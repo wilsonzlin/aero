@@ -6,9 +6,11 @@ import { startProxyServer } from "../server";
 import {
   TCP_MUX_SUBPROTOCOL,
   TcpMuxCloseFlags,
+  TcpMuxErrorCode,
   TcpMuxFrameParser,
   TcpMuxMsgType,
   decodeTcpMuxClosePayload,
+  decodeTcpMuxErrorPayload,
   encodeTcpMuxClosePayload,
   encodeTcpMuxFrame,
   encodeTcpMuxOpenPayload,
@@ -212,6 +214,102 @@ test("tcp-mux relay echoes bytes on multiple concurrent streams", async () => {
     const serverClose2 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 2);
     assert.ok((decodeTcpMuxClosePayload(serverClose1.payload).flags & TcpMuxCloseFlags.FIN) !== 0);
     assert.ok((decodeTcpMuxClosePayload(serverClose2.payload).flags & TcpMuxCloseFlags.FIN) !== 0);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
+test("tcp-mux policy denials are returned as ERROR without closing the websocket", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: false,
+    allow: `127.0.0.1:${echoServer.port}`
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  try {
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const deniedPort = echoServer.port === 65535 ? 65534 : echoServer.port + 1;
+
+    const openAllowed = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    const openDenied = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      2,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: deniedPort })
+    );
+
+    const payload = Buffer.from("still-works");
+    const dataAllowed = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload);
+
+    ws.send(Buffer.concat([openAllowed, openDenied, dataAllowed]));
+
+    const errorPromise = waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 2);
+    const echoPromise = waitForEcho(waiter, 1, payload);
+
+    const [errFrame] = await Promise.all([errorPromise, echoPromise]);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.POLICY_DENIED);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
+test("tcp-mux enforces max streams per websocket with STREAM_LIMIT_EXCEEDED", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    tcpMuxMaxStreams: 1
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  try {
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const openAllowed = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    const openDenied = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      2,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+
+    const payload = Buffer.from("one-stream");
+    const dataAllowed = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload);
+
+    ws.send(Buffer.concat([openAllowed, openDenied, dataAllowed]));
+
+    const errorPromise = waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 2);
+    const echoPromise = waitForEcho(waiter, 1, payload);
+
+    const [errFrame] = await Promise.all([errorPromise, echoPromise]);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.STREAM_LIMIT_EXCEEDED);
 
     const closePromise = waitForClose(ws);
     ws.close(1000, "done");
