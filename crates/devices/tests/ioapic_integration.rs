@@ -4,7 +4,8 @@ use std::sync::Arc;
 #[test]
 fn ioapic_routes_configured_vector_to_lapic() {
     let lapic = Arc::new(LocalApic::new(0));
-    lapic.mmio_write(0xF0, &(1u32 << 8).to_le_bytes());
+    // Enable LAPIC with spurious vector 0xFF so injected interrupts are accepted.
+    lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
     let mut ioapic = IoApic::new(IoApicId(0), lapic.clone());
 
     // Configure GSI 5 -> vector 0x45, unmasked, edge-triggered.

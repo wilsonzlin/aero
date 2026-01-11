@@ -366,7 +366,9 @@ mod tests {
 
     fn mk_ioapic() -> (IoApic, Arc<LocalApic>) {
         let lapic = Arc::new(LocalApic::new(0));
-        lapic.mmio_write(0xF0, &(1u32 << 8).to_le_bytes());
+        // Enable LAPIC with a valid spurious interrupt vector (0xFF) so injected
+        // interrupts are accepted.
+        lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
         let ioapic = IoApic::new(IoApicId(0), lapic.clone());
         (ioapic, lapic)
     }

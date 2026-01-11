@@ -24,7 +24,8 @@ fn pci_intx_can_drive_ioapic_and_be_mirrored_to_pic() {
     let mut router = PciIntxRouter::new(PciIntxRouterConfig::default());
 
     let lapic = Arc::new(LocalApic::new(0));
-    lapic.mmio_write(0xF0, &(1u32 << 8).to_le_bytes());
+    // Enable LAPIC with spurious vector 0xFF so injected interrupts are accepted.
+    lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
     let mut ioapic = IoApic::new(IoApicId(0), lapic.clone());
 
     // Configure GSI 10 -> vector 0x45, unmasked, active-low, level-triggered.

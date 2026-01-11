@@ -20,12 +20,7 @@ fn ioapic_mmio_programming_via_system_bus() {
     let mut bus = MemoryBus::new(Box::new(ram));
 
     let lapic = Arc::new(LocalApic::new(0));
-    // Enable LAPIC via SVR[8] so injected interrupts are accepted.
-    lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
     let ioapic = Arc::new(Mutex::new(IoApic::new(IoApicId(0), lapic.clone())));
-
-    // LAPIC starts disabled (SVR[8] == 0); enable it so injected interrupts are accepted.
-    lapic.mmio_write(0xF0, &(1u32 << 8).to_le_bytes());
 
     bus.add_mmio_region(
         LAPIC_MMIO_BASE,
@@ -40,8 +35,8 @@ fn ioapic_mmio_programming_via_system_bus() {
     )
     .unwrap();
 
-    // Enable the LAPIC (SVR[8] = 1).
-    write_u32(&mut bus, LAPIC_MMIO_BASE + 0xF0, 1 << 8);
+    // Enable the LAPIC (SVR[8] = 1) with a valid spurious interrupt vector (0xFF).
+    write_u32(&mut bus, LAPIC_MMIO_BASE + 0xF0, 0x1FF);
 
     // Configure GSI 5 -> vector 0x45, unmasked.
     let gsi = 5u32;

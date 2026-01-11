@@ -7,7 +7,8 @@ use std::sync::Arc;
 fn hpet_timer0_interrupt_is_routed_via_ioapic_to_lapic() {
     let clock = ManualClock::new();
     let lapic = Arc::new(LocalApic::new(0));
-    lapic.mmio_write(0xF0, &(1u32 << 8).to_le_bytes());
+    // Enable LAPIC with spurious vector 0xFF so injected interrupts are accepted.
+    lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
     let mut ioapic = IoApic::new(IoApicId(0), lapic.clone());
 
     // Route HPET Timer 0 (default GSI 2) to vector 0x42.
