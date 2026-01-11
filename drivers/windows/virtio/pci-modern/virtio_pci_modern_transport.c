@@ -843,9 +843,11 @@ NTSTATUS VirtioPciModernTransportReadDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *t
 
 	for (attempt = 0; attempt < VIRTIO_PCI_CONFIG_MAX_READ_RETRIES; ++attempt) {
 		gen1 = t->CommonCfg->config_generation;
+		VirtioPciModernMb(t);
 		for (i = 0; i < length; ++i) {
 			out[i] = t->DeviceCfg[offset + i];
 		}
+		VirtioPciModernMb(t);
 		gen2 = t->CommonCfg->config_generation;
 		if (gen1 == gen2) {
 			return STATUS_SUCCESS;
@@ -879,9 +881,11 @@ NTSTATUS VirtioPciModernTransportWriteDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *
 
 	for (attempt = 0; attempt < VIRTIO_PCI_CONFIG_MAX_READ_RETRIES; ++attempt) {
 		gen1 = t->CommonCfg->config_generation;
+		VirtioPciModernMb(t);
 		for (i = 0; i < length; ++i) {
 			t->DeviceCfg[offset + i] = in[i];
 		}
+		VirtioPciModernMb(t);
 		gen2 = t->CommonCfg->config_generation;
 		if (gen1 == gen2) {
 			return STATUS_SUCCESS;

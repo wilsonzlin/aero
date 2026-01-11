@@ -45,6 +45,11 @@ typedef struct _FAKE_DEV {
 	UINT64 DriverFeatures;
 	UINT16 QueueSize[FAKE_MAX_QUEUES];
 	UINT16 QueueNotifyOff[FAKE_MAX_QUEUES];
+	UINT32 MbBumpConfigGenRemaining;
+	BOOLEAN MbFillDeviceCfgOnBump;
+	UINT32 MbFillDeviceCfgOffset;
+	UINT32 MbFillDeviceCfgLength;
+	UINT8 MbFillDeviceCfgValue;
 } FAKE_DEV;
 
 static void WriteLe16(UINT8 *p, UINT16 v)
@@ -168,6 +173,7 @@ static void OsMb(void *ctx)
 	UINT32 sel;
 	UINT16 q;
 	UINT64 feat;
+	UINT32 i;
 
 	common = (volatile virtio_pci_common_cfg *)(dev->Bar0 + 0x0000);
 
@@ -205,6 +211,22 @@ static void OsMb(void *ctx)
 		dev->DriverFeatures = (dev->DriverFeatures & 0xFFFFFFFF00000000ull) | (UINT64)common->driver_feature;
 	} else if (sel == 1) {
 		dev->DriverFeatures = (dev->DriverFeatures & 0x00000000FFFFFFFFull) | ((UINT64)common->driver_feature << 32);
+	}
+
+	/*
+	 * Optional config_generation / DEVICE_CFG mutation hook used by config read/write
+	 * unit tests.
+	 */
+	if (dev->MbBumpConfigGenRemaining != 0) {
+		dev->MbBumpConfigGenRemaining--;
+		common->config_generation = (UINT8)(common->config_generation + 1u);
+
+		if (dev->MbFillDeviceCfgOnBump) {
+			assert(0x3000u + dev->MbFillDeviceCfgOffset + dev->MbFillDeviceCfgLength <= BAR0_LEN);
+			for (i = 0; i < dev->MbFillDeviceCfgLength; ++i) {
+				dev->Bar0[0x3000u + dev->MbFillDeviceCfgOffset + i] = dev->MbFillDeviceCfgValue;
+			}
+		}
 	}
 }
 
@@ -655,6 +677,135 @@ static void TestNotifyRejectInvalidQueue(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestDeviceConfigReadStable(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT8 buf[4];
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.Bar0[0x3000] = 0xAA;
+	dev.Bar0[0x3001] = 0xBB;
+	dev.Bar0[0x3002] = 0xCC;
+	dev.Bar0[0x3003] = 0xDD;
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	memset(buf, 0, sizeof(buf));
+	st = VirtioPciModernTransportReadDeviceConfig(&t, 0, buf, sizeof(buf));
+	assert(st == STATUS_SUCCESS);
+	assert(buf[0] == 0xAA);
+	assert(buf[1] == 0xBB);
+	assert(buf[2] == 0xCC);
+	assert(buf[3] == 0xDD);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestDeviceConfigReadRetriesAndGetsLatest(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT8 buf[4];
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	memset(dev.Bar0 + 0x3000, 0x11, sizeof(buf));
+
+	dev.MbBumpConfigGenRemaining = 1;
+	dev.MbFillDeviceCfgOnBump = TRUE;
+	dev.MbFillDeviceCfgOffset = 0;
+	dev.MbFillDeviceCfgLength = sizeof(buf);
+	dev.MbFillDeviceCfgValue = 0x22;
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	memset(buf, 0, sizeof(buf));
+	st = VirtioPciModernTransportReadDeviceConfig(&t, 0, buf, sizeof(buf));
+	assert(st == STATUS_SUCCESS);
+	assert(buf[0] == 0x22);
+	assert(buf[1] == 0x22);
+	assert(buf[2] == 0x22);
+	assert(buf[3] == 0x22);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestDeviceConfigReadFailsWhenGenerationNeverStabilizes(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT8 buf[4];
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.MbBumpConfigGenRemaining = 100;
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	memset(buf, 0, sizeof(buf));
+	st = VirtioPciModernTransportReadDeviceConfig(&t, 0, buf, sizeof(buf));
+	assert(st == STATUS_IO_DEVICE_ERROR);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestDeviceConfigWriteRetriesAndSucceeds(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	const UINT8 in[3] = { 0x11, 0x22, 0x33 };
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	memset(dev.Bar0 + 0x3000, 0, 16);
+	dev.MbBumpConfigGenRemaining = 1;
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportWriteDeviceConfig(&t, 1, in, sizeof(in));
+	assert(st == STATUS_SUCCESS);
+	assert(dev.Bar0[0x3001] == 0x11);
+	assert(dev.Bar0[0x3002] == 0x22);
+	assert(dev.Bar0[0x3003] == 0x33);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestDeviceConfigWriteFailsWhenGenerationNeverStabilizes(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	const UINT8 in[3] = { 0x11, 0x22, 0x33 };
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.MbBumpConfigGenRemaining = 100;
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportWriteDeviceConfig(&t, 1, in, sizeof(in));
+	assert(st == STATUS_IO_DEVICE_ERROR);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 int main(void)
 {
 	TestInitOk();
@@ -678,6 +829,11 @@ int main(void)
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestQueueSetupAndNotify();
 	TestNotifyRejectInvalidQueue();
+	TestDeviceConfigReadStable();
+	TestDeviceConfigReadRetriesAndGetsLatest();
+	TestDeviceConfigReadFailsWhenGenerationNeverStabilizes();
+	TestDeviceConfigWriteRetriesAndSucceeds();
+	TestDeviceConfigWriteFailsWhenGenerationNeverStabilizes();
 	printf("virtio_pci_modern_transport_tests: PASS\n");
 	return 0;
 }
