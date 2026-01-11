@@ -404,6 +404,11 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   bool supported = false;
   bool prevSupported = false;
   bool havePrev = false;
+  uint32_t stallCount = 0;
+  uint64_t perVblankUsMin = 0;
+  uint64_t perVblankUsMax = 0;
+  uint64_t perVblankUsSum = 0;
+  uint64_t perVblankUsSamples = 0;
 
   for (uint32_t i = 0; i < samples; ++i) {
     if (!QueryVblank(f, hAdapter, vidpnSourceId, &q, &supported)) {
@@ -422,6 +427,23 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       if (dseq != 0 && dt != 0) {
         const double hz = (double)dseq * 1000000000.0 / (double)dt;
         wprintf(L"  observed: ~%.3f Hz\n", hz);
+
+        const uint64_t perVblankUs = (dt / dseq) / 1000ull;
+        if (perVblankUsSamples == 0) {
+          perVblankUsMin = perVblankUs;
+          perVblankUsMax = perVblankUs;
+        } else {
+          if (perVblankUs < perVblankUsMin) {
+            perVblankUsMin = perVblankUs;
+          }
+          if (perVblankUs > perVblankUsMax) {
+            perVblankUsMax = perVblankUs;
+          }
+        }
+        perVblankUsSum += perVblankUs;
+        perVblankUsSamples += 1;
+      } else if (dseq == 0) {
+        stallCount += 1;
       }
     }
 
@@ -432,6 +454,16 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     if (i + 1 < samples) {
       Sleep(intervalMs);
     }
+  }
+
+  if (samples > 1 && perVblankUsSamples != 0) {
+    const uint64_t avg = perVblankUsSum / perVblankUsSamples;
+    wprintf(L"Summary (%I64u deltas): per-vblank ~%I64u us (min=%I64u max=%I64u), stalls=%lu\n",
+            (unsigned long long)perVblankUsSamples,
+            (unsigned long long)avg,
+            (unsigned long long)perVblankUsMin,
+            (unsigned long long)perVblankUsMax,
+            (unsigned long)stallCount);
   }
 
   return 0;
