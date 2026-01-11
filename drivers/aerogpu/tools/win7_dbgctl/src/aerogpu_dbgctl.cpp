@@ -547,18 +547,8 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   out->vidpn_source_id = vidpnSourceId;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
-  if (st == STATUS_NOT_SUPPORTED) {
-    if (supportedOut) {
-      *supportedOut = false;
-    }
-
-    // Some KMD/device combos return STATUS_NOT_SUPPORTED when
-    // AEROGPU_FEATURE_VBLANK isn't advertised; treat as a successful query of
-    // "unsupported".
-    return true;
-  }
   if (!NT_SUCCESS(st)) {
-    PrintNtStatus(L"D3DKMTEscape(query-vblank) failed", f, st);
+    PrintNtStatus(L"D3DKMTEscape(dump-vblank) failed", f, st);
     return false;
   }
 
@@ -950,6 +940,11 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       } else {
         PrintNtStatus(L"D3DKMTGetScanLine failed", f, st);
       }
+    }
+
+    if (!supported) {
+      PrintNtStatus(L"Vblank not supported by device/KMD", f, STATUS_NOT_SUPPORTED);
+      return 2;
     }
 
     if (havePrev && supported && prevSupported) {
