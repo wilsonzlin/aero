@@ -428,7 +428,11 @@ guest-tools\drivers\<arch>\virtio-snd\
    - `aero-virtio-snd.cat` (signed)
    - (Optional) `virtio-snd.inf` + `virtio-snd.cat` (signed)
 2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
-2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
+
+INF selection note:
+
+- `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `DEV_1059&REV_01` and installs service `aeroviosnd`).
+- `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows (functionally equivalent to `aero-virtio-snd.inf` but with a different `CatalogFile` name).
 
 For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
 

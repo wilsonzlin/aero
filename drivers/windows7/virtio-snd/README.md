@@ -176,6 +176,8 @@ This signs:
 4. Browse to `drivers/windows7/virtio-snd/inf/`
 5. Select `aero-virtio-snd.inf` (recommended for Aero contract v1)
 
+`virtio-snd.inf` is a legacy filename alias kept for compatibility with older workflows/tools (functionally equivalent to `aero-virtio-snd.inf` but with a different `CatalogFile` name).
+
 ## Offline / slipstream installation (optional)
 
 If you want virtio-snd to bind automatically on first boot (for example when building unattended Win7 images), see:
