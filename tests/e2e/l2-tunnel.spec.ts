@@ -435,6 +435,35 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
             return { srcIp: srcIp.slice(), dstIp: dstIp.slice(), srcPort, dstPort, payload: payload.slice() };
           }
 
+          const wsBase = new URL(l2ProxyOrigin);
+          wsBase.protocol = wsBase.protocol === 'https:' ? 'wss:' : 'ws:';
+          wsBase.pathname = '/l2';
+          wsBase.search = '';
+          const wsUrl = wsBase.toString();
+
+          // First, prove that the proxy rejects WebSocket upgrades without the session cookie.
+          // (This catches regressions where cookie auth is accidentally disabled.)
+          const unauth = await withTimeout(
+            new Promise<{ opened: boolean; code?: number; reason?: string }>((resolve) => {
+              const ws = new WebSocket(wsUrl, 'aero-l2-tunnel-v1');
+              ws.binaryType = 'arraybuffer';
+              let opened = false;
+              ws.onopen = () => {
+                opened = true;
+                ws.close(1000, 'unexpected');
+              };
+              ws.onerror = () => {
+                // `WebSocket` only exposes an error event (no HTTP status). We assert via `opened` below.
+              };
+              ws.onclose = (evt) => resolve({ opened, code: evt.code, reason: evt.reason });
+            }),
+            10_000,
+            'WebSocket without cookie',
+          );
+          if (unauth.opened) {
+            throw new Error('expected WebSocket /l2 to be rejected without session cookie');
+          }
+
           // Establish a gateway session cookie (httpOnly) that will be sent on the /l2 WebSocket.
           const sessionRes = await withTimeout(
             fetch(`${gatewayOrigin}/session`, {
@@ -448,12 +477,7 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
           );
           if (!sessionRes.ok) throw new Error(`session endpoint failed: ${sessionRes.status}`);
 
-          const wsBase = new URL(l2ProxyOrigin);
-          wsBase.protocol = wsBase.protocol === 'https:' ? 'wss:' : 'ws:';
-          wsBase.pathname = '/l2';
-          wsBase.search = '';
-
-          const ws = new WebSocket(wsBase.toString(), 'aero-l2-tunnel-v1');
+          const ws = new WebSocket(wsUrl, 'aero-l2-tunnel-v1');
           ws.binaryType = 'arraybuffer';
 
           await withTimeout(
