@@ -23,7 +23,10 @@ The repo provides PowerShell entrypoints that CI and local builds can share:
 
 These scripts are orchestrated in CI by:
 
-- `.github/workflows/drivers-win7.yml` (**canonical** PR/push workflow; builds + catalogs + test-signs + packages, then uploads `out/artifacts/` as the `win7-drivers` artifact)
+- `.github/workflows/drivers-win7.yml` (**canonical** PR/push workflow; builds + catalogs + test-signs + packages)
+  - Driver bundles: `win7-drivers` (from `out/artifacts/`)
+  - Raw signed packages + cert: `win7-drivers-signed-packages` (from `out/packages/**` + `out/certs/aero-test.cer`)
+  - Guest Tools media: `aero-guest-tools` (ISO/zip/manifest)
 - `.github/workflows/release-drivers-win7.yml` (tagged releases; publishes the packaged artifacts to GitHub Releases)
 
 ---

@@ -26,6 +26,18 @@ Binaries are staged under:
 - `out/packages/aerogpu/x86/` and `out/packages/aerogpu/x64/` (INF+CAT staged packages)
 - `out/artifacts/` (ZIP/ISO bundles)
 
+## CI (GitHub Actions)
+
+The canonical CI pipeline for Windows 7 drivers (including AeroGPU) is:
+
+- `.github/workflows/drivers-win7.yml`
+
+Artifacts produced by the workflow:
+
+- `win7-drivers` (from `out/artifacts/`; installable ZIP/ISO bundles)
+- `win7-drivers-signed-packages` (from `out/packages/**` + `out/certs/aero-test.cer`; raw INF/CAT staging)
+- `aero-guest-tools` (Guest Tools ISO/zip/manifest built from the signed packages)
+
 ## Key docs / entrypoints
 
 * Build + toolchain setup: `drivers/aerogpu/build/README.md`

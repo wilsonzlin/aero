@@ -4,6 +4,13 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
 
 > Aero does **not** include or distribute Windows. You must provide your own Windows 7 ISO and license.
 
+If you are building from source / working on a PR, the GitHub Actions workflow
+`.github/workflows/drivers-win7.yml` uploads an `aero-guest-tools` artifact containing:
+
+- `aero-guest-tools.iso`
+- `aero-guest-tools.zip`
+- `manifest.json`
+
 ## Quick start (overview)
 
 1. Install Windows 7 SP1 using **baseline devices**: **AHCI + e1000 + VGA**.
