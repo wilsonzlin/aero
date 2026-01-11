@@ -126,10 +126,13 @@ async function handleInit(ramBytes: number): Promise<InitResult> {
   }
 
   const init = await initWasmForContext();
-  api = init.api;
-  variant = init.variant;
+  const wasmApi = init.api;
+  const wasmVariant = init.variant;
+  api = wasmApi;
+  variant = wasmVariant;
 
-  vm = new api.DemoVm(ramBytes);
+  const newVm = new wasmApi.DemoVm(ramBytes);
+  vm = newVm;
   stepsTotal = 0;
   serialBytes = 0;
   savedSerialBytesByPath.clear();
@@ -141,11 +144,12 @@ async function handleInit(ramBytes: number): Promise<InitResult> {
       (globalThis as any).FileSystemFileHandle?.prototype?.createSyncAccessHandle
     ) === "function";
 
-  const streamingSnapshots = typeof (vm as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs === "function";
+  const streamingSnapshots =
+    typeof (newVm as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs === "function";
   const streamingRestore =
-    typeof (vm as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs === "function";
+    typeof (newVm as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs === "function";
 
-  const initialLen = getSerialOutputLenFromVm(vm);
+  const initialLen = getSerialOutputLenFromVm(newVm);
   if (initialLen !== null) {
     stepsTotal = initialLen;
     serialBytes = initialLen;
@@ -153,7 +157,7 @@ async function handleInit(ramBytes: number): Promise<InitResult> {
 
   startStepLoop();
 
-  return { wasmVariant: variant, syncAccessHandles, streamingSnapshots, streamingRestore };
+  return { wasmVariant: wasmVariant, syncAccessHandles, streamingSnapshots, streamingRestore };
 }
 
 async function handleRunSteps(steps: number): Promise<{ steps: number; serialBytes: number | null }> {
