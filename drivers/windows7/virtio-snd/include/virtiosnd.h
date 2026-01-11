@@ -55,7 +55,6 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     volatile LONG PendingIsrStatus;
     volatile LONG Stopping;
     volatile LONG DpcInFlight;
-    KEVENT DpcIdleEvent;
 
     ULONG InterruptVector;
     KIRQL InterruptIrql;

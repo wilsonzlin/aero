@@ -60,7 +60,6 @@ VOID VirtIoSndIntxInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx) {
     // spurious interrupts can't queue work against uninitialized queues.
     Dx->Stopping = 1;
     Dx->DpcInFlight = 0;
-    KeInitializeEvent(&Dx->DpcIdleEvent, NotificationEvent, TRUE);
 
     KeInitializeDpc(&Dx->InterruptDpc, VirtIoSndIntxDpc, Dx);
 }
@@ -149,7 +148,6 @@ NTSTATUS VirtIoSndIntxConnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
     Dx->PendingIsrStatus = 0;
     Dx->Stopping = 0;
     Dx->DpcInFlight = 0;
-    KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
 
     status = IoConnectInterrupt(
         &Dx->InterruptObject,
@@ -177,6 +175,7 @@ NTSTATUS VirtIoSndIntxConnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
 _Use_decl_annotations_
 VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
     BOOLEAN removed;
+    LARGE_INTEGER delay;
 
     if (Dx == NULL) {
         return;
@@ -198,27 +197,26 @@ VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
          * in-flight counter here to keep teardown synchronization correct.
          *
          * Note: a DPC instance may still be *running* concurrently (a KDPC can be
-         * re-queued while executing). We still wait for DpcIdleEvent below.
+         * re-queued while executing). We still wait for DpcInFlight to drain below.
          */
         LONG remaining = InterlockedDecrement(&Dx->DpcInFlight);
-        if (remaining <= 0) {
-            if (remaining < 0) {
-                (VOID)InterlockedExchange(&Dx->DpcInFlight, 0);
-            }
-            KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
+        if (remaining < 0) {
+            (VOID)InterlockedExchange(&Dx->DpcInFlight, 0);
         }
     }
 
     // Wait for any in-flight DPC to finish before callers unmap MMIO/free queues.
     if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
-        (VOID)KeWaitForSingleObject(&Dx->DpcIdleEvent, Executive, KernelMode, FALSE, NULL);
+        delay.QuadPart = -10 * 1000; /* 1ms */
+        while (InterlockedCompareExchange(&Dx->DpcInFlight, 0, 0) != 0) {
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
     } else {
         VIRTIOSND_TRACE_ERROR("VirtIoSndIntxDisconnect called at IRQL %lu; skipping DPC idle wait\n", (ULONG)KeGetCurrentIrql());
     }
 
     (VOID)InterlockedExchange(&Dx->PendingIsrStatus, 0);
     (VOID)InterlockedExchange(&Dx->DpcInFlight, 0);
-    KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
 }
 
 _Use_decl_annotations_
@@ -255,9 +253,7 @@ BOOLEAN VirtIoSndIntxIsr(PKINTERRUPT Interrupt, PVOID ServiceContext) {
          * safely wait even if the DPC has been dequeued for execution but has not
          * started running yet (KeRemoveQueueDpc would return FALSE in that state).
          */
-        if (InterlockedIncrement(&dx->DpcInFlight) == 1) {
-            KeClearEvent(&dx->DpcIdleEvent);
-        }
+        (VOID)InterlockedIncrement(&dx->DpcInFlight);
     }
     return TRUE;
 }
@@ -294,12 +290,11 @@ VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, P
     remaining = InterlockedDecrement(&dx->DpcInFlight);
     if (remaining <= 0) {
         /*
-         * Ensure the idle event is always signaled when no DPC instances remain,
-         * even if DpcInFlight gets out of sync due to unexpected callers.
+         * Ensure the in-flight count is always non-negative even if DpcInFlight
+         * gets out of sync due to unexpected callers.
          */
         if (remaining < 0) {
             (VOID)InterlockedExchange(&dx->DpcInFlight, 0);
         }
-        KeSetEvent(&dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
     }
 }
