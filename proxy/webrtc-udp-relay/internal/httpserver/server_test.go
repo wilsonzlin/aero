@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -50,6 +51,17 @@ func startTestServer(t *testing.T, cfg config.Config, register func(*Server)) st
 	return "http://" + ln.Addr().String()
 }
 
+func makeJWT(secret string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{}`))
+	unsigned := header + "." + payload
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(unsigned))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return unsigned + "." + sig
+}
+
 func TestHealthzReadyzVersion(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
@@ -57,6 +69,7 @@ func TestHealthzReadyzVersion(t *testing.T) {
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
 	}
 
 	baseURL := startTestServer(t, cfg, nil)
@@ -117,6 +130,7 @@ func TestICEEndpointSchema(t *testing.T) {
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.example.com:3478"}},
 			{URLs: []string{"turn:turn.example.com:3478?transport=udp"}, Username: "user", Credential: "pass"},
@@ -149,7 +163,115 @@ func TestICEEndpointSchema(t *testing.T) {
 	}
 }
 
+func TestICEEndpoint_AuthAPIKey(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeAPIKey,
+		APIKey:          "secret",
+		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
+	}
+	baseURL := startTestServer(t, cfg, nil)
+
+	t.Run("missing", func(t *testing.T) {
+		resp, err := http.Get(baseURL + "/webrtc/ice")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("valid header", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("X-API-Key", "secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+
+	t.Run("valid query", func(t *testing.T) {
+		resp, err := http.Get(baseURL + "/webrtc/ice?apiKey=secret")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+}
+
+func TestICEEndpoint_AuthJWT(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeJWT,
+		JWTSecret:       "secret",
+		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
+	}
+	baseURL := startTestServer(t, cfg, nil)
+
+	t.Run("missing", func(t *testing.T) {
+		resp, err := http.Get(baseURL + "/webrtc/ice")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		}
+	})
+
+	token := makeJWT("secret")
+
+	t.Run("valid bearer header", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+
+	t.Run("valid query", func(t *testing.T) {
+		resp, err := http.Get(baseURL + "/webrtc/ice?token=" + token)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+}
+
 func TestICEEndpoint_TURNRESTInjectsCredentials(t *testing.T) {
+	t.Setenv("AUTH_MODE", "api_key")
+	t.Setenv("API_KEY", "secret")
 	t.Setenv("TURN_REST_SHARED_SECRET", "shared-secret")
 	t.Setenv("TURN_REST_TTL_SECONDS", "10")
 	t.Setenv("TURN_REST_USERNAME_PREFIX", "aero")
@@ -170,6 +292,7 @@ func TestICEEndpoint_TURNRESTInjectsCredentials(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Origin", baseURL)
+	req.Header.Set("X-API-Key", "secret")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -243,6 +366,7 @@ func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
@@ -272,6 +396,7 @@ func TestOriginMiddleware_RejectsInvalidOrigin(t *testing.T) {
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
@@ -301,6 +426,7 @@ func TestOriginMiddleware_RejectsNonHTTPOrigin(t *testing.T) {
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
@@ -331,6 +457,7 @@ func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
 		AllowedOrigins:  []string{"https://app.example.com"},
+		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 

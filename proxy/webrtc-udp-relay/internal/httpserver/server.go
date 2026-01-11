@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/auth"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/turnrest"
 )
@@ -101,6 +103,31 @@ func (s *Server) registerRoutes() {
 	})
 
 	s.mux.HandleFunc("GET /webrtc/ice", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.AuthMode != config.AuthModeNone {
+			cred, err := auth.CredentialFromRequest(s.cfg.AuthMode, r)
+			if err != nil {
+				if errors.Is(err, auth.ErrMissingCredentials) {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			verifier, err := auth.NewVerifier(s.cfg)
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			if err := verifier.Verify(cred); err != nil {
+				if errors.Is(err, auth.ErrMissingCredentials) || errors.Is(err, auth.ErrInvalidCredentials) || errors.Is(err, auth.ErrUnsupportedJWT) {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+		}
+
 		if err := s.cfg.ICEConfigError(); err != nil {
 			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 			return

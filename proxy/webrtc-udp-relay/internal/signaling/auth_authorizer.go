@@ -51,52 +51,12 @@ func (a AuthAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) error 
 }
 
 func credentialFromHelloAndRequest(mode config.AuthMode, hello *ClientHello, r *http.Request) (string, error) {
-	if hello != nil && strings.TrimSpace(hello.Credential) != "" {
-		return strings.TrimSpace(hello.Credential), nil
-	}
-	if r == nil {
-		return "", auth.ErrMissingCredentials
-	}
-
-	// Prefer headers for HTTP requests; they don't leak into logs/history like query strings.
-	if v := credentialFromHeaders(mode, r.Header); v != "" {
-		return v, nil
-	}
-	return auth.CredentialFromQuery(mode, r.URL.Query())
-}
-
-func credentialFromHeaders(mode config.AuthMode, h http.Header) string {
-	switch mode {
-	case config.AuthModeAPIKey:
-		if v := strings.TrimSpace(h.Get("X-API-Key")); v != "" {
-			return v
+	if hello != nil {
+		if v := strings.TrimSpace(hello.Credential); v != "" {
+			return v, nil
 		}
-		scheme, token := parseAuthHeader(h.Get("Authorization"))
-		if scheme == "apikey" && token != "" {
-			return token
-		}
-		return ""
-	case config.AuthModeJWT:
-		scheme, token := parseAuthHeader(h.Get("Authorization"))
-		if scheme == "bearer" && token != "" {
-			return token
-		}
-		return ""
-	default:
-		return ""
 	}
-}
-
-func parseAuthHeader(v string) (scheme, token string) {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return "", ""
-	}
-	parts := strings.SplitN(v, " ", 2)
-	if len(parts) != 2 {
-		return "", ""
-	}
-	return strings.ToLower(strings.TrimSpace(parts[0])), strings.TrimSpace(parts[1])
+	return auth.CredentialFromRequest(mode, r)
 }
 
 // IsAuthMissing reports whether err represents missing credentials (as opposed to

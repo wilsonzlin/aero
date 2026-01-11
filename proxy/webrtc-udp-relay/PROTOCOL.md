@@ -276,7 +276,7 @@ The relay supports multiple signaling surfaces:
 
 ### Authentication
 
-When `AUTH_MODE != none`, **all** signaling endpoints (`POST /offer`, `POST /webrtc/offer`, `POST /session`, `GET /webrtc/signal`) require credentials.
+When `AUTH_MODE != none`, `GET /webrtc/ice` and **all** signaling endpoints (`POST /offer`, `POST /webrtc/offer`, `POST /session`, `GET /webrtc/signal`) require credentials.
 
 HTTP endpoints accept credentials via:
 

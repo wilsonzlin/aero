@@ -174,6 +174,7 @@ The E2E test builds and runs a small Go relay helper under `e2e/relay-server-go/
 - `GET /metrics` → Prometheus text exposition of internal counters
 - `GET /webrtc/ice` → ICE server list for browser clients: `{"iceServers":[...]}`
   - guarded by the same origin policy as signaling endpoints (to avoid leaking TURN credentials cross-origin)
+  - when `AUTH_MODE != none`, also requires the same credentials as signaling endpoints (to avoid leaking TURN REST credentials to unauthenticated callers)
 - `POST /offer` → signaling: exchange SDP offer/answer (non-trickle ICE) per `PROTOCOL.md`
 - `POST /session` → allocate a server-side session (primarily for quota enforcement; not required by the v1 offer/answer flow)
 - `GET /webrtc/signal` → WebSocket signaling (trickle ICE)
@@ -282,7 +283,7 @@ or:
 Tradeoff: query parameters can leak into browser history, reverse-proxy logs, and monitoring.
 Prefer the first-message `{type:"auth"}` flow when possible.
 
-For HTTP signaling endpoints (`POST /offer`, `POST /webrtc/offer`, `POST /session`), clients can use headers:
+For HTTP endpoints (`GET /webrtc/ice`, `POST /offer`, `POST /webrtc/offer`, `POST /session`), clients can use headers:
 
 - `AUTH_MODE=api_key`:
   - Preferred: `X-API-Key: ...`
