@@ -9,6 +9,14 @@
 #define VIRTIOSND_CTRL_TIMEOUT_DEFAULT_MS 1000u
 
 /*
+ * WDK 7600 headers predate ALIGN_UP_BY(). Provide a local fallback to keep the
+ * virtio-snd driver building against both WDK7 and newer kits.
+ */
+#ifndef ALIGN_UP_BY
+#define ALIGN_UP_BY(_length, _alignment) (((_length) + ((_alignment) - 1)) & ~((_alignment) - 1))
+#endif
+
+/*
  * Per-request context + DMA buffers.
  *
  * A control request is submitted as a 2-descriptor chain:
