@@ -1641,9 +1641,14 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
 
     ULONGLONG line = 0;
     if (periodNs != 0 && totalLines != 0) {
-        line = (posNs * (ULONGLONG)totalLines) / periodNs;
+        ULONGLONG tline = (posNs * (ULONGLONG)totalLines) / periodNs;
+        if (tline >= (ULONGLONG)totalLines) {
+            tline = (ULONGLONG)totalLines - 1;
+        }
+
+        line = tline + (ULONGLONG)height;
         if (line >= (ULONGLONG)totalLines) {
-            line = (ULONGLONG)totalLines - 1;
+            line -= (ULONGLONG)totalLines;
         }
     }
 
