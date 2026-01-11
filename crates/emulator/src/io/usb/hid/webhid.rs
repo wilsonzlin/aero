@@ -357,4 +357,24 @@ mod tests {
             other => panic!("expected UnitExponentOutOfRange error, got {other:?}"),
         }
     }
+
+    #[test]
+    fn buffered_bytes_uses_bit7_for_input_main_items() {
+        let mut item = make_item(0);
+        // Ensure the main-item flag byte is otherwise zero so we can assert the exact
+        // spec-canonical encoding.
+        item.is_array = true;
+        item.is_buffered_bytes = true;
+        let collections = make_collections(item);
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(2).any(|w| w == [0x81, 0x80]),
+            "expected spec-canonical Input Buffered Bytes encoding (0x81 0x80): {desc:02x?}"
+        );
+        assert!(
+            !desc.windows(3).any(|w| w == [0x82, 0x00, 0x01]),
+            "did not expect Input Buffered Bytes to be encoded as a 2-byte payload (0x82 0x00 0x01): {desc:02x?}"
+        );
+    }
 }

@@ -177,11 +177,12 @@ The current synthesis encodes only the subset supported by `report_descriptor.rs
 | `isConstant` | 0 |
 | `isArray` (inverted: `!isArray` means Variable) | 1 |
 | `isAbsolute` (inverted: `!isAbsolute` means Relative) | 2 |
-| `isBufferedBytes` | 8 |
+| `isBufferedBytes` (Input) | 7 |
+| `isBufferedBytes` (Output/Feature) | 8 |
 
 The remaining WebHID booleans (`isWrapped`, `isLinear`, `hasPreferredState`, `hasNull`, `isVolatile`, …) are currently ignored during synthesis.
 
-This corresponds to a common subset of the Output/Feature flag layout. For `Input` items, the HID specification uses **bit 7** for “Buffered Bytes” instead of volatility, so an Input item with `isBufferedBytes === true` is not reconstructed in the spec-canonical way (we emit a 2-byte payload with bit 8 set).
+For `Input` items, the HID specification uses **bit 7** for “Buffered Bytes” instead of volatility; we encode that directly so Input buffered-bytes items synthesize using the spec-canonical 1-byte encoding (`0x81` with bit 7 set in the payload, e.g. `0x81 0x80`).
 
 ---
 
