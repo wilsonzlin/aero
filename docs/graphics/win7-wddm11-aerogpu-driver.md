@@ -142,7 +142,7 @@ AeroGPU KMD (aerogpu.sys)
 │  PCI config + MMIO regs + shared rings in guest phys memory  │
 │  Executes command stream and translates to host WebGPU        │
 └──────────────────────────────────────────────────────────────┘
-  │  fence complete / vblank interrupts
+  │  AEROGPU_IRQ_FENCE / AEROGPU_IRQ_SCANOUT_VBLANK interrupts
   ▼
 KMD interrupt → dxgkrnl → UMD fences complete
 ```
