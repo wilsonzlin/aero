@@ -885,8 +885,9 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt,
     shouldKick = VirtqSplitKickPrepare(devExt->Vq);
     if (shouldKick) {
         AerovblkNotifyQueue0(devExt);
-        VirtqSplitKickCommit(devExt->Vq);
     }
+    /* Reset batching bookkeeping even if notification is suppressed. */
+    VirtqSplitKickCommit(devExt->Vq);
 
     StorPortReleaseSpinLock(devExt, &lock);
     StorPortNotification(NextRequest, devExt, NULL);
