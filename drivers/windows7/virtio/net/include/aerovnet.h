@@ -3,28 +3,16 @@
 #include <ndis.h>
 
 #include "virtqueue_split.h"
-#include "virtio_spec.h"
+#include "aero_virtio_pci_modern.h"
 
 // Driver identity
 #define AEROVNET_VENDOR_ID 0x1AF4 // virtio vendor
 
 #define AEROVNET_MTU_DEFAULT 1500u
 
-// --------------------------------------------------------------------------
-// Aero virtio contract v1 (virtio-pci modern, BAR0 MMIO fixed layout)
-// --------------------------------------------------------------------------
-
 #define AEROVNET_PCI_REVISION_ID 0x01u
 
-#define AEROVNET_BAR0_MIN_LEN 0x4000u
-
-#define AEROVNET_MMIO_COMMON_CFG_OFF 0x0000u
-#define AEROVNET_MMIO_NOTIFY_OFF     0x1000u
-#define AEROVNET_MMIO_ISR_OFF        0x2000u
-#define AEROVNET_MMIO_DEVICE_CFG_OFF 0x3000u
-
-// Contract v1 notify semantics (docs/windows7-virtio-driver-contract.md §1.6).
-#define AEROVNET_NOTIFY_OFF_MULTIPLIER 4u
+#define AEROVNET_BAR0_MIN_LEN AERO_VIRTIO_PCI_MODERN_BAR0_REQUIRED_SIZE
 
 // Virtio feature bits.
 #define VIRTIO_F_RING_INDIRECT_DESC (1ui64 << 28)
@@ -122,6 +110,7 @@ typedef enum _AEROVNET_ADAPTER_STATE {
 typedef struct _AEROVNET_VQ {
   USHORT QueueIndex;
   USHORT QueueSize;
+  USHORT QueueNotifyOff;
 
   VIRTQ_SPLIT* Vq;
 
@@ -132,8 +121,6 @@ typedef struct _AEROVNET_VQ {
   PVOID IndirectVa;
   UINT64 IndirectPa;
   ULONG IndirectBytes;
-
-  volatile USHORT* NotifyAddr;
 } AEROVNET_VQ;
 
 typedef struct _AEROVNET_ADAPTER {
@@ -155,11 +142,8 @@ typedef struct _AEROVNET_ADAPTER {
   PUCHAR Bar0Va;
   ULONG Bar0Length;
 
-  volatile virtio_pci_common_cfg* CommonCfg;
-  volatile UCHAR* NotifyBase;
-  ULONG NotifyOffMultiplier;
-  volatile UCHAR* IsrCfg;
-  volatile UCHAR* DeviceCfg;
+  // Virtio-pci modern transport (BAR0 fixed layout, contract v1).
+  AERO_VIRTIO_PCI_MODERN_DEVICE Vdev;
 
   // Virtqueues
   AEROVNET_VQ RxVq;
