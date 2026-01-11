@@ -218,12 +218,13 @@ static int RunVblankWaitSanity(int argc, char** argv) {
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--samples=N] [--timeout-ms=N] [--allow-remote] [--require-vid=0x####] "
-        "[--require-did=0x####]",
+        "Usage: %s.exe [--samples=N] [--timeout-ms=N] [--wait-timeout-ms=N] [--allow-remote] "
+        "[--require-vid=0x####] [--require-did=0x####]",
         kTestName);
     aerogpu_test::PrintfStdout("Default: --samples=120 --timeout-ms=2000");
     aerogpu_test::PrintfStdout(
         "Measures WDDM vblank delivery directly via D3DKMTWaitForVerticalBlankEvent.");
+    aerogpu_test::PrintfStdout("Note: --wait-timeout-ms is accepted as an alias for --timeout-ms.");
     return 0;
   }
 
@@ -245,6 +246,13 @@ static int RunVblankWaitSanity(int argc, char** argv) {
     std::string err;
     if (!aerogpu_test::ParseUint32(timeout_str, &timeout_ms, &err)) {
       return aerogpu_test::Fail(kTestName, "invalid --timeout-ms: %s", err.c_str());
+    }
+  }
+  std::string wait_timeout_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--wait-timeout-ms", &wait_timeout_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(wait_timeout_str, &timeout_ms, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --wait-timeout-ms: %s", err.c_str());
     }
   }
 
