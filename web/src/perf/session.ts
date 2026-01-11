@@ -1,12 +1,15 @@
 import type { PerfAggregator, AggregatedFrame } from "./aggregator.js";
 import type { PerfChannel } from "./shared.js";
 
-import { PerfAggregator as PerfAggregatorImpl } from "./aggregator.js";
-import { encodeFrameSampleRecord, msToUsU32, PERF_RECORD_SIZE_BYTES, WorkerKind } from "./record.js";
+import { PerfAggregator as PerfAggregatorImpl, collectBuildMetadata, collectEnvironmentMetadata } from "./aggregator.js";
+import { FrameTimeStats } from "../../../packages/aero-stats/src/index.js";
+import type { PerfBufferStats, PerfCaptureRecord, PerfExport } from "./export";
+import { JIT_DISABLED_SNAPSHOT } from "./export";
+import { encodeFrameSampleRecord, msToUsU32, PERF_RECORD_SIZE_BYTES, WorkerKind, workerKindToString } from "./record.js";
 import { SpscRingBuffer } from "./ring_buffer.js";
 import { createPerfChannel, PERF_FRAME_HEADER_FRAME_ID_INDEX, PERF_FRAME_HEADER_T_US_INDEX } from "./shared.js";
 import type { ByteSizedCacheTracker, GpuAllocationTracker } from "./memory";
-import { WASM_PAGE_SIZE_BYTES } from "./memory";
+import { MemoryTelemetry } from "./memory";
 import type { PerfApi, PerfHudSnapshot, PerfTimeBreakdownMs } from "./types";
 import { ResponsivenessTracker, type ResponsivenessHudSnapshot } from "./responsiveness";
 
@@ -19,22 +22,17 @@ export type InstallPerfSessionOptions = {
   shaderCacheTracker?: ByteSizedCacheTracker;
 };
 
-type PerformanceMemoryLike = {
-  usedJSHeapSize: number;
-  totalJSHeapSize: number;
-  jsHeapSizeLimit: number;
-};
-
-const perfMemory = (): PerformanceMemoryLike | undefined => {
-  return (performance as unknown as { memory?: PerformanceMemoryLike }).memory;
-};
-
 const MIPS_SCALE = 1000;
 
 const bigintDivToNumberScaled = (numerator: bigint, denominator: bigint, scale: number): number => {
   if (denominator === 0n) return 0;
   const scaled = (numerator * BigInt(scale)) / denominator;
   return Number(scaled) / scale;
+};
+
+const bigintToJsonNumberOrString = (value: bigint): number | string => {
+  if (value <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(value);
+  return value.toString();
 };
 
 export class PerfSession implements PerfApi {
@@ -44,6 +42,7 @@ export class PerfSession implements PerfApi {
   readonly gpuTracker?: GpuAllocationTracker;
   readonly jitCacheTracker?: ByteSizedCacheTracker;
   readonly shaderCacheTracker?: ByteSizedCacheTracker;
+  readonly memoryTelemetry: MemoryTelemetry;
 
   readonly channel: PerfChannel;
   private readonly frameHeader: Int32Array;
@@ -73,13 +72,15 @@ export class PerfSession implements PerfApi {
   private hudActive = false;
   private captureActive = false;
   private captureStartNowMs = 0;
+  private captureStartUnixMs = 0;
+  private captureEndUnixMs = 0;
   private captureDurationMs = 0;
   private captureDroppedBase = 0;
   private captureDropped = 0;
   private captureRecords = 0;
   private captureStartFrameId: number | null = null;
   private captureEndFrameId: number | null = null;
-  private captureExport: unknown | null = null;
+  private captureExport: PerfExport | null = null;
 
   private frameId = 0;
   private raf: number | null = null;
@@ -89,10 +90,6 @@ export class PerfSession implements PerfApi {
 
   private responsiveness = new ResponsivenessTracker();
   private responsivenessSnapshot: ResponsivenessHudSnapshot = {};
-
-  private peakHostJsHeapUsedBytes: number | undefined;
-  private peakWasmMemoryBytes: number | undefined;
-  private peakGpuEstimatedBytes: number | undefined;
 
   private readonly aggregatorOptions = {
     windowSize: 120,
@@ -107,6 +104,20 @@ export class PerfSession implements PerfApi {
     this.gpuTracker = options.gpuTracker;
     this.jitCacheTracker = options.jitCacheTracker;
     this.shaderCacheTracker = options.shaderCacheTracker;
+
+    this.memoryTelemetry = new MemoryTelemetry({
+      wasmMemory: options.wasmMemory,
+      wasmMemoryMaxPages: options.wasmMemoryMaxPages ?? null,
+      getGuestMemoryStats: options.guestRamBytes
+        ? () => ({ configured_bytes: options.guestRamBytes!, committed_bytes: options.guestRamBytes! })
+        : null,
+      gpuTracker: options.gpuTracker,
+      jitCacheTracker: options.jitCacheTracker,
+      shaderCacheTracker: options.shaderCacheTracker,
+      sampleHz: 1,
+      maxSamples: 600,
+    });
+    this.memoryTelemetry.sampleNow("boot");
 
     this.channel = createPerfChannel();
     this.runStartNowMs = this.channel.runStartEpochMs - performance.timeOrigin;
@@ -184,13 +195,18 @@ export class PerfSession implements PerfApi {
     if (this.captureActive) return;
     this.captureActive = true;
     this.captureStartNowMs = performance.now();
+    this.captureStartUnixMs = Date.now();
+    this.captureEndUnixMs = 0;
     this.captureDurationMs = 0;
     this.captureDroppedBase = this.getDroppedRecords();
     this.captureDropped = 0;
     this.captureRecords = 0;
-    this.captureStartFrameId = (this.frameId + 1) >>> 0;
+    const lastCompletedFrameId = this.aggregator.completedFrameIds.at(-1);
+    const startFrom = lastCompletedFrameId == null ? this.frameId : Math.max(this.frameId, lastCompletedFrameId);
+    this.captureStartFrameId = (startFrom + 1) >>> 0;
     this.captureEndFrameId = null;
     this.captureExport = null;
+    this.memoryTelemetry.sampleNow("capture_start");
     this.syncLoops();
   }
 
@@ -199,11 +215,13 @@ export class PerfSession implements PerfApi {
     this.aggregator.drain();
     this.captureDurationMs = performance.now() - this.captureStartNowMs;
     this.captureActive = false;
-    this.captureEndFrameId = this.frameId >>> 0;
+    this.captureEndUnixMs = Date.now();
+    const lastCompletedFrameId = this.aggregator.completedFrameIds.at(-1);
+    const endAt = lastCompletedFrameId == null ? this.frameId : Math.max(this.frameId, lastCompletedFrameId);
+    this.captureEndFrameId = endAt >>> 0;
     this.captureDropped = Math.max(0, this.getDroppedRecords() - this.captureDroppedBase);
-    const out = this.buildCaptureExport() as Record<string, unknown>;
-    out.responsiveness = this.responsiveness.export();
-    this.captureExport = out;
+    this.memoryTelemetry.sampleNow("capture_stop");
+    this.captureExport = this.buildCaptureExport();
     this.syncLoops();
   }
 
@@ -214,16 +232,21 @@ export class PerfSession implements PerfApi {
     this.captureDropped = 0;
     this.captureDurationMs = 0;
 
-    this.peakHostJsHeapUsedBytes = undefined;
-    this.peakWasmMemoryBytes = undefined;
-    this.peakGpuEstimatedBytes = undefined;
+    this.memoryTelemetry.reset();
+    this.memoryTelemetry.sampleNow("capture_reset");
     this.responsiveness.reset();
 
     if (this.captureActive) {
       this.captureStartNowMs = performance.now();
-      this.captureStartFrameId = (this.frameId + 1) >>> 0;
+      this.captureStartUnixMs = Date.now();
+      this.captureEndUnixMs = 0;
+      const lastCompletedFrameId = this.aggregator.completedFrameIds.at(-1);
+      const startFrom = lastCompletedFrameId == null ? this.frameId : Math.max(this.frameId, lastCompletedFrameId);
+      this.captureStartFrameId = (startFrom + 1) >>> 0;
       this.captureEndFrameId = null;
     } else {
+      this.captureStartUnixMs = 0;
+      this.captureEndUnixMs = 0;
       // Represent an empty capture interval so downloads after reset produce an
       // empty capture until Start is pressed again.
       this.captureStartFrameId = (this.frameId + 1) >>> 0;
@@ -231,13 +254,12 @@ export class PerfSession implements PerfApi {
     }
   }
 
-  export(): unknown {
+  export(): PerfExport {
     if (!this.captureActive && this.captureExport) {
       return this.captureExport;
     }
     this.aggregator.drain();
-    const out = this.buildCaptureExport() as Record<string, unknown>;
-    out.responsiveness = this.responsiveness.export();
+    const out = this.buildCaptureExport();
     if (!this.captureActive) {
       this.captureExport = out;
     }
@@ -269,42 +291,26 @@ export class PerfSession implements PerfApi {
     out.gpuTimingSupported = hasGraphicsSamples ? stats.gpuTimingSupported : undefined;
     out.gpuTimingEnabled = hasGraphicsSamples ? stats.gpuTimingEnabled : undefined;
 
-    const memory = perfMemory();
-    out.hostJsHeapUsedBytes = memory?.usedJSHeapSize;
-    out.hostJsHeapTotalBytes = memory?.totalJSHeapSize;
-    out.hostJsHeapLimitBytes = memory?.jsHeapSizeLimit;
+    const memSample = this.memoryTelemetry.getLatestSample();
+    out.hostJsHeapUsedBytes = memSample?.js_heap_used_bytes ?? undefined;
+    out.hostJsHeapTotalBytes = memSample?.js_heap_total_bytes ?? undefined;
+    out.hostJsHeapLimitBytes = memSample?.js_heap_limit_bytes ?? undefined;
 
     out.guestRamBytes = this.guestRamBytes;
 
-    if (this.wasmMemory) {
-      const wasmBytes = this.wasmMemory.buffer.byteLength;
-      out.wasmMemoryBytes = wasmBytes;
-      out.wasmMemoryPages = wasmBytes / WASM_PAGE_SIZE_BYTES;
-      out.wasmMemoryMaxPages = this.wasmMemoryMaxPages;
-    } else {
-      out.wasmMemoryBytes = undefined;
-      out.wasmMemoryPages = undefined;
-      out.wasmMemoryMaxPages = this.wasmMemoryMaxPages;
-    }
+    out.wasmMemoryBytes = memSample?.wasm_memory_bytes ?? undefined;
+    out.wasmMemoryPages = memSample?.wasm_memory_pages ?? undefined;
+    out.wasmMemoryMaxPages = memSample?.wasm_memory_max_pages ?? undefined;
 
-    const gpuStats = this.gpuTracker?.getStats();
-    out.gpuEstimatedBytes = gpuStats?.gpu_total_bytes ?? undefined;
-    out.jitCodeCacheBytes = this.jitCacheTracker?.getTotalBytes();
-    out.shaderCacheBytes = this.shaderCacheTracker?.getTotalBytes();
+    out.gpuEstimatedBytes = memSample?.gpu_total_bytes ?? undefined;
+    out.jitCodeCacheBytes = memSample?.jit_code_cache_bytes ?? undefined;
+    out.shaderCacheBytes = memSample?.shader_cache_bytes ?? undefined;
 
-    if (out.hostJsHeapUsedBytes !== undefined) {
-      this.peakHostJsHeapUsedBytes = Math.max(this.peakHostJsHeapUsedBytes ?? 0, out.hostJsHeapUsedBytes);
-    }
-    if (out.wasmMemoryBytes !== undefined) {
-      this.peakWasmMemoryBytes = Math.max(this.peakWasmMemoryBytes ?? 0, out.wasmMemoryBytes);
-    }
-    if (out.gpuEstimatedBytes !== undefined) {
-      this.peakGpuEstimatedBytes = Math.max(this.peakGpuEstimatedBytes ?? 0, out.gpuEstimatedBytes);
-    }
+    out.jit = JIT_DISABLED_SNAPSHOT;
 
-    out.peakHostJsHeapUsedBytes = this.peakHostJsHeapUsedBytes;
-    out.peakWasmMemoryBytes = this.peakWasmMemoryBytes;
-    out.peakGpuEstimatedBytes = this.peakGpuEstimatedBytes;
+    out.peakHostJsHeapUsedBytes = this.memoryTelemetry.peaks.js_heap_used_bytes ?? undefined;
+    out.peakWasmMemoryBytes = this.memoryTelemetry.peaks.wasm_memory_bytes ?? undefined;
+    out.peakGpuEstimatedBytes = this.memoryTelemetry.peaks.gpu_total_bytes ?? undefined;
     out.responsiveness = this.responsiveness.getHudSnapshot(this.responsivenessSnapshot);
 
     const captureDurationMs = this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs;
@@ -328,6 +334,11 @@ export class PerfSession implements PerfApi {
     const shouldRun = this.shouldRun();
 
     this.responsiveness.setActive(shouldRun);
+    if (shouldRun) {
+      this.memoryTelemetry.start();
+    } else {
+      this.memoryTelemetry.stop();
+    }
     if (shouldRun) {
       this.startRaf();
       // When the HUD is visible, `getHudSnapshot()` is called frequently enough to
@@ -399,72 +410,109 @@ export class PerfSession implements PerfApi {
     return dropped;
   }
 
-  private buildCaptureExport(): unknown {
-    const base = this.aggregator.export() as Record<string, unknown>;
+  private buildCaptureExport(): PerfExport {
+    const build = collectBuildMetadata() as PerfExport["build"];
+    const env = collectEnvironmentMetadata() as PerfExport["env"];
+
+    const durationMs = this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs;
 
     const startFrameId = this.captureStartFrameId;
-    const endFrameId = this.captureEndFrameId ?? (this.captureActive ? (this.frameId >>> 0) : null);
+    const lastCompletedFrameId = this.aggregator.completedFrameIds.at(-1);
+    const liveEndFrameId =
+      lastCompletedFrameId == null ? (this.frameId >>> 0) : Math.max(this.frameId, lastCompletedFrameId) >>> 0;
+    const endFrameId = this.captureEndFrameId ?? (this.captureActive ? liveEndFrameId : null);
 
-    const samples = (base.samples as Record<string, unknown>) ?? {};
-    const framesRaw = samples.frames;
-    if (!Array.isArray(framesRaw)) {
-      return base;
-    }
+    const captureStartUs = msToUsU32(this.captureStartNowMs - this.runStartNowMs);
+    const frameTimeStats = new FrameTimeStats();
+    const records: PerfCaptureRecord[] = [];
 
-    if (startFrameId == null || endFrameId == null) {
-      samples.frame_count = 0;
-      samples.frames = [];
-      base.samples = samples;
-      base.capture = { start_t_us: 0, end_t_us: 0, duration_ms: 0 };
-      base.capture_control = {
-        start_frame_id: startFrameId,
-        end_frame_id: endFrameId,
-        dropped_records: this.captureActive
-          ? Math.max(0, this.getDroppedRecords() - this.captureDroppedBase)
-          : this.captureDropped,
-        records: this.captureRecords,
-      };
-      return base;
-    }
+    let captureInstructionTotal = 0n;
+    let captureFrameTimeTotalUs = 0n;
 
-    const frames = [];
-    let startUs = 0;
-    let endUs = 0;
+    if (startFrameId != null && endFrameId != null && endFrameId >= startFrameId) {
+      for (const frameId of this.aggregator.completedFrameIds) {
+        if (frameId < startFrameId || frameId > endFrameId) continue;
+        const frame = this.aggregator.frames.get(frameId);
+        if (!frame) continue;
 
-    for (const frame of framesRaw) {
-      if (!frame || typeof frame !== "object") continue;
-      const id = (frame as { frame_id?: unknown }).frame_id;
-      if (typeof id !== "number") continue;
-      if (id < startFrameId || id > endFrameId) continue;
-      frames.push(frame);
+        const frameTimeMs = frame.frameUs / 1000;
+        frameTimeStats.pushFrameTimeMs(frameTimeMs);
 
-      const tUs = (frame as { t_us?: unknown }).t_us;
-      if (typeof tUs === "number" && tUs > 0) {
-        if (startUs === 0 || tUs < startUs) startUs = tUs;
-        if (tUs > endUs) endUs = tUs;
+        captureInstructionTotal += frame.instructions;
+        captureFrameTimeTotalUs += BigInt(frame.frameUs >>> 0);
+
+        const tUs = frame.tUs ?? 0;
+        const tMs = tUs > captureStartUs ? (tUs - captureStartUs) / 1000 : 0;
+
+        const ioBytes = (frame.ioReadBytes + frame.ioWriteBytes) >>> 0;
+
+        records.push({
+          tMs,
+          frameTimeMs,
+          instructions: frame.instructions > 0n ? bigintToJsonNumberOrString(frame.instructions) : null,
+          cpuMs: frame.cpuUs > 0 ? frame.cpuUs / 1000 : null,
+          gpuMs: frame.gpuUs > 0 ? frame.gpuUs / 1000 : null,
+          ioMs: frame.ioUs > 0 ? frame.ioUs / 1000 : null,
+          jitMs: frame.jitUs > 0 ? frame.jitUs / 1000 : null,
+          drawCalls: frame.drawCalls > 0 ? frame.drawCalls : null,
+          ioBytes: ioBytes > 0 ? ioBytes : null,
+        });
       }
     }
 
-    samples.frame_count = frames.length;
-    samples.frames = frames;
-    base.samples = samples;
+    const frameTimeSummary = frameTimeStats.summary();
+    const mipsAvg =
+      captureInstructionTotal > 0n && captureFrameTimeTotalUs > 0n
+        ? bigintDivToNumberScaled(captureInstructionTotal, captureFrameTimeTotalUs, MIPS_SCALE)
+        : null;
 
-    base.capture = {
-      start_t_us: startUs,
-      end_t_us: endUs,
-      duration_ms: endUs >= startUs ? (endUs - startUs) / 1000 : 0,
+    const buffers: PerfBufferStats[] = [];
+    for (const [workerKind, ring] of this.aggregator.readers.entries()) {
+      buffers.push({
+        workerKind,
+        worker: workerKindToString(workerKind),
+        capacity: ring.getCapacity(),
+        recordSize: ring.getRecordSize(),
+        droppedRecords: ring.getDroppedCount(),
+        drainedRecords: this.aggregator.recordCountsByWorkerKind.get(workerKind) ?? 0,
+      });
+    }
+
+    const droppedRecords = this.captureActive
+      ? Math.max(0, this.getDroppedRecords() - this.captureDroppedBase)
+      : this.captureDropped;
+
+    return {
+      kind: "aero-perf-capture",
+      version: 2,
+      build,
+      env,
+      capture: {
+        startUnixMs: this.captureStartUnixMs || null,
+        endUnixMs: this.captureActive ? Date.now() : this.captureEndUnixMs || null,
+        durationMs,
+      },
+      capture_control: {
+        startFrameId,
+        endFrameId,
+        droppedRecords,
+        records: records.length,
+      },
+      buffers,
+      guestRamBytes: this.guestRamBytes ?? null,
+      memory: this.memoryTelemetry.export(),
+      summary: {
+        frameTime: frameTimeSummary,
+        mipsAvg,
+      },
+      frameTime: {
+        summary: frameTimeSummary,
+        stats: frameTimeStats.toJSON(),
+      },
+      responsiveness: this.responsiveness.export(),
+      jit: JIT_DISABLED_SNAPSHOT,
+      records,
     };
-
-    base.capture_control = {
-      start_frame_id: startFrameId,
-      end_frame_id: endFrameId,
-      dropped_records: this.captureActive
-        ? Math.max(0, this.getDroppedRecords() - this.captureDroppedBase)
-        : this.captureDropped,
-      records: this.captureRecords,
-    };
-
-    return base;
   }
 
   private computeWindowAggregates(): {

@@ -111,6 +111,35 @@ a.download = `aero-perf-${new Date().toISOString()}.json`;
 a.click();
 ```
 
+### Perf export schema (canonical, v2)
+
+`window.aero.perf.export()` returns a **versioned**, **JSON-serializable** object with:
+
+- `kind: "aero-perf-capture"`
+- `version: 2`
+
+Top-level fields (v2):
+
+- `build`: build metadata (`git_sha`, `mode`, and optional `features` when available)
+- `env`: environment metadata (`now_epoch_ms`, `userAgent`, `platform`, `hardwareConcurrency`, `devicePixelRatio`, `webgpu`)
+- `capture`: capture timing (`startUnixMs`, `endUnixMs`, `durationMs`)
+- `capture_control`: capture bounds/counters (`startFrameId`, `endFrameId`, `droppedRecords`, `records`)
+- `summary`: `{ frameTime, mipsAvg }` (frame-time summary + MIPS average)
+- `frameTime`: `{ summary, stats }` (histogram payload; `stats` is `FrameTimeStats.toJSON()`)
+- `records[]`: per-frame samples:
+  - `tMs`: milliseconds since `captureStart()`
+  - `frameTimeMs`
+  - `instructions` (number when safe, otherwise string; `null` if unavailable)
+  - `cpuMs`, `gpuMs`, `ioMs`, `jitMs`, `drawCalls`, `ioBytes` (nullable)
+- `memory`: memory telemetry (`MemoryTelemetryExport`)
+- `responsiveness`: input/long-task telemetry (`ResponsivenessExport`)
+- `jit`: JIT telemetry snapshot (currently a placeholder in most builds, but always present)
+- optional: `benchmarks` (attached by `web/src/aero.ts` when bench suites are enabled)
+
+The JSON schema used by CI and tooling lives at:
+
+- `bench/schema/perf-output.schema.json`
+
 ---
 
 ## Trace mode (timeline capture)

@@ -463,16 +463,16 @@ async function runMicrobenchSamples(url, iterations, opts) {
       try {
         const parsed = JSON.parse(aeroPerfExport.json);
         if (parsed && typeof parsed === "object") {
-          // Most perf exports: `{ jit: ... }`
-          if ("jit" in parsed) {
-            jit = parsed.jit ?? null;
-          } else if ("capture" in parsed) {
-            // Wrapped exports (see `web/src/runtime/aero_global.ts`): `{ capture: ..., benchmarks: ... }`
-            const cap = parsed.capture;
-            if (cap && typeof cap === "object" && "jit" in cap) {
-              jit = cap.jit ?? null;
-            }
-          }
+          const extractJit = (value) => {
+            if (!value || typeof value !== "object") return null;
+            if ("jit" in value) return value.jit ?? null;
+            // Legacy wrappers sometimes nest the payload under `capture` or `exported`.
+            if ("capture" in value) return extractJit(value.capture);
+            if ("exported" in value) return extractJit(value.exported);
+            return null;
+          };
+
+          jit = extractJit(parsed);
         }
       } catch {
         // Ignore parse errors; keep jit=null.

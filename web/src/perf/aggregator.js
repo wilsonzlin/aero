@@ -443,8 +443,20 @@ export function collectBuildMetadata() {
 
   const mode = maybeBuild.mode ?? g.__AERO_BUILD_MODE__ ?? env.AERO_BUILD_MODE ?? env.NODE_ENV ?? null;
 
+  const featuresRaw = maybeBuild.features ?? g.__AERO_BUILD_FEATURES__ ?? env.AERO_BUILD_FEATURES ?? null;
+  let features = null;
+  if (featuresRaw && typeof featuresRaw === "object" && !Array.isArray(featuresRaw)) {
+    try {
+      JSON.stringify(featuresRaw);
+      features = featuresRaw;
+    } catch {
+      features = null;
+    }
+  }
+
   return {
     git_sha: gitSha,
     mode,
+    features,
   };
 }

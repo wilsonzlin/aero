@@ -6,31 +6,39 @@ async function assertPerfExportAvailable(url: string, page: import('@playwright/
   await page.waitForFunction(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const aero = (globalThis as any).aero;
-    return aero?.perf?.getStats?.().frames > 0;
+    const perf = aero?.perf;
+    return (
+      perf &&
+      typeof perf === 'object' &&
+      typeof perf.captureStart === 'function' &&
+      typeof perf.captureStop === 'function' &&
+      typeof perf.export === 'function'
+    );
   });
 
-  const exported = await page.evaluate(() => {
+  const exported = await page.evaluate(async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (globalThis as any).aero.perf.export();
+    const perf = (globalThis as any).aero.perf;
+    if (typeof perf.captureReset === 'function') perf.captureReset();
+    perf.captureStart();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    perf.captureStop();
+    return perf.export();
   });
 
-  expect(exported.schema_version).toBe(1);
-  expect(exported.samples.frame_count).toBeGreaterThan(0);
-  expect(exported.samples.frames.length).toBeGreaterThan(0);
-  expect(typeof exported.samples.frames[0].counters.instructions).toBe('string');
+  expect(exported.kind).toBe('aero-perf-capture');
+  expect(exported.version).toBe(2);
+  expect(exported.records.length).toBeGreaterThan(0);
+  expect(exported.memory).toBeTruthy();
+  expect(exported.responsiveness).toBeTruthy();
+  expect(exported.jit).toBeTruthy();
 
   const json = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return JSON.stringify((globalThis as any).aero.perf.export());
   });
-  expect(json).toContain('"schema_version":1');
-
-  await page.evaluate(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).aero.perf.setEnabled(false);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).aero.perf.setEnabled(true);
-  });
+  expect(json).toContain('"kind":"aero-perf-capture"');
+  expect(json).toContain('"version":2');
 }
 
 test('perf export works on dev server', async ({ page }) => {
@@ -40,4 +48,3 @@ test('perf export works on dev server', async ({ page }) => {
 test('perf export works on preview server', async ({ page }) => {
   await assertPerfExportAvailable('http://127.0.0.1:4173/', page);
 });
-

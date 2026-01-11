@@ -2,33 +2,235 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://aero.example/schema/perf-output.schema.json",
   "title": "Aero performance telemetry export",
-  "type": "object",
-  "required": ["kind", "version", "records", "memory"],
-  "additionalProperties": true,
-  "properties": {
-    "kind": { "const": "aero-perf-capture" },
-    "version": { "type": "integer", "minimum": 1 },
-    "startUnixMs": { "type": ["number", "null"] },
-    "durationMs": { "type": "number", "minimum": 0 },
-    "droppedRecords": { "type": "integer", "minimum": 0 },
-    "guestRamBytes": { "type": ["number", "null"], "minimum": 0 },
-    "records": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["tMs", "frameTimeMs", "instructions", "cpuMs", "gpuMs", "ioMs", "jitMs", "drawCalls", "ioBytes"],
-        "additionalProperties": false,
-        "properties": {
-          "tMs": { "type": "number", "minimum": 0 },
-          "frameTimeMs": { "type": "number", "minimum": 0 },
-          "instructions": { "type": ["number", "null"], "minimum": 0 },
-          "cpuMs": { "type": ["number", "null"], "minimum": 0 },
-          "gpuMs": { "type": ["number", "null"], "minimum": 0 },
-          "ioMs": { "type": ["number", "null"], "minimum": 0 },
-          "jitMs": { "type": ["number", "null"], "minimum": 0 },
-          "drawCalls": { "type": ["number", "null"], "minimum": 0 },
-          "ioBytes": { "type": ["number", "null"], "minimum": 0 }
+  "oneOf": [{ "$ref": "#/definitions/perf_export_v1" }, { "$ref": "#/definitions/perf_export_v2" }],
+  "definitions": {
+    "u64_string": { "type": "string", "pattern": "^[0-9]+$" },
+    "p50_p95": {
+      "type": "object",
+      "required": ["p50", "p95"],
+      "additionalProperties": false,
+      "properties": {
+        "p50": { "type": ["number", "null"], "minimum": 0 },
+        "p95": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "perf_capture_record": {
+      "type": "object",
+      "required": ["tMs", "frameTimeMs", "instructions", "cpuMs", "gpuMs", "ioMs", "jitMs", "drawCalls", "ioBytes"],
+      "additionalProperties": false,
+      "properties": {
+        "tMs": { "type": "number", "minimum": 0 },
+        "frameTimeMs": { "type": "number", "minimum": 0 },
+        "instructions": {
+          "anyOf": [
+            { "type": "number", "minimum": 0 },
+            { "$ref": "#/definitions/u64_string" },
+            { "type": "null" }
+          ]
+        },
+        "cpuMs": { "type": ["number", "null"], "minimum": 0 },
+        "gpuMs": { "type": ["number", "null"], "minimum": 0 },
+        "ioMs": { "type": ["number", "null"], "minimum": 0 },
+        "jitMs": { "type": ["number", "null"], "minimum": 0 },
+        "drawCalls": { "type": ["number", "null"], "minimum": 0 },
+        "ioBytes": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "frame_time_payload": {
+      "type": "object",
+      "required": ["summary", "stats"],
+      "additionalProperties": true,
+      "properties": {
+        "summary": { "type": "object" },
+        "stats": { "type": "object" }
+      }
+    },
+    "responsiveness_export": {
+      "type": "object",
+      "required": ["capabilities", "input_latency", "event_loop_lag_ms", "raf_delta_ms", "long_tasks", "event_timing_ms"],
+      "additionalProperties": true,
+      "properties": {
+        "capabilities": {
+          "type": "object",
+          "required": ["performance_observer", "longtask", "event_timing", "consume_timestamps"],
+          "additionalProperties": false,
+          "properties": {
+            "performance_observer": { "type": "boolean" },
+            "longtask": { "type": "boolean" },
+            "event_timing": { "type": "boolean" },
+            "consume_timestamps": { "type": "boolean" }
+          }
+        },
+        "input_latency": {
+          "type": "object",
+          "required": ["capture_to_inject_ms", "inject_to_consume_ms", "capture_to_present_ms", "queue"],
+          "additionalProperties": true,
+          "properties": {
+            "capture_to_inject_ms": { "$ref": "#/definitions/p50_p95" },
+            "inject_to_consume_ms": { "anyOf": [{ "$ref": "#/definitions/p50_p95" }, { "type": "null" }] },
+            "capture_to_present_ms": { "$ref": "#/definitions/p50_p95" },
+            "queue": {
+              "type": "object",
+              "required": ["depth", "oldest_event_age_ms"],
+              "additionalProperties": false,
+              "properties": {
+                "depth": { "type": ["number", "null"], "minimum": 0 },
+                "oldest_event_age_ms": { "type": ["number", "null"], "minimum": 0 }
+              }
+            }
+          }
+        },
+        "event_loop_lag_ms": { "$ref": "#/definitions/p50_p95" },
+        "raf_delta_ms": { "$ref": "#/definitions/p50_p95" },
+        "long_tasks": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": ["count", "total_duration_ms", "max_duration_ms", "last_duration_ms", "last_end_ms"],
+              "additionalProperties": true,
+              "properties": {
+                "count": { "type": "integer", "minimum": 0 },
+                "total_duration_ms": { "type": "number", "minimum": 0 },
+                "max_duration_ms": { "type": "number", "minimum": 0 },
+                "last_duration_ms": { "type": ["number", "null"], "minimum": 0 },
+                "last_end_ms": { "type": ["number", "null"], "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "event_timing_ms": { "anyOf": [{ "$ref": "#/definitions/p50_p95" }, { "type": "null" }] }
+      }
+    },
+    "jit_snapshot": {
+      "type": "object",
+      "required": ["enabled", "totals", "rolling"],
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "totals": {
+          "type": "object",
+          "required": ["tier1", "tier2", "cache", "deopt"],
+          "additionalProperties": true,
+          "properties": {
+            "tier1": {
+              "type": "object",
+              "required": ["blocksCompiled", "compileMs"],
+              "additionalProperties": true,
+              "properties": {
+                "blocksCompiled": { "type": "integer", "minimum": 0 },
+                "compileMs": { "type": "number", "minimum": 0 }
+              }
+            },
+            "tier2": {
+              "type": "object",
+              "required": ["blocksCompiled", "compileMs", "passesMs"],
+              "additionalProperties": true,
+              "properties": {
+                "blocksCompiled": { "type": "integer", "minimum": 0 },
+                "compileMs": { "type": "number", "minimum": 0 },
+                "passesMs": {
+                  "type": "object",
+                  "required": ["constFold", "dce", "regalloc"],
+                  "additionalProperties": true,
+                  "properties": {
+                    "constFold": { "type": "number", "minimum": 0 },
+                    "dce": { "type": "number", "minimum": 0 },
+                    "regalloc": { "type": "number", "minimum": 0 }
+                  }
+                }
+              }
+            },
+            "cache": {
+              "type": "object",
+              "required": ["lookupHit", "lookupMiss", "capacityBytes", "usedBytes"],
+              "additionalProperties": true,
+              "properties": {
+                "lookupHit": { "type": "integer", "minimum": 0 },
+                "lookupMiss": { "type": "integer", "minimum": 0 },
+                "capacityBytes": { "type": "integer", "minimum": 0 },
+                "usedBytes": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "deopt": {
+              "type": "object",
+              "required": ["count", "guardFail"],
+              "additionalProperties": true,
+              "properties": {
+                "count": { "type": "integer", "minimum": 0 },
+                "guardFail": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "rolling": {
+          "type": "object",
+          "required": ["windowMs", "cacheHitRate", "compileMsPerSec", "blocksCompiledPerSec"],
+          "additionalProperties": true,
+          "properties": {
+            "windowMs": { "type": "number", "minimum": 0 },
+            "cacheHitRate": { "type": "number", "minimum": 0 },
+            "compileMsPerSec": { "type": "number", "minimum": 0 },
+            "blocksCompiledPerSec": { "type": "number", "minimum": 0 }
+          }
         }
+      }
+    },
+    "buffer_stats": {
+      "type": "object",
+      "required": ["workerKind", "worker", "capacity", "recordSize", "droppedRecords", "drainedRecords"],
+      "additionalProperties": false,
+      "properties": {
+        "workerKind": { "type": "integer", "minimum": 0 },
+        "worker": { "type": "string" },
+        "capacity": { "type": "integer", "minimum": 0 },
+        "recordSize": { "type": "integer", "minimum": 0 },
+        "droppedRecords": { "type": "integer", "minimum": 0 },
+        "drainedRecords": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "build_metadata": {
+      "type": "object",
+      "required": ["git_sha", "mode"],
+      "additionalProperties": true,
+      "properties": {
+        "git_sha": { "type": ["string", "null"] },
+        "mode": { "type": ["string", "null"] },
+        "features": { "type": ["object", "null"], "additionalProperties": true }
+      }
+    },
+    "env_metadata": {
+      "type": "object",
+      "required": ["now_epoch_ms", "userAgent", "platform", "hardwareConcurrency", "devicePixelRatio", "webgpu"],
+      "additionalProperties": true,
+      "properties": {
+        "now_epoch_ms": { "type": "number", "minimum": 0 },
+        "userAgent": { "type": ["string", "null"] },
+        "platform": { "type": ["string", "null"] },
+        "hardwareConcurrency": { "type": ["number", "null"], "minimum": 0 },
+        "devicePixelRatio": { "type": ["number", "null"], "minimum": 0 },
+        "webgpu": { "type": "boolean" }
+      }
+    },
+    "capture_metadata_v2": {
+      "type": "object",
+      "required": ["startUnixMs", "endUnixMs", "durationMs"],
+      "additionalProperties": true,
+      "properties": {
+        "startUnixMs": { "type": ["number", "null"], "minimum": 0 },
+        "endUnixMs": { "type": ["number", "null"], "minimum": 0 },
+        "durationMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "capture_control_v2": {
+      "type": "object",
+      "required": ["startFrameId", "endFrameId", "droppedRecords", "records"],
+      "additionalProperties": true,
+      "properties": {
+        "startFrameId": { "type": ["integer", "null"], "minimum": 0 },
+        "endFrameId": { "type": ["integer", "null"], "minimum": 0 },
+        "droppedRecords": { "type": "integer", "minimum": 0 },
+        "records": { "type": "integer", "minimum": 0 }
       }
     },
     "memory": {
@@ -59,24 +261,19 @@
             "properties": {
               "t_ms": { "type": "number", "minimum": 0 },
               "event": { "type": ["string", "null"] },
-
               "wasm_memory_bytes": { "type": ["number", "null"], "minimum": 0 },
               "wasm_memory_pages": { "type": ["number", "null"], "minimum": 0 },
               "wasm_memory_max_pages": { "type": ["number", "null"], "minimum": 0 },
-
               "guest_configured_bytes": { "type": ["number", "null"], "minimum": 0 },
               "guest_committed_bytes": { "type": ["number", "null"], "minimum": 0 },
-
               "js_heap_used_bytes": { "type": ["number", "null"], "minimum": 0 },
               "js_heap_total_bytes": { "type": ["number", "null"], "minimum": 0 },
               "js_heap_limit_bytes": { "type": ["number", "null"], "minimum": 0 },
-
               "gpu_buffer_bytes": { "type": ["number", "null"], "minimum": 0 },
               "gpu_texture_bytes": { "type": ["number", "null"], "minimum": 0 },
               "gpu_total_bytes": { "type": ["number", "null"], "minimum": 0 },
               "gpu_buffer_count": { "type": ["number", "null"], "minimum": 0 },
               "gpu_texture_count": { "type": ["number", "null"], "minimum": 0 },
-
               "jit_code_cache_bytes": { "type": ["number", "null"], "minimum": 0 },
               "jit_wasm_modules": { "type": ["number", "null"], "minimum": 0 },
               "shader_cache_bytes": { "type": ["number", "null"], "minimum": 0 },
@@ -97,6 +294,69 @@
             "deltas": { "type": "object", "additionalProperties": { "type": ["number", "null"] } }
           }
         }
+      }
+    },
+    "perf_export_v1": {
+      "type": "object",
+      "required": ["kind", "version", "records", "memory"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "const": "aero-perf-capture" },
+        "version": { "const": 1 },
+        "startUnixMs": { "type": ["number", "null"], "minimum": 0 },
+        "durationMs": { "type": "number", "minimum": 0 },
+        "droppedRecords": { "type": "integer", "minimum": 0 },
+        "guestRamBytes": { "type": ["number", "null"], "minimum": 0 },
+        "jit": { "$ref": "#/definitions/jit_snapshot" },
+        "memory": { "$ref": "#/definitions/memory" },
+        "summary": { "type": "object", "additionalProperties": true },
+        "frameTime": { "$ref": "#/definitions/frame_time_payload" },
+        "responsiveness": { "$ref": "#/definitions/responsiveness_export" },
+        "records": { "type": "array", "items": { "$ref": "#/definitions/perf_capture_record" } }
+      }
+    },
+    "perf_export_v2": {
+      "type": "object",
+      "required": [
+        "kind",
+        "version",
+        "build",
+        "env",
+        "capture",
+        "capture_control",
+        "summary",
+        "frameTime",
+        "records",
+        "memory",
+        "responsiveness",
+        "jit",
+        "buffers"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "const": "aero-perf-capture" },
+        "version": { "const": 2 },
+        "build": { "$ref": "#/definitions/build_metadata" },
+        "env": { "$ref": "#/definitions/env_metadata" },
+        "capture": { "$ref": "#/definitions/capture_metadata_v2" },
+        "capture_control": { "$ref": "#/definitions/capture_control_v2" },
+        "buffers": { "type": "array", "items": { "$ref": "#/definitions/buffer_stats" } },
+        "guestRamBytes": { "type": ["number", "null"], "minimum": 0 },
+        "summary": {
+          "type": "object",
+          "required": ["frameTime", "mipsAvg"],
+          "additionalProperties": true,
+          "properties": {
+            "frameTime": { "type": "object" },
+            "mipsAvg": { "type": ["number", "null"], "minimum": 0 }
+          }
+        },
+        "frameTime": { "$ref": "#/definitions/frame_time_payload" },
+        "records": { "type": "array", "items": { "$ref": "#/definitions/perf_capture_record" } },
+        "memory": { "$ref": "#/definitions/memory" },
+        "responsiveness": { "$ref": "#/definitions/responsiveness_export" },
+        "jit": { "$ref": "#/definitions/jit_snapshot" },
+        "benchmarks": { "type": "object", "additionalProperties": true }
       }
     }
   }

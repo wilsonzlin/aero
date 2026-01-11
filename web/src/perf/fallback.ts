@@ -1,9 +1,11 @@
-import type { PerfApi, PerfCaptureState, PerfHudSnapshot, PerfJitSnapshot, PerfTimeBreakdownMs } from './types';
+import type { PerfApi, PerfCaptureState, PerfHudSnapshot, PerfTimeBreakdownMs } from './types';
 import type { PerfExport } from './export';
+import { JIT_DISABLED_SNAPSHOT } from './export';
 import { ResponsivenessTracker, type ResponsivenessHudSnapshot } from './responsiveness';
 
 import { FrameTimeStats } from '../../../packages/aero-stats/src/index.js';
 
+import { collectBuildMetadata, collectEnvironmentMetadata } from './aggregator.js';
 import { ByteSizedCacheTracker, GpuAllocationTracker, MemoryTelemetry } from './memory.js';
 
 export type InstallFallbackPerfOptions = {
@@ -27,17 +29,6 @@ const clampMs = (ms: number): number => {
 };
 
 const isValidNumber = (value: number): boolean => Number.isFinite(value) && !Number.isNaN(value);
-
-const JIT_DISABLED_SNAPSHOT: PerfJitSnapshot = {
-  enabled: false,
-  totals: {
-    tier1: { blocksCompiled: 0, compileMs: 0 },
-    tier2: { blocksCompiled: 0, compileMs: 0, passesMs: { constFold: 0, dce: 0, regalloc: 0 } },
-    cache: { lookupHit: 0, lookupMiss: 0, capacityBytes: 0, usedBytes: 0 },
-    deopt: { count: 0, guardFail: 0 },
-  },
-  rolling: { windowMs: 0, cacheHitRate: 0, compileMsPerSec: 0, blocksCompiledPerSec: 0 },
-};
 
 export class FallbackPerf implements PerfApi {
   readonly guestRamBytes?: number;
@@ -102,6 +93,7 @@ export class FallbackPerf implements PerfApi {
   private captureActive = false;
   private captureStartNowMs = 0;
   private captureStartUnixMs = 0;
+  private captureEndUnixMs = 0;
   private captureDurationMs = 0;
   private captureDroppedRecords = 0;
   private captureRecords = 0;
@@ -479,6 +471,7 @@ export class FallbackPerf implements PerfApi {
     this.captureActive = true;
     this.captureStartNowMs = performance.now();
     this.captureStartUnixMs = Date.now();
+    this.captureEndUnixMs = 0;
     this.captureDurationMs = 0;
     this.captureDroppedRecords = 0;
     this.captureRecords = 0;
@@ -490,6 +483,7 @@ export class FallbackPerf implements PerfApi {
     if (!this.captureActive) return;
     this.captureDurationMs = performance.now() - this.captureStartNowMs;
     this.captureActive = false;
+    this.captureEndUnixMs = Date.now();
     this.memoryTelemetry.sampleNow('capture_stop');
     this.syncRaf();
   }
@@ -500,6 +494,10 @@ export class FallbackPerf implements PerfApi {
     if (this.captureActive) {
       this.captureStartNowMs = performance.now();
       this.captureStartUnixMs = Date.now();
+      this.captureEndUnixMs = 0;
+    } else {
+      this.captureStartUnixMs = 0;
+      this.captureEndUnixMs = 0;
     }
     this.captureDurationMs = 0;
     this.captureDroppedRecords = 0;
@@ -508,6 +506,9 @@ export class FallbackPerf implements PerfApi {
   }
 
   export(): PerfExport {
+    const env = collectEnvironmentMetadata() as PerfExport['env'];
+    const build = collectBuildMetadata() as PerfExport['build'];
+
     const records = new Array(this.captureRecords);
     for (let i = 0; i < this.captureRecords; i += 1) {
       const instructions = this.captureInstructions[i];
@@ -548,24 +549,40 @@ export class FallbackPerf implements PerfApi {
     const mipsAvg =
       instructionsFrameTimeSumMs > 0 ? (instructionsSum / (instructionsFrameTimeSumMs / 1000)) / 1_000_000 : null;
 
+    const durationMs = this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs;
+    const startUnixMs = this.captureStartUnixMs || null;
+    const endUnixMs = this.captureActive ? Date.now() : this.captureEndUnixMs || null;
+    const frameTimeSummary = frameTimeStats.summary();
+
     return {
       kind: 'aero-perf-capture',
-      version: 1,
-      startUnixMs: this.captureStartUnixMs || null,
-      durationMs: this.captureActive ? performance.now() - this.captureStartNowMs : this.captureDurationMs,
-      droppedRecords: this.captureDroppedRecords,
+      version: 2,
+      build,
+      env,
+      capture: {
+        startUnixMs,
+        endUnixMs,
+        durationMs,
+      },
+      capture_control: {
+        startFrameId: null,
+        endFrameId: null,
+        droppedRecords: this.captureDroppedRecords,
+        records: this.captureRecords,
+      },
+      buffers: [],
       guestRamBytes: this.guestRamBytes ?? null,
-      jit: JIT_DISABLED_SNAPSHOT,
       memory: this.memoryTelemetry.export(),
       summary: {
-        frameTime: frameTimeStats.summary(),
+        frameTime: frameTimeSummary,
         mipsAvg,
       },
       frameTime: {
-        summary: frameTimeStats.summary(),
+        summary: frameTimeSummary,
         stats: frameTimeStats.toJSON(),
       },
       responsiveness: this.responsiveness.export(),
+      jit: JIT_DISABLED_SNAPSHOT,
       records,
     };
   }
