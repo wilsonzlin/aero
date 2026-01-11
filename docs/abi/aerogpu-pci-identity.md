@@ -15,6 +15,18 @@ identity.
 | New, versioned ABI | `VID=0xA3A0, DID=0x0001` (`PCI\VEN_A3A0&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_pci.h` (+ `aerogpu_ring.h`) | `crates/emulator/src/devices/pci/aerogpu.rs` |
 | Legacy bring-up ABI | `VID=0x1AED, DID=0x0001` (`PCI\VEN_1AED&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_protocol.h` | `crates/emulator/src/devices/pci/aerogpu_legacy.rs` |
 
+## PCI class identity (base class / subclass / prog-if)
+
+Both AeroGPU ABIs identify as a VGA-compatible display controller so that Windows 7 will bind the WDDM stack:
+
+| Field | Value | Protocol constant (versioned ABI) |
+|---|---:|---|
+| Base class | `0x03` | `AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER` |
+| Subclass | `0x00` | `AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE` |
+| Prog-IF | `0x00` | `AEROGPU_PCI_PROG_IF` |
+
+Source of truth for these values is `drivers/aerogpu/protocol/aerogpu_pci.h` (mirrored in the canonical `aero-protocol` crate).
+
 Notes:
 
 * These PCI IDs are **project-local** and are **not assigned by PCI‑SIG**. They

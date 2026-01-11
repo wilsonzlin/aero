@@ -42,7 +42,7 @@ This directory currently contains two PCI/MMIO ABIs:
 - **Legacy bring-up ABI** – `aerogpu_protocol.h`, PCI `1AED:0001` (`VEN_1AED&DEV_0001`).
   - Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`).
 
-Both IDs are project-specific (not PCI-SIG assigned). Both identify as a display controller (`0x03`), VGA-compatible subclass (`0x00`).
+Both IDs are project-specific (not PCI-SIG assigned). Both identify as a VGA-compatible display controller (base class `0x03`, subclass `0x00`, prog-if `0x00`).
 
 The in-tree Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the versioned `VEN_A3A0&DEV_0001` device by default.
 The legacy `VEN_1AED&DEV_0001` path is retained for bring-up/compatibility and requires a custom INF plus enabling the emulator legacy device model.
