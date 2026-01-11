@@ -28,6 +28,6 @@ doc at `docs/16-driver-packaging-and-signing.md` for details.
 ## Files
 
 - `ci-package.README.md`: field-by-field reference (canonical documentation lives under `docs/16-driver-packaging-and-signing.md`).
-- `ci-package.json`: starter template (this file is required for CI build+packaging in real driver directories). Add `infFiles` if you need explicit INF selection, and update `wow64Files` as needed.
+- `ci-package.json`: starter template (this file is required for CI build+packaging in real driver directories). Replace the `infFiles` placeholder (or remove `infFiles` to enable CI auto-discovery) and update `wow64Files` as needed.
 - `ci-package.inf-wow64-example.json`: example manifest showing `infFiles` + `wow64Files` usage (explicit INF selection + WOW64 payload DLLs).
 - `ci-package.wdf-example.json`: WDF coinstaller example.
