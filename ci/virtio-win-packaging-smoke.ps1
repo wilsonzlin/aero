@@ -466,8 +466,19 @@ if ($manifestObj.package.version -ne "0.0.0") {
 if ($manifestObj.package.build_id -ne "ci") {
   throw "Guest Tools manifest build_id mismatch: expected ci, got $($manifestObj.package.build_id)"
 }
+if ($manifestObj.signing_policy -ne "none") {
+  throw "Guest Tools manifest signing_policy mismatch: expected none, got $($manifestObj.signing_policy)"
+}
+if ($manifestObj.certs_required -ne $false) {
+  throw "Guest Tools manifest certs_required mismatch: expected false, got $($manifestObj.certs_required)"
+}
 
 $manifestPaths = @($manifestObj.files | ForEach-Object { $_.path })
+foreach ($p in $manifestPaths) {
+  if ($p -like "certs/*" -and $p -ne "certs/README.md") {
+    throw "Did not expect certificate files to be packaged for signing_policy=none: $p"
+  }
+}
 foreach ($want in @(
   "THIRD_PARTY_NOTICES.md",
   "licenses/virtio-win/license.txt",
@@ -542,6 +553,12 @@ if ($defaultsLogText -notmatch 'win7-virtio-full\\.json') {
 $defaultsManifestObj = Get-Content -LiteralPath $defaultsManifest -Raw | ConvertFrom-Json
 if ($defaultsManifestObj.package.build_id -ne "ci-defaults") {
   throw "Guest Tools defaults manifest build_id mismatch: expected ci-defaults, got $($defaultsManifestObj.package.build_id)"
+}
+if ($defaultsManifestObj.signing_policy -ne "none") {
+  throw "Guest Tools defaults manifest signing_policy mismatch: expected none, got $($defaultsManifestObj.signing_policy)"
+}
+if ($defaultsManifestObj.certs_required -ne $false) {
+  throw "Guest Tools defaults manifest certs_required mismatch: expected false, got $($defaultsManifestObj.certs_required)"
 }
 
 # Default profile is 'full', so when optional drivers are present in the source, they should be
