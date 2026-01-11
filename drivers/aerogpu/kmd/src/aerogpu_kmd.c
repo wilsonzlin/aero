@@ -2587,6 +2587,18 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
     }
 
     /*
+     * Avoid accidentally treating other (non-vblank) interrupt types as vblank.
+     *
+     * On Windows 7, the vblank interrupt type is ordered before
+     * DXGK_INTERRUPT_TYPE_DMA_COMPLETED; other DMA-related interrupt types (e.g.
+     * preemption/fault) are ordered after it. Filter based on that ordering to
+     * ensure we only ever capture/act on the vblank type here.
+     */
+    if (InterruptType >= DXGK_INTERRUPT_TYPE_DMA_COMPLETED) {
+        return STATUS_SUCCESS;
+    }
+
+    /*
      * Record the vblank interrupt type that dxgkrnl expects and ignore other
      * non-DMA interrupt types (if any) to avoid misprogramming vblank IRQ state.
      */
