@@ -1,0 +1,52 @@
+name: Resolve WASM crate
+description: Resolve which Rust crate should be used as the wasm-pack entrypoint.
+
+inputs:
+  wasm-crate-dir:
+    description: Optional override for the wasm crate directory (same as AERO_WASM_CRATE_DIR).
+    required: false
+    default: ""
+  install-wasm-pack:
+    description: Install wasm-pack (jetli/wasm-pack-action).
+    required: false
+    default: "false"
+  install-wasm-target:
+    description: Install the wasm32-unknown-unknown Rust target via rustup.
+    required: false
+    default: "false"
+
+outputs:
+  dir:
+    description: Resolved crate directory (relative to repo root when possible).
+    value: ${{ steps.resolve.outputs.dir }}
+  manifest_path:
+    description: Resolved Cargo.toml path (relative to repo root when possible).
+    value: ${{ steps.resolve.outputs.manifest_path }}
+  crate_name:
+    description: Cargo package name for the resolved crate.
+    value: ${{ steps.resolve.outputs.crate_name }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install wasm32 target
+      if: ${{ inputs.install-wasm-target == 'true' }}
+      shell: bash
+      run: rustup target add wasm32-unknown-unknown
+
+    - name: Install wasm-pack
+      if: ${{ inputs.install-wasm-pack == 'true' }}
+      uses: jetli/wasm-pack-action@v0.4.0
+
+    - name: Resolve wasm crate
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        wasm_crate_dir="${{ inputs.wasm-crate-dir }}"
+        if [[ -n "$wasm_crate_dir" ]]; then
+          export AERO_WASM_CRATE_DIR="$wasm_crate_dir"
+        fi
+
+        node "$GITHUB_WORKSPACE/scripts/ci/detect-wasm-crate.mjs" --github-output "$GITHUB_OUTPUT"

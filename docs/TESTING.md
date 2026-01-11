@@ -175,9 +175,10 @@ wasm-pack test --node
 
 Notes:
 
-- `scripts/test-all.sh` prefers `crates/aero-wasm` when present; otherwise it falls back to auto-detection.
-  - It checks common repo locations first, then falls back to `cargo metadata` (first crate with a `cdylib` target).
+- `scripts/test-all.sh` resolves the wasm-pack crate via `scripts/ci/detect-wasm-crate.*`.
   - Override with `AERO_WASM_CRATE_DIR` / `--wasm-crate-dir` if needed.
+  - Otherwise it prefers the canonical crate (`crates/aero-wasm`) when present.
+  - If it must fall back to `cargo metadata`, it fails if multiple `cdylib` crates exist (set an override).
 
 Common pitfalls:
 

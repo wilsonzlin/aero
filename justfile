@@ -24,30 +24,24 @@ _detect_wasm_crate_dir:
   #!/usr/bin/env bash
   set -euo pipefail
 
+  args=(--allow-missing)
   if [[ -n "${WASM_CRATE_DIR:-}" ]]; then
-    if [[ -f "${WASM_CRATE_DIR}/Cargo.toml" ]]; then
-      echo "${WASM_CRATE_DIR}"
-      exit 0
-    fi
-    echo "error: WASM_CRATE_DIR is set to '${WASM_CRATE_DIR}', but Cargo.toml was not found there" >&2
-    exit 1
+    args+=(--wasm-crate-dir "${WASM_CRATE_DIR}")
+  elif [[ -n "${AERO_WASM_CRATE_DIR:-}" ]]; then
+    args+=(--wasm-crate-dir "${AERO_WASM_CRATE_DIR}")
   fi
 
-  for candidate in \
-    crates/wasm \
-    crates/aero-wasm \
-    crates/aero-ipc \
-    wasm \
-    rust/wasm
-  do
-    if [[ -f "${candidate}/Cargo.toml" ]]; then
-      echo "${candidate}"
-      exit 0
-    fi
-  done
+  out="$(./scripts/ci/detect-wasm-crate.sh "${args[@]}")"
+  dir=""
+  while IFS="=" read -r key value; do
+    case "$key" in
+      dir)
+        dir="$value"
+        ;;
+    esac
+  done <<<"$out"
 
-  # Empty output signals "not found".
-  echo ""
+  echo "$dir"
 
 default:
   @just --list

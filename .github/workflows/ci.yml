@@ -305,54 +305,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
-
-      - name: Determine wasm crate directory
+      - name: Resolve wasm crate
         id: wasm-crate
-        run: |
-          set -euo pipefail
-
-          if [[ -n "${AERO_WASM_CRATE_DIR:-}" ]]; then
-            dir="$AERO_WASM_CRATE_DIR"
-          elif [[ -f crates/aero-wasm/Cargo.toml ]]; then
-            dir="crates/aero-wasm"
-          else
-            if [[ ! -f Cargo.toml ]]; then
-              echo "Cargo.toml not found at repo root; set AERO_WASM_CRATE_DIR to the crate directory containing Cargo.toml." >&2
-              exit 1
-            fi
-
-            manifest_path="$(
-              python3 - <<'PY'
-          import json
-          import subprocess
-          import sys
-
-          meta = json.loads(
-              subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version=1"])
-          )
-          for pkg in meta.get("packages", []):
-              for tgt in pkg.get("targets", []):
-                  if "cdylib" in tgt.get("kind", []):
-                      print(pkg.get("manifest_path", ""))
-                      sys.exit(0)
-          print("")
-          PY
-            )"
-            if [[ -z "$manifest_path" || "$manifest_path" == "null" ]]; then
-              echo "Unable to auto-detect a wasm-pack crate (cdylib). Set AERO_WASM_CRATE_DIR to the wasm crate directory." >&2
-              exit 1
-            fi
-            dir="$(dirname "$manifest_path")"
-          fi
-
-          if [[ ! -f "$dir/Cargo.toml" ]]; then
-            echo "WASM crate directory '$dir' does not contain Cargo.toml." >&2
-            exit 1
-          fi
-
-          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/resolve-wasm-crate
+        with:
+          install-wasm-pack: "true"
 
       - name: Use --locked when Cargo.lock exists
         id: cargo-locked

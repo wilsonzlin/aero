@@ -199,47 +199,25 @@ ensure_wasm_crate_dir() {
     return
   fi
 
-  # Prefer canonical wasm-pack crate locations when present to avoid ambiguous
-  # auto-detection (the workspace contains multiple `cdylib` crates).
-  local candidate
-  for candidate in \
-    "$ROOT_DIR/crates/aero-wasm" \
-    "$ROOT_DIR/crates/wasm" \
-    "$ROOT_DIR/crates/aero-ipc" \
-    "$ROOT_DIR/wasm" \
-    "$ROOT_DIR/rust/wasm"; do
-    if [[ -f "$candidate/Cargo.toml" ]]; then
-      WASM_CRATE_DIR="$candidate"
-      return
-    fi
-  done
+  need_cmd node
 
-  need_cmd cargo
-  need_cmd python3
-  [[ -f "$ROOT_DIR/Cargo.toml" ]] || die "Cargo.toml not found at repo root: $ROOT_DIR"
+  local detected
+  detected="$(node "$ROOT_DIR/scripts/ci/detect-wasm-crate.mjs")"
 
-  local manifest_path
-  manifest_path="$(
-    cd "$ROOT_DIR" && python3 - <<'PY'
-import json
-import subprocess
-import sys
+  local dir=""
+  while IFS="=" read -r key value; do
+    case "$key" in
+      dir)
+        dir="$value"
+        ;;
+    esac
+  done <<<"$detected"
 
-meta = json.loads(subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version=1"]))
-for pkg in meta.get("packages", []):
-    for tgt in pkg.get("targets", []):
-        if "cdylib" in tgt.get("kind", []):
-            print(pkg.get("manifest_path", ""))
-            sys.exit(0)
-print("")
-PY
-  )"
-
-  if [[ -z "$manifest_path" || "$manifest_path" == "null" ]]; then
-    die "unable to auto-detect a wasm-pack crate (cdylib); pass --wasm-crate-dir <path> or set AERO_WASM_CRATE_DIR"
+  if [[ -z "$dir" ]]; then
+    die "unable to auto-detect a wasm-pack crate; pass --wasm-crate-dir <path> or set AERO_WASM_CRATE_DIR"
   fi
 
-  WASM_CRATE_DIR="$(dirname "$manifest_path")"
+  WASM_CRATE_DIR="$(normalize_dir "$dir")"
   [[ -f "$WASM_CRATE_DIR/Cargo.toml" ]] || die "auto-detected wasm crate dir does not contain Cargo.toml: $WASM_CRATE_DIR"
 }
 
