@@ -32,6 +32,21 @@ W7_VIRTIO_CONTRACT_MD = REPO_ROOT / "docs/windows7-virtio-driver-contract.md"
 WINDOWS_DEVICE_CONTRACT_MD = REPO_ROOT / "docs/windows-device-contract.md"
 WINDOWS_DEVICE_CONTRACT_JSON = REPO_ROOT / "docs/windows-device-contract.json"
 
+# virtio-pci vendor as allocated by PCI-SIG.
+VIRTIO_PCI_VENDOR_ID = 0x1AF4
+# Modern virtio-pci device IDs: 0x1040 + virtio device type.
+VIRTIO_PCI_DEVICE_ID_BASE = 0x1040
+# Transitional virtio-pci device IDs live in the 0x1000..0x103F range.
+VIRTIO_PCI_TRANSITIONAL_DEVICE_ID_MIN = 0x1000
+VIRTIO_PCI_TRANSITIONAL_DEVICE_ID_MAX = 0x103F
+
+VIRTIO_DEVICE_TYPE_IDS: Mapping[str, int] = {
+    "virtio-net": 1,
+    "virtio-blk": 2,
+    "virtio-input": 18,
+    "virtio-snd": 25,
+}
+
 AERO_DEVICES_PCI_PROFILE_RS = REPO_ROOT / "crates/devices/src/pci/profile.rs"
 AERO_VIRTIO_DEVICE_SOURCES: Mapping[str, Path] = {
     "virtio-blk": REPO_ROOT / "crates/aero-virtio/src/devices/blk.rs",
@@ -63,6 +78,10 @@ def parse_hex(value: str) -> int:
         return int(value, 16)
     except ValueError:
         fail(f"expected hex literal, got: {value!r}")
+
+
+def windows_contract_marks_transitional_ids_out_of_scope(md: str) -> bool:
+    return re.search(r"Transitional virtio-pci IDs.*out of scope", md, flags=re.I | re.S) is not None
 
 
 @dataclass(frozen=True)
@@ -535,6 +554,41 @@ def main() -> None:
     contract_queues = parse_w7_contract_queue_sizes(w7_md)
 
     # ---------------------------------------------------------------------
+    # 0) Fixed virtio-pci invariants that must never drift.
+    # ---------------------------------------------------------------------
+    for name, ids in contract_ids.items():
+        if ids.vendor_id != VIRTIO_PCI_VENDOR_ID:
+            errors.append(
+                format_error(
+                    f"{name}: contract Vendor ID must be 0x{VIRTIO_PCI_VENDOR_ID:04X}:",
+                    [f"got: 0x{ids.vendor_id:04X}"],
+                )
+            )
+        if ids.subsystem_vendor_id != VIRTIO_PCI_VENDOR_ID:
+            errors.append(
+                format_error(
+                    f"{name}: contract Subsystem Vendor ID must be 0x{VIRTIO_PCI_VENDOR_ID:04X}:",
+                    [f"got: 0x{ids.subsystem_vendor_id:04X}"],
+                )
+            )
+
+        base_name = name.split(" (", 1)[0]
+        virtio_type = VIRTIO_DEVICE_TYPE_IDS.get(base_name)
+        if virtio_type is not None:
+            expected_device_id = VIRTIO_PCI_DEVICE_ID_BASE + virtio_type
+            if ids.device_id != expected_device_id:
+                errors.append(
+                    format_error(
+                        f"{name}: contract PCI Device ID must follow modern virtio-pci formula (0x1040 + virtio_device_type):",
+                        [
+                            f"virtio_device_type: {virtio_type}",
+                            f"expected: 0x{expected_device_id:04X}",
+                            f"got: 0x{ids.device_id:04X}",
+                        ],
+                    )
+                )
+
+    # ---------------------------------------------------------------------
     # 1) windows-device-contract.md table must match authoritative contract.
     # ---------------------------------------------------------------------
     table_ids = parse_windows_device_contract_table(windows_md)
@@ -587,6 +641,29 @@ def main() -> None:
         entry = _find_manifest_device(devices, device_name)
         vendor = _parse_manifest_hex_u16(entry, "pci_vendor_id", device=device_name)
         dev_id = _parse_manifest_hex_u16(entry, "pci_device_id", device=device_name)
+        expected_type = VIRTIO_DEVICE_TYPE_IDS[device_name]
+        expected_modern_id = VIRTIO_PCI_DEVICE_ID_BASE + expected_type
+        if vendor != VIRTIO_PCI_VENDOR_ID:
+            errors.append(
+                format_error(
+                    f"{device_name}: manifest pci_vendor_id must be 0x{VIRTIO_PCI_VENDOR_ID:04X}:",
+                    [
+                        f"expected: 0x{VIRTIO_PCI_VENDOR_ID:04X}",
+                        f"got: 0x{vendor:04X}",
+                    ],
+                )
+            )
+        if dev_id != expected_modern_id:
+            errors.append(
+                format_error(
+                    f"{device_name}: manifest pci_device_id must follow modern virtio-pci formula (0x1040 + virtio_device_type):",
+                    [
+                        f"virtio_device_type: {expected_type}",
+                        f"expected: 0x{expected_modern_id:04X}",
+                        f"got: 0x{dev_id:04X}",
+                    ],
+                )
+            )
 
         # virtio-input is represented as one manifest entry but covers two subsystem IDs.
         if device_name == "virtio-input":
@@ -623,6 +700,26 @@ def main() -> None:
                 )
             )
 
+        transitional_patterns = [
+            pat
+            for pat in patterns
+            if re.search(
+                r"PCI\\VEN_1AF4&DEV_(?:10[0-3][0-9A-Fa-f]|100[0-9A-Fa-f])",
+                pat,
+                flags=re.I,
+            )
+        ]
+        if transitional_patterns and not windows_contract_marks_transitional_ids_out_of_scope(windows_md):
+            errors.append(
+                format_error(
+                    f"{device_name}: manifest contains transitional virtio-pci IDs, but docs do not explicitly mark them out-of-scope:",
+                    [
+                        f"patterns: {transitional_patterns}",
+                        f"hint: add an explicit 'out of scope' compatibility note to {WINDOWS_DEVICE_CONTRACT_MD.as_posix()}",
+                    ],
+                )
+            )
+
         for subsys_device in expected_subsys:
             if not _manifest_contains_subsys(patterns, contract_any.subsystem_vendor_id, subsys_device):
                 errors.append(
@@ -636,10 +733,12 @@ def main() -> None:
                 )
 
         # If any pattern revision-qualifies, it must match the contract major.
+        has_rev_qualifier = False
         for pat in patterns:
             m = re.search(r"&REV_(?P<rev>[0-9A-Fa-f]{2})", pat)
             if not m:
                 continue
+            has_rev_qualifier = True
             rev = int(m.group("rev"), 16)
             if rev != contract_rev:
                 errors.append(
@@ -653,7 +752,6 @@ def main() -> None:
                 )
 
         # virtio_device_type must be stable.
-        expected_type = {"virtio-net": 1, "virtio-blk": 2, "virtio-input": 18, "virtio-snd": 25}[device_name]
         if entry.get("virtio_device_type") != expected_type:
             errors.append(
                 format_error(
@@ -661,6 +759,17 @@ def main() -> None:
                     [
                         f"expected: {expected_type}",
                         f"got: {entry.get('virtio_device_type')!r}",
+                    ],
+                )
+            )
+
+        if not has_rev_qualifier:
+            errors.append(
+                format_error(
+                    f"{device_name}: manifest must include at least one revision-qualified hardware ID pattern:",
+                    [
+                        f"expected at least one pattern containing: &REV_{contract_rev:02X}",
+                        f"got: {patterns}",
                     ],
                 )
             )
