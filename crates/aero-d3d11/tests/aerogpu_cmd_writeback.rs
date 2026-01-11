@@ -1,3 +1,5 @@
+mod common;
+
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -33,7 +35,7 @@ fn copy_buffer_writeback_roundtrip() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping buffer writeback test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -148,7 +150,7 @@ fn copy_buffer_writeback_allows_unaligned_size_at_buffer_end() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping unaligned writeback test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -244,7 +246,7 @@ fn copy_texture2d_writeback_roundtrip() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping texture writeback test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -400,7 +402,7 @@ fn copy_texture2d_writeback_does_not_clobber_uncopied_pixels() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping texture writeback test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -570,7 +572,7 @@ fn copy_buffer_clears_dst_dirty_after_copy() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping buffer dirty-clear test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -690,7 +692,7 @@ fn copy_texture2d_clears_dst_dirty_after_copy() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping texture dirty-clear test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };

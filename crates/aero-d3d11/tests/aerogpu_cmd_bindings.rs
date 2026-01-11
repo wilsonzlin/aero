@@ -1,3 +1,5 @@
+mod common;
+
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
@@ -336,7 +338,7 @@ fn aerogpu_cmd_binds_constant_buffer_cb0() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping constant buffer binding test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -566,7 +568,7 @@ fn aerogpu_cmd_binds_texture_and_sampler() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping texture/sampler binding test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -800,7 +802,7 @@ fn aerogpu_cmd_rebinds_texture_between_draws() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping bind-group caching test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
