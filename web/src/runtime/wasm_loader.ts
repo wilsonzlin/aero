@@ -220,6 +220,12 @@ export interface WasmApi {
         set_disk_image(bytes: Uint8Array): void;
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
         serial_output(): Uint8Array;
+        /**
+         * Returns the number of bytes currently buffered in the serial output log.
+         *
+         * Optional for older WASM builds.
+         */
+        serial_output_len?(): number;
         inject_browser_key(code: string, pressed: boolean): void;
         /**
          * Optional for older WASM builds; canonical machine snapshot support.

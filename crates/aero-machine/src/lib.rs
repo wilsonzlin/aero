@@ -457,6 +457,15 @@ impl Machine {
         std::mem::take(&mut self.serial_log)
     }
 
+    /// Return the number of bytes currently buffered in the serial output log.
+    ///
+    /// This is a cheap alternative to [`Machine::take_serial_output`] for callers that only need a
+    /// byte count (e.g. UI progress indicators) and want to avoid copying large buffers.
+    pub fn serial_output_len(&mut self) -> u64 {
+        self.flush_serial();
+        u64::try_from(self.serial_log.len()).unwrap_or(u64::MAX)
+    }
+
     /// Inject a browser-style keyboard code into the i8042 controller, if present.
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         if let Some(ctrl) = &self.i8042 {

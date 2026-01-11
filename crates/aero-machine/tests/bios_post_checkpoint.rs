@@ -49,7 +49,9 @@ fn boots_mbr_and_writes_to_serial_integration() {
     m.reset();
 
     run_until_halt(&mut m);
+    assert_eq!(m.serial_output_len(), 3);
     assert_eq!(m.take_serial_output(), b"OK\n");
+    assert_eq!(m.serial_output_len(), 0);
 }
 
 #[test]

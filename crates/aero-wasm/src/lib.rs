@@ -1522,6 +1522,11 @@ impl Machine {
         self.inner.take_serial_output()
     }
 
+    /// Return the current serial output length without copying the bytes into JS.
+    pub fn serial_output_len(&mut self) -> u32 {
+        self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
+    }
+
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         self.inner.inject_browser_key(code, pressed);
     }
