@@ -18,6 +18,8 @@ use std::collections::HashMap;
 pub enum CommandProcessorError {
     Parse(AeroGpuCmdStreamParseError),
     UnknownShareToken(u64),
+    ShareTokenAlreadyExported { share_token: u64, existing: u32, new: u32 },
+    SharedSurfaceAliasAlreadyBound { alias: u32, existing: u32, new: u32 },
 }
 
 impl std::fmt::Display for CommandProcessorError {
@@ -27,6 +29,18 @@ impl std::fmt::Display for CommandProcessorError {
             CommandProcessorError::UnknownShareToken(token) => {
                 write!(f, "unknown shared surface token 0x{token:016X}")
             }
+            CommandProcessorError::ShareTokenAlreadyExported {
+                share_token,
+                existing,
+                new,
+            } => write!(
+                f,
+                "shared surface token 0x{share_token:016X} already exported (existing_handle=0x{existing:X} new_handle=0x{new:X})"
+            ),
+            CommandProcessorError::SharedSurfaceAliasAlreadyBound { alias, existing, new } => write!(
+                f,
+                "shared surface alias handle 0x{alias:X} already bound (existing_handle=0x{existing:X} new_handle=0x{new:X})"
+            ),
         }
     }
 }
@@ -115,7 +129,19 @@ impl AeroGpuCommandProcessor {
                 } => {
                     // If the handle is itself an alias, normalize to the original.
                     let original = self.resolve_shared_surface(resource_handle);
-                    self.shared_surface_by_token.insert(share_token, original);
+                    if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
+                        // Treat re-export of the same token as idempotent, but reject attempts to
+                        // retarget a token to a different resource (would corrupt sharing tables).
+                        if existing != original {
+                            return Err(CommandProcessorError::ShareTokenAlreadyExported {
+                                share_token,
+                                existing,
+                                new: original,
+                            });
+                        }
+                    } else {
+                        self.shared_surface_by_token.insert(share_token, original);
+                    }
                 }
                 AeroGpuCmd::ImportSharedSurface {
                     out_resource_handle,
@@ -125,8 +151,19 @@ impl AeroGpuCommandProcessor {
                     else {
                         return Err(CommandProcessorError::UnknownShareToken(share_token));
                     };
-                    self.shared_surface_aliases
-                        .insert(out_resource_handle, original);
+                    if let Some(existing) = self.shared_surface_aliases.get(&out_resource_handle).copied() {
+                        // Idempotent re-import is allowed if it targets the same original.
+                        if existing != original {
+                            return Err(CommandProcessorError::SharedSurfaceAliasAlreadyBound {
+                                alias: out_resource_handle,
+                                existing,
+                                new: original,
+                            });
+                        }
+                    } else {
+                        self.shared_surface_aliases
+                            .insert(out_resource_handle, original);
+                    }
                 }
                 _ => {
                     // For now the processor treats most commands as "handled elsewhere".

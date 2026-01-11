@@ -111,3 +111,111 @@ fn importing_unknown_token_is_an_error() {
     let err = processor.process_submission(&stream, 1).unwrap_err();
     assert!(err.to_string().contains("unknown shared surface token"));
 }
+
+#[test]
+fn exporting_the_same_token_twice_is_idempotent() {
+    const TOKEN: u64 = 0x1111_2222_3333_4444;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, 0x710, |out| {
+            push_u32(out, 0x10);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, 0x710, |out| {
+            push_u32(out, 0x10);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&stream, 1)
+        .expect("duplicate export should be idempotent");
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), Some(0x10));
+}
+
+#[test]
+fn exporting_same_token_for_different_resources_is_an_error() {
+    const TOKEN: u64 = 0x9999_AAAA_BBBB_CCCC;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, 0x710, |out| {
+            push_u32(out, 0x10);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, 0x710, |out| {
+            push_u32(out, 0x11);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    let err = processor.process_submission(&stream, 1).unwrap_err();
+    assert!(err.to_string().contains("already exported"));
+}
+
+#[test]
+fn importing_into_an_existing_alias_is_idempotent_for_the_same_original() {
+    const TOKEN: u64 = 0xABC0_DEF0_0000_0001;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, 0x710, |out| {
+            push_u32(out, 0x10);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, 0x711, |out| {
+            push_u32(out, 0x20);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, 0x711, |out| {
+            push_u32(out, 0x20);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&stream, 1)
+        .expect("duplicate import should be idempotent");
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x10);
+}
+
+#[test]
+fn importing_into_an_existing_alias_for_different_original_is_an_error() {
+    const TOKEN_A: u64 = 0xABC0_DEF0_0000_0002;
+    const TOKEN_B: u64 = 0xABC0_DEF0_0000_0003;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, 0x710, |out| {
+            push_u32(out, 0x10);
+            push_u32(out, 0);
+            push_u64(out, TOKEN_A);
+        });
+        emit_packet(out, 0x710, |out| {
+            push_u32(out, 0x11);
+            push_u32(out, 0);
+            push_u64(out, TOKEN_B);
+        });
+        emit_packet(out, 0x711, |out| {
+            push_u32(out, 0x20);
+            push_u32(out, 0);
+            push_u64(out, TOKEN_A);
+        });
+        emit_packet(out, 0x711, |out| {
+            push_u32(out, 0x20);
+            push_u32(out, 0);
+            push_u64(out, TOKEN_B);
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    let err = processor.process_submission(&stream, 1).unwrap_err();
+    assert!(err.to_string().contains("already bound"));
+}
