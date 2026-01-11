@@ -37,7 +37,7 @@ CatalogFile = aero-virtio-snd.cat
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
  
-[VirtioSnd_Install]
+[VirtioSnd_Install.NT]
 ; PortCls / KS / WDMAudio integration (in-box on Windows 7).
 ;
 ; Using Include/Needs is the canonical Win7 mechanism for registering a
@@ -50,7 +50,7 @@ AddReg    = VirtioSnd.AddReg
 
 ; Register the KS device interfaces that the Windows audio stack enumerates.
 ; Reference strings match the PortCls subdevice names ("Wave" / "Topology").
-[VirtioSnd_Install.Interfaces]
+[VirtioSnd_Install.NT.Interfaces]
 AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%, VirtioSnd.Wave.Interface
 AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%, VirtioSnd.Wave.Interface
 AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%, VirtioSnd.Wave.Interface
@@ -88,8 +88,8 @@ HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSnd.TopologyDesc%
  
 [VirtioSnd.CopyFiles]
 virtiosnd.sys
- 
-[VirtioSnd_Install.Services]
+  
+[VirtioSnd_Install.NT.Services]
 AddService = aeroviosnd, 0x00000002, VirtioSnd_Service_Inst
 
 [VirtioSnd_Service_Inst]
