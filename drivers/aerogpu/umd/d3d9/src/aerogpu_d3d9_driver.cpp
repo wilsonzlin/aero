@@ -2581,7 +2581,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
         logf("aerogpu-d3d9: CreateResource missing private data buffer (have=%u need=%u)\n",
              pCreateResource->KmdAllocPrivateDataSize,
              static_cast<unsigned>(sizeof(aerogpu_wddm_alloc_priv)));
-        return kD3DErrInvalidCall;
+        return trace.ret(D3DERR_INVALIDCALL);
       }
 
       // Use the same cross-process allocator as shared surfaces so alloc_id values
@@ -4969,6 +4969,26 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
 
+#if defined(_WIN32)
+    // Returning S_PRESENT_OCCLUDED from PresentEx helps some D3D9Ex clients avoid
+    // pathological present loops when their target window is minimized/hidden.
+    // Keep the check cheap and never block on it.
+    HWND hwnd = pPresentEx->hWnd;
+    if (!hwnd) {
+      SwapChain* sc = dev->current_swapchain;
+      if (!sc && !dev->swapchains.empty()) {
+        sc = dev->swapchains[0];
+      }
+      hwnd = sc ? sc->hwnd : nullptr;
+    }
+    if (hwnd) {
+      if (IsIconic(hwnd) || !IsWindowVisible(hwnd)) {
+        retire_completed_presents_locked(dev);
+        return trace.ret(kSPresentOccluded);
+      }
+    }
+#endif
+
     HRESULT hr = throttle_presents_locked(dev, pPresentEx->d3d9_present_flags);
     if (hr != S_OK) {
       return trace.ret(hr);
@@ -5129,6 +5149,32 @@ HRESULT AEROGPU_D3D9_CALL device_present(
   uint32_t present_count = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
+
+#if defined(_WIN32)
+    HWND hwnd = pPresent->hWnd;
+    if (!hwnd) {
+      SwapChain* sc = as_swapchain(pPresent->hSwapChain);
+      if (sc) {
+        auto it = std::find(dev->swapchains.begin(), dev->swapchains.end(), sc);
+        if (it == dev->swapchains.end()) {
+          sc = nullptr;
+        }
+      }
+      if (!sc) {
+        sc = dev->current_swapchain;
+      }
+      if (!sc && !dev->swapchains.empty()) {
+        sc = dev->swapchains[0];
+      }
+      hwnd = sc ? sc->hwnd : nullptr;
+    }
+    if (hwnd) {
+      if (IsIconic(hwnd) || !IsWindowVisible(hwnd)) {
+        retire_completed_presents_locked(dev);
+        return trace.ret(kSPresentOccluded);
+      }
+    }
+#endif
 
     HRESULT hr = throttle_presents_locked(dev, pPresent->flags);
     if (hr != S_OK) {
