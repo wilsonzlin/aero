@@ -80,61 +80,68 @@ impl fmt::Display for SignatureError {
 impl std::error::Error for SignatureError {}
 
 pub fn parse_signatures(dxbc: &DxbcFile<'_>) -> Result<ShaderSignatures, SignatureError> {
-    const ISGN: FourCC = FourCC(*b"ISGN");
     const ISG1: FourCC = FourCC(*b"ISG1");
-    const OSGN: FourCC = FourCC(*b"OSGN");
     const OSG1: FourCC = FourCC(*b"OSG1");
-    const PSGN: FourCC = FourCC(*b"PSGN");
     const PSG1: FourCC = FourCC(*b"PSG1");
 
     Ok(ShaderSignatures {
-        isgn: dxbc
-            .get_chunk(ISG1)
-            .or_else(|| dxbc.get_chunk(ISGN))
-            .map(|c| parse_signature_chunk(c.fourcc, c.data))
-            .transpose()?,
-        osgn: dxbc
-            .get_chunk(OSG1)
-            .or_else(|| dxbc.get_chunk(OSGN))
-            .map(|c| parse_signature_chunk(c.fourcc, c.data))
-            .transpose()?,
-        psgn: dxbc
-            .get_chunk(PSG1)
-            .or_else(|| dxbc.get_chunk(PSGN))
-            .map(|c| parse_signature_chunk(c.fourcc, c.data))
-            .transpose()?,
+        // Prefer the `*SG1` variants but accept `*SGN` when needed. We use the
+        // `aero-dxbc` helper to skip malformed duplicate chunks and fall back to
+        // the variant spelling as needed.
+        isgn: parse_signature_from_dxbc(dxbc, ISG1)?,
+        osgn: parse_signature_from_dxbc(dxbc, OSG1)?,
+        psgn: parse_signature_from_dxbc(dxbc, PSG1)?,
     })
+}
+
+fn parse_signature_from_dxbc(
+    dxbc: &DxbcFile<'_>,
+    preferred: FourCC,
+) -> Result<Option<DxbcSignature>, SignatureError> {
+    let Some(res) = dxbc.get_signature(preferred) else {
+        return Ok(None);
+    };
+
+    let chunk = res.map_err(|err| map_dxbc_error(preferred, &err))?;
+    Ok(Some(convert_dxbc_signature_chunk(preferred, chunk)?))
+}
+
+fn map_dxbc_error(fourcc: FourCC, err: &aero_dxbc::DxbcError) -> SignatureError {
+    if err.context().contains("UTF-8") || err.context().contains("utf-8") {
+        SignatureError::InvalidUtf8 {
+            fourcc,
+            reason: "invalid UTF-8 in signature chunk",
+        }
+    } else {
+        SignatureError::MalformedChunk {
+            fourcc,
+            reason: "failed to parse signature chunk",
+        }
+    }
 }
 
 pub fn parse_signature_chunk(
     fourcc: FourCC,
     bytes: &[u8],
 ) -> Result<DxbcSignature, SignatureError> {
-    let chunk = parse_dxbc_signature_chunk(fourcc, bytes).map_err(|err| {
-        if err.context().contains("UTF-8") || err.context().contains("utf-8") {
-            SignatureError::InvalidUtf8 {
-                fourcc,
-                reason: "invalid UTF-8 in signature chunk",
-            }
-        } else {
-            SignatureError::MalformedChunk {
-                fourcc,
-                reason: "failed to parse signature chunk",
-            }
-        }
-    })?;
+    let chunk = parse_dxbc_signature_chunk(fourcc, bytes).map_err(|err| map_dxbc_error(fourcc, &err))?;
+    convert_dxbc_signature_chunk(fourcc, chunk)
+}
 
+fn convert_dxbc_signature_chunk(
+    fourcc: FourCC,
+    chunk: aero_dxbc::SignatureChunk,
+) -> Result<DxbcSignature, SignatureError> {
     let mut parameters = Vec::with_capacity(chunk.entries.len());
     for entry in chunk.entries {
-        let stream: u8 =
-            entry
-                .stream
-                .unwrap_or(0)
-                .try_into()
-                .map_err(|_| SignatureError::MalformedChunk {
-                    fourcc,
-                    reason: "stream index out of range",
-                })?;
+        let stream: u8 = entry
+            .stream
+            .unwrap_or(0)
+            .try_into()
+            .map_err(|_| SignatureError::MalformedChunk {
+                fourcc,
+                reason: "stream index out of range",
+            })?;
 
         parameters.push(DxbcSignatureParameter {
             semantic_name: entry.semantic_name,
