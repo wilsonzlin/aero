@@ -18,12 +18,6 @@ CARGO_BUILD_RUSTC_WRAPPER = ""
 # exported globally.
 RUSTC_WRAPPER = ""
 
-# Some sandbox environments ship with a broken `sccache` wrapper via environment
-# variables. Keep this in addition to the `[build]` override below so `cargo`
-# invocations from within the repo are resilient even when `RUSTC_WRAPPER` is
-# exported globally.
-RUSTC_WRAPPER = ""
-
 [alias]
 # `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
 xtask = "run --locked -p xtask --"
