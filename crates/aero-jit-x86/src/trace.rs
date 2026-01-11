@@ -63,7 +63,7 @@ impl<'a> TraceBuilder<'a> {
         let mut cur = entry_block;
         let mut instr_budget = self.cfg.max_instrs;
 
-        while trace.blocks.len() < self.cfg.max_blocks && instr_budget > 0 {
+        'build: while trace.blocks.len() < self.cfg.max_blocks && instr_budget > 0 {
             if !visited.insert(cur) {
                 break;
             }
@@ -78,7 +78,7 @@ impl<'a> TraceBuilder<'a> {
                 trace.ir.body.push(inst.clone());
                 instr_budget -= 1;
                 if inst.is_terminator() {
-                    return Some(trace);
+                    break 'build;
                 }
             }
 
@@ -92,10 +92,8 @@ impl<'a> TraceBuilder<'a> {
                     if instr_budget == 0 {
                         break;
                     }
-                    trace.ir.body.push(Instr::SideExit {
-                        exit_rip: *exit_rip,
-                    });
-                    return Some(trace);
+                    trace.ir.body.push(Instr::SideExit { exit_rip: *exit_rip });
+                    break;
                 }
                 crate::t2_ir::Terminator::Jump(t) => {
                     if *t == entry_block && self.profile.is_hot_backedge(cur, *t) {

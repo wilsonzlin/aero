@@ -591,15 +591,14 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
     profile.edge_counts.insert((BlockId(0), BlockId(0)), 9_000);
     profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
     profile.hot_backedges.insert((BlockId(0), BlockId(0)));
+    let mut env = RuntimeEnv::default();
+    env.page_versions.set_version(0, 7);
 
     let cfg = TraceConfig {
         hot_block_threshold: 1000,
         max_blocks: 8,
         max_instrs: 256,
     };
-
-    let mut env = RuntimeEnv::default();
-    env.page_versions.set_version(0, 7);
 
     let builder = TraceBuilder::new(&func, &profile, &env.page_versions, cfg);
     let mut trace = builder.build_from(BlockId(0)).expect("trace");

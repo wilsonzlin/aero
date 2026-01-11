@@ -31,7 +31,10 @@ impl Eq for T2State {}
 
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeEnv {
-    /// Current code page versions (self-modifying code invalidation).
+    /// Tracks the current version of each guest code page.
+    ///
+    /// Traces use [`Instr::GuardCodeVersion`] to compare their embedded "expected" snapshot
+    /// against this tracker at runtime.
     pub page_versions: PageVersionTracker,
 }
 

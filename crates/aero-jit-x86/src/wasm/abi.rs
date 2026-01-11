@@ -17,6 +17,12 @@ pub const IMPORT_MEM_WRITE_U16: &str = "mem_write_u16";
 pub const IMPORT_MEM_WRITE_U32: &str = "mem_write_u32";
 pub const IMPORT_MEM_WRITE_U64: &str = "mem_write_u64";
 
+/// Import that returns the current code page version for self-modifying code guards.
+///
+/// Signature: `env.code_page_version(cpu_ptr: i32, page: i64) -> i64`, returning a
+/// `u32`-encoded-as-`i64`.
+pub const IMPORT_CODE_PAGE_VERSION: &str = "code_page_version";
+
 /// Page-fault helper for the baseline ABI.
 pub const IMPORT_PAGE_FAULT: &str = "page_fault";
 

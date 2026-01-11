@@ -23,6 +23,8 @@ use crate::{
 /// Export name for a compiled Tier-2 trace.
 pub const EXPORT_TRACE_FN: &str = "trace";
 
+pub use super::abi::IMPORT_CODE_PAGE_VERSION;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Tier2WasmOptions {
     /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads
@@ -36,8 +38,6 @@ impl Default for Tier2WasmOptions {
     }
 }
 
-/// Import that returns the current code page version for self-modifying code guards.
-pub const IMPORT_CODE_PAGE_VERSION: &str = "code_page_version";
 #[derive(Clone, Copy)]
 struct ImportedFuncs {
     mem_read_u8: u32,
@@ -48,8 +48,8 @@ struct ImportedFuncs {
     mem_write_u16: u32,
     mem_write_u32: u32,
     mem_write_u64: u32,
-    mmu_translate: Option<u32>,
     code_page_version: u32,
+    mmu_translate: Option<u32>,
     count: u32,
 }
 
@@ -118,6 +118,10 @@ impl Tier2WasmCodegen {
         types
             .ty()
             .function([ValType::I32, ValType::I64, ValType::I64], []);
+        let ty_code_page_version = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64], [ValType::I64]);
         let ty_mmu_translate = if options.inline_tlb {
             let ty = types.len();
             types.ty().function(
@@ -128,10 +132,6 @@ impl Tier2WasmCodegen {
         } else {
             None
         };
-        let ty_code_page_version = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I64]);
         let ty_trace = types.len();
         types
             .ty()
@@ -162,8 +162,8 @@ impl Tier2WasmCodegen {
             mem_write_u16: next(&mut next_func),
             mem_write_u32: next(&mut next_func),
             mem_write_u64: next(&mut next_func),
-            mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
             code_page_version: next(&mut next_func),
+            mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
             count: next_func - func_base,
         };
 
@@ -207,6 +207,11 @@ impl Tier2WasmCodegen {
             IMPORT_MEM_WRITE_U64,
             EntityType::Function(ty_mem_write_u64),
         );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_CODE_PAGE_VERSION,
+            EntityType::Function(ty_code_page_version),
+        );
         if options.inline_tlb {
             imports.import(
                 IMPORT_MODULE,
@@ -214,11 +219,6 @@ impl Tier2WasmCodegen {
                 EntityType::Function(ty_mmu_translate.expect("type for mmu_translate")),
             );
         }
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_CODE_PAGE_VERSION,
-            EntityType::Function(ty_code_page_version),
-        );
         module.section(&imports);
 
         let mut funcs = FunctionSection::new();

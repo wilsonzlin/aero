@@ -467,11 +467,14 @@ Self-modifying code invalidation is handled by the runtime using page-version sn
   - `JitRuntime::install_handle` rejects compilation results whose `CompiledBlockMeta.page_versions` no longer match the current `PageVersionTracker` (e.g. background compilation races with code writes).
   - `JitRuntime::prepare_block` lazily invalidates cached blocks whose page-version snapshots are stale and requests recompilation.
 
-This keeps versioning logic in one place and avoids requiring “check code versions at block entry” guards inside the WASM itself.
+Tier-1 blocks rely on these runtime snapshot checks, while Tier-2 traces additionally embed
+`GuardCodeVersion { page, expected }` checks derived from the same tracker so they can deopt when the
+guest modifies code after trace compilation.
 
 > **Future/optional:** If Tier-1/Tier-2 direct RAM stores are enabled, the runtime may not observe those writes unless the JIT explicitly notifies it. One possible extension is to reserve an extra flag bit (conceptually “CODE_WATCH”) so stores can cheaply decide whether to call a write-notification helper or force a runtime exit.
 >
-> **Future/optional:** For long Tier-2 traces, adding in-WASM page-version guards (e.g. at trace entry or mid-trace) could allow the engine to bail out without returning to the dispatcher. The current implementation validates versions in `install_handle` / `prepare_block` only.
+> Tier-2 traces emit in-WASM page-version guards (at trace entry, and for loop traces on every
+> iteration) so they can bail out quickly on self-modifying code.
 
 ### Lookup flow (inline in JIT)
 

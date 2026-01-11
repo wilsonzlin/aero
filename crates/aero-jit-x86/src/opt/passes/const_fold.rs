@@ -84,7 +84,7 @@ fn fold_inst(
             consts.insert(*dst, *value);
             out.push(inst.clone());
         }
-        Instr::LoadReg { .. } | Instr::LoadFlag { .. } => {
+        Instr::LoadReg { .. } | Instr::LoadFlag { .. } | Instr::GuardCodeVersion { .. } => {
             out.push(inst.clone());
         }
         Instr::LoadMem { dst, addr, width } => {
@@ -240,17 +240,6 @@ fn fold_inst(
             }
             out.push(Instr::Guard {
                 cond: cond2,
-                expected: *expected,
-                exit_rip: *exit_rip,
-            });
-        }
-        Instr::GuardCodeVersion {
-            page,
-            expected,
-            exit_rip,
-        } => {
-            out.push(Instr::GuardCodeVersion {
-                page: *page,
                 expected: *expected,
                 exit_rip: *exit_rip,
             });
