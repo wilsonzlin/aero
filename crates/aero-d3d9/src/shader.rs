@@ -896,6 +896,15 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             }
         }
         ShaderStage::Pixel => {
+            let max_color_output = ir
+                .used_outputs
+                .iter()
+                .filter(|reg| reg.file == RegisterFile::ColorOut)
+                .map(|reg| reg.index)
+                .max()
+                .unwrap_or(0);
+            let uses_multiple_color_outputs = max_color_output > 0;
+
             // Inputs are driven by varying mapping. We just emit for any used input regs.
             // For simplicity we emit `v#` as @location(#) and `t#` as @location(4+#).
             let mut inputs_by_reg = BTreeSet::new();
@@ -910,6 +919,15 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                 }
             }
             let has_inputs = !inputs_by_reg.is_empty();
+
+            if uses_multiple_color_outputs {
+                wgsl.push_str("struct PsOutput {\n");
+                for i in 0..=max_color_output {
+                    wgsl.push_str(&format!("  @location({}) oC{}: vec4<f32>,\n", i, i));
+                }
+                wgsl.push_str("};\n\n");
+            }
+
             if has_inputs {
                 wgsl.push_str("struct PsInput {\n");
                 for reg in &inputs_by_reg {
@@ -922,13 +940,21 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                     }
                 }
                 wgsl.push_str("};\n\n");
-                wgsl.push_str(
-                    "@fragment\nfn fs_main(input: PsInput) -> @location(0) vec4<f32> {\n",
-                );
+                if uses_multiple_color_outputs {
+                    wgsl.push_str("@fragment\nfn fs_main(input: PsInput) -> PsOutput {\n");
+                } else {
+                    wgsl.push_str(
+                        "@fragment\nfn fs_main(input: PsInput) -> @location(0) vec4<f32> {\n",
+                    );
+                }
             } else {
                 // WGSL does not permit empty structs, so if the shader uses no varyings we
                 // omit the input parameter entirely.
-                wgsl.push_str("@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n");
+                if uses_multiple_color_outputs {
+                    wgsl.push_str("@fragment\nfn fs_main() -> PsOutput {\n");
+                } else {
+                    wgsl.push_str("@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n");
+                }
             }
             for i in 0..ir.temp_count {
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
@@ -953,14 +979,29 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                     wgsl_f32(val[3])
                 ));
             }
-            wgsl.push_str("  var oC0: vec4<f32> = vec4<f32>(0.0);\n\n");
+            if uses_multiple_color_outputs {
+                for i in 0..=max_color_output {
+                    wgsl.push_str(&format!("  var oC{}: vec4<f32> = vec4<f32>(0.0);\n", i));
+                }
+                wgsl.push('\n');
+            } else {
+                wgsl.push_str("  var oC0: vec4<f32> = vec4<f32>(0.0);\n\n");
+            }
 
             let mut indent = 1usize;
             for inst in &ir.ops {
                 emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32, const_base);
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
-            wgsl.push_str("  return oC0;\n}\n");
+            if uses_multiple_color_outputs {
+                wgsl.push_str("  var out: PsOutput;\n");
+                for i in 0..=max_color_output {
+                    wgsl.push_str(&format!("  out.oC{} = oC{};\n", i, i));
+                }
+                wgsl.push_str("  return out;\n}\n");
+            } else {
+                wgsl.push_str("  return oC0;\n}\n");
+            }
 
             WgslOutput {
                 wgsl,

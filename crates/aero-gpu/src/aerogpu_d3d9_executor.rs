@@ -114,11 +114,7 @@ impl ContextState {
             bind_group_dirty: true,
             samplers_ps: create_default_samplers(device),
             sampler_state_ps: std::array::from_fn(|_| D3d9SamplerState::default()),
-            state: State {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                blend_constant: [1.0; 4],
-                ..Default::default()
-            },
+            state: create_default_state(),
         }
     }
 }
@@ -361,7 +357,7 @@ struct BlendState {
     src_factor_alpha: u32,
     dst_factor_alpha: u32,
     blend_op_alpha: u32,
-    color_write_mask: u8,
+    color_write_mask: [u8; 8],
 }
 
 impl Default for BlendState {
@@ -375,7 +371,7 @@ impl Default for BlendState {
             src_factor_alpha: 1,
             dst_factor_alpha: 0,
             blend_op_alpha: 0,
-            color_write_mask: 0xF,
+            color_write_mask: [0xF; 8],
         }
     }
 }
@@ -482,6 +478,52 @@ fn create_constants_buffer(device: &wgpu::Device) -> wgpu::Buffer {
         contents: &[0u8; CONSTANTS_BUFFER_SIZE_BYTES],
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     })
+}
+
+fn create_default_render_states() -> Vec<u32> {
+    // Keep this list scoped to the render states we use for pipeline derivation. Other render
+    // states are initialized to 0 until written.
+    //
+    // IMPORTANT: `set_render_state_u32` caches state values and early-returns when the render-state
+    // value is unchanged. For states whose D3D9 defaults are non-zero, we must seed the cache with
+    // those defaults so the first explicit set-to-zero call is not dropped.
+    let mut states = vec![0u32; d3d9::D3DRS_BLENDOPALPHA as usize + 1];
+
+    states[d3d9::D3DRS_COLORWRITEENABLE as usize] = 0xF;
+    states[d3d9::D3DRS_COLORWRITEENABLE1 as usize] = 0xF;
+    states[d3d9::D3DRS_COLORWRITEENABLE2 as usize] = 0xF;
+    states[d3d9::D3DRS_COLORWRITEENABLE3 as usize] = 0xF;
+
+    states[d3d9::D3DRS_SRCBLEND as usize] = d3d9::D3DBLEND_ONE;
+    states[d3d9::D3DRS_DESTBLEND as usize] = d3d9::D3DBLEND_ZERO;
+    states[d3d9::D3DRS_BLENDOP as usize] = 1; // D3DBLENDOP_ADD
+
+    states[d3d9::D3DRS_ZENABLE as usize] = 1;
+    states[d3d9::D3DRS_ZWRITEENABLE as usize] = 1;
+    states[d3d9::D3DRS_ZFUNC as usize] = 4; // D3DCMP_LESSEQUAL
+
+    states[d3d9::D3DRS_CULLMODE as usize] = d3d9::D3DCULL_CCW;
+
+    states[d3d9::D3DRS_BLENDFACTOR as usize] = 0xFFFF_FFFF;
+
+    states[d3d9::D3DRS_STENCILFUNC as usize] = 8; // D3DCMP_ALWAYS
+    states[d3d9::D3DRS_STENCILFAIL as usize] = 1; // D3DSTENCILOP_KEEP
+    states[d3d9::D3DRS_STENCILZFAIL as usize] = 1; // D3DSTENCILOP_KEEP
+    states[d3d9::D3DRS_STENCILPASS as usize] = 1; // D3DSTENCILOP_KEEP
+    states[d3d9::D3DRS_STENCILMASK as usize] = 0xFFFF_FFFF;
+    states[d3d9::D3DRS_STENCILWRITEMASK as usize] = 0xFFFF_FFFF;
+
+    states
+}
+
+fn create_default_state() -> State {
+    let mut state = State {
+        topology: wgpu::PrimitiveTopology::TriangleList,
+        blend_constant: [1.0; 4],
+        ..Default::default()
+    };
+    state.render_states = create_default_render_states();
+    state
 }
 
 fn create_default_samplers(device: &wgpu::Device) -> [Arc<wgpu::Sampler>; MAX_SAMPLERS] {
@@ -724,11 +766,7 @@ impl AerogpuD3d9Executor {
             presented_scanouts: HashMap::new(),
             contexts: HashMap::new(),
             current_context_id: 0,
-            state: State {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                blend_constant: [1.0; 4],
-                ..Default::default()
-            },
+            state: create_default_state(),
             encoder: None,
         }
     }
@@ -752,11 +790,7 @@ impl AerogpuD3d9Executor {
         self.sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
         self.sampler_cache.clear();
         self.samplers_ps = create_default_samplers(&self.device);
-        self.state = State {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            blend_constant: [1.0; 4],
-            ..Default::default()
-        };
+        self.state = create_default_state();
         self.encoder = None;
 
         // Avoid leaking constants across resets; the next draw will rewrite what it needs.
@@ -2747,7 +2781,7 @@ impl AerogpuD3d9Executor {
                     src_factor_alpha: state.src_factor_alpha,
                     dst_factor_alpha: state.dst_factor_alpha,
                     blend_op_alpha: state.blend_op_alpha,
-                    color_write_mask: state.color_write_mask,
+                    color_write_mask: [state.color_write_mask; 8],
                 };
                 self.state.blend_constant =
                     state.blend_constant_rgba_f32.map(|v| f32::from_bits(v));
@@ -4154,11 +4188,19 @@ impl AerogpuD3d9Executor {
 
         let targets = color_formats
             .iter()
-            .map(|fmt| {
+            .enumerate()
+            .map(|(idx, fmt)| {
                 fmt.map(|format| wgpu::ColorTargetState {
                     format,
                     blend: map_blend_state(self.state.blend_state),
-                    write_mask: map_color_write_mask(self.state.blend_state.color_write_mask),
+                    write_mask: map_color_write_mask(
+                        self.state
+                            .blend_state
+                            .color_write_mask
+                            .get(idx)
+                            .copied()
+                            .unwrap_or(0xF),
+                    ),
                 })
             })
             .collect::<Vec<_>>();
@@ -4580,7 +4622,16 @@ impl AerogpuD3d9Executor {
             | d3d9::D3DRS_DESTBLENDALPHA
             | d3d9::D3DRS_BLENDOPALPHA => self.update_separate_alpha_blend_from_render_state(),
             d3d9::D3DRS_COLORWRITEENABLE => {
-                self.state.blend_state.color_write_mask = (value & 0xF) as u8
+                self.state.blend_state.color_write_mask[0] = (value & 0xF) as u8
+            }
+            d3d9::D3DRS_COLORWRITEENABLE1 => {
+                self.state.blend_state.color_write_mask[1] = (value & 0xF) as u8
+            }
+            d3d9::D3DRS_COLORWRITEENABLE2 => {
+                self.state.blend_state.color_write_mask[2] = (value & 0xF) as u8
+            }
+            d3d9::D3DRS_COLORWRITEENABLE3 => {
+                self.state.blend_state.color_write_mask[3] = (value & 0xF) as u8
             }
             d3d9::D3DRS_BLENDFACTOR => {
                 let a = ((value >> 24) & 0xFF) as f32 / 255.0;
@@ -5463,6 +5514,9 @@ mod d3d9 {
     pub const D3DRS_BLENDOPALPHA: u32 = 209;
 
     pub const D3DRS_COLORWRITEENABLE: u32 = 168;
+    pub const D3DRS_COLORWRITEENABLE1: u32 = 190;
+    pub const D3DRS_COLORWRITEENABLE2: u32 = 191;
+    pub const D3DRS_COLORWRITEENABLE3: u32 = 192;
     pub const D3DRS_BLENDFACTOR: u32 = 193;
     pub const D3DRS_SRGBWRITEENABLE: u32 = 194;
     pub const D3DRS_SCISSORTESTENABLE: u32 = 174;
