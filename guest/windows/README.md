@@ -1,7 +1,7 @@
 # Legacy AeroGPU Windows 7 driver stack (archived)
 
 This directory intentionally contains only small **pointer/stub** files (this README and a
-redirecting `docs/driver_install.md`), not a real driver source tree.
+redirecting `docs/driver_install.md` and stub `inf/aerogpu.inf`), not a real driver source tree.
 
 Historically, the repo had a `guest/windows/` Win7 AeroGPU prototype driver tree. It has since
 been **archived** to avoid accidental installs of an incomplete/obsolete package.

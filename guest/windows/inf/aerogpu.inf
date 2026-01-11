@@ -1,0 +1,16 @@
+; ---------------------------------------------------------------------------
+; Legacy path stub: guest/windows/inf/aerogpu.inf
+;
+; The supported Windows 7 AeroGPU driver package lives under:
+;   drivers/aerogpu/packaging/win7/
+;     - aerogpu.inf      (D3D9)
+;     - aerogpu_dx11.inf (D3D9 + D3D10/11)
+;
+; The archived prototype Win7 driver stack (historical reference only) lives under:
+;   prototype/legacy-win7-aerogpu-1ae0/guest/windows/
+;
+; IMPORTANT:
+;   This file is intentionally NOT a valid Windows driver INF.
+;   Do not attempt to install it.
+; ---------------------------------------------------------------------------
+
