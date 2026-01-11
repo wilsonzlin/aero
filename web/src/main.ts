@@ -2151,6 +2151,11 @@ function renderInputPanel(): HTMLElement {
           const bytes = [];
           for (let j = 0; j < len; j += 1) bytes.push((packed >>> (j * 8)) & 0xff);
           append(`kbd: ${bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ")}`);
+        } else if (type === InputEventType.KeyHidUsage) {
+          const packed = words[off + 2] >>> 0;
+          const usage = packed & 0xff;
+          const pressed = ((packed >>> 8) & 1) !== 0;
+          append(`hid: usage=0x${usage.toString(16).padStart(2, "0")} ${pressed ? "down" : "up"}`);
         } else if (type === InputEventType.GamepadReport) {
           const lo = words[off + 2] >>> 0;
           const hi = words[off + 3] >>> 0;
