@@ -555,6 +555,47 @@ describe("chunked delivery", () => {
     );
   });
 
+  it("returns no-store Cache-Control for /stream-url in local mode", async () => {
+    const config = makeConfig({ cloudfrontDomain: undefined });
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      chunkedPrefix: "images/user-1/image-1/v1/",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/stream-url`,
+      headers: { "x-user-id": ownerId },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
+    const body = res.json() as { url: string; chunked?: { manifestUrl: string } };
+    expect(body.url).toMatch(new RegExp(`^http://localhost(?::\\d+)?/v1/images/${imageId}/range$`));
+    expect(body.chunked?.manifestUrl).toMatch(
+      new RegExp(`^http://localhost(?::\\d+)?/v1/images/${imageId}/chunked/manifest$`)
+    );
+  });
+
   it("redirects chunked endpoints to CloudFront URLs when configured (cookie mode)", async () => {
     const { privateKey } = generateKeyPairSync("rsa", {
       modulusLength: 2048,
