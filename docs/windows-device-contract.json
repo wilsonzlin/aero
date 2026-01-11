@@ -61,7 +61,7 @@
         "PCI\\VEN_A3A0&DEV_0001",
         "PCI\\VEN_1AED&DEV_0001"
       ],
-      "driver_service_name": "aerogpu",
+      "driver_service_name": "AeroGPU",
       "inf_name": "aerogpu.inf"
     }
   ]

@@ -88,7 +88,7 @@ All numeric values are shown as hexadecimal.
 | virtio-snd | `1AF4:1059` | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
 | virtio-input (keyboard) | `1AF4:1052` | `1AF4:0010` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
 | virtio-input (mouse) | `1AF4:1052` | `1AF4:0011` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
-| Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `aerogpu` | `aerogpu.inf` |
+| Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `AeroGPU` | `aerogpu.inf` |
 
 Notes:
 
