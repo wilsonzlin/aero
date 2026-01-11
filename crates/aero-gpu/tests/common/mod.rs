@@ -22,3 +22,28 @@ pub fn skip_or_panic(test_name: &str, reason: &str) {
     }
     eprintln!("skipping {test_name}: {reason}");
 }
+
+pub fn ensure_xdg_runtime_dir() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::OnceLock;
+
+        static INIT: OnceLock<()> = OnceLock::new();
+        INIT.get_or_init(|| {
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+            if !needs_runtime_dir {
+                return;
+            }
+
+            let dir =
+                std::env::temp_dir().join(format!("aero-gpu-xdg-runtime-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        });
+    }
+}

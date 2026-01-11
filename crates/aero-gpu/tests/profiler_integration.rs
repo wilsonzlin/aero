@@ -4,6 +4,7 @@ use aero_gpu::{GpuBackendKind, GpuCapabilities, GpuProfiler, GpuProfilerConfig};
 
 #[test]
 fn gpu_profiler_reports_gpu_time_when_supported_otherwise_falls_back() {
+    common::ensure_xdg_runtime_dir();
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
         backends: if cfg!(target_os = "linux") {

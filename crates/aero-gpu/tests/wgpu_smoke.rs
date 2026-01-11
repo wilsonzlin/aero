@@ -6,6 +6,7 @@ use aero_gpu::GpuError;
 
 #[test]
 fn wgpu_backend_create_destroy_smoke() {
+    common::ensure_xdg_runtime_dir();
     let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {
         Ok(backend) => backend,
         Err(err) => {
