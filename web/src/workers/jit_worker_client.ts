@@ -15,6 +15,7 @@ export class JitWorkerClient {
   readonly #onMessage: (event: MessageEvent) => void;
   readonly #onError: (event: Event) => void;
   readonly #onMessageError: () => void;
+  #destroyed = false;
 
   constructor(worker: Worker) {
     this.#worker = worker;
@@ -50,6 +51,9 @@ export class JitWorkerClient {
     wasmBytes: ArrayBuffer,
     opts?: { importsHint?: JitImportsHint; timeoutMs?: number },
   ): Promise<JitWorkerResponse> {
+    if (this.#destroyed) {
+      return Promise.reject(new Error("JitWorkerClient is destroyed."));
+    }
     const id = this.#nextId++;
     const timeoutMs = Math.max(0, opts?.timeoutMs ?? 10_000);
 
@@ -85,5 +89,16 @@ export class JitWorkerClient {
       globalThis.clearTimeout(entry.timeoutId);
       entry.reject(err);
     }
+  }
+
+  destroy(reason: Error = new Error("JitWorkerClient destroyed")): void {
+    if (this.#destroyed) return;
+    this.#destroyed = true;
+
+    this.#worker.removeEventListener("message", this.#onMessage);
+    this.#worker.removeEventListener("error", this.#onError);
+    this.#worker.removeEventListener("messageerror", this.#onMessageError);
+
+    this.#rejectAll(reason);
   }
 }

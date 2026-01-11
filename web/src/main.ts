@@ -1954,6 +1954,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     }
 
     if (!jitClient || jitClientWorker !== jitWorker) {
+      jitClient?.destroy();
       jitClient = new JitWorkerClient(jitWorker);
       jitClientWorker = jitWorker;
     }
@@ -2076,6 +2077,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const stopButton = el("button", {
     text: "Stop workers",
     onclick: () => {
+      jitClient?.destroy();
+      jitClient = null;
+      jitClientWorker = null;
       frameScheduler?.stop();
       frameScheduler = null;
       workerCoordinator.stop();

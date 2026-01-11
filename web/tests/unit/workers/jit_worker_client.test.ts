@@ -21,6 +21,16 @@ class FakeWorker {
     }
   }
 
+  removeEventListener(type: string, listener: GenericListener): void {
+    if (type === "message") {
+      this.messageListeners.delete(listener as MessageListener);
+    } else if (type === "error") {
+      this.errorListeners.delete(listener);
+    } else if (type === "messageerror") {
+      this.messageErrorListeners.delete(listener);
+    }
+  }
+
   postMessage(msg: unknown, transfer: Transferable[] = []): void {
     this.postMessageCalls.push({ msg, transfer });
   }
@@ -108,5 +118,16 @@ describe("JitWorkerClient", () => {
     const promise = client.compile(new ArrayBuffer(8), { timeoutMs: 1000 });
     worker.dispatchMessageError();
     await expect(promise).rejects.toThrow(/deserialization/i);
+  });
+
+  it("destroy() rejects pending requests and prevents new compiles", async () => {
+    const worker = new FakeWorker();
+    const client = new JitWorkerClient(worker as unknown as Worker);
+
+    const pending = client.compile(new ArrayBuffer(8), { timeoutMs: 1000 });
+    client.destroy(new Error("gone"));
+    await expect(pending).rejects.toThrow("gone");
+
+    await expect(client.compile(new ArrayBuffer(8), { timeoutMs: 1000 })).rejects.toThrow(/destroyed/i);
   });
 });
