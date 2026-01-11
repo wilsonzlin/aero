@@ -28,6 +28,12 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io.write(0xCFC, 2, u32::from(value));
 }
 
+fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 4, value);
+}
+
 #[test]
 fn pc_platform_enumerates_hda_and_assigns_bar0() {
     let mut pc = PcPlatform::new_with_hda(2 * 1024 * 1024);
@@ -83,6 +89,29 @@ fn pc_platform_gates_hda_mmio_on_pci_command_register() {
     // Now writes should take effect.
     pc.memory.write_u32(bar0_base + 0x08, 1);
     assert_ne!(pc.memory.read_u32(bar0_base + 0x08) & 1, 0);
+}
+
+#[test]
+fn pc_platform_routes_hda_mmio_after_bar0_reprogramming() {
+    let mut pc = PcPlatform::new_with_hda(2 * 1024 * 1024);
+    let bdf = HDA_ICH6.bdf;
+
+    let bar0_base = read_hda_bar0_base(&mut pc);
+    let new_base = bar0_base + 0x1_0000;
+    assert_eq!(new_base % 0x4000, 0);
+
+    // Bring controller out of reset at the original BAR0 base.
+    pc.memory.write_u32(bar0_base + 0x08, 1);
+    assert_ne!(pc.memory.read_u32(bar0_base + 0x08) & 1, 0);
+
+    // Move BAR0 within the platform's PCI MMIO window.
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, new_base as u32);
+
+    // Old base should no longer decode.
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x08), 0xFFFF_FFFF);
+
+    // New base should decode and preserve controller state.
+    assert_ne!(pc.memory.read_u32(new_base + 0x08) & 1, 0);
 }
 
 #[test]

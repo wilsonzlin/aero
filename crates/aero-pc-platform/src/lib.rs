@@ -7,8 +7,8 @@ use aero_devices::clock::ManualClock;
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBarDefinition, PciBdf, PciConfigPorts, PciDevice,
-    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    bios_post, register_pci_config_ports, PciBarDefinition, PciBarRange, PciBdf, PciConfigPorts,
+    PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -80,35 +80,67 @@ impl PciDevice for HdaPciConfigDevice {
 }
 
 #[derive(Clone)]
-struct HdaMmio {
-    hda: Rc<RefCell<HdaPciDevice>>,
+struct PciMmioWindow {
+    base: u64,
     pci_cfg: SharedPciConfigPorts,
-    bdf: PciBdf,
+
+    // Device handlers registered in this MMIO window.
+    hda: Option<Rc<RefCell<HdaPciDevice>>>,
+    hda_bdf: PciBdf,
 }
 
-impl MmioHandler for HdaMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if !self.mem_decode_enabled() {
-            return all_ones(size);
+impl PciMmioWindow {
+    fn hda_bar0(&self) -> Option<(bool, PciBarRange)> {
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let cfg = bus.device_config(self.hda_bdf)?;
+        let mem_enabled = (cfg.command() & 0x2) != 0;
+        let bar0 = cfg.bar_range(0)?;
+        Some((mem_enabled, bar0))
+    }
+
+    fn map_hda(
+        &mut self,
+        paddr: u64,
+        size: usize,
+    ) -> Option<(Rc<RefCell<HdaPciDevice>>, u64)> {
+        let hda = self.hda.as_ref()?.clone();
+        let (mem_enabled, bar0) = self.hda_bar0()?;
+        if !mem_enabled || bar0.base == 0 {
+            return None;
         }
-        self.hda.borrow_mut().read(offset, size)
+
+        let access_end = paddr.checked_add(size as u64)?;
+        let bar_end = bar0.base.saturating_add(bar0.size);
+        if paddr < bar0.base || access_end > bar_end {
+            return None;
+        }
+
+        Some((hda, paddr - bar0.base))
+    }
+}
+
+impl MmioHandler for PciMmioWindow {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let Some(paddr) = self.base.checked_add(offset) else {
+            return all_ones(size);
+        };
+        let Some((hda, dev_offset)) = self.map_hda(paddr, size) else {
+            return all_ones(size);
+        };
+        let mut hda = hda.borrow_mut();
+        hda.read(dev_offset, size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if !self.mem_decode_enabled() {
+        let Some(paddr) = self.base.checked_add(offset) else {
             return;
-        }
-        self.hda.borrow_mut().write(offset, size, value);
-    }
-}
-
-impl HdaMmio {
-    fn mem_decode_enabled(&self) -> bool {
-        let mut pci_cfg = self.pci_cfg.borrow_mut();
-        let Some(cfg) = pci_cfg.bus_mut().device_config(self.bdf) else {
-            return false;
         };
-        (cfg.command() & 0x2) != 0
+        let Some((hda, dev_offset)) = self.map_hda(paddr, size) else {
+            return;
+        };
+        let mut hda = hda.borrow_mut();
+        hda.write(dev_offset, size, value);
     }
 }
 
@@ -350,7 +382,8 @@ impl PcPlatform {
         );
 
         let pci_intx = PciIntxRouter::new(PciIntxRouterConfig::default());
-        let mut pci_allocator = PciResourceAllocator::new(PciResourceAllocatorConfig::default());
+        let pci_allocator_config = PciResourceAllocatorConfig::default();
+        let mut pci_allocator = PciResourceAllocator::new(pci_allocator_config.clone());
 
         let hda = if config.enable_hda {
             let profile = aero_devices::pci::profile::HDA_ICH6;
@@ -375,35 +408,20 @@ impl PcPlatform {
             bios_post(pci_cfg.bus_mut(), &mut pci_allocator).unwrap();
         }
 
-        // Map PCI BAR-backed MMIO ranges into the platform physical address space.
-        //
-        // Note: `MemoryBus` currently rejects overlapping MMIO mappings and does not support
-        // unmapping. For now, map BARs once during platform construction. If a future reset flow
-        // reprograms BARs to different addresses, the MMIO map will need to be rebuilt.
-        if let Some(hda) = hda.clone() {
-            let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
-            let bar0_base = {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                let bus = pci_cfg.bus_mut();
-                let bar0 = bus
-                    .device_config(bdf)
-                    .and_then(|cfg| cfg.bar_range(0))
-                    .expect("HDA BAR0 must be assigned by BIOS POST");
-                bar0.base
-            };
-
-            memory
-                .map_mmio(
-                    bar0_base,
-                    u64::from(HdaPciDevice::MMIO_BAR_SIZE),
-                    Box::new(HdaMmio {
-                        hda,
-                        pci_cfg: pci_cfg.clone(),
-                        bdf,
-                    }),
-                )
-                .unwrap();
-        }
+        // Map the PCI MMIO window used by `PciResourceAllocator` so BAR reprogramming is reflected
+        // immediately without needing MMIO unmap/remap support in `MemoryBus`.
+        memory
+            .map_mmio(
+                pci_allocator_config.mmio_base,
+                pci_allocator_config.mmio_size,
+                Box::new(PciMmioWindow {
+                    base: pci_allocator_config.mmio_base,
+                    pci_cfg: pci_cfg.clone(),
+                    hda: hda.clone(),
+                    hda_bdf: aero_devices::pci::profile::HDA_ICH6.bdf,
+                }),
+            )
+            .unwrap();
 
         let hpet = Rc::new(RefCell::new(hpet::Hpet::new_default(clock.clone())));
 
