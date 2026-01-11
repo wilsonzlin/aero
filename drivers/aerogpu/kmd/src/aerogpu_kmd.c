@@ -1052,6 +1052,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
             interruptRegistered = TRUE;
         }
     }
+    adapter->InterruptRegistered = interruptRegistered;
 
     NTSTATUS ringSt = STATUS_SUCCESS;
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
@@ -1122,6 +1123,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         if (interruptRegistered && adapter->DxgkInterface.DxgkCbUnregisterInterrupt) {
             adapter->DxgkInterface.DxgkCbUnregisterInterrupt(adapter->StartInfo.hDxgkHandle);
         }
+        adapter->InterruptRegistered = FALSE;
 
         AeroGpuRingCleanup(adapter);
         MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
@@ -1184,12 +1186,13 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
         }
     }
 
-    if (adapter->DxgkInterface.DxgkCbDisableInterrupt) {
+    if (adapter->InterruptRegistered && adapter->DxgkInterface.DxgkCbDisableInterrupt) {
         adapter->DxgkInterface.DxgkCbDisableInterrupt(adapter->StartInfo.hDxgkHandle);
     }
 
-    if (adapter->DxgkInterface.DxgkCbUnregisterInterrupt) {
+    if (adapter->InterruptRegistered && adapter->DxgkInterface.DxgkCbUnregisterInterrupt) {
         adapter->DxgkInterface.DxgkCbUnregisterInterrupt(adapter->StartInfo.hDxgkHandle);
+        adapter->InterruptRegistered = FALSE;
     }
 
     AeroGpuMetaHandleFreeAll(adapter);

@@ -113,6 +113,7 @@ typedef struct _AEROGPU_ADAPTER {
 
     DXGK_START_INFO StartInfo;
     DXGKRNL_INTERFACE DxgkInterface;
+    BOOLEAN InterruptRegistered; /* True once DxgkCbRegisterInterrupt succeeds. */
 
     PUCHAR Bar0;
     ULONG Bar0Length;
