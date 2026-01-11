@@ -72,6 +72,93 @@ gateway:
   affinity: {}
   topologySpreadConstraints: []
 
+## Optional: L2 tunnel proxy (`aero-l2-proxy`) for Option C (ADR 0005).
+##
+## When enabled, this chart deploys a second service that terminates the `/l2` WebSocket tunnel and
+## runs the user-space NAT/egress policy stack (Rust service under `crates/aero-l2-proxy`).
+##
+## The chart's Ingress will add a path rule so:
+##   - `/l2` → `aero-l2-proxy`
+##   - everything else (e.g. `/tcp`, `/dns-query`) → `aero-gateway`
+##
+l2Proxy:
+  enabled: false
+
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/wilsonzlin/aero-l2-proxy
+    tag: "" # Defaults to Chart.appVersion if unset.
+    pullPolicy: IfNotPresent
+
+  containerPort: 8090
+
+  service:
+    # `aero-l2-proxy` listens on 8090 by default.
+    port: 8090
+
+  ingress:
+    path: /l2
+    pathType: Prefix
+
+  # Security / auth.
+  #
+  # Origin allowlist:
+  # - If ingress.enabled=true, the chart will automatically allow the derived ingress origin
+  #   (http/https + ingress.host).
+  # - Add additional exact origins here if you serve the frontend from more than one origin.
+  extraAllowedOrigins: []
+
+  # Disable Origin enforcement (trusted local dev only).
+  open: false
+
+  auth:
+    # Optional: set `AERO_L2_AUTH_MODE` for the proxy (e.g. "session-cookie" or "token").
+    # Leave empty to let the proxy default.
+    mode: ""
+
+  # Session cookie auth wiring.
+  #
+  # When using a session-cookie auth mode, the L2 proxy must be able to verify the gateway-issued
+  # session cookie. This typically requires sharing the same signing secret used by the gateway
+  # (`SESSION_SECRET`).
+  #
+  # By default, this chart reuses the gateway secret (secrets.*). To use a separate Secret:
+  #   l2Proxy.sessionSecret.existingSecret: "<secret-name>"
+  #   l2Proxy.sessionSecret.key: "SESSION_SECRET"
+  sessionSecret:
+    existingSecret: ""
+    key: SESSION_SECRET
+
+  # Extra environment variables to set directly on the container.
+  extraEnv: []
+
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext: {}
+  securityContext: {}
+
+  resources: {}
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: null
+
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    path: /metrics
+    additionalLabels: {}
+
 autoscaling:
   enabled: false
   minReplicas: 1

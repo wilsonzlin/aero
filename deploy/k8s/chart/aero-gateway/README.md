@@ -2,6 +2,10 @@
 
 This chart deploys the Aero backend gateway (`aero-gateway`) to Kubernetes.
 
+Optionally (recommended for production networking), it can also deploy the L2 tunnel proxy
+(`aero-l2-proxy`, ADR 0005 / “Option C”) and route `/l2` to it behind the same Ingress and
+security headers.
+
 For the complete walkthrough (TLS + COOP/COEP + WebSocket verification), see:
 
 - [`deploy/k8s/README.md`](../../README.md)
@@ -17,6 +21,7 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
 ## Key values
 
 - `gateway.image.repository` / `gateway.image.tag`
+- `l2Proxy.enabled` / `l2Proxy.image.repository` / `l2Proxy.image.tag` (Option C)
 - `ingress.host`
 - `ingress.tls.enabled` / `ingress.tls.secretName` (or `certManager.enabled=true`)
 - `ingress.coopCoep.enabled` (or `gateway.crossOriginIsolation.enabled=true`)
@@ -24,9 +29,72 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
 - `secrets.create` / `secrets.existingSecret`
 - `redis.enabled`
 
+## Option C (`aero-l2-proxy`) / `/l2` routing
+
+Enable the L2 proxy:
+
+```yaml
+l2Proxy:
+  enabled: true
+  image:
+    repository: ghcr.io/wilsonzlin/aero-l2-proxy
+    tag: "<REPLACE_WITH_L2_PROXY_IMAGE_TAG>"
+```
+
+When `l2Proxy.enabled=true` and `ingress.enabled=true`, the chart's Ingress will include:
+
+- `/l2` → `aero-l2-proxy` Service (port 8090)
+- `/<everything-else>` → `aero-gateway` Service
+
+Because the same Ingress resource is used, the existing COOP/COEP/CSP (or Traefik Middleware)
+header injection strategy applies to `/l2` as well.
+
+### Origin allowlist (`AERO_L2_ALLOWED_ORIGINS`)
+
+`aero-l2-proxy` enforces an Origin allowlist for WebSocket upgrades.
+
+This chart sets `AERO_L2_ALLOWED_ORIGINS` automatically to match the derived Ingress origin
+(`http(s)://<ingress.host>`), and you can add additional exact origins via:
+
+```yaml
+l2Proxy:
+  extraAllowedOrigins:
+    - "https://another-frontend.example.com"
+```
+
+### Session secret sharing (session-cookie auth)
+
+If your `aero-l2-proxy` auth mode verifies gateway-issued session cookies, it must use the same
+signing secret as the gateway (`SESSION_SECRET`).
+
+By default, this chart reuses the gateway secret configured under `secrets.*` (so both pods see the
+same `SESSION_SECRET` value). If you need to source `SESSION_SECRET` from a different Secret:
+
+```yaml
+l2Proxy:
+  sessionSecret:
+    existingSecret: "my-session-secret"
+    key: "SESSION_SECRET"
+```
+
+The chart also sets `AERO_L2_SESSION_SECRET` to the same value for forward-compatibility.
+
+## Metrics / ServiceMonitor (optional)
+
+`aero-l2-proxy` exposes Prometheus metrics at `GET /metrics` on port 8090.
+
+If you use the Prometheus Operator, you can enable a `ServiceMonitor`:
+
+```yaml
+l2Proxy:
+  serviceMonitor:
+    enabled: true
+```
+
 ## UDP relay (guest UDP)
 
-This chart deploys **only** the gateway. Guest UDP requires deploying the separate relay service under:
+This chart deploys `aero-gateway` (and optionally `aero-l2-proxy`). Guest UDP requires deploying the
+separate relay service under:
 
 - [`proxy/webrtc-udp-relay`](../../../../proxy/webrtc-udp-relay/)
 

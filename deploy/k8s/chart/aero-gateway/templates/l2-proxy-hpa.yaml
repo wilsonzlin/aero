@@ -1,0 +1,30 @@
+{{- if and .Values.l2Proxy.enabled .Values.l2Proxy.autoscaling.enabled -}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "aero-gateway.l2ProxyFullname" . }}
+  labels:
+    {{- include "aero-gateway.l2ProxyLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "aero-gateway.l2ProxyFullname" . }}
+  minReplicas: {{ .Values.l2Proxy.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.l2Proxy.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.l2Proxy.autoscaling.targetCPUUtilizationPercentage }}
+    {{- if .Values.l2Proxy.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.l2Proxy.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}

@@ -62,6 +62,15 @@ spec:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
+          {{- if .Values.l2Proxy.enabled }}
+          - path: {{ .Values.l2Proxy.ingress.path }}
+            pathType: {{ .Values.l2Proxy.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "aero-gateway.l2ProxyFullname" . }}
+                port:
+                  number: {{ .Values.l2Proxy.service.port }}
+          {{- end }}
           - path: {{ .Values.ingress.path }}
             pathType: {{ .Values.ingress.pathType }}
             backend:

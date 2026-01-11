@@ -1,0 +1,20 @@
+{{- if and .Values.l2Proxy.enabled .Values.l2Proxy.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "aero-gateway.l2ProxyFullname" . }}
+  labels:
+    {{- include "aero-gateway.l2ProxyLabels" . | nindent 4 }}
+    {{- with .Values.l2Proxy.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "aero-gateway.l2ProxySelectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.l2Proxy.serviceMonitor.path | quote }}
+      interval: {{ .Values.l2Proxy.serviceMonitor.interval | quote }}
+      scrapeTimeout: {{ .Values.l2Proxy.serviceMonitor.scrapeTimeout | quote }}
+{{- end }}

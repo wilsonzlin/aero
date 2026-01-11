@@ -10,24 +10,35 @@ The chart includes:
 - `Ingress` example (defaults to `ingress-nginx`) that:
   - terminates TLS (optional in dev; recommended in prod)
   - supports WebSocket upgrades (Aero uses `wss://<host>/tcp?v=1&host=<dst>&port=<dstPort>`)
-  - for the Option C L2 tunnel (`wss://<host>/l2`, subprotocol `aero-l2-tunnel-v1`), you must deploy
-    `aero-l2-proxy` separately and route `/l2` to it (see below)
+  - for the Option C L2 tunnel (`wss://<host>/l2`, subprotocol `aero-l2-tunnel-v1`), enable the
+    optional `aero-l2-proxy` deployment (`l2Proxy.enabled=true`) so `/l2` is routed to it
   - can inject security headers (COOP/COEP/CORP/OAC + CSP) required for `SharedArrayBuffer` / `crossOriginIsolated`
 - Optional in-cluster Redis (useful when running multiple gateway replicas)
 - Optional `NetworkPolicy` template to help restrict ingress/egress
 
 ## L2 tunnel proxy (`/l2`)
 
-This chart deploys **only** `aero-gateway`. If you are using the recommended Option C networking path
-(tunneling raw Ethernet frames over WebSocket), you also need to deploy:
+If you are using the recommended Option C networking path (tunneling raw Ethernet frames over WebSocket),
+you should deploy the L2 tunnel proxy:
 
 - `aero-l2-proxy` (Rust service under `crates/aero-l2-proxy`)
 
-And configure your Ingress to route:
+This Helm chart can deploy it for you. Enable:
+
+```yaml
+l2Proxy:
+  enabled: true
+  image:
+    repository: ghcr.io/<owner>/aero-l2-proxy
+    tag: "<REPLACE_WITH_IMAGE_TAG>"
+```
+
+When enabled, the chart's Ingress routes:
 
 - `/l2` → `aero-l2-proxy` Service (port 8090)
+- everything else → `aero-gateway` Service
 
-Example nginx Ingress path addition (snippet; adapt to your chart/Ingress structure):
+If you manage your Ingress separately, the equivalent nginx Ingress path addition looks like:
 
 ```yaml
 paths:
@@ -113,6 +124,7 @@ CHART=deploy/k8s/chart/aero-gateway
 for values in \
   values-dev.yaml \
   values-prod.yaml \
+  values-prod-with-l2.yaml \
   values-traefik.yaml \
   values-prod-certmanager.yaml \
   values-prod-certmanager-issuer.yaml \
@@ -123,6 +135,7 @@ done
 for values in \
   values-dev.yaml \
   values-prod.yaml \
+  values-prod-with-l2.yaml \
   values-traefik.yaml \
   values-prod-certmanager.yaml \
   values-prod-certmanager-issuer.yaml \
@@ -290,6 +303,7 @@ The chart ships example values you can copy locally:
 
 - `deploy/k8s/chart/aero-gateway/values-dev.yaml` – basic dev defaults
 - `deploy/k8s/chart/aero-gateway/values-prod.yaml` – production-ish defaults (TLS + 2 replicas)
+- `deploy/k8s/chart/aero-gateway/values-prod-with-l2.yaml` – production-ish defaults with the L2 proxy enabled
 - `deploy/k8s/chart/aero-gateway/values-traefik.yaml` – Traefik Ingress + Middleware headers
 - `deploy/k8s/chart/aero-gateway/values-prod-appheaders.yaml` – production with app-level COOP/COEP (no ingress snippets)
 - `deploy/k8s/chart/aero-gateway/values-prod-certmanager.yaml` – production with cert-manager-managed TLS

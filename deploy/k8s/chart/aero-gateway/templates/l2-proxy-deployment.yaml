@@ -1,0 +1,153 @@
+{{- if .Values.l2Proxy.enabled -}}
+{{- $configEnabled := or .Values.config.create .Values.config.name -}}
+{{- $secretEnabled := or .Values.secrets.create .Values.secrets.existingSecret -}}
+
+{{- $allowedOrigins := list -}}
+{{- if and .Values.ingress.enabled .Values.ingress.host -}}
+  {{- $scheme := "http" -}}
+  {{- if .Values.ingress.tls.enabled -}}
+    {{- $scheme = "https" -}}
+  {{- end -}}
+  {{- $allowedOrigins = append $allowedOrigins (printf "%s://%s" $scheme .Values.ingress.host) -}}
+{{- end -}}
+{{- range $origin := (.Values.l2Proxy.extraAllowedOrigins | default (list)) -}}
+  {{- if $origin -}}
+    {{- $allowedOrigins = append $allowedOrigins $origin -}}
+  {{- end -}}
+{{- end -}}
+{{- $allowedOriginsCsv := join "," $allowedOrigins -}}
+
+{{- $sessionSecretName := "" -}}
+{{- if .Values.l2Proxy.sessionSecret.existingSecret -}}
+  {{- $sessionSecretName = .Values.l2Proxy.sessionSecret.existingSecret -}}
+{{- else if $secretEnabled -}}
+  {{- $sessionSecretName = include "aero-gateway.effectiveSecretName" . -}}
+{{- end -}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aero-gateway.l2ProxyFullname" . }}
+  labels:
+    {{- include "aero-gateway.l2ProxyLabels" . | nindent 4 }}
+spec:
+  replicas: {{ ternary .Values.l2Proxy.autoscaling.minReplicas .Values.l2Proxy.replicaCount .Values.l2Proxy.autoscaling.enabled }}
+  selector:
+    matchLabels:
+      {{- include "aero-gateway.l2ProxySelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aero-gateway.l2ProxySelectorLabels" . | nindent 8 }}
+        {{- with .Values.l2Proxy.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if .Values.config.create }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.secrets.create }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.l2Proxy.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ default (include "aero-gateway.fullname" .) .Values.serviceAccount.name }}
+      {{- end }}
+      automountServiceAccountToken: {{ default false .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.l2Proxy.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.l2Proxy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.l2Proxy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.l2Proxy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.l2Proxy.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: aero-l2-proxy
+          image: "{{ .Values.l2Proxy.image.repository }}:{{ default .Chart.AppVersion .Values.l2Proxy.image.tag }}"
+          imagePullPolicy: {{ .Values.l2Proxy.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.l2Proxy.containerPort }}
+              protocol: TCP
+          env:
+            - name: AERO_L2_PROXY_LISTEN_ADDR
+              value: {{ printf "0.0.0.0:%v" .Values.l2Proxy.containerPort | quote }}
+            {{- if $allowedOriginsCsv }}
+            - name: AERO_L2_ALLOWED_ORIGINS
+              value: {{ $allowedOriginsCsv | quote }}
+            {{- end }}
+            {{- if .Values.l2Proxy.open }}
+            - name: AERO_L2_OPEN
+              value: "1"
+            {{- end }}
+            {{- if .Values.l2Proxy.auth.mode }}
+            - name: AERO_L2_AUTH_MODE
+              value: {{ .Values.l2Proxy.auth.mode | quote }}
+            {{- end }}
+            {{- if $sessionSecretName }}
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $sessionSecretName }}
+                  key: {{ .Values.l2Proxy.sessionSecret.key | quote }}
+            - name: AERO_L2_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $sessionSecretName }}
+                  key: {{ .Values.l2Proxy.sessionSecret.key | quote }}
+            {{- end }}
+            {{- with .Values.l2Proxy.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if or $configEnabled $secretEnabled }}
+          envFrom:
+            {{- if $configEnabled }}
+            - configMapRef:
+                name: {{ include "aero-gateway.configName" . }}
+            {{- end }}
+            {{- if $secretEnabled }}
+            - secretRef:
+                name: {{ include "aero-gateway.effectiveSecretName" . }}
+            {{- end }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.l2Proxy.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.l2Proxy.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

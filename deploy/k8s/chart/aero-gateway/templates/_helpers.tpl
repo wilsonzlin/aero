@@ -28,9 +28,27 @@ app.kubernetes.io/name: {{ include "aero-gateway.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "aero-gateway.l2ProxyFullname" -}}
+{{- printf "%s-l2-proxy" (include "aero-gateway.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "aero-gateway.l2ProxySelectorLabels" -}}
+app.kubernetes.io/name: aero-l2-proxy
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
 {{- define "aero-gateway.labels" -}}
 helm.sh/chart: {{ include "aero-gateway.chart" . }}
 {{ include "aero-gateway.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "aero-gateway.l2ProxyLabels" -}}
+helm.sh/chart: {{ include "aero-gateway.chart" . }}
+{{ include "aero-gateway.l2ProxySelectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}

@@ -1,0 +1,51 @@
+# Example values for production clusters using Option C (L2 tunnel proxy).
+# Copy this file locally and replace placeholders before deploying.
+
+gateway:
+  replicaCount: 2
+  image:
+    tag: "<REPLACE_WITH_GATEWAY_IMAGE_TAG>"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+l2Proxy:
+  enabled: true
+  image:
+    tag: "<REPLACE_WITH_L2_PROXY_IMAGE_TAG>"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # The chart will automatically set AERO_L2_ALLOWED_ORIGINS to the derived ingress origin
+  # (https://<ingress.host> when TLS is enabled) and route `/l2` to the proxy.
+  #
+  # Optional: configure the proxy auth mode when using session-cookie auth.
+  # (Exact supported values depend on the proxy implementation.)
+  auth:
+    mode: "session-cookie"
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+ingress:
+  host: "aero.example.com"
+  tls:
+    enabled: true
+    secretName: "aero-tls"
+
+# Recommended for multi-replica deployments.
+redis:
+  enabled: true
+
+secrets:
+  data:
+    SESSION_SECRET: "<REPLACE_WITH_RANDOM_SECRET>"

@@ -78,6 +78,7 @@ done
 values_files=(
   values-dev.yaml
   values-prod.yaml
+  values-prod-with-l2.yaml
   values-traefik.yaml
   values-prod-certmanager.yaml
   values-prod-certmanager-issuer.yaml

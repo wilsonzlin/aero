@@ -1,0 +1,17 @@
+{{- if .Values.l2Proxy.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aero-gateway.l2ProxyFullname" . }}
+  labels:
+    {{- include "aero-gateway.l2ProxyLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.l2Proxy.service.port }}
+      protocol: TCP
+      targetPort: http
+  selector:
+    {{- include "aero-gateway.l2ProxySelectorLabels" . | nindent 4 }}
+{{- end }}
