@@ -205,8 +205,7 @@ async fn run_case(max_pending: u32, expect_servfail: bool) {
     let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
     let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
-    let _max_connections_per_session =
-        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_connections_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
     let _allow_private_ips = EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS");
@@ -264,4 +263,3 @@ async fn stack_max_pending_dns_env_controls_dns_servfail() {
     run_case(0, true).await;
     run_case(1, false).await;
 }
-
