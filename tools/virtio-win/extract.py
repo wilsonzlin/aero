@@ -13,6 +13,8 @@ for the Win7-relevant subtrees Aero uses, plus common root-level license/notice 
 and small provenance metadata files (e.g. VERSION markers).
 """
 
+from __future__ import annotations
+
 import argparse
 import dataclasses
 import datetime as _dt
