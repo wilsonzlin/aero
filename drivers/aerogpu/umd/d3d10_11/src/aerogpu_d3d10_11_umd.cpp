@@ -4246,6 +4246,63 @@ struct DynamicConstantBufferUnmapThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
 };
 
 template <typename FnPtr>
+struct SetRenderTargetsAndUnorderedAccessViewsThunk;
+
+template <typename Ret, typename... Args>
+struct SetRenderTargetsAndUnorderedAccessViewsThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+
+    // Expected signature:
+    //   (hCtx, NumRTVs, phRTVs, hDSV, UAVStartSlot, NumUAVs, phUAVs, pUAVInitialCounts)
+    if constexpr (sizeof...(Args) == 8) {
+      const auto hCtx = std::get<0>(tup);
+      const uint32_t num_rtvs = to_u32(std::get<1>(tup));
+      const auto* ph_rtvs = std::get<2>(tup);
+      const auto h_dsv = std::get<3>(tup);
+      (void)to_u32(std::get<4>(tup)); // uav_start_slot (ignored)
+      const uint32_t num_uavs = to_u32(std::get<5>(tup));
+      const auto* ph_uavs = std::get<6>(tup);
+      (void)std::get<7>(tup); // pUAVInitialCounts (ignored)
+
+      if (!hCtx.pDrvPrivate) {
+        if constexpr (!std::is_void_v<Ret>) {
+          return E_INVALIDARG;
+        } else {
+          return;
+        }
+      }
+
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      if (!ctx || !ctx->device) {
+        if constexpr (!std::is_void_v<Ret>) {
+          return E_INVALIDARG;
+        } else {
+          return;
+        }
+      }
+
+      // Always bind render targets (supported subset). UAV binding is unsupported, but unbinding is benign.
+      SetRenderTargets11(hCtx, num_rtvs, ph_rtvs, h_dsv);
+      if (AnyNonNullHandles(ph_uavs, num_uavs)) {
+        SetError(ctx->device, E_NOTIMPL);
+        if constexpr (!std::is_void_v<Ret>) {
+          return E_NOTIMPL;
+        }
+      } else {
+        if constexpr (!std::is_void_v<Ret>) {
+          return S_OK;
+        }
+      }
+    } else {
+      if constexpr (!std::is_void_v<Ret>) {
+        return E_NOTIMPL;
+      }
+    }
+  }
+};
+
+template <typename FnPtr>
 struct UpdateSubresourceUPThunk;
 
 template <typename Ret, typename... Args>
@@ -5031,6 +5088,11 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs.pfnSetBlendState = &SetBlendState11;
   ctx_funcs.pfnSetDepthStencilState = &SetDepthStencilState11;
   ctx_funcs.pfnSetRenderTargets = &SetRenderTargets11;
+
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnSetRenderTargetsAndUnorderedAccessViews);
+    ctx_funcs.pfnSetRenderTargetsAndUnorderedAccessViews = &SetRenderTargetsAndUnorderedAccessViewsThunk<Fn>::Impl;
+  }
 
   ctx_funcs.pfnClearRenderTargetView = &ClearRenderTargetView11;
   ctx_funcs.pfnClearDepthStencilView = &ClearDepthStencilView11;
