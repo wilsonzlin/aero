@@ -333,7 +333,18 @@ npm run bench:browser -- --iterations 7 --out-dir perf-results/local --url http:
 The GPU bench runner executes scenario scripts in a real browser and emits a JSON report:
 
 ```bash
-npm run bench:gpu -- --scenarios vga_text_scroll,vbe_lfb_blit --headless false --output gpu_bench.json
+npm run bench:gpu -- --scenarios vga_text_scroll,vbe_lfb_blit --iterations 7 --headless false --output gpu_bench.json
+```
+
+Compare two GPU bench reports (baseline vs candidate) and emit a Markdown report (plus machine-readable JSON):
+
+```bash
+node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+  --baseline gpu_bench_base.json \
+  --current gpu_bench_head.json \
+  --outDir gpu_bench_compare \
+  --thresholdPct 15 \
+  --cvThreshold 0.5
 ```
 
 ### Interpreting summary output and variance warnings

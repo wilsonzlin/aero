@@ -1,87 +1,166 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compareGpuBenchmarks } from "../../scripts/compare_gpu_benchmarks.ts";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-test("compareGpuBenchmarks fails on regressions beyond threshold", () => {
-  const baseline = {
-    meta: { gitSha: "base", iterations: 3 },
-    summary: {
-      scenarios: {
-        vbe_lfb_blit: {
-          name: "VBE LFB full-screen blit",
-          status: "ok",
-          metrics: {
-            frameTimeMsP95: { median: 100, p50: 100, mean: 100, stdev: 0, cv: 0.1, p95: 100, n: 3 },
+const writeJson = async (filePath: string, value: unknown) => {
+  await writeFile(filePath, JSON.stringify(value, null, 2));
+};
+
+const runCompare = ({ baseline, candidate, outDir }: { baseline: string; candidate: string; outDir: string }) => {
+  return spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      "scripts/compare_gpu_benchmarks.ts",
+      "--baseline",
+      baseline,
+      "--candidate",
+      candidate,
+      "--out-dir",
+      outDir,
+      "--thresholdPct",
+      "15",
+      "--cvThreshold",
+      "0.5",
+    ],
+    { encoding: "utf8" },
+  );
+};
+
+test("compare_gpu_benchmarks exits 1 on regression beyond threshold", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "aero-gpu-compare-"));
+  try {
+    const baselinePath = path.join(dir, "baseline.json");
+    const candidatePath = path.join(dir, "candidate.json");
+    const outDir = path.join(dir, "out");
+
+    await writeJson(baselinePath, {
+      meta: { gitSha: "base", iterations: 3 },
+      summary: {
+        scenarios: {
+          vbe_lfb_blit: {
+            name: "VBE LFB full-screen blit",
+            status: "ok",
+            metrics: { frameTimeMsP95: { median: 100, cv: 0.1, n: 3 } },
           },
         },
       },
-    },
-  };
+    });
 
-  const current = {
-    meta: { gitSha: "head", iterations: 3 },
-    summary: {
-      scenarios: {
-        vbe_lfb_blit: {
-          name: "VBE LFB full-screen blit",
-          status: "ok",
-          metrics: {
-            frameTimeMsP95: { median: 120, p50: 120, mean: 120, stdev: 0, cv: 0.1, p95: 120, n: 3 },
+    await writeJson(candidatePath, {
+      meta: { gitSha: "head", iterations: 3 },
+      summary: {
+        scenarios: {
+          vbe_lfb_blit: {
+            name: "VBE LFB full-screen blit",
+            status: "ok",
+            metrics: { frameTimeMsP95: { median: 120, cv: 0.1, n: 3 } },
           },
         },
       },
-    },
-  };
+    });
 
-  const result = compareGpuBenchmarks({ baseline, current, thresholdPct: 15, cvThreshold: 0.5 });
-  assert.equal(result.status, "fail");
-  assert.equal(result.hasRegression, true);
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir });
+    assert.equal(result.status, 1, `expected exit code 1, got ${result.status}\n${result.stderr}`);
 
-  const row = result.rows.find((r) => r.scenarioId === "vbe_lfb_blit" && r.metric === "frameTimeMsP95");
-  assert.ok(row, "expected a comparison row for frameTimeMsP95");
-  assert.equal(row.regression, true);
-  assert.equal(row.unstable, false);
-  assert.ok(row.deltaPct != null && row.deltaPct > 0.15);
+    const summary = JSON.parse(await readFile(path.join(outDir, "summary.json"), "utf8"));
+    assert.equal(summary.status, "regression");
+
+    const md = await readFile(path.join(outDir, "compare.md"), "utf8");
+    assert.ok(md.includes("# GPU perf comparison"), "expected markdown header");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test("compareGpuBenchmarks returns unstable on extreme coefficient-of-variation", () => {
-  const baseline = {
-    meta: { gitSha: "base", iterations: 3 },
-    summary: {
-      scenarios: {
-        vbe_lfb_blit: {
-          name: "VBE LFB full-screen blit",
-          status: "ok",
-          metrics: {
-            frameTimeMsP95: { median: 100, p50: 100, mean: 100, stdev: 0, cv: 0.1, p95: 100, n: 3 },
+test("compare_gpu_benchmarks exits 2 on unstable CV", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "aero-gpu-compare-"));
+  try {
+    const baselinePath = path.join(dir, "baseline.json");
+    const candidatePath = path.join(dir, "candidate.json");
+    const outDir = path.join(dir, "out");
+
+    await writeJson(baselinePath, {
+      meta: { gitSha: "base", iterations: 3 },
+      summary: {
+        scenarios: {
+          vbe_lfb_blit: {
+            name: "VBE LFB full-screen blit",
+            status: "ok",
+            metrics: { frameTimeMsP95: { median: 100, cv: 0.1, n: 3 } },
           },
         },
       },
-    },
-  };
+    });
 
-  const current = {
-    meta: { gitSha: "head", iterations: 3 },
-    summary: {
-      scenarios: {
-        vbe_lfb_blit: {
-          name: "VBE LFB full-screen blit",
-          status: "ok",
-          metrics: {
-            frameTimeMsP95: { median: 100, p50: 100, mean: 100, stdev: 0, cv: 0.9, p95: 100, n: 3 },
+    await writeJson(candidatePath, {
+      meta: { gitSha: "head", iterations: 3 },
+      summary: {
+        scenarios: {
+          vbe_lfb_blit: {
+            name: "VBE LFB full-screen blit",
+            status: "ok",
+            metrics: { frameTimeMsP95: { median: 100, cv: 0.9, n: 3 } },
           },
         },
       },
-    },
-  };
+    });
 
-  const result = compareGpuBenchmarks({ baseline, current, thresholdPct: 15, cvThreshold: 0.5 });
-  assert.equal(result.status, "unstable");
-  assert.equal(result.isUnstable, true);
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir });
+    assert.equal(result.status, 2, `expected exit code 2, got ${result.status}\n${result.stderr}`);
 
-  const row = result.rows.find((r) => r.scenarioId === "vbe_lfb_blit" && r.metric === "frameTimeMsP95");
-  assert.ok(row, "expected a comparison row for frameTimeMsP95");
-  assert.equal(row.unstable, true);
-  assert.equal(row.regression, false);
+    const summary = JSON.parse(await readFile(path.join(outDir, "summary.json"), "utf8"));
+    assert.equal(summary.status, "unstable");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
+test("compare_gpu_benchmarks supports aero-gpu-bench schemaVersion=1 baseline", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "aero-gpu-compare-"));
+  try {
+    const baselinePath = path.join(dir, "baseline.json");
+    const candidatePath = path.join(dir, "candidate.json");
+    const outDir = path.join(dir, "out");
+
+    await writeJson(baselinePath, {
+      schemaVersion: 1,
+      tool: "aero-gpu-bench",
+      startedAt: "2025-01-01T00:00:00Z",
+      finishedAt: "2025-01-01T00:00:01Z",
+      environment: { userAgent: "UA", webgpu: false, webgl2: true },
+      scenarios: {
+        vbe_lfb_blit: {
+          id: "vbe_lfb_blit",
+          name: "VBE LFB full-screen blit",
+          status: "ok",
+          durationMs: 123,
+          params: {},
+          telemetry: {},
+          derived: { frameTimeMsP95: 100 },
+        },
+      },
+    });
+
+    await writeJson(candidatePath, {
+      meta: { gitSha: "head", iterations: 3 },
+      summary: {
+        scenarios: {
+          vbe_lfb_blit: {
+            name: "VBE LFB full-screen blit",
+            status: "ok",
+            metrics: { frameTimeMsP95: { median: 120, cv: 0.1, n: 3 } },
+          },
+        },
+      },
+    });
+
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir });
+    assert.equal(result.status, 1, `expected exit code 1, got ${result.status}\n${result.stderr}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
