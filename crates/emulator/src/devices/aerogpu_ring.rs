@@ -135,6 +135,44 @@ impl AeroGpuRingHeader {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::devices::aerogpu_regs::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR};
+
+    fn make_valid_header_with_abi(abi_version: u32) -> AeroGpuRingHeader {
+        let entry_count = 8;
+        let entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES;
+        let size_bytes =
+            (AEROGPU_RING_HEADER_SIZE_BYTES + (entry_count as u64 * entry_stride_bytes as u64)) as u32;
+
+        AeroGpuRingHeader {
+            magic: AEROGPU_RING_MAGIC,
+            abi_version,
+            size_bytes,
+            entry_count,
+            entry_stride_bytes,
+            flags: 0,
+            head: 0,
+            tail: 0,
+        }
+    }
+
+    #[test]
+    fn ring_header_validation_accepts_unknown_minor() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 999);
+        let hdr = make_valid_header_with_abi(abi_version);
+        assert!(hdr.is_valid(hdr.size_bytes));
+    }
+
+    #[test]
+    fn ring_header_validation_rejects_unknown_major() {
+        let abi_version = ((AEROGPU_ABI_MAJOR + 1) << 16) | AEROGPU_ABI_MINOR;
+        let hdr = make_valid_header_with_abi(abi_version);
+        assert!(!hdr.is_valid(hdr.size_bytes));
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AeroGpuSubmitDesc {
     pub desc_size_bytes: u32,
