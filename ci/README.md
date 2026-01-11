@@ -58,6 +58,21 @@ WDK redistributables (WDF coinstaller):
 
 See: `docs/16-driver-packaging-and-signing.md`.
 
+## `ci/sign-drivers.ps1`
+
+Test-signs staged driver packages under `out/packages/` (or `-InputRoot`) using `signtool.exe`.
+
+CI signs:
+
+- `*.sys` (kernel-mode drivers)
+- `*.dll` (user-mode components like display driver UMDs and KMDF coinstallers)
+- `*.cat` (catalogs)
+
+And verifies:
+
+- `.sys`: `signtool verify /kp /v`
+- `.dll` + `.cat`: `signtool verify /v`
+
 ## `ci/package-drivers.ps1`
 
 Packages signed driver staging folders from `out/packages/` into release artifacts under `out/artifacts/`.
