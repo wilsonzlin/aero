@@ -57,7 +57,6 @@ call :apply_arg "%~2" || exit /b 1
 
 set "HAVE_X64=0"
 echo %ARCHES% | findstr /i "x64" >nul 2>nul && set "HAVE_X64=1"
-
 if not exist "%KMD_DIR%" (
   echo ERROR: Expected KMD directory not found: "%KMD_DIR%"
   echo        The KMD task should populate drivers\aerogpu\kmd\
@@ -83,6 +82,13 @@ if not exist "%UMD_D3D9_PROJ%" (
 set "HAVE_D3D10_11=0"
 if exist "%UMD_D3D10_11_SLN%" (
   set "HAVE_D3D10_11=1"
+)
+if "%HAVE_D3D10_11%"=="1" (
+  rem The D3D10/11 UMD is compiled against the Win7-era D3D DDI headers.
+  rem Provide WDKROOT (typically WDK 7.1: C:\WinDDK\7600.16385.1) so MSBuild
+  rem can find d3d10umddi.h/d3d11umddi.h.
+  call :ensure_wdk_root
+  if errorlevel 1 exit /b 1
 )
 if "%HAVE_D3D10_11%"=="0" (
   echo NOTE: Optional D3D10/11 UMD not found; skipping:
@@ -208,5 +214,31 @@ if errorlevel 1 (
   )
 
 endlocal & exit /b 0
+
+rem -----------------------------------------------------------------------------
+rem :ensure_wdk_root
+rem
+rem The D3D10/11 UMD builds against Win7-era D3D DDI headers (d3d10umddi.h /
+rem d3d11umddi.h). These are most readily available via WDK 7.1 (7600).
+rem Set WDKROOT (and WINDDK for compatibility) if not already configured.
+rem -----------------------------------------------------------------------------
+:ensure_wdk_root
+if defined WDKROOT goto :wdk_ok
+if defined WINDDK set "WDKROOT=%WINDDK%" & goto :wdk_ok
+if defined WDK_ROOT set "WDKROOT=%WDK_ROOT%" & goto :wdk_ok
+
+if exist "C:\WinDDK\7600.16385.1\inc\api\d3d10umddi.h" (
+  set "WDKROOT=C:\WinDDK\7600.16385.1"
+  goto :wdk_ok
+)
+
+echo ERROR: WDKROOT not set and WDK 7.1 headers were not found.
+echo        Set WDKROOT (or WINDDK) to your WDK 7.1 root, e.g.:
+echo          set WDKROOT=C:\WinDDK\7600.16385.1
+exit /b 1
+
+:wdk_ok
+if not defined WINDDK set "WINDDK=%WDKROOT%"
+exit /b 0
 
 

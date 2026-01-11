@@ -222,7 +222,14 @@ On a clean Win7 SP1 VM:
 
 ## 6.1) Confirm which UMD DLL actually loaded (32-bit vs 64-bit)
 
-On Win7 x64 it’s possible for a test to “work” while the wrong UMD is being used (e.g. fallback to Microsoft / WARP). To confirm the **real** AeroGPU UMD loaded for a given process bitness:
+On Win7 x64 it’s possible for a test to “work” while the wrong UMD is being used (e.g. fallback to Microsoft / WARP).
+
+For `aerogpu_dx11.inf`, the expected install on x64 is:
+
+- Native x64 processes load: `C:\Windows\System32\aerogpu_d3d10_x64.dll` (`UserModeDriverName`)
+- WOW64 (32-bit) processes load: `C:\Windows\SysWOW64\aerogpu_d3d10.dll` (`UserModeDriverNameWow`)
+
+To confirm the **real** AeroGPU UMD loaded for a given process bitness:
 
 1. Run the relevant test executable:
    - D3D9: `drivers\aerogpu\tests\win7\bin\d3d9ex_triangle.exe` (build/run both x86 and x64)
@@ -234,6 +241,8 @@ On Win7 x64 it’s possible for a test to “work” while the wrong UMD is bein
    - **DebugView**: capture `OutputDebugString` output from the UMDs.
      - D3D9 logs `aerogpu-d3d9: OpenAdapter2 ...`
      - D3D10/11 logs `aerogpu-d3d10_11: OpenAdapter.. ...`
+3. (Optional) After each run, confirm fences advance:
+   - `drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --query-fence`
 
 ## 6.2) Optional: run the AeroGPU debug/control tool (dbgctl)
 

@@ -2966,6 +2966,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   funcs.pfnMap = &Map;
   funcs.pfnUnmap = &Unmap;
 
+  // The runtime-provided device function table is typically a superset of the
+  // subset we populate here. Ensure the full table is zeroed first so any
+  // unimplemented entrypoints are nullptr (instead of uninitialized garbage).
+  std::memset(pCreateDevice->pDeviceFuncs, 0, sizeof(*pCreateDevice->pDeviceFuncs));
   *out_funcs = funcs;
   return S_OK;
 }
