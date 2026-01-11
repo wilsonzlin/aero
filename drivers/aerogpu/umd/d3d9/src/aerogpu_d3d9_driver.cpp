@@ -1040,6 +1040,14 @@ HRESULT invoke_submit_callback(Device* dev, CallbackFn cb, uint32_t command_leng
   // updated pointers and reset the book-keeping so the next submission starts
   // from a clean command stream header.
   update_context_from_submit_args(dev, args);
+  // Keep the command stream writer bound to the currently active command buffer.
+  // The runtime is allowed to return a new DMA buffer pointer/size in the
+  // callback out-params; failing to rebind would cause us to write into a stale
+  // buffer on the next submission.
+  if (dev->wddm_context.pCommandBuffer &&
+      dev->wddm_context.CommandBufferSize >= sizeof(aerogpu_cmd_stream_header)) {
+    dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
+  }
   dev->wddm_context.reset_submission_buffers();
   return hr;
 }
