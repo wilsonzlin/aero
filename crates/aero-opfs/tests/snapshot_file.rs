@@ -59,6 +59,76 @@ impl OpfsSyncFileHandle for MockHandle {
     }
 }
 
+/// Sparse in-memory handle that can simulate multi-GB offsets without allocating a multi-GB `Vec`.
+#[derive(Default, Debug)]
+struct SparseMockHandle {
+    size: u64,
+    bytes: std::collections::BTreeMap<u64, u8>,
+}
+
+impl OpfsSyncFileHandle for SparseMockHandle {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
+        if offset >= self.size {
+            return Ok(0);
+        }
+
+        let max_len = (self.size - offset).min(buf.len() as u64) as usize;
+        buf[..max_len].fill(0);
+
+        let end = offset
+            .checked_add(max_len as u64)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+
+        for (pos, byte) in self.bytes.range(offset..end) {
+            let idx: usize = (*pos - offset)
+                .try_into()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+            buf[idx] = *byte;
+        }
+
+        Ok(max_len)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> std::io::Result<usize> {
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+        self.size = self.size.max(end);
+
+        for (idx, byte) in buf.iter().copied().enumerate() {
+            let pos = offset
+                .checked_add(idx as u64)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+            self.bytes.insert(pos, byte);
+        }
+
+        Ok(buf.len())
+    }
+
+    fn get_size(&mut self) -> std::io::Result<u64> {
+        Ok(self.size)
+    }
+
+    fn truncate(&mut self, size: u64) -> std::io::Result<()> {
+        self.size = size;
+
+        let keys: Vec<u64> = self.bytes.range(size..).map(|(k, _)| *k).collect();
+        for k in keys {
+            self.bytes.remove(&k);
+        }
+
+        Ok(())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn close(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn read_to_end_seek_start<R: Read + Seek>(mut r: R) -> Vec<u8> {
     r.seek(SeekFrom::Start(0)).unwrap();
     let mut out = Vec::new();
@@ -149,4 +219,28 @@ fn write_after_close_errors() {
 
     let err = file.write(b"x").unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+}
+
+#[test]
+fn large_seek_uses_u64_offsets() {
+    let mut file = OpfsSyncFile::from_handle(SparseMockHandle::default());
+    let offset = 5u64 * 1024 * 1024 * 1024; // 5 GiB, exercises >u32 offsets.
+
+    file.seek(SeekFrom::Start(offset)).unwrap();
+    file.write_all(b"hello").unwrap();
+
+    assert_eq!(file.seek(SeekFrom::End(0)).unwrap(), offset + 5);
+
+    file.seek(SeekFrom::Start(offset - 2)).unwrap();
+    let mut buf = [0u8; 7];
+    file.read_exact(&mut buf).unwrap();
+    assert_eq!(&buf, b"\0\0hello");
+
+    file.truncate(offset + 2).unwrap();
+    assert_eq!(file.seek(SeekFrom::End(0)).unwrap(), offset + 2);
+
+    file.seek(SeekFrom::Start(offset)).unwrap();
+    let mut head = [0u8; 2];
+    file.read_exact(&mut head).unwrap();
+    assert_eq!(&head, b"he");
 }
