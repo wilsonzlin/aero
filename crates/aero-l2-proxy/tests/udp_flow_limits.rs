@@ -265,22 +265,21 @@ async fn udp_flow_cap_drops_new_flows() {
         let guest_port = 50_000 + i;
         let payload = format!("hi-{i}").into_bytes();
         let frame = wrap_udp_ipv4_eth(
-            guest_mac,
-            stack_mac,
-            guest_ip,
-            remote_ip,
-            guest_port,
-            udp_port,
-            &payload,
+            guest_mac, stack_mac, guest_ip, remote_ip, guest_port, udp_port, &payload,
         );
         ws_tx
             .send(Message::Binary(encode_l2_frame(&frame).into()))
             .await
             .unwrap();
 
-        let resp = tokio::time::timeout(Duration::from_secs(2), wait_for_udp_frame(&mut ws_rx, |udp| {
-            udp.src_port() == udp_port && udp.dst_port() == guest_port && udp.payload() == payload
-        }))
+        let resp = tokio::time::timeout(
+            Duration::from_secs(2),
+            wait_for_udp_frame(&mut ws_rx, |udp| {
+                udp.src_port() == udp_port
+                    && udp.dst_port() == guest_port
+                    && udp.payload() == payload
+            }),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -304,11 +303,14 @@ async fn udp_flow_cap_drops_new_flows() {
         .await
         .unwrap();
 
-    let dropped = tokio::time::timeout(Duration::from_millis(200), wait_for_udp_frame(&mut ws_rx, |udp| {
-        udp.src_port() == udp_port
-            && udp.dst_port() == dropped_guest_port
-            && udp.payload() == dropped_payload
-    }))
+    let dropped = tokio::time::timeout(
+        Duration::from_millis(200),
+        wait_for_udp_frame(&mut ws_rx, |udp| {
+            udp.src_port() == udp_port
+                && udp.dst_port() == dropped_guest_port
+                && udp.payload() == dropped_payload
+        }),
+    )
     .await;
     assert!(dropped.is_err(), "unexpected response for capped UDP flow");
 
@@ -378,22 +380,19 @@ async fn udp_flow_idle_timeout_closes_flow() {
     let guest_port = 50_000;
     let payload = b"hi-idle".to_vec();
     let frame = wrap_udp_ipv4_eth(
-        guest_mac,
-        stack_mac,
-        guest_ip,
-        remote_ip,
-        guest_port,
-        udp_port,
-        &payload,
+        guest_mac, stack_mac, guest_ip, remote_ip, guest_port, udp_port, &payload,
     );
     ws_tx
         .send(Message::Binary(encode_l2_frame(&frame).into()))
         .await
         .unwrap();
 
-    let resp = tokio::time::timeout(Duration::from_secs(2), wait_for_udp_frame(&mut ws_rx, |udp| {
-        udp.src_port() == udp_port && udp.dst_port() == guest_port && udp.payload() == payload
-    }))
+    let resp = tokio::time::timeout(
+        Duration::from_secs(2),
+        wait_for_udp_frame(&mut ws_rx, |udp| {
+            udp.src_port() == udp_port && udp.dst_port() == guest_port && udp.payload() == payload
+        }),
+    )
     .await
     .unwrap()
     .unwrap();
@@ -423,9 +422,12 @@ async fn udp_flow_idle_timeout_closes_flow() {
         .send(Message::Binary(encode_l2_frame(&frame).into()))
         .await
         .unwrap();
-    let resp = tokio::time::timeout(Duration::from_secs(2), wait_for_udp_frame(&mut ws_rx, |udp| {
-        udp.src_port() == udp_port && udp.dst_port() == guest_port && udp.payload() == payload
-    }))
+    let resp = tokio::time::timeout(
+        Duration::from_secs(2),
+        wait_for_udp_frame(&mut ws_rx, |udp| {
+            udp.src_port() == udp_port && udp.dst_port() == guest_port && udp.payload() == payload
+        }),
+    )
     .await
     .unwrap()
     .unwrap();
@@ -436,4 +438,3 @@ async fn udp_flow_idle_timeout_closes_flow() {
     proxy.shutdown().await;
     udp_echo.shutdown().await;
 }
-

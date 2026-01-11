@@ -368,19 +368,11 @@ impl ProxyConfig {
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(64);
 
-        let max_udp_flows_per_tunnel = read_env_usize_clamped(
-            "AERO_L2_MAX_UDP_FLOWS_PER_TUNNEL",
-            256,
-            0,
-            65_535,
-        );
+        let max_udp_flows_per_tunnel =
+            read_env_usize_clamped("AERO_L2_MAX_UDP_FLOWS_PER_TUNNEL", 256, 0, 65_535);
 
-        let udp_flow_idle_timeout_ms = read_env_u64_clamped(
-            "AERO_L2_UDP_FLOW_IDLE_TIMEOUT_MS",
-            60_000,
-            0,
-            86_400_000,
-        );
+        let udp_flow_idle_timeout_ms =
+            read_env_u64_clamped("AERO_L2_UDP_FLOW_IDLE_TIMEOUT_MS", 60_000, 0, 86_400_000);
         let udp_flow_idle_timeout =
             (udp_flow_idle_timeout_ms > 0).then(|| Duration::from_millis(udp_flow_idle_timeout_ms));
 
