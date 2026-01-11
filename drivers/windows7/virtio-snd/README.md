@@ -192,18 +192,32 @@ To generate the optional QEMU/transitional catalog, run:
 From `drivers/windows7/virtio-snd/`:
 
 ```cmd
-.\scripts\sign-driver.cmd
+.\scripts\sign-driver.cmd [contract|legacy|all] [PFX_PASSWORD]
 ```
 
-`sign-driver.cmd` will prompt for the PFX password. You can also pass it as the first argument or set `PFX_PASSWORD` in the environment.
+`sign-driver.cmd` will prompt for the PFX password. You can also set `PFX_PASSWORD` in the environment.
 
-This signs:
+Notes:
+
+- The default variant is `contract`.
+- Backwards compatible: if the first argument is not a variant, it is treated as the PFX password (and the `contract` variant is used).
+
+This signs (contract v1):
 
 - `inf\virtiosnd.sys`
 - `inf\aero-virtio-snd.cat`
-- `inf\virtiosnd_legacy.sys` (if present)
-- `inf\aero-virtio-snd-legacy.cat` (if present)
 - `inf\virtio-snd.cat` (if `inf\virtio-snd.inf` is present)
+
+To sign the optional transitional/QEMU package, run:
+
+```cmd
+.\scripts\sign-driver.cmd legacy
+```
+
+This signs:
+
+- `inf\virtiosnd_legacy.sys`
+- `inf\aero-virtio-snd-legacy.cat`
 
 ## Installation (Device Manager → “Have Disk…”)
 
