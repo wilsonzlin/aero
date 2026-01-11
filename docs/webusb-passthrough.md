@@ -104,6 +104,10 @@ Cancellation behavior (important):
 - Stale completions are therefore expected and must be safely ignored (the Rust model already
   does this by checking `id` against in-flight state).
 
+In Aero, this cancellation is triggered by the UHCI control pipe: when a new SETUP arrives before
+the previous control transfer completes, `AttachedUsbDevice` invokes the device model hook
+`UsbDeviceModel::cancel_control_transfer()` (`crates/emulator/src/io/usb/core/mod.rs`).
+
 Descriptor status (current code):
 
 - `UsbPassthroughDevice` currently returns empty device/config/HID descriptors. Full passthrough
@@ -176,6 +180,26 @@ Important constraints for passthrough:
 The current Rust `UsbHostAction` surface does not yet include “select configuration / claim
 interface” actions; today these operations are expected to be performed by the host-side broker
 when attaching a physical device.
+
+### Physical disconnect / guest hot-unplug
+
+When the physical device is unplugged, the browser fires a `navigator.usb` `"disconnect"` event.
+For guest correctness, this must be reflected as a **USB disconnect** on the emulated root hub
+port so the guest OS can tear down drivers cleanly.
+
+In this repo:
+
+- `src/platform/webusb_broker.ts` listens for `usb.addEventListener('disconnect', ...)` and broadcasts
+  `{ type: 'disconnect', deviceId }` events to attached worker ports.
+- `src/platform/webusb_client.ts` exposes `onBrokerEvent(...)` for workers to subscribe.
+- The UHCI root hub supports detach via `RootHub::detach(port)` (`crates/emulator/src/io/usb/hub/root.rs`),
+  which sets the connect-status-change bits the guest driver expects.
+
+Recommended behavior on a physical disconnect:
+
+1. Detach the passthrough device model from the associated emulated port (root hub or downstream hub).
+2. Cancel any in-flight host actions (by dropping the device model or calling `reset()` / cancel hooks).
+3. Ignore any completions that arrive after detach (they will be stale by `id` anyway).
 
 Data flow (conceptual):
 
