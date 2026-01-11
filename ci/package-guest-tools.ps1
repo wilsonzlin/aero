@@ -836,6 +836,155 @@ function Assert-ZipContainsFile {
   }
 }
 
+function Show-PackagerHwidDiagnostics {
+  param(
+    [Parameter(Mandatory = $true)][string] $StageDriversRoot,
+    [Parameter(Mandatory = $true)][string] $SpecPath
+  )
+
+  Write-Host ""
+  Write-Host "---- Packager HWID diagnostics (staged driver INFs) ----"
+  Write-Host ("  drivers  : {0}" -f $StageDriversRoot)
+  Write-Host ("  spec     : {0}" -f $SpecPath)
+
+  if (-not (Test-Path -LiteralPath $StageDriversRoot -PathType Container)) {
+    Write-Warning "Staged drivers directory not found; skipping HWID diagnostics."
+    return
+  }
+  if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
+    Write-Warning "Spec file not found; skipping HWID diagnostics."
+    return
+  }
+
+  $spec = $null
+  try {
+    $spec = Get-Content -LiteralPath $SpecPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    Write-Warning ("Failed to parse spec JSON for diagnostics: {0}" -f $_.Exception.Message)
+    return
+  }
+
+  $driverEntries = @()
+  if ($spec -and $spec.drivers) { $driverEntries += $spec.drivers }
+  if ($spec -and $spec.required_drivers) { $driverEntries += $spec.required_drivers }
+  if (-not $driverEntries -or $driverEntries.Count -eq 0) {
+    Write-Warning "Spec contains no driver entries; skipping HWID diagnostics."
+    return
+  }
+
+  # Best-effort: when a spec HWID regex doesn't match any line in the INF, print any PCI HWID-like
+  # lines present so CI logs make it obvious whether the driver has the wrong DEV_XXXX (e.g. a
+  # transitional virtio ID) or is missing hardware IDs entirely.
+  $pciLineRegex = [regex]::new("PCI\\VEN_", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+
+  foreach ($drv in $driverEntries) {
+    if (-not $drv -or -not $drv.name) { continue }
+    $driverName = ("" + $drv.name).Trim()
+    if ([string]::IsNullOrWhiteSpace($driverName)) { continue }
+
+    $patterns = @()
+    if ($drv.expected_hardware_ids) {
+      foreach ($p in $drv.expected_hardware_ids) {
+        $t = ("" + $p).Trim()
+        if ($t.Length -gt 0) { $patterns += $t }
+      }
+    }
+
+    if (-not $patterns -or $patterns.Count -eq 0) {
+      continue
+    }
+
+    $compiled = @()
+    foreach ($p in $patterns) {
+      try {
+        $compiled += [pscustomobject]@{
+          Pattern = $p
+          Regex   = [regex]::new($p, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+      } catch {
+        Write-Warning ("Invalid expected_hardware_ids regex for driver {0}: {1}" -f $driverName, $p)
+      }
+    }
+    if (-not $compiled -or $compiled.Count -eq 0) { continue }
+
+    foreach ($arch in @("x86", "amd64")) {
+      $driverDir = Join-Path (Join-Path $StageDriversRoot $arch) $driverName
+      if (-not (Test-Path -LiteralPath $driverDir -PathType Container)) {
+        continue
+      }
+
+      Write-Host ""
+      Write-Host ("Driver: {0} ({1})" -f $driverName, $arch)
+      Write-Host "  Expected HWID regexes:"
+      foreach ($p in $patterns) {
+        Write-Host ("    - {0}" -f $p)
+      }
+
+      $infFiles = @(
+        Get-ChildItem -LiteralPath $driverDir -Recurse -File -ErrorAction SilentlyContinue |
+          Where-Object { $_.Name -match '(?i)\.inf$' } |
+          Sort-Object -Property FullName
+      )
+      if (-not $infFiles -or $infFiles.Count -eq 0) {
+        Write-Host "  (no INF files found)"
+        continue
+      }
+
+      foreach ($inf in $infFiles) {
+        Write-Host ("  INF: {0}" -f $inf.FullName)
+        $lines = @()
+        try {
+          $lines = Get-Content -LiteralPath $inf.FullName -ErrorAction Stop
+        } catch {
+          Write-Host "    (failed to read INF)"
+          continue
+        }
+
+        $anyMatch = $false
+        $printed = 0
+        $maxPrint = 50
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+          $line = $lines[$i]
+          foreach ($entry in $compiled) {
+            if ($entry.Regex.IsMatch($line)) {
+              if (-not $anyMatch) {
+                Write-Host "    Matches:"
+              }
+              $anyMatch = $true
+              $printed += 1
+              Write-Host ("      L{0}: {1}" -f ($i + 1), $line.Trim())
+              if ($printed -ge $maxPrint) {
+                Write-Host ("      ... truncated after {0} match(es) ..." -f $printed)
+                break
+              }
+            }
+          }
+          if ($printed -ge $maxPrint) { break }
+        }
+
+        if (-not $anyMatch) {
+          Write-Host "    No matches found. PCI HWID-like lines present in INF:"
+          $printed = 0
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            if ($pciLineRegex.IsMatch($line)) {
+              $printed += 1
+              Write-Host ("      L{0}: {1}" -f ($i + 1), $line.Trim())
+              if ($printed -ge $maxPrint) {
+                Write-Host ("      ... truncated after {0} line(s) ..." -f $printed)
+                break
+              }
+            }
+          }
+          if ($printed -eq 0) {
+            Write-Host "      (none found)"
+          }
+        }
+      }
+    }
+  }
+}
+
 $inputRootResolved = Resolve-RepoPath -Path $InputRoot
 $guestToolsResolved = Resolve-RepoPath -Path $GuestToolsDir
 $certPathResolved = Resolve-RepoPath -Path $CertPath
@@ -970,18 +1119,29 @@ try {
   Write-Host "  contract: $stageDeviceContract"
   Write-Host "  out     : $outDirResolved"
 
-  & cargo run --manifest-path $packagerManifest --release --locked -- `
-    --drivers-dir $stageDriversRoot `
-    --guest-tools-dir $stageGuestTools `
-    --spec $specPathResolved `
-    --windows-device-contract $stageDeviceContract `
-    --out-dir $outDirResolved `
-    --version $Version `
-    --build-id $BuildId `
-    --signing-policy $SigningPolicy `
-    --source-date-epoch $epoch
-  if ($LASTEXITCODE -ne 0) {
-    throw "aero_packager failed (exit code $LASTEXITCODE)."
+  try {
+    & cargo run --manifest-path $packagerManifest --release --locked -- `
+      --drivers-dir $stageDriversRoot `
+      --guest-tools-dir $stageGuestTools `
+      --spec $specPathResolved `
+      --windows-device-contract $stageDeviceContract `
+      --out-dir $outDirResolved `
+      --version $Version `
+      --build-id $BuildId `
+      --signing-policy $SigningPolicy `
+      --source-date-epoch $epoch
+    if ($LASTEXITCODE -ne 0) {
+      throw "aero_packager failed (exit code $LASTEXITCODE)."
+    }
+  } catch {
+    Write-Host ""
+    Write-Host "aero_packager failed; collecting HWID diagnostics to aid debugging..."
+    try {
+      Show-PackagerHwidDiagnostics -StageDriversRoot $stageDriversRoot -SpecPath $specPathResolved
+    } catch {
+      Write-Warning ("HWID diagnostics failed: {0}" -f $_.Exception.Message)
+    }
+    throw
   }
 
   $isoPath = Join-Path $outDirResolved "aero-guest-tools.iso"
