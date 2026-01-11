@@ -138,7 +138,12 @@ rem -----------------------------------------------------------------
 where "%~1" >nul 2>&1
 if not "%ERRORLEVEL%"=="0" (
   echo [ERROR] Required tool not found on PATH: %~1
-  echo [ERROR] Install the Windows 7 WDK (7600) or a Windows SDK/WDK that includes it, then retry.
+  echo [ERROR] Install a Windows SDK/WDK that provides it (and ensure it is on PATH), then retry.
+  echo [ERROR] Alternatively, sign the package on a Windows 10/11 host using:
+  echo [ERROR]   pwsh ci/install-wdk.ps1
+  echo [ERROR]   pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu
+  echo [ERROR]   pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
+  echo [ERROR]   pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
   exit /b 1
 )
 exit /b 0

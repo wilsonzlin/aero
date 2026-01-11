@@ -59,13 +59,31 @@ Before installing, confirm your VM's device model reports the same Hardware ID:
 
 ## 3) Prerequisites (test signing tools)
 
-To run `sign_test.cmd` you need tooling from a Windows SDK/WDK:
+### Recommended: sign on the build host (no WDK tools needed in the Win7 VM)
+
+The simplest workflow is to generate and sign the driver package on a **Windows 10/11 build host** using the repo CI scripts, then copy the signed package into the Windows 7 VM:
+
+```powershell
+pwsh ci/install-wdk.ps1
+pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu
+pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
+pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
+```
+
+Then copy one of these directories into the Win7 VM and run `install.cmd` there:
+
+- `out/packages/aerogpu/x86/` (Windows 7 x86)
+- `out/packages/aerogpu/x64/` (Windows 7 x64)
+
+This avoids installing any SDK/WDK tooling in the guest.
+
+### Optional: sign inside the Win7 VM with `sign_test.cmd`
+
+To run `sign_test.cmd` inside the Windows 7 VM, you need tooling from a Windows SDK/WDK available on `PATH`:
 
 - `makecert.exe`
 - `signtool.exe`
 - `inf2cat.exe` (recommended; required if the INF declares `CatalogFile=...`)
-
-The **Windows 7 WDK (7600)** includes all of these tools and is the most straightforward option for Win7 VMs.
 
 ## 4) Test-signing + install steps (Win7 SP1 VM)
 
