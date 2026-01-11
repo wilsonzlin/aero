@@ -19,11 +19,7 @@ pub(crate) enum SharedSurfaceError {
     #[error(
         "shared surface alias handle 0x{alias:08X} already bound (existing=0x{existing:08X} new=0x{new:08X})"
     )]
-    AliasAlreadyBound {
-        alias: u32,
-        existing: u32,
-        new: u32,
-    },
+    AliasAlreadyBound { alias: u32, existing: u32, new: u32 },
     #[error(
         "shared surface token 0x{share_token:016X} refers to destroyed handle 0x{underlying:08X}"
     )]
@@ -155,4 +151,3 @@ impl SharedSurfaceTable {
         Some((underlying, true))
     }
 }
-

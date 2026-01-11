@@ -239,7 +239,8 @@ impl AeroGpuAcmdExecutor {
                         .map_err(|e| AeroGpuAcmdExecutorError::Backend(e.to_string()))?;
                 }
                 AeroGpuCmd::DestroyResource { resource_handle } => {
-                    if let Some((underlying, last_ref)) = self.shared_surfaces.destroy_handle(resource_handle)
+                    if let Some((underlying, last_ref)) =
+                        self.shared_surfaces.destroy_handle(resource_handle)
                     {
                         if last_ref {
                             self.textures.remove(&underlying);

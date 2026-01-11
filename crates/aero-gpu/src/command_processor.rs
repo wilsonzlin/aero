@@ -549,7 +549,9 @@ impl AeroGpuCommandProcessor {
                     share_token,
                 } => {
                     if resource_handle == 0 {
-                        return Err(CommandProcessorError::InvalidResourceHandle(resource_handle));
+                        return Err(CommandProcessorError::InvalidResourceHandle(
+                            resource_handle,
+                        ));
                     }
                     // If the handle is itself an alias, normalize to the underlying surface.
                     let Some(underlying) = self.resolve_shared_surface_handle(resource_handle)
@@ -579,7 +581,9 @@ impl AeroGpuCommandProcessor {
                     share_token,
                 } => {
                     if out_resource_handle == 0 {
-                        return Err(CommandProcessorError::InvalidResourceHandle(out_resource_handle));
+                        return Err(CommandProcessorError::InvalidResourceHandle(
+                            out_resource_handle,
+                        ));
                     }
                     let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
                         return Err(CommandProcessorError::UnknownShareToken(share_token));

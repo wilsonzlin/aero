@@ -299,7 +299,7 @@ fn long_mode_stack_page_fault_during_interrupt_delivery_delivers_pf_using_ist(
     set_pte(&mut phys, pt_base, 0x2, PTE_P | PTE_RW); // interrupt handler supervisor-only
     set_pte(&mut phys, pt_base, 0x3, PTE_P | PTE_RW); // #PF handler supervisor-only
     set_pte(&mut phys, pt_base, 0x4, PTE_P | PTE_RW); // TSS supervisor-only
-    // Page 0x8 (0x8000..0x8FFF) intentionally left not-present: stack push faults there.
+                                                      // Page 0x8 (0x8000..0x8FFF) intentionally left not-present: stack push faults there.
     set_pte(&mut phys, pt_base, 0x9, PTE_P | PTE_RW); // IST stack supervisor-only
 
     let mut bus = PagingBus::new(phys);

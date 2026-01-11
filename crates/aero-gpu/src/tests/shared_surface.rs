@@ -64,4 +64,3 @@ fn shared_surface_import_is_idempotent_but_alias_rebind_is_rejected() {
     assert_eq!(table.destroy_handle(2), Some((1, false)));
     assert_eq!(table.destroy_handle(1), Some((1, true)));
 }
-

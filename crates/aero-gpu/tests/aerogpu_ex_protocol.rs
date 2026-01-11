@@ -166,7 +166,10 @@ fn creating_buffer_with_zero_handle_is_an_error() {
 
     let mut processor = AeroGpuCommandProcessor::new();
     let err = processor.process_submission(&stream, 1).unwrap_err();
-    assert!(matches!(err, CommandProcessorError::InvalidResourceHandle(0)));
+    assert!(matches!(
+        err,
+        CommandProcessorError::InvalidResourceHandle(0)
+    ));
 }
 
 #[test]
@@ -177,7 +180,10 @@ fn creating_texture_with_zero_handle_is_an_error() {
 
     let mut processor = AeroGpuCommandProcessor::new();
     let err = processor.process_submission(&stream, 1).unwrap_err();
-    assert!(matches!(err, CommandProcessorError::InvalidResourceHandle(0)));
+    assert!(matches!(
+        err,
+        CommandProcessorError::InvalidResourceHandle(0)
+    ));
 }
 
 #[test]
@@ -200,7 +206,10 @@ fn importing_shared_surface_into_zero_handle_is_an_error() {
 
     let mut processor = AeroGpuCommandProcessor::new();
     let err = processor.process_submission(&stream, 1).unwrap_err();
-    assert!(matches!(err, CommandProcessorError::InvalidResourceHandle(0)));
+    assert!(matches!(
+        err,
+        CommandProcessorError::InvalidResourceHandle(0)
+    ));
 }
 
 #[test]
