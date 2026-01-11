@@ -239,6 +239,8 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
  - Recommended: `?token=<value>` query parameter.
  - Optional: include an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (alongside
    `aero-l2-tunnel-v1`) to avoid placing tokens in URLs/logs; requires a header-safe token value.
+   - The negotiated subprotocol MUST still be `aero-l2-tunnel-v1`; the token entry is used only for
+     authentication and MUST NOT replace the tunnel framing subprotocol.
  
  Missing/incorrect tokens MUST reject the upgrade with **HTTP 401** (no WebSocket).
 
