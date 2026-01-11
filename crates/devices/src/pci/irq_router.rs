@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode, PlatformInterrupts};
 
@@ -279,6 +279,7 @@ impl IoSnapshot for PciIntxRouter {
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_CFG: u16 = 1;
         const TAG_SOURCES: u16 = 2;
+        const MAX_INTX_SOURCES: usize = 256 * 32 * 8 * 4;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -295,8 +296,17 @@ impl IoSnapshot for PciIntxRouter {
         if let Some(buf) = r.bytes(TAG_SOURCES) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            if count > MAX_INTX_SOURCES {
+                return Err(SnapshotError::InvalidFieldEncoding("too many INTx sources"));
+            }
             for _ in 0..count {
-                let bdf = PciBdf::new(d.u8()?, d.u8()?, d.u8()?);
+                let bus = d.u8()?;
+                let device = d.u8()?;
+                let function = d.u8()?;
+                if device >= 32 || function >= 8 {
+                    return Err(SnapshotError::InvalidFieldEncoding("invalid PCI BDF"));
+                }
+                let bdf = PciBdf::new(bus, device, function);
                 let pin_u8 = d.u8()?;
                 let level = d.bool()?;
                 let Some(pin) = PciInterruptPin::from_config_u8(pin_u8) else {

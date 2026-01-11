@@ -315,6 +315,7 @@ impl IoSnapshot for PciBusSnapshot {
         use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 
         const TAG_DEVICES: u16 = 1;
+        const MAX_PCI_FUNCTIONS: usize = 256 * 32 * 8;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -327,9 +328,18 @@ impl IoSnapshot for PciBusSnapshot {
 
         let mut d = Decoder::new(buf);
         let count = d.u32()? as usize;
+        if count > MAX_PCI_FUNCTIONS {
+            return Err(SnapshotError::InvalidFieldEncoding("too many PCI BDF entries"));
+        }
         let mut by_bdf = BTreeMap::new();
         for _ in 0..count {
-            let bdf = PciBdf::new(d.u8()?, d.u8()?, d.u8()?);
+            let bus = d.u8()?;
+            let device = d.u8()?;
+            let function = d.u8()?;
+            if device >= 32 || function >= 8 {
+                return Err(SnapshotError::InvalidFieldEncoding("invalid PCI BDF"));
+            }
+            let bdf = PciBdf::new(bus, device, function);
 
             let mut config_bytes = [0u8; PCI_CONFIG_SPACE_SIZE];
             config_bytes.copy_from_slice(d.bytes(PCI_CONFIG_SPACE_SIZE)?);
