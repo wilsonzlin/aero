@@ -484,7 +484,5 @@ fn translates_texture_load_ld() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
-    assert!(translated
-        .wgsl
-        .contains("bitcast<i32>(0x00000001u)"));
+    assert!(translated.wgsl.contains("bitcast<i32>(0x00000001u)"));
 }

@@ -119,7 +119,12 @@ fn run(args: &Args) -> Result<()> {
 
     validate_contract_entries(&devices)?;
     validate_contract_entries(&virtio_win_devices)?;
-    validate_virtio_win_contract_variant(&contract, &devices, &virtio_win_contract, &virtio_win_devices)?;
+    validate_virtio_win_contract_variant(
+        &contract,
+        &devices,
+        &virtio_win_contract,
+        &virtio_win_devices,
+    )?;
     validate_guest_tools_config(&repo_root, &devices)?;
     validate_packaging_specs(&repo_root, &devices, &virtio_win_devices)?;
     validate_in_tree_infs(&repo_root, &devices)?;
@@ -191,9 +196,7 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
 
         if let Some(vtype) = dev.virtio_device_type {
             if vendor != 0x1AF4 {
-                bail!(
-                    "{name}: virtio devices must use pci_vendor_id 0x1AF4 (found {vendor:#06x})"
-                );
+                bail!("{name}: virtio devices must use pci_vendor_id 0x1AF4 (found {vendor:#06x})");
             }
 
             // Modern ID space: 0x1040 + virtio_device_type.
@@ -209,9 +212,8 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                 );
             }
 
-            let expected_transitional = 0x1000u16
-                + u16::try_from(vtype).context("virtio_device_type out of range")?
-                - 1;
+            let expected_transitional =
+                0x1000u16 + u16::try_from(vtype).context("virtio_device_type out of range")? - 1;
             let trans = dev
                 .pci_device_id_transitional
                 .as_deref()
@@ -233,8 +235,13 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
             if !hwids.iter().any(|p| p.contains("VEN_A3A0&DEV_0001")) {
                 bail!("{name}: hardware_id_patterns missing PCI\\\\VEN_A3A0&DEV_0001");
             }
-            if !hwids.iter().any(|p| p.contains("VEN_A3A0&DEV_0001&SUBSYS_0001A3A0")) {
-                bail!("{name}: hardware_id_patterns missing PCI\\\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0");
+            if !hwids
+                .iter()
+                .any(|p| p.contains("VEN_A3A0&DEV_0001&SUBSYS_0001A3A0"))
+            {
+                bail!(
+                    "{name}: hardware_id_patterns missing PCI\\\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0"
+                );
             }
             if hwids.iter().any(|p| p.contains("VEN_1AED&DEV_0001")) {
                 bail!("{name}: hardware_id_patterns must not include legacy bring-up HWID PCI\\\\VEN_1AED&DEV_0001");
@@ -307,7 +314,9 @@ fn validate_virtio_win_contract_variant(
     for (name, base) in base_devices {
         let virtio_win = virtio_win_devices.get(name).expect("checked key set");
 
-        if base.pci_vendor_id != virtio_win.pci_vendor_id || base.pci_device_id != virtio_win.pci_device_id {
+        if base.pci_vendor_id != virtio_win.pci_vendor_id
+            || base.pci_device_id != virtio_win.pci_device_id
+        {
             bail!(
                 "{name}: virtio-win variant PCI ID mismatch: base={}:{}, virtio-win={}:{}",
                 base.pci_vendor_id,
@@ -348,7 +357,8 @@ fn validate_virtio_win_contract_variant(
         }
 
         if base.virtio_device_type.is_some() {
-            let Some((expected_service, expected_inf)) = expected_virtio_win.get(name.as_str()) else {
+            let Some((expected_service, expected_inf)) = expected_virtio_win.get(name.as_str())
+            else {
                 bail!("{name}: unexpected virtio device in contract (validator bug)");
             };
             if !virtio_win
@@ -413,9 +423,7 @@ fn validate_hwid_literal(hwid: &str) -> Result<()> {
     )
     .unwrap();
     if !re.is_match(hwid) {
-        bail!(
-            "HWID must match PCI\\\\VEN_XXXX&DEV_YYYY[&SUBSYS_SSSSVVVV][&REV_RR]; got: {hwid}"
-        );
+        bail!("HWID must match PCI\\\\VEN_XXXX&DEV_YYYY[&SUBSYS_SSSSVVVV][&REV_RR]; got: {hwid}");
     }
     Ok(())
 }
@@ -552,7 +560,8 @@ fn validate_packaging_specs(
         .expect("static regex must compile");
 
     for spec_path in spec_paths {
-        let bytes = fs::read(&spec_path).with_context(|| format!("read {}", spec_path.display()))?;
+        let bytes =
+            fs::read(&spec_path).with_context(|| format!("read {}", spec_path.display()))?;
         let spec: PackagingSpec = serde_json::from_slice(&bytes)
             .with_context(|| format!("parse {}", spec_path.display()))?;
 
@@ -589,7 +598,10 @@ fn validate_packaging_specs(
                     bail!(
                         "{}: driver '{}': devices.cmd variable {} is empty",
                         spec_path.display(),
-                        original_names.get(&key).cloned().unwrap_or_else(|| key.clone()),
+                        original_names
+                            .get(&key)
+                            .cloned()
+                            .unwrap_or_else(|| key.clone()),
                         var
                     );
                 }
@@ -625,14 +637,13 @@ fn validate_packaging_specs(
         }
 
         if merged.is_empty() {
-            bail!("{}: packaging spec contains no drivers", spec_path.display());
+            bail!(
+                "{}: packaging spec contains no drivers",
+                spec_path.display()
+            );
         }
 
-        let contract_devices = match spec_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-        {
+        let contract_devices = match spec_path.file_name().and_then(|s| s.to_str()).unwrap_or("") {
             "win7-virtio-win.json" | "win7-virtio-full.json" => virtio_win_devices,
             "win7-aero-guest-tools.json" | "win7-aero-virtio.json" => devices,
             other => bail!("unexpected spec file name (validator bug): {other}"),
@@ -643,13 +654,15 @@ fn validate_packaging_specs(
 
             // Ensure every spec driver name maps to a contract entry so adding drivers forces
             // updating the contract.
-            let dev = find_contract_device_for_spec_driver(contract_devices, &name).with_context(|| {
-                format!(
-                    "{}: could not map spec driver '{}' to a Windows device contract entry",
-                    spec_path.display(),
-                    name
-                )
-            })?;
+            let dev = find_contract_device_for_spec_driver(contract_devices, &name).with_context(
+                || {
+                    format!(
+                        "{}: could not map spec driver '{}' to a Windows device contract entry",
+                        spec_path.display(),
+                        name
+                    )
+                },
+            )?;
 
             if patterns.is_empty() {
                 bail!(
@@ -678,7 +691,11 @@ fn validate_packaging_specs(
             // Each spec regex must match at least one contract HWID string for the mapped device.
             for (i, re) in compiled.iter().enumerate() {
                 let pat = &patterns[i];
-                if !dev.hardware_id_patterns.iter().any(|hwid| re.is_match(hwid)) {
+                if !dev
+                    .hardware_id_patterns
+                    .iter()
+                    .any(|hwid| re.is_match(hwid))
+                {
                     bail!(
                         "{}: driver '{}': expected_hardware_ids regex does not match any contract hardware_id_patterns for {}: {pat}",
                         spec_path.display(),
@@ -771,7 +788,10 @@ fn find_contract_device_for_spec_driver<'a>(
         _ => bail!(
             "ambiguous spec driver name '{}' (matches multiple contract devices): {:?}",
             spec_driver_name,
-            matches.iter().map(|d| d.device.as_str()).collect::<Vec<_>>()
+            matches
+                .iter()
+                .map(|d| d.device.as_str())
+                .collect::<Vec<_>>()
         ),
     }
 }
@@ -941,12 +961,11 @@ fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
     ];
     for (device_name, const_name) in virtio_transitional_consts {
         let dev = devices.get(*device_name).unwrap();
-        let expected = parse_hex_u16(
-            dev.pci_device_id_transitional
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("{device_name}: missing pci_device_id_transitional"))?,
-        )
-        .with_context(|| format!("{device_name}: parse pci_device_id_transitional"))?;
+        let expected =
+            parse_hex_u16(dev.pci_device_id_transitional.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("{device_name}: missing pci_device_id_transitional")
+            })?)
+            .with_context(|| format!("{device_name}: parse pci_device_id_transitional"))?;
         let found = parse_rust_u16_const(&virtio_profile_rs, const_name)
             .with_context(|| format!("parse {const_name}"))?;
         if found != expected {

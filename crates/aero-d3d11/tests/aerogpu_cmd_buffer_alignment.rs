@@ -147,4 +147,3 @@ fn aerogpu_cmd_rejects_unaligned_copy_buffer() {
         );
     });
 }
-

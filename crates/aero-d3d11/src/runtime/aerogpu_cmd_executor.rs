@@ -865,9 +865,7 @@ impl AerogpuD3d11Executor {
         }
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
         if size_bytes % alignment != 0 {
-            bail!(
-                "CREATE_BUFFER: size_bytes must be a multiple of {alignment} (got {size_bytes})"
-            );
+            bail!("CREATE_BUFFER: size_bytes must be a multiple of {alignment} (got {size_bytes})");
         }
 
         let usage = map_buffer_usage_flags(usage_flags);
@@ -1180,7 +1178,10 @@ impl AerogpuD3d11Executor {
         }
 
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-        if dst_offset_bytes % alignment != 0 || src_offset_bytes % alignment != 0 || size_bytes % alignment != 0 {
+        if dst_offset_bytes % alignment != 0
+            || src_offset_bytes % alignment != 0
+            || size_bytes % alignment != 0
+        {
             bail!(
                 "COPY_BUFFER: offsets and size must be multiples of {alignment} (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})"
             );

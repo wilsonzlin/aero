@@ -582,7 +582,10 @@ struct TcpProxyQuery {
     target: Option<String>,
 }
 
-async fn tcp_ws_handler(ws: WebSocketUpgrade, Query(query): Query<TcpProxyQuery>) -> impl IntoResponse {
+async fn tcp_ws_handler(
+    ws: WebSocketUpgrade,
+    Query(query): Query<TcpProxyQuery>,
+) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
         handle_tcp_ws(socket, query).await;
     })

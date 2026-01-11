@@ -107,10 +107,7 @@ fn to_bytes(words: &[u32]) -> Vec<u8> {
 fn assemble_vs_passthrough_pos() -> Vec<u8> {
     // vs_2_0: mov oPos, v0; end
     let mut words = vec![0xFFFE_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -118,10 +115,7 @@ fn assemble_vs_passthrough_pos() -> Vec<u8> {
 fn assemble_ps_solid_color_c0() -> Vec<u8> {
     // ps_2_0: mov oC0, c0; end
     let mut words = vec![0xFFFF_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }

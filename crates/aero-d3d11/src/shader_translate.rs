@@ -1040,7 +1040,9 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
             }
-            Sm4Inst::Ld { dst, coord, lod, .. } => {
+            Sm4Inst::Ld {
+                dst, coord, lod, ..
+            } => {
                 scan_reg(dst.reg);
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);

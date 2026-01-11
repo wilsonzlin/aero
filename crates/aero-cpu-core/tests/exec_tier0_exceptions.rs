@@ -75,7 +75,9 @@ struct TestMemory {
 
 impl TestMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn write_bytes(&mut self, paddr: u64, bytes: &[u8]) {
@@ -209,7 +211,6 @@ fn page_fault_is_delivered_through_idt_and_cr2_is_set() {
     assert_eq!(cpu.exit, None);
     assert!(cpu.cpu.state.halted);
     assert_eq!(cpu.cpu.state.rip(), handler as u64 + 1);
-
 }
 
 #[test]

@@ -71,4 +71,3 @@ pub fn map_tier0_exception(e: &Tier0Exception) -> Result<ExceptionFault, CpuExit
         T::Unimplemented(name) => return Err(CpuExit::UnimplementedInstruction(name)),
     })
 }
-
