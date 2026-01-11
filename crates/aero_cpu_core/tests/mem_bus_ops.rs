@@ -148,7 +148,7 @@ fn bulk_copy_memmove_overlap_semantics() {
     bus.load(0, &data);
 
     // Overlapping copy where `dst > src` would be corrupted by a naive forward copy.
-    bus.bulk_copy(2, 0, 8).unwrap();
+    assert!(bus.bulk_copy(2, 0, 8).unwrap());
 
     let expected = [0u8, 1, 0, 1, 2, 3, 4, 5, 6, 7];
     assert_eq!(bus.slice(0, expected.len()), expected);
@@ -165,7 +165,7 @@ fn bulk_set_repeats_pattern_for_common_sizes() {
         (0xC0, (0u8..8).collect::<Vec<_>>(), 5usize),
         (0x100, (0u8..16).collect::<Vec<_>>(), 3usize),
     ] {
-        bus.bulk_set(dst, &pattern, repeat).unwrap();
+        assert!(bus.bulk_set(dst, &pattern, repeat).unwrap());
         let expected: Vec<u8> = pattern
             .iter()
             .copied()
@@ -194,13 +194,13 @@ fn bulk_ops_fallback_work_when_unsupported() {
     bus.load(0, &data);
 
     // Ensure the default `bulk_copy` fallback still provides memmove semantics.
-    bus.bulk_copy(2, 0, 8).unwrap();
+    assert!(bus.bulk_copy(2, 0, 8).unwrap());
     let expected = [0u8, 1, 0, 1, 2, 3, 4, 5, 6, 7];
     assert_eq!(bus.slice(0, expected.len()), expected);
 
     // And `bulk_set` falls back to scalar writes correctly.
     let pattern = [0xDEu8, 0xAD, 0xBE, 0xEF];
-    bus.bulk_set(0x40, &pattern, 4).unwrap();
+    assert!(bus.bulk_set(0x40, &pattern, 4).unwrap());
     let expected: Vec<u8> = pattern.iter().copied().cycle().take(16).collect();
     assert_eq!(bus.slice(0x40, expected.len()), expected.as_slice());
 }

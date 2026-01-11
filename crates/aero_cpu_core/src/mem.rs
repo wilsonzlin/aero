@@ -82,34 +82,11 @@ pub trait CpuBus {
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception>;
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception>;
 
-    /// Perform a read-modify-write cycle as a single operation when possible.
-    ///
-    /// This is used by the Tier-0 interpreter for `LOCK`ed instructions and other
-    /// atomic RMW operations (e.g. `XCHG` with a memory operand).
-    ///
-    /// Bus implementations may override this to provide true atomicity against
-    /// concurrent devices/threads. The default implementation falls back to a
-    /// plain read + conditional write using the scalar `read_u*`/`write_u*`
-    /// operations.
-    fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
-    where
-        T: BusValue,
-        Self: Sized,
-    {
-        let old = T::read_from(self, vaddr)?;
-        let (new, ret) = f(old);
-        if new != old {
-            T::write_to(self, vaddr, new)?;
-        }
-        Ok(ret)
-    }
-
     /// Read a contiguous byte slice from memory.
     ///
-    /// This is primarily a convenience helper for instructions that naturally
-    /// operate on byte arrays (FXSAVE/FXRSTOR, REP string ops). Implementations
-    /// may override this for more efficient access, but the default
-    /// implementation safely falls back to scalar `read_u8` accesses.
+    /// This is a hint/fast-path only; implementations may override for more
+    /// efficient reads. The default implementation performs scalar `read_u8`
+    /// operations.
     fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
         for (i, slot) in dst.iter_mut().enumerate() {
             let addr = vaddr
@@ -122,88 +99,12 @@ pub trait CpuBus {
 
     /// Write a contiguous byte slice into memory.
     ///
-    /// This is a hint/fast-path only; the default implementation safely falls
-    /// back to scalar `write_u8` accesses.
+    /// This is a hint/fast-path only; implementations may override for more
+    /// efficient writes. The default implementation performs scalar `write_u8`
+    /// operations.
     fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
         for (i, byte) in src.iter().copied().enumerate() {
             let addr = vaddr
-                .checked_add(i as u64)
-                .ok_or(Exception::MemoryFault)?;
-            self.write_u8(addr, byte)?;
-        }
-        Ok(())
-    }
-
-    /// Whether the bus can perform fast, contiguous copies between RAM regions.
-    ///
-    /// This is a hint only: callers may still invoke [`CpuBus::bulk_copy`] even
-    /// when this returns `false` and will get correct results (via the default
-    /// scalar fallback implementation).
-    fn supports_bulk_copy(&self) -> bool {
-        false
-    }
-
-    /// Copy `len` bytes from `src` to `dst` with memmove semantics.
-    ///
-    /// The Tier-0 interpreter uses this as a bulk primitive for REP MOVS* fast
-    /// paths, but it must remain correct even for overlapping ranges.
-    ///
-    /// Default implementation: byte-wise copy using scalar `read_u8`/`write_u8`,
-    /// choosing a direction that preserves memmove overlap semantics.
-    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<(), Exception> {
-        if len == 0 || dst == src {
-            return Ok(());
-        }
-
-        // `memmove` overlap semantics: copy forwards when dst < src, otherwise
-        // copy backwards.
-        if dst < src {
-            for i in 0..len {
-                let off = i as u64;
-                let src_addr = src.checked_add(off).ok_or(Exception::MemoryFault)?;
-                let dst_addr = dst.checked_add(off).ok_or(Exception::MemoryFault)?;
-                let b = self.read_u8(src_addr)?;
-                self.write_u8(dst_addr, b)?;
-            }
-        } else {
-            for i in (0..len).rev() {
-                let off = i as u64;
-                let src_addr = src.checked_add(off).ok_or(Exception::MemoryFault)?;
-                let dst_addr = dst.checked_add(off).ok_or(Exception::MemoryFault)?;
-                let b = self.read_u8(src_addr)?;
-                self.write_u8(dst_addr, b)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Whether the bus can perform fast, contiguous sets/fills in RAM.
-    ///
-    /// This is a hint only: callers may still invoke [`CpuBus::bulk_set`] even
-    /// when this returns `false` and will get correct results (via the default
-    /// scalar fallback implementation).
-    fn supports_bulk_set(&self) -> bool {
-        false
-    }
-
-    /// Write `repeat` copies of `pattern` starting at `dst`.
-    ///
-    /// For example, STOSD would call this with `pattern.len() == 4` and
-    /// `repeat == ECX`.
-    ///
-    /// Default implementation: scalar byte writes via `write_u8`.
-    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<(), Exception> {
-        if repeat == 0 {
-            return Ok(());
-        }
-        assert!(!pattern.is_empty(), "pattern must be non-empty");
-        let total = pattern
-            .len()
-            .checked_mul(repeat)
-            .ok_or(Exception::MemoryFault)?;
-        for i in 0..total {
-            let byte = pattern[i % pattern.len()];
-            let addr = dst
                 .checked_add(i as u64)
                 .ok_or(Exception::MemoryFault)?;
             self.write_u8(addr, byte)?;
@@ -246,6 +147,10 @@ pub trait CpuBus {
     }
 
     /// Whether this bus can perform fast contiguous copies between RAM regions.
+    ///
+    /// This is a hint only; callers may still invoke [`CpuBus::bulk_copy`] when
+    /// this returns `false` and will get correct results (via the default scalar
+    /// fallback implementation).
     fn supports_bulk_copy(&self) -> bool {
         false
     }
@@ -284,6 +189,10 @@ pub trait CpuBus {
     }
 
     /// Whether this bus can perform fast contiguous repeated sets/fills in RAM.
+    ///
+    /// This is a hint only; callers may still invoke [`CpuBus::bulk_set`] when
+    /// this returns `false` and will get correct results (via the default scalar
+    /// fallback implementation).
     fn supports_bulk_set(&self) -> bool {
         false
     }
@@ -320,61 +229,6 @@ pub trait CpuBus {
     }
 }
 
-pub trait BusValue: Copy + PartialEq {
-    fn read_from<B: CpuBus>(bus: &mut B, vaddr: u64) -> Result<Self, Exception>;
-    fn write_to<B: CpuBus>(bus: &mut B, vaddr: u64, val: Self) -> Result<(), Exception>;
-}
-
-impl BusValue for u8 {
-    fn read_from<B: CpuBus>(bus: &mut B, vaddr: u64) -> Result<Self, Exception> {
-        bus.read_u8(vaddr)
-    }
-
-    fn write_to<B: CpuBus>(bus: &mut B, vaddr: u64, val: Self) -> Result<(), Exception> {
-        bus.write_u8(vaddr, val)
-    }
-}
-
-impl BusValue for u16 {
-    fn read_from<B: CpuBus>(bus: &mut B, vaddr: u64) -> Result<Self, Exception> {
-        bus.read_u16(vaddr)
-    }
-
-    fn write_to<B: CpuBus>(bus: &mut B, vaddr: u64, val: Self) -> Result<(), Exception> {
-        bus.write_u16(vaddr, val)
-    }
-}
-
-impl BusValue for u32 {
-    fn read_from<B: CpuBus>(bus: &mut B, vaddr: u64) -> Result<Self, Exception> {
-        bus.read_u32(vaddr)
-    }
-
-    fn write_to<B: CpuBus>(bus: &mut B, vaddr: u64, val: Self) -> Result<(), Exception> {
-        bus.write_u32(vaddr, val)
-    }
-}
-
-impl BusValue for u64 {
-    fn read_from<B: CpuBus>(bus: &mut B, vaddr: u64) -> Result<Self, Exception> {
-        bus.read_u64(vaddr)
-    }
-
-    fn write_to<B: CpuBus>(bus: &mut B, vaddr: u64, val: Self) -> Result<(), Exception> {
-        bus.write_u64(vaddr, val)
-    }
-}
-
-impl BusValue for u128 {
-    fn read_from<B: CpuBus>(bus: &mut B, vaddr: u64) -> Result<Self, Exception> {
-        bus.read_u128(vaddr)
-    }
-
-    fn write_to<B: CpuBus>(bus: &mut B, vaddr: u64, val: Self) -> Result<(), Exception> {
-        bus.write_u128(vaddr, val)
-    }
-}
-
 /// Identity-mapped memory bus used by unit tests.
 #[derive(Debug, Clone)]
 pub struct FlatTestBus {
@@ -384,15 +238,6 @@ pub struct FlatTestBus {
 impl FlatTestBus {
     pub fn new(size: usize) -> Self {
         Self { mem: vec![0; size] }
-    }
-
-    fn range(&self, addr: u64, len: usize) -> Result<std::ops::Range<usize>, Exception> {
-        let start = usize::try_from(addr).map_err(|_| Exception::MemoryFault)?;
-        let end = start.checked_add(len).ok_or(Exception::MemoryFault)?;
-        if end > self.mem.len() {
-            return Err(Exception::MemoryFault);
-        }
-        Ok(start..end)
     }
 
     pub fn load(&mut self, addr: u64, data: &[u8]) {
@@ -470,18 +315,6 @@ impl CpuBus for FlatTestBus {
         self.write_bytes(vaddr, &val.to_le_bytes())
     }
 
-    fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
-    where
-        T: BusValue,
-    {
-        let old = T::read_from(self, vaddr)?;
-        let (new, ret) = f(old);
-        if new != old {
-            T::write_to(self, vaddr, new)?;
-        }
-        Ok(ret)
-    }
-
     fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
         let range = self.range(vaddr, dst.len())?;
         dst.copy_from_slice(&self.mem[range]);
@@ -494,56 +327,11 @@ impl CpuBus for FlatTestBus {
         Ok(())
     }
 
-    fn supports_bulk_copy(&self) -> bool {
-        true
-    }
-
-    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<(), Exception> {
-        if len == 0 || dst == src {
-            return Ok(());
-        }
-        let src_range = self.range(src, len)?;
-        let dst_range = self.range(dst, len)?;
-        self.mem.copy_within(src_range, dst_range.start);
-        Ok(())
-    }
-
-    fn supports_bulk_set(&self) -> bool {
-        true
-    }
-
-    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<(), Exception> {
-        if repeat == 0 {
-            return Ok(());
-        }
-        assert!(!pattern.is_empty(), "pattern must be non-empty");
-        let total = pattern
-            .len()
-            .checked_mul(repeat)
-            .ok_or(Exception::MemoryFault)?;
-        let range = self.range(dst, total)?;
-        let dst_slice = &mut self.mem[range];
-
-        if pattern.len() == 1 {
-            dst_slice.fill(pattern[0]);
-            return Ok(());
-        }
-
-        for chunk in dst_slice.chunks_exact_mut(pattern.len()) {
-            chunk.copy_from_slice(pattern);
-        }
-        Ok(())
-    }
-
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for i in 0..len {
-            let addr = vaddr
-                .checked_add(i as u64)
-                .ok_or(Exception::MemoryFault)?;
-            buf[i] = self.read_u8(addr)?;
-        }
+        let range = self.range(vaddr, len)?;
+        buf[..len].copy_from_slice(&self.mem[range]);
         Ok(buf)
     }
 
@@ -571,6 +359,7 @@ impl CpuBus for FlatTestBus {
             return Ok(true);
         }
 
+        // `copy_within` provides memmove semantics.
         let src_range_owned = src_range.clone();
         self.mem.copy_within(src_range_owned, dst_range.start);
         Ok(true)
@@ -607,3 +396,4 @@ impl CpuBus for FlatTestBus {
         Ok(true)
     }
 }
+
