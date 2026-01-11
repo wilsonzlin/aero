@@ -271,6 +271,16 @@ def main() -> int:
                             )
                             _print_tail(serial_log)
                             return 1
+                        if (
+                            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" not in tail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" not in tail
+                        ):
+                            print(
+                                "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            return 1
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         return 0
                     if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
@@ -287,6 +297,16 @@ def main() -> int:
                             if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" not in tail:
                                 print(
                                     "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                return 1
+                            if (
+                                b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" not in tail
+                                and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" not in tail
+                            ):
+                                print(
+                                    "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)

@@ -198,7 +198,15 @@ function Wait-AeroSelftestResult {
         # Ensure we saw the virtio-input test marker so older selftest binaries (blk/net-only)
         # cannot accidentally pass the host harness.
         if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|PASS") {
-          return @{ Result = "PASS"; Tail = $tail }
+          # Also ensure the virtio-snd marker is present, so older selftest binaries that predate
+          # virtio-snd testing cannot accidentally pass.
+          if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|PASS" -or $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|SKIP") {
+            return @{ Result = "PASS"; Tail = $tail }
+          }
+          if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|FAIL") {
+            return @{ Result = "FAIL"; Tail = $tail }
+          }
+          return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
         }
         if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|FAIL") {
           return @{ Result = "FAIL"; Tail = $tail }
@@ -385,6 +393,14 @@ try {
     }
     "MISSING_VIRTIO_INPUT" {
       Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      exit 1
+    }
+    "MISSING_VIRTIO_SND" {
+      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
