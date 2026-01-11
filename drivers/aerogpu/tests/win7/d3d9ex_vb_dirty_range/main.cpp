@@ -57,8 +57,8 @@ static int RunD3D9ExVertexBufferDirtyRange(int argc, char** argv) {
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExVbDirtyRange",
                                               L"AeroGPU D3D9Ex Vertex Buffer Dirty Range",
                                               kWidth,
-                                              kHeight,
-                                              !hidden);
+                                               kHeight,
+                                               !hidden);
   if (!hwnd) {
     return reporter.Fail("CreateBasicWindow failed");
   }
@@ -176,9 +176,9 @@ static int RunD3D9ExVertexBufferDirtyRange(int argc, char** argv) {
   hr = dev->CreateVertexBuffer(sizeof(verts),
                                D3DUSAGE_WRITEONLY,
                                D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
-                               D3DPOOL_DEFAULT,
-                               vb.put(),
-                               NULL);
+                                D3DPOOL_DEFAULT,
+                                vb.put(),
+                                NULL);
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateVertexBuffer", hr);
   }
@@ -246,9 +246,9 @@ static int RunD3D9ExVertexBufferDirtyRange(int argc, char** argv) {
   hr = dev->CreateOffscreenPlainSurface(desc.Width,
                                         desc.Height,
                                         desc.Format,
-                                        D3DPOOL_SYSTEMMEM,
-                                        sysmem.put(),
-                                        NULL);
+                                         D3DPOOL_SYSTEMMEM,
+                                         sysmem.put(),
+                                         NULL);
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateOffscreenPlainSurface", hr);
   }
@@ -276,18 +276,25 @@ static int RunD3D9ExVertexBufferDirtyRange(int argc, char** argv) {
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
     if (dump) {
       std::string err;
-      aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(),
-                                                         L"d3d9ex_vb_dirty_range.bmp"),
-                                   (int)desc.Width,
-                                   (int)desc.Height,
-                                   lr.pBits,
-                                   (int)lr.Pitch,
-                                   &err);
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_vb_dirty_range.bmp");
+      if (aerogpu_test::WriteBmp32BGRA(bmp_path,
+                                       (int)desc.Width,
+                                       (int)desc.Height,
+                                       lr.pBits,
+                                       (int)lr.Pitch,
+                                       &err)) {
+        reporter.AddArtifactPathW(bmp_path);
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+      }
     }
     sysmem->UnlockRect();
-    return reporter.Fail("pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
+    return reporter.Fail("pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX",
                          (unsigned long)center,
-                         (unsigned long)corner);
+                         (unsigned long)expected,
+                         (unsigned long)corner,
+                         (unsigned long)expected_corner);
   }
 
   sysmem->UnlockRect();
@@ -297,14 +304,17 @@ static int RunD3D9ExVertexBufferDirtyRange(int argc, char** argv) {
     hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
     if (SUCCEEDED(hr)) {
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(),
-                                                              L"d3d9ex_vb_dirty_range.bmp"),
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_vb_dirty_range.bmp");
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
                                         (int)desc.Width,
                                         (int)desc.Height,
                                         lr.pBits,
                                         (int)lr.Pitch,
                                         &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
       sysmem->UnlockRect();
     }
