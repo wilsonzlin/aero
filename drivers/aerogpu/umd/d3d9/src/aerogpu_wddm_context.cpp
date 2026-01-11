@@ -223,7 +223,7 @@ HRESULT create_context_common(const CallbacksT& callbacks, FnT fn, WddmHandle hD
     const uintptr_t cmd = reinterpret_cast<uintptr_t>(ctxOut->pCommandBuffer);
     if (cmd >= base) {
       const uintptr_t offset = cmd - base;
-      if (offset < static_cast<uintptr_t>(ctxOut->CommandBufferSize)) {
+      if (offset <= static_cast<uintptr_t>(ctxOut->CommandBufferSize)) {
         ctxOut->CommandBufferSize -= static_cast<uint32_t>(offset);
       }
     }

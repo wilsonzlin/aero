@@ -4346,7 +4346,7 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
     const uintptr_t cmd = reinterpret_cast<uintptr_t>(cmd_ptr);
     if (cmd >= base) {
       const uintptr_t offset = cmd - base;
-      if (offset < static_cast<uintptr_t>(cap)) {
+      if (offset <= static_cast<uintptr_t>(cap)) {
         cap -= static_cast<uint32_t>(offset);
       }
     }
@@ -4494,7 +4494,7 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
     const uintptr_t cmd = reinterpret_cast<uintptr_t>(cmd_ptr);
     if (cmd >= base) {
       const uintptr_t offset = cmd - base;
-      if (offset < static_cast<uintptr_t>(cap)) {
+      if (offset <= static_cast<uintptr_t>(cap)) {
         cap -= static_cast<uint32_t>(offset);
       }
     }
