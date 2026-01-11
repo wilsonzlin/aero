@@ -36,7 +36,13 @@ Virtio PCI functions are typically identified by:
 > - transitional: `0x1000 + (device_type - 1)`
 > - modern: `0x1040 + device_type`
 
-For Windows 7 compatibility, prefer presenting **transitional** IDs by default.
+For Windows 7 compatibility with **upstream virtio-win** driver packages, presenting **transitional**
+IDs is often the safest default.
+
+However, Aero’s own Windows 7 virtio contract v1 uses the **modern** virtio-pci ID space by default
+(see `docs/windows7-virtio-driver-contract.md` and `docs/windows-device-contract.md`). Aero may still
+expose transitional IDs/legacy I/O BARs as an optional compatibility mode, but drivers must not rely
+on it unless explicitly stated by the contract.
 
 ---
 
