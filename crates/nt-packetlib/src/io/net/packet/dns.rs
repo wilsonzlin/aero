@@ -258,6 +258,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_single_question_accepts_responses() {
+        // Query for "a." (qname: 1,'a',0) type A class IN
+        let query = [
+            0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            b'a', 0x00, 0x00, 0x01, 0x00, 0x01,
+        ];
+        let q = parse_single_query(&query).unwrap();
+        let builder = DnsResponseBuilder {
+            id: q.id,
+            rd: q.recursion_desired(),
+            rcode: DnsResponseCode::NoError,
+            qname: q.qname,
+            qtype: q.qtype,
+            qclass: q.qclass,
+            answer_a: Some(Ipv4Addr::new(10, 0, 0, 1)),
+            ttl: 60,
+        };
+        let resp = builder.build_vec().unwrap();
+
+        let q_resp = parse_single_question(&resp).unwrap();
+        assert_eq!(q_resp.id, q.id);
+        assert_eq!(q_resp.qname, q.qname);
+        assert_eq!(q_resp.qtype, q.qtype);
+        assert_eq!(q_resp.qclass, q.qclass);
+        assert_ne!(q_resp.flags & 0x8000, 0, "expected QR=1 in response");
+
+        let err = parse_single_query(&resp).unwrap_err();
+        assert_eq!(err, PacketError::Malformed("DNS packet is not a query"));
+    }
+
+    #[test]
     fn decode_qname_to_string() {
         let qname = [
             0x07u8, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00,
