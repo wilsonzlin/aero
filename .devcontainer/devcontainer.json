@@ -1,0 +1,26 @@
+{
+  "name": "Aero",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "runArgs": ["--ulimit", "nofile=4096:4096"],
+  "containerEnv": {
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_INCREMENTAL": "1",
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "PW_TEST_WORKERS": "1",
+    "AERO_NODE_DIR": "web"
+  },
+  "postCreateCommand": "bash -lc 'just setup'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  }
+}

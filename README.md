@@ -6,6 +6,8 @@ This repository contains Aero’s architecture/design documentation plus browser
 
 Use [`just`](https://github.com/casey/just) from the repo root so contributors don’t need to remember multi-step Rust + WASM + web commands.
 
+For a reproducible “clone → build → test” environment (including Rust stable+nightly, Node, QEMU, etc.), see [`docs/dev-environment.md`](./docs/dev-environment.md).
+
 ### Prerequisites
 
 - Rust (via `rustup`)
