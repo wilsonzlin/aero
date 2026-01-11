@@ -41,7 +41,7 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 ### virtio-snd (audio)
 
 The guest selftest emits virtio-snd markers. By default, virtio-snd playback is skipped unless the scheduled task
-was provisioned/configured with `--test-snd` / `--require-snd`.
+was provisioned/configured with `--test-snd` / `--require-snd` (for example via `New-AeroWin7TestImage.ps1 -RequireSnd`).
 
 To run virtio-snd playback end-to-end, attach a virtio-snd PCI device with:
 
