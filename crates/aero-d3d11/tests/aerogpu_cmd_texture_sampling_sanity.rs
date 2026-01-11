@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
@@ -213,7 +215,7 @@ fn aerogpu_cmd_texture_sampling_sanity() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping texture sampling sanity test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };

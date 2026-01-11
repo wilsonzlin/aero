@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 
 use aero_d3d11::input_layout::fnv1a_32;
@@ -215,7 +217,7 @@ fn aerogpu_cmd_dynamic_constant_buffer_sanity() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping constant buffer sanity test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
