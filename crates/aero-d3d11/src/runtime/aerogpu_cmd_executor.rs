@@ -2145,6 +2145,8 @@ impl AerogpuD3d11Executor {
         let size_bytes = cmd.size_bytes;
         let flags = cmd.flags;
 
+        // WRITEBACK_DST requires an async executor on wasm (`execute_cmd_stream_async`), but the
+        // copy + staging readback can be recorded here for both targets.
         let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
         if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
             bail!("COPY_BUFFER: unknown flags {flags:#x}");
@@ -2349,6 +2351,8 @@ impl AerogpuD3d11Executor {
         let height = cmd.height;
         let flags = cmd.flags;
 
+        // WRITEBACK_DST requires an async executor on wasm (`execute_cmd_stream_async`), but the
+        // copy + staging readback can be recorded here for both targets.
         let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
         if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
             bail!("COPY_TEXTURE2D: unknown flags {flags:#x}");
