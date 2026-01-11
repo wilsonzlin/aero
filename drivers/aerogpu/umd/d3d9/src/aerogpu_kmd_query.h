@@ -50,6 +50,11 @@ class AerogpuKmdQuery {
 
   // Queries the last fence values observed by the KMD.
   //
+  // NOTE: `last_submitted` is an adapter-global value (shared across all guest
+  // processes using the same adapter). It must not be used to infer the fence
+  // ID for a specific user-mode submission under multi-process workloads (DWM +
+  // apps); per-submission fence IDs must come from the D3D runtime callbacks.
+  // `last_completed` is still useful for polling overall forward progress.
   // Returns false if the query path is unavailable (missing exports, adapter
   // open failure, or escape failure).
   bool QueryFence(uint64_t* last_submitted, uint64_t* last_completed);
