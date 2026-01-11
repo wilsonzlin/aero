@@ -7,7 +7,7 @@ use crate::packet::{
 };
 use crate::policy::HostPolicy;
 use core::net::Ipv4Addr;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 pub type Millis = u64;
 
@@ -23,6 +23,30 @@ pub struct StackConfig {
     pub webrtc_udp: bool,
 
     pub host_policy: HostPolicy,
+
+    /// Maximum number of concurrent TCP connections tracked by the stack.
+    ///
+    /// When exceeded, new SYNs are rejected with a guest-visible TCP RST and no connection state is
+    /// allocated.
+    pub max_tcp_connections: u32,
+
+    /// Maximum number of bytes of TCP payload buffered per connection while the proxy-side TCP
+    /// tunnel is not yet connected.
+    ///
+    /// When exceeded, the connection is aborted with a guest-visible TCP RST and the connection
+    /// state is dropped.
+    pub max_buffered_tcp_bytes_per_conn: u32,
+
+    /// Maximum number of entries in the DNS cache.
+    ///
+    /// When exceeded, the cache deterministically evicts the oldest entry (FIFO by insertion
+    /// order). Cache hits do not affect eviction order.
+    pub max_dns_cache_entries: u32,
+
+    /// Maximum number of in-flight DNS resolutions.
+    ///
+    /// When exceeded, new DNS queries are answered immediately with SERVFAIL.
+    pub max_pending_dns: u32,
 }
 
 impl Default for StackConfig {
@@ -36,6 +60,10 @@ impl Default for StackConfig {
             dhcp_lease_time_secs: 86400,
             webrtc_udp: true,
             host_policy: HostPolicy::default(),
+            max_tcp_connections: 1024,
+            max_buffered_tcp_bytes_per_conn: 256 * 1024,
+            max_dns_cache_entries: 10_000,
+            max_pending_dns: 1024,
         }
     }
 }
@@ -127,6 +155,7 @@ struct TcpConn {
 
     proxy_connected: bool,
     buffered_to_proxy: Vec<Vec<u8>>,
+    buffered_to_proxy_bytes: usize,
 }
 
 impl TcpConn {
@@ -173,6 +202,7 @@ pub struct NetworkStack {
     tcp: HashMap<TcpKey, TcpConn>,
     pending_dns: HashMap<u32, PendingDns>,
     dns_cache: HashMap<String, DnsCacheEntry>,
+    dns_cache_fifo: VecDeque<String>,
 }
 
 impl NetworkStack {
@@ -187,6 +217,7 @@ impl NetworkStack {
             tcp: HashMap::new(),
             pending_dns: HashMap::new(),
             dns_cache: HashMap::new(),
+            dns_cache_fifo: VecDeque::new(),
         }
     }
 
@@ -262,6 +293,7 @@ impl NetworkStack {
                         data: chunk,
                     });
                 }
+                conn.buffered_to_proxy_bytes = 0;
                 self.tcp.insert(key, conn);
             }
             TcpProxyEvent::Closed { .. } => {
@@ -337,7 +369,7 @@ impl NetworkStack {
 
         if let Some(addr) = allowed_addr {
             let expires_at_ms = now_ms.saturating_add(resolved.ttl_secs as u64 * 1000);
-            self.dns_cache.insert(
+            self.insert_dns_cache(
                 pending.name.clone(),
                 DnsCacheEntry {
                     addr,
@@ -566,6 +598,21 @@ impl NetworkStack {
             }
         }
 
+        // Avoid unbounded growth if the guest sends many DNS queries while the host/proxy is slow
+        // to resolve them.
+        let max_pending_dns = self.cfg.max_pending_dns as usize;
+        if max_pending_dns == 0 || self.pending_dns.len() >= max_pending_dns {
+            return self.emit_dns_error(
+                msg.id,
+                &name,
+                qtype,
+                qclass,
+                udp.src_port,
+                rd,
+                DnsResponseCode::ServerFailure,
+            );
+        }
+
         let request_id = self.next_dns_id;
         self.next_dns_id += 1;
         self.pending_dns.insert(
@@ -767,6 +814,18 @@ impl NetworkStack {
                 );
             }
 
+            // Cap concurrent connections to avoid unbounded memory use.
+            let max_tcp_connections = self.cfg.max_tcp_connections as usize;
+            if max_tcp_connections == 0 || self.tcp.len() >= max_tcp_connections {
+                return self.emit_tcp_rst_for_syn(
+                    ip.src,
+                    tcp.src_port,
+                    ip.dst,
+                    tcp.dst_port,
+                    tcp.seq,
+                );
+            }
+
             let guest_isn = tcp.seq;
             let our_isn = self.allocate_isn();
             let conn_id = self.next_tcp_id;
@@ -788,6 +847,7 @@ impl NetworkStack {
                 guest_fin_received: false,
                 proxy_connected: false,
                 buffered_to_proxy: Vec::new(),
+                buffered_to_proxy_bytes: 0,
             };
 
             let mut actions = Vec::new();
@@ -825,13 +885,25 @@ impl NetworkStack {
         if !tcp.payload.is_empty() {
             // We intentionally do not implement full TCP reassembly: accept only in-order payload.
             if tcp.seq == conn.guest_next_seq {
-                conn.guest_next_seq = conn.guest_next_seq.wrapping_add(tcp.payload.len() as u32);
                 if conn.proxy_connected {
+                    conn.guest_next_seq =
+                        conn.guest_next_seq.wrapping_add(tcp.payload.len() as u32);
                     out.push(Action::TcpProxySend {
                         connection_id: conn.id,
                         data: tcp.payload.to_vec(),
                     });
                 } else {
+                    if self.tcp_buffer_would_exceed_limit(&conn, tcp.payload.len()) {
+                        out.extend(self.emit_tcp_rst(&conn));
+                        out.push(Action::TcpProxyClose {
+                            connection_id: conn.id,
+                        });
+                        return out;
+                    }
+                    conn.guest_next_seq =
+                        conn.guest_next_seq.wrapping_add(tcp.payload.len() as u32);
+                    conn.buffered_to_proxy_bytes =
+                        conn.buffered_to_proxy_bytes.saturating_add(tcp.payload.len());
                     conn.buffered_to_proxy.push(tcp.payload.to_vec());
                 }
                 out.extend(self.emit_tcp_ack(&conn));
@@ -842,13 +914,25 @@ impl NetworkStack {
                 // Overlapping segment; forward only unseen tail.
                 let offset = conn.guest_next_seq.wrapping_sub(tcp.seq) as usize;
                 let tail = &tcp.payload[offset..];
-                conn.guest_next_seq = conn.guest_next_seq.wrapping_add(tail.len() as u32);
                 if conn.proxy_connected {
+                    conn.guest_next_seq =
+                        conn.guest_next_seq.wrapping_add(tail.len() as u32);
                     out.push(Action::TcpProxySend {
                         connection_id: conn.id,
                         data: tail.to_vec(),
                     });
                 } else {
+                    if self.tcp_buffer_would_exceed_limit(&conn, tail.len()) {
+                        out.extend(self.emit_tcp_rst(&conn));
+                        out.push(Action::TcpProxyClose {
+                            connection_id: conn.id,
+                        });
+                        return out;
+                    }
+                    conn.guest_next_seq =
+                        conn.guest_next_seq.wrapping_add(tail.len() as u32);
+                    conn.buffered_to_proxy_bytes =
+                        conn.buffered_to_proxy_bytes.saturating_add(tail.len());
                     conn.buffered_to_proxy.push(tail.to_vec());
                 }
                 out.extend(self.emit_tcp_ack(&conn));
@@ -1088,5 +1172,41 @@ impl NetworkStack {
         (self.next_tcp_id as u32)
             .wrapping_mul(1_000_000)
             .wrapping_add(self.ipv4_ident as u32)
+    }
+
+    fn tcp_buffer_would_exceed_limit(&self, conn: &TcpConn, new_bytes: usize) -> bool {
+        let max = self.cfg.max_buffered_tcp_bytes_per_conn as usize;
+        if max == 0 {
+            return new_bytes > 0;
+        }
+        conn.buffered_to_proxy_bytes
+            .saturating_add(new_bytes)
+            .saturating_sub(max)
+            > 0
+    }
+
+    fn insert_dns_cache(&mut self, name: String, entry: DnsCacheEntry) {
+        let max = self.cfg.max_dns_cache_entries as usize;
+        if max == 0 {
+            return;
+        }
+
+        let is_new = !self.dns_cache.contains_key(&name);
+        self.dns_cache.insert(name.clone(), entry);
+        if is_new {
+            self.dns_cache_fifo.push_back(name);
+        }
+
+        while self.dns_cache.len() > max {
+            let Some(evict) = self.dns_cache_fifo.pop_front() else {
+                break;
+            };
+            self.dns_cache.remove(&evict);
+        }
+
+        // Keep auxiliary bookkeeping bounded even if it somehow gets out of sync.
+        while self.dns_cache_fifo.len() > max {
+            self.dns_cache_fifo.pop_front();
+        }
     }
 }

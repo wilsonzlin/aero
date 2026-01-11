@@ -469,6 +469,281 @@ fn udp_proxy_fallback_transport() {
     );
 }
 
+#[test]
+fn tcp_connection_cap_rejects_new_syn() {
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
+    cfg.max_tcp_connections = 1;
+    let mut stack = NetworkStack::new(cfg);
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+
+    let remote_ip = Ipv4Addr::new(93, 184, 216, 34);
+    let syn_a = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        40000,
+        80,
+        123,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    let actions_a = stack.process_outbound_ethernet(&syn_a, 0);
+    assert!(
+        actions_a
+            .iter()
+            .any(|a| matches!(a, Action::TcpProxyConnect { .. })),
+        "first SYN should be accepted"
+    );
+
+    let syn_b = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        40001,
+        80,
+        456,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    let actions_b = stack.process_outbound_ethernet(&syn_b, 1);
+    assert!(
+        actions_b
+            .iter()
+            .all(|a| !matches!(a, Action::TcpProxyConnect { .. })),
+        "second SYN should not allocate state"
+    );
+    let frame = extract_single_frame(&actions_b);
+    let seg = parse_tcp_from_frame(&frame);
+    assert_eq!(
+        seg.flags & (TcpFlags::RST | TcpFlags::ACK),
+        TcpFlags::RST | TcpFlags::ACK
+    );
+}
+
+#[test]
+fn tcp_buffered_payload_cap_sends_rst_and_frees_state() {
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
+    cfg.max_tcp_connections = 1;
+    cfg.max_buffered_tcp_bytes_per_conn = 8;
+    let mut stack = NetworkStack::new(cfg);
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+
+    let remote_ip = Ipv4Addr::new(93, 184, 216, 34);
+    let guest_port_a = 41000;
+    let guest_isn = 1000;
+
+    // SYN.
+    let syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port_a,
+        80,
+        guest_isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    let actions = stack.process_outbound_ethernet(&syn, 0);
+    let (conn_id, syn_ack_frame) = extract_tcp_connect_and_frame(&actions);
+    let syn_ack = parse_tcp_from_frame(&syn_ack_frame);
+
+    // First payload chunk fits in the buffer.
+    let payload = b"12345678";
+    let psh_ok = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port_a,
+        80,
+        guest_isn + 1,
+        syn_ack.seq + 1,
+        TcpFlags::ACK | TcpFlags::PSH,
+        payload,
+    );
+    let actions = stack.process_outbound_ethernet(&psh_ok, 1);
+    assert!(actions.iter().any(|a| matches!(a, Action::EmitFrame(_))));
+    assert!(actions
+        .iter()
+        .all(|a| !matches!(a, Action::TcpProxySend { .. })));
+
+    // Second chunk would exceed the per-connection buffer limit -> RST + drop state.
+    let overflow = b"x";
+    let psh_overflow = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        guest_port_a,
+        80,
+        guest_isn + 1 + payload.len() as u32,
+        syn_ack.seq + 1,
+        TcpFlags::ACK | TcpFlags::PSH,
+        overflow,
+    );
+    let actions = stack.process_outbound_ethernet(&psh_overflow, 2);
+    assert!(actions.iter().any(
+        |a| matches!(a, Action::TcpProxyClose { connection_id } if *connection_id == conn_id)
+    ));
+    let frame = extract_single_frame(
+        &actions
+            .iter()
+            .cloned()
+            .filter(|a| matches!(a, Action::EmitFrame(_)))
+            .collect::<Vec<_>>(),
+    );
+    let seg = parse_tcp_from_frame(&frame);
+    assert_eq!(
+        seg.flags & (TcpFlags::RST | TcpFlags::ACK),
+        TcpFlags::RST | TcpFlags::ACK
+    );
+
+    // Connection state should be gone, freeing the only available slot.
+    let syn_b = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        remote_ip,
+        41001,
+        80,
+        2000,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    let actions = stack.process_outbound_ethernet(&syn_b, 3);
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a, Action::TcpProxyConnect { .. })),
+        "new SYN should be accepted after abort"
+    );
+}
+
+#[test]
+fn dns_cache_eviction_fifo() {
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
+    cfg.max_dns_cache_entries = 2;
+    let mut stack = NetworkStack::new(cfg);
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+
+    fn query_and_resolve(
+        stack: &mut NetworkStack,
+        guest_mac: MacAddr,
+        txid: u16,
+        name: &str,
+        addr: Ipv4Addr,
+        now_ms: u64,
+    ) {
+        let query = build_dns_query(txid, name, DnsType::A as u16);
+        let frame = wrap_udp_ipv4_eth(
+            guest_mac,
+            stack.config().our_mac,
+            stack.config().guest_ip,
+            stack.config().dns_ip,
+            53000 + txid,
+            53,
+            &query,
+        );
+        let actions = stack.process_outbound_ethernet(&frame, now_ms);
+        let (req_id, got_name) = match actions.as_slice() {
+            [Action::DnsResolve { request_id, name }] => (*request_id, name.clone()),
+            _ => panic!("expected single DnsResolve action, got {actions:?}"),
+        };
+        let resp_actions = stack.handle_dns_resolved(
+            DnsResolved {
+                request_id: req_id,
+                name: got_name,
+                addr: Some(addr),
+                ttl_secs: 60,
+            },
+            now_ms + 1,
+        );
+        let resp_frame = extract_single_frame(&resp_actions);
+        assert_dns_response_has_a_record(&resp_frame, txid, addr.octets());
+    }
+
+    query_and_resolve(
+        &mut stack,
+        guest_mac,
+        0x1000,
+        "a.example",
+        Ipv4Addr::new(1, 1, 1, 1),
+        0,
+    );
+    query_and_resolve(
+        &mut stack,
+        guest_mac,
+        0x1001,
+        "b.example",
+        Ipv4Addr::new(2, 2, 2, 2),
+        10,
+    );
+    query_and_resolve(
+        &mut stack,
+        guest_mac,
+        0x1002,
+        "c.example",
+        Ipv4Addr::new(3, 3, 3, 3),
+        20,
+    );
+
+    // a.example should have been evicted (FIFO), so another query should trigger a new resolve.
+    let query_a = build_dns_query(0x2000, "a.example", DnsType::A as u16);
+    let frame_a = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        stack.config().dns_ip,
+        54000,
+        53,
+        &query_a,
+    );
+    let actions = stack.process_outbound_ethernet(&frame_a, 30);
+    assert!(matches!(actions.as_slice(), [Action::DnsResolve { .. }]));
+
+    // b.example and c.example should still be cached.
+    let query_b = build_dns_query(0x2001, "b.example", DnsType::A as u16);
+    let frame_b = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        stack.config().dns_ip,
+        54001,
+        53,
+        &query_b,
+    );
+    let actions = stack.process_outbound_ethernet(&frame_b, 30);
+    let resp_frame = extract_single_frame(&actions);
+    assert_dns_response_has_a_record(&resp_frame, 0x2001, [2, 2, 2, 2]);
+
+    let query_c = build_dns_query(0x2002, "c.example", DnsType::A as u16);
+    let frame_c = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        stack.config().dns_ip,
+        54002,
+        53,
+        &query_c,
+    );
+    let actions = stack.process_outbound_ethernet(&frame_c, 30);
+    let resp_frame = extract_single_frame(&actions);
+    assert_dns_response_has_a_record(&resp_frame, 0x2002, [3, 3, 3, 3]);
+}
+
 fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
     let xid = 0x1020_3040;
     let discover = build_dhcp_discover(xid, guest_mac);
