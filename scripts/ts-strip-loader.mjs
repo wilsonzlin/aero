@@ -56,30 +56,30 @@ export async function load(url, context, nextLoad) {
   // Vite uses query-string imports like `?worker&url` / `?url` to turn an asset
   // path into a URL string default export. When running the TypeScript sources
   // directly under Node (with `--experimental-strip-types`), those query strings
-  // reach the native loader, which will load the underlying file as an ES module
-  // (and therefore not have a default export).
+  // reach the native loader, which will load the underlying file as an ES module.
   //
   // For unit tests, we only need a stable string (the URL isn't actually fetched),
   // so synthesize a minimal module that default-exports the resolved file URL.
+  //
+  // Some "worker module" sources provide their own `default export` (and other
+  // named exports) so they can be imported directly in Node-based unit tests.
+  // Don't short-circuit those module loads; only synthesize `?url` for non-module
+  // assets.
   const u = new URL(url);
   if (u.protocol === "file:" && u.searchParams.has("url")) {
-    // Some "worker module" sources provide their own `default export` (and other
-    // named exports) so they can be imported directly in Node-based unit tests.
-    // Don't short-circuit those module loads; only synthesize `?url` for non-module
-    // assets.
     const path = u.pathname.toLowerCase();
-    if (path.endsWith(".js") || path.endsWith(".ts") || path.endsWith(".mjs") || path.endsWith(".cjs")) {
+    if (
+      path.endsWith(".js") ||
+      path.endsWith(".ts") ||
+      path.endsWith(".mjs") ||
+      path.endsWith(".mts") ||
+      path.endsWith(".cjs")
+    ) {
       return nextLoad(url, context);
     }
     const base = new URL(url);
     base.search = "";
     base.hash = "";
-    // Some `.js` modules (e.g. AudioWorklet processors) are written to be safe to
-    // import directly in Node and intentionally provide a default export. In that
-    // case, preserve the real module so tests can access named exports too.
-    if (base.pathname.endsWith(".js")) {
-      return nextLoad(url, context);
-    }
     return {
       format: "module",
       source: `export default ${JSON.stringify(base.href)};\n`,

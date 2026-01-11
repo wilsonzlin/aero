@@ -98,15 +98,16 @@ test("RemoteStreamingDisk (OPFS cache)", async (t) => {
   await t.test("caches fetched blocks in OPFS and reuses them on subsequent reads", async () => {
     installOpfsMock();
     const blockSize = 512;
+    // NOTE: `RemoteStreamingDisk` treats `cacheLimitBytes=null` as "cache disabled".
+    // Use a positive limit here so the OPFS cache is enabled.
+    const cacheLimitBytes = blockSize * 8;
     const image = makeTestImage(blockSize * 3);
     const mock = installMockRangeFetch(image, { etag: '"e1"' });
 
     const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
       blockSize,
       cacheBackend: "opfs",
-      // `cacheLimitBytes: null` disables caching; use a generous limit so this
-      // test exercises read-through caching without evictions.
-      cacheLimitBytes: blockSize * 8,
+      cacheLimitBytes,
       prefetchSequentialBlocks: 0,
       credentials: "omit",
     });
