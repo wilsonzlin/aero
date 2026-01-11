@@ -479,6 +479,9 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log) {
 
     log.Logf("virtio-snd: detected PCI device instance_id=%s name=%s",
              WideToUtf8(snd.instance_id).c_str(), WideToUtf8(snd.description).c_str());
+    if (!hwids.empty()) {
+      log.Logf("virtio-snd: detected PCI device hwid0=%s", WideToUtf8(hwids[0]).c_str());
+    }
     out.push_back(std::move(snd));
   }
 
