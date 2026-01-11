@@ -29,9 +29,11 @@ NTSTATUS VirtIoSndAllocCommonBuffer(PVIRTIOSND_DMA_CONTEXT Ctx, SIZE_T Size, BOO
 {
     void* p;
 
-    UNREFERENCED_PARAMETER(Ctx);
+    if (Out != NULL) {
+        RtlZeroMemory(Out, sizeof(*Out));
+    }
 
-    if (Out == NULL || Size == 0) {
+    if (Ctx == NULL || Out == NULL || Size == 0) {
         return STATUS_INVALID_PARAMETER;
     }
 

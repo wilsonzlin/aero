@@ -31,9 +31,11 @@ NTSTATUS VirtIoSndAllocCommonBuffer(
 {
     void *mem;
 
-    UNREFERENCED_PARAMETER(Ctx);
+    if (Out != NULL) {
+        RtlZeroMemory(Out, sizeof(*Out));
+    }
 
-    if (Out == NULL || Size == 0) {
+    if (Ctx == NULL || Out == NULL || Size == 0) {
         return STATUS_INVALID_PARAMETER;
     }
 
