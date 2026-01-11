@@ -32,10 +32,10 @@ struct WddmContext {
   uint32_t CommandBufferSize = 0;
 
   WddmAllocationList* pAllocationList = nullptr;
-  uint32_t AllocationListSize = 0; // entries
+  uint32_t AllocationListSize = 0; // entries (capacity)
 
   WddmPatchLocationList* pPatchLocationList = nullptr;
-  uint32_t PatchLocationListSize = 0; // entries
+  uint32_t PatchLocationListSize = 0; // entries (capacity)
 
   // Runtime-provided per-DMA-buffer private data (WDDM).
   //
