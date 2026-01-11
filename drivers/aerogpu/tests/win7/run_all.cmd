@@ -33,7 +33,7 @@ if not exist "%MANIFEST%" (
   exit /b 1
 )
 
-rem The suite uses --timeout-ms=NNNN to configure aerogpu_timeout_runner.exe; avoid forwarding that
+rem The suite uses --timeout-ms=NNNN (or --timeout-ms NNNN) to configure aerogpu_timeout_runner.exe; avoid forwarding that
 rem flag into tests (vblank_wait_sanity has its own --timeout-ms for per-wait timeouts).
 set "TEST_ARGS="
 set "EXPECT_TIMEOUT_VALUE="
