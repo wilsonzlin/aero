@@ -73,7 +73,6 @@ describe("runtime disk worker protocol", () => {
         cacheKey: "win7-sp1-x64.sha256-deadbeef",
       },
     } satisfies DiskOpenSpec;
-
     if (spec.kind !== "remote" || spec.remote.delivery !== "range") {
       throw new Error("expected a range remote disk spec");
     }

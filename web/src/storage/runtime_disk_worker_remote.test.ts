@@ -37,9 +37,10 @@ function createRangeFetch(
       const start = Number(m[1]);
       const end = Number(m[2]);
       const slice = data.subarray(start, Math.min(end + 1, data.byteLength));
-      return new Response(toArrayBuffer(slice), {
+      const body = toArrayBuffer(slice);
+      return new Response(body, {
         status: 206,
-        headers: { "Content-Range": `bytes ${start}-${start + slice.byteLength - 1}/${data.byteLength}` },
+        headers: { "Content-Range": `bytes ${start}-${start + body.byteLength - 1}/${data.byteLength}` },
       });
     }
 
