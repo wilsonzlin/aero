@@ -342,6 +342,37 @@ fn dxbc_get_signature_falls_back_to_psg1_chunk() {
 }
 
 #[test]
+fn dxbc_get_signature_parses_osgn_chunk() {
+    let sig_bytes = build_signature_chunk();
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"OSGN"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let sig = dxbc
+        .get_signature(FourCC(*b"OSGN"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
+fn dxbc_get_signature_falls_back_to_osg1_chunk() {
+    let sig_bytes = build_signature_chunk_v1();
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"OSG1"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    // Callers commonly ask for `OSGN`, but some toolchains emit `OSG1`.
+    let sig = dxbc
+        .get_signature(FourCC(*b"OSGN"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
 fn dxbc_get_signature_prefers_v0_layout_for_sgn_chunk_ids() {
     let sig_bytes = build_signature_chunk_v0_one_entry_padded(2);
     let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISGN"), &sig_bytes)]);
