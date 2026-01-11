@@ -186,9 +186,8 @@ This signs:
 5. Select `aero-virtio-snd.inf` (recommended for Aero contract v1)
 
 `virtio-snd.inf` is a legacy filename alias kept for compatibility with older workflows/tools.
-It installs the same driver/service as `aero-virtio-snd.inf`, but is less strict: it also matches
-`PCI\VEN_1AF4&DEV_1059` without `REV_01` and the transitional virtio-snd ID (`DEV_1018`), and uses
-`CatalogFile = virtio-snd.cat`.
+It installs the same driver/service and matches the same contract-v1 HWID as `aero-virtio-snd.inf`,
+but uses `CatalogFile = virtio-snd.cat`.
 
 To avoid accidentally installing **two** INFs that match the same HWIDs, the alias INF is checked in as
 `virtio-snd.inf.disabled`; rename it back to `virtio-snd.inf` if you need the legacy filename.

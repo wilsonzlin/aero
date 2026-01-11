@@ -132,9 +132,9 @@ qemu-system-x86_64 -device virtio-sound-pci,help
 ```
 
 Development note: the repo also contains an optional legacy filename alias INF
-(`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf`, it matches less strict
-HWIDs such as `DEV_1059` without `REV_01` and the transitional `DEV_1018`. This legacy INF is
-**not** staged into the CI driver bundle.
+(`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf`, it installs the same
+driver/service as `aero-virtio-snd.inf` but provides the legacy filename for compatibility with
+older tooling/workflows. This legacy INF is **not** staged into the CI driver bundle.
 
 ## Verifying HWID in Device Manager
 
