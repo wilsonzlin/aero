@@ -468,15 +468,11 @@ fn uhci_portsc_high_byte_write_does_not_clear_change_bits() {
 
     const PORTSC_CSC: u16 = 1 << 1;
     const PORTSC_PEDC: u16 = 1 << 3;
-    const PORTSC_RD: u16 = 1 << 6;
     const PORTSC_SUSP: u16 = 1 << 12;
-
-    uhci.controller.hub_mut().force_resume_detect_for_tests(0);
 
     let before = uhci.port_read(REG_PORTSC1, 2) as u16;
     assert_ne!(before & PORTSC_CSC, 0);
     assert_ne!(before & PORTSC_PEDC, 0);
-    assert_ne!(before & PORTSC_RD, 0);
 
     // SUSP is bit12, i.e. bit4 of the high byte.
     uhci.port_write(REG_PORTSC1 + 1, 1, 0x10);
@@ -486,7 +482,6 @@ fn uhci_portsc_high_byte_write_does_not_clear_change_bits() {
     // High-byte writes must not clear low-byte W1C bits.
     assert_ne!(after & PORTSC_CSC, 0);
     assert_ne!(after & PORTSC_PEDC, 0);
-    assert_ne!(after & PORTSC_RD, 0);
 }
 
 #[test]

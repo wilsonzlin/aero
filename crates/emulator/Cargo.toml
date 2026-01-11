@@ -26,6 +26,7 @@ aero-edid = { path = "../aero-edid" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-platform = { path = "../platform" }
+aero-ipc = { path = "../aero-ipc" }
 aero-gpu-trace = { path = "../aero-gpu-trace", optional = true }
 aero-protocol = { path = "../../emulator/protocol" }
 aero-gpu = { path = "../aero-gpu", optional = true }
@@ -35,7 +36,6 @@ font8x8 = "0.3"
 memory = { path = "../memory" }
 aero-net-stack = { path = "../aero-net-stack" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
-aero-ipc = { path = "../aero-ipc" }
 pollster = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
