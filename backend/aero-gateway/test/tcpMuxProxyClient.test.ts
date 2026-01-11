@@ -4,6 +4,8 @@ import net from "node:net";
 import { once } from "node:events";
 import { describe, it } from "node:test";
 
+import { WebSocketServer } from "ws";
+
 import { handleTcpMuxUpgrade } from "../src/routes/tcpMux.js";
 import { decodeTcpMuxOpenPayload as decodeGatewayTcpMuxOpenPayload } from "../src/protocol/tcpMux.js";
 
@@ -11,6 +13,7 @@ import {
   decodeTcpMuxErrorPayload,
   encodeTcpMuxFrame,
   encodeTcpMuxOpenPayload,
+  TCP_MUX_SUBPROTOCOL,
   TCP_MUX_HEADER_BYTES,
   TcpMuxFrameParser,
   TcpMuxMsgType,
@@ -187,6 +190,71 @@ describe("tcp-mux browser client integration", () => {
     } finally {
       await closeServer(proxyServer);
       await closeServer(echoServer);
+    }
+  });
+
+  it("responds to mux-level PING with PONG (same payload)", async () => {
+    const server = http.createServer();
+
+    const wss = new WebSocketServer({
+      server,
+      path: "/tcp-mux",
+      // Mimic the gateway: require & select the canonical subprotocol.
+      handleProtocols: (protocols) => (protocols.has(TCP_MUX_SUBPROTOCOL) ? TCP_MUX_SUBPROTOCOL : false),
+    });
+
+    let client: WebSocketTcpMuxProxyClient | null = null;
+    try {
+      const port = await listen(server, "127.0.0.1");
+
+      client = new WebSocketTcpMuxProxyClient(`http://127.0.0.1:${port}`);
+
+      const serverWs = await withTimeout(
+        new Promise<any>((resolve) => wss.once("connection", (ws) => resolve(ws))),
+        2_000,
+        "expected WebSocket connection",
+      );
+
+      const pingPayload = new Uint8Array([1, 2, 3, 4]);
+      const parser = new TcpMuxFrameParser();
+
+      const gotPong = new Promise<void>((resolve, reject) => {
+        const onError = (err: unknown) => reject(err);
+        const onMessage = (data: unknown) => {
+          const chunk =
+            typeof data === "string"
+              ? Buffer.from(data, "utf8")
+              : Array.isArray(data)
+                ? Buffer.concat(data as Buffer[])
+                : Buffer.from(data as ArrayBuffer);
+
+          try {
+            for (const frame of parser.push(chunk)) {
+              if (frame.msgType !== TcpMuxMsgType.PONG) continue;
+              assert.equal(frame.streamId, 0);
+              assert.deepEqual(new Uint8Array(frame.payload), pingPayload);
+              serverWs.off("message", onMessage);
+              serverWs.off("error", onError);
+              resolve();
+              return;
+            }
+          } catch (err) {
+            serverWs.off("message", onMessage);
+            serverWs.off("error", onError);
+            reject(err);
+          }
+        };
+
+        serverWs.on("message", onMessage);
+        serverWs.on("error", onError);
+      });
+
+      serverWs.send(Buffer.from(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, pingPayload)));
+      await withTimeout(gotPong, 2_000, "expected PONG response");
+    } finally {
+      await client?.shutdown().catch(() => {});
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await closeServer(server);
     }
   });
 
