@@ -325,8 +325,10 @@ Recommended guardrails:
     `0x09`) that can be attached behind a root port to expose additional downstream ports.
     - Implementation: `crates/aero-usb/src/hub/device.rs`
     - UHCI integration tests: `crates/aero-usb/tests/uhci_external_hub.rs`
-  - Host integrations still need to decide *when* to attach a hub (e.g. always keep one root port
-    reserved for a hub and hot-plug passthrough devices behind it).
+  - Current host-side dev UI assumes an external hub is attached on UHCI root port 0 and allocates
+    passthrough devices behind it using guest paths like `0.3`; if that hub fills up, one extra
+    device can attach directly at path `1`.
+    - Implementation: `web/src/platform/webhid_passthrough.ts` (guest path allocator + UI hint)
 - **No low-speed modeling**
   - Low-speed (1.5 Mbps) USB devices are not modeled correctly yet.
   - Expect some HID peripherals to fail enumeration or behave incorrectly.
