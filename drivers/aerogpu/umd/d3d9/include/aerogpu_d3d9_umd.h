@@ -1201,6 +1201,10 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyDevice) == 0,
 #if UINTPTR_MAX == 0xFFFFFFFFu
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateResource) == 4,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateResource offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnOpenResource) == 8,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnOpenResource offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnOpenResource2) == 12,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnOpenResource2 offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyResource) == 16,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyResource offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnLock) == 20,
@@ -1211,6 +1215,14 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateSwapChain) == 104,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateSwapChain offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroySwapChain) == 108,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroySwapChain offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetSwapChain) == 112,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetSwapChain offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetSwapChain) == 116,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetSwapChain offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnReset) == 120,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnReset offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnResetEx) == 124,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnResetEx offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckDeviceState) == 128,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCheckDeviceState offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForVBlank) == 132,
@@ -1227,10 +1239,22 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetDisplayModeEx) == 152,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetDisplayModeEx offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnComposeRects) == 156,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnComposeRects offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnRotateResourceIdentities) == 160,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnRotateResourceIdentities offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnPresent) == 164,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnPresent offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnPresentEx) == 168,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnPresentEx offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnFlush) == 172,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnFlush offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetMaximumFrameLatency) == 176,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetMaximumFrameLatency offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetMaximumFrameLatency) == 180,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetMaximumFrameLatency offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetPresentStats) == 184,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetPresentStats offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetLastPresentCount) == 188,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetLastPresentCount offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateQuery) == 192,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateQuery offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyQuery) == 196,
@@ -1239,6 +1263,10 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnIssueQuery) == 200,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnIssueQuery offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetQueryData) == 204,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetQueryData offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetRenderTargetData) == 208,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetRenderTargetData offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCopyRects) == 212,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCopyRects offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForIdle) == 216,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnWaitForIdle offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnBlt) == 220,
@@ -1252,6 +1280,10 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateTexture) == 232,
 #else
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateResource) == 8,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateResource offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnOpenResource) == 16,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnOpenResource offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnOpenResource2) == 24,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnOpenResource2 offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyResource) == 32,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyResource offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnLock) == 40,
@@ -1262,6 +1294,14 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateSwapChain) == 208,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateSwapChain offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroySwapChain) == 216,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroySwapChain offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetSwapChain) == 224,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetSwapChain offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetSwapChain) == 232,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetSwapChain offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnReset) == 240,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnReset offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnResetEx) == 248,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnResetEx offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckDeviceState) == 256,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCheckDeviceState offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForVBlank) == 264,
@@ -1278,10 +1318,22 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetDisplayModeEx) == 304,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetDisplayModeEx offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnComposeRects) == 312,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnComposeRects offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnRotateResourceIdentities) == 320,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnRotateResourceIdentities offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnPresent) == 328,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnPresent offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnPresentEx) == 336,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnPresentEx offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnFlush) == 344,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnFlush offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetMaximumFrameLatency) == 352,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetMaximumFrameLatency offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetMaximumFrameLatency) == 360,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetMaximumFrameLatency offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetPresentStats) == 368,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetPresentStats offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetLastPresentCount) == 376,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetLastPresentCount offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateQuery) == 384,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateQuery offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyQuery) == 392,
@@ -1290,6 +1342,10 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnIssueQuery) == 400,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnIssueQuery offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetQueryData) == 408,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetQueryData offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetRenderTargetData) == 416,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetRenderTargetData offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCopyRects) == 424,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCopyRects offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForIdle) == 432,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnWaitForIdle offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnBlt) == 440,
