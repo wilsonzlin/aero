@@ -51,13 +51,14 @@ AERO_NODE_DIR=web cargo xtask test-all --skip-e2e
 
 The container includes the native libraries Playwright needs, but it does **not** pre-download browser binaries.
 
-Install the browsers once:
+Install the repo-root Node dependencies (Playwright lives in the root `package.json`), then install the browsers once:
 
 ```bash
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
 npx playwright install chromium
 ```
 
-Then run:
+Then run e2e:
 
 ```bash
 cargo xtask test-all

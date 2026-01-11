@@ -152,11 +152,108 @@ describe("RingBuffer", () => {
       ring.reset();
 
     const count = 100;
-    const worker = new Worker(new URL("./ring_buffer_consumer_worker.ts", import.meta.url), {
-      type: "module",
-      workerData: { sab, byteOffset: 0, byteLength: sab.byteLength, count },
-      execArgv: ["--experimental-strip-types"],
-    });
+    // Worker threads do not support Node ESM loaders, and Node 20 does not have a
+    // built-in TypeScript runtime. Keep the cross-thread test coverage by running
+    // a small JS-only consumer worker (no TS imports).
+    const worker = new Worker(
+      `
+const { parentPort, workerData } = require("node:worker_threads");
+
+const META_BYTES = 8;
+const HEAD_INDEX = 0;
+const TAIL_INDEX = 1;
+
+const { sab, byteOffset, byteLength, count } = workerData;
+const meta = new Int32Array(sab, byteOffset, 2);
+const cap = byteLength - META_BYTES;
+const data = new Uint8Array(sab, byteOffset + META_BYTES, cap);
+
+function advance(pos, delta) {
+  const next = pos + delta;
+  return next >= cap ? next - cap : next;
+}
+
+function usedBytesFor(head, tail) {
+  if (head >= tail) return head - tail;
+  return cap - (tail - head);
+}
+
+function maxMessageBytes() {
+  return Math.max(0, cap - 5);
+}
+
+function readU32LE(pos) {
+  return (
+    data[pos] |
+    (data[(pos + 1) % cap] << 8) |
+    (data[(pos + 2) % cap] << 16) |
+    (data[(pos + 3) % cap] << 24)
+  ) >>> 0;
+}
+
+function readBytes(pos, out) {
+  const first = Math.min(out.byteLength, cap - pos);
+  out.set(data.subarray(pos, pos + first), 0);
+  if (first < out.byteLength) {
+    out.set(data.subarray(0, out.byteLength - first), first);
+  }
+}
+
+function pop() {
+  const head = Atomics.load(meta, HEAD_INDEX);
+  const tail = Atomics.load(meta, TAIL_INDEX);
+  const used = usedBytesFor(head, tail);
+  if (used < 4) return null;
+
+  const len = readU32LE(tail);
+  if (len === 0 || len > maxMessageBytes()) {
+    Atomics.store(meta, TAIL_INDEX, head);
+    return null;
+  }
+
+  const totalBytes = 4 + len;
+  if (used < totalBytes) {
+    Atomics.store(meta, TAIL_INDEX, head);
+    return null;
+  }
+
+  const payloadStart = advance(tail, 4);
+  const payload = new Uint8Array(len);
+  readBytes(payloadStart, payload);
+  Atomics.store(meta, TAIL_INDEX, advance(tail, totalBytes));
+  return payload;
+}
+
+async function run() {
+  const received = [];
+  while (received.length < count) {
+    const msg = pop();
+    if (!msg) {
+      const head = Atomics.load(meta, HEAD_INDEX);
+      const tail = Atomics.load(meta, TAIL_INDEX);
+      if (head === tail) {
+        Atomics.wait(meta, HEAD_INDEX, head, 1000);
+      }
+      continue;
+    }
+
+    if (msg.byteLength !== 4) continue;
+    const value = new DataView(msg.buffer, msg.byteOffset, msg.byteLength).getUint32(0, true);
+    received.push(value);
+  }
+
+  parentPort?.postMessage(received);
+}
+
+run().catch((err) => {
+  parentPort?.postMessage({ error: String(err) });
+});
+      `,
+      {
+        eval: true,
+        workerData: { sab, byteOffset: 0, byteLength: sab.byteLength, count },
+      }
+    );
 
     try {
       for (let i = 0; i < count; i++) {
@@ -168,7 +265,13 @@ describe("RingBuffer", () => {
       }
 
       const received = await new Promise<number[]>((resolve, reject) => {
-        worker.once("message", (msg) => resolve(msg as number[]));
+        worker.once("message", (msg) => {
+          if (!Array.isArray(msg) && msg && typeof msg === "object" && "error" in msg) {
+            reject(new Error(String((msg as { error: unknown }).error)));
+            return;
+          }
+          resolve(msg as number[]);
+        });
         worker.once("error", reject);
         worker.once("exit", (code) => {
           if (code !== 0) reject(new Error(`ring buffer worker exited with code ${code}`));

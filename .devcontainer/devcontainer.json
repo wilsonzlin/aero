@@ -5,6 +5,7 @@
     "context": ".."
   },
   "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
   "runArgs": ["--ulimit", "nofile=4096:4096"],
   "containerEnv": {
     "CARGO_BUILD_JOBS": "4",
