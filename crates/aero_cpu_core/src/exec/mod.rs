@@ -218,9 +218,9 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     break;
                 }
                 StepExit::BiosInterrupt(vector) => {
+                    cpu.cpu.pending.retire_instruction();
                     // Real-mode BIOS stubs may use `HLT` as a hypercall boundary after `INT n`.
                     // Preserve the vector so higher-level glue can dispatch it if desired.
-                    cpu.cpu.pending.retire_instruction();
                     cpu.cpu.state.set_pending_bios_int(vector);
                     break;
                 }

@@ -1,6 +1,5 @@
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
-use aero_cpu_core::interrupts;
-use aero_cpu_core::interrupts::PendingEventState;
+use aero_cpu_core::interrupts::{self, PendingEventState};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::CpuState;
 use aero_cpu_core::{AssistReason, Exception};
@@ -103,16 +102,16 @@ impl CpuBus for TestBus {
 #[derive(Debug)]
 pub struct Tier0Machine {
     pub cpu: CpuState,
-    pending: PendingEventState,
     pub bus: TestBus,
+    pending: PendingEventState,
 }
 
 impl Tier0Machine {
     pub fn new(cpu: CpuState, bus: TestBus) -> Self {
         Self {
             cpu,
-            pending: PendingEventState::default(),
             bus,
+            pending: PendingEventState::default(),
         }
     }
 

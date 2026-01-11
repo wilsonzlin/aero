@@ -389,6 +389,72 @@ fn segment_override_applies_to_source_only_for_movs() {
 }
 
 #[test]
+fn rep_movsb_addr16_wrap_skips_bulk_copy_and_uses_wrapping_offsets() {
+    // In 16-bit address-size mode, SI/DI wrap at 0x10000. If the range wraps, the accessed
+    // addresses are not contiguous in linear memory and we must not use bulk-copy fast paths.
+    let count = 128u16;
+
+    let mut cpu = Cpu::new(CpuMode::Real16);
+    cpu.segs.ds.base = 0;
+    cpu.segs.es.base = 0x20000;
+    cpu.regs.set_si(0xFFC0);
+    cpu.regs.set_di(0x0100);
+    cpu.regs.set_cx(count);
+
+    let mut bus = CountingBus::new(0x30000);
+    // Source wraps: [0xFFC0..0xFFFF] then [0x0000..0x003F]
+    for i in 0..64u64 {
+        bus.write_u8(0xFFC0 + i, 0xAA);
+        bus.write_u8(i, 0xBB);
+        // This is what an incorrect bulk-copy would read instead of wrapping to 0x0000.
+        bus.write_u8(0x10000 + i, 0xCC);
+    }
+
+    cpu.execute_bytes(&mut bus, &[0xF3, 0xA4]).unwrap(); // REP MOVSB
+
+    assert_eq!(bus.bulk_copy_calls, 0);
+    assert_eq!(cpu.regs.cx(), 0);
+    assert_eq!(cpu.regs.si(), 0x0040);
+    assert_eq!(cpu.regs.di(), 0x0180);
+
+    let dst_base = 0x20000 + 0x0100;
+    for i in 0..64u64 {
+        assert_eq!(bus.read_u8(dst_base + i), 0xAA);
+        assert_eq!(bus.read_u8(dst_base + 64 + i), 0xBB);
+    }
+}
+
+#[test]
+fn rep_stosb_addr16_wrap_skips_bulk_set_and_uses_wrapping_offsets() {
+    // Same idea as the MOVSB test above, but for STOSB bulk-set behavior.
+    let count = 128u16;
+
+    let mut cpu = Cpu::new(CpuMode::Real16);
+    cpu.segs.es.base = 0;
+    cpu.regs.set_di(0xFFC0);
+    cpu.regs.set_cx(count);
+    cpu.regs.set_al(0x5A);
+
+    let mut bus = CountingBus::new(0x20000);
+    for i in 0..64u64 {
+        bus.write_u8(0x10000 + i, 0xCC);
+    }
+
+    cpu.execute_bytes(&mut bus, &[0xF3, 0xAA]).unwrap(); // REP STOSB
+
+    assert_eq!(bus.bulk_set_calls, 0);
+    assert_eq!(cpu.regs.cx(), 0);
+    assert_eq!(cpu.regs.di(), 0x0040);
+
+    for i in 0..64u64 {
+        assert_eq!(bus.read_u8(0xFFC0 + i), 0x5A);
+        assert_eq!(bus.read_u8(i), 0x5A);
+        // Incorrect bulk-set would have overwritten this region instead of wrapping to 0x0000.
+        assert_eq!(bus.read_u8(0x10000 + i), 0xCC);
+    }
+}
+
+#[test]
 fn rep_movsb_uses_bulk_copy_when_safe() {
     let mut cpu = Cpu::new(CpuMode::Protected32);
     cpu.segs.ds.base = 0;
