@@ -360,6 +360,23 @@ static int RunD3D101Triangle(int argc, char** argv) {
   }
 
   device->CopyResource(staging.get(), backbuffer.get());
+
+  // Probe DO_NOT_WAIT map before any explicit Flush call. A correct UMD should
+  // either return DXGI_ERROR_WAS_STILL_DRAWING (in-flight copy) or succeed if the
+  // work completed quickly.
+  {
+    D3D10_MAPPED_TEXTURE2D map_nowait;
+    ZeroMemory(&map_nowait, sizeof(map_nowait));
+    hr = staging->Map(0, D3D10_MAP_READ, D3D10_MAP_FLAG_DO_NOT_WAIT, &map_nowait);
+    if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+      // Expected: the CopyResource is still being processed by the GPU.
+    } else if (SUCCEEDED(hr)) {
+      staging->Unmap(0);
+    } else {
+      return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(staging, DO_NOT_WAIT)", hr, device.get());
+    }
+  }
+
   device->Flush();
 
   D3D10_MAPPED_TEXTURE2D map;
