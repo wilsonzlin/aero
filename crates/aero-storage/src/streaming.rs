@@ -466,6 +466,7 @@ struct StreamingDiskInner {
     validator: Option<String>,
     cache: Arc<dyn ChunkStore>,
     meta_store: JsonMetaStore,
+    meta_write_lock: AsyncMutex<()>,
     options: StreamingDiskOptions,
     telemetry: StreamingTelemetry,
     fetch_sem: Semaphore,
@@ -569,6 +570,7 @@ impl StreamingDisk {
                 validator,
                 cache,
                 meta_store,
+                meta_write_lock: AsyncMutex::new(()),
                 options: config.options.clone(),
                 telemetry: StreamingTelemetry::default(),
                 fetch_sem: Semaphore::new(config.options.max_concurrent_fetches.max(1)),
@@ -625,18 +627,7 @@ impl StreamingDisk {
 
     pub async fn flush(&self) -> Result<(), StreamingDiskError> {
         self.inner.cache.flush()?;
-        let meta = {
-            let state = self.inner.state.lock().await;
-            CacheMeta {
-                version: 1,
-                total_size: self.inner.total_size,
-                validator: self.inner.validator.clone(),
-                chunk_size: self.inner.options.chunk_size,
-                downloaded: state.downloaded.clone(),
-            }
-        };
-        self.inner.meta_store.save(&meta)?;
-        Ok(())
+        self.save_meta().await
     }
 
     /// Read bytes at `offset` into `buf`, fetching any missing chunks via HTTP `Range`.
@@ -737,18 +728,11 @@ impl StreamingDisk {
                 let chunk_start = chunk_index * self.inner.options.chunk_size;
                 let chunk_end =
                     (chunk_start + self.inner.options.chunk_size).min(self.inner.total_size);
-                let meta = {
+                {
                     let mut state = self.inner.state.lock().await;
                     state.downloaded.remove(chunk_start, chunk_end);
-                    CacheMeta {
-                        version: 1,
-                        total_size: self.inner.total_size,
-                        validator: self.inner.validator.clone(),
-                        chunk_size: self.inner.options.chunk_size,
-                        downloaded: state.downloaded.clone(),
-                    }
-                };
-                self.inner.meta_store.save(&meta)?;
+                }
+                self.save_meta().await?;
 
                 let token = self.inner.cancel_token.lock().await.clone();
                 self.ensure_chunk_cached(chunk_index, &token).await?;
@@ -873,9 +857,20 @@ impl StreamingDisk {
 
         self.inner.cache.write_chunk(chunk_index, &bytes)?;
 
-        let meta = {
+        {
             let mut state = self.inner.state.lock().await;
             state.downloaded.insert(chunk_start, chunk_end);
+        }
+        self.save_meta().await?;
+        Ok(())
+    }
+
+    async fn save_meta(&self) -> Result<(), StreamingDiskError> {
+        // Multiple chunks can be fetched concurrently. Serialize metadata writes so we never
+        // race on the `.tmp` file and so the on-disk meta reflects a consistent snapshot.
+        let _guard = self.inner.meta_write_lock.lock().await;
+        let meta = {
+            let state = self.inner.state.lock().await;
             CacheMeta {
                 version: 1,
                 total_size: self.inner.total_size,
