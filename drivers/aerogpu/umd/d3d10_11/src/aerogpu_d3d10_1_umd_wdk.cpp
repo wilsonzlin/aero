@@ -293,6 +293,10 @@ struct AeroGpuDepthStencilView {
   AeroGpuResource* resource = nullptr;
 };
 
+struct AeroGpuShaderResourceView {
+  aerogpu_handle_t texture = 0;
+};
+
 struct AeroGpuBlendState {
   uint32_t dummy = 0;
 };
@@ -302,6 +306,10 @@ struct AeroGpuRasterizerState {
 };
 
 struct AeroGpuDepthStencilState {
+  uint32_t dummy = 0;
+};
+
+struct AeroGpuSampler {
   uint32_t dummy = 0;
 };
 
@@ -2375,6 +2383,66 @@ void AEROGPU_APIENTRY ClearDepthStencilView(D3D10DDI_HDEVICE hDevice,
   cmd->stencil = stencil;
 }
 
+SIZE_T AEROGPU_APIENTRY CalcPrivateShaderResourceViewSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATESHADERRESOURCEVIEW*) {
+  return sizeof(AeroGpuShaderResourceView);
+}
+
+HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
+                                                  const D3D10DDIARG_CREATESHADERRESOURCEVIEW* pDesc,
+                                                  D3D10DDI_HSHADERRESOURCEVIEW hView,
+                                                  D3D10DDI_HRTSHADERRESOURCEVIEW) {
+  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  D3D10DDI_HRESOURCE hResource{};
+  __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::hDrvResource) {
+    hResource = pDesc->hDrvResource;
+  }
+  __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::hDrvResource) {
+    hResource = pDesc->hResource;
+  }
+  if (!hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  auto* srv = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
+  srv->texture = res ? res->handle : 0;
+  return S_OK;
+}
+
+void AEROGPU_APIENTRY DestroyShaderResourceView(D3D10DDI_HDEVICE, D3D10DDI_HSHADERRESOURCEVIEW hView) {
+  if (!hView.pDrvPrivate) {
+    return;
+  }
+  auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(hView);
+  view->~AeroGpuShaderResourceView();
+}
+
+SIZE_T AEROGPU_APIENTRY CalcPrivateSamplerSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATESAMPLER*) {
+  return sizeof(AeroGpuSampler);
+}
+
+HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
+                                       const D3D10DDIARG_CREATESAMPLER*,
+                                       D3D10DDI_HSAMPLER hSampler,
+                                       D3D10DDI_HRTSAMPLER) {
+  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  new (hSampler.pDrvPrivate) AeroGpuSampler();
+  return S_OK;
+}
+
+void AEROGPU_APIENTRY DestroySampler(D3D10DDI_HDEVICE, D3D10DDI_HSAMPLER hSampler) {
+  if (!hSampler.pDrvPrivate) {
+    return;
+  }
+  auto* s = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(hSampler);
+  s->~AeroGpuSampler();
+}
+
 SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize(D3D10DDI_HDEVICE, const D3D10_1_DDI_BLEND_DESC*) {
   return sizeof(AeroGpuBlendState);
 }
@@ -2704,6 +2772,52 @@ void AEROGPU_APIENTRY PsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HPIXELSHADE
   cmd->ps = dev->current_ps;
   cmd->cs = 0;
   cmd->reserved0 = 0;
+}
+
+void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
+                              uint32_t shader_stage,
+                              UINT start_slot,
+                              UINT num_views,
+                              const D3D10DDI_HSHADERRESOURCEVIEW* phViews) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  if (num_views && !phViews) {
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  for (UINT i = 0; i < num_views; i++) {
+    aerogpu_handle_t tex = 0;
+    if (phViews[i].pDrvPrivate) {
+      tex = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(phViews[i])->texture;
+    }
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    cmd->shader_stage = shader_stage;
+    cmd->slot = start_slot + i;
+    cmd->texture = tex;
+    cmd->reserved0 = 0;
+  }
+}
+
+void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
+                                          UINT start_slot,
+                                          UINT num_views,
+                                          const D3D10DDI_HSHADERRESOURCEVIEW* phViews) {
+  SetShaderResourcesCommon(hDevice, AEROGPU_SHADER_STAGE_VERTEX, start_slot, num_views, phViews);
+}
+
+void AEROGPU_APIENTRY PsSetShaderResources(D3D10DDI_HDEVICE hDevice,
+                                          UINT start_slot,
+                                          UINT num_views,
+                                          const D3D10DDI_HSHADERRESOURCEVIEW* phViews) {
+  SetShaderResourcesCommon(hDevice, AEROGPU_SHADER_STAGE_PIXEL, start_slot, num_views, phViews);
 }
 
 void AEROGPU_APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice, UINT num_viewports, const D3D10_DDI_VIEWPORT* pViewports) {
@@ -3279,6 +3393,22 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCreatePixelShader = &CreatePixelShader;
   pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = &DestroyVertexShader;
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
+  __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
+    // Not implemented yet, but keep the entrypoints non-null so runtimes don't
+    // crash on unexpected geometry shader probes.
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize =
+        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize)>::Call;
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader =
+        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader)>::Call;
+    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader =
+        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader)>::Call;
+  }
+  __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize =
+        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput =
+        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput)>::Call;
+  }
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;
   pCreateDevice->pDeviceFuncs->pfnCreateElementLayout = &CreateElementLayout;
@@ -3293,6 +3423,16 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilView = &CreateDepthStencilView;
   pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilView = &DestroyDepthStencilView;
   pCreateDevice->pDeviceFuncs->pfnClearDepthStencilView = &ClearDepthStencilView;
+  __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateShaderResourceViewSize) {
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateShaderResourceViewSize = &CalcPrivateShaderResourceViewSize;
+    pCreateDevice->pDeviceFuncs->pfnCreateShaderResourceView = &CreateShaderResourceView;
+    pCreateDevice->pDeviceFuncs->pfnDestroyShaderResourceView = &DestroyShaderResourceView;
+  }
+  __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateSamplerSize) {
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateSamplerSize = &CalcPrivateSamplerSize;
+    pCreateDevice->pDeviceFuncs->pfnCreateSampler = &CreateSampler;
+    pCreateDevice->pDeviceFuncs->pfnDestroySampler = &DestroySampler;
+  }
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateBlendStateSize = &CalcPrivateBlendStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateBlendState = &CreateBlendState;
@@ -3328,8 +3468,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
 
   AEROGPU_D3D10_ASSIGN_STUB(pfnVsSetConstantBuffers, VsSetConstantBuffers);
   AEROGPU_D3D10_ASSIGN_STUB(pfnPsSetConstantBuffers, PsSetConstantBuffers);
-  AEROGPU_D3D10_ASSIGN_STUB(pfnVsSetShaderResources, VsSetShaderResources);
-  AEROGPU_D3D10_ASSIGN_STUB(pfnPsSetShaderResources, PsSetShaderResources);
+  pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources = &VsSetShaderResources;
+  pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources = &PsSetShaderResources;
   AEROGPU_D3D10_ASSIGN_STUB(pfnVsSetSamplers, VsSetSamplers);
   AEROGPU_D3D10_ASSIGN_STUB(pfnPsSetSamplers, PsSetSamplers);
 
