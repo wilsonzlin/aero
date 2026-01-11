@@ -365,6 +365,38 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue(END warmup)", hr);
   }
+
+  // First poll must not block and should indicate "not ready" when using DONOTFLUSH.
+  {
+    HRESULT hr_immediate = E_FAIL;
+    LONGLONG start_qpc = 0;
+    LONGLONG end_qpc = 0;
+    if (!getdata.GetData(query.get(),
+                         NULL,
+                         0,
+                         D3DGETDATA_DONOTFLUSH,
+                         200,
+                         &hr_immediate,
+                         &start_qpc,
+                         &end_qpc)) {
+      FailFast(kTestName, "GetData(DONOTFLUSH warmup) hung");
+    }
+    const double call_ms = QpcToMs(end_qpc - start_qpc, qpc_freq);
+    if (call_ms > kMaxGetDataCallMs) {
+      return aerogpu_test::Fail(kTestName,
+                                "GetData(D3DGETDATA_DONOTFLUSH warmup) blocked for %.3fms",
+                                call_ms);
+    }
+    if (hr_immediate != S_FALSE && hr_immediate != D3DERR_WASSTILLDRAWING) {
+      if (hr_immediate == S_OK) {
+        return aerogpu_test::Fail(kTestName,
+                                  "GetData(D3DGETDATA_DONOTFLUSH warmup) returned S_OK immediately; "
+                                  "expected not-ready");
+      }
+      return aerogpu_test::FailHresult(kTestName, "GetData(DONOTFLUSH warmup)", hr_immediate);
+    }
+  }
+
   hr = dev->Flush();
   if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "Flush(warmup)", hr);
@@ -412,10 +444,6 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     if (FAILED(hr)) {
       return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue(END)", hr);
     }
-    hr = dev->Flush();
-    if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "Flush", hr);
-    }
 
     HRESULT hr_immediate = E_FAIL;
     LONGLONG start_qpc = 0;
@@ -448,6 +476,11 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                 immediate_ms,
                                 (unsigned)it,
                                 aerogpu_test::HresultToString(hr_immediate).c_str());
+    }
+
+    hr = dev->Flush();
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "Flush", hr);
     }
 
     const DWORD poll_start = GetTickCount();
