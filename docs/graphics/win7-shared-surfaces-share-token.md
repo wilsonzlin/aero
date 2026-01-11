@@ -28,8 +28,6 @@ On Windows 7 (WDDM 1.1), `share_token` is stored in WDDM allocation private driv
 
 The **UMD** chooses a non-zero, collision-resistant token at creation time and writes it into the allocation private-data blob. dxgkrnl preserves that blob for shared allocations and returns it verbatim to other processes when they open the shared resource, making the token stable cross-process.
  
-Note: `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h` exists as a legacy/experimental “KMD → UMD” private-data payload, but the current Win7 WDDM 1.1 driver stack does **not** rely on KMD→UMD writeback semantics (see the header comment in `aerogpu_alloc_privdata.h`).
-
 ## Expected flow (UMD ↔ KMD ↔ host)
 
 ### 1) Create shared resource → export (token)
