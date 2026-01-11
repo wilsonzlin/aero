@@ -915,7 +915,7 @@ fn emit_item(
     // descriptor), so we must never emit a descriptor longer than 65535 bytes. Enforce this as we
     // build the byte stream to avoid allocating absurdly large buffers for malformed metadata.
     let added = 1usize.saturating_add(data.len());
-    let next_len = out.len().checked_add(added).unwrap_or(usize::MAX);
+    let next_len = out.len().saturating_add(added);
     if next_len > u16::MAX as usize {
         return Err(HidDescriptorError::at(
             "reportDescriptor",
