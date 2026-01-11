@@ -655,8 +655,8 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
 
     let files = output.stdout;
 
-    let allowed_prefixes: [&[u8]; 4] = [
-        b"docs/abi/aerogpu-pci-identity.md",
+    let allowed_mapping_doc = b"docs/abi/aerogpu-pci-identity.md";
+    let allowed_prefixes: [&[u8]; 3] = [
         b"drivers/aerogpu/protocol/legacy/",
         b"drivers/aerogpu/packaging/win7/legacy/",
         b"prototype/legacy-win7-aerogpu-1ae0/",
@@ -675,9 +675,7 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
         if rel.is_empty() {
             continue;
         }
-        if allowed_prefixes
-            .iter()
-            .any(|prefix| rel.starts_with(prefix))
+        if rel == allowed_mapping_doc || allowed_prefixes.iter().any(|prefix| rel.starts_with(prefix))
         {
             continue;
         }
