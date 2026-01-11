@@ -191,6 +191,54 @@ components:
           type: string
       required: [delivery, manifestUrl]
 
+    ChunkedDiskManifestV1:
+      type: object
+      description: |
+        Chunked disk image manifest as produced by `tools/image-chunker` (see docs/18-chunked-disk-image-format.md).
+      properties:
+        schema:
+          type: string
+          enum: ["aero.chunked-disk-image.v1"]
+        imageId:
+          type: string
+          nullable: true
+        version:
+          type: string
+        mimeType:
+          type: string
+        totalSize:
+          type: integer
+          format: int64
+        chunkSize:
+          type: integer
+          format: int64
+        chunkCount:
+          type: integer
+          format: int64
+        chunkIndexWidth:
+          type: integer
+          format: int32
+        chunks:
+          type: array
+          items:
+            type: object
+            properties:
+              size:
+                type: integer
+                format: int64
+                nullable: true
+              sha256:
+                type: string
+                nullable: true
+      required:
+        - schema
+        - version
+        - mimeType
+        - totalSize
+        - chunkSize
+        - chunkCount
+        - chunkIndexWidth
+
 paths:
   /health:
     get:
@@ -469,8 +517,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/ChunkedDiskManifestV1"
         default:
           description: Error
           content:
