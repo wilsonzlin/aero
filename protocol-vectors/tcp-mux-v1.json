@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "frames": [
+    {
+      "name": "frame_open_example.com_with_metadata",
+      "msgType": 1,
+      "streamId": 1,
+      "payload_b64": "AAtleGFtcGxlLmNvbQG7AAl7ImsiOiJ2In0=",
+      "frame_b64": "AQAAAAEAAAAaAAtleGFtcGxlLmNvbQG7AAl7ImsiOiJ2In0="
+    },
+    {
+      "name": "frame_data_hi",
+      "msgType": 2,
+      "streamId": 1,
+      "payload_b64": "aGk=",
+      "frame_b64": "AgAAAAEAAAACaGk="
+    },
+    {
+      "name": "frame_close_fin",
+      "msgType": 3,
+      "streamId": 1,
+      "payload_b64": "AQ==",
+      "frame_b64": "AwAAAAEAAAABAQ=="
+    },
+    {
+      "name": "frame_error_policy_denied_nope",
+      "msgType": 4,
+      "streamId": 1,
+      "payload_b64": "AAEABG5vcGU=",
+      "frame_b64": "BAAAAAEAAAAIAAEABG5vcGU="
+    },
+    {
+      "name": "frame_ping_stream0_payload_010203",
+      "msgType": 5,
+      "streamId": 0,
+      "payload_b64": "AQID",
+      "frame_b64": "BQAAAAAAAAADAQID"
+    },
+    {
+      "name": "frame_pong_stream0_empty",
+      "msgType": 6,
+      "streamId": 0,
+      "payload_b64": "",
+      "frame_b64": "BgAAAAAAAAAA"
+    }
+  ],
+  "openPayloads": [
+    {
+      "name": "open_short_host_no_metadata",
+      "host": "a",
+      "port": 1,
+      "payload_b64": "AAFhAAEAAA=="
+    },
+    {
+      "name": "open_dotted_host_with_metadata",
+      "host": "example.com",
+      "port": 443,
+      "metadata": "{\"k\":\"v\"}",
+      "payload_b64": "AAtleGFtcGxlLmNvbQG7AAl7ImsiOiJ2In0="
+    },
+    {
+      "name": "open_ipv6_literal_no_metadata",
+      "host": "2001:db8::1",
+      "port": 80,
+      "payload_b64": "AAsyMDAxOmRiODo6MQBQAAA="
+    }
+  ],
+  "closePayloads": [
+    {
+      "name": "close_fin",
+      "flags": 1,
+      "payload_b64": "AQ=="
+    },
+    {
+      "name": "close_rst",
+      "flags": 2,
+      "payload_b64": "Ag=="
+    }
+  ],
+  "errorPayloads": [
+    {
+      "name": "error_policy_denied_nope",
+      "code": 1,
+      "message": "nope",
+      "payload_b64": "AAEABG5vcGU="
+    },
+    {
+      "name": "error_length_mismatch_truncated_message",
+      "payload_b64": "AAEABG5vcA==",
+      "expectError": true,
+      "errorContains": "length mismatch"
+    }
+  ],
+  "parserStreams": [
+    {
+      "name": "stream_split_across_chunks_open_then_data",
+      "chunks_b64": ["AQAA", "AAEAAAAaAAtleGFtcGxlLmNvbQE=", "uwAJeyJrIjoidiJ9AgAAAAEAAAACaGk="],
+      "expectFrames": [
+        {
+          "msgType": 1,
+          "streamId": 1,
+          "payload_b64": "AAtleGFtcGxlLmNvbQG7AAl7ImsiOiJ2In0="
+        },
+        {
+          "msgType": 2,
+          "streamId": 1,
+          "payload_b64": "aGk="
+        }
+      ]
+    },
+    {
+      "name": "stream_concatenated_frames_single_chunk_open_then_data",
+      "chunks_b64": ["AQAAAAEAAAAaAAtleGFtcGxlLmNvbQG7AAl7ImsiOiJ2In0CAAAAAQAAAAJoaQ=="],
+      "expectFrames": [
+        {
+          "msgType": 1,
+          "streamId": 1,
+          "payload_b64": "AAtleGFtcGxlLmNvbQG7AAl7ImsiOiJ2In0="
+        },
+        {
+          "msgType": 2,
+          "streamId": 1,
+          "payload_b64": "aGk="
+        }
+      ]
+    },
+    {
+      "name": "stream_truncated_frame_at_eof",
+      "chunks_b64": ["AgAAAAEAAAACaA=="],
+      "expectError": true,
+      "errorContains": "truncated tcp-mux frame stream"
+    }
+  ]
+}
+

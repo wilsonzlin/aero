@@ -170,6 +170,43 @@ export function encodeTcpMuxOpenPayload(payload: TcpMuxOpenPayload): Uint8Array 
   return buf;
 }
 
+export function decodeTcpMuxOpenPayload(buf: Uint8Array): TcpMuxOpenPayload {
+  if (buf.byteLength < 2 + 2 + 2) {
+    throw new Error("OPEN payload too short");
+  }
+
+  let offset = 0;
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const hostLen = dv.getUint16(offset, false);
+  offset += 2;
+
+  if (buf.byteLength < offset + hostLen + 2 + 2) {
+    throw new Error("OPEN payload truncated (host)");
+  }
+
+  const host = textDecoder.decode(buf.subarray(offset, offset + hostLen));
+  offset += hostLen;
+
+  const port = dv.getUint16(offset, false);
+  offset += 2;
+
+  const metadataLen = dv.getUint16(offset, false);
+  offset += 2;
+
+  if (buf.byteLength < offset + metadataLen) {
+    throw new Error("OPEN payload truncated (metadata)");
+  }
+
+  const metadata = metadataLen > 0 ? textDecoder.decode(buf.subarray(offset, offset + metadataLen)) : undefined;
+  offset += metadataLen;
+
+  if (offset !== buf.byteLength) {
+    throw new Error("OPEN payload has trailing bytes");
+  }
+
+  return { host, port, metadata };
+}
+
 export function encodeTcpMuxClosePayload(flags: number): Uint8Array {
   const buf = new Uint8Array(1);
   buf[0] = flags & 0xff;
@@ -181,6 +218,19 @@ export function decodeTcpMuxClosePayload(payload: Uint8Array): { flags: number }
     throw new Error("CLOSE payload must be exactly 1 byte");
   }
   return { flags: payload[0]! };
+}
+
+export function encodeTcpMuxErrorPayload(code: TcpMuxErrorCode | number, message: string): Uint8Array {
+  const messageBytes = textEncoder.encode(message);
+  if (messageBytes.byteLength > 0xffff) {
+    throw new Error("error message too long");
+  }
+  const buf = new Uint8Array(2 + 2 + messageBytes.byteLength);
+  const dv = new DataView(buf.buffer);
+  dv.setUint16(0, code & 0xffff, false);
+  dv.setUint16(2, messageBytes.byteLength, false);
+  buf.set(messageBytes, 4);
+  return buf;
 }
 
 export function decodeTcpMuxErrorPayload(payload: Uint8Array): TcpMuxError {

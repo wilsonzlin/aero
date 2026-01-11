@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import {
   UDP_RELAY_DEFAULT_MAX_PAYLOAD,
@@ -17,56 +18,110 @@ import {
   encodeUdpRelayV1Datagram,
 } from "../web/src/shared/udpRelayProtocol.ts";
 
-function hexToU8(hex) {
-  return new Uint8Array(Buffer.from(hex, "hex"));
+function decodeB64(b64) {
+  return new Uint8Array(Buffer.from(b64, "base64"));
 }
 
-function loadProtocolVectors() {
-  const path = new URL("./protocol-vectors/networking.json", import.meta.url);
-  return JSON.parse(readFileSync(path, "utf8"));
+function parseIpv4(ip) {
+  const parts = ip.split(".");
+  if (parts.length !== 4) throw new Error(`invalid IPv4: ${ip}`);
+  const nums = parts.map((p) => Number(p));
+  for (const n of nums) {
+    if (!Number.isInteger(n) || n < 0 || n > 255) throw new Error(`invalid IPv4: ${ip}`);
+  }
+  return [nums[0], nums[1], nums[2], nums[3]];
 }
 
-const vectors = loadProtocolVectors();
+function parseIpv6(ip) {
+  const parts = ip.split("::");
+  if (parts.length > 2) throw new Error(`invalid IPv6: ${ip}`);
 
-test("udp relay v1: golden vector matches PROTOCOL.md", () => {
-  const v = vectors.udpRelay.v1;
+  const left = parts[0] ? parts[0].split(":").filter((p) => p.length > 0) : [];
+  const right = parts.length === 2 && parts[1] ? parts[1].split(":").filter((p) => p.length > 0) : [];
 
-  const encoded = encodeUdpRelayV1Datagram({
-    guestPort: v.guestPort,
-    remoteIpv4: v.remoteIpv4,
-    remotePort: v.remotePort,
-    payload: new TextEncoder().encode(v.payloadUtf8),
-  });
+  let hextets;
+  if (parts.length === 2) {
+    const missing = 8 - (left.length + right.length);
+    if (missing < 0) throw new Error(`invalid IPv6: ${ip}`);
+    hextets = [...left, ...Array.from({ length: missing }, () => "0"), ...right];
+  } else {
+    hextets = left;
+  }
 
-  assert.deepEqual(encoded, hexToU8(v.frameHex));
+  if (hextets.length !== 8) throw new Error(`invalid IPv6: ${ip}`);
 
-  const decoded = decodeUdpRelayV1Datagram(encoded);
-  assert.equal(decoded.guestPort, v.guestPort);
-  assert.deepEqual(decoded.remoteIpv4, v.remoteIpv4);
-  assert.equal(decoded.remotePort, v.remotePort);
-  assert.deepEqual(decoded.payload, new TextEncoder().encode(v.payloadUtf8));
-});
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    const v = Number.parseInt(hextets[i], 16);
+    if (!Number.isInteger(v) || v < 0 || v > 0xffff) throw new Error(`invalid IPv6: ${ip}`);
+    out[i * 2] = (v >>> 8) & 0xff;
+    out[i * 2 + 1] = v & 0xff;
+  }
+  return out;
+}
 
-test("udp relay v2: ipv6 golden vector matches PROTOCOL.md", () => {
-  const v = vectors.udpRelay.v2_ipv6;
-  const remoteIp = hexToU8(v.remoteIpHex);
+function parseIp(ip) {
+  if (ip.includes(".")) return new Uint8Array(parseIpv4(ip));
+  return parseIpv6(ip);
+}
 
-  const encoded = encodeUdpRelayV2Datagram({
-    guestPort: v.guestPort,
-    remoteIp,
-    remotePort: v.remotePort,
-    payload: hexToU8(v.payloadHex),
-  });
+function loadUdpRelayVectors() {
+  const vectorsPath = fileURLToPath(new URL("../protocol-vectors/udp-relay.json", import.meta.url));
+  return JSON.parse(fs.readFileSync(vectorsPath, "utf8"));
+}
 
-  assert.deepEqual(encoded, hexToU8(v.frameHex));
+const udpRelayVectors = loadUdpRelayVectors();
+assert.equal(udpRelayVectors.schema, 1);
 
-  const decoded = decodeUdpRelayFrame(encoded);
-  assert.equal(decoded.version, 2);
-  assert.equal(decoded.addressFamily, 6);
-  assert.equal(decoded.guestPort, v.guestPort);
-  assert.deepEqual(decoded.remoteIp, remoteIp);
-  assert.equal(decoded.remotePort, v.remotePort);
-  assert.deepEqual(decoded.payload, hexToU8(v.payloadHex));
+function getVector(name) {
+  const v = udpRelayVectors.vectors.find((x) => x.name === name);
+  assert.ok(v, `missing udp relay vector: ${name}`);
+  return v;
+}
+
+test("udp relay protocol vectors", () => {
+  for (const v of udpRelayVectors.vectors) {
+    const frame = decodeB64(v.frame_b64);
+
+    if (v.expectError) {
+      assert.throws(
+        () => decodeUdpRelayFrame(frame),
+        (err) => err instanceof Error && (!v.errorContains || err.message.includes(v.errorContains)),
+      );
+      continue;
+    }
+
+    const payload = decodeB64(v.payload_b64);
+    const decoded = decodeUdpRelayFrame(frame);
+
+    assert.equal(decoded.version, v.version);
+    assert.equal(decoded.guestPort, v.guestPort);
+    assert.equal(decoded.remotePort, v.remotePort);
+    assert.deepEqual(decoded.payload, payload);
+
+    if (v.version === 1) {
+      const ip4 = parseIpv4(v.remoteIp);
+      assert.deepEqual(decoded.remoteIpv4, ip4);
+      const encoded = encodeUdpRelayV1Datagram({
+        guestPort: v.guestPort,
+        remoteIpv4: ip4,
+        remotePort: v.remotePort,
+        payload,
+      });
+      assert.deepEqual(encoded, frame);
+    } else {
+      const ip = parseIp(v.remoteIp);
+      assert.equal(decoded.addressFamily, ip.byteLength === 4 ? 4 : 6);
+      assert.deepEqual(decoded.remoteIp, ip);
+      const encoded = encodeUdpRelayV2Datagram({
+        guestPort: v.guestPort,
+        remoteIp: ip,
+        remotePort: v.remotePort,
+        payload,
+      });
+      assert.deepEqual(encoded, frame);
+    }
+  }
 });
 
 test("udp relay v1: roundtrip encode/decode", () => {
@@ -97,8 +152,7 @@ test("udp relay v1: decode rejects frames shorter than header", () => {
 });
 
 test("udp relay v2: decode rejects invalid message type", () => {
-  const frame = hexToU8(vectors.udpRelay.v2_ipv6.frameHex);
-  frame[3] = 0x01; // type must be 0x00
+  const frame = decodeB64(getVector("err_v2_unsupported_message_type").frame_b64);
   assert.throws(
     () => decodeUdpRelayV2Datagram(frame),
     (err) => err instanceof UdpRelayDecodeError && err.code === "invalid_v2",
@@ -106,9 +160,7 @@ test("udp relay v2: decode rejects invalid message type", () => {
 });
 
 test("udp relay v2: decode rejects unknown address family", () => {
-  const frame = hexToU8(vectors.udpRelay.v2_ipv6.frameHex);
-  frame[2] = 0xff; // unknown AF
-
+  const frame = decodeB64(getVector("err_v2_unknown_address_family").frame_b64);
   assert.throws(
     () => decodeUdpRelayV2Datagram(frame),
     (err) => err instanceof UdpRelayDecodeError && err.code === "invalid_v2",
@@ -153,7 +205,8 @@ test("udp relay v1: max payload enforcement", () => {
     /payload too large/i,
   );
 
-  const frame = new Uint8Array([...hexToU8(vectors.udpRelay.v1.frameHex), 0x00]);
+  const base = decodeB64(getVector("v1_ipv4_example_abc").frame_b64);
+  const frame = new Uint8Array([...base, 0x00]);
 
   assert.throws(
     () => decodeUdpRelayV1Datagram(frame, { maxPayload }),
@@ -211,4 +264,20 @@ test("udp relay v1: encode validates ports and IPv4 octets", () => {
 
 test("udp relay v1: default max payload constant is sensible", () => {
   assert.ok(UDP_RELAY_DEFAULT_MAX_PAYLOAD >= 1200);
+});
+
+// Sanity: ensure we keep the UDP relay spec constant in-sync when editing vectors.
+test("udp relay vectors use the protocol TEST-NET/Documentation ranges", () => {
+  const v1 = getVector("v1_ipv4_example_abc");
+  assert.equal(v1.remoteIp, "192.0.2.1");
+
+  const v2 = getVector("v2_ipv6_example_010203");
+  assert.equal(v2.remoteIp, "2001:db8::1");
+  assert.equal(v2.version, 2);
+  assert.equal(v2.addressFamily, undefined);
+
+  // Validate the address family constant used in the wire format is still the same.
+  // (The vector frames themselves are authoritative; this just makes intent obvious.)
+  assert.equal(UDP_RELAY_V2_AF_IPV6, 0x06);
+  assert.equal(UDP_RELAY_V2_TYPE_DATAGRAM, 0x00);
 });

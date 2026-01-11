@@ -98,6 +98,11 @@ export class TcpMuxFrameParser {
   pendingBytes() {
     return this.buffer.length;
   }
+
+  finish() {
+    if (this.buffer.length === 0) return;
+    throw new Error(`truncated tcp-mux frame stream (${this.buffer.length} pending bytes)`);
+  }
 }
 
 /**

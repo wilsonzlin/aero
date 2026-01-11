@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "vectors": [
+    {
+      "name": "v1_ipv4_example_abc",
+      "version": 1,
+      "frame_b64": "JxDAAAIBADVhYmM=",
+      "guestPort": 10000,
+      "remoteIp": "192.0.2.1",
+      "remotePort": 53,
+      "payload_b64": "YWJj"
+    },
+    {
+      "name": "v2_ipv6_example_010203",
+      "version": 2,
+      "frame_b64": "ogIGAL7vIAENuAAAAAAAAAAAAAAAAcr+AQID",
+      "guestPort": 48879,
+      "remoteIp": "2001:db8::1",
+      "remotePort": 51966,
+      "payload_b64": "AQID"
+    },
+    {
+      "name": "v2_ipv4_example_hello",
+      "version": 2,
+      "frame_b64": "ogIEABCSwAACAicPaGVsbG8=",
+      "guestPort": 4242,
+      "remoteIp": "192.0.2.2",
+      "remotePort": 9999,
+      "payload_b64": "aGVsbG8="
+    },
+    {
+      "name": "err_truncated_frame_too_short_v1",
+      "frame_b64": "AAAAAAAAAA==",
+      "expectError": true,
+      "errorContains": "too short"
+    },
+    {
+      "name": "err_truncated_frame_too_short_v2_prefix_only",
+      "frame_b64": "ogI=",
+      "expectError": true,
+      "errorContains": "too short"
+    },
+    {
+      "name": "err_v2_unsupported_message_type",
+      "frame_b64": "ogIEAQABwAACAQA1",
+      "expectError": true,
+      "errorContains": "message type"
+    },
+    {
+      "name": "err_v2_unknown_address_family",
+      "frame_b64": "ogL/AAABAAAAAAAA",
+      "expectError": true,
+      "errorContains": "unknown address family"
+    },
+    {
+      "name": "err_v2_truncated_ip",
+      "frame_b64": "ogIGAAABIAENuAAAAAAAAA==",
+      "expectError": true,
+      "errorContains": "too short"
+    },
+    {
+      "name": "err_v2_truncated_port",
+      "frame_b64": "ogIGAAABIAENuAAAAAAAAAAAAAAAAco=",
+      "expectError": true,
+      "errorContains": "too short"
+    }
+  ]
+}
+
