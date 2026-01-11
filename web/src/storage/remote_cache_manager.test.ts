@@ -6,6 +6,7 @@ import {
   type RemoteCacheFileHandle,
   type RemoteCacheWritableFileStream,
   RemoteCacheManager,
+  remoteRangeDeliveryType,
 } from "./remote_cache_manager";
 
 class MemNotFoundError extends Error {
@@ -125,18 +126,36 @@ class MemDir implements RemoteCacheDirectoryHandle {
 
 describe("RemoteCacheManager", () => {
   it("derives stable cache keys from {imageId, version, deliveryType}", async () => {
-    const a = await RemoteCacheManager.deriveCacheKey({ imageId: "img-1", version: "v1", deliveryType: "range" });
-    const b = await RemoteCacheManager.deriveCacheKey({ imageId: "img-1", version: "v1", deliveryType: "range" });
-    const c = await RemoteCacheManager.deriveCacheKey({ imageId: "img-1", version: "v2", deliveryType: "range" });
+    const a = await RemoteCacheManager.deriveCacheKey({
+      imageId: "img-1",
+      version: "v1",
+      deliveryType: remoteRangeDeliveryType(1024),
+    });
+    const b = await RemoteCacheManager.deriveCacheKey({
+      imageId: "img-1",
+      version: "v1",
+      deliveryType: remoteRangeDeliveryType(1024),
+    });
+    const c = await RemoteCacheManager.deriveCacheKey({
+      imageId: "img-1",
+      version: "v2",
+      deliveryType: remoteRangeDeliveryType(1024),
+    });
+    const d = await RemoteCacheManager.deriveCacheKey({
+      imageId: "img-1",
+      version: "v1",
+      deliveryType: remoteRangeDeliveryType(2048),
+    });
     expect(a).toBe(b);
     expect(a).not.toBe(c);
+    expect(a).not.toBe(d);
   });
 
   it("roundtrips metadata and reports cache status", async () => {
     const root = new MemDir();
     const mgr = new RemoteCacheManager(root, { now: () => 1234 });
     const { cacheKey } = await mgr.openCache(
-      { imageId: "img-1", version: "v1", deliveryType: "range" },
+      { imageId: "img-1", version: "v1", deliveryType: remoteRangeDeliveryType(1024) },
       { chunkSizeBytes: 1024, validators: { sizeBytes: 10_000, etag: '"e1"', lastModified: "Wed, 01 Jan 2025 00:00:00 GMT" } },
     );
 
@@ -160,7 +179,7 @@ describe("RemoteCacheManager", () => {
     let now = 1000;
     const mgr = new RemoteCacheManager(root, { now: () => now });
 
-    const parts = { imageId: "img-1", version: "v1", deliveryType: "range" };
+    const parts = { imageId: "img-1", version: "v1", deliveryType: remoteRangeDeliveryType(1024) };
     const first = await mgr.openCache(parts, { chunkSizeBytes: 1024, validators: { sizeBytes: 10, etag: "a" } });
     expect(first.invalidated).toBe(false);
 

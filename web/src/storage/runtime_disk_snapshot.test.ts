@@ -9,6 +9,7 @@ import {
   type RemoteDiskBaseSnapshot,
   type RuntimeDiskSnapshot,
 } from "./runtime_disk_snapshot";
+import { remoteRangeDeliveryType } from "./remote_cache_manager";
 
 describe("runtime disk snapshot payload", () => {
   it("serializes and deserializes (roundtrip)", () => {
@@ -48,7 +49,7 @@ describe("runtime disk snapshot payload", () => {
             base: {
               imageId: "win7-sp1-x64",
               version: "sha256-deadbeef",
-              deliveryType: "range",
+              deliveryType: remoteRangeDeliveryType(1024 * 1024),
               expectedValidator: { kind: "etag", value: "\"abc\"" },
               chunkSize: 1024 * 1024,
             },
@@ -80,7 +81,7 @@ describe("runtime disk snapshot payload", () => {
     const expected: RemoteDiskBaseSnapshot = {
       imageId: "win7",
       version: "v1",
-      deliveryType: "range",
+      deliveryType: remoteRangeDeliveryType(1024),
       expectedValidator: { kind: "etag", value: "\"abc\"" },
       chunkSize: 1024,
     };
@@ -109,7 +110,7 @@ describe("runtime disk snapshot payload", () => {
     const expected: RemoteDiskBaseSnapshot = {
       imageId: "win7",
       version: "v1",
-      deliveryType: "range",
+      deliveryType: remoteRangeDeliveryType(1024),
       expectedValidator: { kind: "etag", value: "\"abc\"" },
       chunkSize: 1024,
     };
@@ -123,7 +124,7 @@ describe("runtime disk snapshot payload", () => {
     // Changing only chunk size should not invalidate overlay (cache tuning parameter).
     expect(
       shouldInvalidateRemoteOverlay(
-        { ...expected, chunkSize: 2048 },
+        { ...expected, chunkSize: 2048, deliveryType: remoteRangeDeliveryType(2048) },
         okBinding,
       ),
     ).toBe(false);

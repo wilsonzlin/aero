@@ -100,6 +100,11 @@ export type RemoteCacheBinding = {
   base: RemoteDiskBaseSnapshot;
 };
 
+function remoteDeliveryKind(deliveryType: string): string {
+  const idx = deliveryType.indexOf(":");
+  return idx === -1 ? deliveryType : deliveryType.slice(0, idx);
+}
+
 export function shouldInvalidateRemoteOverlay(
   expected: RemoteDiskBaseSnapshot,
   binding: RemoteCacheBinding | null | undefined,
@@ -113,7 +118,7 @@ export function shouldInvalidateRemoteOverlay(
 
   if (base.imageId !== expected.imageId) return true;
   if (base.version !== expected.version) return true;
-  if (base.deliveryType !== expected.deliveryType) return true;
+  if (remoteDeliveryKind(base.deliveryType) !== remoteDeliveryKind(expected.deliveryType)) return true;
 
   // NOTE: We intentionally *do not* compare `chunkSize` here. `chunkSize` is a local cache
   // tuning parameter for remote delivery and can be changed without changing the underlying

@@ -21,6 +21,7 @@ import { RemoteChunkedDisk, type RemoteChunkedDiskOpenOptions } from "./remote_c
 import { idbDeleteDiskData, opfsDeleteDisk, opfsGetDiskFileHandle } from "./import_export";
 import type { DiskAccessLease } from "./disk_access_lease";
 import { RemoteRangeDisk, defaultRemoteRangeUrl } from "./remote_range_disk";
+import { remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
 import {
   deserializeRuntimeDiskSnapshot,
   serializeRuntimeDiskSnapshot,
@@ -350,10 +351,14 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
     const leaseEndpointRaw = typeof meta.remote.urls.leaseEndpoint === "string" ? meta.remote.urls.leaseEndpoint.trim() : "";
     const leaseEndpoint = leaseEndpointRaw.startsWith("/") ? leaseEndpointRaw : undefined;
 
+    const deliveryType =
+      meta.remote.delivery === "range"
+        ? remoteRangeDeliveryType(meta.cache.chunkSizeBytes)
+        : remoteChunkedDeliveryType(meta.cache.chunkSizeBytes);
     const base: RemoteCacheBinding["base"] = {
       imageId: meta.remote.imageId,
       version: meta.remote.version,
-      deliveryType: meta.remote.delivery,
+      deliveryType,
       ...(leaseEndpoint ? { leaseEndpoint } : {}),
       ...(expectedValidator ? { expectedValidator } : {}),
       chunkSize: meta.cache.chunkSizeBytes,
@@ -698,7 +703,7 @@ async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise
       throw new Error("cacheVersion must not be empty");
     }
     const disk = await RemoteRangeDisk.open(url, {
-      cacheKeyParts: { imageId, version, deliveryType: `range:${chunkSize}` },
+      cacheKeyParts: { imageId, version, deliveryType: remoteRangeDeliveryType(chunkSize) },
       chunkSize,
       readAheadChunks: options?.prefetchSequentialBlocks,
       fetchFn,
@@ -799,7 +804,8 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
     throw new Error(`unsupported remote cache backend ${String(remoteCacheBackend)}`);
   }
 
-  if (backend.base.deliveryType !== "range" && backend.base.deliveryType !== "chunked") {
+  const deliveryKind = backend.base.deliveryType.split(":", 1)[0];
+  if (deliveryKind !== "range" && deliveryKind !== "chunked") {
     throw new Error(`unsupported remote deliveryType=${backend.base.deliveryType}`);
   }
 
@@ -808,7 +814,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
 
   let base: AsyncSectorDisk;
   if (remoteCacheBackend === "opfs") {
-    if (backend.base.deliveryType === "range") {
+    if (deliveryKind === "range") {
       const url = defaultRemoteRangeUrl(backend.base);
       // See openDisk(): prefer RemoteStreamingDisk for OPFS-cached Range delivery.
       // Best-effort cleanup of any legacy sparse cache files.
@@ -816,7 +822,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
         await opfsDeleteDisk(backend.cache.fileName);
         await opfsDeleteDisk(`${backend.cache.fileName}.binding.json`);
       }
-      const imageKey = `${backend.base.imageId}:${backend.base.version}:${backend.base.deliveryType}`;
+      const imageKey = `${backend.base.imageId}:${backend.base.version}:${deliveryKind}`;
       const cacheId = await stableCacheId(imageKey);
       const legacyFiles = [`remote-range-cache-${cacheId}.aerospar`, `remote-range-cache-${cacheId}.json`];
       for (const fileName of legacyFiles) {
@@ -851,7 +857,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
           expectedSizeBytes: backend.sizeBytes,
         });
       }
-    } else if (backend.base.deliveryType === "chunked") {
+    } else if (deliveryKind === "chunked") {
       const manifestUrl = defaultRemoteChunkedManifestUrl(backend.base);
       if (leaseEndpoint) {
         const lease = streamLeaseEndpointDiskAccessLease(leaseEndpoint, "chunked");
@@ -876,7 +882,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
       throw new Error(`unsupported remote deliveryType=${backend.base.deliveryType} for OPFS cache backend`);
     }
   } else {
-    if (backend.base.deliveryType === "range") {
+    if (deliveryKind === "range") {
       const expectedEtag =
         backend.base.expectedValidator?.kind === "etag" ? backend.base.expectedValidator.value : undefined;
       const url = defaultRemoteRangeUrl(backend.base);
@@ -905,7 +911,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
           expectedSizeBytes: backend.sizeBytes,
         });
       }
-    } else {
+    } else if (deliveryKind === "chunked") {
       const manifestUrl = defaultRemoteChunkedManifestUrl(backend.base);
       if (leaseEndpoint) {
         const lease = streamLeaseEndpointDiskAccessLease(leaseEndpoint, "chunked");
@@ -926,6 +932,8 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
         await base.close?.();
         throw new Error(`disk size mismatch: expected=${backend.sizeBytes} actual=${base.capacityBytes}`);
       }
+    } else {
+      throw new Error(`unsupported remote deliveryType=${backend.base.deliveryType} for IDB cache backend`);
     }
   }
 
