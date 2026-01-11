@@ -1715,7 +1715,7 @@ mod proptests {
                         (usage_u16ish(), usage_u16ish())
                             .prop_map(|(a, b)| {
                                 let (min, max) = if a <= b { (a, b) } else { (b, a) };
-                                vec![min, max]
+                                (min..=max).collect::<Vec<u32>>()
                             })
                             .boxed()
                     } else {
