@@ -431,6 +431,48 @@ static void TestRejectUnalignedCapPtr(void)
 	ExpectInitFail("unaligned_cap_ptr", &dev, VIRTIO_PCI_MODERN_INIT_ERR_PCI_CAP_PTR_UNALIGNED);
 }
 
+static void TestRejectZeroCapPtr(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	dev.Cfg[PCI_CAP_PTR_OFF] = 0;
+
+	ExpectInitFail("zero_cap_ptr", &dev, VIRTIO_PCI_MODERN_INIT_ERR_PCI_CAP_LIST_INVALID);
+}
+
+static void TestRejectCapPtrBelow0x40(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	dev.Cfg[PCI_CAP_PTR_OFF] = 0x20;
+
+	ExpectInitFail("cap_ptr_below_0x40", &dev, VIRTIO_PCI_MODERN_INIT_ERR_PCI_CAP_LIST_INVALID);
+}
+
+static void TestRejectCapNextBelow0x40(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	/* cap_next must point to another entry in the capabilities area (>=0x40) */
+	dev.Cfg[0x40 + 1] = 0x20;
+
+	ExpectInitFail("cap_next_below_0x40", &dev, VIRTIO_PCI_MODERN_INIT_ERR_PCI_CAP_LIST_INVALID);
+}
+
+static void TestRejectCapListLoop(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	/* Create a cycle: last cap points back to the first cap. */
+	dev.Cfg[0x74 + 1] = 0x40;
+
+	ExpectInitFail("cap_list_loop", &dev, VIRTIO_PCI_MODERN_INIT_ERR_PCI_CAP_LIST_INVALID);
+}
+
 static void TestRejectWrongNotifyMultiplier(void)
 {
 	FAKE_DEV dev;
@@ -905,10 +947,14 @@ int main(void)
 	TestRejectBar0Not64BitMmio();
 	TestRejectMissingStatusCapList();
 	TestRejectUnalignedCapPtr();
+	TestRejectZeroCapPtr();
+	TestRejectCapPtrBelow0x40();
+	TestRejectCapNextBelow0x40();
 	TestRejectWrongNotifyMultiplier();
 	TestRejectWrongOffsets();
 	TestRejectBar0TooSmall();
 	TestRejectUnalignedCapNext();
+	TestRejectCapListLoop();
 	TestRejectMissingDeviceCfgCap();
 	TestNegotiateFeaturesOk();
 	TestNegotiateFeaturesRejectNoVersion1();
