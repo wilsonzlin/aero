@@ -1282,7 +1282,10 @@ def _get_qemu_virtio_sound_device_arg(
 
     The Aero Win7 virtio-snd contract v1 expects the modern virtio-pci ID space (`DEV_1059`) and
     PCI Revision ID 0x01 (`REV_01`). The canonical Win7 INF (`aero_virtio_snd.inf`) is intentionally
-    strict and matches only `PCI\\VEN_1AF4&DEV_1059&REV_01`, so we force `disable-legacy=on,x-pci-revision=0x01`.
+    strict and matches only `PCI\\VEN_1AF4&DEV_1059&REV_01`.
+
+    Callers choose whether to force modern-only enumeration (`disable-legacy=on`) and a specific
+    contract revision (`x-pci-revision=<...>`). The strict host harness path passes both.
     """
     device_name = _detect_virtio_snd_device(qemu_system)
     help_text = _qemu_device_help_text(qemu_system, device_name)
