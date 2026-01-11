@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{PrefetchConfig, StreamingDisk, StreamingDiskConfig};
-use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, RANGE};
+use aero_storage::{StreamingCacheBackend, StreamingDisk, StreamingDiskConfig};
+use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, RANGE};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use std::convert::Infallible;
@@ -82,6 +82,7 @@ async fn handle_request(
                 .insert(CONTENT_LENGTH, total_size.to_string().parse().unwrap());
             resp.headers_mut()
                 .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+            resp.headers_mut().insert(ETAG, "\"large-offset\"".parse().unwrap());
             return Ok(resp);
         }
         Method::GET => {}
@@ -129,6 +130,7 @@ async fn handle_request(
     );
     resp.headers_mut()
         .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+    resp.headers_mut().insert(ETAG, "\"large-offset\"".parse().unwrap());
     resp.headers_mut().insert(
         CONTENT_RANGE,
         format!("bytes {start}-{end_inclusive}/{total_size}")
@@ -197,12 +199,10 @@ async fn streaming_disk_reads_offsets_beyond_4gib_without_truncation() {
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
-    config.block_size = 1024;
-    config.cache_limit_bytes = Some(1024);
-    config.prefetch = PrefetchConfig {
-        enabled: false,
-        sequential_distance_blocks: 0,
-    };
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
 
     let disk = StreamingDisk::open(config).await.unwrap();
 
@@ -229,4 +229,3 @@ async fn streaming_disk_reads_offsets_beyond_4gib_without_truncation() {
 
     let _ = shutdown.send(());
 }
-

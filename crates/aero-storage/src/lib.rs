@@ -42,5 +42,7 @@ mod streaming;
 pub use range_set::{ByteRange, RangeSet};
 #[cfg(not(target_arch = "wasm32"))]
 pub use streaming::{
-    CacheStatus, PrefetchConfig, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
+    CacheStatus, ChunkManifest, ChunkStore, DirectoryChunkStore, SparseFileChunkStore,
+    StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
+    StreamingDiskOptions, StreamingTelemetrySnapshot, DEFAULT_CHUNK_SIZE, DEFAULT_SECTOR_SIZE,
 };

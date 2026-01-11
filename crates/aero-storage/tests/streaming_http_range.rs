@@ -1,12 +1,14 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{PrefetchConfig, StreamingDisk, StreamingDiskConfig};
+use aero_storage::{
+    ChunkManifest, StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
+};
 use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tempfile::tempdir;
 use tokio::sync::oneshot;
@@ -19,21 +21,32 @@ struct Counters {
     get_full: AtomicUsize,
 }
 
-async fn start_range_server(
+struct State {
+    image: Arc<Vec<u8>>,
+    etag: String,
+    fail_first_range: AtomicBool,
+    counters: Counters,
+}
+
+async fn start_range_server_with_options(
     image: Vec<u8>,
-) -> (Url, Arc<Counters>, oneshot::Sender<()>) {
-    let image = Arc::new(image);
-    let counters = Arc::new(Counters::default());
+    etag: &str,
+    fail_first_range: bool,
+) -> (Url, Arc<State>, oneshot::Sender<()>) {
+    let state = Arc::new(State {
+        image: Arc::new(image),
+        etag: etag.to_string(),
+        fail_first_range: AtomicBool::new(fail_first_range),
+        counters: Counters::default(),
+    });
 
     let make_svc = {
-        let image = image.clone();
-        let counters = counters.clone();
+        let state = state.clone();
         make_service_fn(move |_conn| {
-            let image = image.clone();
-            let counters = counters.clone();
+            let state = state.clone();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req| {
-                    handle_request(req, image.clone(), counters.clone())
+                    handle_request(req, state.clone())
                 }))
             }
         })
@@ -52,32 +65,40 @@ async fn start_range_server(
     tokio::spawn(server);
 
     let url = Url::parse(&format!("http://{local_addr}/image.raw")).expect("url");
-    (url, counters, shutdown_tx)
+    (url, state, shutdown_tx)
 }
 
 async fn handle_request(
     req: Request<Body>,
-    image: Arc<Vec<u8>>,
-    counters: Arc<Counters>,
+    state: Arc<State>,
 ) -> Result<Response<Body>, Infallible> {
     match *req.method() {
         Method::HEAD => {
-            counters.head.fetch_add(1, Ordering::SeqCst);
+            state.counters.head.fetch_add(1, Ordering::SeqCst);
             let mut resp = Response::new(Body::empty());
             *resp.status_mut() = StatusCode::OK;
             resp.headers_mut()
-                .insert(CONTENT_LENGTH, (image.len() as u64).to_string().parse().unwrap());
+                .insert(CONTENT_LENGTH, (state.image.len() as u64).to_string().parse().unwrap());
             resp.headers_mut()
                 .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+            resp.headers_mut()
+                .insert(hyper::header::ETAG, state.etag.parse().unwrap());
             return Ok(resp);
         }
         Method::GET => {
             if let Some(range_header) = req.headers().get(RANGE).and_then(|v| v.to_str().ok()) {
-                counters.get_range.fetch_add(1, Ordering::SeqCst);
-                match parse_range_header(range_header, image.len() as u64) {
+                state.counters.get_range.fetch_add(1, Ordering::SeqCst);
+
+                if state.fail_first_range.swap(false, Ordering::SeqCst) {
+                    let mut resp = Response::new(Body::empty());
+                    *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                    return Ok(resp);
+                }
+
+                match parse_range_header(range_header, state.image.len() as u64) {
                     Ok((start, end_exclusive)) => {
                         let end_inclusive = end_exclusive - 1;
-                        let body = image[start as usize..end_exclusive as usize].to_vec();
+                        let body = state.image[start as usize..end_exclusive as usize].to_vec();
                         let mut resp = Response::new(Body::from(body));
                         *resp.status_mut() = StatusCode::PARTIAL_CONTENT;
                         resp.headers_mut().insert(
@@ -85,9 +106,11 @@ async fn handle_request(
                             (end_exclusive - start).to_string().parse().unwrap(),
                         );
                         resp.headers_mut().insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+                        resp.headers_mut()
+                            .insert(hyper::header::ETAG, state.etag.parse().unwrap());
                         resp.headers_mut().insert(
                             CONTENT_RANGE,
-                            format!("bytes {start}-{end_inclusive}/{}", image.len())
+                            format!("bytes {start}-{end_inclusive}/{}", state.image.len())
                                 .parse()
                                 .unwrap(),
                         );
@@ -101,13 +124,15 @@ async fn handle_request(
                 }
             }
 
-            counters.get_full.fetch_add(1, Ordering::SeqCst);
-            let mut resp = Response::new(Body::from(image.as_ref().clone()));
+            state.counters.get_full.fetch_add(1, Ordering::SeqCst);
+            let mut resp = Response::new(Body::from(state.image.as_ref().clone()));
             *resp.status_mut() = StatusCode::OK;
             resp.headers_mut()
-                .insert(CONTENT_LENGTH, (image.len() as u64).to_string().parse().unwrap());
+                .insert(CONTENT_LENGTH, (state.image.len() as u64).to_string().parse().unwrap());
             resp.headers_mut()
                 .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+            resp.headers_mut()
+                .insert(hyper::header::ETAG, state.etag.parse().unwrap());
             return Ok(resp);
         }
         _ => {}
@@ -151,16 +176,13 @@ async fn streaming_reads_and_reuses_cache() {
     let image: Vec<u8> = (0..(4096 + 123))
         .map(|i| (i % 251) as u8)
         .collect();
-    let (url, counters, shutdown) = start_range_server(image.clone()).await;
+    let (url, state, shutdown) = start_range_server_with_options(image.clone(), "etag-v1", false).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
-    config.block_size = 1024;
-    config.cache_limit_bytes = None;
-    config.prefetch = PrefetchConfig {
-        enabled: false,
-        sequential_distance_blocks: 0,
-    };
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
 
     let disk = StreamingDisk::open(config.clone()).await.unwrap();
     assert_eq!(disk.total_size() as usize, image.len());
@@ -169,14 +191,15 @@ async fn streaming_reads_and_reuses_cache() {
     disk.read_at(1000, &mut buf).await.unwrap();
     assert_eq!(&buf[..], &image[1000..1200]);
 
-    // Offset 1000..1200 touches blocks 0 and 1, so we expect 2 range GETs.
-    assert_eq!(counters.get_range.load(Ordering::SeqCst), 2);
+    // Offset 1000..1200 touches chunks 0 and 1, so we expect 2 range GETs.
+    // (Requests are chunk-aligned; i.e. two 1KiB range GETs.)
+    assert_eq!(state.counters.get_range.load(Ordering::SeqCst), 2);
 
     let mut buf2 = vec![0u8; 200];
     disk.read_at(1000, &mut buf2).await.unwrap();
     assert_eq!(&buf2[..], &image[1000..1200]);
     assert_eq!(
-        counters.get_range.load(Ordering::SeqCst),
+        state.counters.get_range.load(Ordering::SeqCst),
         2,
         "second read should be served from cache"
     );
@@ -184,32 +207,33 @@ async fn streaming_reads_and_reuses_cache() {
     drop(disk);
 
     // Re-open with the same cache directory; should still avoid extra range GETs.
-    let disk2 = StreamingDisk::open(config).await.unwrap();
+    let mut url2 = url.clone();
+    url2.set_query(Some("token=ignored"));
+    let mut config2 = config;
+    config2.url = url2;
+    let disk2 = StreamingDisk::open(config2).await.unwrap();
     let mut buf3 = vec![0u8; 200];
     disk2.read_at(1000, &mut buf3).await.unwrap();
     assert_eq!(&buf3[..], &image[1000..1200]);
     assert_eq!(
-        counters.get_range.load(Ordering::SeqCst),
+        state.counters.get_range.load(Ordering::SeqCst),
         2,
-        "cache should persist across runs"
+        "cache should persist across runs (cache identity is size+validator, not URL)"
     );
 
     let _ = shutdown.send(());
 }
 
 #[tokio::test]
-async fn cache_limit_eviction_refetches() {
+async fn cache_invalidates_on_validator_change() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
-    let (url, counters, shutdown) = start_range_server(image.clone()).await;
+    let (url, state1, shutdown1) = start_range_server_with_options(image.clone(), "etag-v1", false).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
-    config.block_size = 1024;
-    config.cache_limit_bytes = Some(1024); // exactly one block
-    config.prefetch = PrefetchConfig {
-        enabled: false,
-        sequential_distance_blocks: 0,
-    };
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
 
     let disk = StreamingDisk::open(config).await.unwrap();
 
@@ -220,17 +244,140 @@ async fn cache_limit_eviction_refetches() {
     disk.read_at(1024, &mut buf).await.unwrap();
     assert_eq!(&buf[..], &image[1024..1040]);
 
-    // Two different blocks were read, so at least 2 range GETs.
-    assert_eq!(counters.get_range.load(Ordering::SeqCst), 2);
+    // Two different chunks were read, so at least 2 range GETs.
+    assert_eq!(state1.counters.get_range.load(Ordering::SeqCst), 2);
 
-    // Cache limit is 1 block, so block 0 should have been evicted by now.
+    drop(disk);
+    let _ = shutdown1.send(());
+
+    // Same bytes endpoint, but validator changed => invalidate cache and re-fetch.
+    let (url2, state2, shutdown2) = start_range_server_with_options(image.clone(), "etag-v2", false).await;
+    let mut config2 = StreamingDiskConfig::new(url2, cache_dir.path());
+    config2.cache_backend = StreamingCacheBackend::Directory;
+    config2.options.chunk_size = 1024;
+    config2.options.read_ahead_chunks = 0;
+
+    let disk2 = StreamingDisk::open(config2).await.unwrap();
+    buf.fill(0);
+    disk2.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf[..], &image[0..16]);
+    assert_eq!(
+        state2.counters.get_range.load(Ordering::SeqCst),
+        1,
+        "cache should be invalidated and chunk re-fetched"
+    );
+
+    let _ = shutdown2.send(());
+}
+
+#[tokio::test]
+async fn inflight_dedup_avoids_duplicate_fetches() {
+    let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), "etag-dedup", false).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 2;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let a = {
+        let disk = disk.clone();
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 128];
+            disk.read_at(0, &mut buf).await.unwrap();
+            buf
+        })
+    };
+    let b = {
+        let disk = disk.clone();
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 128];
+            disk.read_at(0, &mut buf).await.unwrap();
+            buf
+        })
+    };
+
+    let (buf_a, buf_b) = tokio::join!(a, b);
+    let buf_a = buf_a.unwrap();
+    let buf_b = buf_b.unwrap();
+    assert_eq!(&buf_a[..], &image[0..buf_a.len()]);
+    assert_eq!(&buf_b[..], &image[0..buf_b.len()]);
+
+    assert_eq!(
+        state.counters.get_range.load(Ordering::SeqCst),
+        1,
+        "concurrent reads of the same chunk should be deduplicated"
+    );
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn retries_transient_http_errors() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), "etag-retry", true).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 2;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; 16];
     disk.read_at(0, &mut buf).await.unwrap();
     assert_eq!(&buf[..], &image[0..16]);
     assert_eq!(
-        counters.get_range.load(Ordering::SeqCst),
-        3,
-        "evicted block should be re-fetched"
+        state.counters.get_range.load(Ordering::SeqCst),
+        2,
+        "first range request fails, second succeeds"
     );
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn integrity_manifest_rejects_corrupt_chunk() {
+    use sha2::{Digest, Sha256};
+
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), "etag-integrity", false).await;
+
+    let chunk_size = 1024usize;
+    let mut sha256 = Vec::new();
+    for chunk in 0..2 {
+        let start = chunk * chunk_size;
+        let end = (start + chunk_size).min(image.len());
+        let digest = Sha256::digest(&image[start..end]);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&digest);
+        sha256.push(out);
+    }
+    sha256[0][0] ^= 0xFF;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = chunk_size as u64;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+    config.options.manifest = Some(ChunkManifest {
+        chunk_size: chunk_size as u64,
+        sha256,
+    });
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; 16];
+    let err = disk.read_at(0, &mut buf).await.err().unwrap();
+    assert!(matches!(err, StreamingDiskError::Integrity { .. }));
+    assert_eq!(state.counters.get_range.load(Ordering::SeqCst), 1);
 
     let _ = shutdown.send(());
 }

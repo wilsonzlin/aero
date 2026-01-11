@@ -1,35 +1,127 @@
+use std::{
+    collections::HashMap,
+    fs,
+    io::{Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
+
 use crate::range_set::{ByteRange, RangeSet};
-use bytes::Bytes;
-use hyper::body::HttpBody;
-use hyper::client::HttpConnector;
-use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, RANGE};
-use hyper::{Body, Client, Method, Request, StatusCode, Uri};
-use hyper_rustls::HttpsConnectorBuilder;
+use reqwest::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::io::AsyncReadExt;
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex as AsyncMutex, Semaphore};
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 const META_FILE_NAME: &str = "streaming-cache-meta.json";
-const BLOCKS_DIR_NAME: &str = "blocks";
-pub const DEFAULT_SECTOR_SIZE: u64 = 512;
-pub const DEFAULT_BLOCK_SIZE: u64 = 1024 * 1024; // 1MiB
+const CHUNKS_DIR_NAME: &str = "chunks";
+const CACHE_FILE_NAME: &str = "cache.bin";
 
-#[derive(Debug, Clone)]
-pub struct PrefetchConfig {
-    pub enabled: bool,
-    pub sequential_distance_blocks: u64,
+pub const DEFAULT_SECTOR_SIZE: u64 = 512;
+pub const DEFAULT_CHUNK_SIZE: u64 = 1024 * 1024; // 1MiB
+
+#[derive(Debug, Error, Clone)]
+pub enum StreamingDiskError {
+    #[error("remote server does not support HTTP Range requests")]
+    RangeNotSupported,
+
+    #[error("remote request failed: {0}")]
+    Http(String),
+
+    #[error("unexpected remote response: {0}")]
+    Protocol(String),
+
+    #[error("I/O error: {0}")]
+    Io(String),
+
+    #[error("serialization error: {0}")]
+    Serde(String),
+
+    #[error("integrity check failed for chunk {chunk_index}: expected {expected} got {actual}")]
+    Integrity {
+        chunk_index: u64,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("operation cancelled")]
+    Cancelled,
+
+    #[error("out of bounds access: offset {offset} len {len} size {size}")]
+    OutOfBounds { offset: u64, len: u64, size: u64 },
+
+    #[error("URL must be absolute: {0}")]
+    UrlNotAbsolute(String),
 }
 
-impl Default for PrefetchConfig {
+impl From<std::io::Error> for StreamingDiskError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value.to_string())
+    }
+}
+
+impl From<serde_json::Error> for StreamingDiskError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::Serde(value.to_string())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ChunkManifest {
+    pub chunk_size: u64,
+    pub sha256: Vec<[u8; 32]>,
+}
+
+impl ChunkManifest {
+    pub fn sha256_for_chunk(&self, chunk_index: u64) -> Option<[u8; 32]> {
+        self.sha256.get(chunk_index as usize).copied()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamingDiskOptions {
+    /// Caching unit for the remote image. All range fetches are chunk-aligned.
+    pub chunk_size: u64,
+    /// How many chunks to prefetch when sequential reads are detected.
+    pub read_ahead_chunks: u64,
+    /// Maximum concurrent HTTP range fetches.
+    pub max_concurrent_fetches: usize,
+    /// Maximum retries for a failed HTTP range fetch.
+    pub max_retries: usize,
+    /// Optional per-chunk integrity verification.
+    pub manifest: Option<ChunkManifest>,
+}
+
+impl Default for StreamingDiskOptions {
     fn default() -> Self {
         Self {
-            enabled: true,
-            sequential_distance_blocks: 2,
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            read_ahead_chunks: 2,
+            max_concurrent_fetches: 4,
+            max_retries: 4,
+            manifest: None,
         }
+    }
+}
+
+/// Persistent cache backend used for storing fetched chunks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamingCacheBackend {
+    /// Store chunks as individual files under `cache_dir/chunks/`.
+    Directory,
+    /// Store chunks in a sparse file at `cache_dir/cache.bin`.
+    SparseFile,
+}
+
+impl Default for StreamingCacheBackend {
+    fn default() -> Self {
+        Self::SparseFile
     }
 }
 
@@ -37,9 +129,13 @@ impl Default for PrefetchConfig {
 pub struct StreamingDiskConfig {
     pub url: Url,
     pub cache_dir: PathBuf,
-    pub block_size: u64,
-    pub cache_limit_bytes: Option<u64>,
-    pub prefetch: PrefetchConfig,
+    /// Optional stable validator for the image (e.g. ETag).
+    ///
+    /// When unset, `StreamingDisk` will attempt to use the server-provided `ETag`
+    /// from `HEAD`/`GET` and persist it as the cache identity.
+    pub validator: Option<String>,
+    pub cache_backend: StreamingCacheBackend,
+    pub options: StreamingDiskOptions,
 }
 
 impl StreamingDiskConfig {
@@ -47,9 +143,9 @@ impl StreamingDiskConfig {
         Self {
             url,
             cache_dir: cache_dir.into(),
-            block_size: DEFAULT_BLOCK_SIZE,
-            cache_limit_bytes: Some(512 * 1024 * 1024), // 512MiB default
-            prefetch: PrefetchConfig::default(),
+            validator: None,
+            cache_backend: StreamingCacheBackend::default(),
+            options: StreamingDiskOptions::default(),
         }
     }
 }
@@ -59,256 +155,329 @@ pub struct CacheStatus {
     pub total_size: u64,
     pub cached_bytes: u64,
     pub cached_ranges: Vec<ByteRange>,
-    pub cache_limit_bytes: Option<u64>,
+    pub chunk_size: u64,
+    pub validator: Option<String>,
 }
 
-#[derive(Debug, Error)]
-pub enum StreamingDiskError {
-    #[error("remote server does not appear to support HTTP Range requests (required for streaming): {0}")]
-    RangeNotSupported(String),
-    #[error("remote server did not provide a valid Content-Length")]
-    MissingContentLength,
-    #[error("unexpected HTTP response: {status} {reason}")]
-    UnexpectedHttpResponse { status: u16, reason: String },
-    #[error("invalid Content-Range header: {0}")]
-    InvalidContentRange(String),
-    #[error("unexpected range response length: expected {expected} bytes, got {actual} bytes")]
-    UnexpectedRangeLength { expected: usize, actual: usize },
-    #[error("URL must be absolute: {0}")]
-    UrlNotAbsolute(String),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("HTTP error: {0}")]
-    Hyper(#[from] hyper::Error),
-    #[error("URL parse error: {0}")]
-    UrlParse(#[from] url::ParseError),
-    #[error("serialization error: {0}")]
-    Serde(#[from] serde_json::Error),
+#[derive(Default)]
+pub struct StreamingTelemetry {
+    pub bytes_downloaded: AtomicU64,
+    pub range_requests: AtomicU64,
+    pub cache_hit_chunks: AtomicU64,
+    pub cache_miss_chunks: AtomicU64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct CacheMeta {
-    version: u32,
-    url: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamingTelemetrySnapshot {
+    pub bytes_downloaded: u64,
+    pub range_requests: u64,
+    pub cache_hit_chunks: u64,
+    pub cache_miss_chunks: u64,
+}
+
+impl StreamingTelemetry {
+    pub fn snapshot(&self) -> StreamingTelemetrySnapshot {
+        StreamingTelemetrySnapshot {
+            bytes_downloaded: self.bytes_downloaded.load(Ordering::Relaxed),
+            range_requests: self.range_requests.load(Ordering::Relaxed),
+            cache_hit_chunks: self.cache_hit_chunks.load(Ordering::Relaxed),
+            cache_miss_chunks: self.cache_miss_chunks.load(Ordering::Relaxed),
+        }
+    }
+}
+
+pub trait ChunkStore: Send + Sync {
+    fn total_size(&self) -> u64;
+    fn chunk_size(&self) -> u64;
+    fn read_chunk(&self, chunk_index: u64) -> Result<Option<Vec<u8>>, StreamingDiskError>;
+    fn write_chunk(&self, chunk_index: u64, data: &[u8]) -> Result<(), StreamingDiskError>;
+    fn clear(&self) -> Result<(), StreamingDiskError>;
+    fn flush(&self) -> Result<(), StreamingDiskError>;
+}
+
+pub struct SparseFileChunkStore {
     total_size: u64,
-    block_size: u64,
-    downloaded: RangeSet,
-    access_counter: u64,
-    block_last_access: HashMap<u64, u64>,
+    chunk_size: u64,
+    file: Mutex<std::fs::File>,
 }
 
-impl CacheMeta {
-    fn new(url: &Url, total_size: u64, block_size: u64) -> Self {
-        Self {
-            version: 1,
-            url: url.to_string(),
-            total_size,
-            block_size,
-            downloaded: RangeSet::new(),
-            access_counter: 0,
-            block_last_access: HashMap::new(),
-        }
-    }
-}
-
-struct CacheState {
-    meta: CacheMeta,
-    meta_path: PathBuf,
-    blocks_dir: PathBuf,
-    cache_limit_bytes: Option<u64>,
-}
-
-impl CacheState {
-    fn status(&self) -> CacheStatus {
-        CacheStatus {
-            total_size: self.meta.total_size,
-            cached_bytes: self.meta.downloaded.total_len(),
-            cached_ranges: self.meta.downloaded.ranges().to_vec(),
-            cache_limit_bytes: self.cache_limit_bytes,
-        }
-    }
-
-    fn block_path(&self, block_index: u64) -> PathBuf {
-        self.blocks_dir.join(format!("{block_index}.bin"))
-    }
-
-    fn block_range(&self, block_index: u64) -> ByteRange {
-        let start = block_index * self.meta.block_size;
-        let end = (start + self.meta.block_size).min(self.meta.total_size);
-        ByteRange { start, end }
-    }
-
-    fn is_block_cached(&self, block_index: u64) -> bool {
-        let r = self.block_range(block_index);
-        self.meta.downloaded.contains_range(r.start, r.end)
-    }
-
-    async fn load(
-        cache_dir: &Path,
-        url: &Url,
-        total_size: u64,
-        block_size: u64,
-        cache_limit_bytes: Option<u64>,
-    ) -> Result<Self, StreamingDiskError> {
-        tokio::fs::create_dir_all(cache_dir).await?;
-        let blocks_dir = cache_dir.join(BLOCKS_DIR_NAME);
-        tokio::fs::create_dir_all(&blocks_dir).await?;
-        let meta_path = cache_dir.join(META_FILE_NAME);
-
-        let mut meta = match tokio::fs::read(&meta_path).await {
-            Ok(bytes) => serde_json::from_slice::<CacheMeta>(&bytes)?,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                CacheMeta::new(url, total_size, block_size)
-            }
-            Err(err) => return Err(err.into()),
-        };
-
-        // Reject incompatible metadata. We conservatively reset if anything
-        // important changed (different image, different block size, etc).
-        let compatible = meta.version == 1
-            && meta.url == url.to_string()
-            && meta.total_size == total_size
-            && meta.block_size == block_size;
-
-        if !compatible {
-            // Best-effort cleanup: remove the existing blocks directory and meta.
-            let _ = tokio::fs::remove_dir_all(&blocks_dir).await;
-            tokio::fs::create_dir_all(&blocks_dir).await?;
-            let _ = tokio::fs::remove_file(&meta_path).await;
-            meta = CacheMeta::new(url, total_size, block_size);
-        }
-
+impl SparseFileChunkStore {
+    pub fn create(path: impl AsRef<Path>, total_size: u64, chunk_size: u64) -> Result<Self, StreamingDiskError> {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)
+            .map_err(|e| StreamingDiskError::Io(e.to_string()))?;
+        file.set_len(total_size)
+            .map_err(|e| StreamingDiskError::Io(e.to_string()))?;
         Ok(Self {
-            meta,
-            meta_path,
-            blocks_dir,
-            cache_limit_bytes,
+            total_size,
+            chunk_size,
+            file: Mutex::new(file),
         })
     }
 
-    async fn persist(&self) -> Result<(), StreamingDiskError> {
-        let tmp = self.meta_path.with_extension("json.tmp");
-        let bytes = serde_json::to_vec_pretty(&self.meta)?;
-        tokio::fs::write(&tmp, bytes).await?;
-        match tokio::fs::rename(&tmp, &self.meta_path).await {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                tokio::fs::remove_file(&self.meta_path).await?;
-                tokio::fs::rename(&tmp, &self.meta_path).await?;
-            }
-            Err(err) => return Err(err.into()),
-        }
-        Ok(())
+    fn chunk_range(&self, chunk_index: u64) -> (u64, u64) {
+        let start = chunk_index * self.chunk_size;
+        let end = (start + self.chunk_size).min(self.total_size);
+        (start, end)
+    }
+}
+
+impl ChunkStore for SparseFileChunkStore {
+    fn total_size(&self) -> u64 {
+        self.total_size
     }
 
-    fn note_access(&mut self, block_index: u64) {
-        self.meta.access_counter = self.meta.access_counter.wrapping_add(1);
-        self.meta
-            .block_last_access
-            .insert(block_index, self.meta.access_counter);
+    fn chunk_size(&self) -> u64 {
+        self.chunk_size
     }
 
-    async fn read_block(&mut self, block_index: u64) -> Result<Option<Vec<u8>>, StreamingDiskError> {
-        if !self.is_block_cached(block_index) {
-            return Ok(None);
+    fn read_chunk(&self, chunk_index: u64) -> Result<Option<Vec<u8>>, StreamingDiskError> {
+        let (start, end) = self.chunk_range(chunk_index);
+        if start >= end {
+            return Ok(Some(Vec::new()));
         }
 
-        let path = self.block_path(block_index);
-        let mut file = match tokio::fs::File::open(&path).await {
-            Ok(f) => f,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                // Metadata says it's cached, but the data is missing. Heal by
-                // dropping the range.
-                let r = self.block_range(block_index);
-                self.meta.downloaded.remove(r.start, r.end);
-                self.meta.block_last_access.remove(&block_index);
-                self.persist().await?;
-                return Ok(None);
-            }
-            Err(err) => return Err(err.into()),
-        };
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf).await?;
-        self.note_access(block_index);
-        self.persist().await?;
+        let len = (end - start) as usize;
+        let mut buf = vec![0u8; len];
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| StreamingDiskError::Io("poisoned lock".to_string()))?;
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut buf)?;
         Ok(Some(buf))
     }
 
-    async fn write_block(&mut self, block_index: u64, data: &[u8]) -> Result<(), StreamingDiskError> {
-        let expected_len = self.block_range(block_index).len() as usize;
-        if data.len() != expected_len {
-            return Err(StreamingDiskError::UnexpectedRangeLength {
-                expected: expected_len,
-                actual: data.len(),
-            });
+    fn write_chunk(&self, chunk_index: u64, data: &[u8]) -> Result<(), StreamingDiskError> {
+        let (start, end) = self.chunk_range(chunk_index);
+        let expected = (end - start) as usize;
+        if data.len() != expected {
+            return Err(StreamingDiskError::Protocol(format!(
+                "chunk {chunk_index} length mismatch: expected {expected} got {}",
+                data.len()
+            )));
         }
 
-        let path = self.block_path(block_index);
-        let tmp = path.with_extension("bin.tmp");
-        tokio::fs::write(&tmp, data).await?;
-        match tokio::fs::rename(&tmp, &path).await {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                tokio::fs::remove_file(&path).await?;
-                tokio::fs::rename(&tmp, &path).await?;
-            }
-            Err(err) => return Err(err.into()),
-        }
-
-        let r = self.block_range(block_index);
-        self.meta.downloaded.insert(r.start, r.end);
-        self.note_access(block_index);
-        self.persist().await?;
-        self.enforce_cache_limit(block_index).await?;
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| StreamingDiskError::Io("poisoned lock".to_string()))?;
+        file.seek(SeekFrom::Start(start))?;
+        file.write_all(data)?;
         Ok(())
     }
 
-    async fn enforce_cache_limit(&mut self, protected_block: u64) -> Result<(), StreamingDiskError> {
-        let Some(limit) = self.cache_limit_bytes else {
-            return Ok(());
-        };
+    fn clear(&self) -> Result<(), StreamingDiskError> {
+        let file = self
+            .file
+            .lock()
+            .map_err(|_| StreamingDiskError::Io("poisoned lock".to_string()))?;
+        file.set_len(0)?;
+        file.set_len(self.total_size)?;
+        Ok(())
+    }
 
-        // If the limit can't fit even a single block, caching is effectively
-        // disabled but we still keep the most recently accessed block.
-        while self.meta.downloaded.total_len() > limit {
-            // Find least-recently-used block (excluding the protected block).
-            let mut lru_block = None;
-            let mut lru_counter = u64::MAX;
-            for (&block, &counter) in &self.meta.block_last_access {
-                if block == protected_block {
-                    continue;
-                }
-                if counter < lru_counter {
-                    lru_counter = counter;
-                    lru_block = Some(block);
-                }
-            }
-
-            let Some(block_to_evict) = lru_block else {
-                // Nothing left to evict without breaking the caller's read.
-                break;
-            };
-
-            let path = self.block_path(block_to_evict);
-            let _ = tokio::fs::remove_file(&path).await;
-            let r = self.block_range(block_to_evict);
-            self.meta.downloaded.remove(r.start, r.end);
-            self.meta.block_last_access.remove(&block_to_evict);
-            self.persist().await?;
-        }
-
+    fn flush(&self) -> Result<(), StreamingDiskError> {
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| StreamingDiskError::Io("poisoned lock".to_string()))?;
+        file.flush()?;
         Ok(())
     }
 }
 
+pub struct DirectoryChunkStore {
+    dir: PathBuf,
+    total_size: u64,
+    chunk_size: u64,
+}
+
+impl DirectoryChunkStore {
+    pub fn create(dir: impl Into<PathBuf>, total_size: u64, chunk_size: u64) -> Result<Self, StreamingDiskError> {
+        let dir = dir.into();
+        fs::create_dir_all(&dir)?;
+        Ok(Self {
+            dir,
+            total_size,
+            chunk_size,
+        })
+    }
+
+    fn chunk_path(&self, chunk_index: u64) -> PathBuf {
+        self.dir.join(format!("{chunk_index}.bin"))
+    }
+
+    fn chunk_range(&self, chunk_index: u64) -> (u64, u64) {
+        let start = chunk_index * self.chunk_size;
+        let end = (start + self.chunk_size).min(self.total_size);
+        (start, end)
+    }
+}
+
+impl ChunkStore for DirectoryChunkStore {
+    fn total_size(&self) -> u64 {
+        self.total_size
+    }
+
+    fn chunk_size(&self) -> u64 {
+        self.chunk_size
+    }
+
+    fn read_chunk(&self, chunk_index: u64) -> Result<Option<Vec<u8>>, StreamingDiskError> {
+        let (start, end) = self.chunk_range(chunk_index);
+        if start >= end {
+            return Ok(Some(Vec::new()));
+        }
+
+        let path = self.chunk_path(chunk_index);
+        let bytes = match fs::read(&path) {
+            Ok(b) => b,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+
+        let expected = (end - start) as usize;
+        if bytes.len() != expected {
+            // Treat corrupt/mismatched chunks as a cache miss. Best-effort cleanup.
+            let _ = fs::remove_file(&path);
+            return Ok(None);
+        }
+        Ok(Some(bytes))
+    }
+
+    fn write_chunk(&self, chunk_index: u64, data: &[u8]) -> Result<(), StreamingDiskError> {
+        let (start, end) = self.chunk_range(chunk_index);
+        let expected = (end - start) as usize;
+        if data.len() != expected {
+            return Err(StreamingDiskError::Protocol(format!(
+                "chunk {chunk_index} length mismatch: expected {expected} got {}",
+                data.len()
+            )));
+        }
+
+        let path = self.chunk_path(chunk_index);
+        let tmp = path.with_extension("bin.tmp");
+        fs::write(&tmp, data)?;
+        match fs::rename(&tmp, &path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                fs::remove_file(&path)?;
+                fs::rename(&tmp, &path)?;
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn clear(&self) -> Result<(), StreamingDiskError> {
+        let _ = fs::remove_dir_all(&self.dir);
+        fs::create_dir_all(&self.dir)?;
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), StreamingDiskError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CacheMeta {
+    version: u32,
+    total_size: u64,
+    validator: Option<String>,
+    chunk_size: u64,
+    downloaded: RangeSet,
+}
+
+impl CacheMeta {
+    fn new(total_size: u64, validator: Option<String>, chunk_size: u64) -> Self {
+        Self {
+            version: 1,
+            total_size,
+            validator,
+            chunk_size,
+            downloaded: RangeSet::new(),
+        }
+    }
+}
+
+struct JsonMetaStore {
+    path: PathBuf,
+}
+
+impl JsonMetaStore {
+    fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    fn load(&self) -> Result<Option<CacheMeta>, StreamingDiskError> {
+        if !self.path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&self.path)?;
+        Ok(Some(serde_json::from_str(&raw)?))
+    }
+
+    fn save(&self, meta: &CacheMeta) -> Result<(), StreamingDiskError> {
+        let raw = serde_json::to_string(meta)?;
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let tmp = tmp_path(&self.path);
+        fs::write(&tmp, raw)?;
+        match fs::rename(&tmp, &self.path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                fs::remove_file(&self.path)?;
+                fs::rename(&tmp, &self.path)?;
+            }
+            Err(err) => return Err(err.into()),
+        }
+        Ok(())
+    }
+
+    fn remove(&self) -> Result<(), StreamingDiskError> {
+        if self.path.exists() {
+            fs::remove_file(&self.path)?;
+        }
+        Ok(())
+    }
+}
+
+fn tmp_path(path: &Path) -> PathBuf {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    PathBuf::from(tmp)
+}
+
 pub struct StreamingDisk {
+    inner: Arc<StreamingDiskInner>,
+}
+
+struct StreamingDiskInner {
+    client: reqwest::Client,
     url: Url,
     total_size: u64,
-    block_size: u64,
-    client: Client<hyper_rustls::HttpsConnector<HttpConnector>>,
-    cache: Mutex<CacheState>,
-    last_read_end: Mutex<Option<u64>>,
-    prefetch: PrefetchConfig,
+    validator: Option<String>,
+    cache: Arc<dyn ChunkStore>,
+    meta_store: JsonMetaStore,
+    options: StreamingDiskOptions,
+    telemetry: StreamingTelemetry,
+    fetch_sem: Semaphore,
+    cancel_token: AsyncMutex<CancellationToken>,
+    state: AsyncMutex<State>,
+}
+
+#[derive(Default)]
+struct State {
+    downloaded: RangeSet,
+    in_flight: HashMap<u64, Vec<oneshot::Sender<Result<(), StreamingDiskError>>>>,
+    last_read_end: Option<u64>,
 }
 
 impl StreamingDisk {
@@ -317,391 +486,594 @@ impl StreamingDisk {
             return Err(StreamingDiskError::UrlNotAbsolute(config.url.to_string()));
         }
 
-        let client = Self::build_client();
-        let (total_size, range_supported) = probe_range_support(&client, &config.url).await?;
-        if !range_supported {
-            return Err(StreamingDiskError::RangeNotSupported(config.url.to_string()));
+        if config.options.chunk_size == 0 || config.options.chunk_size % DEFAULT_SECTOR_SIZE != 0 {
+            return Err(StreamingDiskError::Protocol(format!(
+                "chunk_size must be a non-zero multiple of sector size ({DEFAULT_SECTOR_SIZE})"
+            )));
+        }
+        if config.options.max_retries == 0 {
+            return Err(StreamingDiskError::Protocol(
+                "max_retries must be greater than zero".to_string(),
+            ));
         }
 
-        let cache_state = CacheState::load(
-            &config.cache_dir,
-            &config.url,
-            total_size,
-            config.block_size,
-            config.cache_limit_bytes,
-        )
-        .await?;
+        fs::create_dir_all(&config.cache_dir)?;
+
+        let client = reqwest::Client::new();
+        let (total_size, probed_validator) = probe_remote_size_and_validator(&client, &config.url).await?;
+        let validator = config.validator.or(probed_validator);
+
+        if let Some(manifest) = &config.options.manifest {
+            if manifest.chunk_size != config.options.chunk_size {
+                return Err(StreamingDiskError::Protocol(format!(
+                    "manifest chunk_size ({}) does not match options.chunk_size ({})",
+                    manifest.chunk_size, config.options.chunk_size
+                )));
+            }
+
+            let expected_chunks =
+                ((total_size + config.options.chunk_size - 1) / config.options.chunk_size) as usize;
+            if manifest.sha256.len() != expected_chunks {
+                return Err(StreamingDiskError::Protocol(format!(
+                    "manifest chunk count ({}) does not match expected ({expected_chunks})",
+                    manifest.sha256.len()
+                )));
+            }
+        }
+
+        let cache: Arc<dyn ChunkStore> = match config.cache_backend {
+            StreamingCacheBackend::Directory => Arc::new(DirectoryChunkStore::create(
+                config.cache_dir.join(CHUNKS_DIR_NAME),
+                total_size,
+                config.options.chunk_size,
+            )?),
+            StreamingCacheBackend::SparseFile => Arc::new(SparseFileChunkStore::create(
+                config.cache_dir.join(CACHE_FILE_NAME),
+                total_size,
+                config.options.chunk_size,
+            )?),
+        };
+
+        let meta_store = JsonMetaStore::new(config.cache_dir.join(META_FILE_NAME));
+
+        let downloaded = match meta_store.load()? {
+            Some(meta)
+                if meta.version == 1
+                    && meta.total_size == total_size
+                    && meta.chunk_size == config.options.chunk_size
+                    && meta.validator == validator =>
+            {
+                meta.downloaded
+            }
+            Some(_) => {
+                // Invalidate: size/validator/chunk size changed. The URL is intentionally
+                // *not* part of the cache identity (it may embed ephemeral auth material).
+                cache.clear()?;
+                meta_store.remove()?;
+                let fresh = CacheMeta::new(total_size, validator.clone(), config.options.chunk_size);
+                meta_store.save(&fresh)?;
+                RangeSet::new()
+            }
+            None => {
+                let fresh = CacheMeta::new(total_size, validator.clone(), config.options.chunk_size);
+                meta_store.save(&fresh)?;
+                RangeSet::new()
+            }
+        };
 
         Ok(Self {
-            url: config.url,
-            total_size,
-            block_size: config.block_size,
-            client,
-            cache: Mutex::new(cache_state),
-            last_read_end: Mutex::new(None),
-            prefetch: config.prefetch,
+            inner: Arc::new(StreamingDiskInner {
+                client,
+                url: config.url,
+                total_size,
+                validator,
+                cache,
+                meta_store,
+                options: config.options.clone(),
+                telemetry: StreamingTelemetry::default(),
+                fetch_sem: Semaphore::new(config.options.max_concurrent_fetches.max(1)),
+                cancel_token: AsyncMutex::new(CancellationToken::new()),
+                state: AsyncMutex::new(State {
+                    downloaded,
+                    ..State::default()
+                }),
+            }),
         })
     }
 
-    fn build_client() -> Client<hyper_rustls::HttpsConnector<HttpConnector>> {
-        let https = HttpsConnectorBuilder::new()
-            .with_native_roots()
-            .https_or_http()
-            .enable_http1()
-            .build();
-        Client::builder().build::<_, Body>(https)
+    pub fn total_size(&self) -> u64 {
+        self.inner.total_size
     }
 
-    pub fn total_size(&self) -> u64 {
-        self.total_size
+    pub fn validator(&self) -> Option<&str> {
+        self.inner.validator.as_deref()
+    }
+
+    pub fn telemetry_snapshot(&self) -> StreamingTelemetrySnapshot {
+        self.inner.telemetry.snapshot()
     }
 
     pub async fn cache_status(&self) -> CacheStatus {
-        let cache = self.cache.lock().await;
-        cache.status()
+        let state = self.inner.state.lock().await;
+        CacheStatus {
+            total_size: self.inner.total_size,
+            cached_bytes: state.downloaded.total_len(),
+            cached_ranges: state.downloaded.ranges().to_vec(),
+            chunk_size: self.inner.options.chunk_size,
+            validator: self.inner.validator.clone(),
+        }
     }
 
-    /// Read bytes at `offset` into `buf`.
-    ///
-    /// This method fetches blocks via HTTP Range requests on demand and stores
-    /// them in the local cache directory.
+    pub async fn reset(&self) {
+        {
+            let mut token = self.inner.cancel_token.lock().await;
+            token.cancel();
+            *token = CancellationToken::new();
+        }
+
+        let mut state = self.inner.state.lock().await;
+        let waiters = std::mem::take(&mut state.in_flight);
+        state.last_read_end = None;
+        drop(state);
+
+        for (_, senders) in waiters {
+            for sender in senders {
+                let _ = sender.send(Err(StreamingDiskError::Cancelled));
+            }
+        }
+    }
+
+    pub async fn flush(&self) -> Result<(), StreamingDiskError> {
+        self.inner.cache.flush()?;
+        let meta = {
+            let state = self.inner.state.lock().await;
+            CacheMeta {
+                version: 1,
+                total_size: self.inner.total_size,
+                validator: self.inner.validator.clone(),
+                chunk_size: self.inner.options.chunk_size,
+                downloaded: state.downloaded.clone(),
+            }
+        };
+        self.inner.meta_store.save(&meta)?;
+        Ok(())
+    }
+
+    /// Read bytes at `offset` into `buf`, fetching any missing chunks via HTTP `Range`.
     pub async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<(), StreamingDiskError> {
         if buf.is_empty() {
-            self.maybe_prefetch(offset, 0).await;
+            let mut state = self.inner.state.lock().await;
+            state.last_read_end = Some(offset);
             return Ok(());
         }
 
-        if offset.saturating_add(buf.len() as u64) > self.total_size {
-            return Err(StreamingDiskError::UnexpectedHttpResponse {
-                status: 416,
-                reason: "read beyond end of image".to_string(),
+        let len = buf.len() as u64;
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| StreamingDiskError::Protocol("read overflow".to_string()))?;
+        if end > self.inner.total_size {
+            return Err(StreamingDiskError::OutOfBounds {
+                offset,
+                len,
+                size: self.inner.total_size,
             });
         }
 
-        let (start_block, end_block) =
-            block_span_for_range(offset, buf.len() as u64, self.block_size)
-                .expect("non-empty buffer produces a span");
+        let token = self.inner.cancel_token.lock().await.clone();
+        let chunk_size = self.inner.options.chunk_size;
+
+        let (sequential, read_ahead_chunks) = {
+            let mut state = self.inner.state.lock().await;
+            let sequential = state.last_read_end.map_or(true, |prev| prev == offset);
+            state.last_read_end = Some(end);
+            (sequential, self.inner.options.read_ahead_chunks)
+        };
+
+        let start_chunk = offset / chunk_size;
+        let end_chunk = (end.saturating_sub(1)) / chunk_size;
 
         let mut written = 0usize;
-        for block_index in start_block..=end_block {
-            let block_bytes = self.get_block(block_index).await?;
-            let block_start = block_index * self.block_size;
-            let in_block_start = if offset > block_start {
-                (offset - block_start) as usize
+        for chunk_index in start_chunk..=end_chunk {
+            self.ensure_chunk_cached(chunk_index, &token).await?;
+            let bytes = self.read_chunk_healing(chunk_index).await?;
+
+            let chunk_start = chunk_index * chunk_size;
+            let in_chunk_start = if offset > chunk_start {
+                (offset - chunk_start) as usize
             } else {
                 0
             };
-            let max_in_block = block_bytes.len().saturating_sub(in_block_start);
+
+            let max_in_chunk = bytes.len().saturating_sub(in_chunk_start);
             let remaining = buf.len() - written;
-            let to_copy = remaining.min(max_in_block);
+            let to_copy = remaining.min(max_in_chunk);
             buf[written..written + to_copy]
-                .copy_from_slice(&block_bytes[in_block_start..in_block_start + to_copy]);
+                .copy_from_slice(&bytes[in_chunk_start..in_chunk_start + to_copy]);
             written += to_copy;
         }
 
-        self.maybe_prefetch(offset, buf.len() as u64).await;
+        if sequential && read_ahead_chunks > 0 {
+            let next_chunk = if end == 0 { 0 } else { (end.saturating_sub(1) / chunk_size) + 1 };
+            self.spawn_prefetch(next_chunk, read_ahead_chunks, token);
+        }
+
         Ok(())
     }
 
     /// Read `buf.len()` bytes starting at sector `lba`.
     pub async fn read_sectors(&self, lba: u64, buf: &mut [u8]) -> Result<(), StreamingDiskError> {
         if buf.len() as u64 % DEFAULT_SECTOR_SIZE != 0 {
-            return Err(StreamingDiskError::UnexpectedHttpResponse {
-                status: 400,
-                reason: "read_sectors buffer length must be multiple of 512".to_string(),
-            });
+            return Err(StreamingDiskError::Protocol(format!(
+                "read_sectors buffer length must be multiple of {DEFAULT_SECTOR_SIZE}"
+            )));
         }
-        self.read_at(lba * DEFAULT_SECTOR_SIZE, buf).await
+        let offset = lba
+            .checked_mul(DEFAULT_SECTOR_SIZE)
+            .ok_or_else(|| StreamingDiskError::Protocol("lba overflow".to_string()))?;
+        self.read_at(offset, buf).await
     }
 
-    async fn get_block(&self, block_index: u64) -> Result<Vec<u8>, StreamingDiskError> {
-        // Fast path: cached.
-        if let Some(bytes) = self.cache.lock().await.read_block(block_index).await? {
-            return Ok(bytes);
+    fn spawn_prefetch(&self, start_chunk: u64, count: u64, token: CancellationToken) {
+        let disk = self.clone();
+        tokio::spawn(async move {
+            for chunk in start_chunk..start_chunk.saturating_add(count) {
+                if token.is_cancelled() {
+                    break;
+                }
+                if chunk * disk.inner.options.chunk_size >= disk.inner.total_size {
+                    break;
+                }
+                let _ = disk.ensure_chunk_cached(chunk, &token).await;
+            }
+        });
+    }
+
+    async fn read_chunk_healing(&self, chunk_index: u64) -> Result<Vec<u8>, StreamingDiskError> {
+        match self.inner.cache.read_chunk(chunk_index)? {
+            Some(bytes) => Ok(bytes),
+            None => {
+                // Metadata says the chunk is present but the data is missing/corrupt.
+                // Heal by dropping the chunk from the downloaded set and re-fetching.
+                let chunk_start = chunk_index * self.inner.options.chunk_size;
+                let chunk_end =
+                    (chunk_start + self.inner.options.chunk_size).min(self.inner.total_size);
+                let meta = {
+                    let mut state = self.inner.state.lock().await;
+                    state.downloaded.remove(chunk_start, chunk_end);
+                    CacheMeta {
+                        version: 1,
+                        total_size: self.inner.total_size,
+                        validator: self.inner.validator.clone(),
+                        chunk_size: self.inner.options.chunk_size,
+                        downloaded: state.downloaded.clone(),
+                    }
+                };
+                self.inner.meta_store.save(&meta)?;
+
+                let token = self.inner.cancel_token.lock().await.clone();
+                self.ensure_chunk_cached(chunk_index, &token).await?;
+                self.inner
+                    .cache
+                    .read_chunk(chunk_index)?
+                    .ok_or_else(|| StreamingDiskError::Io("chunk vanished after re-download".to_string()))
+            }
         }
+    }
 
-        let range = {
-            let cache = self.cache.lock().await;
-            cache.block_range(block_index)
-        };
+    async fn ensure_chunk_cached(
+        &self,
+        chunk_index: u64,
+        token: &CancellationToken,
+    ) -> Result<(), StreamingDiskError> {
+        let chunk_size = self.inner.options.chunk_size;
+        let chunk_start = chunk_index * chunk_size;
+        if chunk_start >= self.inner.total_size {
+            return Ok(());
+        }
+        let chunk_end = (chunk_start + chunk_size).min(self.inner.total_size);
 
-        let bytes = fetch_http_range(&self.client, &self.url, range.start, range.end).await?;
         {
-            let mut cache = self.cache.lock().await;
-            cache.write_block(block_index, &bytes).await?;
-        }
-        Ok(bytes)
-    }
-
-    async fn maybe_prefetch(&self, offset: u64, len: u64) {
-        if len == 0 {
-            let mut last = self.last_read_end.lock().await;
-            *last = Some(offset);
-            return;
+            let state = self.inner.state.lock().await;
+            if state.downloaded.contains_range(chunk_start, chunk_end) {
+                self.inner
+                    .telemetry
+                    .cache_hit_chunks
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
         }
 
-        if !self.prefetch.enabled {
-            let mut last = self.last_read_end.lock().await;
-            *last = Some(offset + len);
-            return;
-        }
+        self.inner
+            .telemetry
+            .cache_miss_chunks
+            .fetch_add(1, Ordering::Relaxed);
 
-        let mut last = self.last_read_end.lock().await;
-        let sequential = last.map(|end| end == offset).unwrap_or(false);
-        *last = Some(offset + len);
-        drop(last);
-
-        if !sequential {
-            return;
-        }
-
-        let next_offset = offset + len;
-        let next_block = next_offset / self.block_size;
-        let distance = self.prefetch.sequential_distance_blocks;
-        for i in 0..distance {
-            let block = next_block + i;
-            if block * self.block_size >= self.total_size {
-                break;
+        let waiter_rx = {
+            let mut state = self.inner.state.lock().await;
+            if state.downloaded.contains_range(chunk_start, chunk_end) {
+                self.inner
+                    .telemetry
+                    .cache_hit_chunks
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
             }
 
-            // Best-effort: ignore prefetch errors.
-            let _ = self.get_block(block).await;
+            if let Some(waiters) = state.in_flight.get_mut(&chunk_index) {
+                let (tx, rx) = oneshot::channel();
+                waiters.push(tx);
+                Some(rx)
+            } else {
+                state.in_flight.insert(chunk_index, Vec::new());
+                None
+            }
+        };
+
+        if let Some(rx) = waiter_rx {
+            return rx
+                .await
+                .map_err(|_| StreamingDiskError::Cancelled)?
+                .map(|_| ());
+        }
+
+        let result = self
+            .download_and_cache_chunk(chunk_index, chunk_start, chunk_end, token)
+            .await;
+
+        let waiters = {
+            let mut state = self.inner.state.lock().await;
+            state.in_flight.remove(&chunk_index).unwrap_or_default()
+        };
+        for sender in waiters {
+            let _ = sender.send(result.clone());
+        }
+
+        result
+    }
+
+    async fn download_and_cache_chunk(
+        &self,
+        chunk_index: u64,
+        chunk_start: u64,
+        chunk_end: u64,
+        token: &CancellationToken,
+    ) -> Result<(), StreamingDiskError> {
+        let _permit = tokio::select! {
+            _ = token.cancelled() => return Err(StreamingDiskError::Cancelled),
+            permit = self.inner.fetch_sem.acquire() => permit.map_err(|_| StreamingDiskError::Cancelled)?,
+        };
+
+        let bytes = self.fetch_with_retries(chunk_start, chunk_end, token).await?;
+
+        if token.is_cancelled() {
+            return Err(StreamingDiskError::Cancelled);
+        }
+
+        if bytes.len() as u64 != chunk_end - chunk_start {
+            return Err(StreamingDiskError::Protocol(format!(
+                "short read: expected {} bytes, got {}",
+                chunk_end - chunk_start,
+                bytes.len()
+            )));
+        }
+
+        if let Some(manifest) = &self.inner.options.manifest {
+            if let Some(expected) = manifest.sha256_for_chunk(chunk_index) {
+                let actual = Sha256::digest(&bytes);
+                let mut actual_arr = [0u8; 32];
+                actual_arr.copy_from_slice(&actual);
+                if actual_arr != expected {
+                    return Err(StreamingDiskError::Integrity {
+                        chunk_index,
+                        expected: hex::encode(expected),
+                        actual: hex::encode(actual_arr),
+                    });
+                }
+            }
+        }
+
+        self.inner.cache.write_chunk(chunk_index, &bytes)?;
+
+        let meta = {
+            let mut state = self.inner.state.lock().await;
+            state.downloaded.insert(chunk_start, chunk_end);
+            CacheMeta {
+                version: 1,
+                total_size: self.inner.total_size,
+                validator: self.inner.validator.clone(),
+                chunk_size: self.inner.options.chunk_size,
+                downloaded: state.downloaded.clone(),
+            }
+        };
+        self.inner.meta_store.save(&meta)?;
+        Ok(())
+    }
+
+    async fn fetch_with_retries(
+        &self,
+        start: u64,
+        end: u64,
+        token: &CancellationToken,
+    ) -> Result<Vec<u8>, StreamingDiskError> {
+        let mut backoff = Duration::from_millis(100);
+        let mut last_err = None;
+
+        for attempt in 0..self.inner.options.max_retries {
+            match self.fetch_range_once(start, end, token).await {
+                Ok(bytes) => return Ok(bytes),
+                Err(e) => {
+                    if matches!(
+                        e,
+                        StreamingDiskError::RangeNotSupported
+                            | StreamingDiskError::Integrity { .. }
+                            | StreamingDiskError::Cancelled
+                    ) {
+                        return Err(e);
+                    }
+                    last_err = Some(e);
+                    let is_last = attempt + 1 >= self.inner.options.max_retries;
+                    if is_last || token.is_cancelled() {
+                        break;
+                    }
+                    tokio::time::sleep(backoff).await;
+                    backoff = backoff.saturating_mul(2);
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| StreamingDiskError::Http("unknown".to_string())))
+    }
+
+    async fn fetch_range_once(
+        &self,
+        start: u64,
+        end: u64,
+        token: &CancellationToken,
+    ) -> Result<Vec<u8>, StreamingDiskError> {
+        if start >= end {
+            return Ok(Vec::new());
+        }
+
+        let range_header = format!("bytes={}-{}", start, end - 1);
+        self.inner
+            .telemetry
+            .range_requests
+            .fetch_add(1, Ordering::Relaxed);
+
+        let mut req = self.inner.client.get(self.inner.url.clone()).header(RANGE, range_header);
+        if let Some(validator) = &self.inner.validator {
+            req = req.header(IF_RANGE, validator);
+        }
+
+        let resp = tokio::select! {
+            _ = token.cancelled() => return Err(StreamingDiskError::Cancelled),
+            resp = req.send() => resp.map_err(|e| StreamingDiskError::Http(e.to_string()))?,
+        };
+
+        if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            if resp.status().is_success() {
+                return Err(StreamingDiskError::RangeNotSupported);
+            }
+            return Err(StreamingDiskError::Http(format!(
+                "unexpected status {}",
+                resp.status()
+            )));
+        }
+
+        let bytes = tokio::select! {
+            _ = token.cancelled() => return Err(StreamingDiskError::Cancelled),
+            bytes = resp.bytes() => bytes.map_err(|e| StreamingDiskError::Http(e.to_string()))?,
+        };
+
+        self.inner
+            .telemetry
+            .bytes_downloaded
+            .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+
+        Ok(bytes.to_vec())
+    }
+}
+
+impl Clone for StreamingDisk {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
         }
     }
 }
 
-async fn probe_range_support(
-    client: &Client<hyper_rustls::HttpsConnector<HttpConnector>>,
+async fn probe_remote_size_and_validator(
+    client: &reqwest::Client,
     url: &Url,
-) -> Result<(u64, bool), StreamingDiskError> {
-    let uri: Uri = url.as_str().parse().map_err(|_| {
-        StreamingDiskError::UnexpectedHttpResponse {
-            status: 0,
-            reason: format!("invalid URI: {}", url),
-        }
-    })?;
-
-    // HEAD probe for size and Accept-Ranges. Some servers disallow HEAD (405),
-    // so we treat it as a best-effort hint and fall back to a Range GET probe.
+) -> Result<(u64, Option<String>), StreamingDiskError> {
     let mut head_total_size: Option<u64> = None;
+    let mut head_validator: Option<String> = None;
 
-    let head = Request::builder()
-        .method(Method::HEAD)
-        .uri(uri.clone())
-        .body(Body::empty())
-        .expect("valid request");
-    if let Ok(resp) = client.request(head).await {
+    let head = client.head(url.clone()).send().await;
+    if let Ok(resp) = head {
         if resp.status().is_success() {
             head_total_size = resp
                 .headers()
                 .get(CONTENT_LENGTH)
                 .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
-            let accept_ranges_bytes = resp
+                .and_then(|v| v.parse::<u64>().ok());
+            head_validator = resp
+                .headers()
+                .get(ETAG)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.to_string());
+
+            let accept_ranges = resp
                 .headers()
                 .get(ACCEPT_RANGES)
                 .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_ascii_lowercase().contains("bytes"))
-                .unwrap_or(false);
-            if accept_ranges_bytes {
-                if let Some(total_size) = head_total_size {
-                    return Ok((total_size, true));
+                .map(|v| v.trim().to_ascii_lowercase());
+
+            if accept_ranges.as_deref() == Some("bytes") {
+                if let Some(len) = head_total_size {
+                    return Ok((len, head_validator));
                 }
             }
         }
     }
 
-    // Some servers omit Accept-Ranges (or disallow HEAD) but still honor Range.
-    // Probe with a small request and look for 206 + Content-Range.
-    let range_get = Request::builder()
-        .method(Method::GET)
-        .uri(uri)
+    let resp = client
+        .get(url.clone())
         .header(RANGE, "bytes=0-0")
-        .body(Body::empty())
-        .expect("valid request");
+        .send()
+        .await
+        .map_err(|e| StreamingDiskError::Http(e.to_string()))?;
 
-    let resp = client.request(range_get).await?;
-    if resp.status() != StatusCode::PARTIAL_CONTENT {
-        if let Some(total) = head_total_size {
-            return Ok((total, false));
-        }
-        // Best-effort: some servers include the full Content-Length on a 200
-        // even if Range is ignored.
-        let total = resp
-            .headers()
-            .get(CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .ok_or(StreamingDiskError::MissingContentLength)?;
-        return Ok((total, false));
+    if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Err(StreamingDiskError::RangeNotSupported);
     }
 
-    let content_range = resp
+    let validator = resp
+        .headers()
+        .get(ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string());
+
+    let cr = resp
         .headers()
         .get(CONTENT_RANGE)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let parsed = parse_content_range_full(content_range)?;
+        .ok_or_else(|| StreamingDiskError::Protocol("missing Content-Range".to_string()))?;
+
+    let total = parse_total_size_from_content_range(cr)?;
     if let Some(expected) = head_total_size {
-        if parsed.total != expected {
-            return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
+        if total != expected {
+            return Err(StreamingDiskError::Protocol(format!(
+                "Content-Range total ({total}) does not match Content-Length ({expected})"
+            )));
         }
     }
-    Ok((parsed.total, true))
+    Ok((total, validator.or(head_validator)))
 }
 
-fn block_span_for_range(offset: u64, len: u64, block_size: u64) -> Option<(u64, u64)> {
-    if len == 0 {
-        return None;
-    }
-    let start_block = offset / block_size;
-    let end_block = (offset + len - 1) / block_size;
-    Some((start_block, end_block))
-}
-
-async fn fetch_http_range(
-    client: &Client<hyper_rustls::HttpsConnector<HttpConnector>>,
-    url: &Url,
-    start: u64,
-    end: u64,
-) -> Result<Vec<u8>, StreamingDiskError> {
-    let uri: Uri = url.as_str().parse().map_err(|_| {
-        StreamingDiskError::UnexpectedHttpResponse {
-            status: 0,
-            reason: format!("invalid URI: {}", url),
-        }
-    })?;
-
-    // Range is inclusive in HTTP.
-    let header_value = format!("bytes={}-{}", start, end - 1);
-    let req = Request::builder()
-        .method(Method::GET)
-        .uri(uri)
-        .header(RANGE, header_value)
-        .body(Body::empty())
-        .expect("valid request");
-
-    let mut resp = client.request(req).await?;
-
-    if resp.status() != StatusCode::PARTIAL_CONTENT {
-        return Err(StreamingDiskError::UnexpectedHttpResponse {
-            status: resp.status().as_u16(),
-            reason: format!("expected 206 Partial Content, got {}", resp.status()),
-        });
-    }
-
-    let content_range = resp
-        .headers()
-        .get(CONTENT_RANGE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let (got_start, got_end) = parse_content_range(content_range, None)?;
-    if got_start != start || got_end != end {
-        return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
-    }
-
-    let mut out = Vec::with_capacity((end - start) as usize);
-    while let Some(chunk) = resp.body_mut().data().await {
-        let chunk: Bytes = chunk?;
-        out.extend_from_slice(&chunk);
-    }
-
-    let expected_len = (end - start) as usize;
-    if out.len() != expected_len {
-        return Err(StreamingDiskError::UnexpectedRangeLength {
-            expected: expected_len,
-            actual: out.len(),
-        });
-    }
-
-    Ok(out)
-}
-
-fn parse_content_range(
-    content_range: &str,
-    expected_total_size: Option<u64>,
-) -> Result<(u64, u64), StreamingDiskError> {
-    let parsed = parse_content_range_full(content_range)?;
-    if let Some(expected) = expected_total_size {
-        if parsed.total != expected {
-            return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
-        }
-    }
-    Ok((parsed.start, parsed.end))
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ParsedContentRange {
-    start: u64,
-    end: u64,
-    total: u64,
-}
-
-fn parse_content_range_full(content_range: &str) -> Result<ParsedContentRange, StreamingDiskError> {
+fn parse_total_size_from_content_range(content_range: &str) -> Result<u64, StreamingDiskError> {
     // Example: "bytes 0-0/12345"
     let content_range = content_range.trim();
-    let Some(rest) = content_range.strip_prefix("bytes ") else {
-        return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
-    };
-    let mut parts = rest.split('/');
-    let Some(range_part) = parts.next() else {
-        return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
-    };
-    let total_part = parts.next().unwrap_or("");
-    if parts.next().is_some() {
-        return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
-    }
-
-    let mut range_parts = range_part.split('-');
-    let start: u64 = range_parts
-        .next()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| StreamingDiskError::InvalidContentRange(content_range.to_string()))?;
-    let end_inclusive: u64 = range_parts
-        .next()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| StreamingDiskError::InvalidContentRange(content_range.to_string()))?;
-    if range_parts.next().is_some() {
-        return Err(StreamingDiskError::InvalidContentRange(content_range.to_string()));
-    }
-    let end = end_inclusive
-        .checked_add(1)
-        .ok_or_else(|| StreamingDiskError::InvalidContentRange(content_range.to_string()))?;
-
-    let total: u64 = total_part
-        .parse()
-        .map_err(|_| StreamingDiskError::InvalidContentRange(content_range.to_string()))?;
-
-    Ok(ParsedContentRange { start, end, total })
+    let total = content_range
+        .split('/')
+        .nth(1)
+        .and_then(|v| v.parse::<u64>().ok())
+        .ok_or_else(|| {
+            StreamingDiskError::Protocol(format!("invalid Content-Range: {content_range}"))
+        })?;
+    Ok(total)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_content_range_ok() {
-        assert_eq!(
-            parse_content_range("bytes 0-0/10", Some(10)).unwrap(),
-            (0, 1)
-        );
-        assert_eq!(
-            parse_content_range("bytes 100-199/1000", None).unwrap(),
-            (100, 200)
-        );
-    }
-
-    #[test]
-    fn parse_content_range_rejects_mismatch_total() {
-        assert!(parse_content_range("bytes 0-0/11", Some(10)).is_err());
-    }
-
-    #[test]
-    fn block_span_for_range_handles_boundaries() {
-        assert_eq!(block_span_for_range(0, 0, 1024), None);
-        assert_eq!(block_span_for_range(0, 1, 1024), Some((0, 0)));
-        assert_eq!(block_span_for_range(1023, 1, 1024), Some((0, 0)));
-        assert_eq!(block_span_for_range(1023, 2, 1024), Some((0, 1)));
-        assert_eq!(block_span_for_range(1024, 1024, 1024), Some((1, 1)));
+// We use `hex` only for integrity error messages. Keep it private to avoid committing
+// to a public dependency in the API surface.
+mod hex {
+    pub fn encode(bytes: [u8; 32]) -> String {
+        const LUT: &[u8; 16] = b"0123456789abcdef";
+        let mut out = [0u8; 64];
+        for (i, b) in bytes.iter().copied().enumerate() {
+            out[i * 2] = LUT[(b >> 4) as usize];
+            out[i * 2 + 1] = LUT[(b & 0xF) as usize];
+        }
+        // Safety: LUT is valid UTF-8.
+        unsafe { String::from_utf8_unchecked(out.to_vec()) }
     }
 }
