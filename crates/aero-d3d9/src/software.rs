@@ -414,6 +414,36 @@ fn run_vertex_shader(ir: &ShaderIr, inputs: &HashMap<u16, Vec4>, constants: &[Ve
                     a.mul(b),
                 );
             }
+            Op::Min => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs, &empty_t, constants);
+                let b = exec_src(inst.src[1], &temps, inputs, &empty_t, constants);
+                let v = Vec4::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z), a.w.min(b.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut o_pos,
+                    &mut o_attr,
+                    &mut o_tex,
+                    &mut dummy_color,
+                    v,
+                );
+            }
+            Op::Max => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs, &empty_t, constants);
+                let b = exec_src(inst.src[1], &temps, inputs, &empty_t, constants);
+                let v = Vec4::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z), a.w.max(b.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut o_pos,
+                    &mut o_attr,
+                    &mut o_tex,
+                    &mut dummy_color,
+                    v,
+                );
+            }
             Op::Mad => {
                 let dst = inst.dst.unwrap();
                 let a = exec_src(inst.src[0], &temps, inputs, &empty_t, constants);
@@ -457,6 +487,94 @@ fn run_vertex_shader(ir: &ShaderIr, inputs: &HashMap<u16, Vec4>, constants: &[Ve
                     &mut o_tex,
                     &mut dummy_color,
                     d,
+                );
+            }
+            Op::Rcp => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs, &empty_t, constants);
+                let v = Vec4::new(1.0 / a.x, 1.0 / a.y, 1.0 / a.z, 1.0 / a.w);
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut o_pos,
+                    &mut o_attr,
+                    &mut o_tex,
+                    &mut dummy_color,
+                    v,
+                );
+            }
+            Op::Rsq => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs, &empty_t, constants);
+                let inv_sqrt = |v: f32| 1.0 / v.sqrt();
+                let v = Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut o_pos,
+                    &mut o_attr,
+                    &mut o_tex,
+                    &mut dummy_color,
+                    v,
+                );
+            }
+            Op::Frc => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs, &empty_t, constants);
+                let fract = |v: f32| v - v.floor();
+                let v = Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut o_pos,
+                    &mut o_attr,
+                    &mut o_tex,
+                    &mut dummy_color,
+                    v,
+                );
+            }
+            Op::Cmp => {
+                let dst = inst.dst.unwrap();
+                let cond = exec_src(inst.src[0], &temps, inputs, &empty_t, constants);
+                let a = exec_src(inst.src[1], &temps, inputs, &empty_t, constants);
+                let b = exec_src(inst.src[2], &temps, inputs, &empty_t, constants);
+                let pick = |cond: f32, a: f32, b: f32| if cond >= 0.0 { a } else { b };
+                let v = Vec4::new(
+                    pick(cond.x, a.x, b.x),
+                    pick(cond.y, a.y, b.y),
+                    pick(cond.z, a.z, b.z),
+                    pick(cond.w, a.w, b.w),
+                );
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut o_pos,
+                    &mut o_attr,
+                    &mut o_tex,
+                    &mut dummy_color,
+                    v,
+                );
+            }
+            Op::Slt | Op::Sge => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs, &empty_t, constants);
+                let b = exec_src(inst.src[1], &temps, inputs, &empty_t, constants);
+                let cmp = |a: f32, b: f32| {
+                    if inst.op == Op::Slt {
+                        (a < b) as u8 as f32
+                    } else {
+                        (a >= b) as u8 as f32
+                    }
+                };
+                let v = Vec4::new(cmp(a.x, b.x), cmp(a.y, b.y), cmp(a.z, b.z), cmp(a.w, b.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut o_pos,
+                    &mut o_attr,
+                    &mut o_tex,
+                    &mut dummy_color,
+                    v,
                 );
             }
             Op::Texld => {
@@ -531,6 +649,36 @@ fn run_pixel_shader(
                     a.mul(b),
                 );
             }
+            Op::Min => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, constants);
+                let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, constants);
+                let v = Vec4::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z), a.w.min(b.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut dummy_pos,
+                    &mut dummy_attr,
+                    &mut dummy_tex,
+                    &mut o_color,
+                    v,
+                );
+            }
+            Op::Max => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, constants);
+                let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, constants);
+                let v = Vec4::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z), a.w.max(b.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut dummy_pos,
+                    &mut dummy_attr,
+                    &mut dummy_tex,
+                    &mut o_color,
+                    v,
+                );
+            }
             Op::Mad => {
                 let dst = inst.dst.unwrap();
                 let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, constants);
@@ -574,6 +722,94 @@ fn run_pixel_shader(
                     &mut dummy_tex,
                     &mut o_color,
                     d,
+                );
+            }
+            Op::Rcp => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, constants);
+                let v = Vec4::new(1.0 / a.x, 1.0 / a.y, 1.0 / a.z, 1.0 / a.w);
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut dummy_pos,
+                    &mut dummy_attr,
+                    &mut dummy_tex,
+                    &mut o_color,
+                    v,
+                );
+            }
+            Op::Rsq => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, constants);
+                let inv_sqrt = |v: f32| 1.0 / v.sqrt();
+                let v = Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut dummy_pos,
+                    &mut dummy_attr,
+                    &mut dummy_tex,
+                    &mut o_color,
+                    v,
+                );
+            }
+            Op::Frc => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, constants);
+                let fract = |v: f32| v - v.floor();
+                let v = Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut dummy_pos,
+                    &mut dummy_attr,
+                    &mut dummy_tex,
+                    &mut o_color,
+                    v,
+                );
+            }
+            Op::Cmp => {
+                let dst = inst.dst.unwrap();
+                let cond = exec_src(inst.src[0], &temps, inputs_v, inputs_t, constants);
+                let a = exec_src(inst.src[1], &temps, inputs_v, inputs_t, constants);
+                let b = exec_src(inst.src[2], &temps, inputs_v, inputs_t, constants);
+                let pick = |cond: f32, a: f32, b: f32| if cond >= 0.0 { a } else { b };
+                let v = Vec4::new(
+                    pick(cond.x, a.x, b.x),
+                    pick(cond.y, a.y, b.y),
+                    pick(cond.z, a.z, b.z),
+                    pick(cond.w, a.w, b.w),
+                );
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut dummy_pos,
+                    &mut dummy_attr,
+                    &mut dummy_tex,
+                    &mut o_color,
+                    v,
+                );
+            }
+            Op::Slt | Op::Sge => {
+                let dst = inst.dst.unwrap();
+                let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, constants);
+                let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, constants);
+                let cmp = |a: f32, b: f32| {
+                    if inst.op == Op::Slt {
+                        (a < b) as u8 as f32
+                    } else {
+                        (a >= b) as u8 as f32
+                    }
+                };
+                let v = Vec4::new(cmp(a.x, b.x), cmp(a.y, b.y), cmp(a.z, b.z), cmp(a.w, b.w));
+                exec_dst(
+                    dst,
+                    &mut temps,
+                    &mut dummy_pos,
+                    &mut dummy_attr,
+                    &mut dummy_tex,
+                    &mut o_color,
+                    v,
                 );
             }
             Op::Texld => {

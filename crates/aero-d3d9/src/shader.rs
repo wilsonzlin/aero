@@ -99,6 +99,14 @@ pub enum Op {
     Mad,
     Dp3,
     Dp4,
+    Rcp,
+    Rsq,
+    Min,
+    Max,
+    Cmp,
+    Slt,
+    Sge,
+    Frc,
     Texld,
     End,
 }
@@ -215,9 +223,17 @@ fn opcode_to_op(opcode: u16) -> Option<Op> {
         0x0002 => Some(Op::Add),
         0x0004 => Some(Op::Mad),
         0x0005 => Some(Op::Mul),
+        0x0006 => Some(Op::Rcp),
+        0x0007 => Some(Op::Rsq),
         0x0008 => Some(Op::Dp3),
         0x0009 => Some(Op::Dp4),
+        0x000A => Some(Op::Min),
+        0x000B => Some(Op::Max),
+        0x000C => Some(Op::Slt),
+        0x000D => Some(Op::Sge),
+        0x0013 => Some(Op::Frc),
         0x0042 => Some(Op::Texld), // D3DSIO_TEX
+        0x0058 => Some(Op::Cmp),
         0xFFFF => Some(Op::End),
         _ => None,
     }
@@ -311,7 +327,20 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 src: Vec::new(),
                 sampler: None,
             },
-            Op::Mov | Op::Add | Op::Mul | Op::Mad | Op::Dp3 | Op::Dp4 => {
+            Op::Mov
+            | Op::Add
+            | Op::Mul
+            | Op::Mad
+            | Op::Dp3
+            | Op::Dp4
+            | Op::Rcp
+            | Op::Rsq
+            | Op::Min
+            | Op::Max
+            | Op::Cmp
+            | Op::Slt
+            | Op::Sge
+            | Op::Frc => {
                 if params.len() < 2 {
                     return Err(ShaderError::UnexpectedEof);
                 }
@@ -535,12 +564,15 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
 
     match ir.version.stage {
         ShaderStage::Vertex => {
-            // Input struct.
-            wgsl.push_str("struct VsInput {\n");
-            for &v in &ir.used_inputs {
-                wgsl.push_str(&format!("  @location({}) v{}: vec4<f32>,\n", v, v));
+            let has_inputs = !ir.used_inputs.is_empty();
+            if has_inputs {
+                // Input struct.
+                wgsl.push_str("struct VsInput {\n");
+                for &v in &ir.used_inputs {
+                    wgsl.push_str(&format!("  @location({}) v{}: vec4<f32>,\n", v, v));
+                }
+                wgsl.push_str("};\n");
             }
-            wgsl.push_str("};\n");
 
             // Output struct.
             wgsl.push_str("struct VsOutput {\n  @builtin(position) pos: vec4<f32>,\n");
@@ -558,7 +590,11 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             }
             wgsl.push_str("};\n\n");
 
-            wgsl.push_str("@vertex\nfn vs_main(input: VsInput) -> VsOutput {\n");
+            if has_inputs {
+                wgsl.push_str("@vertex\nfn vs_main(input: VsInput) -> VsOutput {\n");
+            } else {
+                wgsl.push_str("@vertex\nfn vs_main() -> VsOutput {\n");
+            }
             // Declare registers.
             for i in 0..ir.temp_count {
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
@@ -608,16 +644,6 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             }
         }
         ShaderStage::Pixel => {
-            wgsl.push_str("struct PsInput {\n");
-            // Inputs are driven by varying mapping. We just emit for any used input regs.
-            // For simplicity we emit `v#` as @location(#) and `t#` as @location(4+#).
-            for &i in &ir.used_inputs {
-                // We can't tell if the input was `v#` or `t#` just from index; rely on register file in ops.
-                // We'll scan operands to determine required files.
-                // First collect in a set.
-                // (done below)
-                let _ = i;
-            }
             let mut inputs_by_reg = BTreeSet::new();
             for inst in &ir.ops {
                 for src in &inst.src {
@@ -629,39 +655,37 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                     }
                 }
             }
-            for reg in inputs_by_reg {
-                if let Some(loc) = ps_input_location(reg) {
-                    wgsl.push_str(&format!(
-                        "  @location({}) {}: vec4<f32>,\n",
-                        loc,
-                        reg_var_name(reg)
-                    ));
+            let has_inputs = !inputs_by_reg.is_empty();
+            if has_inputs {
+                // Inputs are driven by varying mapping. We just emit for any used input regs.
+                // For simplicity we emit `v#` as @location(#) and `t#` as @location(4+#).
+                wgsl.push_str("struct PsInput {\n");
+                for reg in &inputs_by_reg {
+                    if let Some(loc) = ps_input_location(*reg) {
+                        wgsl.push_str(&format!(
+                            "  @location({}) {}: vec4<f32>,\n",
+                            loc,
+                            reg_var_name(*reg)
+                        ));
+                    }
                 }
+                wgsl.push_str("};\n\n");
+                wgsl.push_str("@fragment\nfn fs_main(input: PsInput) -> @location(0) vec4<f32> {\n");
+            } else {
+                wgsl.push_str("@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n");
             }
-            wgsl.push_str("};\n\n");
-
-            wgsl.push_str("@fragment\nfn fs_main(input: PsInput) -> @location(0) vec4<f32> {\n");
             for i in 0..ir.temp_count {
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
             }
             // Load inputs.
-            let mut inputs_by_reg = BTreeSet::new();
-            for inst in &ir.ops {
-                for src in &inst.src {
-                    match src.reg.file {
-                        RegisterFile::Input | RegisterFile::Texture => {
-                            inputs_by_reg.insert(src.reg);
-                        }
-                        _ => {}
-                    }
+            if has_inputs {
+                for reg in &inputs_by_reg {
+                    wgsl.push_str(&format!(
+                        "  let {}: vec4<f32> = input.{};\n",
+                        reg_var_name(*reg),
+                        reg_var_name(*reg)
+                    ));
                 }
-            }
-            for reg in &inputs_by_reg {
-                wgsl.push_str(&format!(
-                    "  let {}: vec4<f32> = input.{};\n",
-                    reg_var_name(*reg),
-                    reg_var_name(*reg)
-                ));
             }
             wgsl.push_str("  var oC0: vec4<f32> = vec4<f32>(0.0);\n\n");
 
@@ -707,12 +731,58 @@ fn emit_inst(wgsl: &mut String, inst: &Instruction) {
                 wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
             }
         }
+        Op::Min | Op::Max => {
+            let dst = inst.dst.unwrap();
+            let src0 = inst.src[0];
+            let src1 = inst.src[1];
+            let func = if inst.op == Op::Min { "min" } else { "max" };
+            let dst_name = reg_var_name(dst.reg);
+            let expr = format!("{}({}, {})", func, src_expr(&src0), src_expr(&src1));
+            if let Some(mask) = mask_suffix(dst.mask) {
+                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+            }
+        }
         Op::Mad => {
             let dst = inst.dst.unwrap();
             let a = src_expr(&inst.src[0]);
             let b = src_expr(&inst.src[1]);
             let c = src_expr(&inst.src[2]);
             let expr = format!("fma({}, {}, {})", a, b, c);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Cmp => {
+            let dst = inst.dst.unwrap();
+            let cond = src_expr(&inst.src[0]);
+            let a = src_expr(&inst.src[1]);
+            let b = src_expr(&inst.src[2]);
+            // Per-component compare: if cond >= 0 then a else b.
+            let expr = format!(
+                "select({}, {}, ({} >= vec4<f32>(0.0)))",
+                b, a, cond
+            );
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Slt | Op::Sge => {
+            let dst = inst.dst.unwrap();
+            let a = src_expr(&inst.src[0]);
+            let b = src_expr(&inst.src[1]);
+            let op = if inst.op == Op::Slt { "<" } else { ">=" };
+            let expr = format!(
+                "select(vec4<f32>(0.0), vec4<f32>(1.0), ({} {} {}))",
+                a, op, b
+            );
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
                 wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
@@ -747,6 +817,39 @@ fn emit_inst(wgsl: &mut String, inst: &Instruction) {
                 wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, sample, mask));
             } else {
                 wgsl.push_str(&format!("  {} = {};\n", dst_name, sample));
+            }
+        }
+        Op::Rcp => {
+            let dst = inst.dst.unwrap();
+            let src0 = src_expr(&inst.src[0]);
+            let expr = format!("(vec4<f32>(1.0) / {})", src0);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Rsq => {
+            let dst = inst.dst.unwrap();
+            let src0 = src_expr(&inst.src[0]);
+            let expr = format!("inverseSqrt({})", src0);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Frc => {
+            let dst = inst.dst.unwrap();
+            let src0 = src_expr(&inst.src[0]);
+            let expr = format!("fract({})", src0);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
             }
         }
     }

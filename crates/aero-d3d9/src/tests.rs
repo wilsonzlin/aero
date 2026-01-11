@@ -75,6 +75,71 @@ fn assemble_ps_color_passthrough() -> Vec<u32> {
     out
 }
 
+fn assemble_ps_math_ops() -> Vec<u32> {
+    // ps_2_0
+    let mut out = vec![0xFFFF0200];
+
+    // mov r0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // min r0, r0, c1
+    out.extend(enc_inst(
+        0x000A,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            enc_src(2, 1, 0xE4),
+        ],
+    ));
+    // max r0, r0, c2
+    out.extend(enc_inst(
+        0x000B,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            enc_src(2, 2, 0xE4),
+        ],
+    ));
+    // rcp r1, c3
+    out.extend(enc_inst(0x0006, &[enc_dst(0, 1, 0xF), enc_src(2, 3, 0xE4)]));
+    // rsq r2, c4
+    out.extend(enc_inst(0x0007, &[enc_dst(0, 2, 0xF), enc_src(2, 4, 0xE4)]));
+    // frc r3, c5
+    out.extend(enc_inst(0x0013, &[enc_dst(0, 3, 0xF), enc_src(2, 5, 0xE4)]));
+    // slt r4, c6, c7
+    out.extend(enc_inst(
+        0x000C,
+        &[
+            enc_dst(0, 4, 0xF),
+            enc_src(2, 6, 0xE4),
+            enc_src(2, 7, 0xE4),
+        ],
+    ));
+    // sge r5, c8, c9
+    out.extend(enc_inst(
+        0x000D,
+        &[
+            enc_dst(0, 5, 0xF),
+            enc_src(2, 8, 0xE4),
+            enc_src(2, 9, 0xE4),
+        ],
+    ));
+    // cmp r6, c10, c11, c12
+    out.extend(enc_inst(
+        0x0058,
+        &[
+            enc_dst(0, 6, 0xF),
+            enc_src(2, 10, 0xE4),
+            enc_src(2, 11, 0xE4),
+            enc_src(2, 12, 0xE4),
+        ],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_vs_passthrough_sm3() -> Vec<u32> {
     let mut out = assemble_vs_passthrough();
     out[0] = 0xFFFE0300; // vs_3_0
@@ -160,6 +225,28 @@ fn translates_simple_ps_to_wgsl() {
 
     assert!(wgsl.wgsl.contains("@fragment"));
     assert!(wgsl.wgsl.contains("textureSample"));
+}
+
+#[test]
+fn translates_additional_ps_ops_to_wgsl() {
+    let ps_bytes = to_bytes(&assemble_ps_math_ops());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir);
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("min("));
+    assert!(wgsl.wgsl.contains("max("));
+    assert!(wgsl.wgsl.contains("inverseSqrt"));
+    assert!(wgsl.wgsl.contains("fract("));
+    assert!(wgsl.wgsl.contains("select("));
 }
 
 fn build_vertex_decl_pos_tex_color() -> state::VertexDecl {
