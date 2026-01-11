@@ -125,12 +125,14 @@ describe("usb/usb_proxy_protocol", () => {
       type: "usb.action",
       action: { kind: "bulkOut", id: 1, endpoint: 1, data: Uint8Array.of(1, 2, 3) },
     };
+    if (actionMsg.action.kind !== "bulkOut") throw new Error("unreachable");
     expect(getTransferablesForUsbActionMessage(actionMsg)).toEqual([actionMsg.action.data.buffer]);
 
     const completionMsg: UsbCompletionMessage = {
       type: "usb.completion",
       completion: { kind: "bulkIn", id: 2, status: "success", data: Uint8Array.of(9) },
     };
+    if (completionMsg.completion.kind !== "bulkIn" || completionMsg.completion.status !== "success") throw new Error("unreachable");
     expect(getTransferablesForUsbCompletionMessage(completionMsg)).toEqual([completionMsg.completion.data.buffer]);
 
     const stall: UsbCompletionMessage = { type: "usb.completion", completion: { kind: "bulkIn", id: 3, status: "stall" } };

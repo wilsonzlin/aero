@@ -33,14 +33,14 @@ type UsbHostActionKind = UsbHostAction["kind"];
 
 function normalizeActionId(value: unknown): number | null {
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || value < 0) return null;
+    // Rust-side ids are u32 and must be representable as JS numbers. Keep the
+    // runtime strict here so we never forward (or attempt to complete) actions
+    // that the WASM bridge cannot match.
+    if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) return null;
     return value;
   }
   if (typeof value === "bigint") {
-    if (value < 0n) return null;
-    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new Error(`USB action id is too large for JS number: ${value.toString()}`);
-    }
+    if (value < 0n || value > 0xffff_ffffn) return null;
     return Number(value);
   }
   return null;
@@ -338,10 +338,14 @@ export class WebUsbPassthroughRuntime {
           } else {
             // Without an id+kind we cannot fabricate a completion for the Rust-side queue.
             // Reset the bridge to clear any stuck actions so the guest can recover.
-            this.#lastError =
-              extractedId !== null
-                ? "Invalid UsbHostAction received from WASM (missing kind)."
-                : "Invalid UsbHostAction received from WASM (missing id/kind).";
+            const problems: string[] = [];
+            if (extractedId === null) {
+              problems.push(record && "id" in record ? "invalid id" : "missing id");
+            }
+            if (extractedKind === null) {
+              problems.push(record && "kind" in record ? "invalid kind" : "missing kind");
+            }
+            this.#lastError = `Invalid UsbHostAction received from WASM (${problems.join(", ")}).`;
             try {
               this.#bridge.reset();
             } catch (resetErr) {

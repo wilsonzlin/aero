@@ -66,7 +66,9 @@ describe("usb/WebUsbPassthroughRuntime", () => {
       { type: "usb.action", action: actions[0] },
       { type: "usb.action", action: actions[1] },
     ]);
-    expect(port.transfers).toEqual([undefined, [actions[1].data.buffer]]);
+    const bulkOut = actions[1];
+    if (!bulkOut || bulkOut.kind !== "bulkOut") throw new Error("unreachable");
+    expect(port.transfers).toEqual([undefined, [bulkOut.data.buffer]]);
 
     port.emit({
       type: "usb.completion",
@@ -361,5 +363,27 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(completion.kind).toBe("bulkIn");
     expect(completion.id).toBe(1);
     expect(completion.status).toBe("error");
+  });
+
+  it("resets the bridge when WASM emits an out-of-range (non-u32) action id", async () => {
+    const port = new FakePort();
+    const rawAction = { kind: "bulkIn", id: 0x1_0000_0000n, endpoint: 1, length: 8 };
+
+    const push_completion = vi.fn();
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [rawAction]),
+      push_completion,
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    await runtime.pollOnce();
+
+    expect(port.posted).toEqual([]);
+    expect(push_completion).not.toHaveBeenCalled();
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(runtime.getMetrics().lastError).toMatch(/invalid id/);
   });
 });
