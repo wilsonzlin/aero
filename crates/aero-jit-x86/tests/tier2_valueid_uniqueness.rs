@@ -3,6 +3,7 @@ mod tier1_common;
 use std::collections::HashMap;
 
 use aero_cpu_core::jit::runtime::PageVersionTracker;
+
 use aero_jit_x86::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::ir::{Operand, ValueId};
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
@@ -64,7 +65,6 @@ fn tier2_traces_have_globally_unique_value_ids_across_blocks() {
         trace.blocks.len()
     );
 
-    // --- ValueId uniqueness check -----------------------------------------------------------
     let mut defs: HashMap<ValueId, usize> = HashMap::new();
     for inst in trace.ir.iter_instrs() {
         if let Some(dst) = inst.dst() {
@@ -73,24 +73,27 @@ fn tier2_traces_have_globally_unique_value_ids_across_blocks() {
     }
 
     for (v, count) in &defs {
-        assert_eq!(*count, 1, "ValueId {v:?} defined {count} times");
+        assert_eq!(
+            *count, 1,
+            "ValueId collision: {v:?} is defined {count} times in a single trace"
+        );
     }
 
     for inst in trace.ir.iter_instrs() {
         inst.for_each_operand(|op| {
-            if let Operand::Value(v) = op {
-                assert_eq!(
-                    defs.get(&v),
-                    Some(&1),
-                    "ValueId {v:?} used but not uniquely defined"
-                );
-            }
+            let Operand::Value(v) = op else { return };
+            assert_eq!(
+                defs.get(&v).copied(),
+                Some(1),
+                "use of {v:?} does not resolve to exactly one definition"
+            );
         });
     }
 
-    // --- Full Tier-2 pipeline --------------------------------------------------------------
     let opt = optimize_trace(&mut trace.ir, &OptConfig::default());
     let wasm = Tier2WasmCodegen::new().compile_trace(&trace.ir, &opt.regalloc);
 
-    Validator::new().validate_all(&wasm).unwrap();
+    let mut validator = Validator::new();
+    validator.validate_all(&wasm).expect("generated wasm is valid");
 }
+

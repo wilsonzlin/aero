@@ -121,10 +121,15 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
             .fold(0u32, |acc, inst| acc.saturating_add(inst.len as u32));
         let ir = translate_block(bb);
 
+        let value_count: u32 = ir
+            .value_types
+            .len()
+            .try_into()
+            .expect("Tier-1 IR value count overflows u32");
         let base = self.next_value;
         self.next_value = self
             .next_value
-            .checked_add(ir.value_types.len() as u32)
+            .checked_add(value_count)
             .expect("Tier-2 ValueId space exhausted");
 
         let (instrs, unsupported) = {
@@ -195,7 +200,10 @@ fn lower_terminator<B: Tier1Bus>(
             builder.get_or_create_block(fallthrough),
         ) {
             (Some(then_bb), Some(else_bb)) => TerminatorLowering::Term(Terminator::Branch {
-                cond: Operand::Value(ValueId(base + cond.0)),
+                cond: Operand::Value(ValueId(
+                    base.checked_add(cond.0)
+                        .expect("Tier-2 ValueId space exhausted"),
+                )),
                 then_bb,
                 else_bb,
             }),
@@ -229,7 +237,11 @@ struct BlockLowerer<'a> {
 
 impl BlockLowerer<'_> {
     fn map_value(&self, v: crate::tier1_ir::ValueId) -> ValueId {
-        ValueId(self.base + v.0)
+        ValueId(
+            self.base
+                .checked_add(v.0)
+                .expect("Tier-2 ValueId space exhausted"),
+        )
     }
 
     fn value(&self, v: crate::tier1_ir::ValueId) -> Operand {
