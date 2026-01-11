@@ -1302,7 +1302,9 @@ impl AerogpuD3d9Executor {
                         )));
                     }
                     let _base_gpa = entry.gpa.checked_add(backing_offset).ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("CREATE_TEXTURE2D: backing gpa overflow".into())
+                        AerogpuD3d9Error::Validation(
+                            "CREATE_TEXTURE2D: backing gpa overflow".into(),
+                        )
                     })?;
                     Some(GuestTextureBacking {
                         alloc_id: backing_alloc_id,

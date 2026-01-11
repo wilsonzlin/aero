@@ -1220,9 +1220,7 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
             .expect("write alloc table");
 
         let sentinel = [0xEEu8; 16];
-        guest
-            .write(DST_GPA, &sentinel)
-            .expect("write dst sentinel");
+        guest.write(DST_GPA, &sentinel).expect("write dst sentinel");
 
         let payload = *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
         let stream = build_stream(|out| {
@@ -1277,7 +1275,10 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
             alloc_table_gpa,
             alloc_table_bytes.len() as u32,
         );
-        assert!(!report.is_ok(), "expected executor report to contain errors");
+        assert!(
+            !report.is_ok(),
+            "expected executor report to contain errors"
+        );
         assert!(
             report.events.iter().any(|e| matches!(
                 e,
