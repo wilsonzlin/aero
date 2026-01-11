@@ -77,14 +77,20 @@
 
   <ItemDefinitionGroup>
       <ClCompile>
-        <WarningLevel>Level4</WarningLevel>
-        <ConformanceMode>true</ConformanceMode>
-        <TreatWarningAsError>true</TreatWarningAsError>
-        <PrecompiledHeader>NotUsing</PrecompiledHeader>
-        <PreprocessorDefinitions>_KERNEL_MODE;_WIN32_WINNT=0x0601;WINVER=0x0601;NTDDI_VERSION=NTDDI_WIN7;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-        <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\virtio\common\include;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-        <SpectreMitigation>false</SpectreMitigation>
-      </ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <!--
+        WDK 10+ headers deprecate some Win7-era pool APIs/types (e.g. NonPagedPool,
+        ExAllocatePoolWithTag) even when targeting Windows 7. Silence those
+        deprecation warnings so /WX can stay enabled for actionable warnings.
+      -->
+      <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>_KERNEL_MODE;_WIN32_WINNT=0x0601;WINVER=0x0601;NTDDI_VERSION=NTDDI_WIN7;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\virtio\common\include;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <SpectreMitigation>false</SpectreMitigation>
+    </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
