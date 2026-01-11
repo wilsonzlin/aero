@@ -263,6 +263,13 @@ test("integration: policy denies private IPs by default", async () => {
     const errFrame4 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 4);
     const err4 = decodeTcpMuxErrorPayload(errFrame4.payload);
     assert.equal(err4.code, TcpMuxErrorCode.POLICY_DENIED);
+
+    // Hostnames that resolve only to blocked ranges should also be denied (DNS
+    // rebinding / local-network bypass mitigation).
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 5, encodeTcpMuxOpenPayload({ host: "localhost", port: 80 })));
+    const errFrame5 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 5);
+    const err5 = decodeTcpMuxErrorPayload(errFrame5.payload);
+    assert.equal(err5.code, TcpMuxErrorCode.POLICY_DENIED);
   } finally {
     if (ws) ws.terminate();
     if (proxy) await proxy.close();
