@@ -1,0 +1,86 @@
+// Win7 D3D10/11 UMD ABI probe (WDK headers).
+//
+// This program is intended to be compiled in a Win7-era WDK build environment so
+// that `d3d10umddi.h`, `d3d10_1umddi.h`, and `d3d11umddi.h` are available on the
+// include path. It prints:
+// - key struct sizes/offsets
+// - expected x86 stdcall export decoration for OpenAdapter10/10_2/11
+
+#include <windows.h>
+
+#include <d3d10umddi.h>
+#include <d3d10_1umddi.h>
+#include <d3d11umddi.h>
+
+#include <cstdio>
+#include <cstddef>
+#include <type_traits>
+#include <utility>
+
+template <typename T, typename = void>
+struct has_member_pAdapterCallbacks : std::false_type {};
+template <typename T>
+struct has_member_pAdapterCallbacks<T, std::void_t<decltype(std::declval<T>().pAdapterCallbacks)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hRTAdapter : std::false_type {};
+template <typename T>
+struct has_member_hRTAdapter<T, std::void_t<decltype(std::declval<T>().hRTAdapter)>> : std::true_type {};
+
+int main() {
+  std::printf("== Win7 D3D10/11 UMD WDK ABI probe ==\n");
+
+#if defined(_M_IX86)
+  std::printf("arch: x86\n");
+#elif defined(_M_X64)
+  std::printf("arch: x64\n");
+#else
+  std::printf("arch: unknown\n");
+#endif
+
+  std::printf("sizeof(void*) = %zu\n", sizeof(void*));
+  std::printf("\n");
+
+  std::printf("== D3D10DDIARG_OPENADAPTER ==\n");
+  std::printf("  sizeof(D3D10DDIARG_OPENADAPTER) = %zu\n", sizeof(D3D10DDIARG_OPENADAPTER));
+  std::printf("  offsetof(Interface) = %zu\n", offsetof(D3D10DDIARG_OPENADAPTER, Interface));
+  std::printf("  offsetof(Version) = %zu\n", offsetof(D3D10DDIARG_OPENADAPTER, Version));
+  std::printf("  offsetof(hAdapter) = %zu\n", offsetof(D3D10DDIARG_OPENADAPTER, hAdapter));
+  if constexpr (has_member_hRTAdapter<D3D10DDIARG_OPENADAPTER>::value) {
+    std::printf("  offsetof(hRTAdapter) = %zu\n", offsetof(D3D10DDIARG_OPENADAPTER, hRTAdapter));
+  } else {
+    std::printf("  offsetof(hRTAdapter) = <absent>\n");
+  }
+  if constexpr (has_member_pAdapterCallbacks<D3D10DDIARG_OPENADAPTER>::value) {
+    std::printf("  offsetof(pAdapterCallbacks) = %zu\n", offsetof(D3D10DDIARG_OPENADAPTER, pAdapterCallbacks));
+  } else {
+    std::printf("  offsetof(pAdapterCallbacks) = <absent>\n");
+  }
+  std::printf("  offsetof(pAdapterFuncs) = %zu\n", offsetof(D3D10DDIARG_OPENADAPTER, pAdapterFuncs));
+  std::printf("\n");
+
+  std::printf("== Interface constants ==\n");
+  std::printf("  D3D10DDI_INTERFACE_VERSION  = 0x%08X\n", static_cast<unsigned>(D3D10DDI_INTERFACE_VERSION));
+  std::printf("  D3D10DDI_SUPPORTED          = 0x%08X\n", static_cast<unsigned>(D3D10DDI_SUPPORTED));
+  std::printf("  D3D10_1DDI_INTERFACE_VERSION= 0x%08X\n", static_cast<unsigned>(D3D10_1DDI_INTERFACE_VERSION));
+  std::printf("  D3D10_1DDI_SUPPORTED         = 0x%08X\n", static_cast<unsigned>(D3D10_1DDI_SUPPORTED));
+  std::printf("  D3D11DDI_INTERFACE_VERSION  = 0x%08X\n", static_cast<unsigned>(D3D11DDI_INTERFACE_VERSION));
+#ifdef D3D11DDI_INTERFACE
+  std::printf("  D3D11DDI_INTERFACE          = 0x%08X\n", static_cast<unsigned>(D3D11DDI_INTERFACE));
+#endif
+  std::printf("\n");
+
+  std::printf("== Exported entrypoints ==\n");
+  std::printf("  runtime expects: OpenAdapter10, OpenAdapter10_2, OpenAdapter11\n");
+  if (sizeof(void*) == 4) {
+    const unsigned stack_bytes = static_cast<unsigned>(sizeof(void*));
+    std::printf("  x86 stdcall decoration:\n");
+    std::printf("    OpenAdapter10   => _OpenAdapter10@%u\n", stack_bytes);
+    std::printf("    OpenAdapter10_2 => _OpenAdapter10_2@%u\n", stack_bytes);
+    std::printf("    OpenAdapter11   => _OpenAdapter11@%u\n", stack_bytes);
+  } else {
+    std::printf("  x64: no stdcall decoration\n");
+  }
+
+  return 0;
+}
