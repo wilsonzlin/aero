@@ -386,7 +386,8 @@ Fields (subset relevant to the UMD allocation contract; see `win7_wdk_probe` for
 The Win7 bring-up set of flags you should expect to set in practice:
 
 * `Primary`
-  * Must be set for scanout/backbuffer allocations.
+  * If your headers expose this bit, set it for DXGI primaries/backbuffers.
+  * Some Win7-capable header sets only expose “Primary” at the resource level via `D3DDDICB_ALLOCATEFLAGS.Primary`—validate expected behavior with traces (see §5.3).
 * `CpuVisible`
   * Must be set for staging allocations that are CPU-mapped via `pfnLockCb`/`pfnUnlockCb`.
   * AeroGPU MVP often sets this for *all* allocations because it uses the single CPU-visible system segment.
