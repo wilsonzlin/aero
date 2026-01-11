@@ -2371,12 +2371,12 @@ void AEROGPU_APIENTRY DynamicConstantBufferUnmap11(D3D11DDI_HDEVICECONTEXT hCtx,
 }
 
 void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                           D3D11DDI_HRESOURCE hDstResource,
-                                           UINT,
-                                           const D3D10_DDI_BOX*,
-                                           const void* pSysMem,
-                                           UINT src_pitch,
-                                           UINT) {
+                                            D3D11DDI_HRESOURCE hDstResource,
+                                            UINT,
+                                            const D3D10_DDI_BOX* pDstBox,
+                                            const void* pSysMem,
+                                            UINT src_pitch,
+                                            UINT) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || !hDstResource.pDrvPrivate || !pSysMem) {
     if (dev) {
@@ -2394,20 +2394,87 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (res->kind == ResourceKind::Buffer) {
-    const size_t bytes = std::min(res->storage.size(), static_cast<size_t>(res->size_bytes));
-    std::memcpy(res->storage.data(), pSysMem, bytes);
-    EmitUploadLocked(dev, res, 0, bytes);
+    uint64_t dst_off = 0;
+    uint64_t bytes = res->size_bytes;
+    if (pDstBox) {
+      if (pDstBox->right < pDstBox->left || pDstBox->top != 0 || pDstBox->bottom != 1 || pDstBox->front != 0 ||
+          pDstBox->back != 1) {
+        SetError(dev, E_INVALIDARG);
+        return;
+      }
+      dst_off = static_cast<uint64_t>(pDstBox->left);
+      bytes = static_cast<uint64_t>(pDstBox->right - pDstBox->left);
+    }
+    if (dst_off > res->size_bytes || bytes > res->size_bytes - dst_off) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+    if (res->storage.size() < dst_off + bytes) {
+      SetError(dev, E_FAIL);
+      return;
+    }
+    if (bytes) {
+      std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pSysMem, static_cast<size_t>(bytes));
+      EmitUploadLocked(dev, res, dst_off, bytes);
+    }
     return;
   }
 
   if (res->kind == ResourceKind::Texture2D) {
     const uint8_t* src_bytes = reinterpret_cast<const uint8_t*>(pSysMem);
-    const uint32_t pitch = src_pitch ? src_pitch : res->row_pitch_bytes;
-    for (uint32_t y = 0; y < res->height; y++) {
-      std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
-                  src_bytes + static_cast<size_t>(y) * pitch,
-                  res->row_pitch_bytes);
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+    if (bpp == 0 || res->row_pitch_bytes < res->width * bpp) {
+      SetError(dev, E_INVALIDARG);
+      return;
     }
+
+    uint32_t left = 0;
+    uint32_t top = 0;
+    uint32_t right = res->width;
+    uint32_t bottom = res->height;
+    if (pDstBox) {
+      if (pDstBox->right < pDstBox->left || pDstBox->bottom < pDstBox->top || pDstBox->front != 0 ||
+          pDstBox->back != 1) {
+        SetError(dev, E_INVALIDARG);
+        return;
+      }
+      left = pDstBox->left;
+      top = pDstBox->top;
+      right = pDstBox->right;
+      bottom = pDstBox->bottom;
+    }
+    if (right > res->width || bottom > res->height) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+
+    const uint32_t copy_width = right - left;
+    const uint32_t copy_height = bottom - top;
+    const uint32_t row_bytes = copy_width * bpp;
+    if (row_bytes == 0 || copy_height == 0) {
+      return;
+    }
+
+    const uint32_t pitch = src_pitch ? src_pitch : row_bytes;
+    if (pitch < row_bytes) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+
+    for (uint32_t y = 0; y < copy_height; y++) {
+      const size_t dst_off = static_cast<size_t>(top + y) * res->row_pitch_bytes + static_cast<size_t>(left) * bpp;
+      const size_t src_off = static_cast<size_t>(y) * pitch;
+      if (dst_off + row_bytes > res->storage.size()) {
+        SetError(dev, E_FAIL);
+        return;
+      }
+      std::memcpy(res->storage.data() + dst_off, src_bytes + src_off, row_bytes);
+    }
+
+    // Texture updates are not guaranteed to be contiguous in memory (unless the
+    // full subresource is updated). For the bring-up path, upload the whole
+    // resource after applying the CPU-side update.
     EmitUploadLocked(dev, res, 0, res->storage.size());
     return;
   }
