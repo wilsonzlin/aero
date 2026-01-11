@@ -50,14 +50,23 @@
       const views = createSharedMemoryViews(segments);
       window.__ioStatus = views.status;
       window.__ioReadyIndex = StatusIndex.IoReady;
-      window.__ioInputBatchCounterIndex = StatusIndex.IoInputBatchCounter;
-      window.__ioInputEventCounterIndex = StatusIndex.IoInputEventCounter;
+       window.__ioInputBatchCounterIndex = StatusIndex.IoInputBatchCounter;
+       window.__ioInputEventCounterIndex = StatusIndex.IoInputEventCounter;
 
-       const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", import.meta.url), { type: "module" });
-       ioWorker.postMessage({
-         kind: "init",
-         role: "io",
-         controlSab: segments.control,
+        const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", import.meta.url), { type: "module" });
+        // io.worker waits for an initial boot disk selection message before reporting READY.
+        // This fixture doesn't mount any disks, but it still needs the worker to reach READY so
+        // input batching can be tested deterministically.
+        ioWorker.postMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: null,
+          cd: null,
+        });
+        ioWorker.postMessage({
+          kind: "init",
+          role: "io",
+          controlSab: segments.control,
          guestMemory: segments.guestMemory,
          vgaFramebuffer: segments.vgaFramebuffer,
          ioIpcSab: segments.ioIpc,
