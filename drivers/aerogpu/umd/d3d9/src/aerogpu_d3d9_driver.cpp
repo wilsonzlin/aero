@@ -166,6 +166,100 @@ bool wait_for_fence(Adapter* adapter, uint64_t fence, uint32_t timeout_ms) {
   return refresh_fence_snapshot(adapter).last_completed >= fence;
 }
 
+enum class FenceWaitResult {
+  Complete,
+  NotReady,
+  Failed,
+};
+
+#if defined(_WIN32)
+using AerogpuNtStatus = LONG;
+
+constexpr AerogpuNtStatus kStatusSuccess = 0x00000000L;
+constexpr AerogpuNtStatus kStatusTimeout = 0x00000102L;
+
+struct AerogpuD3DKMTWaitForSynchronizationObject {
+  UINT ObjectCount;
+  const WddmHandle* ObjectHandleArray;
+  const uint64_t* FenceValueArray;
+  uint64_t Timeout;
+};
+
+using PFND3DKMTWaitForSynchronizationObject =
+    AerogpuNtStatus(WINAPI*)(AerogpuD3DKMTWaitForSynchronizationObject* pData);
+
+PFND3DKMTWaitForSynchronizationObject load_d3dkmt_wait_for_sync_object() {
+  static PFND3DKMTWaitForSynchronizationObject fn = []() -> PFND3DKMTWaitForSynchronizationObject {
+    HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
+    if (!gdi32) {
+      gdi32 = LoadLibraryW(L"gdi32.dll");
+    }
+    if (!gdi32) {
+      return nullptr;
+    }
+    return reinterpret_cast<PFND3DKMTWaitForSynchronizationObject>(
+        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
+  }();
+  return fn;
+}
+#endif
+
+FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint64_t timeout_ms) {
+  if (!dev || !dev->adapter) {
+    return FenceWaitResult::Failed;
+  }
+  if (fence_value == 0) {
+    return FenceWaitResult::Complete;
+  }
+
+  Adapter* adapter = dev->adapter;
+
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    if (adapter->completed_fence >= fence_value) {
+      return FenceWaitResult::Complete;
+    }
+  }
+
+#if defined(_WIN32)
+  const WddmHandle sync_object = dev->wddm_context.hSyncObject;
+  if (sync_object != 0) {
+    auto* wait_fn = load_d3dkmt_wait_for_sync_object();
+    if (wait_fn) {
+      const WddmHandle handles[1] = {sync_object};
+      const uint64_t fences[1] = {fence_value};
+
+      AerogpuD3DKMTWaitForSynchronizationObject args{};
+      args.ObjectCount = 1;
+      args.ObjectHandleArray = handles;
+      args.FenceValueArray = fences;
+      args.Timeout = timeout_ms;
+
+      const AerogpuNtStatus st = wait_fn(&args);
+      if (st == kStatusSuccess) {
+        {
+          std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+          adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
+        }
+        adapter->fence_cv.notify_all();
+        return FenceWaitResult::Complete;
+      }
+      if (st == kStatusTimeout) {
+        return FenceWaitResult::NotReady;
+      }
+    }
+  }
+#endif
+
+  if (timeout_ms == 0) {
+    return (refresh_fence_snapshot(adapter).last_completed >= fence_value) ? FenceWaitResult::Complete
+                                                                          : FenceWaitResult::NotReady;
+  }
+
+  const bool complete = wait_for_fence(adapter, fence_value, static_cast<uint32_t>(timeout_ms));
+  return complete ? FenceWaitResult::Complete : FenceWaitResult::NotReady;
+}
+
 HRESULT throttle_presents_locked(Device* dev, uint32_t d3d9_present_flags) {
   if (!dev) {
     return E_INVALIDARG;
@@ -475,13 +569,18 @@ uint64_t submit(Device* dev) {
   // A real driver would forward the command buffer GPA/size to the KMD, which
   // would then place a submit descriptor into the shared ring.
 
-  if (!dev || dev->cmd.empty()) {
+  if (!dev) {
     return 0;
   }
 
   Adapter* adapter = dev->adapter;
   if (!adapter) {
     return 0;
+  }
+
+  if (dev->cmd.empty()) {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    return adapter->last_submitted_fence;
   }
 
   dev->cmd.finalize();
@@ -1501,8 +1600,8 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
     fence_value = refresh_fence_snapshot(adapter).last_submitted;
   }
 
-  q->fence_value = fence_value;
-  q->issued = true;
+  q->fence_value.store(fence_value, std::memory_order_release);
+  q->issued.store(true, std::memory_order_release);
   return S_OK;
 }
 
@@ -1528,15 +1627,25 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   if (!is_event) {
     return D3DERR_NOTAVAILABLE;
   }
-  if (!q->issued) {
+  if (!q->issued.load(std::memory_order_acquire)) {
     return S_FALSE;
   }
 
   // If no output buffer provided, just report readiness via HRESULT.
   const bool need_data = (pGetQueryData->pData != nullptr) && (pGetQueryData->data_size != 0);
 
-  FenceSnapshot snap = refresh_fence_snapshot(adapter);
-  if (snap.last_completed >= q->fence_value) {
+  const uint64_t fence_value = q->fence_value.load(std::memory_order_acquire);
+
+  FenceWaitResult wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/0);
+  if (wait_res == FenceWaitResult::NotReady && (pGetQueryData->flags & kD3DGetDataFlush)) {
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      (void)submit(dev);
+    }
+    wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/16);
+  }
+
+  if (wait_res == FenceWaitResult::Complete) {
     if (need_data) {
       // D3DQUERYTYPE_EVENT expects a BOOL-like result.
       if (pGetQueryData->data_size < sizeof(uint32_t)) {
@@ -1546,27 +1655,37 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     }
     return S_OK;
   }
+  if (wait_res == FenceWaitResult::Failed) {
+    return E_FAIL;
+  }
+  return S_FALSE;
+}
 
-  // If requested, flush once to help the query make forward progress, then
-  // return non-ready if the fence is still outstanding.
-  if (pGetQueryData->flags & kD3DGetDataFlush) {
-    {
-      std::lock_guard<std::mutex> lock(dev->mutex);
-      flush_locked(dev);
-    }
-    snap = refresh_fence_snapshot(adapter);
-    if (snap.last_completed >= q->fence_value) {
-      if (need_data) {
-        if (pGetQueryData->data_size < sizeof(uint32_t)) {
-          return kD3DErrInvalidCall;
-        }
-        *reinterpret_cast<uint32_t*>(pGetQueryData->pData) = TRUE;
-      }
-      return S_OK;
-    }
+HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(AEROGPU_D3D9DDI_HDEVICE hDevice) {
+  if (!hDevice) {
+    return E_INVALIDARG;
   }
 
-  return S_FALSE;
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  uint64_t fence_value = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    fence_value = submit(dev);
+  }
+
+  for (;;) {
+    const FenceWaitResult wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/250);
+    if (wait_res == FenceWaitResult::Complete) {
+      return S_OK;
+    }
+    if (wait_res == FenceWaitResult::Failed) {
+      return E_FAIL;
+    }
+  }
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
@@ -1682,6 +1801,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnDestroyQuery = device_destroy_query;
   pDeviceFuncs->pfnIssueQuery = device_issue_query;
   pDeviceFuncs->pfnGetQueryData = device_get_query_data;
+  pDeviceFuncs->pfnWaitForIdle = device_wait_for_idle;
 
   dev.release();
   return S_OK;

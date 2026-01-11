@@ -93,8 +93,8 @@ struct VertexDecl {
 
 struct Query {
   uint32_t type = 0;
-  uint64_t fence_value = 0;
-  bool issued = false;
+  std::atomic<uint64_t> fence_value{0};
+  std::atomic<bool> issued{false};
 };
 
 struct Adapter {
