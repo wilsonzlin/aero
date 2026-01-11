@@ -2598,7 +2598,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       uint64_t alloc_token = 0;
       uint32_t alloc_id = 0;
       do {
-        alloc_token = allocate_share_token(dev->adapter);
+        alloc_token = allocate_shared_alloc_id_token(dev->adapter);
         alloc_id = static_cast<uint32_t>(alloc_token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
       } while (alloc_token != 0 && alloc_id == 0);
 
