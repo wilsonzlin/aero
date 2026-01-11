@@ -2669,12 +2669,25 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
 
     // SET_BLEND_STATE: standard src_alpha/inv_src_alpha.
     push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
-    push_u32(&mut stream, 28);
+    push_u32(&mut stream, cmd::AerogpuCmdSetBlendState::SIZE_BYTES as u32);
+    // BlendState { enable, src_factor, dst_factor, blend_op, ... }
     push_u32(&mut stream, 1); // enable
     push_u32(&mut stream, cmd::AerogpuBlendFactor::SrcAlpha as u32);
     push_u32(&mut stream, cmd::AerogpuBlendFactor::InvSrcAlpha as u32);
     push_u32(&mut stream, cmd::AerogpuBlendOp::Add as u32);
-    push_u32(&mut stream, 0xF); // write mask + padding
+    // color_write_mask (u8) + reserved0[3]
+    push_u32(&mut stream, 0xF);
+    // Alpha blend factors/op (unused by the software executor; keep consistent).
+    push_u32(&mut stream, cmd::AerogpuBlendFactor::SrcAlpha as u32);
+    push_u32(&mut stream, cmd::AerogpuBlendFactor::InvSrcAlpha as u32);
+    push_u32(&mut stream, cmd::AerogpuBlendOp::Add as u32);
+    // blend_constant_rgba_f32
+    push_f32(&mut stream, 0.0);
+    push_f32(&mut stream, 0.0);
+    push_f32(&mut stream, 0.0);
+    push_f32(&mut stream, 0.0);
+    // sample_mask
+    push_u32(&mut stream, u32::MAX);
 
     // CLEAR red.
     push_u32(&mut stream, cmd::AerogpuCmdOpcode::Clear as u32);

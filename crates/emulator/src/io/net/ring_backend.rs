@@ -87,6 +87,23 @@ pub struct L2TunnelRingBackendStats {
 /// This backend bridges raw Ethernet frames to/from Aero IPC ring buffers so the
 /// WASM emulator can exchange frames with a JS forwarder without `postMessage`
 /// copies.
+///
+/// ## WASM/browser usage (NET_TX / NET_RX)
+///
+/// In the browser runtime, the tunnel forwarder lives in JS (`web/src/net/l2TunnelForwarder.ts`)
+/// and exchanges raw Ethernet frames with the emulator worker via the `ioIpcSab` AIPC queues. The
+/// worker can open those rings by `kind` and construct this backend directly:
+///
+/// ```ignore
+/// use aero_ipc::layout::io_ipc_queue_kind;
+/// use emulator::io::net::L2TunnelRingBackend;
+///
+/// // `io_ipc_sab` is the SharedArrayBuffer created by `createIoIpcSab()`.
+/// let net_tx = aero_ipc::wasm::open_ring_by_kind(io_ipc_sab.clone(), io_ipc_queue_kind::NET_TX, 0)?;
+/// let net_rx = aero_ipc::wasm::open_ring_by_kind(io_ipc_sab, io_ipc_queue_kind::NET_RX, 0)?;
+/// let backend = L2TunnelRingBackend::new(net_tx, net_rx);
+/// # Ok::<(), wasm_bindgen::JsValue>(())
+/// ```
 pub struct L2TunnelRingBackend<TX, RX> {
     tx: TX,
     rx: RX,
