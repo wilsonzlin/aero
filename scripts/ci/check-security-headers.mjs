@@ -196,6 +196,7 @@ const targets = [
   { type: 'headers', path: 'web/public/_headers' },
   { type: 'headers', path: 'deploy/cloudflare-pages/_headers' },
   { type: 'netlify', path: 'netlify.toml' },
+  { type: 'netlify', path: 'deploy/netlify.toml' },
   { type: 'vercel', path: 'deploy/vercel.json' },
   // The primary Vercel deployment config lives at repo root.
   { type: 'vercel', path: 'vercel.json' },

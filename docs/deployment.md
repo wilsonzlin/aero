@@ -59,7 +59,11 @@ Currently validated files:
 - `web/vite.config.ts`
 - `vite.harness.config.ts`
 - `web/public/_headers`
+- `deploy/cloudflare-pages/_headers`
+- `netlify.toml`
+- `deploy/netlify.toml`
 - `vercel.json`
+- `deploy/vercel.json`
 - `deploy/caddy/Caddyfile`
 - `deploy/nginx/nginx.conf`
 
@@ -107,7 +111,7 @@ single-threaded/non-shared WASM variant.
 
 This repo provides:
 
-- `netlify.toml` (build/publish settings for `web/` via npm workspaces)
+- `netlify.toml` (build/publish settings for `web/` via npm workspaces + header rules)
 - `web/public/_headers` (COOP/COEP + CSP + baseline security headers + caching defaults)
 
 Netlify will apply `dist/_headers` automatically (Vite copies `public/` → `dist/`).

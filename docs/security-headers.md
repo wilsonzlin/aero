@@ -129,8 +129,15 @@ CI validates that the following stay in sync with the canonical values:
   - `web/vite.config.ts` (production app)
   - `vite.harness.config.ts` (repo-root dev harness)
 - Deployment templates:
-  - `web/public/_headers` (`_headers` file for static hosts like Netlify/Cloudflare Pages)
-  - `vercel.json`
+  - Static hosts (`_headers`):
+    - `web/public/_headers`
+    - `deploy/cloudflare-pages/_headers`
+  - Netlify (`netlify.toml`):
+    - `netlify.toml` (repo root)
+    - `deploy/netlify.toml` (headers-only template)
+  - Vercel (`vercel.json`):
+    - `vercel.json` (repo root)
+    - `deploy/vercel.json` (headers-only template)
   - `deploy/caddy/Caddyfile`
   - `deploy/nginx/nginx.conf`
 
@@ -150,7 +157,7 @@ Vite copies `public/` into `dist/`, so production builds automatically contain:
 
 Netlify and Cloudflare Pages will apply this file automatically when it exists at the root of the deployed output directory.
 
-Netlify build settings are in `netlify.toml` (repo root). (Header values are intentionally not duplicated there.)
+Netlify build settings and header rules are in `netlify.toml` (repo root). CI validates that its header values match `scripts/headers.json`.
 
 ### Vercel (`vercel.json`)
 
