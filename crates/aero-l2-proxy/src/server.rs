@@ -161,7 +161,10 @@ async fn version() -> impl IntoResponse {
     );
 
     (
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/json; charset=utf-8",
+        )],
         body,
     )
 }
@@ -171,7 +174,7 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     (
         [(
             axum::http::header::CONTENT_TYPE,
-            "text/plain; version=0.0.4",
+            "text/plain; version=0.0.4; charset=utf-8",
         )],
         body,
     )
