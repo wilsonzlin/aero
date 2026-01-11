@@ -301,10 +301,118 @@ async fn run_dns_case(allow_private_ips: bool, expect_addr: Option<[u8; 4]>) {
     proxy.shutdown().await;
 }
 
+async fn run_localhost_case(allow_private_ips: bool, expect_addr: Option<[u8; 4]>, expect_denied: u64) {
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _insecure_allow_no_auth = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
+    let _allowed_origins = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _allowed_origins_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
+    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
+    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
+    let _jwt_audience = EnvVarGuard::unset("AERO_L2_JWT_AUDIENCE");
+    let _jwt_issuer = EnvVarGuard::unset("AERO_L2_JWT_ISSUER");
+    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
+    let _session_secret_alias = EnvVarGuard::unset("SESSION_SECRET");
+    let _gateway_session_secret = EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET");
+    let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
+    let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
+    let _max_connections_per_session =
+        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
+    let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
+
+    let _allowed_domains = EnvVarGuard::unset("AERO_L2_ALLOWED_DOMAINS");
+    let _blocked_domains = EnvVarGuard::unset("AERO_L2_BLOCKED_DOMAINS");
+
+    let _allow_private_ips_guard = if allow_private_ips {
+        EnvVarGuard::set("AERO_L2_ALLOW_PRIVATE_IPS", "1")
+    } else {
+        EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS")
+    };
+
+    // Ensure we are exercising the system resolver path (not test-mode overrides).
+    let _dns_a = EnvVarGuard::unset("AERO_L2_DNS_A");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let req = ws_request(addr);
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_tx, mut ws_rx) = ws.split();
+
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    let guest_ip = Ipv4Addr::new(10, 0, 2, 15);
+    let gateway_ip = Ipv4Addr::new(10, 0, 2, 2);
+
+    let id = 0x4242;
+    let query = build_dns_query(id, "localhost");
+    let frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        guest_ip,
+        gateway_ip,
+        53001,
+        53,
+        &query,
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&frame).into()))
+        .await
+        .unwrap();
+
+    let resp = wait_for_dns_response(&mut ws_rx, id).await;
+    match expect_addr {
+        Some(addr) => assert_dns_has_last_a(&resp, id, addr),
+        None => assert_dns_rcode_and_ancount(&resp, id, 3, 0),
+    }
+
+    ws_tx.send(Message::Close(None)).await.unwrap();
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let dns_queries = parse_metric(&body, "l2_dns_queries_total").unwrap();
+    assert!(
+        dns_queries >= 1,
+        "expected at least 1 DNS query, got {dns_queries}"
+    );
+
+    let dns_fail = parse_metric(&body, "l2_dns_fail_total").unwrap();
+    assert_eq!(dns_fail, 0, "expected no DNS failures, got {dns_fail}");
+
+    let denied = parse_metric(&body, "l2_policy_denied_total").unwrap();
+    assert_eq!(
+        denied, expect_denied,
+        "expected policy denied counter {expect_denied}, got {denied}"
+    );
+
+    proxy.shutdown().await;
+}
+
 #[tokio::test]
 async fn dns_loopback_a_records_are_filtered_unless_private_ips_allowed() {
     let _lock = ENV_LOCK.lock().await;
 
     run_dns_case(false, None).await;
     run_dns_case(true, Some([127, 0, 0, 1])).await;
+}
+
+#[tokio::test]
+async fn dns_private_ip_filter_increments_policy_denied_metric_for_system_resolution() {
+    let _lock = ENV_LOCK.lock().await;
+
+    // `localhost` should resolve to 127.0.0.1 via the system resolver, which is filtered by the
+    // proxy egress policy unless private IPs are explicitly allowed.
+    run_localhost_case(false, None, 1).await;
+    run_localhost_case(true, Some([127, 0, 0, 1]), 0).await;
 }
