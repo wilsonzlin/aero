@@ -3683,7 +3683,10 @@ HRESULT OpenAdapter11Wdk(D3D10DDIARG_OPENADAPTER* pOpenData) {
     pOpenData->Version = kAeroGpuWin7D3D11DdiSupportedVersion;
   }
 
-  auto* adapter = new AeroGpuAdapter();
+  auto* adapter = new (std::nothrow) AeroGpuAdapter();
+  if (!adapter) {
+    return E_OUTOFMEMORY;
+  }
   adapter->d3d11_ddi_interface_version = pOpenData->Version;
   InitKmtAdapterHandle(adapter);
   InitUmdPrivate(adapter);
