@@ -11,6 +11,8 @@ import {
 
 export const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
 
+const textDecoder = new TextDecoder();
+
 export type L2TunnelEvent =
   | { type: "open" }
   | { type: "frame"; frame: Uint8Array }
@@ -93,6 +95,31 @@ function nowMs(): number {
 function validateNonNegativeInt(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 0) {
     throw new RangeError(`${name} must be a non-negative integer (got ${value})`);
+  }
+}
+
+function decodePeerErrorPayload(payload: Uint8Array): { code?: number; message: string } {
+  // Prefer the structured binary form from docs/l2-tunnel-protocol.md:
+  //   code (u16 BE) | msg_len (u16 BE) | msg (msg_len bytes, UTF-8)
+  if (payload.byteLength >= 4) {
+    const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const code = dv.getUint16(0, false);
+    const msgLen = dv.getUint16(2, false);
+    if (payload.byteLength === 4 + msgLen) {
+      const msgBytes = payload.subarray(4);
+      try {
+        return { code, message: textDecoder.decode(msgBytes) };
+      } catch {
+        // Fall through to the unstructured decoding below.
+      }
+    }
+  }
+
+  // Unstructured form: treat the entire payload as UTF-8 (best-effort).
+  try {
+    return { message: textDecoder.decode(payload) };
+  } catch {
+    return { message: `l2 tunnel error (${payload.byteLength} bytes)` };
   }
 }
 
@@ -242,14 +269,9 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }
 
     if (msg.type === L2_TUNNEL_TYPE_ERROR) {
-      // Peer-reported session error (UTF-8 string payload by convention).
-      let detail = `l2 tunnel error (${msg.payload.length} bytes)`;
-      try {
-        detail = new TextDecoder().decode(msg.payload);
-      } catch {
-        // Ignore decode errors; include a generic message.
-      }
-      this.onTransportError(new Error(detail));
+      const decoded = decodePeerErrorPayload(msg.payload);
+      const prefix = decoded.code === undefined ? "l2 tunnel error" : `l2 tunnel error (${decoded.code})`;
+      this.onTransportError(new Error(`${prefix}: ${decoded.message}`));
       return;
     }
 

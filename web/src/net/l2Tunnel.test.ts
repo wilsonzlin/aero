@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { L2_TUNNEL_TYPE_FRAME, L2_TUNNEL_TYPE_PONG, decodeL2Message, encodeL2Frame, encodePing } from "../shared/l2TunnelProtocol.ts";
+import {
+  L2_TUNNEL_MAGIC,
+  L2_TUNNEL_TYPE_ERROR,
+  L2_TUNNEL_TYPE_FRAME,
+  L2_TUNNEL_TYPE_PONG,
+  L2_TUNNEL_VERSION,
+  decodeL2Message,
+  encodeL2Frame,
+  encodePing,
+} from "../shared/l2TunnelProtocol.ts";
 import { WebRtcL2TunnelClient } from "./l2Tunnel.ts";
 
 function microtask(): Promise<void> {
@@ -79,6 +88,45 @@ describe("net/l2Tunnel", () => {
       const pong = decodeL2Message(channel.sent[1]!);
       expect(pong.type).toBe(L2_TUNNEL_TYPE_PONG);
       expect(Array.from(pong.payload)).toEqual(Array.from(pingPayload));
+    } finally {
+      client.close();
+    }
+  });
+
+  it("decodes structured ERROR payloads", async () => {
+    const channel = new FakeRtcDataChannel();
+    const events: unknown[] = [];
+
+    const client = new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+    });
+
+    try {
+      await microtask();
+
+      const msg = "blocked by policy";
+      const msgBytes = new TextEncoder().encode(msg);
+      const payload = new Uint8Array(4 + msgBytes.byteLength);
+      const dv = new DataView(payload.buffer);
+      dv.setUint16(0, 1234, false);
+      dv.setUint16(2, msgBytes.byteLength, false);
+      payload.set(msgBytes, 4);
+
+      const wire = new Uint8Array(4 + payload.byteLength);
+      wire[0] = L2_TUNNEL_MAGIC;
+      wire[1] = L2_TUNNEL_VERSION;
+      wire[2] = L2_TUNNEL_TYPE_ERROR;
+      wire[3] = 0;
+      wire.set(payload, 4);
+
+      channel.emitMessage(wire);
+
+      const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
+      expect(errEv?.error).toBeInstanceOf(Error);
+      const message = (errEv?.error as Error | undefined)?.message ?? "";
+      expect(message).toContain("1234");
+      expect(message).toContain(msg);
     } finally {
       client.close();
     }
