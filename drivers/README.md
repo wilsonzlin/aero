@@ -154,6 +154,30 @@ upstream virtio-win license/notice files (if present) are also included under:
 - `licenses/virtio-win/`
   - Includes `driver-pack-manifest.json` (copied from the extracted driver pack) to preserve virtio-win ISO provenance.
 
+### Optional: build `aero-guest-tools.iso` from in-tree aero virtio drivers (aerovblk + aerovnet)
+
+If you built Aero's in-tree Win7 virtio drivers (`aerovblk`, `aerovnet`) and have a packager-style driver output directory:
+
+```
+<DriverOutDir>/
+  x86/aerovblk/*.{inf,sys,cat}
+  x86/aerovnet/*.{inf,sys,cat}
+  amd64/aerovblk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
+  amd64/aerovnet/*.{inf,sys,cat}
+```
+
+You can build Guest Tools media (ISO + zip) using:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-aero-virtio.ps1 `
+  -DriverOutDir C:\path\to\driver-out `
+  -OutDir .\dist\guest-tools
+```
+
+This validates the packaged drivers using:
+
+- `tools/packaging/specs/win7-aero-virtio.json` (modern-only virtio IDs; rejects transitional `1000/1001`)
+
 ## In-guest install workflow (post-install)
 
 1. Copy `aero-win7-driver-pack.zip` into the Win7 guest.
