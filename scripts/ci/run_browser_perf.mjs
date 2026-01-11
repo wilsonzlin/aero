@@ -19,6 +19,10 @@ Options:
   --preview             Build + start a preview server (npm run build + npm run preview)
   --preview-port <n>    Preview server port (default: 4173)
   --perf-runner <path>  Path to tools/perf/run.mjs (default: <repo>/tools/perf/run.mjs)
+  --trace               Capture an Aero trace via tools/perf/run.mjs (best-effort; opt-in)
+  --trace-duration-ms <n>
+                        Capture a trace for a fixed duration
+  --include-aero-bench  Include app-provided microbench suite if available
   --out-dir <dir>       Output directory (required)
   --iterations <n>      Iterations per benchmark (default: $PERF_ITERATIONS or 3)
   --help                Show this help
@@ -41,6 +45,9 @@ function parseArgs(argv) {
     preview: false,
     previewPort: null,
     perfRunner: null,
+    trace: null,
+    traceDurationMs: null,
+    includeAeroBench: null,
     outDir: null,
     iterations: null,
   };
@@ -67,6 +74,16 @@ function parseArgs(argv) {
           console.error("--perf-runner requires a value");
           usage(1);
         }
+        break;
+      case "--trace":
+        opts.trace = true;
+        break;
+      case "--trace-duration-ms":
+        opts.trace = true;
+        opts.traceDurationMs = Number.parseInt(argv[++i], 10);
+        break;
+      case "--include-aero-bench":
+        opts.includeAeroBench = true;
         break;
       case "--out-dir":
         opts.outDir = argv[++i];
@@ -115,12 +132,39 @@ function parseArgs(argv) {
     usage(1);
   }
 
+  const parseBool = (value) => {
+    if (value == null) return null;
+    const v = String(value).trim().toLowerCase();
+    if (!v) return null;
+    if (["1", "true", "yes", "y", "on"].includes(v)) return true;
+    if (["0", "false", "no", "n", "off"].includes(v)) return false;
+    return null;
+  };
+
+  const envTrace = parseBool(process.env.PERF_TRACE);
+  const trace = opts.trace ?? envTrace ?? false;
+
+  const envTraceDuration = Number.parseInt(process.env.PERF_TRACE_DURATION_MS ?? "", 10);
+  const traceDurationMs =
+    opts.traceDurationMs ?? (Number.isFinite(envTraceDuration) && envTraceDuration > 0 ? envTraceDuration : null);
+  if (traceDurationMs !== null && (!Number.isFinite(traceDurationMs) || traceDurationMs <= 0)) {
+    // eslint-disable-next-line no-console
+    console.error("--trace-duration-ms must be a positive integer (or set PERF_TRACE_DURATION_MS)");
+    usage(1);
+  }
+
+  const envIncludeAeroBench = parseBool(process.env.PERF_INCLUDE_AERO_BENCH);
+  const includeAeroBench = opts.includeAeroBench ?? envIncludeAeroBench ?? false;
+
   return {
     workspace: opts.workspace,
     url: opts.url,
     preview: opts.preview,
     previewPort,
     perfRunner: opts.perfRunner,
+    trace,
+    traceDurationMs,
+    includeAeroBench,
     outDir: opts.outDir,
     iterations,
   };
@@ -353,7 +397,18 @@ async function main() {
       await waitForHttpReady(url, { timeoutMs: 60_000, intervalMs: 1_000, serverProcess: server });
     }
 
-    await execChecked(process.execPath, [perfRunner, "--url", url, "--out-dir", outDirAbs, "--iterations", String(opts.iterations)], {
+    const runnerArgs = [perfRunner, "--url", url, "--out-dir", outDirAbs, "--iterations", String(opts.iterations)];
+    if (opts.trace) {
+      runnerArgs.push("--trace");
+      if (opts.traceDurationMs !== null) {
+        runnerArgs.push("--trace-duration-ms", String(opts.traceDurationMs));
+      }
+    }
+    if (opts.includeAeroBench) {
+      runnerArgs.push("--include-aero-bench");
+    }
+
+    await execChecked(process.execPath, runnerArgs, {
       cwd: workspaceAbs,
       env: process.env,
       label: "tools/perf/run.mjs",
