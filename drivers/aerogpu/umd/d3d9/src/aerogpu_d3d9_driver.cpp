@@ -172,21 +172,6 @@ void retire_completed_presents_locked(Device* dev) {
   }
 }
 
-bool wait_for_fence(Adapter* adapter, uint64_t fence, uint32_t timeout_ms) {
-  if (!adapter || !fence) {
-    return true;
-  }
-
-  const uint64_t deadline = monotonic_ms() + timeout_ms;
-  while (monotonic_ms() < deadline) {
-    if (refresh_fence_snapshot(adapter).last_completed >= fence) {
-      return true;
-    }
-    sleep_ms(1);
-  }
-  return refresh_fence_snapshot(adapter).last_completed >= fence;
-}
-
 enum class FenceWaitResult {
   Complete,
   NotReady,
@@ -225,7 +210,7 @@ PFND3DKMTWaitForSynchronizationObject load_d3dkmt_wait_for_sync_object() {
 }
 #endif
 
-FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint64_t timeout_ms) {
+FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeout_ms) {
   if (!dev || !dev->adapter) {
     return FenceWaitResult::Failed;
   }
@@ -234,51 +219,55 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint64_t timeo
   }
 
   Adapter* adapter = dev->adapter;
+  const uint64_t deadline = monotonic_ms() + timeout_ms;
 
-  {
-    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    if (adapter->completed_fence >= fence_value) {
-      return FenceWaitResult::Complete;
-    }
-  }
-
-#if defined(_WIN32)
-  const WddmHandle sync_object = dev->wddm_context.hSyncObject;
-  if (sync_object != 0) {
-    auto* wait_fn = load_d3dkmt_wait_for_sync_object();
-    if (wait_fn) {
-      const WddmHandle handles[1] = {sync_object};
-      const uint64_t fences[1] = {fence_value};
-
-      AerogpuD3DKMTWaitForSynchronizationObject args{};
-      args.ObjectCount = 1;
-      args.ObjectHandleArray = handles;
-      args.FenceValueArray = fences;
-      args.Timeout = timeout_ms;
-
-      const AerogpuNtStatus st = wait_fn(&args);
-      if (st == kStatusSuccess) {
-        {
-          std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-          adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
-        }
-        adapter->fence_cv.notify_all();
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      if (adapter->completed_fence >= fence_value) {
         return FenceWaitResult::Complete;
       }
-      if (st == kStatusTimeout) {
-        return FenceWaitResult::NotReady;
+    }
+
+#if defined(_WIN32)
+    const WddmHandle sync_object = dev->wddm_context.hSyncObject;
+    if (sync_object != 0) {
+      auto* wait_fn = load_d3dkmt_wait_for_sync_object();
+      if (wait_fn) {
+        const WddmHandle handles[1] = {sync_object};
+        const uint64_t fences[1] = {fence_value};
+
+        AerogpuD3DKMTWaitForSynchronizationObject args{};
+        args.ObjectCount = 1;
+        args.ObjectHandleArray = handles;
+        args.FenceValueArray = fences;
+        args.Timeout = 0; // poll
+
+        const AerogpuNtStatus st = wait_fn(&args);
+        if (st == kStatusSuccess) {
+          {
+            std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+            adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
+          }
+          adapter->fence_cv.notify_all();
+          return FenceWaitResult::Complete;
+        }
+        if (st == kStatusTimeout) {
+          // Fall through to the KMD query path below.
+        }
       }
     }
-  }
 #endif
 
-  if (timeout_ms == 0) {
-    return (refresh_fence_snapshot(adapter).last_completed >= fence_value) ? FenceWaitResult::Complete
-                                                                          : FenceWaitResult::NotReady;
-  }
+    if (refresh_fence_snapshot(adapter).last_completed >= fence_value) {
+      return FenceWaitResult::Complete;
+    }
 
-  const bool complete = wait_for_fence(adapter, fence_value, static_cast<uint32_t>(timeout_ms));
-  return complete ? FenceWaitResult::Complete : FenceWaitResult::NotReady;
+    if (timeout_ms == 0 || monotonic_ms() >= deadline) {
+      return FenceWaitResult::NotReady;
+    }
+    sleep_ms(1);
+  }
 }
 
 HRESULT throttle_presents_locked(Device* dev, uint32_t d3d9_present_flags) {
