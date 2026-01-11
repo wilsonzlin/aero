@@ -114,7 +114,7 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
 1. **Docs**
    - Treat this ADR as the source of truth for USB stack selection.
    - Update related docs to link to this ADR and avoid implying the legacy `crates/emulator` USB stack
-     is the primary path for browser USB.
+      is the primary path for browser USB.
 
 2. **Keep the legacy `aero-wasm` prototype deleted**
    - Do not reintroduce `crates/aero-wasm/src/usb_passthrough.rs` (it duplicated the passthrough
@@ -124,15 +124,15 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
 
 3. **Consolidate TypeScript WebUSB host integration**
    - Treat `web/src/usb/*` as the canonical WebUSB passthrough host integration for the
-     `UsbHostAction`/`UsbHostCompletion` contract.
+      `UsbHostAction`/`UsbHostCompletion` contract.
    - The repo-root `src/platform/webusb_{broker,client,protocol}.ts` stack is a **generic WebUSB demo
      RPC** (direct `navigator.usb` operations), and must not grow a second passthrough wire contract.
    - Deletion target (once demos migrate or become redundant): `src/platform/webusb_{broker,client,protocol}.ts`.
 
 4. **Converge native on shared code**
-     - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
-       device models/UHCI (or gate the legacy code behind a feature flag and stop extending it).
-     - Deletion target: legacy USB stack in `crates/emulator` (`emulator::io::usb`) once unused.
+   - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
+     device models/UHCI (or gate the legacy code behind a feature flag and stop extending it).
+   - Deletion target: legacy USB stack in `crates/emulator` (`emulator::io::usb`) once unused.
 
 ### Testing strategy
 
