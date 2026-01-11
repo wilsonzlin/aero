@@ -924,6 +924,17 @@ impl D3D11Runtime {
         let dst_offset = (payload[4] as u64) | ((payload[5] as u64) << 32);
         let size = (payload[6] as u64) | ((payload[7] as u64) << 32);
 
+        if size == 0 {
+            return Ok(());
+        }
+
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        if src_offset % alignment != 0 || dst_offset % alignment != 0 || size % alignment != 0 {
+            bail!(
+                "CopyBufferToBuffer offsets and size must be {alignment}-byte aligned (src_offset={src_offset} dst_offset={dst_offset} size={size})"
+            );
+        }
+
         let src_buf = self
             .resources
             .buffers
@@ -934,6 +945,20 @@ impl D3D11Runtime {
             .buffers
             .get(&dst)
             .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
+
+        let src_end = src_offset
+            .checked_add(size)
+            .ok_or_else(|| anyhow!("CopyBufferToBuffer src range overflows u64"))?;
+        let dst_end = dst_offset
+            .checked_add(size)
+            .ok_or_else(|| anyhow!("CopyBufferToBuffer dst range overflows u64"))?;
+        if src_end > src_buf.size || dst_end > dst_buf.size {
+            bail!(
+                "CopyBufferToBuffer out of bounds: src_end={src_end} (size={}) dst_end={dst_end} (size={})",
+                src_buf.size,
+                dst_buf.size
+            );
+        }
 
         encoder.copy_buffer_to_buffer(
             &src_buf.buffer,
