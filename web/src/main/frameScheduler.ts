@@ -56,17 +56,21 @@ export const startFrameScheduler = ({
 
   const frameState = new Int32Array(sharedFrameState);
   perf.registerWorker(gpuWorker, { threadName: 'gpu-presenter' });
-  gpuWorker.postMessage(
-    {
-      type: "init",
-      canvas,
-      sharedFrameState,
-      sharedFramebuffer,
-      sharedFramebufferOffsetBytes: sharedFramebufferOffsetBytes ?? 0,
-      options: initOptions,
-    },
-    canvas ? [canvas] : [],
-  );
+  try {
+    gpuWorker.postMessage(
+      {
+        type: "init",
+        canvas,
+        sharedFrameState,
+        sharedFramebuffer,
+        sharedFramebufferOffsetBytes: sharedFramebufferOffsetBytes ?? 0,
+        options: initOptions,
+      },
+      canvas ? [canvas] : [],
+    );
+  } catch (err) {
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 
   let overlay: DebugOverlay | null = null;
   if (showDebugOverlay) {
@@ -118,13 +122,19 @@ export const startFrameScheduler = ({
       perf.spanBegin('render');
       try {
         if (shouldSendTick()) {
-          perf.spanBegin('present');
+        perf.spanBegin('present');
+        try {
           try {
             gpuWorker.postMessage({ type: 'tick', frameTimeMs });
-          } finally {
-            perf.spanEnd('present');
+          } catch (err) {
+            console.error('[frameScheduler] Failed to post tick to GPU worker; stopping scheduler.', err);
+            stop();
+            return;
           }
+        } finally {
+          perf.spanEnd('present');
         }
+      }
       } finally {
         perf.spanEnd('render');
       }
