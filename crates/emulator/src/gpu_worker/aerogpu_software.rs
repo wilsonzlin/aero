@@ -366,7 +366,9 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         }
-        if hdr.entry_stride_bytes as usize != ring::AerogpuAllocEntry::SIZE_BYTES {
+        // Forward-compat: newer guests may extend `aerogpu_alloc_entry` by increasing the declared
+        // stride and appending fields. We only require the entry prefix we understand.
+        if hdr.entry_stride_bytes < ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
             Self::record_error(regs);
             return None;
         }
@@ -375,8 +377,8 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         };
-        let Some(entries_bytes) = entry_count.checked_mul(ring::AerogpuAllocEntry::SIZE_BYTES)
-        else {
+        let entry_stride = hdr.entry_stride_bytes as usize;
+        let Some(entries_bytes) = entry_count.checked_mul(entry_stride) else {
             Self::record_error(regs);
             return None;
         };
@@ -390,6 +392,8 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         }
+
+        let buf = &buf[..total_size];
 
         let mut out = HashMap::new();
         let mut off = ring::AerogpuAllocTableHeader::SIZE_BYTES;
@@ -405,7 +409,7 @@ impl AeroGpuSoftwareExecutor {
                     return None;
                 }
             };
-            off += ring::AerogpuAllocEntry::SIZE_BYTES;
+            off += entry_stride;
 
             if entry.alloc_id == 0 || entry.size_bytes == 0 {
                 Self::record_error(regs);
@@ -3522,5 +3526,67 @@ impl AeroGpuSoftwareExecutor {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use memory::Bus;
+
+    #[test]
+    fn parse_alloc_table_accepts_extended_entry_stride() {
+        let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES + 16;
+        let entry_count = 2u32;
+        let total_size =
+            ring::AerogpuAllocTableHeader::SIZE_BYTES + (entry_count as usize * entry_stride);
+
+        let alloc_table_gpa = 0x1000u64;
+        let mut table = vec![0u8; total_size];
+        table[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+        table[4..8].copy_from_slice(&AeroGpuRegs::default().abi_version.to_le_bytes());
+        table[8..12].copy_from_slice(&(total_size as u32).to_le_bytes());
+        table[12..16].copy_from_slice(&entry_count.to_le_bytes());
+        table[16..20].copy_from_slice(&(entry_stride as u32).to_le_bytes());
+        table[20..24].copy_from_slice(&0u32.to_le_bytes());
+
+        for i in 0..entry_count as usize {
+            let base = ring::AerogpuAllocTableHeader::SIZE_BYTES + i * entry_stride;
+            let alloc_id = (i as u32) + 1;
+            table[base..base + 4].copy_from_slice(&alloc_id.to_le_bytes());
+            table[base + 4..base + 8].copy_from_slice(&0u32.to_le_bytes()); // flags
+            table[base + 8..base + 16].copy_from_slice(&(0x2000u64 + i as u64).to_le_bytes()); // gpa
+            table[base + 16..base + 24].copy_from_slice(&0x100u64.to_le_bytes()); // size_bytes
+            table[base + 24..base + 32].copy_from_slice(&0u64.to_le_bytes()); // reserved0
+
+            // Extension bytes.
+            table[base + ring::AerogpuAllocEntry::SIZE_BYTES..base + entry_stride].fill(0xAB);
+        }
+
+        let mut mem = Bus::new(0x4000);
+        mem.write_physical(alloc_table_gpa, &table);
+
+        let desc = AeroGpuSubmitDesc {
+            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa: 0,
+            cmd_size_bytes: 0,
+            alloc_table_gpa,
+            alloc_table_size_bytes: total_size as u32,
+            signal_fence: 0,
+        };
+
+        let exec = AeroGpuSoftwareExecutor::new();
+        let mut regs = AeroGpuRegs::default();
+        let allocs = exec
+            .parse_alloc_table(&mut regs, &mut mem, &desc)
+            .expect("alloc table should parse");
+        assert_eq!(allocs.len(), 2);
+        assert_eq!(allocs.get(&1).unwrap().size_bytes, 0x100);
+        assert_eq!(allocs.get(&2).unwrap().size_bytes, 0x100);
+        assert_eq!(regs.irq_status, 0);
     }
 }
