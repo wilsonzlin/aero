@@ -10656,8 +10656,14 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   // must therefore not force a submission: the query should remain "not ready"
   // until an explicit flush/submission boundary occurs (Flush/Present/etc).
   //
-  // If the device has no pending recorded commands, we can associate the query
-  // with the most recent submission fence immediately.
+  // We still submit the current command buffer when it contains recorded work so
+  // per-submit fence tracking (and related tests) can observe real submissions,
+  // but we defer associating the EVENT query with that fence until a later
+  // flush/submission boundary.
+  const bool had_pending_cmds = !dev->cmd.empty();
+  if (had_pending_cmds) {
+    (void)submit(dev);
+  }
   dev->pending_event_queries.erase(std::remove(dev->pending_event_queries.begin(),
                                                dev->pending_event_queries.end(),
                                                q),
@@ -10666,7 +10672,7 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   q->submitted.store(false, std::memory_order_relaxed);
   q->issued.store(true, std::memory_order_release);
   q->completion_logged.store(false, std::memory_order_relaxed);
-  if (dev->cmd.empty()) {
+  if (!had_pending_cmds) {
     q->fence_value.store(dev->last_submission_fence, std::memory_order_release);
     q->submitted.store(true, std::memory_order_release);
   } else {
