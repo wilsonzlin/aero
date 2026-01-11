@@ -586,15 +586,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
         aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 5, kHeight / 2);
 
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor_null_state.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor_null_state.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: scissor-NULL-state BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
 
@@ -602,16 +600,15 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     if ((inside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
         (outside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "scissor NULL state failed: inside(5,%d)=0x%08lX expected ~0x%08lX, "
-                                "outside(%d,%d)=0x%08lX expected ~0x%08lX",
-                                kHeight / 2,
-                                (unsigned long)inside_null,
-                                (unsigned long)expected_green,
-                                kWidth - 5,
-                                kHeight / 2,
-                                (unsigned long)outside_null,
-                                (unsigned long)expected_green);
+      return reporter.Fail(
+          "scissor NULL state failed: inside(5,%d)=0x%08lX expected ~0x%08lX, outside(%d,%d)=0x%08lX expected ~0x%08lX",
+          kHeight / 2,
+          (unsigned long)inside_null,
+          (unsigned long)expected_green,
+          kWidth - 5,
+          kHeight / 2,
+          (unsigned long)outside_null,
+          (unsigned long)expected_green);
     }
 
     // Verify that the scissor rect is ignored when ScissorEnable is FALSE (explicit rasterizer state).
@@ -643,15 +640,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
         aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 5, kHeight / 2);
 
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor_disabled.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor_disabled.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: scissor-disabled BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
 
@@ -659,16 +654,15 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     if ((inside_disabled & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
         (outside_disabled & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "scissor disable failed: inside(5,%d)=0x%08lX expected ~0x%08lX, "
-                                "outside(%d,%d)=0x%08lX expected ~0x%08lX",
-                                kHeight / 2,
-                                (unsigned long)inside_disabled,
-                                (unsigned long)expected_green,
-                                kWidth - 5,
-                                kHeight / 2,
-                                (unsigned long)outside_disabled,
-                                (unsigned long)expected_green);
+      return reporter.Fail(
+          "scissor disable failed: inside(5,%d)=0x%08lX expected ~0x%08lX, outside(%d,%d)=0x%08lX expected ~0x%08lX",
+          kHeight / 2,
+          (unsigned long)inside_disabled,
+          (unsigned long)expected_green,
+          kWidth - 5,
+          kHeight / 2,
+          (unsigned long)outside_disabled,
+          (unsigned long)expected_green);
     }
   }
 
@@ -754,27 +748,24 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     const uint32_t center_no_cull = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
+      const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_none.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_none.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: cull(none) BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_green = 0xFF00FF00u;
     if ((center_no_cull & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "cull failed (expected visible with CullMode=NONE): center(%d,%d)=0x%08lX expected ~0x%08lX",
-                                cx,
-                                cy,
-                                (unsigned long)center_no_cull,
-                                (unsigned long)expected_green);
+      return reporter.Fail(
+          "cull failed (expected visible with CullMode=NONE): center(%d,%d)=0x%08lX expected ~0x%08lX",
+          cx,
+          cy,
+          (unsigned long)center_no_cull,
+          (unsigned long)expected_green);
     }
 
     // Second: FrontCounterClockwise=TRUE, same CCW triangle should render (center becomes green).
@@ -847,26 +838,23 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     const uint32_t center_null = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_null_state.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_null_state.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: cull(NULL state) BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
     context->Unmap(staging.get(), 0);
 
     if ((center_null & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "cull NULL state failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
-                                cx,
-                                cy,
-                                (unsigned long)center_null,
-                                (unsigned long)expected_red);
+      return reporter.Fail("cull NULL state failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
+                           cx,
+                           cy,
+                           (unsigned long)center_null,
+                           (unsigned long)expected_red);
     }
   }
 
@@ -1056,15 +1044,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     const uint32_t center_disabled = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_blend_disabled.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_blend_disabled.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: blend-disabled BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
     context->Unmap(staging.get(), 0);
@@ -1073,14 +1059,14 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint8_t g2 = (uint8_t)((center_disabled >> 8) & 0xFFu);
     const uint8_t r2 = (uint8_t)((center_disabled >> 16) & 0xFFu);
     if (r2 != 0 || g2 != 0xFFu || b2 != 0) {
-      return aerogpu_test::Fail(kTestName,
-                                "blend disable failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~0xFF00FF00",
-                                cx,
-                                cy,
-                                (unsigned long)center_disabled,
-                                (unsigned)r2,
-                                (unsigned)g2,
-                                (unsigned)b2);
+      return reporter.Fail(
+          "blend disable failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~0xFF00FF00",
+          cx,
+          cy,
+          (unsigned long)center_disabled,
+          (unsigned)r2,
+          (unsigned)g2,
+          (unsigned)b2);
     }
 
     // Verify that RenderTargetWriteMask in the bound blend state is respected.
@@ -1109,15 +1095,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     const uint32_t center_mask = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_write_mask.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_write_mask.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: write-mask BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
 
@@ -1128,15 +1112,15 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       const uint8_t b3 = (uint8_t)(center_mask & 0xFFu);
       const uint8_t g3 = (uint8_t)((center_mask >> 8) & 0xFFu);
       const uint8_t r3 = (uint8_t)((center_mask >> 16) & 0xFFu);
-      return aerogpu_test::Fail(kTestName,
-                                "write mask failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~0x%08lX",
-                                cx,
-                                cy,
-                                (unsigned long)center_mask,
-                                (unsigned)r3,
-                                (unsigned)g3,
-                                (unsigned)b3,
-                                (unsigned long)expected_yellow);
+      return reporter.Fail(
+          "write mask failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~0x%08lX",
+          cx,
+          cy,
+          (unsigned long)center_mask,
+          (unsigned)r3,
+          (unsigned)g3,
+          (unsigned)b3,
+          (unsigned long)expected_yellow);
     }
 
     // Verify that OMSetBlendState's blend-factor parameter is honored.
@@ -1164,15 +1148,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     const uint32_t center_bf = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_blend_factor.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_blend_factor.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: blend-factor BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
     context->Unmap(staging.get(), 0);
@@ -1187,19 +1169,18 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint8_t tol2 = 2;
     if ((r4 < exp_r2 - tol2 || r4 > exp_r2 + tol2) || (g4 < exp_g2 - tol2 || g4 > exp_g2 + tol2) ||
         (b4 < exp_b2 - tol2 || b4 > exp_b2 + tol2)) {
-      return aerogpu_test::Fail(kTestName,
-                                "blend factor failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~"
-                                "(r=%u g=%u b=%u) tol=%u",
-                                cx,
-                                cy,
-                                (unsigned long)center_bf,
-                                (unsigned)r4,
-                                (unsigned)g4,
-                                (unsigned)b4,
-                                (unsigned)exp_r2,
-                                (unsigned)exp_g2,
-                                (unsigned)exp_b2,
-                                (unsigned)tol2);
+      return reporter.Fail(
+          "blend factor failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~(r=%u g=%u b=%u) tol=%u",
+          cx,
+          cy,
+          (unsigned long)center_bf,
+          (unsigned)r4,
+          (unsigned)g4,
+          (unsigned)b4,
+          (unsigned)exp_r2,
+          (unsigned)exp_g2,
+          (unsigned)exp_b2,
+          (unsigned)tol2);
     }
 
     // Verify OMSetBlendState's SampleMask parameter is honored.
@@ -1227,27 +1208,24 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     const uint32_t center_sm0 = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_sample_mask_0.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_sample_mask_0.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: sample-mask BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_red = 0xFFFF0000u;
     if ((center_sm0 & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "sample mask failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
-                                cx,
-                                cy,
-                                (unsigned long)center_sm0,
-                                (unsigned long)expected_red);
+      return reporter.Fail("sample mask failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
+                           cx,
+                           cy,
+                           (unsigned long)center_sm0,
+                           (unsigned long)expected_red);
     }
   }
 
