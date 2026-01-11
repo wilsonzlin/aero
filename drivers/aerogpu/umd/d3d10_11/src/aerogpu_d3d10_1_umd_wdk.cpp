@@ -2233,6 +2233,72 @@ constexpr uint32_t kD3DMapWriteNoOverwrite = 5;
 // D3D10_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d10.h / d3d10_1.h).
 constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
 
+static void InitLockArgsForMap(D3DDDICB_LOCK* lock, uint32_t subresource, uint32_t map_type, uint32_t map_flags) {
+  if (!lock) {
+    return;
+  }
+  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+    lock->SubresourceIndex = subresource;
+  }
+  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+    lock->SubResourceIndex = subresource;
+  }
+  __if_exists(D3DDDICB_LOCK::Offset) {
+    lock->Offset = 0;
+  }
+  __if_exists(D3DDDICB_LOCK::Size) {
+    lock->Size = 0;
+  }
+
+  const bool do_not_wait = (map_flags & kD3DMapFlagDoNotWait) != 0;
+  const bool is_read_only = (map_type == kD3DMapRead);
+  const bool is_write_only = (map_type == kD3DMapWrite || map_type == kD3DMapWriteDiscard || map_type == kD3DMapWriteNoOverwrite);
+  const bool discard = (map_type == kD3DMapWriteDiscard);
+  const bool no_overwrite = (map_type == kD3DMapWriteNoOverwrite);
+
+  __if_exists(D3DDDICB_LOCK::Flags) {
+    std::memset(&lock->Flags, 0, sizeof(lock->Flags));
+
+    __if_exists(D3DDDICB_LOCKFLAGS::ReadOnly) {
+      lock->Flags.ReadOnly = is_read_only ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
+      lock->Flags.WriteOnly = is_write_only ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
+      // For READ_WRITE the Win7 contract treats the lock as read+write (no explicit "write" bit).
+      lock->Flags.Write = is_write_only ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Discard) {
+      lock->Flags.Discard = discard ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) {
+      lock->Flags.NoOverwrite = no_overwrite ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::NoOverWrite) {
+      lock->Flags.NoOverWrite = no_overwrite ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::DoNotWait) {
+      lock->Flags.DoNotWait = do_not_wait ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::DonotWait) {
+      lock->Flags.DonotWait = do_not_wait ? 1u : 0u;
+    }
+  }
+}
+
+static void InitUnlockArgsForMap(D3DDDICB_UNLOCK* unlock, uint32_t subresource) {
+  if (!unlock) {
+    return;
+  }
+  __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+    unlock->SubresourceIndex = subresource;
+  }
+  __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+    unlock->SubResourceIndex = subresource;
+  }
+}
+
 HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t map_type, uint32_t map_flags) {
   if (!dev || !res) {
     return E_INVALIDARG;
@@ -2369,59 +2435,22 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   const uint64_t km_alloc = res->wddm.km_allocation_handles[0];
   D3DDDICB_LOCK lock_cb = {};
   lock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
-  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
-    lock_cb.SubresourceIndex = subresource;
-  }
-  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
-    lock_cb.SubResourceIndex = subresource;
-  }
-  __if_exists(D3DDDICB_LOCK::Flags) {
-    std::memset(&lock_cb.Flags, 0, sizeof(lock_cb.Flags));
-
-    const bool do_not_wait = (map_flags & kD3DMapFlagDoNotWait) != 0;
-    __if_exists(D3DDDICB_LOCKFLAGS::DoNotWait) {
-      lock_cb.Flags.DoNotWait = do_not_wait ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::DonotWait) {
-      lock_cb.Flags.DonotWait = do_not_wait ? 1u : 0u;
-    }
-
-    const bool is_read_only = (map_type == kD3DMapRead);
-    const bool is_write_only =
-        (map_type == kD3DMapWrite || map_type == kD3DMapWriteDiscard || map_type == kD3DMapWriteNoOverwrite);
-    const bool discard = (map_type == kD3DMapWriteDiscard);
-    const bool no_overwrite = (map_type == kD3DMapWriteNoOverwrite);
-
-    __if_exists(D3DDDICB_LOCKFLAGS::ReadOnly) {
-      lock_cb.Flags.ReadOnly = is_read_only ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
-      lock_cb.Flags.WriteOnly = is_write_only ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
-      lock_cb.Flags.Write = want_write ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::Discard) {
-      lock_cb.Flags.Discard = discard ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) {
-      lock_cb.Flags.NoOverwrite = no_overwrite ? 1u : 0u;
-    }
-  }
+  InitLockArgsForMap(&lock_cb, subresource, map_type, map_flags);
 
   hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
+  if (hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT)) {
+    hr = kDxgiErrorWasStillDrawing;
+  }
+  if (hr == kDxgiErrorWasStillDrawing) {
+    return kDxgiErrorWasStillDrawing;
+  }
   if (FAILED(hr)) {
     return hr;
   }
   if (!lock_cb.pData) {
     D3DDDICB_UNLOCK unlock_cb = {};
     unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
-    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-      unlock_cb.SubresourceIndex = subresource;
-    }
-    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-      unlock_cb.SubResourceIndex = subresource;
-    }
+    InitUnlockArgsForMap(&unlock_cb, subresource);
     (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
     return E_FAIL;
   }
@@ -2545,12 +2574,7 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
     if (cb && cb->pfnUnlockCb) {
       D3DDDICB_UNLOCK unlock_cb = {};
       unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
-      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-        unlock_cb.SubresourceIndex = subresource;
-      }
-      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-        unlock_cb.SubResourceIndex = subresource;
-      }
+      InitUnlockArgsForMap(&unlock_cb, subresource);
       const HRESULT unlock_hr = CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
       if (FAILED(unlock_hr)) {
         set_error(dev, unlock_hr);
@@ -2634,6 +2658,9 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
     __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) {
       lock_cb.Flags.NoOverwrite = discard ? 0u : 1u;
     }
+    __if_exists(D3DDDICB_LOCKFLAGS::NoOverWrite) {
+      lock_cb.Flags.NoOverWrite = discard ? 0u : 1u;
+    }
   }
 
   hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
@@ -2643,12 +2670,7 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
   if (!lock_cb.pData) {
     D3DDDICB_UNLOCK unlock_cb = {};
     unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
-    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-      unlock_cb.SubresourceIndex = 0;
-    }
-    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-      unlock_cb.SubResourceIndex = 0;
-    }
+    InitUnlockArgsForMap(&unlock_cb, /*subresource=*/0);
     (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
     return E_FAIL;
   }
