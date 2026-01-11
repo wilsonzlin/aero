@@ -72,6 +72,7 @@ export default {
 | Gamepad | ✓ | ✓ | 10.1+ | ✓ | Optional |
 | WebCodecs | 94+ | 🚧 | 🚧 | 94+ | Optional |
 | WebUSB (`navigator.usb`) | 61+ | ✗ | ✗ | 79+ | Optional |
+| WebHID (`navigator.hid`) | Chromium-only | ✗ | ✗ | Chromium-only | Optional |
 
 ---
 
@@ -95,6 +96,19 @@ Because Aero prefers worker-side I/O, there are two viable integration patterns:
   - If worker access is unavailable, or the `USBDevice` handle cannot be moved/shared, keep all WebUSB calls on the main thread and proxy operations over Aero’s existing main↔worker IPC.
 
 > `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. This should be probed at runtime (see the [WebUSB probe panel](../src/main.ts) once implemented).
+
+---
+
+## WebHID (HID device access)
+
+WebHID (`navigator.hid`) enables direct access to HID-class devices from the browser.
+
+- **Browser support:** Chromium-only (Chrome / Edge). No Firefox or Safari support.
+- **Secure context:** requires `https://` (or `http://localhost`).
+- **User activation:** requesting a device requires a user gesture on the main thread (similar to WebUSB).
+- **Report descriptor access:** WebHID does **not** expose the raw HID report descriptor bytes. It only provides a structured view (collections/reports/items), so Aero must synthesize a report descriptor when it needs byte-accurate HID descriptors for a Windows 7 guest.
+
+See: [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
 
 ---
 
