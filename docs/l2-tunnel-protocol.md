@@ -234,12 +234,13 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
 - Non-browser WebSocket clients can omit `Origin`.
 - Non-browser clients can trivially forge an `Origin` header.
 
-If `AERO_L2_TOKEN` is set, `aero-l2-proxy` requires a matching token during the WebSocket upgrade:
-
-- Recommended: `?token=<value>` query parameter.
-- Optional: `Sec-WebSocket-Protocol: aero-l2-token.<value>` (to avoid placing tokens in URLs/logs; requires a header-safe token value).
-
-Missing/incorrect tokens MUST reject the upgrade with **HTTP 401** (no WebSocket).
+ If `AERO_L2_TOKEN` is set, `aero-l2-proxy` requires a matching token during the WebSocket upgrade:
+ 
+ - Recommended: `?token=<value>` query parameter.
+ - Optional: include an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (alongside
+   `aero-l2-tunnel-v1`) to avoid placing tokens in URLs/logs; requires a header-safe token value.
+ 
+ Missing/incorrect tokens MUST reject the upgrade with **HTTP 401** (no WebSocket).
 
 ### Quotas
 
