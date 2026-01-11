@@ -4208,13 +4208,46 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       struct MsaaQualityLevels {
         UINT Format;
         UINT SampleCount;
+        UINT Flags;
         UINT NumQualityLevels;
       };
       if (data_size < sizeof(MsaaQualityLevels)) {
         return E_INVALIDARG;
       }
       auto* ms = reinterpret_cast<MsaaQualityLevels*>(data);
+      ms->Flags = 0;
       ms->NumQualityLevels = (ms->SampleCount == 1) ? 1u : 0u;
+      return S_OK;
+    }
+
+    case 10: { // SHADER
+      // Shader model caps for FL10_0: VS/GS/PS are SM4.0; HS/DS/CS are unsupported.
+      //
+      // Layout begins with a sequence of UINT "version tokens" matching the D3D
+      // shader bytecode token format:
+      //   (program_type << 16) | (major << 4) | minor
+      //
+      // Be careful about overrunning DataSize: only write fields that fit.
+      std::memset(data, 0, data_size);
+
+      constexpr auto ver_token = [](uint32_t program_type, uint32_t major, uint32_t minor) -> uint32_t {
+        return (program_type << 16) | (major << 4) | minor;
+      };
+
+      constexpr uint32_t kShaderTypePixel = 0;
+      constexpr uint32_t kShaderTypeVertex = 1;
+      constexpr uint32_t kShaderTypeGeometry = 2;
+
+      auto write_u32 = [&](size_t offset, uint32_t value) {
+        if (data_size < offset + sizeof(uint32_t)) {
+          return;
+        }
+        *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(data) + offset) = value;
+      };
+
+      write_u32(0, ver_token(kShaderTypePixel, 4, 0));
+      write_u32(sizeof(uint32_t), ver_token(kShaderTypeVertex, 4, 0));
+      write_u32(sizeof(uint32_t) * 2, ver_token(kShaderTypeGeometry, 4, 0));
       return S_OK;
     }
 
