@@ -129,8 +129,8 @@ document.getElementById("autosave").addEventListener("change", async (ev) => {
   autosaveTimer = setInterval(() => {
     doSave().catch((err) => log(`Auto-save failed: ${err}`));
   }, seconds * 1000);
+  autosaveTimer?.unref?.();
   log(`Auto-save enabled: every ${seconds}s`);
 });
 
 log("Snapshot UI loaded. Provide window.aeroSnapshotHost to enable Save/Load.");
-

@@ -78,5 +78,6 @@ export function mountStatusPanel(
   }
 
   updateWorkers();
-  globalThis.setInterval(updateWorkers, 250);
+  const timer = globalThis.setInterval(updateWorkers, 250);
+  (timer as unknown as { unref?: () => void }).unref?.();
 }
