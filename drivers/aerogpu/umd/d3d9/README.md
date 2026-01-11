@@ -95,6 +95,7 @@ Optional: `drivers\aerogpu\build\build_all.cmd` is a convenience wrapper around 
 - The code in `include/aerogpu_d3d9_umd.h` includes a tiny “compat” subset of the D3D9 DDI types so the core translation code is self-contained in this repository. When integrating into a real Win7 WDK build, wire the entrypoints to the real WDK D3D9 DDI headers and structures (the exported names are the key ABI contract).
 - For ABI verification against the real Win7 D3D9 UMD headers (struct sizes/offsets + x86 stdcall export decoration), see `tools/wdk_abi_probe/`.
 - Logging is done via `OutputDebugStringA` (view with DebugView/WinDbg) and is intentionally lightweight.
+  - Set `AEROGPU_D3D9_LOG_SUBMITS=1` before loading the UMD to enable per-submission fence logs (useful for `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress` and debugging submit ordering).
 
 ## Install / Register (INF)
 
