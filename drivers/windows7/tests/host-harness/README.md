@@ -178,7 +178,7 @@ Some QEMU virtio device types report `REV_00` by default. Once the Aero drivers 
 contract Revision ID, they will refuse to bind unless QEMU is told to advertise `REV_01`.
 
 The harness sets `disable-legacy=on` for virtio-net/virtio-blk/virtio-input (and virtio-snd when supported) so QEMU does **not** expose
-the legacy I/O-port transport (transitional devices enumerate as `DEV_1000/DEV_1001/DEV_1012`). This matches
+the legacy I/O-port transport (transitional devices enumerate as `DEV_1000/DEV_1001/DEV_1011`). This matches
 [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO` v1),
 which is modern-only.
 

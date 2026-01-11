@@ -4,7 +4,7 @@
 #
 # The Windows 7 virtio driver contract (AERO-W7-VIRTIO v1) requires *modern-only*
 # virtio-pci devices. QEMU's `virtio-*-pci` devices are transitional by default and
-# can expose the legacy I/O-port transport (PCI Device IDs 0x10xx, e.g. 0x1000/0x1001/0x1012).
+# can expose the legacy I/O-port transport (PCI Device IDs 0x10xx, e.g. 0x1000/0x1001/0x1011).
 #
 # To force modern-only enumeration (e.g. virtio-net `DEV_1041`, virtio-blk `DEV_1042`,
 # virtio-input `DEV_1052`) and prevent legacy transport from being exposed, pass

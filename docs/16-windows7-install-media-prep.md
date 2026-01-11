@@ -593,6 +593,7 @@ Example (QEMU, x64):
 qemu-system-x86_64 \
   -m 4096 \
   -cdrom win7-aero.iso \
-  -drive file=win7.qcow2,if=virtio,format=qcow2 \
+  -drive file=win7.qcow2,if=none,id=drive0,format=qcow2 \
+  -device virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01 \
   -boot d
 ```
