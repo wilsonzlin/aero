@@ -110,6 +110,13 @@ jobs:
           python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-full.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-virtio-full.log
           python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-guest-tools.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-aero-guest-tools.log
 
+      - name: Python unit tests (tools/guest-tools)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/guest-tools-packager
+          python -m unittest discover -s tools/guest-tools/tests -p 'test_*.py' 2>&1 | tee out/guest-tools-packager/python-unittest-guest-tools.log
+
       - name: Smoke-test CI wrapper (ci/package-guest-tools.ps1)
         shell: pwsh
         run: |

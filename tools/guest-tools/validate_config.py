@@ -536,10 +536,6 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         drv = spec_expected.get(driver_name)
         if drv is None:
             return
-        # Optional drivers may not be configured in devices.cmd; only validate
-        # them when HWIDs are present.
-        if not drv.required and not hwids:
-            return
         match = _validate_hwid_contract(
             spec_path=spec_path,
             driver_name=driver_name,
