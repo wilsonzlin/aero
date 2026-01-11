@@ -21,6 +21,7 @@ add_test(NAME virtio_common_tests COMMAND virtio_common_tests)
 add_executable(virtio_pci_cap_parser_tests
     ${CMAKE_CURRENT_LIST_DIR}/../../../../win7/virtio/tests/virtio_pci_cap_parser_test.c
     ${CMAKE_CURRENT_LIST_DIR}/../../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../../../win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c
 )
 
 target_include_directories(virtio_pci_cap_parser_tests PRIVATE
