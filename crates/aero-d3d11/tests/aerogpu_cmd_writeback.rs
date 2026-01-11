@@ -129,18 +129,15 @@ fn copy_buffer_writeback_roundtrip() {
 
         let dst_base = (alloc.gpa + dst_backing_offset as u64) as usize;
         let mem = guest_mem.as_slice();
-        let actual = &mem
-            [dst_base + copy_dst_offset as usize..dst_base + (copy_dst_offset + copy_size) as usize];
-        let expected = &src_pattern
-            [copy_src_offset as usize..(copy_src_offset + copy_size) as usize];
+        let actual = &mem[dst_base + copy_dst_offset as usize
+            ..dst_base + (copy_dst_offset + copy_size) as usize];
+        let expected =
+            &src_pattern[copy_src_offset as usize..(copy_src_offset + copy_size) as usize];
         assert_eq!(actual, expected);
 
         // Ensure bytes outside the copied range were not clobbered.
         assert_eq!(mem[dst_base], 0xEE);
-        assert_eq!(
-            mem[dst_base + (copy_dst_offset + copy_size) as usize],
-            0xEE
-        );
+        assert_eq!(mem[dst_base + (copy_dst_offset + copy_size) as usize], 0xEE);
     });
 }
 

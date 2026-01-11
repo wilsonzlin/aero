@@ -1541,7 +1541,8 @@ impl AerogpuD3d11Executor {
                     .offset_bytes
                     .checked_add(dst_offset_bytes)
                     .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?;
-                let dst_gpa = allocs.validate_write_range(dst_backing.alloc_id, dst_offset, size_bytes)?;
+                let dst_gpa =
+                    allocs.validate_write_range(dst_backing.alloc_id, dst_offset, size_bytes)?;
 
                 let new_encoder =
                     self.device
@@ -1854,8 +1855,11 @@ impl AerogpuD3d11Executor {
                 let required = (dst_row_pitch_bytes as u64)
                     .checked_mul(mip_h as u64)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size overflow"))?;
-                let base_gpa =
-                    allocs.validate_write_range(dst_backing.alloc_id, dst_backing.offset_bytes, required)?;
+                let base_gpa = allocs.validate_write_range(
+                    dst_backing.alloc_id,
+                    dst_backing.offset_bytes,
+                    required,
+                )?;
 
                 let new_encoder =
                     self.device
