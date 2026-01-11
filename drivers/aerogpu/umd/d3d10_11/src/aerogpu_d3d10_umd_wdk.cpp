@@ -46,6 +46,10 @@ constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
 }
 
+constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
+constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
+constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
+
 // -----------------------------------------------------------------------------
 // Logging (opt-in)
 // -----------------------------------------------------------------------------
@@ -409,6 +413,7 @@ struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTOpenAdapterFromHdc) pfn_open_adapter_from_hdc = nullptr;
   decltype(&D3DKMTCloseAdapter) pfn_close_adapter = nullptr;
   decltype(&D3DKMTQueryAdapterInfo) pfn_query_adapter_info = nullptr;
+  decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
 };
 
 static const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
@@ -427,6 +432,8 @@ static const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
     p.pfn_close_adapter = reinterpret_cast<decltype(&D3DKMTCloseAdapter)>(GetProcAddress(gdi32, "D3DKMTCloseAdapter"));
     p.pfn_query_adapter_info =
         reinterpret_cast<decltype(&D3DKMTQueryAdapterInfo)>(GetProcAddress(gdi32, "D3DKMTQueryAdapterInfo"));
+    p.pfn_wait_for_syncobj = reinterpret_cast<decltype(&D3DKMTWaitForSynchronizationObject)>(
+        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
     return p;
   }();
   return procs;
@@ -548,6 +555,13 @@ struct AeroGpuResource {
   uint32_t row_pitch_bytes = 0;
 
   std::vector<uint8_t> storage;
+
+  // Map state (for resources backed by `storage`).
+  bool mapped = false;
+  bool mapped_write = false;
+  uint32_t mapped_subresource = 0;
+  uint64_t mapped_offset = 0;
+  uint64_t mapped_size = 0;
 };
 
 struct AeroGpuShader {
@@ -596,9 +610,12 @@ struct AeroGpuDevice {
   D3D10DDI_DEVICECALLBACKS callbacks = {};
   const D3DDDI_DEVICECALLBACKS* um_callbacks = nullptr;
   uint64_t last_submitted_fence = 0;
+  uint64_t last_completed_fence = 0;
   // Best-effort WDDM context propagation for WDK/OS callback struct variants
   // that include `hContext` in D3DDDICB_* submission structs.
+  D3DKMT_HANDLE hDevice = 0;
   D3DKMT_HANDLE hContext = 0;
+  D3DKMT_HANDLE hSyncObject = 0;
 
   std::mutex mutex;
   aerogpu::CmdWriter cmd;
@@ -636,6 +653,381 @@ decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
   } else {
     return fn(std::forward<Args>(args)...);
   }
+}
+
+template <typename T>
+std::uintptr_t D3dHandleToUintPtr(T value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<std::uintptr_t>(value);
+  } else {
+    return static_cast<std::uintptr_t>(value);
+  }
+}
+
+template <typename T>
+T UintPtrToD3dHandle(std::uintptr_t value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<T>(value);
+  } else {
+    return static_cast<T>(value);
+  }
+}
+
+void DestroyKernelDeviceContext(AeroGpuDevice* dev) {
+  if (!dev) {
+    return;
+  }
+
+  const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
+  if (!cb) {
+    dev->hSyncObject = 0;
+    dev->hContext = 0;
+    dev->hDevice = 0;
+    return;
+  }
+
+  if (dev->hSyncObject) {
+    __if_exists(D3DDDI_DEVICECALLBACKS::pfnDestroySynchronizationObjectCb) {
+      if (cb->pfnDestroySynchronizationObjectCb) {
+        __if_exists(D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT) {
+          D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT args{};
+          __if_exists(D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT::hSyncObject) {
+            args.hSyncObject = UintPtrToD3dHandle<decltype(args.hSyncObject)>(static_cast<std::uintptr_t>(dev->hSyncObject));
+          }
+          (void)CallCbMaybeHandle(cb->pfnDestroySynchronizationObjectCb, dev->hrt_device, &args);
+        }
+      }
+    }
+    dev->hSyncObject = 0;
+  }
+
+  if (dev->hContext) {
+    __if_exists(D3DDDI_DEVICECALLBACKS::pfnDestroyContextCb) {
+      if (cb->pfnDestroyContextCb) {
+        __if_exists(D3DDDICB_DESTROYCONTEXT) {
+          D3DDDICB_DESTROYCONTEXT args{};
+          __if_exists(D3DDDICB_DESTROYCONTEXT::hContext) {
+            args.hContext = UintPtrToD3dHandle<decltype(args.hContext)>(static_cast<std::uintptr_t>(dev->hContext));
+          }
+          (void)CallCbMaybeHandle(cb->pfnDestroyContextCb, dev->hrt_device, &args);
+        }
+      }
+    }
+    dev->hContext = 0;
+  }
+
+  if (dev->hDevice) {
+    __if_exists(D3DDDI_DEVICECALLBACKS::pfnDestroyDeviceCb) {
+      if (cb->pfnDestroyDeviceCb) {
+        __if_exists(D3DDDICB_DESTROYDEVICE) {
+          D3DDDICB_DESTROYDEVICE args{};
+          __if_exists(D3DDDICB_DESTROYDEVICE::hDevice) {
+            args.hDevice = UintPtrToD3dHandle<decltype(args.hDevice)>(static_cast<std::uintptr_t>(dev->hDevice));
+          }
+          (void)CallCbMaybeHandle(cb->pfnDestroyDeviceCb, dev->hrt_device, &args);
+        }
+      }
+    }
+    dev->hDevice = 0;
+  }
+}
+
+HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  if (dev->hContext && dev->hSyncObject) {
+    return S_OK;
+  }
+
+  const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
+  if (!cb) {
+    return S_OK;
+  }
+
+  bool have_create_device = false;
+  __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateDeviceCb) {
+    have_create_device = (cb->pfnCreateDeviceCb != nullptr);
+  }
+  if (!have_create_device) {
+    return S_OK;
+  }
+
+  bool have_create_context = false;
+  bool use_create_context2 = false;
+  __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateContextCb2) {
+    if (cb->pfnCreateContextCb2) {
+      have_create_context = true;
+      use_create_context2 = true;
+    }
+  }
+  __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateContextCb) {
+    if (!have_create_context && cb->pfnCreateContextCb) {
+      have_create_context = true;
+      use_create_context2 = false;
+    }
+  }
+  if (!have_create_context) {
+    return S_OK;
+  }
+
+  __if_exists(D3DDDICB_CREATEDEVICE) {
+    D3DDDICB_CREATEDEVICE create_device{};
+    __if_exists(D3DDDICB_CREATEDEVICE::hAdapter) {
+      create_device.hAdapter =
+          UintPtrToD3dHandle<decltype(create_device.hAdapter)>(reinterpret_cast<std::uintptr_t>(hAdapter.pDrvPrivate));
+    }
+    HRESULT hr = CallCbMaybeHandle(cb->pfnCreateDeviceCb, dev->hrt_device, &create_device);
+    if (FAILED(hr) || !create_device.hDevice) {
+      return FAILED(hr) ? hr : E_FAIL;
+    }
+    dev->hDevice = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_device.hDevice));
+  }
+  __if_not_exists(D3DDDICB_CREATEDEVICE) {
+    return S_OK;
+  }
+
+  __if_exists(D3DDDICB_CREATECONTEXT) {
+    D3DDDICB_CREATECONTEXT create_ctx{};
+    __if_exists(D3DDDICB_CREATECONTEXT::hDevice) {
+      create_ctx.hDevice = UintPtrToD3dHandle<decltype(create_ctx.hDevice)>(static_cast<std::uintptr_t>(dev->hDevice));
+    }
+    __if_exists(D3DDDICB_CREATECONTEXT::NodeOrdinal) {
+      create_ctx.NodeOrdinal = 0;
+    }
+    __if_exists(D3DDDICB_CREATECONTEXT::EngineAffinity) {
+      create_ctx.EngineAffinity = 0;
+    }
+    __if_exists(D3DDDICB_CREATECONTEXT::pPrivateDriverData) {
+      create_ctx.pPrivateDriverData = nullptr;
+    }
+    __if_exists(D3DDDICB_CREATECONTEXT::PrivateDriverDataSize) {
+      create_ctx.PrivateDriverDataSize = 0;
+    }
+
+    HRESULT hr = E_FAIL;
+    if (use_create_context2) {
+      __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateContextCb2) {
+        hr = CallCbMaybeHandle(cb->pfnCreateContextCb2, dev->hrt_device, &create_ctx);
+      }
+    } else {
+      __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateContextCb) {
+        hr = CallCbMaybeHandle(cb->pfnCreateContextCb, dev->hrt_device, &create_ctx);
+      }
+    }
+    if (FAILED(hr) || !create_ctx.hContext || !create_ctx.hSyncObject) {
+      DestroyKernelDeviceContext(dev);
+      return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    dev->hContext = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hContext));
+    dev->hSyncObject = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hSyncObject));
+  }
+  __if_not_exists(D3DDDICB_CREATECONTEXT) {
+    DestroyKernelDeviceContext(dev);
+    return E_FAIL;
+  }
+
+  return S_OK;
+}
+
+HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout_ms) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (fence == 0) {
+    return S_OK;
+  }
+  if (dev->last_completed_fence >= fence) {
+    return S_OK;
+  }
+
+  if (!dev->hSyncObject) {
+    return E_FAIL;
+  }
+
+  const D3DKMT_HANDLE handles[1] = {dev->hSyncObject};
+  const UINT64 fence_values[1] = {fence};
+
+  const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
+  bool have_wait_cb = false;
+  __if_exists(D3DDDI_DEVICECALLBACKS::pfnWaitForSynchronizationObjectCb) {
+    have_wait_cb = (cb && cb->pfnWaitForSynchronizationObjectCb);
+  }
+  if (have_wait_cb) {
+    D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
+      args.hContext = UintPtrToD3dHandle<decltype(args.hContext)>(static_cast<std::uintptr_t>(dev->hContext));
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectCount) {
+      args.ObjectCount = 1;
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
+      args.ObjectHandleArray = handles;
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
+      args.hSyncObjects = handles;
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+      args.FenceValueArray = fence_values;
+    }
+    __if_not_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
+        args.FenceValue = fence;
+      }
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::Timeout) {
+      args.Timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
+    }
+
+    const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb, dev->hrt_device, &args);
+    if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT)) {
+      return kDxgiErrorWasStillDrawing;
+    }
+    if (FAILED(hr)) {
+      return E_FAIL;
+    }
+
+    dev->last_completed_fence = fence;
+    return S_OK;
+  }
+
+  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+  if (!procs.pfn_wait_for_syncobj) {
+    return E_FAIL;
+  }
+
+  D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
+    args.hContext = dev->hContext;
+  }
+  args.ObjectCount = 1;
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
+    args.ObjectHandleArray = handles;
+  }
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
+    args.hSyncObjects = handles;
+  }
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+    args.FenceValueArray = fence_values;
+  }
+  __if_not_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+    __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
+      args.FenceValue = fence;
+    }
+  }
+  args.Timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
+
+  const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
+  if (st == kStatusTimeout) {
+    return kDxgiErrorWasStillDrawing;
+  }
+  if (!NtSuccess(st)) {
+    return E_FAIL;
+  }
+
+  dev->last_completed_fence = fence;
+  return S_OK;
+}
+
+HRESULT AeroGpuPollFence(AeroGpuDevice* dev, uint64_t fence) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (fence == 0) {
+    return S_OK;
+  }
+  if (dev->last_completed_fence >= fence) {
+    return S_OK;
+  }
+
+  if (!dev->hSyncObject) {
+    return E_FAIL;
+  }
+
+  const D3DKMT_HANDLE handles[1] = {dev->hSyncObject};
+  const UINT64 fence_values[1] = {fence};
+
+  const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
+  bool have_wait_cb = false;
+  __if_exists(D3DDDI_DEVICECALLBACKS::pfnWaitForSynchronizationObjectCb) {
+    have_wait_cb = (cb && cb->pfnWaitForSynchronizationObjectCb);
+  }
+  if (have_wait_cb) {
+    D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
+      args.hContext = UintPtrToD3dHandle<decltype(args.hContext)>(static_cast<std::uintptr_t>(dev->hContext));
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectCount) {
+      args.ObjectCount = 1;
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
+      args.ObjectHandleArray = handles;
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
+      args.hSyncObjects = handles;
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+      args.FenceValueArray = fence_values;
+    }
+    __if_not_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
+        args.FenceValue = fence;
+      }
+    }
+    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::Timeout) {
+      args.Timeout = 0; // poll
+    }
+
+    const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb, dev->hrt_device, &args);
+    if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT)) {
+      return kDxgiErrorWasStillDrawing;
+    }
+    if (FAILED(hr)) {
+      return E_FAIL;
+    }
+
+    dev->last_completed_fence = fence;
+    return S_OK;
+  }
+
+  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+  if (!procs.pfn_wait_for_syncobj) {
+    return E_FAIL;
+  }
+
+  D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
+    args.hContext = dev->hContext;
+  }
+  args.ObjectCount = 1;
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
+    args.ObjectHandleArray = handles;
+  }
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
+    args.hSyncObjects = handles;
+  }
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+    args.FenceValueArray = fence_values;
+  }
+  __if_not_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+    __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
+      args.FenceValue = fence;
+    }
+  }
+  args.Timeout = 0; // poll
+
+  const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
+  if (st == kStatusTimeout) {
+    return kDxgiErrorWasStillDrawing;
+  }
+  if (!NtSuccess(st)) {
+    return E_FAIL;
+  }
+
+  dev->last_completed_fence = fence;
+  return S_OK;
 }
 
 void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
@@ -1118,6 +1510,7 @@ void APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
     return;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  DestroyKernelDeviceContext(dev);
   dev->~AeroGpuDevice();
 }
 
@@ -1515,6 +1908,13 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
   res->~AeroGpuResource();
 }
 
+// D3D10_DDI_MAP subset (numeric values from d3d10umddi.h / d3d10.h).
+constexpr uint32_t kD3DMapRead = 1;
+constexpr uint32_t kD3DMapWrite = 2;
+constexpr uint32_t kD3DMapReadWrite = 3;
+constexpr uint32_t kD3DMapWriteDiscard = 4;
+constexpr uint32_t kD3DMapWriteNoOverwrite = 5;
+
 HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   if (!hDevice.pDrvPrivate || !pMap || !pMap->hResource.pDrvPrivate) {
     return E_INVALIDARG;
@@ -1528,25 +1928,83 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  if (res->storage.empty()) {
-    uint64_t size = 0;
-    if (res->kind == ResourceKind::Buffer) {
-      size = res->size_bytes;
-    } else if (res->kind == ResourceKind::Texture2D) {
-      size = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
-    }
-    if (size && size <= static_cast<uint64_t>(SIZE_MAX)) {
-      try {
-        res->storage.resize(static_cast<size_t>(size));
-      } catch (...) {
-        return E_OUTOFMEMORY;
-      }
+  if (res->mapped) {
+    return E_FAIL;
+  }
+
+  uint32_t subresource = 0;
+  __if_exists(D3D10DDIARG_MAP::Subresource) {
+    subresource = static_cast<uint32_t>(pMap->Subresource);
+  }
+  if (subresource != 0) {
+    return E_NOTIMPL;
+  }
+
+  uint32_t map_type_u = kD3DMapWrite;
+  __if_exists(D3D10DDIARG_MAP::MapType) {
+    map_type_u = static_cast<uint32_t>(pMap->MapType);
+  }
+
+  uint32_t map_flags_u = 0;
+  __if_exists(D3D10DDIARG_MAP::Flags) {
+    map_flags_u = static_cast<uint32_t>(pMap->Flags);
+  }
+
+  bool want_write = false;
+  switch (map_type_u) {
+    case kD3DMapRead:
+      break;
+    case kD3DMapWrite:
+    case kD3DMapReadWrite:
+    case kD3DMapWriteDiscard:
+    case kD3DMapWriteNoOverwrite:
+      want_write = true;
+      break;
+    default:
+      return E_INVALIDARG;
+  }
+
+  if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
+    const uint64_t fence = dev->last_submitted_fence;
+    const HRESULT wait = (map_flags_u & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
+    if (FAILED(wait)) {
+      return wait;
     }
   }
 
-  pMap->pData = res->storage.empty() ? nullptr : res->storage.data();
+  uint64_t size = 0;
+  if (res->kind == ResourceKind::Buffer) {
+    size = res->size_bytes;
+  } else if (res->kind == ResourceKind::Texture2D) {
+    size = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+  }
+  if (!size) {
+    return E_INVALIDARG;
+  }
+  if (size > static_cast<uint64_t>(SIZE_MAX)) {
+    return E_OUTOFMEMORY;
+  }
+
+  try {
+    if (map_type_u == kD3DMapWriteDiscard) {
+      // Approximate DISCARD renaming by allocating a fresh CPU backing store.
+      res->storage.assign(static_cast<size_t>(size), 0);
+    } else if (res->storage.size() < static_cast<size_t>(size)) {
+      res->storage.resize(static_cast<size_t>(size), 0);
+    }
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  pMap->pData = res->storage.data();
   pMap->RowPitch = (res->kind == ResourceKind::Texture2D) ? res->row_pitch_bytes : 0;
   pMap->DepthPitch = 0;
+
+  res->mapped = true;
+  res->mapped_write = want_write;
+  res->mapped_subresource = subresource;
+  res->mapped_offset = 0;
+  res->mapped_size = size;
   return S_OK;
 }
 
@@ -1565,14 +2023,53 @@ void APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UNMAP* pUnmap) {
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  if (!res->storage.empty()) {
+  uint32_t subresource = 0;
+  __if_exists(D3D10DDIARG_UNMAP::Subresource) {
+    subresource = static_cast<uint32_t>(pUnmap->Subresource);
+  }
+
+  if (!res->mapped) {
+    SetError(hDevice, E_FAIL);
+    return;
+  }
+  if (subresource != res->mapped_subresource) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+
+  if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
+    if (res->mapped_offset > res->storage.size()) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+    const size_t remaining = res->storage.size() - static_cast<size_t>(res->mapped_offset);
+    if (res->mapped_size > remaining) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+    if (res->mapped_size > static_cast<uint64_t>(SIZE_MAX)) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+    }
+
+    const uint8_t* payload = res->storage.data() + static_cast<size_t>(res->mapped_offset);
     auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+        AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(res->mapped_size));
+    if (!upload) {
+      SetError(hDevice, E_FAIL);
+      return;
+    }
     upload->resource_handle = res->handle;
     upload->reserved0 = 0;
-    upload->offset_bytes = 0;
-    upload->size_bytes = res->storage.size();
+    upload->offset_bytes = res->mapped_offset;
+    upload->size_bytes = res->mapped_size;
   }
+
+  res->mapped = false;
+  res->mapped_write = false;
+  res->mapped_subresource = 0;
+  res->mapped_offset = 0;
+  res->mapped_size = 0;
 }
 
 void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UPDATESUBRESOURCEUP* pUpdate) {
@@ -3033,7 +3530,7 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
   resources.reserve(numResources);
   for (UINT i = 0; i < numResources; ++i) {
     auto* res = phResources[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(phResources[i]) : nullptr;
-    if (!res) {
+    if (!res || res->mapped) {
       return;
     }
     if (std::find(resources.begin(), resources.end(), res) != resources.end()) {
@@ -3263,6 +3760,15 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
   }
   if (!device->um_callbacks) {
     device->um_callbacks = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(pCreateDevice->pCallbacks);
+  }
+
+  // Ensure we have a kernel-mode device + context so we can wait/poll the
+  // monitored fence sync object for Map READ / DO_NOT_WAIT semantics.
+  HRESULT wddm_hr = InitKernelDeviceContext(device, hAdapter);
+  if (FAILED(wddm_hr) || device->hSyncObject == 0) {
+    DestroyKernelDeviceContext(device);
+    device->~AeroGpuDevice();
+    return FAILED(wddm_hr) ? wddm_hr : E_FAIL;
   }
 
   // Populate the full D3D10DDI_DEVICEFUNCS table. Any unimplemented entrypoints
