@@ -58,6 +58,7 @@ struct CommonL2Env {
     _jwt_secret: EnvVarGuard,
     _session_secret: EnvVarGuard,
     _session_secret_fallback: EnvVarGuard,
+    _gateway_session_secret: EnvVarGuard,
 }
 
 impl CommonL2Env {
@@ -75,6 +76,7 @@ impl CommonL2Env {
             _jwt_secret: EnvVarGuard::unset("AERO_L2_JWT_SECRET"),
             _session_secret: EnvVarGuard::unset("AERO_L2_SESSION_SECRET"),
             _session_secret_fallback: EnvVarGuard::unset("SESSION_SECRET"),
+            _gateway_session_secret: EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET"),
         }
     }
 }
@@ -734,7 +736,9 @@ async fn cookie_auth_falls_back_to_session_secret() {
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie");
-    let _secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
+    // Docker Compose stacks commonly pass through `AERO_L2_SESSION_SECRET=` even when relying on
+    // `SESSION_SECRET` as the canonical knob; ensure we treat empty values as unset.
+    let _secret = EnvVarGuard::set("AERO_L2_SESSION_SECRET", "");
     let _fallback_secret = EnvVarGuard::set("SESSION_SECRET", "sekrit");
 
     let cfg = ProxyConfig::from_env().unwrap();
