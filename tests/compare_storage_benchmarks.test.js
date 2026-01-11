@@ -29,12 +29,16 @@ test("compareMetric: latency (lower is better) flags regressions", () => {
 
 test("compareStorageBenchmarks: skips optional random_write when absent", () => {
   const baseline = {
+    backend: "opfs",
+    api_mode: "async",
     sequential_write: { mean_mb_per_s: 100 },
     sequential_read: { mean_mb_per_s: 150 },
     random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
   };
 
   const current = {
+    backend: "opfs",
+    api_mode: "async",
     sequential_write: { mean_mb_per_s: 105 },
     sequential_read: { mean_mb_per_s: 149 },
     random_read_4k: { mean_p50_ms: 5.1, mean_p95_ms: 9.9 },
@@ -43,10 +47,13 @@ test("compareStorageBenchmarks: skips optional random_write when absent", () => 
   const result = compareStorageBenchmarks({ baseline, current, thresholdPct: 15 });
   assert.equal(result.pass, true);
   assert.equal(result.comparisons.length, 4);
+  assert.equal(result.metadataComparisons.length, 2);
 });
 
 test("compareStorageBenchmarks: detects optional random_write regressions when present", () => {
   const baseline = {
+    backend: "opfs",
+    api_mode: "async",
     sequential_write: { mean_mb_per_s: 100 },
     sequential_read: { mean_mb_per_s: 150 },
     random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
@@ -54,6 +61,8 @@ test("compareStorageBenchmarks: detects optional random_write regressions when p
   };
 
   const current = {
+    backend: "opfs",
+    api_mode: "async",
     sequential_write: { mean_mb_per_s: 100 },
     sequential_read: { mean_mb_per_s: 150 },
     random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
@@ -65,3 +74,46 @@ test("compareStorageBenchmarks: detects optional random_write regressions when p
   assert.ok(result.comparisons.find((c) => c.metric === "random_write_4k.mean_p95_ms")?.regression);
 });
 
+test("compareStorageBenchmarks: fails when backend regresses (opfs -> indexeddb)", () => {
+  const baseline = {
+    backend: "opfs",
+    api_mode: "sync_access_handle",
+    sequential_write: { mean_mb_per_s: 100 },
+    sequential_read: { mean_mb_per_s: 150 },
+    random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
+  };
+
+  const current = {
+    backend: "indexeddb",
+    api_mode: "async",
+    sequential_write: { mean_mb_per_s: 100 },
+    sequential_read: { mean_mb_per_s: 150 },
+    random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
+  };
+
+  const result = compareStorageBenchmarks({ baseline, current, thresholdPct: 15 });
+  assert.equal(result.pass, false);
+  assert.ok(result.metadataComparisons.find((c) => c.field === "backend")?.regression);
+});
+
+test("compareStorageBenchmarks: fails when OPFS api_mode regresses (sync -> async)", () => {
+  const baseline = {
+    backend: "opfs",
+    api_mode: "sync_access_handle",
+    sequential_write: { mean_mb_per_s: 100 },
+    sequential_read: { mean_mb_per_s: 150 },
+    random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
+  };
+
+  const current = {
+    backend: "opfs",
+    api_mode: "async",
+    sequential_write: { mean_mb_per_s: 100 },
+    sequential_read: { mean_mb_per_s: 150 },
+    random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
+  };
+
+  const result = compareStorageBenchmarks({ baseline, current, thresholdPct: 15 });
+  assert.equal(result.pass, false);
+  assert.ok(result.metadataComparisons.find((c) => c.field === "api_mode")?.regression);
+});

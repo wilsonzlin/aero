@@ -31,6 +31,14 @@ export interface MetricComparison {
   note?: string;
 }
 
+export interface MetadataComparison {
+  field: string;
+  baseline: string | null;
+  current: string | null;
+  regression: boolean;
+  note?: string;
+}
+
 function parseArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -82,11 +90,65 @@ function getNumber(obj: any, getter: (v: any) => unknown): number | null {
   return isFiniteNumber(value) ? value : null;
 }
 
+function getString(obj: any, getter: (v: any) => unknown): string | null {
+  const value = getter(obj);
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function compareOrderedField(params: {
+  field: string;
+  baseline: string | null;
+  current: string | null;
+  ranks: Record<string, number>;
+}): MetadataComparison {
+  if (!params.baseline || !params.current) {
+    return {
+      field: params.field,
+      baseline: params.baseline,
+      current: params.current,
+      regression: true,
+      note: "missing/invalid baseline or current value",
+    };
+  }
+
+  if (params.baseline === params.current) {
+    return {
+      field: params.field,
+      baseline: params.baseline,
+      current: params.current,
+      regression: false,
+    };
+  }
+
+  const baseRank = params.ranks[params.baseline];
+  const curRank = params.ranks[params.current];
+  if (Number.isFinite(baseRank) && Number.isFinite(curRank)) {
+    const regression = curRank < baseRank;
+    return {
+      field: params.field,
+      baseline: params.baseline,
+      current: params.current,
+      regression,
+      note: regression ? "capability regressed" : "capability improved/changed",
+    };
+  }
+
+  // If we don't understand one of the values, treat it as a regression to avoid silently
+  // passing on an apples-to-oranges comparison.
+  return {
+    field: params.field,
+    baseline: params.baseline,
+    current: params.current,
+    regression: true,
+    note: "unknown baseline/current value",
+  };
+}
+
 export function compareStorageBenchmarks(params: {
   baseline: any;
   current: any;
   thresholdPct: number;
-}): { comparisons: MetricComparison[]; pass: boolean } {
+}): { comparisons: MetricComparison[]; metadataComparisons: MetadataComparison[]; pass: boolean } {
   const threshold = params.thresholdPct / 100;
 
   const metrics: Array<{
@@ -171,7 +233,36 @@ export function compareStorageBenchmarks(params: {
     });
   }
 
-  return { comparisons, pass: comparisons.every((c) => !c.regression) };
+  const metadataComparisons: MetadataComparison[] = [];
+  const baselineBackend = getString(params.baseline, (v) => v?.backend);
+  const currentBackend = getString(params.current, (v) => v?.backend);
+  metadataComparisons.push(
+    compareOrderedField({
+      field: "backend",
+      baseline: baselineBackend,
+      current: currentBackend,
+      ranks: { indexeddb: 1, opfs: 2 },
+    }),
+  );
+
+  const baselineApiMode = getString(params.baseline, (v) => v?.api_mode);
+  const currentApiMode = getString(params.current, (v) => v?.api_mode);
+  // Only gate api_mode if we stayed on OPFS; IndexedDB is always async.
+  if (baselineBackend === "opfs" && currentBackend === "opfs") {
+    metadataComparisons.push(
+      compareOrderedField({
+        field: "api_mode",
+        baseline: baselineApiMode,
+        current: currentApiMode,
+        ranks: { async: 1, sync_access_handle: 2 },
+      }),
+    );
+  }
+
+  const pass =
+    comparisons.every((c) => !c.regression) && metadataComparisons.every((c) => !c.regression);
+
+  return { comparisons, metadataComparisons, pass };
 }
 
 export function renderCompareMarkdown(params: {
@@ -179,11 +270,14 @@ export function renderCompareMarkdown(params: {
   current: any;
   thresholdPct: number;
   comparisons: MetricComparison[];
+  metadataComparisons: MetadataComparison[];
 }): string {
   const lines: string[] = [];
 
-  const regressions = params.comparisons.filter((c) => c.regression);
-  const pass = regressions.length === 0;
+  const metricRegressions = params.comparisons.filter((c) => c.regression);
+  const metadataRegressions = params.metadataComparisons.filter((c) => c.regression);
+  const regressions = metricRegressions.length + metadataRegressions.length;
+  const pass = regressions === 0;
 
   lines.push("# Storage perf comparison");
   lines.push("");
@@ -196,11 +290,47 @@ export function renderCompareMarkdown(params: {
     `Current: backend=\`${params.current?.backend ?? "unknown"}\` api_mode=\`${params.current?.api_mode ?? "unknown"}\``,
   );
   lines.push("");
+
+  if (params.metadataComparisons.length > 0) {
+    lines.push("## Context");
+    lines.push("");
+    lines.push("| Field | Baseline | Current | Status | Note |");
+    lines.push("| --- | --- | --- | --- | --- |");
+    for (const c of params.metadataComparisons) {
+      const status = c.regression ? "FAIL" : c.baseline === c.current ? "OK" : "WARN";
+      lines.push(
+        `| ${c.field} | ${c.baseline ?? "n/a"} | ${c.current ?? "n/a"} | ${status} | ${c.note ?? ""} |`,
+      );
+    }
+    lines.push("");
+  }
+
+  const baselineWarnings = Array.isArray(params.baseline?.warnings) ? params.baseline.warnings : [];
+  const currentWarnings = Array.isArray(params.current?.warnings) ? params.current.warnings : [];
+  if (baselineWarnings.length > 0 || currentWarnings.length > 0) {
+    lines.push("## Warnings");
+    lines.push("");
+    if (baselineWarnings.length > 0) {
+      lines.push("Baseline warnings:");
+      for (const w of baselineWarnings) {
+        lines.push(`- ${w}`);
+      }
+      lines.push("");
+    }
+    if (currentWarnings.length > 0) {
+      lines.push("Current warnings:");
+      for (const w of currentWarnings) {
+        lines.push(`- ${w}`);
+      }
+      lines.push("");
+    }
+  }
+
   lines.push(`Result: **${pass ? "PASS" : "FAIL"}**`);
   lines.push("");
 
   if (!pass) {
-    lines.push(`Regressions: ${regressions.length}`);
+    lines.push(`Regressions: ${regressions}`);
     lines.push("");
   }
 
@@ -241,7 +371,7 @@ async function main() {
   const baseline = JSON.parse(await fs.readFile(baselinePath, "utf8"));
   const current = JSON.parse(await fs.readFile(currentPath, "utf8"));
 
-  const { comparisons, pass } = compareStorageBenchmarks({
+  const { comparisons, metadataComparisons, pass } = compareStorageBenchmarks({
     baseline,
     current,
     thresholdPct,
@@ -254,6 +384,7 @@ async function main() {
     current,
     thresholdPct,
     comparisons,
+    metadataComparisons,
   });
   await fs.writeFile(outputMd, markdown, "utf8");
 
@@ -261,7 +392,7 @@ async function main() {
     await fs.mkdir(path.dirname(outputJson), { recursive: true });
     await fs.writeFile(
       outputJson,
-      `${JSON.stringify({ thresholdPct, pass, comparisons }, null, 2)}\n`,
+      `${JSON.stringify({ thresholdPct, pass, metadataComparisons, comparisons }, null, 2)}\n`,
       "utf8",
     );
   }
@@ -271,9 +402,16 @@ async function main() {
     return;
   }
 
-  const regressions = comparisons.filter((c) => c.regression);
-  console.error(`FAIL: ${regressions.length} regressions beyond ${thresholdPct}%`);
-  for (const r of regressions) {
+  const metricRegressions = comparisons.filter((c) => c.regression);
+  const metaRegressions = metadataComparisons.filter((c) => c.regression);
+  const total = metricRegressions.length + metaRegressions.length;
+  console.error(`FAIL: ${total} regressions beyond ${thresholdPct}%`);
+  for (const r of metaRegressions) {
+    console.error(
+      `- ${r.field}: baseline=${r.baseline ?? "n/a"} current=${r.current ?? "n/a"} (${r.note ?? "regressed"})`,
+    );
+  }
+  for (const r of metricRegressions) {
     const base = r.baseline ?? "n/a";
     const cur = r.current ?? "n/a";
     const delta = r.deltaPct === null ? "n/a" : fmtSignedPct(r.deltaPct);
@@ -288,4 +426,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   });
 }
-
