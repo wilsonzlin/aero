@@ -2847,6 +2847,7 @@ impl AerogpuD3d11Executor {
         staging.unmap();
 
         encoder.copy_buffer_to_buffer(&staging, 0, dst, offset_bytes, byte_len as u64);
+        self.encoder_has_commands = true;
         Ok(())
     }
 
@@ -3681,6 +3682,7 @@ impl AerogpuD3d11Executor {
                 let scratch = self.get_or_create_constant_buffer_scratch(stage, slot, size);
                 let src = unsafe { &*src_ptr };
                 encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
+                self.encoder_has_commands = true;
             }
         }
 
@@ -5188,4 +5190,48 @@ fn map_blend_op(v: u32) -> Option<wgpu::BlendOperation> {
 
 fn anyhow_guest_mem(err: GuestMemoryError) -> anyhow::Error {
     anyhow!("{err}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode;
+
+    #[test]
+    fn set_shader_constants_f_marks_encoder_has_commands() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    eprintln!("wgpu unavailable ({e:#}); skipping encoder_has_commands test");
+                    return;
+                }
+            };
+
+            assert!(!exec.encoder_has_commands);
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd test encoder_has_commands"),
+                });
+
+            let vec4_count = 1u32;
+            let size_bytes = (24 + 16) as u32;
+            let mut cmd_bytes = Vec::with_capacity(size_bytes as usize);
+            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::SetShaderConstantsF as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&size_bytes.to_le_bytes());
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_register
+            cmd_bytes.extend_from_slice(&vec4_count.to_le_bytes());
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            cmd_bytes.extend_from_slice(&[0xABu8; 16]); // vec4 data
+            assert_eq!(cmd_bytes.len(), size_bytes as usize);
+
+            exec.exec_set_shader_constants_f(&mut encoder, &cmd_bytes)
+                .expect("SET_SHADER_CONSTANTS_F should succeed");
+
+            assert!(exec.encoder_has_commands);
+        });
+    }
 }
