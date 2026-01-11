@@ -50,6 +50,15 @@ Rules:
 
 > Rationale for “only latch when enabled”: if vblank status bits accumulate while masked, re-enabling can cause an immediate stale interrupt and break `WaitForVerticalBlankEvent` pacing.
 
+### Scanout enable gating
+
+The emulator device model gates vblank tick generation on scanout enable:
+
+* Vblank ticks (and `SCANOUT0_VBLANK_*` counter advancement) occur only while `AEROGPU_MMIO_REG_SCANOUT0_ENABLE != 0`.
+* When scanout is disabled (`SCANOUT0_ENABLE = 0`), the device should stop vblank scheduling and clear any pending vblank IRQ status bit.
+
+This matches Windows 7 display stack expectations: vblank wait paths should only be active while a VidPn source is visible/enabled.
+
 ---
 
 ## MMIO registers
