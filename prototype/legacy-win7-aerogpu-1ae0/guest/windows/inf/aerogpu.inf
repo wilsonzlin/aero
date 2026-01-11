@@ -50,7 +50,8 @@ DriverVer=01/10/2026,0.1.0.0
 CatalogFile=aerogpu.cat
 
 [Manufacturer]
-%Aero%=Aero,NTamd64.6.1,NTx86.6.1
+; This archived prototype package only builds x64 binaries.
+%Aero%=Aero,NTamd64.6.1
 
 [Aero.NTamd64.6.1]
 %AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\VEN_1AE0&DEV_0001
@@ -60,13 +61,6 @@ CatalogFile=aerogpu.cat
 ;   an INF (especially with aggressive FeatureScore) can hijack display driver
 ;   binding on unrelated hardware.
 ;   This is prototype bring-up glue only; do not enable for real installs.
-;
-; %AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\CC_030000
-
-[Aero.NTx86.6.1]
-%AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\VEN_1AE0&DEV_0001
-;
-; See SAFETY WARNING above.
 ;
 ; %AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\CC_030000
 
