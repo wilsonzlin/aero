@@ -123,6 +123,76 @@ struct FenceSnapshot {
   uint64_t last_completed = 0;
 };
 
+#if defined(_WIN32)
+
+// Best-effort HDC -> adapter LUID translation.
+//
+// Win7's D3D9 runtime and DWM may open the same adapter using both the HDC and
+// LUID paths. Returning a stable LUID from OpenAdapterFromHdc is critical so our
+// adapter cache (keyed by LUID) maps both opens to the same Adapter instance.
+using NTSTATUS = LONG;
+
+constexpr bool nt_success(NTSTATUS st) {
+  return st >= 0;
+}
+
+struct D3DKMT_OPENADAPTERFROMHDC {
+  HDC hDc;
+  UINT hAdapter;
+  LUID AdapterLuid;
+  UINT VidPnSourceId;
+};
+
+struct D3DKMT_CLOSEADAPTER {
+  UINT hAdapter;
+};
+
+using PFND3DKMTOpenAdapterFromHdc = NTSTATUS(__stdcall*)(D3DKMT_OPENADAPTERFROMHDC* pData);
+using PFND3DKMTCloseAdapter = NTSTATUS(__stdcall*)(D3DKMT_CLOSEADAPTER* pData);
+
+bool get_luid_from_hdc(HDC hdc, LUID* luid_out) {
+  if (!hdc || !luid_out) {
+    return false;
+  }
+
+  HMODULE gdi32 = LoadLibraryW(L"gdi32.dll");
+  if (!gdi32) {
+    return false;
+  }
+
+  auto* open_adapter_from_hdc =
+      reinterpret_cast<PFND3DKMTOpenAdapterFromHdc>(GetProcAddress(gdi32, "D3DKMTOpenAdapterFromHdc"));
+  auto* close_adapter =
+      reinterpret_cast<PFND3DKMTCloseAdapter>(GetProcAddress(gdi32, "D3DKMTCloseAdapter"));
+  if (!open_adapter_from_hdc || !close_adapter) {
+    FreeLibrary(gdi32);
+    return false;
+  }
+
+  D3DKMT_OPENADAPTERFROMHDC open{};
+  open.hDc = hdc;
+  open.hAdapter = 0;
+  std::memset(&open.AdapterLuid, 0, sizeof(open.AdapterLuid));
+  open.VidPnSourceId = 0;
+
+  const NTSTATUS st = open_adapter_from_hdc(&open);
+  if (!nt_success(st) || open.hAdapter == 0) {
+    FreeLibrary(gdi32);
+    return false;
+  }
+
+  *luid_out = open.AdapterLuid;
+
+  D3DKMT_CLOSEADAPTER close{};
+  close.hAdapter = open.hAdapter;
+  close_adapter(&close);
+
+  FreeLibrary(gdi32);
+  return true;
+}
+
+#endif
+
 FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
   FenceSnapshot snap{};
   if (!adapter) {
@@ -2317,16 +2387,22 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
     return E_INVALIDARG;
   }
 
-  // For bring-up we treat the driver as single-adapter; the runtime may still
-  // choose between HDC and LUID open paths depending on the caller (e.g. DWM).
-  const LUID luid = aerogpu::default_luid();
+  LUID luid = aerogpu::default_luid();
+#if defined(_WIN32)
+  if (pOpenAdapter->hDc && !get_luid_from_hdc(pOpenAdapter->hDc, &luid)) {
+    aerogpu::logf("aerogpu-d3d9: OpenAdapterFromHdc failed to resolve adapter LUID from HDC\n");
+  }
+#endif
   pOpenAdapter->AdapterLuid = luid;
 
-  aerogpu::logf("aerogpu-d3d9: OpenAdapterFromHdc hdc=%p\n", pOpenAdapter->hDc);
+  aerogpu::logf("aerogpu-d3d9: OpenAdapterFromHdc hdc=%p LUID=%08x:%08x\n",
+                pOpenAdapter->hDc,
+                static_cast<unsigned>(luid.HighPart),
+                static_cast<unsigned>(luid.LowPart));
   const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromHdc",
-                                                pOpenAdapter->Interface,
-                                                pOpenAdapter->Version,
-                                                pOpenAdapter->pAdapterCallbacks,
+                                                 pOpenAdapter->Interface,
+                                                 pOpenAdapter->Version,
+                                                 pOpenAdapter->pAdapterCallbacks,
                                                 pOpenAdapter->pAdapterCallbacks2,
                                                 luid,
                                                 &pOpenAdapter->hAdapter,
