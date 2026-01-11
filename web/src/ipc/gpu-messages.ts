@@ -24,6 +24,28 @@ export interface GpuWorkerInitOptions {
    * Unknown features should be rejected by the implementation.
    */
   requiredFeatures?: string[];
+
+  /**
+   * Optional output canvas size in CSS pixels. When unset, defaults to the source
+   * framebuffer width/height.
+   */
+  outputWidth?: number;
+  outputHeight?: number;
+
+  /**
+   * How the framebuffer should be mapped into the output canvas when sizes differ.
+   */
+  scaleMode?: "stretch" | "fit" | "integer";
+
+  /**
+   * Texture filtering mode.
+   */
+  filter?: "nearest" | "linear";
+
+  /**
+   * Clear color used for letterboxing/pillarboxing (RGBA floats).
+   */
+  clearColor?: [number, number, number, number];
 }
 
 export interface GpuAdapterInfo {
@@ -39,4 +61,3 @@ export interface FrameTimingsReport {
   cpu_submit_us: number;
   gpu_us?: number;
 }
-

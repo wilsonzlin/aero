@@ -1483,10 +1483,10 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
   if (forceBackend) {
     backends = [forceBackend];
   } else {
-    backends = preferWebGpu ? ["webgpu", "webgl2_raw"] : ["webgl2_raw", "webgpu"];
+    backends = preferWebGpu ? ["webgpu", "webgl2_wgpu", "webgl2_raw"] : ["webgl2_wgpu", "webgl2_raw", "webgpu"];
     if (disableWebGpu && !preferWebGpu) {
       // When WebGPU is disabled and WebGL2 is preferred, never attempt WebGPU.
-      backends = ["webgl2_raw"];
+      backends = ["webgl2_wgpu", "webgl2_raw"];
     }
   }
 

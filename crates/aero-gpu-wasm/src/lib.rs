@@ -102,6 +102,13 @@ mod wasm {
         _pad: [u32; 3],
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ScaleMode {
+        Stretch,
+        Fit,
+        Integer,
+    }
+
     struct AdapterInfo {
         vendor: Option<String>,
         renderer: Option<String>,
@@ -129,19 +136,18 @@ mod wasm {
         bind_group_layout: wgpu::BindGroupLayout,
 
         sampler: wgpu::Sampler,
+        scale_mode: ScaleMode,
+        clear_color: wgpu::Color,
         viewport_buffer: wgpu::Buffer,
         params_buffer: wgpu::Buffer,
 
         // Framebuffer texture (RGBA8, linear).
-        framebuffer_size: (u32, u32),
+        src_size: (u32, u32),
         framebuffer_texture: wgpu::Texture,
         framebuffer_view: wgpu::TextureView,
         bind_group: wgpu::BindGroup,
-
-        // Screenshot path: render the same blit into a copy-src texture.
-        capture_size: (u32, u32),
-        capture_texture: Option<wgpu::Texture>,
-        capture_view: Option<wgpu::TextureView>,
+        upload_scratch: Vec<u8>,
+        upload_scratch_bytes_per_row: u32,
 
         // Best-effort timing report (CPU only for now).
         profiler: GpuProfiler,
@@ -152,6 +158,11 @@ mod wasm {
             canvas: OffscreenCanvas,
             backend_kind: GpuBackendKind,
             required_features: wgpu::Features,
+            src_width: u32,
+            src_height: u32,
+            scale_mode: ScaleMode,
+            filter_mode: wgpu::FilterMode,
+            clear_color: wgpu::Color,
         ) -> Result<Self, JsValue> {
             let backends = match backend_kind {
                 GpuBackendKind::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
@@ -320,9 +331,9 @@ mod wasm {
 
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("aero-gpu-wasm.blit.sampler"),
-                mag_filter: wgpu::FilterMode::Nearest,
-                min_filter: wgpu::FilterMode::Nearest,
-                mipmap_filter: wgpu::FilterMode::Nearest,
+                mag_filter: filter_mode,
+                min_filter: filter_mode,
+                mipmap_filter: filter_mode,
                 ..Default::default()
             });
 
@@ -340,9 +351,9 @@ mod wasm {
                 mapped_at_creation: false,
             });
 
-            // Create initial framebuffer texture at canvas size.
-            let fb_w = canvas.width().max(1);
-            let fb_h = canvas.height().max(1);
+            // Create initial source framebuffer texture at the *source* size (not the canvas size).
+            let fb_w = src_width.max(1);
+            let fb_h = src_height.max(1);
             let (framebuffer_texture, framebuffer_view) =
                 create_framebuffer_texture(&device, fb_w, fb_h);
 
@@ -358,14 +369,14 @@ mod wasm {
             flags &= !FLAG_FLIP_Y;
             flags &= !FLAG_PREMULTIPLY_ALPHA;
 
-            queue.write_buffer(
-                &viewport_buffer,
-                0,
-                bytemuck::bytes_of(&ViewportTransform {
-                    scale: [1.0, 1.0],
-                    offset: [0.0, 0.0],
-                }),
+            let viewport_transform = compute_viewport_transform(
+                canvas.width().max(1),
+                canvas.height().max(1),
+                fb_w,
+                fb_h,
+                scale_mode,
             );
+            queue.write_buffer(&viewport_buffer, 0, bytemuck::bytes_of(&viewport_transform));
             queue.write_buffer(
                 &params_buffer,
                 0,
@@ -412,15 +423,16 @@ mod wasm {
                 pipeline,
                 bind_group_layout,
                 sampler,
+                scale_mode,
+                clear_color,
                 viewport_buffer,
                 params_buffer,
-                framebuffer_size: (fb_w, fb_h),
+                src_size: (fb_w, fb_h),
                 framebuffer_texture,
                 framebuffer_view,
                 bind_group,
-                capture_size: (0, 0),
-                capture_texture: None,
-                capture_view: None,
+                upload_scratch: Vec::new(),
+                upload_scratch_bytes_per_row: 0,
                 profiler: GpuProfiler::new_cpu_only(backend_kind),
             })
         }
@@ -437,22 +449,23 @@ mod wasm {
             self.canvas.set_height(pixel_height.max(1));
         }
 
-        fn resize(&mut self, pixel_width: u32, pixel_height: u32) {
-            let pixel_width = pixel_width.max(1);
-            let pixel_height = pixel_height.max(1);
+        fn resize(&mut self, src_width: u32, src_height: u32, out_width_px: u32, out_height_px: u32) {
+            let src_width = src_width.max(1);
+            let src_height = src_height.max(1);
+            let out_width_px = out_width_px.max(1);
+            let out_height_px = out_height_px.max(1);
 
-            self.set_canvas_size(pixel_width, pixel_height);
+            self.set_canvas_size(out_width_px, out_height_px);
 
-            self.config.width = pixel_width;
-            self.config.height = pixel_height;
+            self.config.width = out_width_px;
+            self.config.height = out_height_px;
             self.surface.configure(&self.device, &self.config);
 
-            if self.framebuffer_size != (pixel_width, pixel_height) {
-                let (tex, view) =
-                    create_framebuffer_texture(&self.device, pixel_width, pixel_height);
+            if self.src_size != (src_width, src_height) {
+                let (tex, view) = create_framebuffer_texture(&self.device, src_width, src_height);
                 self.framebuffer_texture = tex;
                 self.framebuffer_view = view;
-                self.framebuffer_size = (pixel_width, pixel_height);
+                self.src_size = (src_width, src_height);
 
                 self.bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("aero-gpu-wasm.blit.bind_group"),
@@ -478,44 +491,71 @@ mod wasm {
                 });
             }
 
-            if self.capture_size != (pixel_width, pixel_height) {
-                self.capture_size = (pixel_width, pixel_height);
-                self.capture_texture = None;
-                self.capture_view = None;
-            }
+            // Update viewport transform for letterboxing/pillarboxing.
+            let viewport_transform = compute_viewport_transform(
+                out_width_px,
+                out_height_px,
+                src_width,
+                src_height,
+                self.scale_mode,
+            );
+            self.queue.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytemuck::bytes_of(&viewport_transform),
+            );
         }
 
-        fn upload_rgba8(&self, rgba8: &[u8], width: u32, height: u32) -> Result<(), JsValue> {
+        fn upload_rgba8_strided(&mut self, rgba8: &[u8], stride_bytes: u32) -> Result<(), JsValue> {
+            let (width, height) = self.src_size;
             if width == 0 || height == 0 {
                 return Ok(());
             }
-            let expected_len = width as usize * height as usize * 4;
-            if rgba8.len() != expected_len {
+
+            let tight_row_bytes = width
+                .checked_mul(4)
+                .ok_or_else(|| JsValue::from_str("Framebuffer width overflow"))?;
+
+            if stride_bytes < tight_row_bytes {
                 return Err(JsValue::from_str(&format!(
-                    "Invalid RGBA8 buffer size: got {}, expected {}",
+                    "Invalid stride_bytes: got {stride_bytes}, expected at least {tight_row_bytes}",
+                )));
+            }
+
+            let expected_len = stride_bytes as usize * height as usize;
+            if rgba8.len() < expected_len {
+                return Err(JsValue::from_str(&format!(
+                    "Frame data too small: got {}, expected at least {}",
                     rgba8.len(),
                     expected_len
                 )));
             }
-            if self.framebuffer_size != (width, height) {
-                return Err(JsValue::from_str(
-                    "Framebuffer size mismatch; call resize() first",
-                ));
-            }
 
-            let bytes_per_row = width * 4;
-            let padded_bpr = padded_bytes_per_row(bytes_per_row);
-            let mut upload = Vec::new();
-            if padded_bpr == bytes_per_row {
-                upload.extend_from_slice(rgba8);
+            let upload_bpr = if stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 {
+                stride_bytes
             } else {
-                upload.resize(padded_bpr as usize * height as usize, 0);
-                for y in 0..height as usize {
-                    let src_off = y * bytes_per_row as usize;
-                    let dst_off = y * padded_bpr as usize;
-                    upload[dst_off..dst_off + bytes_per_row as usize]
-                        .copy_from_slice(&rgba8[src_off..src_off + bytes_per_row as usize]);
+                padded_bytes_per_row(tight_row_bytes)
+            };
+
+            let data: &[u8];
+            if upload_bpr == stride_bytes {
+                data = &rgba8[..expected_len];
+            } else {
+                let total = upload_bpr as usize * height as usize;
+                if self.upload_scratch.len() != total || self.upload_scratch_bytes_per_row != upload_bpr {
+                    self.upload_scratch = vec![0u8; total];
+                    self.upload_scratch_bytes_per_row = upload_bpr;
                 }
+
+                for y in 0..height as usize {
+                    let src_off = y * stride_bytes as usize;
+                    let dst_off = y * upload_bpr as usize;
+                    let row = &mut self.upload_scratch[dst_off..dst_off + upload_bpr as usize];
+                    row[..tight_row_bytes as usize]
+                        .copy_from_slice(&rgba8[src_off..src_off + tight_row_bytes as usize]);
+                    row[tight_row_bytes as usize..].fill(0);
+                }
+                data = &self.upload_scratch;
             }
 
             self.queue.write_texture(
@@ -525,10 +565,10 @@ mod wasm {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &upload,
+                data,
                 wgpu::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: Some(padded_bpr),
+                    bytes_per_row: Some(upload_bpr),
                     rows_per_image: Some(height),
                 },
                 wgpu::Extent3d {
@@ -561,7 +601,7 @@ mod wasm {
                         view: &view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            load: wgpu::LoadOp::Clear(self.clear_color),
                             store: wgpu::StoreOp::Store,
                         },
                     })],
@@ -581,42 +621,15 @@ mod wasm {
             Ok(())
         }
 
-        async fn screenshot(&mut self) -> Result<Vec<u8>, JsValue> {
-            let (width, height) = self.framebuffer_size;
+        async fn screenshot(&self) -> Result<Vec<u8>, JsValue> {
+            let (width, height) = self.src_size;
             if width == 0 || height == 0 {
                 return Ok(Vec::new());
             }
 
-            if self.capture_texture.is_none() {
-                let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("aero-gpu-wasm.screenshot.capture_texture"),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: self.surface_format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                    view_formats: &[],
-                });
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                self.capture_texture = Some(texture);
-                self.capture_view = Some(view);
-            }
-
-            let capture_view = self
-                .capture_view
-                .as_ref()
-                .expect("capture_view should exist");
-            let capture_texture = self
-                .capture_texture
-                .as_ref()
-                .expect("capture_texture should exist");
-
-            let bytes_per_row = width * 4;
+            let bytes_per_row = width
+                .checked_mul(4)
+                .ok_or_else(|| JsValue::from_str("Framebuffer width overflow"))?;
             let padded_bpr = padded_bytes_per_row(bytes_per_row);
             let buffer_size = padded_bpr as u64 * height as u64;
 
@@ -633,29 +646,9 @@ mod wasm {
                     label: Some("aero-gpu-wasm.screenshot.encoder"),
                 });
 
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("aero-gpu-wasm.screenshot.pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: capture_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.draw(0..6, 0..1);
-            }
-
             encoder.copy_texture_to_buffer(
                 wgpu::ImageCopyTexture {
-                    texture: capture_texture,
+                    texture: &self.framebuffer_texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -711,13 +704,6 @@ mod wasm {
             drop(mapped);
             readback.unmap();
 
-            if is_bgra(self.surface_format) {
-                // Convert BGRA -> RGBA.
-                for px in out.chunks_exact_mut(4) {
-                    px.swap(0, 2);
-                }
-            }
-
             Ok(out)
         }
 
@@ -751,7 +737,14 @@ mod wasm {
             obj.into()
         }
 
-        fn capabilities_js(&self, css_width: u32, css_height: u32, dpr: f64) -> JsValue {
+        fn capabilities_js(
+            &self,
+            src_width: u32,
+            src_height: u32,
+            output_css_width: u32,
+            output_css_height: u32,
+            dpr: f64,
+        ) -> JsValue {
             let pixel_width = self.canvas.width();
             let pixel_height = self.canvas.height();
 
@@ -775,7 +768,12 @@ mod wasm {
             let _ = Reflect::set(
                 &obj,
                 &JsValue::from_str("cssSize"),
-                &size_obj(css_width, css_height),
+                &size_obj(output_css_width, output_css_height),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("srcSize"),
+                &size_obj(src_width, src_height),
             );
             let _ = Reflect::set(
                 &obj,
@@ -821,11 +819,50 @@ mod wasm {
         ((bytes_per_row + align - 1) / align) * align
     }
 
-    fn is_bgra(format: wgpu::TextureFormat) -> bool {
-        matches!(
-            format,
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-        )
+    fn compute_viewport_transform(
+        canvas_width_px: u32,
+        canvas_height_px: u32,
+        src_width: u32,
+        src_height: u32,
+        mode: ScaleMode,
+    ) -> ViewportTransform {
+        let canvas_w = canvas_width_px.max(1) as f64;
+        let canvas_h = canvas_height_px.max(1) as f64;
+        let src_w = src_width.max(1) as f64;
+        let src_h = src_height.max(1) as f64;
+
+        let (x, y, w, h) = match mode {
+            ScaleMode::Stretch => (0.0, 0.0, canvas_w, canvas_h),
+            ScaleMode::Fit | ScaleMode::Integer => {
+                let scale_fit = (canvas_w / src_w).min(canvas_h / src_h);
+                let scale = if mode == ScaleMode::Integer {
+                    let integer = scale_fit.floor();
+                    if integer >= 1.0 { integer } else { scale_fit }
+                } else {
+                    scale_fit
+                };
+
+                let w = (src_w * scale).floor().max(1.0);
+                let h = (src_h * scale).floor().max(1.0);
+                let x = ((canvas_w - w) / 2.0).floor();
+                let y = ((canvas_h - h) / 2.0).floor();
+                (x, y, w, h)
+            }
+        };
+
+        let scale_x = (w / canvas_w).clamp(0.0, 1.0);
+        let scale_y = (h / canvas_h).clamp(0.0, 1.0);
+
+        // Convert pixel-space viewport (top-left origin) to clip-space scale/offset.
+        // X: left=-1, right=+1
+        // Y: top=+1, bottom=-1
+        let offset_x = ((2.0 * x + w) / canvas_w) - 1.0;
+        let offset_y = 1.0 - ((2.0 * y + h) / canvas_h);
+
+        ViewportTransform {
+            scale: [scale_x as f32, scale_y as f32],
+            offset: [offset_x as f32, offset_y as f32],
+        }
     }
 
     fn needs_srgb_encode_in_shader(format: wgpu::TextureFormat) -> bool {
@@ -930,8 +967,10 @@ mod wasm {
     }
 
     struct GpuState {
-        css_width: u32,
-        css_height: u32,
+        src_width: u32,
+        src_height: u32,
+        output_width_override: Option<u32>,
+        output_height_override: Option<u32>,
         device_pixel_ratio: f64,
         presenter: Presenter,
     }
@@ -965,6 +1004,97 @@ mod wasm {
             return None;
         }
         value.as_bool()
+    }
+
+    fn parse_u32(obj: &JsValue, key: &str) -> Option<u32> {
+        if obj.is_undefined() || obj.is_null() {
+            return None;
+        }
+        let value = Reflect::get(obj, &JsValue::from_str(key)).ok()?;
+        if value.is_undefined() || value.is_null() {
+            return None;
+        }
+        let n = value.as_f64()?;
+        if !n.is_finite() || n <= 0.0 {
+            return None;
+        }
+        Some(n.round() as u32)
+    }
+
+    fn parse_filter_mode(obj: &JsValue) -> Result<wgpu::FilterMode, JsValue> {
+        if obj.is_undefined() || obj.is_null() {
+            return Ok(wgpu::FilterMode::Nearest);
+        }
+        let value = Reflect::get(obj, &JsValue::from_str("filter")).unwrap_or(JsValue::UNDEFINED);
+        if value.is_undefined() || value.is_null() {
+            return Ok(wgpu::FilterMode::Nearest);
+        }
+        let Some(mode) = value.as_string() else {
+            return Err(JsValue::from_str("Presenter filter must be a string ('nearest' | 'linear')"));
+        };
+        match mode.as_str() {
+            "nearest" => Ok(wgpu::FilterMode::Nearest),
+            "linear" => Ok(wgpu::FilterMode::Linear),
+            other => Err(JsValue::from_str(&format!(
+                "Unsupported filter mode: {other} (expected 'nearest' or 'linear')"
+            ))),
+        }
+    }
+
+    fn parse_scale_mode(obj: &JsValue) -> Result<ScaleMode, JsValue> {
+        if obj.is_undefined() || obj.is_null() {
+            return Ok(ScaleMode::Fit);
+        }
+        let value = Reflect::get(obj, &JsValue::from_str("scaleMode")).unwrap_or(JsValue::UNDEFINED);
+        if value.is_undefined() || value.is_null() {
+            return Ok(ScaleMode::Fit);
+        }
+        let Some(mode) = value.as_string() else {
+            return Err(JsValue::from_str("scaleMode must be a string ('stretch' | 'fit' | 'integer')"));
+        };
+        match mode.as_str() {
+            "stretch" => Ok(ScaleMode::Stretch),
+            "fit" => Ok(ScaleMode::Fit),
+            "integer" => Ok(ScaleMode::Integer),
+            other => Err(JsValue::from_str(&format!(
+                "Unsupported scaleMode: {other} (expected 'stretch' | 'fit' | 'integer')"
+            ))),
+        }
+    }
+
+    fn parse_clear_color(obj: &JsValue) -> Result<wgpu::Color, JsValue> {
+        let default = wgpu::Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+
+        if obj.is_undefined() || obj.is_null() {
+            return Ok(default);
+        }
+        let value = Reflect::get(obj, &JsValue::from_str("clearColor")).unwrap_or(JsValue::UNDEFINED);
+        if value.is_undefined() || value.is_null() {
+            return Ok(default);
+        }
+        if !Array::is_array(&value) {
+            return Err(JsValue::from_str("clearColor must be a 4-element array [r,g,b,a]"));
+        }
+        let arr: Array = value.unchecked_into();
+        if arr.length() < 4 {
+            return Err(JsValue::from_str("clearColor must have at least 4 elements [r,g,b,a]"));
+        }
+        let to_num = |v: JsValue, idx: usize| -> Result<f64, JsValue> {
+            v.as_f64().ok_or_else(|| {
+                JsValue::from_str(&format!("clearColor[{idx}] must be a number"))
+            })
+        };
+        Ok(wgpu::Color {
+            r: to_num(arr.get(0), 0)?,
+            g: to_num(arr.get(1), 1)?,
+            b: to_num(arr.get(2), 2)?,
+            a: to_num(arr.get(3), 3)?,
+        })
     }
 
     fn parse_required_features(obj: &JsValue) -> Result<wgpu::Features, JsValue> {
@@ -1099,18 +1229,30 @@ mod wasm {
         let prefer_webgpu = parse_bool(&options, "preferWebGpu").unwrap_or(true);
         let disable_webgpu = parse_bool(&options, "disableWebGpu").unwrap_or(false);
 
-        let css_width = width.max(1);
-        let css_height = height.max(1);
+        let src_width = width.max(1);
+        let src_height = height.max(1);
+
+        // Optional output size override (CSS pixels).
+        let output_width_override = parse_u32(&options, "outputWidth");
+        let output_height_override = parse_u32(&options, "outputHeight");
+
         let device_pixel_ratio = if dpr.is_finite() && dpr > 0.0 {
             dpr
         } else {
             1.0
         };
 
-        let pixel_width = clamp_pixel_size(css_width, device_pixel_ratio);
-        let pixel_height = clamp_pixel_size(css_height, device_pixel_ratio);
-        offscreen_canvas.set_width(pixel_width);
-        offscreen_canvas.set_height(pixel_height);
+        let output_css_width = output_width_override.unwrap_or(src_width);
+        let output_css_height = output_height_override.unwrap_or(src_height);
+
+        let out_width_px = clamp_pixel_size(output_css_width, device_pixel_ratio);
+        let out_height_px = clamp_pixel_size(output_css_height, device_pixel_ratio);
+        offscreen_canvas.set_width(out_width_px);
+        offscreen_canvas.set_height(out_height_px);
+
+        let scale_mode = parse_scale_mode(&options)?;
+        let filter_mode = parse_filter_mode(&options)?;
+        let clear_color = parse_clear_color(&options)?;
 
         let backends = if disable_webgpu {
             vec![GpuBackendKind::WebGl2]
@@ -1129,13 +1271,26 @@ mod wasm {
                 GpuBackendKind::WebGl2 => wgpu::Features::empty(),
             };
 
-            match Presenter::new(offscreen_canvas.clone(), backend_kind, required_features).await {
+            match Presenter::new(
+                offscreen_canvas.clone(),
+                backend_kind,
+                required_features,
+                src_width,
+                src_height,
+                scale_mode,
+                filter_mode,
+                clear_color,
+            )
+            .await
+            {
                 Ok(mut presenter) => {
-                    presenter.resize(pixel_width, pixel_height);
+                    presenter.resize(src_width, src_height, out_width_px, out_height_px);
 
                     let state = GpuState {
-                        css_width,
-                        css_height,
+                        src_width,
+                        src_height,
+                        output_width_override,
+                        output_height_override,
                         device_pixel_ratio,
                         presenter,
                     };
@@ -1158,19 +1313,39 @@ mod wasm {
     }
 
     #[wasm_bindgen]
-    pub fn resize(width: u32, height: u32, dpr: f64) -> Result<(), JsValue> {
+    pub fn resize(
+        width: u32,
+        height: u32,
+        dpr: f64,
+        output_width_css: u32,
+        output_height_css: u32,
+    ) -> Result<(), JsValue> {
         with_state_mut(|state| {
-            state.css_width = width.max(1);
-            state.css_height = height.max(1);
+            state.src_width = width.max(1);
+            state.src_height = height.max(1);
             state.device_pixel_ratio = if dpr.is_finite() && dpr > 0.0 {
                 dpr
             } else {
                 1.0
             };
 
-            let pixel_width = clamp_pixel_size(state.css_width, state.device_pixel_ratio);
-            let pixel_height = clamp_pixel_size(state.css_height, state.device_pixel_ratio);
-            state.presenter.resize(pixel_width, pixel_height);
+            // Backward-compatible: if callers omit the output size arguments (or pass 0),
+            // keep whatever override was configured at init time.
+            if output_width_css > 0 {
+                state.output_width_override = Some(output_width_css);
+            }
+            if output_height_css > 0 {
+                state.output_height_override = Some(output_height_css);
+            }
+
+            let output_css_width = state.output_width_override.unwrap_or(state.src_width);
+            let output_css_height = state.output_height_override.unwrap_or(state.src_height);
+
+            let out_width_px = clamp_pixel_size(output_css_width, state.device_pixel_ratio);
+            let out_height_px = clamp_pixel_size(output_css_height, state.device_pixel_ratio);
+            state
+                .presenter
+                .resize(state.src_width, state.src_height, out_width_px, out_height_px);
             Ok(())
         })
     }
@@ -1188,9 +1363,13 @@ mod wasm {
     #[wasm_bindgen]
     pub fn capabilities() -> Result<JsValue, JsValue> {
         with_state(|state| {
+            let output_css_width = state.output_width_override.unwrap_or(state.src_width);
+            let output_css_height = state.output_height_override.unwrap_or(state.src_height);
             Ok(state.presenter.capabilities_js(
-                state.css_width,
-                state.css_height,
+                state.src_width,
+                state.src_height,
+                output_css_width,
+                output_css_height,
                 state.device_pixel_ratio,
             ))
         })
@@ -1199,16 +1378,24 @@ mod wasm {
     #[wasm_bindgen]
     pub fn present_test_pattern() -> Result<(), JsValue> {
         with_state_mut(|state| {
-            let (w, h) = state.presenter.framebuffer_size;
+            let (w, h) = state.presenter.src_size;
             let rgba = make_test_pattern(w, h);
-            state.presenter.upload_rgba8(&rgba, w, h)?;
+            state.presenter.upload_rgba8_strided(&rgba, w * 4)?;
+            state.presenter.present()
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn present_rgba8888(frame: &[u8], stride_bytes: u32) -> Result<(), JsValue> {
+        with_state_mut(|state| {
+            state.presenter.upload_rgba8_strided(frame, stride_bytes)?;
             state.presenter.present()
         })
     }
 
     #[wasm_bindgen]
     pub async fn request_screenshot() -> Result<Uint8Array, JsValue> {
-        let mut state = STATE
+        let state = STATE
             .with(|slot| slot.borrow_mut().take())
             .ok_or_else(|| JsValue::from_str("GPU backend not initialized."))?;
 
@@ -1229,6 +1416,14 @@ mod wasm {
             Some(report) => Ok(timings_to_js(&report)),
             None => Ok(JsValue::NULL),
         })
+    }
+
+    #[wasm_bindgen]
+    pub fn destroy_gpu() -> Result<(), JsValue> {
+        STATE.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+        Ok(())
     }
 }
 

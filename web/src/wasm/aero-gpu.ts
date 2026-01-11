@@ -111,9 +111,11 @@ export async function init_gpu(
   await mod.init_gpu(offscreenCanvas, width, height, dpr, options);
 }
 
-export function resize(width: number, height: number, dpr: number): void {
+export function resize(width: number, height: number, dpr: number, outputWidth?: number, outputHeight?: number): void {
   const mod = requireLoaded();
-  mod.resize(width, height, dpr);
+  // `outputWidth/outputHeight` are optional; when omitted we pass 0 so the wasm
+  // side can keep the existing override configured at init time.
+  mod.resize(width, height, dpr, outputWidth ?? 0, outputHeight ?? 0);
 }
 
 export function backend_kind(): BackendKind {
@@ -136,6 +138,11 @@ export function present_test_pattern(): void {
   mod.present_test_pattern();
 }
 
+export function present_rgba8888(frame: Uint8Array, strideBytes: number): void {
+  const mod = requireLoaded();
+  mod.present_rgba8888(frame, strideBytes);
+}
+
 export async function request_screenshot(): Promise<Uint8Array> {
   const mod = requireLoaded();
   return (await mod.request_screenshot()) as Uint8Array;
@@ -144,4 +151,9 @@ export async function request_screenshot(): Promise<Uint8Array> {
 export function get_frame_timings(): FrameTimingsReport | null {
   const mod = requireLoaded();
   return mod.get_frame_timings() as FrameTimingsReport | null;
+}
+
+export function destroy_gpu(): void {
+  const mod = requireLoaded();
+  mod.destroy_gpu();
 }
