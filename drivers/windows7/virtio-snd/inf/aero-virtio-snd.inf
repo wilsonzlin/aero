@@ -82,10 +82,11 @@ HKR,Drivers\topology,Description,,%VirtioSnd.TopologyDesc%
 
 HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
 HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSnd.EndpointDesc%
-
+HKR,%KSNAME_Wave%,Driver,,virtiosnd.sys
+ 
 HKR,%KSNAME_Topology%,CLSID,,%KSProxy.CLSID%
 HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSnd.TopologyDesc%
-
+HKR,%KSNAME_Topology%,Driver,,virtiosnd.sys
 [VirtioSnd.CopyFiles]
 virtiosnd.sys
 
