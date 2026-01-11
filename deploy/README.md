@@ -7,13 +7,19 @@ This directory contains **production** and **local-dev** deployment artifacts th
    - `SharedArrayBuffer` + WASM threads
    - some high-performance browser execution patterns
 3) Set additional hardening headers (CSP, Referrer-Policy, Permissions-Policy, etc.)
-4) Reverse-proxy backend HTTP APIs and WebSocket upgrades (e.g. `/tcp`, `/l2`) to backend services
+4) Reverse-proxy backend HTTP APIs and WebSocket upgrades (e.g. `/tcp`, `/tcp-mux`, `/l2`) to backend services
+5) Reverse-proxy WebRTC signaling + ICE discovery endpoints (e.g. `/webrtc/ice`) to the UDP relay
 
 The recommended topology is **single-origin**:
 
 ```
-Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-gateway / aero-l2-proxy
-                   same-origin for UI + APIs (no CORS needed)
+Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-gateway
+                     │                ──HTTP/WS──▶  aero-l2-proxy
+                     │                ──HTTP/WS──▶  aero-webrtc-udp-relay
+                     │
+                     └──UDP (ICE + relay data)────▶  aero-webrtc-udp-relay (published UDP range)
+
+Same-origin for UI + APIs (no CORS needed).
 ```
 
 ## Files
@@ -21,7 +27,9 @@ Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-ga
 - `deploy/docker-compose.yml` – runs:
   - `aero-proxy` (Caddy) on `:80/:443`
   - `aero-gateway` (`backend/aero-gateway`) on the internal docker network
-  - `aero-l2-proxy` (L2 tunnel proxy) on the internal docker network
+  - `aero-l2-proxy` (`crates/aero-l2-proxy`) on the internal docker network
+  - `aero-webrtc-udp-relay` (`proxy/webrtc-udp-relay`) for WebRTC UDP relay (HTTP behind Caddy, UDP published)
+  - (optional) `coturn` TURN server via compose profile
 - `deploy/caddy/Caddyfile` – TLS termination, COOP/COEP headers, reverse proxy rules
 - `deploy/scripts/smoke.sh` – builds + boots the compose stack and asserts key headers
 - `deploy/static/index.html` – a small **smoke test page** to validate `window.crossOriginIsolated`
@@ -142,6 +150,8 @@ cp deploy/.env.example deploy/.env
 - `AERO_GATEWAY_IMAGE` (default: `aero-gateway:dev`)
   - By default, `deploy/docker-compose.yml` builds `backend/aero-gateway` from source.
   - For production, prefer a published image and remove the compose `build:` stanza (or override it).
+- `AERO_GATEWAY_GIT_SHA` (default: `dev`)
+  - Optional build arg used to populate `GET /version` in `backend/aero-gateway`.
 - `AERO_L2_PROXY_IMAGE` (default: `aero-l2-proxy:dev`)
   - By default, `deploy/docker-compose.yml` builds `crates/aero-l2-proxy` from source.
   - For production, prefer a published image and remove/override the compose `build:` stanza.
@@ -149,6 +159,13 @@ cp deploy/.env.example deploy/.env
   - Only change if your gateway listens on a different port inside docker.
 - `AERO_L2_PROXY_UPSTREAM` (default: `aero-l2-proxy:8090`)
   - Only change if your L2 proxy listens on a different port inside docker.
+- `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
+  - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
+- `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)
+  - Only change if your relay listens on a different port inside docker.
+- `AERO_WEBRTC_UDP_RELAY_ALLOWED_ORIGINS_EXTRA` (default: empty)
+  - Optional comma-prefixed origins appended to the relay `ALLOWED_ORIGINS` allowlist.
+  - Example: `,https://localhost:5173`
 - `AERO_HSTS_MAX_AGE` (default: `0`)
   - `0` disables HSTS (good for local dev)
   - Recommended production value: `31536000` (1 year)
@@ -173,26 +190,59 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
 - `CROSS_ORIGIN_ISOLATION` (default in compose: `0`)
   - Set to `1` only if you are not injecting COOP/COEP headers at the edge proxy.
 
-### Using the real gateway in production
+### WebRTC UDP relay configuration
 
-`deploy/docker-compose.yml` builds `backend/aero-gateway` from source so `docker compose up`
-works without needing a published image.
+The UDP relay (`proxy/webrtc-udp-relay`) has two networking surfaces:
 
-For production deployments, you will typically:
+- **HTTP (same-origin)**: proxied behind Caddy for:
+  - `GET /webrtc/ice`
+  - `GET /webrtc/signal` (WebSocket)
+  - `POST /webrtc/offer` and `POST /offer`
+- **UDP (not proxyable)**: ICE + data plane UDP ports must be reachable by browser clients.
 
-1) Remove the `build:` stanza from the `aero-gateway` service (or override via a separate compose file)
-2) Set `image:` to a published gateway image
-3) Keep the proxy as-is (it is production-ready)
+Defaults in `deploy/docker-compose.yml`:
 
-The edge proxy (Caddy) automatically sets standard forwarding headers like:
-`X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host`.
+- `WEBRTC_UDP_PORT_MIN=50000`
+- `WEBRTC_UDP_PORT_MAX=50100`
+- Host publishing: `50000-50100/udp`
+
+If you change the ICE port range, you must update:
+
+1) The env vars (`WEBRTC_UDP_PORT_MIN/MAX`), and
+2) The published UDP port range (firewall + docker `ports:`).
+
+The relay also supports auth and a strict UDP destination policy; see:
+
+- `proxy/webrtc-udp-relay/README.md` (authoritative)
+
+## Optional TURN server (coturn profile)
+
+Some client networks require TURN for reliable UDP connectivity. This repo includes an opt-in `coturn` service:
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile turn up --build
+```
+
+Ports published by the TURN profile:
+
+- `3478/udp` (TURN listening port)
+- `49152-49200/udp` (TURN relay range; must match `proxy/webrtc-udp-relay/turn/turnserver.conf`)
+
+To have browsers actually use TURN, configure the relay’s ICE server list to include a TURN URL
+pointing at your host (often the same as `AERO_DOMAIN`):
+
+- `AERO_ICE_SERVERS_JSON`, or
+- `AERO_TURN_URLS` + `AERO_TURN_USERNAME` + `AERO_TURN_CREDENTIAL`
+
+> Note: `turnserver.conf` defaults to `user=aero:aero` for local dev. Change credentials and
+> `external-ip=...` before exposing TURN to the public internet.
 
 ## Local dev (self-signed TLS)
 
 Run:
 
 ```bash
-docker compose -f deploy/docker-compose.yml up
+docker compose -f deploy/docker-compose.yml up --build
 ```
 
 Then open:
@@ -279,11 +329,20 @@ You can validate that the TLS + upgrade path works with a CLI client like
 ```bash
 # If you haven't trusted the local Caddy CA yet, you may need:
 #   NODE_TLS_REJECT_UNAUTHORIZED=0
+#
+# Canonical (v1):
+#   /tcp?v=1&host=<hostname-or-ip>&port=<port>
 NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&host=example.com&port=80"
+
+# Compatibility form (legacy; also supported by the gateway):
+# NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&target=example.com:80"
 ```
 
 If you see a successful handshake but the connection immediately closes, the
 gateway may be rejecting the query parameters or target.
+
+> Note: once gateway auth is enforced, you will likely need to call `GET /session` first to obtain
+> a cookie-backed session (and then include that cookie when connecting to `/tcp`).
 
 ## L2 tunnel proxy (/l2)
 
@@ -300,7 +359,7 @@ frames to a server-side network stack / NAT / policy layer).
 ### Run locally
 
 ```bash
-docker compose -f deploy/docker-compose.yml up
+docker compose -f deploy/docker-compose.yml up --build
 ```
 
 ### Validate the upgrade (WSS)
@@ -330,6 +389,28 @@ Supported env vars include:
 - `AERO_L2_ALLOW_PRIVATE_IPS=1` (dev-only; disables private/reserved IP blocking)
 
 See also: `docs/l2-tunnel-runbook.md` (production checklist).
+
+## Networking smoke tests
+
+```bash
+# Gateway liveness (should return 200 + {"ok":true}):
+curl -k https://localhost/healthz
+
+# UDP relay ICE discovery (should return 200 + {"iceServers":[...]}):
+curl -k https://localhost/webrtc/ice
+
+# Optional: session bootstrap (sets a Secure cookie when behind the TLS proxy):
+curl -kI https://localhost/session
+```
+
+### `/session` and UDP relay integration notes
+
+`backend/aero-gateway` currently implements `GET /session` as a minimal cookie smoke test.
+In a full Aero deployment, `/session` is expected to also return the browser-facing UDP relay
+configuration (URL + token), so the frontend can discover:
+
+- which `/webrtc/*` URL to use (same-origin behind Caddy), and
+- how to authenticate to the relay (API key / JWT / session-derived token).
 
 ## CORS / origin strategy
 

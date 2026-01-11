@@ -28,7 +28,7 @@
 		# origin, tighten/extend `connect-src` deliberately (see docs/security-headers.md).
 		# Optionally append additional allowed connect-src origins via env var:
 		#   AERO_CSP_CONNECT_SRC_EXTRA="https://proxy.example.com wss://proxy.example.com"
-		Content-Security-Policy "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid {$AERO_CSP_CONNECT_SRC_EXTRA}; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
+		Content-Security-Policy "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' {$AERO_CSP_CONNECT_SRC_EXTRA}; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
 
 		# HSTS is enabled by setting a non-zero max-age.
 		# - Local dev default: max-age=0 (disabled)
@@ -45,6 +45,13 @@
 	handle @aero_l2 {
 		import aero_headers
 		reverse_proxy {$AERO_L2_PROXY_UPSTREAM:aero-l2-proxy:8090}
+	}
+
+	# WebRTC signaling / ICE discovery for the UDP relay service.
+	@aero_webrtc_udp_relay path /webrtc* /offer
+	handle @aero_webrtc_udp_relay {
+		import aero_headers
+		reverse_proxy {$AERO_WEBRTC_UDP_RELAY_UPSTREAM:aero-webrtc-udp-relay:8080}
 	}
 
 	# WebSocket TCP proxy endpoint and HTTP APIs.

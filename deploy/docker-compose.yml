@@ -28,6 +28,9 @@ services:
       # L2 tunnel proxy upstream within the docker network.
       AERO_L2_PROXY_UPSTREAM: ${AERO_L2_PROXY_UPSTREAM:-aero-l2-proxy:8090}
 
+      # WebRTC UDP relay upstream (HTTP signaling / ICE discovery) within the docker network.
+      AERO_WEBRTC_UDP_RELAY_UPSTREAM: ${AERO_WEBRTC_UDP_RELAY_UPSTREAM:-aero-webrtc-udp-relay:8080}
+
       # HSTS toggle (0 disables, recommended 31536000+ for production).
       AERO_HSTS_MAX_AGE: ${AERO_HSTS_MAX_AGE:-0}
 
@@ -55,6 +58,7 @@ services:
     depends_on:
       - aero-gateway
       - aero-l2-proxy
+      - aero-webrtc-udp-relay
 
   # Backend "gateway" (HTTP + WS) that the browser talks to.
   #
@@ -69,6 +73,8 @@ services:
     build:
       context: ..
       dockerfile: backend/aero-gateway/Dockerfile
+      args:
+        GIT_SHA: ${AERO_GATEWAY_GIT_SHA:-dev}
     restart: unless-stopped
     expose:
       - "8080"
@@ -78,6 +84,10 @@ services:
       # When running behind the reverse proxy, use the public HTTPS origin for
       # origin allowlisting / absolute URL generation.
       PUBLIC_BASE_URL: https://${AERO_DOMAIN:-localhost}
+
+      # Optional explicit origin allowlist (comma-separated). When unset/empty, the
+      # gateway defaults to allowing the origin derived from PUBLIC_BASE_URL.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
 
       # Enable trust for X-Forwarded-* only when the gateway is not directly
       # exposed to the public internet.
@@ -109,6 +119,83 @@ services:
       AERO_L2_BLOCKED_DOMAINS: ${AERO_L2_BLOCKED_DOMAINS:-}
     expose:
       - "8090"
+
+  # WebRTC signaling + UDP relay for browser clients.
+  #
+  # IMPORTANT: WebRTC uses UDP ports directly; these cannot be reverse-proxied
+  # through Caddy. Publish a UDP port range (and keep it aligned with
+  # WEBRTC_UDP_PORT_MIN/MAX and firewall rules).
+  aero-webrtc-udp-relay:
+    image: ${AERO_WEBRTC_UDP_RELAY_IMAGE:-aero-webrtc-udp-relay:dev}
+    build:
+      context: ../proxy/webrtc-udp-relay
+      args:
+        BUILD_COMMIT: ${BUILD_COMMIT:-}
+        BUILD_TIME: ${BUILD_TIME:-}
+    restart: unless-stopped
+    expose:
+      - "8080"
+    ports:
+      # Must align with WEBRTC_UDP_PORT_MIN/MAX and any firewall rules.
+      - "${WEBRTC_UDP_PORT_MIN:-50000}-${WEBRTC_UDP_PORT_MAX:-50100}:${WEBRTC_UDP_PORT_MIN:-50000}-${WEBRTC_UDP_PORT_MAX:-50100}/udp"
+    environment:
+      # Bind to all interfaces in containers (the binary defaults to 127.0.0.1).
+      - AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR=0.0.0.0:8080
+      # Keep deployments same-origin by default. Append additional dev origins via:
+      #   AERO_WEBRTC_UDP_RELAY_ALLOWED_ORIGINS_EXTRA=",https://localhost:5173"
+      - ALLOWED_ORIGINS=https://${AERO_DOMAIN:-localhost}${AERO_WEBRTC_UDP_RELAY_ALLOWED_ORIGINS_EXTRA:-}
+
+      # WebRTC ICE UDP port range (must match the published UDP range above).
+      - WEBRTC_UDP_PORT_MIN=${WEBRTC_UDP_PORT_MIN:-50000}
+      - WEBRTC_UDP_PORT_MAX=${WEBRTC_UDP_PORT_MAX:-50100}
+
+      # Default STUN server (override via env or set AERO_ICE_SERVERS_JSON).
+      - AERO_STUN_URLS=${AERO_STUN_URLS:-stun:stun.l.google.com:19302}
+
+      # Optional auth / policy configuration (passed through when set in deploy/.env).
+      - AUTH_MODE
+      - API_KEY
+      - JWT_SECRET
+      - SIGNALING_AUTH_TIMEOUT
+      - MAX_SIGNALING_MESSAGE_BYTES
+      - MAX_SIGNALING_MESSAGES_PER_SECOND
+
+      # UDP egress policy (highly recommended for public deployments).
+      - DESTINATION_POLICY_PRESET
+      - ALLOW_PRIVATE_NETWORKS
+      - ALLOW_UDP_CIDRS
+      - DENY_UDP_CIDRS
+      - ALLOW_UDP_PORTS
+      - DENY_UDP_PORTS
+
+      # ICE server configuration / optional TURN REST.
+      - AERO_ICE_SERVERS_JSON
+      - AERO_TURN_URLS
+      - AERO_TURN_USERNAME
+      - AERO_TURN_CREDENTIAL
+      - TURN_REST_SHARED_SECRET
+      - TURN_REST_TTL_SECONDS
+      - TURN_REST_USERNAME_PREFIX
+      - TURN_REST_REALM
+      - WEBRTC_NAT_1TO1_IPS
+      - WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE
+      - WEBRTC_UDP_LISTEN_IP
+
+  # Optional TURN server (coturn) for NAT traversal.
+  #
+  # Enable with:
+  #   docker compose -f deploy/docker-compose.yml --profile turn up --build
+  coturn:
+    image: coturn/coturn:latest
+    profiles: ["turn"]
+    restart: unless-stopped
+    command: ["-c", "/etc/coturn/turnserver.conf", "--no-cli"]
+    volumes:
+      - ../proxy/webrtc-udp-relay/turn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - "3478:3478/udp"
+      # Must align with min-port/max-port in turnserver.conf.
+      - "49152-49200:49152-49200/udp"
 
 volumes:
   caddy_data:
