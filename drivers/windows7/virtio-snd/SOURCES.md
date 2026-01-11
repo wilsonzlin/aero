@@ -87,7 +87,7 @@ the build pulls these sources directly).
 
 Contract v1 (virtio-pci modern) references:
 
-- Canonical virtio-pci modern transport (PCI capability discovery + BAR0 MMIO mapping):
+- Canonical virtio-pci modern transport (BAR0 MMIO + PCI vendor capability parsing + feature/queue helpers):
   - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
     (plus `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h`)
 - Aero contract identity validation (`AERO-W7-VIRTIO` v1 / PCI revision gating):

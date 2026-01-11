@@ -159,17 +159,17 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * `src/backend_null.c` — silent backend implementation (fallback / debugging)
 * `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
   - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, INTx wiring, and reset/teardown
-* Canonical virtio-pci modern transport:
+* Canonical virtio-pci modern transport (BAR0 MMIO + PCI vendor capability parsing):
   - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
 * INTx integration:
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
   - `src/virtiosnd_intx.c`
 * `src/virtiosnd_queue_split.c` — split-ring virtqueue wrapper used by the virtio-snd engines
 * `src/virtiosnd_control.c` / `src/virtiosnd_tx.c` / `src/virtiosnd_rx.c` — control/TX/RX protocol engines
 * `drivers/windows7/virtio/common/src/virtio_pci_contract.c` — `AERO-W7-VIRTIO` v1 contract identity validation used at `START_DEVICE` (requires `DEV_1059` + `REV_01`)
-* Shared virtqueue / PCI support code:
-  - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
+* Shared split-ring virtqueue implementation:
+  - `drivers/windows/virtio/common/virtqueue_split.c`
 
 Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 
@@ -183,7 +183,7 @@ Notes:
 * **Interrupts:** **INTx** only (MSI/MSI-X not currently used by this driver package).
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
-## Legacy / transitional virtio-pci path (not shipped)
+## Legacy / transitional virtio-pci I/O-port path (not shipped)
 
 The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example
 `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`).

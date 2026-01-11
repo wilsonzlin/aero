@@ -24,8 +24,8 @@ There are currently two **build/packaging variants** supported:
 The two INFs intentionally have **no overlapping hardware IDs** so they do not compete for the same PCI function.
 
 Both variants use the same **virtio-pci modern** transport path (PCI vendor-specific capabilities + BAR0 MMIO) with
-split-ring virtqueues. The optional QEMU package only relaxes the contract identity checks so the driver can start
-on QEMU defaults.
+split-ring virtqueues. The optional QEMU package exists so QEMU bring-up can be done without weakening the default
+contract-v1 INF; it binds to the transitional virtio-snd PCI ID (`DEV_1018`).
 
 Note: the repository also contains older legacy/transitional virtio-pci **I/O-port** bring-up code (for example
 `src/backend_virtio_legacy.c`) for historical bring-up and ad-hoc compatibility testing only. It is not
@@ -39,15 +39,14 @@ feature flags and is not suitable for contract v1 devices (`VIRTIO_F_VERSION_1` 
 - Virtio backend implementation: `src/backend_virtio.c`
 - Virtio-pci modern bring-up + split virtqueues + protocol engines:
   - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
+  - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
+  - `drivers/windows/virtio/common/virtqueue_split.c`
   - `src/virtiosnd_hw.c` (`VirtIoSndStartHardware`/`VirtIoSndStopHardware`)
   - `src/virtiosnd_queue_split.c`
   - `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
   - `src/virtiosnd_intx.c`
-- Shared virtio support code linked in from:
-  - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
-  - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
 
 ### Legacy virtio-pci I/O-port bring-up (not shipped)
 
@@ -70,8 +69,8 @@ CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
   entries are treated as resource reclamation rather than timing.
 
 The optional `aero-virtio-snd-legacy.inf` package uses the same virtio-pci modern
-transport stack but relaxes PCI identity/version gating so it can be used with
-stock QEMU defaults (transitional virtio-snd PCI ID, typically `REV_00`).
+transport stack but is packaged to bind to QEMU's transitional virtio-snd PCI ID
+(`DEV_1018`).
 
 ## High-level architecture
 
@@ -229,7 +228,9 @@ Implementation note:
   (`VIRTIO_F_VERSION_1` is bit 32). The shipped driver package and INFs assume a
   modern-only device (`DEV_1059` + `REV_01`).
 - The adapter validates the contract PCI identity (requires `DEV_1059` + `REV_01`)
-  at `START_DEVICE` via `AeroVirtioPciValidateContractV1Pdo`.
+  at `START_DEVICE` by reading PCI config space (`src/adapter.c`). The transport
+  layer also enforces the contract PCI identity and BAR0 layout during
+  `VirtioPciModernTransportInit`.
 - The legacy/transitional I/O-port bring-up path only negotiates the low 32 bits
   of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`) and is
   not part of the supported binding contract.
