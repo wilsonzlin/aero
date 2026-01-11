@@ -1,7 +1,7 @@
 {
   "installCommand": "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci",
-  "buildCommand": "npm -w web run build",
-  "outputDirectory": "web/dist",
+  "buildCommand": "npm run build:prod",
+  "outputDirectory": "dist",
   "headers": [
     {
       "source": "/assets/(.*)\\.wasm",

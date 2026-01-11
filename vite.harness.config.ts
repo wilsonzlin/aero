@@ -1,10 +1,17 @@
-// NOTE: This Vite config is for the *repo-root dev harness*.
+// NOTE: This Vite config is for the *repo-root Vite app* (canonical).
 //
 // It exists primarily for:
 // - Playwright E2E that exercises low-level primitives (workers, COOP/COEP, etc.)
 // - Importing source modules across the repo (e.g. `/web/src/...`) in a browser context
 //
-// The production/canonical browser host lives in `web/` (see ADR 0001).
+// The `web/` directory contains shared runtime modules and WASM build tooling.
+// Its Vite entrypoint (`web/index.html`) is legacy/experimental.
+//
+// This config is also responsible for emitting `aero.version.json` in production builds,
+// which is used for provenance/debugging in deployed artifacts.
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Connect, type Plugin } from 'vite';
 
@@ -16,6 +23,80 @@ import {
 
 const coopCoepSetting = (process.env.VITE_DISABLE_COOP_COEP ?? '').toLowerCase();
 const coopCoepDisabled = coopCoepSetting === '1' || coopCoepSetting === 'true';
+
+type AeroBuildInfo = Readonly<{
+  version: string;
+  gitSha: string;
+  builtAt: string;
+}>;
+
+const rootDir = fileURLToPath(new URL('.', import.meta.url));
+
+function resolveGitSha(): string {
+  const fromEnv = process.env.GIT_SHA || process.env.GITHUB_SHA;
+  if (fromEnv && fromEnv.trim().length > 0) return fromEnv.trim();
+
+  try {
+    return execSync('git rev-parse HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+  } catch {
+    return 'dev';
+  }
+}
+
+function resolveBuildTimestamp(): string {
+  const explicit = process.env.BUILD_TIMESTAMP;
+  if (explicit && explicit.trim().length > 0) return explicit.trim();
+
+  // Support reproducible builds when SOURCE_DATE_EPOCH is set (common in release pipelines).
+  const sourceDateEpoch = process.env.SOURCE_DATE_EPOCH;
+  if (sourceDateEpoch && /^\d+$/.test(sourceDateEpoch)) {
+    return new Date(Number(sourceDateEpoch) * 1000).toISOString();
+  }
+
+  return new Date().toISOString();
+}
+
+function resolveVersion(gitSha: string): string {
+  const fromEnv = process.env.AERO_VERSION || process.env.GITHUB_REF_NAME;
+  if (fromEnv && fromEnv.trim().length > 0) return fromEnv.trim();
+  return gitSha.length ? gitSha.slice(0, 12) : 'dev';
+}
+
+function aeroBuildInfoPlugin(): Plugin {
+  const gitSha = resolveGitSha();
+  const buildInfo: AeroBuildInfo = {
+    version: resolveVersion(gitSha),
+    gitSha,
+    builtAt: resolveBuildTimestamp(),
+  };
+
+  const jsonBody = `${JSON.stringify(buildInfo, null, 2)}\n`;
+
+  return {
+    name: 'aero-build-info',
+    config: () => ({
+      define: {
+        __AERO_BUILD_INFO__: JSON.stringify(buildInfo),
+      },
+    }),
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'aero.version.json',
+        source: jsonBody,
+      });
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathname = req.url?.split('?', 1)[0];
+        if (pathname !== '/aero.version.json') return next();
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(jsonBody);
+      });
+    },
+  };
+}
 
 function wasmMimeTypePlugin(): Plugin {
   const installWasmMiddleware = (middlewares: Connect.Server) => {
@@ -40,13 +121,35 @@ function wasmMimeTypePlugin(): Plugin {
   };
 }
 
+function audioWorkletDependenciesPlugin(): Plugin {
+  // Vite treats AudioWorklet modules loaded via `audioWorklet.addModule(new URL(...))` as static
+  // assets and does not follow their ESM imports. Our mic worklet (`web/src/audio/mic-worklet-processor.js`)
+  // imports `./mic_ring.js`, so we manually emit a copy into `dist/assets/` so the browser can
+  // resolve it at runtime.
+  const srcMicRingPath = resolve(rootDir, 'web/src/audio/mic_ring.js');
+  const source = readFileSync(srcMicRingPath, 'utf8');
+  return {
+    name: 'aero-audio-worklet-deps',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'assets/mic_ring.js',
+        source,
+      });
+    },
+  };
+}
+
 export default defineConfig({
+  assetsInclude: ['**/*.wasm'],
   build: {
+    // Ensure `.wasm` is always emitted as a file so `fetch()`/`instantiateStreaming()`
+    // behaves consistently across dev/preview/prod.
+    assetsInlineLimit: 0,
     rollupOptions: {
       // The harness preview server (port 4173) is used for COOP/COEP + CSP matrix tests.
-      // Include the production `web/` entrypoint so it can be exercised under the same
-      // preview server (served at `/web/`), matching the expectations documented in
-      // `web/index.html`.
+      // Include the legacy `web/` entrypoint so it can be exercised under the same
+      // preview server (served at `/web/`).
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         web: fileURLToPath(new URL('./web/index.html', import.meta.url)),
@@ -56,7 +159,7 @@ export default defineConfig({
   // Reuse `web/public` across the repo so test assets and `_headers` templates
   // are consistently available in `vite preview` runs.
   publicDir: 'web/public',
-  plugins: [wasmMimeTypePlugin()],
+  plugins: [aeroBuildInfoPlugin(), wasmMimeTypePlugin(), audioWorkletDependenciesPlugin()],
   // The repo heavily relies on module workers (`type: 'module'` + `import.meta.url`).
   // Keep the harness build aligned with `web/vite.config.ts` so worker bundling
   // supports code-splitting.

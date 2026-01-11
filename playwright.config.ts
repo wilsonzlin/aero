@@ -120,8 +120,9 @@ export default defineConfig({
       command: `npm run dev:harness -- --host 127.0.0.1 --port ${DEV_PORT} --strictPort`,
       port: DEV_PORT,
       // Default to `false` locally to avoid accidentally reusing a different Vite
-      // server on the same port (e.g. `npm run dev` in `web/`). Opt in explicitly
-      // when iterating on E2E: `AERO_PLAYWRIGHT_REUSE_SERVER=1 npm run test:e2e`.
+      // server on the same port (e.g. the legacy `web/` Vite app via `npm run dev:web`
+      // or `npm -w web run dev`). Opt in explicitly when iterating on E2E:
+      // `AERO_PLAYWRIGHT_REUSE_SERVER=1 npm run test:e2e`.
       reuseExistingServer: REUSE_EXISTING_SERVER,
     },
     {

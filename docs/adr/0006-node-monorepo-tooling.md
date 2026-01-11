@@ -21,7 +21,7 @@ Adopt **npm workspaces** with a **single root `package-lock.json`**.
 - The root `package-lock.json` is the *only* lockfile for workspace packages.
 - CI and local workflows use `npm ci` from the repo root.
 - Package-scoped commands are run via npm workspaces:
-  - `npm -w web run dev`
+  - `npm -w web run wasm:build`
   - `npm -w backend/aero-gateway test`
 
 ### Workspace membership
@@ -62,4 +62,3 @@ We chose **npm workspaces** because the repo already standardizes on npm + `pack
 - **Fewer mismatches:** shared tooling versions (TypeScript, Playwright, Vitest) are aligned by construction.
 - **Simpler CI caching:** workflows cache via the root `package-lock.json` instead of per-package lockfiles.
 - **Workspace-first developer workflow:** contributors should run scripts via `npm -w <path> …` instead of `cd <dir> && npm …`.
-

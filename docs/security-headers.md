@@ -132,8 +132,8 @@ The canonical header values live in:
 CI validates that the following stay in sync with the canonical values:
 
 - Vite configs:
-  - `web/vite.config.ts` (production app)
-  - `vite.harness.config.ts` (repo-root dev harness)
+  - `vite.harness.config.ts` (repo-root Vite app; used by CI/Playwright)
+  - `web/vite.config.ts` (legacy/experimental Vite app)
 - Backend (when `aero-gateway` serves as the origin / injects headers itself):
   - `backend/aero-gateway/src/middleware/crossOriginIsolation.ts`
   - `backend/aero-gateway/src/middleware/securityHeaders.ts`
@@ -162,11 +162,11 @@ The check lives at:
 
 The `_headers` file shipped with the built frontend lives at:
 
-- `web/public/_headers` (copied to `web/dist/_headers` by Vite)
+- `web/public/_headers` (copied to `dist/_headers` by the repo-root Vite build)
 
-Vite copies `public/` into `dist/`, so production builds automatically contain:
+Vite copies the configured `publicDir` into `dist/`, so production builds automatically contain:
 
-- `web/dist/_headers`
+- `dist/_headers`
 
 Netlify and Cloudflare Pages will apply this file automatically when it exists at the root of the deployed output directory.
 

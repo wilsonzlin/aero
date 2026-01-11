@@ -65,9 +65,9 @@ Examples / reference-only:
 - `deploy/static/` – smoke-test frontend (not the real UI)
 - `deploy/nginx/` – nginx examples (useful if you don't want Caddy)
 - `deploy/k8s/aero-storage-server/` – optional disk/image service templates (not required for the gateway)
-- Static-host templates (production app living under `web/`):
+- Static-host templates (browser host app):
   - `_headers` (Cloudflare Pages / Netlify-style):
-    - `web/public/_headers` (copied to `web/dist/_headers` on build)
+    - `web/public/_headers` (copied to `dist/_headers` on build)
     - `deploy/cloudflare-pages/_headers` (copy/paste template variant)
   - Netlify (`netlify.toml`):
     - `netlify.toml` (repo root; build config + header rules)
@@ -199,7 +199,7 @@ cp deploy/.env.example deploy/.env
   - Recommended production value: `31536000` (1 year)
 - `AERO_FRONTEND_ROOT` (default: `./static`)
   - Which directory Caddy serves as `/` (mounted at `/srv` in the container).
-  - Recommended: `../web/dist` (after building the real frontend)
+  - Recommended: `../dist` (after building the real frontend)
 - `AERO_CSP_CONNECT_SRC_EXTRA` (default: empty)
   - Optional additional origins to allow in the Caddy Content Security Policy `connect-src`.
   - Use this if the frontend needs to connect to a separate origin for networking (e.g. a TCP proxy service).
@@ -564,7 +564,8 @@ At minimum, your dev server must:
 - Send the same COOP/COEP/CORP headers on the HTML + JS/worker responses
 
 For Vite, this is typically done by setting `server.headers` and enabling HTTPS.
-This repo’s Vite app (`web/`) already includes these headers in `web/vite.config.ts`.
+This repo’s repo-root Vite app already includes these headers in `vite.harness.config.ts`
+(and the legacy `web/` Vite app does as well via `web/vite.config.ts`).
 
 If you need to call the gateway from a different origin (e.g. Vite dev server),
 your gateway must also be configured with an explicit CORS allowlist (for
@@ -592,8 +593,8 @@ To serve your real frontend:
 1) Build it (example):
 
 ```bash
-npm ci
-npm -w web run build
+    npm ci
+    npm run build:prod
 ```
 
 2) Replace the volume mount in `deploy/docker-compose.yml`:
@@ -602,7 +603,7 @@ Set `AERO_FRONTEND_ROOT` (recommended; no compose edits required):
 
 ```bash
 # in deploy/.env (or export it in your shell)
-AERO_FRONTEND_ROOT=../web/dist
+    AERO_FRONTEND_ROOT=../dist
 ```
 
 3) Restart:
@@ -621,7 +622,7 @@ If you must host the frontend elsewhere (Netlify/Vercel/Cloudflare Pages), you m
 
 Hosting templates in this repo:
 
-- Netlify + Cloudflare Pages headers: `web/public/_headers` (copied into `web/dist/_headers` on build)
+- Netlify + Cloudflare Pages headers: `web/public/_headers` (copied into `dist/_headers` on build)
 - Netlify build config: `netlify.toml` (repo root)
 - Vercel config: `vercel.json` (repo root)
 

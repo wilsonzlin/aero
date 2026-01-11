@@ -89,14 +89,15 @@ This repo contains a mix of production code and older prototypes. Start here:
 
 Quick map:
 
-- `web/` – **production** browser host app (Vite)
+- Repo root `index.html` + `src/` – **canonical** browser host app (Vite; used by CI/Playwright)
+- `vite.harness.config.ts` – Vite config for the repo-root app (sets COOP/COEP + CSP for tests)
+- `web/` – shared runtime modules + WASM build tooling (and a legacy/experimental Vite entrypoint at `web/index.html`)
 - `crates/` – Rust workspace crates (emulator core + supporting libs)
 - `backend/`, `services/` – maintained backend services
 - `proxy/` – maintained networking relays (e.g. `proxy/webrtc-udp-relay`)
 - `net-proxy/` – local-dev WebSocket TCP/UDP relay (run alongside `vite dev`)
 - `server/` – **legacy** backend (see `server/LEGACY.md`)
 - `poc/`, `prototype/` – experiments / RFC companions (not production)
-- Repo root `index.html` + `src/main.ts` – **dev/test harness** (used by Playwright; not production)
 
 ## Documentation
 
@@ -123,7 +124,7 @@ Infrastructure decisions are captured as ADRs in [`docs/adr/`](./docs/adr/):
 
 ## Web (Vite)
 
-The `web/` app is configured for **cross-origin isolation** in both dev and preview mode.
+The repo-root Vite app is configured for **cross-origin isolation** in both dev and preview mode.
 
 Canonical:
 
@@ -136,6 +137,14 @@ Manual equivalent:
 
 ```sh
 npm ci
+npm run dev
+```
+
+To run the legacy/experimental `web/` Vite app explicitly:
+
+```sh
+npm run dev:web
+# or:
 npm -w web run dev
 ```
 
@@ -270,7 +279,7 @@ Generated output is written into `web/src/wasm/pkg-{threaded,single}/` and is gi
 To test the **single** variant, start the dev server with the headers disabled:
 
 ```bash
-VITE_DISABLE_COOP_COEP=1 npm -w web run dev
+VITE_DISABLE_COOP_COEP=1 npm run dev
 ```
 
 In this mode the loader will select the non-shared-memory build automatically, and the UI will report which variant
@@ -318,7 +327,7 @@ AERO_PROXY_OPEN=1 npm -w net-proxy run dev
 Terminal 2 (frontend):
 
 ```bash
-npm -w web run dev
+npm run dev
 ```
 
 The proxy exposes:

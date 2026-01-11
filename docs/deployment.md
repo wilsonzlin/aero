@@ -56,8 +56,8 @@ CI validates that Vite servers + deployment templates stay in sync via:
 
 Currently validated files:
 
-- `web/vite.config.ts`
 - `vite.harness.config.ts`
+- `web/vite.config.ts` (legacy/experimental Vite app)
 - `backend/aero-gateway/src/middleware/crossOriginIsolation.ts`
 - `backend/aero-gateway/src/middleware/securityHeaders.ts`
 - `deploy/k8s/chart/aero-gateway/values.yaml` (Helm chart defaults)
@@ -73,8 +73,8 @@ Currently validated files:
 
 ```bash
 npm ci
-npm -w web run build
-npm -w web run preview
+npm run build
+npm run preview
 ```
 
 Then open the printed URL (usually `http://localhost:4173`) and verify:
@@ -98,10 +98,10 @@ npm run test:security-headers
 
 ### Testing the fallback path (no COOP/COEP)
 
-The `web/` Vite dev server can be started with COOP/COEP disabled:
+The repo-root Vite dev server can be started with COOP/COEP disabled:
 
 ```bash
-VITE_DISABLE_COOP_COEP=1 npm -w web run dev
+VITE_DISABLE_COOP_COEP=1 npm run dev
 ```
 
 In this mode `crossOriginIsolated` should be `false` and the runtime will load the
@@ -115,7 +115,7 @@ single-threaded/non-shared WASM variant.
 
 This repo provides:
 
-- `netlify.toml` (build/publish settings for `web/` via npm workspaces + header rules)
+- `netlify.toml` (build/publish settings for the repo-root app + header rules)
 - `web/public/_headers` (COOP/COEP + CSP + baseline security headers + caching defaults)
 
 Netlify will apply `dist/_headers` automatically (Vite copies `public/` → `dist/`).
@@ -124,7 +124,7 @@ Netlify will apply `dist/_headers` automatically (Vite copies `public/` → `dis
 
 This repo provides `vercel.json` (repo root), which:
 
-- builds the `web/` frontend and deploys `web/dist`
+- builds the repo-root frontend and deploys `dist`
 - applies COOP/COEP + CSP + baseline security headers to all paths
 - applies safe caching defaults (`no-cache` for HTML; immutable caching for `/assets/*`)
 
@@ -137,10 +137,10 @@ Configure the project with:
 Recommended (npm workspaces / monorepo):
 
 - Root directory: `.`
-- Build command: `npm ci && npm -w web run build`
-- Build output directory: `web/dist`
+- Build command: `npm ci && npm run build:prod`
+- Build output directory: `dist`
 
-The generated `web/dist/_headers` file is deployed automatically and enables cross-origin isolation and baseline security headers.
+The generated `dist/_headers` file is deployed automatically and enables cross-origin isolation and baseline security headers.
 
 > Note: Some platforms apply only the *most specific* matching `_headers` rule.
 > The provided `_headers` file repeats COOP/COEP/CORP in the `/assets/*` and

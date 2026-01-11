@@ -1,7 +1,8 @@
 <!doctype html>
 <!--
-  NOTE: This repo-root `index.html` is a Vite *dev/test harness* (Playwright, debug panels).
-  The production browser host lives in `web/` (see docs/adr/0001-repo-layout.md).
+  NOTE: This repo-root Vite app is the canonical browser host used by CI/Playwright.
+  The `web/` directory contains shared runtime modules + WASM build tooling; its
+  own Vite entrypoint (`web/index.html`) is legacy/experimental.
 -->
 <html lang="en">
   <head>

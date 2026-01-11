@@ -120,33 +120,33 @@ jobs:
           echo "RELEASE_TAG=${release_tag}" >> "$GITHUB_ENV"
 
       - name: Build (WASM + web)
-        run: npm -w web run build
+        run: npm run build:prod
 
       - name: Validate build output
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f web/dist/_headers
-          test -f web/dist/aero.version.json
+          test -f dist/_headers
+          test -f dist/aero.version.json
 
-          node -e "const fs=require('fs'); const info=JSON.parse(fs.readFileSync('web/dist/aero.version.json','utf8')); const expected={version:process.env.AERO_VERSION,gitSha:process.env.GIT_SHA,builtAt:process.env.BUILD_TIMESTAMP}; for(const [k,v] of Object.entries(expected)){ if(!v){ console.error('Missing expected env '+k); process.exit(1);} if(info[k]!==v){ console.error('aero.version.json '+k+' mismatch: expected '+v+' got '+info[k]); process.exit(1);} }"
+          node -e "const fs=require('fs'); const info=JSON.parse(fs.readFileSync('dist/aero.version.json','utf8')); const expected={version:process.env.AERO_VERSION,gitSha:process.env.GIT_SHA,builtAt:process.env.BUILD_TIMESTAMP}; for(const [k,v] of Object.entries(expected)){ if(!v){ console.error('Missing expected env '+k); process.exit(1);} if(info[k]!==v){ console.error('aero.version.json '+k+' mismatch: expected '+v+' got '+info[k]); process.exit(1);} }"
 
           # Ensure both wasm build variants were produced (threaded + single fallback).
           test -f web/src/wasm/pkg-single/aero_wasm_bg.wasm
           test -f web/src/wasm/pkg-threaded/aero_wasm_bg.wasm
 
-          variant_count="$(find web/dist -name 'aero_wasm_bg*.wasm' | wc -l | tr -d '[:space:]')"
+          variant_count="$(find dist -name 'aero_wasm_bg*.wasm' | wc -l | tr -d '[:space:]')"
           if [[ "${variant_count}" -lt 2 ]]; then
             echo "Expected both WASM variants to be present in the dist bundle (aero_wasm_bg*.wasm). Found: ${variant_count}" >&2
-            find web/dist -name 'aero_wasm_bg*.wasm' -print >&2 || true
+            find dist -name 'aero_wasm_bg*.wasm' -print >&2 || true
             exit 1
           fi
 
-          wasm_count="$(find web/dist -name '*.wasm' | wc -l | tr -d '[:space:]')"
+          wasm_count="$(find dist -name '*.wasm' | wc -l | tr -d '[:space:]')"
           if [[ "${wasm_count}" -lt 2 ]]; then
-            echo "Expected at least 2 .wasm files in web/dist (single + threaded), found: ${wasm_count}" >&2
-            find web/dist -name '*.wasm' -print >&2 || true
+            echo "Expected at least 2 .wasm files in dist (single + threaded), found: ${wasm_count}" >&2
+            find dist -name '*.wasm' -print >&2 || true
             exit 1
           fi
 
@@ -157,7 +157,7 @@ jobs:
           set -euo pipefail
 
           artifact="aero-web-${AERO_VERSION}.zip"
-          (cd web/dist && zip -r "../../${artifact}" .)
+          (cd dist && zip -r "../${artifact}" .)
           sha256sum "${artifact}" > "${artifact}.sha256"
 
           echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"

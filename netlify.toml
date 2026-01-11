@@ -1,7 +1,7 @@
 [build]
   base = "."
-  command = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && npm -w web run build"
-  publish = "web/dist"
+  command = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && npm run build:prod"
+  publish = "dist"
 
 [[headers]]
   for = "/*"

@@ -29,6 +29,9 @@ type ServerBundle = {
 
 function findFrontendDistDir(): string | null {
   const candidates = [
+    path.resolve(process.cwd(), '../../dist'),
+    path.resolve(process.cwd(), '../dist'),
+    path.resolve(process.cwd(), 'dist'),
     path.resolve(process.cwd(), '../../web/dist'),
     path.resolve(process.cwd(), '../web/dist'),
     path.resolve(process.cwd(), 'web/dist'),

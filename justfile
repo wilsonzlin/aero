@@ -12,6 +12,7 @@
 #   just test
 #
 # Optional configuration:
+#   # Run the legacy `web/` Vite app (the default uses the repo-root app).
 #   AERO_NODE_DIR=web just dev
 #   AERO_NODE_DIR=web AERO_WASM_CRATE_DIR=crates/aero-wasm just wasm-watch
 
@@ -200,21 +201,6 @@ wasm:
 
   just _warn_deprecated_env
 
-  # Prefer the web app's wasm build scripts, which produce both:
-  # - web/src/wasm/pkg-single
-  # - web/src/wasm/pkg-threaded (shared-memory)
-  if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
-    if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build']) ? 0 : 1)" >/dev/null 2>&1); then
-      if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
-        exit 1
-      fi
-      echo "==> Building WASM (single + threaded) via 'web' workspace npm scripts"
-      just _check_node_version
-      npm --prefix "{{WEB_DIR}}" -w web run wasm:build
-      exit 0
-    fi
-  fi
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
@@ -249,18 +235,6 @@ wasm-single:
 
   just _warn_deprecated_env
 
-  if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
-    if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:single']) ? 0 : 1)" >/dev/null 2>&1); then
-      if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
-        exit 1
-      fi
-      echo "==> Building WASM (single) via 'web' workspace npm scripts"
-      just _check_node_version
-      npm --prefix "{{WEB_DIR}}" -w web run wasm:build:single
-      exit 0
-    fi
-  fi
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:single']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
@@ -283,18 +257,6 @@ wasm-threaded:
 
   just _warn_deprecated_env
 
-  if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
-    if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:threaded']) ? 0 : 1)" >/dev/null 2>&1); then
-      if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
-        exit 1
-      fi
-      echo "==> Building WASM (threaded/shared-memory) via 'web' workspace npm scripts"
-      just _check_node_version
-      npm --prefix "{{WEB_DIR}}" -w web run wasm:build:threaded
-      exit 0
-    fi
-  fi
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:threaded']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
@@ -373,7 +335,7 @@ dev:
 
     npm --prefix "{{WEB_DIR}}" run dev
   else
-    echo '==> No `web/` app detected.'
+    echo '==> No Node workspace detected.'
     echo ""
     echo "Falling back to the browser-memory proof-of-concept server, which sets COOP/COEP"
     echo "headers so `SharedArrayBuffer` is available."

@@ -47,8 +47,8 @@ services:
       # Optional: serve a built frontend from the same origin as the gateway.
       #
       # Recommended production setup:
-      #   - Build the web app to ../web/dist
-      #   - Set AERO_FRONTEND_ROOT=../web/dist (or edit this file)
+      #   - Build the repo-root Vite app to ../dist
+      #   - Set AERO_FRONTEND_ROOT=../dist (or edit this file)
       #
       # Default: serve the deploy smoke-test frontend under deploy/static/.
       - type: bind

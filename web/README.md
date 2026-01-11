@@ -1,6 +1,11 @@
-# Web / WASM build tooling
+# Web / shared runtime + WASM build tooling
 
-This directory contains the developer-facing WASM build scripts used by the web app.
+> Note: The canonical browser host app lives at the repo root (`npm run dev`, `just dev`).
+> The Vite app entrypoint in this directory (`web/index.html`, `npm -w web run dev`) is
+> legacy/experimental and is not used by CI/Playwright.
+
+This directory contains shared runtime modules (`web/src/...`) and the developer-facing WASM build
+scripts used by the browser host.
 
 ## Commands
 

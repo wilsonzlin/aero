@@ -6,19 +6,26 @@ For project-wide layout decisions, see: [`docs/adr/0001-repo-layout.md`](./adr/0
 
 ## Canonical / production paths
 
-### Browser host app (production): `web/` (Vite)
+### Browser host app (canonical): repo root (Vite)
 
-The **production** browser host app lives in:
+The **canonical** browser host app lives in:
 
-- `web/` (Vite app)
-- Source: `web/src/`
-- Config: `web/vite.config.ts`
+- Repo root `index.html` + `src/`
+- Vite config: `vite.harness.config.ts`
 
 Recommended dev workflow from the repo root:
 
 ```bash
 just setup
 just dev
+```
+
+To run the legacy `web/` Vite app explicitly:
+
+```bash
+npm run dev:web
+# or:
+npm -w web run dev
 ```
 
 ### Rust emulator workspace: root `Cargo.toml` + `crates/`
@@ -75,24 +82,13 @@ prevent protocol drift.
 
 ## Non-canonical / quarantined paths
 
-### Repo-root Vite app: *dev/test harness* (not production)
+### Legacy/experimental Vite app: `web/`
 
-The repo root still contains a small Vite entrypoint used for debugging and browser automation:
+The `web/` directory is primarily shared runtime code + WASM build tooling, but it also contains a
+Vite entrypoint (`web/index.html`) that is **not** the canonical host app.
 
-- `index.html`
-- `src/main.ts`
-- `vite.harness.config.ts`
-
-This is **not** the production host app. It exists so Playwright (and other tooling) can:
-
-- run debug panels and smoke tests without depending on the production UI surface
-- import repo modules via paths like `/web/src/...` from a single dev server root
-
-Use explicitly:
-
-```bash
-npm run dev:harness
-```
+CI and Playwright use the repo-root app, and the repo-root build serves `web/index.html` under `/web/`
+for compatibility when needed.
 
 ### Legacy backend: `server/`
 

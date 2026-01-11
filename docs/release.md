@@ -2,10 +2,10 @@
 
 This repository ships the following production artifacts:
 
-1. **Static web build** (`web/dist/`)
+1. **Static web build** (`dist/`)
    - Includes both WASM variants (**threaded** + **single fallback**).
    - Includes hosting templates (`_headers`) for COOP/COEP + CSP + caching.
-   - Includes provenance metadata (`/aero.version.json`) and shows the commit SHA in the UI.
+   - Includes provenance metadata (`/aero.version.json`) for debugging and deployments.
 2. **Backend gateway container image** (`backend/aero-gateway`)
    - Published to GHCR as `ghcr.io/<owner>/aero-gateway`.
    - Includes provenance metadata via OCI labels + `/version` response.
@@ -49,7 +49,7 @@ GitHub Actions produces these artifacts via:
 ### Verify the release artifacts
 
 - GitHub Release contains `aero-web-<tag>.zip`
-  - Unzipping it should yield the contents of `web/dist/` (not a nested `dist/` directory).
+  - Unzipping it should yield the contents of `dist/` (not a nested `dist/` directory).
   - Must contain:
     - `_headers` (COOP/COEP/CSP templates)
     - `aero.version.json` (build provenance)
@@ -102,12 +102,12 @@ This is the simplest option because platform-specific config files are applied a
 Configure your host with:
 
 - Root directory: `.`
-- Build command: `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && npm -w web run build`
-- Output directory: `web/dist`
+- Build command: `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && npm run build:prod`
+- Output directory: `dist`
 
 ### Option B: Deploy a GitHub Release web artifact (zip)
 
-The GitHub Release asset is a pre-built `web/dist` bundle. This is useful when you want to deploy without building
+The GitHub Release asset is a pre-built `dist` bundle. This is useful when you want to deploy without building
 from source (e.g. air-gapped or pinned deploys).
 
 1. Download `aero-web-<tag>.zip` from the GitHub Release.

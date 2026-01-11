@@ -1,4 +1,4 @@
-# ADR 0001: Repository layout (Rust workspace + `web/` Vite app)
+# ADR 0001: Repository layout (Rust workspace + repo-root Vite app)
 
 ## Context
 
@@ -15,12 +15,18 @@ We need a repo layout that:
 
 ## Decision
 
-Adopt a **Rust workspace at the repository root** with a dedicated **`web/` Vite app** for the browser host:
+Adopt a **Rust workspace at the repository root** with a **repo-root Vite app** for the browser host:
 
 - Root: `Cargo.toml` with `[workspace]` members for all Rust crates.
 - Rust crates live under `crates/` (or equivalent) and produce WebAssembly artifacts consumable by the host.
-- The browser app lives under `web/` and uses **Vite** for development and builds.
-- The `web/` build consumes the generated WASM + JS glue (e.g., `wasm-bindgen` output) as build inputs.
+- The **canonical browser host app** lives at the repo root:
+  - `index.html`
+  - `src/`
+  - `vite.harness.config.ts` (Vite config; also used by Playwright)
+- The `web/` directory is **not** the canonical host app. It primarily contains:
+  - shared runtime modules imported by the repo-root app (`web/src/...`)
+  - WASM build tooling (`web/scripts/build_wasm.mjs`, `npm -w web run wasm:build`)
+  - a legacy/experimental Vite entrypoint (`web/index.html`) that can be served under `/web/` by the repo-root app
 
 This layout makes “Rust builds” and “web builds” first-class while still living in a single repository.
 
@@ -41,6 +47,5 @@ This layout makes “Rust builds” and “web builds” first-class while still
 ## Consequences
 
 - Contributors can work on Rust and the web host independently, but still in one repo.
-- CI can build/test Rust crates via the workspace and build the host via `web/`.
-- WebAssembly artifacts become explicit build outputs that the `web/` app depends on, which simplifies packaging and makes build variants feasible.
-
+- CI and developer tooling run the browser host from the repo root (`npm run dev`, `just dev`).
+- WebAssembly artifacts become explicit build outputs that the repo-root app depends on (`web/src/wasm/pkg-*`), which simplifies packaging and makes build variants feasible.

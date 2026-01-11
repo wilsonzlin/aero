@@ -71,8 +71,17 @@ if (( ${#unexpected_lockfiles[@]} > 0 )); then
   die "unexpected package-lock.json checked in outside the repo root (npm workspaces use a single root lockfile): ${unexpected_lockfiles[*]}"
 fi
 
-# Canonical frontend (ADR 0001).
+# Canonical frontend (ADR 0001): repo-root Vite app (used by CI/Playwright).
+need_file "index.html"
+need_file "src/main.ts"
+need_file "vite.harness.config.ts"
+
+# Shared web runtime + WASM build tooling (and a legacy/experimental Vite entrypoint).
 need_file "web/package.json"
+need_file "web/README.md"
+if ! grep -q "legacy/experimental" web/README.md; then
+  die "web/README.md should clearly mark the web/ Vite entrypoint as legacy/experimental"
+fi
 need_file "web/index.html"
 need_file "web/vite.config.ts"
 
@@ -81,17 +90,15 @@ need_file "poc/README.md"
 need_file "prototype/README.md"
 need_file "server/LEGACY.md"
 
-# Repo-root Vite harness should be explicitly marked so it is not mistaken for the
-# production app living under `web/`.
+# Repo-root Vite app should be explicitly marked so it is not mistaken for a prototype.
 if [[ -f "index.html" ]]; then
-  if ! grep -q "dev/test harness" index.html; then
-    die "repo-root index.html exists but is not marked as a dev/test harness (expected the phrase 'dev/test harness')"
+  if ! grep -q "canonical browser host" index.html; then
+    die "repo-root index.html exists but is not marked as the canonical browser host (expected the phrase 'canonical browser host')"
   fi
 fi
 
-need_file "vite.harness.config.ts"
-if ! grep -q "repo-root dev harness" vite.harness.config.ts; then
-  die "vite.harness.config.ts should include the phrase 'repo-root dev harness' to make its role unambiguous"
+if ! grep -q "repo-root Vite app" vite.harness.config.ts; then
+  die "vite.harness.config.ts should include the phrase 'repo-root Vite app' to make its role unambiguous"
 fi
 
 # Legacy Windows driver layout guardrails.
@@ -141,7 +148,7 @@ fi
 # Fail if someone reintroduces an ambiguous Vite config file name at the repo root
 # (it would be auto-picked up by `vite` and confuse dev/CI tooling).
 if [[ -f "vite.config.ts" || -f "vite.config.js" || -f "vite.config.mjs" || -f "vite.config.cjs" ]]; then
-  die "unexpected Vite config at repo root (vite.config.*). Use web/vite.config.ts for the production app or vite.harness.config.ts for the harness."
+  die "unexpected Vite config at repo root (vite.config.*). Use vite.harness.config.ts for the canonical repo-root app (and web/vite.config.ts only for the legacy web/ app)."
 fi
 
 # Fail if any new Vite config is introduced outside the allowlist.

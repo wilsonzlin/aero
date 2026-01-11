@@ -1,7 +1,8 @@
-// NOTE: Repo-root Vite harness entrypoint.
+// NOTE: Repo-root Vite app entrypoint.
 //
-// This file exists for debugging and Playwright smoke tests. The production
-// browser host lives under `web/` (ADR 0001).
+// This is the canonical browser host used by CI/Playwright. The `web/` directory
+// still houses shared runtime modules and WASM build tooling; its own Vite
+// entrypoint (`web/index.html`) is legacy/experimental.
 import './style.css';
 
 import { installPerfHud } from '../web/src/perf/hud_entry';

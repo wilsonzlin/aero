@@ -203,8 +203,8 @@ Vite requires configuring both the dev server and the preview server:
 
 See:
 
-- `web/vite.config.ts` for the production `web/` app
-- `vite.harness.config.ts` for the repo-root dev harness (Playwright, module import tests)
+- `vite.harness.config.ts` for the repo-root Vite app (used by CI/Playwright)
+- `web/vite.config.ts` for the legacy/experimental `web/` Vite app
 
 For production hosting templates (Netlify / Cloudflare Pages) and caching defaults, see
 [`docs/deployment.md`](./deployment.md).

@@ -563,8 +563,7 @@ async function loadSingle(options: WasmInitOptions): Promise<WasmLoadResult> {
             [
                 "Missing single-thread WASM package.",
                 "",
-                "Build it with:",
-                "  cd web",
+                "Build it with (from the repo root):",
                 "  npm run wasm:build:single",
                 "Or a faster dev build:",
                 "  npm run wasm:build:dev",
@@ -587,11 +586,10 @@ async function loadThreaded(options: WasmInitOptions): Promise<WasmLoadResult> {
             [
                 "Missing threaded WASM package.",
                 "",
-                "Build it with:",
-                "  cd web",
+                "Build it with (from the repo root):",
                 "  npm run wasm:build:threaded",
                 "Or a faster dev build:",
-                "  node ./scripts/build_wasm.mjs threaded dev",
+                "  node web/scripts/build_wasm.mjs threaded dev",
                 "",
                 "Or build both variants:",
                 "  npm run wasm:build",
