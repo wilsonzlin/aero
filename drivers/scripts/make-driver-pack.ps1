@@ -433,7 +433,11 @@ try {
     targets = @("win7-x86", "win7-amd64")
   } | ConvertTo-Json -Depth 8
 
-  $manifest | Out-File -FilePath (Join-Path $packRoot "manifest.json") -Encoding UTF8
+  $manifestPath = Join-Path $packRoot "manifest.json"
+  # Write UTF-8 without BOM (PowerShell 5.1's `Out-File -Encoding UTF8` emits a BOM,
+  # which breaks some strict JSON parsers).
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($manifestPath, ($manifest + "`n"), $utf8NoBom)
 
   if (-not $NoZip) {
     $zipPath = Join-Path $out "aero-win7-driver-pack.zip"
