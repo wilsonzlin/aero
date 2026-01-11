@@ -682,6 +682,8 @@ Practical guidance:
 In AeroGPU, the canonical implementation is in:
 
 - `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wddm_submit.cpp`
+  - x86 uses a “read high/low/high until stable” loop to avoid torn reads without
+    issuing interlocked writes to the fence page.
 
 ---
 
