@@ -1,0 +1,355 @@
+use std::net::{Ipv4Addr, SocketAddr};
+
+use aero_l2_proxy::{start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
+use aero_net_stack::packet::*;
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Message};
+
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+struct EnvVarGuard {
+    key: &'static str,
+    prior: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prior = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prior }
+    }
+
+    fn unset(key: &'static str) -> Self {
+        let prior = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, prior }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match self.prior.take() {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+fn ws_request(addr: SocketAddr) -> tokio_tungstenite::tungstenite::http::Request<()> {
+    let ws_url = format!("ws://{addr}/l2");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req
+}
+
+fn encode_l2_frame(payload: &[u8]) -> Vec<u8> {
+    aero_l2_protocol::encode_frame(payload).unwrap()
+}
+
+async fn wait_for_udp_datagram(
+    ws_rx: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
+    pred: impl Fn(&UdpDatagram<'_>) -> bool,
+) -> Vec<u8> {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let Some(msg) = ws_rx.next().await else {
+                panic!("ws closed");
+            };
+            let msg = msg.expect("ws recv");
+            let Message::Binary(data) = msg else {
+                continue;
+            };
+            let decoded = match aero_l2_protocol::decode_message(&data) {
+                Ok(decoded) => decoded,
+                Err(_) => continue,
+            };
+            if decoded.msg_type != aero_l2_protocol::L2_TUNNEL_TYPE_FRAME {
+                continue;
+            }
+            let Ok(eth) = EthernetFrame::parse(decoded.payload) else {
+                continue;
+            };
+            if eth.ethertype() != EtherType::IPV4 {
+                continue;
+            }
+            let Ok(ip) = Ipv4Packet::parse(eth.payload()) else {
+                continue;
+            };
+            if ip.protocol() != Ipv4Protocol::UDP {
+                continue;
+            }
+            let Ok(udp) = UdpDatagram::parse(ip.payload()) else {
+                continue;
+            };
+            if pred(&udp) {
+                return udp.payload().to_vec();
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
+async fn wait_for_tcp_segment(
+    ws_rx: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
+    pred: impl Fn(&TcpSegment<'_>) -> bool,
+) -> (TcpFlags, u16, u16, u32, u32) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let Some(msg) = ws_rx.next().await else {
+                panic!("ws closed");
+            };
+            let msg = msg.expect("ws recv");
+            let Message::Binary(data) = msg else {
+                continue;
+            };
+            let decoded = match aero_l2_protocol::decode_message(&data) {
+                Ok(decoded) => decoded,
+                Err(_) => continue,
+            };
+            if decoded.msg_type != aero_l2_protocol::L2_TUNNEL_TYPE_FRAME {
+                continue;
+            }
+            let Ok(eth) = EthernetFrame::parse(decoded.payload) else {
+                continue;
+            };
+            if eth.ethertype() != EtherType::IPV4 {
+                continue;
+            }
+            let Ok(ip) = Ipv4Packet::parse(eth.payload()) else {
+                continue;
+            };
+            if ip.protocol() != Ipv4Protocol::TCP {
+                continue;
+            }
+            let Ok(seg) = TcpSegment::parse(ip.payload()) else {
+                continue;
+            };
+            if pred(&seg) {
+                return (
+                    seg.flags(),
+                    seg.src_port(),
+                    seg.dst_port(),
+                    seg.seq_number(),
+                    seg.ack_number(),
+                );
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
+fn build_dhcp_request(
+    xid: u32,
+    mac: MacAddr,
+    requested_ip: Ipv4Addr,
+    server_id: Ipv4Addr,
+) -> Vec<u8> {
+    // Construct a minimal DHCPREQUEST packet. `aero-net-stack` only needs the message type and
+    // client MAC to mark the guest IP as assigned.
+    let mut out = vec![0u8; 240];
+    out[0] = 1; // BOOTREQUEST
+    out[1] = 1; // Ethernet
+    out[2] = 6; // MAC len
+    out[4..8].copy_from_slice(&xid.to_be_bytes());
+    out[10..12].copy_from_slice(&0x8000u16.to_be_bytes()); // broadcast
+    out[28..34].copy_from_slice(&mac.0);
+    out[236..240].copy_from_slice(&[99, 130, 83, 99]); // magic cookie
+    out.extend_from_slice(&[53, 1, 3]); // DHCPREQUEST
+    out.extend_from_slice(&[50, 4]);
+    out.extend_from_slice(&requested_ip.octets());
+    out.extend_from_slice(&[54, 4]);
+    out.extend_from_slice(&server_id.octets());
+    out.push(255);
+    out
+}
+
+fn wrap_udp_ipv4_eth(
+    src_mac: MacAddr,
+    dst_mac: MacAddr,
+    src_ip: Ipv4Addr,
+    dst_ip: Ipv4Addr,
+    src_port: u16,
+    dst_port: u16,
+    payload: &[u8],
+) -> Vec<u8> {
+    let udp = UdpPacketBuilder {
+        src_port,
+        dst_port,
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .expect("build UDP");
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0x4000, // DF
+        ttl: 64,
+        protocol: Ipv4Protocol::UDP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &udp,
+    }
+    .build_vec()
+    .expect("build IPv4");
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .expect("build Ethernet frame")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn wrap_tcp_ipv4_eth(
+    src_mac: MacAddr,
+    dst_mac: MacAddr,
+    src_ip: Ipv4Addr,
+    dst_ip: Ipv4Addr,
+    src_port: u16,
+    dst_port: u16,
+    seq: u32,
+    ack: u32,
+    flags: TcpFlags,
+    payload: &[u8],
+) -> Vec<u8> {
+    let tcp = TcpSegmentBuilder {
+        src_port,
+        dst_port,
+        seq_number: seq,
+        ack_number: ack,
+        flags,
+        window_size: 65535,
+        urgent_pointer: 0,
+        options: &[],
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .expect("build TCP");
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0x4000, // DF
+        ttl: 64,
+        protocol: Ipv4Protocol::TCP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &tcp,
+    }
+    .build_vec()
+    .expect("build IPv4");
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .expect("build Ethernet frame")
+}
+
+#[tokio::test]
+async fn stack_max_tcp_connections_zero_rejects_syn() {
+    let _lock = ENV_LOCK.lock().await;
+
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed_origins = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _allowed_origins_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
+    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
+    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
+    let _jwt_audience = EnvVarGuard::unset("AERO_L2_JWT_AUDIENCE");
+    let _jwt_issuer = EnvVarGuard::unset("AERO_L2_JWT_ISSUER");
+    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
+    let _session_secret_alias = EnvVarGuard::unset("SESSION_SECRET");
+    let _gateway_session_secret = EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET");
+    let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
+    let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
+    let _max_connections_per_session =
+        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
+    let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
+    let _allow_private_ips = EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS");
+    let _allowed_tcp_ports = EnvVarGuard::unset("AERO_L2_ALLOWED_TCP_PORTS");
+    let _stack_max_tcp = EnvVarGuard::set("AERO_L2_STACK_MAX_TCP_CONNECTIONS", "0");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let req = ws_request(addr);
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_tx, mut ws_rx) = ws.split();
+
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    let guest_ip = Ipv4Addr::new(10, 0, 2, 15);
+    let gateway_ip = Ipv4Addr::new(10, 0, 2, 2);
+    let stack_mac = MacAddr([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+
+    // Mark the guest IP as assigned so the stack emits TCP RSTs.
+    let dhcp_request = build_dhcp_request(0x1020_3040, guest_mac, guest_ip, gateway_ip);
+    let dhcp_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::BROADCAST,
+        68,
+        67,
+        &dhcp_request,
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&dhcp_frame).into()))
+        .await
+        .unwrap();
+    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| udp.src_port() == 67 && udp.dst_port() == 68)
+        .await;
+
+    let remote_ip = Ipv4Addr::new(8, 8, 8, 8);
+    let remote_port = 80;
+    let guest_port = 40_000;
+    let isn = 1234;
+
+    let syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack_mac,
+        guest_ip,
+        remote_ip,
+        guest_port,
+        remote_port,
+        isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&syn).into()))
+        .await
+        .unwrap();
+
+    let (flags, _src_port, _dst_port, _seq, ack) = wait_for_tcp_segment(&mut ws_rx, |seg| {
+        seg.src_port() == remote_port
+            && seg.dst_port() == guest_port
+            && seg.flags().contains(TcpFlags::RST | TcpFlags::ACK)
+            && seg.ack_number() == isn + 1
+    })
+    .await;
+    assert!(flags.contains(TcpFlags::RST));
+    assert_eq!(ack, isn + 1);
+
+    ws_tx.send(Message::Close(None)).await.unwrap();
+    proxy.shutdown().await;
+}
