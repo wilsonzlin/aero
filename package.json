@@ -3,7 +3,11 @@
   "private": true,
   "type": "module",
   "workspaces": ["packages/*"],
+  "engines": {
+    "node": ">=20.11.1 <21"
+  },
   "scripts": {
+    "check:node": "node scripts/check-node-version.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",

@@ -375,7 +375,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
 
       - name: Resolve wasm crate
         id: wasm-crate
@@ -454,13 +454,13 @@ jobs:
         if: steps.node-dir.outputs.lockfile == ''
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
 
       - name: Setup Node (npm cache)
         if: steps.node-dir.outputs.lockfile != ''
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
 
@@ -613,13 +613,13 @@ jobs:
         if: steps.node-dir.outputs.lockfile == ''
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
 
       - name: Setup Node (npm cache)
         if: steps.node-dir.outputs.lockfile != ''
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
 
@@ -708,13 +708,13 @@ jobs:
         if: steps.node-dir.outputs.lockfile == ''
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
 
       - name: Setup Node (npm cache)
         if: steps.node-dir.outputs.lockfile != ''
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
 
@@ -795,7 +795,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: tools/disk-streaming-browser-e2e/package-lock.json
 

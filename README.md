@@ -15,7 +15,7 @@ For a reproducible “clone → build → test” environment (including Rust st
 ### Prerequisites
 
 - Rust (via `rustup`)
-- Node.js + npm
+- Node.js + npm (version is pinned in [`.nvmrc`](./.nvmrc))
 - `wasm-pack` (to build the Rust→WASM packages)
   - Install via `cargo install wasm-pack`
 - Optional: `just` (task runner; uses bash)
@@ -45,6 +45,13 @@ just lint    # linting (if configured)
 ```
 
 Tip: if you have `watchexec` installed, `just dev` will also rebuild the threaded/shared-memory WASM variant on changes. Otherwise, run `just wasm-watch` in a second terminal.
+
+To sanity-check your local Node toolchain against CI:
+
+```bash
+node scripts/check-node-version.mjs
+# or: npm run check:node
+```
 
 #### Optional configuration
 

@@ -6,6 +6,18 @@ This document is the practical companion to [`12-testing-strategy.md`](./12-test
 
 ---
 
+## Node.js version
+
+CI and local developer tooling expect the Node.js version declared in the repo root [`.nvmrc`](../.nvmrc).
+
+From the repo root:
+
+```bash
+nvm install && nvm use   # if you use nvm
+node scripts/check-node-version.mjs
+# or: npm run check:node
+```
+
 ## Test fixtures (boot sectors + tiny disk images)
 
 Boot/system tests use **tiny deterministic fixtures** under `tests/fixtures/boot/` (e.g. a 512-byte boot sector that writes a known pattern to VGA/serial).

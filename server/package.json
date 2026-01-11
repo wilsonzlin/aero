@@ -2,6 +2,9 @@
   "name": "aero-backend-server",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.11.1 <21"
+  },
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
@@ -12,4 +15,3 @@
     "ws": "^8.18.3"
   }
 }
-

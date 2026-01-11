@@ -19,7 +19,6 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
-      NODE_VERSION: "20.11.1"
       GPU_PERF_REGRESSION_THRESHOLD_PCT: "15"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
@@ -39,7 +38,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: head/.nvmrc
           cache: npm
           cache-dependency-path: |
             head/package-lock.json

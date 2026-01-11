@@ -22,7 +22,6 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
-      NODE_VERSION: "20.11.1"
       PERF_ITERATIONS: ${{ github.event.inputs.iterations || '7' }}
       AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
       AERO_REQUIRE_WEBGPU: "0"
@@ -66,7 +65,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: |
             tools/perf/package-lock.json

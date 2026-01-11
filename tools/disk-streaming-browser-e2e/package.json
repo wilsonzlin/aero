@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "description": "Browser E2E tests for COOP/COEP cross-origin isolation + authenticated Range fetches (disk streaming).",
+  "engines": {
+    "node": ">=20.11.1 <21"
+  },
   "scripts": {
     "pretest": "playwright install chromium",
     "test": "playwright test"

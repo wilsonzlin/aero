@@ -1,5 +1,8 @@
 {
   "name": "aero-bench",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.1 <21"
+  }
 }
