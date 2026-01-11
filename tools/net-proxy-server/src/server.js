@@ -847,6 +847,7 @@ export async function createProxyServer(userConfig) {
     metricsTimer = setInterval(() => {
       log({ level: "info", event: "metrics", ...stats });
     }, config.metricsIntervalMs);
+    metricsTimer.unref?.();
   }
 
   await new Promise((resolve) => httpServer.listen(config.port, config.host, resolve));
