@@ -108,6 +108,10 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
 
     assert_eq!(dev.mmio_read(&mut mem, mmio::MAGIC, 4), AEROGPU_MMIO_MAGIC);
+    assert_eq!(
+        dev.mmio_read(&mut mem, mmio::ABI_VERSION, 4),
+        AEROGPU_ABI_VERSION_U32
+    );
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;

@@ -94,6 +94,7 @@ fn aerogpu_abi_constants_match_aero_protocol() {
 
     // Feature bits (subset).
     assert_eq!(emu::FEATURE_FENCE_PAGE, proto::AEROGPU_FEATURE_FENCE_PAGE);
+    assert_eq!(emu::FEATURE_TRANSFER, proto::AEROGPU_FEATURE_TRANSFER);
     assert_eq!(emu::FEATURE_SCANOUT, proto::AEROGPU_FEATURE_SCANOUT);
     assert_eq!(emu::FEATURE_VBLANK, proto::AEROGPU_FEATURE_VBLANK);
 }
