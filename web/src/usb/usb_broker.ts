@@ -9,7 +9,11 @@ import {
   type UsbSelectDeviceMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
-import { WebUsbBackend } from "./web_usb_backend";
+import {
+  WebUsbBackend,
+  type UsbHostAction as BackendUsbHostAction,
+  type UsbHostCompletion as BackendUsbHostCompletion,
+} from "./webusb_backend";
 
 type UsbDeviceInfo = { vendorId: number; productId: number; productName?: string };
 
@@ -30,6 +34,49 @@ function getNavigatorUsb(): USB | null {
   // Keep the access tolerant so unit tests (node environment) can stub navigator.
   const nav = (globalThis as unknown as { navigator?: unknown }).navigator as (Navigator & { usb?: USB }) | undefined;
   return nav?.usb ?? null;
+}
+
+function proxyActionToBackendAction(action: UsbHostAction): BackendUsbHostAction {
+  switch (action.kind) {
+    case "controlIn":
+      return { kind: "controlIn", id: action.id, setup: action.setup };
+    case "controlOut":
+      return { kind: "controlOut", id: action.id, setup: action.setup, data: action.data };
+    case "bulkIn":
+      return { kind: "bulkIn", id: action.id, endpoint: action.ep, length: action.length };
+    case "bulkOut":
+      return { kind: "bulkOut", id: action.id, endpoint: action.ep, data: action.data };
+    default: {
+      const neverAction: never = action;
+      throw new Error(`Unknown USB action kind: ${String((neverAction as { kind?: unknown }).kind)}`);
+    }
+  }
+}
+
+function backendCompletionToProxyCompletion(completion: BackendUsbHostCompletion): UsbHostCompletion {
+  const id = completion.id;
+  switch (completion.kind) {
+    case "controlIn":
+    case "bulkIn": {
+      if (completion.status === "success") {
+        return { kind: "okIn", id, data: completion.data };
+      }
+      if (completion.status === "stall") return { kind: "stall", id };
+      return usbErrorCompletion(id, completion.message);
+    }
+    case "controlOut":
+    case "bulkOut": {
+      if (completion.status === "success") {
+        return { kind: "okOut", id, bytesWritten: completion.bytesWritten };
+      }
+      if (completion.status === "stall") return { kind: "stall", id };
+      return usbErrorCompletion(id, completion.message);
+    }
+    default: {
+      const neverCompletion: never = completion;
+      return usbErrorCompletion(id, `Unknown USB completion kind: ${String((neverCompletion as { kind?: unknown }).kind)}`);
+    }
+  }
 }
 
 export class UsbBroker {
@@ -65,7 +112,43 @@ export class UsbBroker {
     }
 
     // `requestDevice` must be called from a user gesture; callers should invoke this from a click handler.
-    const device = await usb.requestDevice({ filters: filters ?? [] });
+    const attempts: Array<USBDeviceRequestOptions> = [];
+    if (filters && filters.length > 0) {
+      attempts.push({ filters });
+    } else {
+      // Chromium versions differ on whether `filters: []` or `filters: [{}]` are accepted. Try a handful of
+      // "broad" options so local smoke tests work across more builds.
+      attempts.push({ filters: [] });
+      attempts.push({ filters: [{}] });
+      attempts.push({ filters: [{ classCode: 0x00 }, { classCode: 0xff }] });
+      attempts.push({ filters: [{ classCode: 0xff }] });
+    }
+
+    let device: USBDevice | null = null;
+    let lastErr: unknown = null;
+    for (const opts of attempts) {
+      try {
+        device = await usb.requestDevice(opts);
+        break;
+      } catch (err) {
+        lastErr = err;
+
+        // User cancelled the chooser (or no matching devices).
+        if (err instanceof DOMException && err.name === "NotFoundError") {
+          throw err;
+        }
+
+        // If the browser rejected the filter shape, try the next fallback.
+        if (err instanceof TypeError) continue;
+        if (err instanceof DOMException && err.name === "TypeError") continue;
+
+        throw err;
+      }
+    }
+
+    if (!device) {
+      throw lastErr ?? new Error("WebUSB requestDevice failed.");
+    }
     const backend = new WebUsbBackend(device);
 
     try {
@@ -171,7 +254,7 @@ export class UsbBroker {
         continue;
       }
 
-      const backendPromise = backend.execute(item.action);
+      const backendPromise = backend.execute(proxyActionToBackendAction(item.action)).then(backendCompletionToProxyCompletion);
       // If the device disconnects, the race below resolves and we drop the backend promise.
       // Avoid unhandled rejections if the backend rejects after disconnect.
       backendPromise.catch(() => undefined);
@@ -203,6 +286,7 @@ export class UsbBroker {
   }
 
   private resetSelectedDevice(reason: string): void {
+    const prevDevice = this.device;
     if (this.backend || this.device) {
       // Resolve in-flight actions (if any) via the disconnect signal.
       this.disconnectError = reason;
@@ -212,6 +296,10 @@ export class UsbBroker {
     this.backend = null;
     this.device = null;
     this.selectedInfo = null;
+
+    if (prevDevice) {
+      void prevDevice.close?.().catch(() => undefined);
+    }
 
     // Fail any queued actions immediately.
     while (this.queue.length) {

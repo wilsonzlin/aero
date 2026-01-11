@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
+import type { UsbHostAction as ProxyUsbHostAction, UsbHostCompletion as ProxyUsbHostCompletion } from "./usb_proxy_protocol";
+import type { UsbHostCompletion as BackendUsbHostCompletion } from "./webusb_backend";
 
 const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
 
@@ -71,16 +72,16 @@ afterEach(() => {
 describe("usb/UsbBroker", () => {
   it("serializes actions via FIFO queue", async () => {
     const callOrder: number[] = [];
-    const resolvers: Array<(c: UsbHostCompletion) => void> = [];
+    const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];
 
-    vi.doMock("./web_usb_backend", () => ({
+    vi.doMock("./webusb_backend", () => ({
       WebUsbBackend: class {
         async ensureOpenAndClaimed(): Promise<void> {
           // No-op
         }
 
-        execute(action: UsbHostAction): Promise<UsbHostCompletion> {
-          callOrder.push(action.id);
+        execute(action: { id: number }): Promise<BackendUsbHostCompletion> {
+          callOrder.push(action.id >>> 0);
           return new Promise((resolve) => resolvers.push(resolve));
         }
       },
@@ -95,8 +96,8 @@ describe("usb/UsbBroker", () => {
     const broker = new UsbBroker();
     await broker.requestDevice();
 
-    const a1: UsbHostAction = { kind: "bulkIn", id: 1, ep: 1, length: 8 };
-    const a2: UsbHostAction = { kind: "bulkIn", id: 2, ep: 1, length: 8 };
+    const a1: ProxyUsbHostAction = { kind: "bulkIn", id: 1, ep: 1, length: 8 };
+    const a2: ProxyUsbHostAction = { kind: "bulkIn", id: 2, ep: 1, length: 8 };
 
     const p1 = broker.execute(a1);
     const p2 = broker.execute(a2);
@@ -105,27 +106,27 @@ describe("usb/UsbBroker", () => {
     expect(callOrder).toEqual([1]);
     expect(resolvers).toHaveLength(1);
 
-    const c1: UsbHostCompletion = { kind: "okIn", id: 1, data: Uint8Array.of(1) };
+    const c1: BackendUsbHostCompletion = { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) };
     resolvers[0](c1);
-    await expect(p1).resolves.toEqual(c1);
+    await expect(p1).resolves.toEqual({ kind: "okIn", id: 1, data: Uint8Array.of(1) } satisfies ProxyUsbHostCompletion);
 
     await Promise.resolve();
     expect(callOrder).toEqual([1, 2]);
     expect(resolvers).toHaveLength(2);
 
-    const c2: UsbHostCompletion = { kind: "okIn", id: 2, data: Uint8Array.of(2) };
+    const c2: BackendUsbHostCompletion = { kind: "bulkIn", id: 2, status: "success", data: Uint8Array.of(2) };
     resolvers[1](c2);
-    await expect(p2).resolves.toEqual(c2);
+    await expect(p2).resolves.toEqual({ kind: "okIn", id: 2, data: Uint8Array.of(2) } satisfies ProxyUsbHostCompletion);
   });
 
   it("flushes pending actions when the selected device disconnects", async () => {
-    const resolvers: Array<(c: UsbHostCompletion) => void> = [];
+    const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];
 
-    vi.doMock("./web_usb_backend", () => ({
+    vi.doMock("./webusb_backend", () => ({
       WebUsbBackend: class {
         async ensureOpenAndClaimed(): Promise<void> {}
 
-        execute(action: UsbHostAction): Promise<UsbHostCompletion> {
+        execute(_action: unknown): Promise<BackendUsbHostCompletion> {
           return new Promise((resolve) => resolvers.push(resolve));
         }
       },
@@ -153,12 +154,12 @@ describe("usb/UsbBroker", () => {
   });
 
   it("routes usb.action requests to usb.completion responses", async () => {
-    vi.doMock("./web_usb_backend", () => ({
+    vi.doMock("./webusb_backend", () => ({
       WebUsbBackend: class {
         async ensureOpenAndClaimed(): Promise<void> {}
 
-        async execute(action: UsbHostAction): Promise<UsbHostCompletion> {
-          return { kind: "okOut", id: action.id, bytesWritten: action.id * 2 };
+        async execute(action: { id: number }): Promise<BackendUsbHostCompletion> {
+          return { kind: "bulkOut", id: action.id, status: "success", bytesWritten: action.id * 2 };
         }
       },
     }));
@@ -185,7 +186,7 @@ describe("usb/UsbBroker", () => {
 
     const completions = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.completion") as Array<{
       type: string;
-      completion: UsbHostCompletion;
+      completion: ProxyUsbHostCompletion;
     }>;
 
     expect(completions).toEqual([
@@ -194,4 +195,3 @@ describe("usb/UsbBroker", () => {
     ]);
   });
 });
-
