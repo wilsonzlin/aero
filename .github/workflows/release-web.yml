@@ -38,16 +38,30 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Install Rust toolchain (nightly + rust-src)
+      - name: Read pinned Rust toolchains
+        id: toolchains
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install nightly --profile minimal --component rust-src --target wasm32-unknown-unknown
+
+          stable="$(node -p "require('fs').readFileSync('rust-toolchain.toml', 'utf8').match(/\\bchannel\\s*=\\s*\\\"([^\\\"]+)\\\"/)[1]")"
+          nightly="$(node -p "require('./scripts/toolchains.json').rust.nightlyWasm")"
+
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
+          echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain (pinned stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.toolchains.outputs.stable }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install Rust toolchain (pinned nightly for threaded WASM)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.toolchains.outputs.nightly }}
+          targets: wasm32-unknown-unknown
+          components: rust-src
 
       - name: Install wasm-pack
         uses: taiki-e/install-action@v2
