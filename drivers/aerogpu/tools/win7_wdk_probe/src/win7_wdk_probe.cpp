@@ -48,6 +48,12 @@ int main() {
   PRINT_OFF(D3DDDICB_RENDER, pPatchLocationList);
   PRINT_OFF(D3DDDICB_RENDER, PatchLocationListSize);
   PRINT_OFF(D3DDDICB_RENDER, pDmaBufferPrivateData);
+#if defined(_MSC_VER)
+  __if_exists(D3DDDICB_RENDER::NewFenceValue) { PRINT_OFF(D3DDDICB_RENDER, NewFenceValue); }
+  __if_exists(D3DDDICB_RENDER::NewCommandBufferSize) { PRINT_OFF(D3DDDICB_RENDER, NewCommandBufferSize); }
+  __if_exists(D3DDDICB_RENDER::NewAllocationListSize) { PRINT_OFF(D3DDDICB_RENDER, NewAllocationListSize); }
+  __if_exists(D3DDDICB_RENDER::NewPatchLocationListSize) { PRINT_OFF(D3DDDICB_RENDER, NewPatchLocationListSize); }
+#endif
   PrintSeparator();
 
   PRINT_SIZE(D3DDDICB_PRESENT);
@@ -59,6 +65,9 @@ int main() {
   PRINT_OFF(D3DDDICB_PRESENT, pPatchLocationList);
   PRINT_OFF(D3DDDICB_PRESENT, PatchLocationListSize);
   PRINT_OFF(D3DDDICB_PRESENT, pDmaBufferPrivateData);
+#if defined(_MSC_VER)
+  __if_exists(D3DDDICB_PRESENT::NewFenceValue) { PRINT_OFF(D3DDDICB_PRESENT, NewFenceValue); }
+#endif
   PrintSeparator();
 
   PRINT_SIZE(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT);

@@ -186,10 +186,10 @@ Important fields (header names):
   - `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList`
   - `VOID* pDmaBufferPrivateData`
 - output capacities (max sizes you are allowed to write):
-  - `UINT CommandBufferSize`
-  - `UINT AllocationListSize`
-  - `UINT PatchLocationListSize`
-  - `UINT DmaBufferPrivateDataSize`
+  - `UINT CommandBufferSize` (bytes)
+  - `UINT AllocationListSize` (count of `D3DDDI_ALLOCATIONLIST` entries)
+  - `UINT PatchLocationListSize` (count of `D3DDDI_PATCHLOCATIONLIST` entries)
+  - `UINT DmaBufferPrivateDataSize` (bytes)
 
 > The capacity fields are critical: **do not write past them**. If you need more space, end the current buffer and submit, then acquire a new one.
 
@@ -206,11 +206,17 @@ Struct:
 Important fields:
 
 - `D3DKMT_HANDLE hContext`
-- `UINT CommandLength`
+- `UINT CommandLength` (bytes written to `pCommandBuffer`)
 - `VOID* pCommandBuffer`
-- `UINT AllocationListSize` + `D3DDDI_ALLOCATIONLIST* pAllocationList`
-- `UINT PatchLocationListSize` + `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList`
+- `UINT AllocationListSize` (count) + `D3DDDI_ALLOCATIONLIST* pAllocationList`
+- `UINT PatchLocationListSize` (count) + `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList`
 - `VOID* pDmaBufferPrivateData`
+
+Fence output (Win7 pattern):
+
+- `UINT64 NewFenceValue` (written by the callback on success; use as the target value when waiting for completion via `WaitForSynchronizationObject`)
+
+> Some header/interface revisions also include “new capacity” outputs (e.g. `NewCommandBufferSize`, `NewAllocationListSize`, `NewPatchLocationListSize`) to help you size the next DMA buffer build. If present, treat them as advisory and still respect the capacities returned by the next `pfnGetCommandBufferCb` call.
 
 #### Submit a present DMA buffer
 
@@ -225,11 +231,15 @@ Struct:
 Important common submission fields (present has additional present-specific fields; see the header):
 
 - `D3DKMT_HANDLE hContext`
-- `UINT CommandLength`
+- `UINT CommandLength` (bytes)
 - `VOID* pCommandBuffer`
-- `UINT AllocationListSize` + `D3DDDI_ALLOCATIONLIST* pAllocationList`
-- `UINT PatchLocationListSize` + `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList`
+- `UINT AllocationListSize` (count) + `D3DDDI_ALLOCATIONLIST* pAllocationList`
+- `UINT PatchLocationListSize` (count) + `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList`
 - `VOID* pDmaBufferPrivateData`
+
+Fence output (Win7 pattern):
+
+- `UINT64 NewFenceValue` (written by the callback on success)
 
 ### 3.2 Minimal call sequence (render submission)
 
