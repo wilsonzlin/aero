@@ -717,8 +717,9 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
 
     fn queue_max_size(&self, queue: u16) -> u16 {
         match queue {
-            VIRTIO_SND_QUEUE_CONTROL | VIRTIO_SND_QUEUE_EVENT => 64,
-            _ => 256,
+            VIRTIO_SND_QUEUE_CONTROL | VIRTIO_SND_QUEUE_EVENT | VIRTIO_SND_QUEUE_RX => 64,
+            VIRTIO_SND_QUEUE_TX => 256,
+            _ => 0,
         }
     }
 
@@ -806,6 +807,24 @@ mod tests {
         assert_eq!(u32::from_le_bytes(cfg[0..4].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(cfg[4..8].try_into().unwrap()), 2);
         assert_eq!(u32::from_le_bytes(cfg[8..12].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn virtio_snd_contract_v1_features() {
+        let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        assert_eq!(
+            snd.device_features(),
+            VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC
+        );
+    }
+
+    #[test]
+    fn virtio_snd_contract_v1_queue_sizes() {
+        let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        assert_eq!(snd.queue_max_size(VIRTIO_SND_QUEUE_CONTROL), 64);
+        assert_eq!(snd.queue_max_size(VIRTIO_SND_QUEUE_EVENT), 64);
+        assert_eq!(snd.queue_max_size(VIRTIO_SND_QUEUE_TX), 256);
+        assert_eq!(snd.queue_max_size(VIRTIO_SND_QUEUE_RX), 64);
     }
 
     #[test]
