@@ -293,3 +293,113 @@ fn decodes_and_translates_sample_shader_from_dxbc() {
         .iter()
         .any(|b| matches!(b.kind, aero_d3d11::BindingKind::Sampler { slot: 0 })));
 }
+
+#[test]
+fn decodes_and_translates_ld_shader_from_dxbc() {
+    const DCL_INPUT: u32 = 0x100;
+    const DCL_OUTPUT: u32 = 0x101;
+    const DCL_RESOURCE: u32 = 0x102;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_input v0.xy
+    body.push(opcode_token(DCL_INPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask(0b0011)));
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    // dcl_resource_texture2d t0 (dimension token ignored by our decl decoder)
+    let tex_decl = reg_src(OPERAND_TYPE_RESOURCE, &[0], Swizzle::XYZW);
+    body.push(opcode_token(
+        DCL_RESOURCE,
+        1 + tex_decl.len() as u32 + 1, /* + dimension token */
+    ));
+    body.extend_from_slice(&tex_decl);
+    body.push(2);
+
+    // ld r0, v0, t0
+    body.push(opcode_token(OPCODE_LD, 1 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_RESOURCE, &[0], Swizzle::XYZW));
+
+    // mov o0, r0
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b0011)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = program.decode().expect("SM4 decode");
+    assert_eq!(module.instructions.len(), 3);
+    assert!(module
+        .decls
+        .iter()
+        .any(|d| matches!(d, Sm4Decl::ResourceTexture2D { slot: 0 })));
+
+    // Spot-check that ld operands decoded as expected.
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Ld {
+            dst: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            coord: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Input,
+                    index: 0
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            texture: TextureRef { slot: 0 },
+            lod: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Input,
+                    index: 0,
+                }),
+                swizzle: Swizzle::ZZZZ,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(translated.wgsl.contains("@fragment"));
+    assert!(translated.wgsl.contains("textureLoad(t0"));
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, aero_d3d11::BindingKind::Texture2D { slot: 0 })));
+    assert!(!translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, aero_d3d11::BindingKind::Sampler { .. })));
+}
