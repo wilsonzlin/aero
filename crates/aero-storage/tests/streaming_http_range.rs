@@ -580,3 +580,88 @@ async fn content_encoding_is_rejected() {
 
     let _ = shutdown.send(());
 }
+
+#[tokio::test]
+async fn cache_invalidates_when_cache_backend_changes() {
+    let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), "etag-backend", false, None, false, false, None).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; 16];
+    disk.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf[..], &image[0..16]);
+    assert_eq!(state.counters.get_range.load(Ordering::SeqCst), 1);
+    drop(disk);
+
+    // Re-open the same cache directory but with a different backend. If we were to reuse the
+    // previous `downloaded` bitmap, we'd treat the chunk as cached and read zeros from the new
+    // sparse file backend.
+    let mut config2 = StreamingDiskConfig::new(url, cache_dir.path());
+    config2.cache_backend = StreamingCacheBackend::SparseFile;
+    config2.options.chunk_size = 1024;
+    config2.options.read_ahead_chunks = 0;
+    config2.options.max_retries = 1;
+
+    let disk2 = StreamingDisk::open(config2).await.unwrap();
+    let mut buf2 = vec![0u8; 16];
+    disk2.read_at(0, &mut buf2).await.unwrap();
+    assert_eq!(&buf2[..], &image[0..16]);
+    assert_eq!(
+        state.counters.get_range.load(Ordering::SeqCst),
+        2,
+        "cache backend change should invalidate downloaded ranges and re-fetch"
+    );
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn corrupt_cache_metadata_is_treated_as_invalidation() {
+    let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), "etag-corrupt", false, None, false, false, None).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; 16];
+    disk.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf[..], &image[0..16]);
+    assert_eq!(state.counters.get_range.load(Ordering::SeqCst), 1);
+    drop(disk);
+
+    // Corrupt the on-disk metadata file; the next open should not fail.
+    let meta_path = cache_dir.path().join("streaming-cache-meta.json");
+    std::fs::write(&meta_path, "{not valid json").unwrap();
+
+    let mut config2 = StreamingDiskConfig::new(url, cache_dir.path());
+    config2.cache_backend = StreamingCacheBackend::Directory;
+    config2.options.chunk_size = 1024;
+    config2.options.read_ahead_chunks = 0;
+    config2.options.max_retries = 1;
+
+    let disk2 = StreamingDisk::open(config2).await.unwrap();
+    let mut buf2 = vec![0u8; 16];
+    disk2.read_at(0, &mut buf2).await.unwrap();
+    assert_eq!(&buf2[..], &image[0..16]);
+    assert_eq!(
+        state.counters.get_range.load(Ordering::SeqCst),
+        2,
+        "corrupt metadata should be treated as cache invalidation"
+    );
+
+    let _ = shutdown.send(());
+}
