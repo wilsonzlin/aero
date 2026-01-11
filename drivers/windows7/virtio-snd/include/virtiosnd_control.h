@@ -18,8 +18,9 @@
  *
  * Queue integration uses the internal VIRTIOSND_QUEUE abstraction (see
  * virtiosnd_queue.h). The driver is responsible for wiring the queue ops (e.g.
- * split virtqueue + transport notify) and calling VirtioSndCtrlProcessUsed from
- * its DPC/ISR path to complete in-flight requests.
+ * split virtqueue + transport notify) and calling VirtioSndCtrlProcessUsed (or
+ * dispatching individual used entries via VirtioSndCtrlOnUsed) from its DPC/ISR
+ * path to complete in-flight requests.
  */
 
 typedef enum _VIRTIOSND_STREAM_STATE {

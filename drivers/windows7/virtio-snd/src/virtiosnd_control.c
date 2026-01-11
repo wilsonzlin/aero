@@ -103,6 +103,10 @@ VirtioSndCtrlCompleteRequest(_Inout_ VIRTIOSND_CTRL_REQUEST* Req, _In_ ULONG Use
         return;
     }
 
+    if (Req->Owner != NULL) {
+        InterlockedIncrement(&Req->Owner->Stats.RequestsCompleted);
+    }
+
     Req->UsedLen = UsedLen;
 
     virtioStatus = 0xFFFFFFFFu;
@@ -302,7 +306,6 @@ VirtioSndCtrlProcessUsed(_Inout_ VIRTIOSND_CONTROL* Ctrl)
         }
 
         if (cookie != NULL) {
-            InterlockedIncrement(&Ctrl->Stats.RequestsCompleted);
             VirtioSndCtrlCompleteRequest((VIRTIOSND_CTRL_REQUEST*)cookie, (ULONG)usedLen);
         }
     }

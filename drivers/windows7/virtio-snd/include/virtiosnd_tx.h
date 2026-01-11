@@ -19,8 +19,9 @@
  *
  * The driver is responsible for period pacing and for calling
  * VirtioSndTxDrainCompletions() (or the compatibility wrapper
- * VirtioSndTxProcessCompletions) from the DPC/interrupt path to recycle
- * contexts and update completion statistics.
+ * VirtioSndTxProcessCompletions, or dispatching individual used entries via
+ * VirtioSndTxOnUsed) from the DPC/interrupt path to recycle contexts and update
+ * completion statistics.
  */
 
 /*
@@ -191,4 +192,3 @@ VOID VirtioSndTxOnUsed(_Inout_ VIRTIOSND_TX_ENGINE* Tx, _In_opt_ void* Cookie, _
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-
