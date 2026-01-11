@@ -53,6 +53,12 @@ that the correct driver directories are present even while HWID patterns evolve.
 This spec is used by the Win7 driver CI/release workflows when packaging Guest Tools from the signed
 packages produced by `ci/make-catalogs.ps1` + `ci/sign-drivers.ps1`.
 
+To reproduce CI-style Guest Tools packaging locally (assuming you already have `out/packages/` + `out/certs/`):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1 -SpecPath tools/packaging/specs/win7-signed.json
+```
+
 ## `win7-aero-virtio.json`
 
 Intended for packaging Guest Tools using Aero's in-tree clean-room Windows 7 virtio drivers.
@@ -66,8 +72,8 @@ This spec is used by `drivers/scripts/make-guest-tools-from-aero-virtio.ps1` by 
 
 `drivers/scripts/make-guest-tools-from-virtio-win.ps1` supports an explicit packaging profile:
 
-- `-Profile minimal` (default): uses `win7-virtio-win.json` and extracts `viostor, netkvm`
-- `-Profile full`: uses `win7-virtio-full.json` and extracts `viostor, netkvm, viosnd, vioinput` (optional `viosnd`/`vioinput` are best-effort)
+- `-Profile full` (default): uses `win7-virtio-full.json` and extracts `viostor, netkvm, viosnd, vioinput` (optional `viosnd`/`vioinput` are best-effort)
+- `-Profile minimal`: uses `win7-virtio-win.json` and extracts `viostor, netkvm`
 
 Advanced overrides:
 

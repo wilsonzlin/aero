@@ -56,13 +56,12 @@ If you want Guest Tools to include the upstream virtio drivers (`viostor`, `netk
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
-  -Profile minimal `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
 ```
 
-To include best-effort Win7 audio/input drivers when present in your virtio-win version, use `-Profile full`.
+To build storage+network-only Guest Tools media (no optional audio/input drivers), use `-Profile minimal`.
 
 On Linux/macOS you can run the same wrapper under PowerShell 7 (`pwsh`). When `Mount-DiskImage`
 is unavailable, it automatically falls back to the cross-platform extractor:
@@ -70,7 +69,6 @@ is unavailable, it automatically falls back to the cross-platform extractor:
 ```bash
 pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
   -VirtioWinIso virtio-win.iso \
-  -Profile minimal \
   -OutDir ./dist/guest-tools \
   -Version 0.0.0 \
   -BuildId local
@@ -80,8 +78,8 @@ Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio
 
 Profiles (defaults):
 
-- `-Profile minimal` (default): uses `tools/packaging/specs/win7-virtio-win.json`
-- `-Profile full`: uses `tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+- `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+- `-Profile minimal`: uses `tools/packaging/specs/win7-virtio-win.json`
 
 For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
 `-Drivers` also overrides the profile’s driver extraction list.
@@ -102,7 +100,14 @@ When the Win7 driver CI pipeline stages signed driver packages under `out/packag
 produce the Guest Tools ISO/zip from those artifacts using:
 
 - `ci/package-guest-tools.ps1`
-- `tools/packaging/specs/win7-aero-guest-tools.json`
+  - Local default (when `-SpecPath` is omitted): `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation)
+  - CI/release workflows: `tools/packaging/specs/win7-signed.json` (HWID regex lists intentionally empty)
+
+To reproduce CI packaging locally (assuming you already have `out/packages/` + `out/certs/`):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1 -SpecPath tools/packaging/specs/win7-signed.json
+```
 
 ## Building Guest Tools from in-tree aero virtio drivers (Win7 aerovblk + aerovnet)
 
