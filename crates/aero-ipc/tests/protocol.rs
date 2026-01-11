@@ -26,6 +26,18 @@ fn command_roundtrip() {
             size: 1,
             value: 0xAA,
         },
+        Command::DiskRead {
+            id: 5,
+            disk_offset: 0x1000,
+            len: 512,
+            guest_offset: 0x2000,
+        },
+        Command::DiskWrite {
+            id: 6,
+            disk_offset: 0x2000,
+            len: 1024,
+            guest_offset: 0x3000,
+        },
     ];
 
     for cmd in cases {
@@ -46,6 +58,18 @@ fn event_roundtrip() {
         Event::PortReadResp { id: 10, value: 0x1234_5678 },
         Event::MmioWriteResp { id: 11 },
         Event::PortWriteResp { id: 12 },
+        Event::DiskReadResp {
+            id: 13,
+            ok: true,
+            bytes: 512,
+            error_code: None,
+        },
+        Event::DiskWriteResp {
+            id: 14,
+            ok: false,
+            bytes: 0,
+            error_code: Some(1),
+        },
         Event::FrameReady { frame_id: 999 },
         Event::IrqRaise { irq: 5 },
         Event::IrqLower { irq: 5 },

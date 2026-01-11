@@ -39,6 +39,28 @@ pub enum Command {
         size: u32,
         value: u32,
     },
+
+    /// Disk read request.
+    ///
+    /// Read `len` bytes starting at `disk_offset` into the shared guest memory
+    /// buffer at `guest_offset`.
+    DiskRead {
+        id: u32,
+        disk_offset: u64,
+        len: u32,
+        guest_offset: u64,
+    },
+
+    /// Disk write request.
+    ///
+    /// Write `len` bytes from the shared guest memory buffer at `guest_offset`
+    /// to the disk starting at `disk_offset`.
+    DiskWrite {
+        id: u32,
+        disk_offset: u64,
+        len: u32,
+        guest_offset: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +82,26 @@ pub enum Event {
 
     /// Port I/O write completion response.
     PortWriteResp { id: u32 },
+
+    /// Disk read completion response.
+    ///
+    /// If `ok` is false, `error_code` is set to an application-defined u32 code.
+    DiskReadResp {
+        id: u32,
+        ok: bool,
+        bytes: u32,
+        error_code: Option<u32>,
+    },
+
+    /// Disk write completion response.
+    ///
+    /// If `ok` is false, `error_code` is set to an application-defined u32 code.
+    DiskWriteResp {
+        id: u32,
+        ok: bool,
+        bytes: u32,
+        error_code: Option<u32>,
+    },
 
     /// Frame completed and ready for presentation.
     FrameReady { frame_id: u64 },
@@ -149,12 +191,16 @@ const CMD_TAG_MMIO_READ: u16 = 0x0100;
 const CMD_TAG_MMIO_WRITE: u16 = 0x0101;
 const CMD_TAG_PORT_READ: u16 = 0x0102;
 const CMD_TAG_PORT_WRITE: u16 = 0x0103;
+const CMD_TAG_DISK_READ: u16 = 0x0104;
+const CMD_TAG_DISK_WRITE: u16 = 0x0105;
 
 const EVT_TAG_ACK: u16 = 0x1000;
 const EVT_TAG_MMIO_READ_RESP: u16 = 0x1100;
 const EVT_TAG_PORT_READ_RESP: u16 = 0x1101;
 const EVT_TAG_MMIO_WRITE_RESP: u16 = 0x1102;
 const EVT_TAG_PORT_WRITE_RESP: u16 = 0x1103;
+const EVT_TAG_DISK_READ_RESP: u16 = 0x1104;
+const EVT_TAG_DISK_WRITE_RESP: u16 = 0x1105;
 const EVT_TAG_FRAME_READY: u16 = 0x1200;
 const EVT_TAG_IRQ_RAISE: u16 = 0x1300;
 const EVT_TAG_IRQ_LOWER: u16 = 0x1301;
@@ -217,6 +263,30 @@ pub fn encode_command_into(cmd: &Command, out: &mut Vec<u8>) {
             push_u32(out, *size);
             push_u32(out, *value);
         }
+        Command::DiskRead {
+            id,
+            disk_offset,
+            len,
+            guest_offset,
+        } => {
+            push_u16(out, CMD_TAG_DISK_READ);
+            push_u32(out, *id);
+            push_u64(out, *disk_offset);
+            push_u32(out, *len);
+            push_u64(out, *guest_offset);
+        }
+        Command::DiskWrite {
+            id,
+            disk_offset,
+            len,
+            guest_offset,
+        } => {
+            push_u16(out, CMD_TAG_DISK_WRITE);
+            push_u32(out, *id);
+            push_u64(out, *disk_offset);
+            push_u32(out, *len);
+            push_u64(out, *guest_offset);
+        }
     }
 }
 
@@ -244,6 +314,34 @@ pub fn encode_event_into(evt: &Event, out: &mut Vec<u8>) {
         Event::PortWriteResp { id } => {
             push_u16(out, EVT_TAG_PORT_WRITE_RESP);
             push_u32(out, *id);
+        }
+        Event::DiskReadResp {
+            id,
+            ok,
+            bytes,
+            error_code,
+        } => {
+            push_u16(out, EVT_TAG_DISK_READ_RESP);
+            push_u32(out, *id);
+            out.push(if *ok { 1 } else { 0 });
+            push_u32(out, *bytes);
+            if !*ok {
+                push_u32(out, error_code.unwrap_or(0));
+            }
+        }
+        Event::DiskWriteResp {
+            id,
+            ok,
+            bytes,
+            error_code,
+        } => {
+            push_u16(out, EVT_TAG_DISK_WRITE_RESP);
+            push_u32(out, *id);
+            out.push(if *ok { 1 } else { 0 });
+            push_u32(out, *bytes);
+            if !*ok {
+                push_u32(out, error_code.unwrap_or(0));
+            }
         }
         Event::FrameReady { frame_id } => {
             push_u16(out, EVT_TAG_FRAME_READY);
@@ -321,6 +419,18 @@ pub fn decode_command(bytes: &[u8]) -> Result<Command, DecodeError> {
             size: r.read_u32()?,
             value: r.read_u32()?,
         },
+        CMD_TAG_DISK_READ => Command::DiskRead {
+            id: r.read_u32()?,
+            disk_offset: r.read_u64()?,
+            len: r.read_u32()?,
+            guest_offset: r.read_u64()?,
+        },
+        CMD_TAG_DISK_WRITE => Command::DiskWrite {
+            id: r.read_u32()?,
+            disk_offset: r.read_u64()?,
+            len: r.read_u32()?,
+            guest_offset: r.read_u64()?,
+        },
         _ => return Err(DecodeError::UnknownTag),
     };
     if r.remaining() != 0 {
@@ -350,6 +460,30 @@ pub fn decode_event(bytes: &[u8]) -> Result<Event, DecodeError> {
         },
         EVT_TAG_MMIO_WRITE_RESP => Event::MmioWriteResp { id: r.read_u32()? },
         EVT_TAG_PORT_WRITE_RESP => Event::PortWriteResp { id: r.read_u32()? },
+        EVT_TAG_DISK_READ_RESP => {
+            let id = r.read_u32()?;
+            let ok = r.read_u8()? != 0;
+            let bytes = r.read_u32()?;
+            let error_code = if ok { None } else { Some(r.read_u32()?) };
+            Event::DiskReadResp {
+                id,
+                ok,
+                bytes,
+                error_code,
+            }
+        }
+        EVT_TAG_DISK_WRITE_RESP => {
+            let id = r.read_u32()?;
+            let ok = r.read_u8()? != 0;
+            let bytes = r.read_u32()?;
+            let error_code = if ok { None } else { Some(r.read_u32()?) };
+            Event::DiskWriteResp {
+                id,
+                ok,
+                bytes,
+                error_code,
+            }
+        }
         EVT_TAG_FRAME_READY => Event::FrameReady {
             frame_id: r.read_u64()?,
         },

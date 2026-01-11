@@ -154,6 +154,8 @@ Each message begins with a 16-bit `tag` identifying the variant; the rest is var
 | `0x0101` | `MmioWrite` | `u32 id`, `u64 addr`, `u32 len`, `len bytes data` |
 | `0x0102` | `PortRead` | `u32 id`, `u16 port`, `u32 size` |
 | `0x0103` | `PortWrite` | `u32 id`, `u16 port`, `u32 size`, `u32 value` |
+| `0x0104` | `DiskRead` | `u32 id`, `u64 disk_offset`, `u32 len`, `u64 guest_offset` |
+| `0x0105` | `DiskWrite` | `u32 id`, `u64 disk_offset`, `u32 len`, `u64 guest_offset` |
  
 ### 7.2 Events (worker → coordinator)
  
@@ -164,6 +166,8 @@ Each message begins with a 16-bit `tag` identifying the variant; the rest is var
 | `0x1101` | `PortReadResp` | `u32 id`, `u32 value` |
 | `0x1102` | `MmioWriteResp` | `u32 id` |
 | `0x1103` | `PortWriteResp` | `u32 id` |
+| `0x1104` | `DiskReadResp` | `u32 id`, `u8 ok`, `u32 bytes`, (`u32 error_code` if `ok==0`) |
+| `0x1105` | `DiskWriteResp` | `u32 id`, `u8 ok`, `u32 bytes`, (`u32 error_code` if `ok==0`) |
 | `0x1200` | `FrameReady` | `u64 frame_id` |
 | `0x1300` | `IrqRaise` | `u8 irq` |
 | `0x1301` | `IrqLower` | `u8 irq` |
@@ -183,7 +187,16 @@ Log levels:
 | 2 | info |
 | 3 | warn |
 | 4 | error |
- 
+  
+Disk I/O error codes (`Disk*Resp.error_code` when `ok==0`):
+  
+| Code | Meaning |
+|---:|---|
+| 1 | no active disk opened |
+| 2 | guest memory range out of bounds |
+| 3 | disk offset not representable as a JS safe integer |
+| 4 | disk I/O failure (read/write threw) |
+  
 ---
  
 ## 8. Reference implementations

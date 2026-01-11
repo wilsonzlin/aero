@@ -11,6 +11,8 @@ describe("ipc/protocol", () => {
       { kind: "mmioWrite" as const, id: 2, addr: 0xfed0_0000n, data: Uint8Array.of(1, 2, 3, 4, 5) },
       { kind: "portRead" as const, id: 3, port: 0x0060, size: 1 },
       { kind: "portWrite" as const, id: 4, port: 0x0064, size: 1, value: 0xaa },
+      { kind: "diskRead" as const, id: 5, diskOffset: 0x1000n, len: 512, guestOffset: 0x2000n },
+      { kind: "diskWrite" as const, id: 6, diskOffset: 0x2000n, len: 1024, guestOffset: 0x3000n },
     ];
 
     for (const cmd of cases) {
@@ -31,6 +33,8 @@ describe("ipc/protocol", () => {
       { kind: "portReadResp" as const, id: 10, value: 0x1234_5678 },
       { kind: "mmioWriteResp" as const, id: 11 },
       { kind: "portWriteResp" as const, id: 12 },
+      { kind: "diskReadResp" as const, id: 13, ok: true, bytes: 512 },
+      { kind: "diskWriteResp" as const, id: 14, ok: false, bytes: 0, errorCode: 1 },
       { kind: "frameReady" as const, frameId: 999n },
       { kind: "irqRaise" as const, irq: 5 },
       { kind: "irqLower" as const, irq: 5 },

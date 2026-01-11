@@ -164,15 +164,20 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     perf.spanBegin("wasm:init");
     perf.spanEnd("wasm:init");
 
-    perf.spanBegin("worker:init");
-    try {
-      role = init.role ?? "jit";
-      maybeUpdatePlatformFeatures(init);
-      recomputeJitEnabled();
-      const segments = { control: init.controlSab!, guestMemory: init.guestMemory!, vgaFramebuffer: init.vgaFramebuffer! };
-      status = createSharedMemoryViews(segments).status;
-      const regions = ringRegionsForWorker(role);
-      commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
+      perf.spanBegin("worker:init");
+      try {
+        role = init.role ?? "jit";
+        maybeUpdatePlatformFeatures(init);
+        recomputeJitEnabled();
+        const segments = {
+          control: init.controlSab!,
+          guestMemory: init.guestMemory!,
+          vgaFramebuffer: init.vgaFramebuffer!,
+          ioIpc: init.ioIpcSab!,
+        };
+        status = createSharedMemoryViews(segments).status;
+        const regions = ringRegionsForWorker(role);
+        commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
 
       if (init.perfChannel) {
         perfWriter = new PerfWriter(init.perfChannel.buffer, {

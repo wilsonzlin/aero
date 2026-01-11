@@ -1,6 +1,9 @@
 /// <reference lib="webworker" />
 
 import type { AeroConfig } from "../config/aero_config";
+import { openRingByKind } from "../ipc/ipc";
+import { decodeEvent, encodeCommand } from "../ipc/protocol";
+import type { RingBuffer as IpcRingBuffer } from "../ipc/ring_buffer";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
@@ -18,8 +21,15 @@ import {
   storeHeaderI32,
   wrapSharedFramebuffer,
 } from "../display/framebuffer_protocol";
-import { RingBuffer } from "../runtime/ring_buffer";
-import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
+import { RingBuffer as RuntimeRingBuffer } from "../runtime/ring_buffer";
+import {
+  IO_IPC_CMD_QUEUE_KIND,
+  IO_IPC_EVT_QUEUE_KIND,
+  StatusIndex,
+  createSharedMemoryViews,
+  ringRegionsForWorker,
+  setReadyFlag,
+} from "../runtime/shared_layout";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
@@ -37,9 +47,10 @@ void installWorkerPerfHandlers();
 
 let role: "cpu" | "gpu" | "io" | "jit" = "cpu";
 let status!: Int32Array;
-let commandRing!: RingBuffer;
-let eventRing!: RingBuffer;
+let commandRing!: RuntimeRingBuffer;
+let eventRing!: RuntimeRingBuffer;
 let guestI32!: Int32Array;
+let guestU8!: Uint8Array;
 let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 let frameState: Int32Array | null = null;
 
@@ -51,7 +62,6 @@ let perfInstructions = 0n;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
-
 type SetAudioOutputRingBufferMessage = {
   type: "setAudioOutputRingBuffer";
   ringBuffer: SharedArrayBuffer | null;
@@ -123,6 +133,12 @@ function attachAudioOutputRingBuffer(ringBuffer: SharedArrayBuffer | null, msg: 
 
   maybeInitAudioOutput();
 }
+let ioCmdRing: IpcRingBuffer | null = null;
+let ioEvtRing: IpcRingBuffer | null = null;
+
+let diskDemoStarted = false;
+let diskDemoResponses = 0;
+let nextIoIpcId = 1;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const msg = ev.data as Partial<WorkerInitMessage | ConfigUpdateMessage | SetAudioOutputRingBufferMessage>;
@@ -150,10 +166,16 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
     perf.spanBegin("worker:init");
     try {
       role = init.role ?? "cpu";
-      const segments = { control: init.controlSab!, guestMemory: init.guestMemory!, vgaFramebuffer: init.vgaFramebuffer! };
+      const segments = {
+        control: init.controlSab!,
+        guestMemory: init.guestMemory!,
+        vgaFramebuffer: init.vgaFramebuffer!,
+        ioIpc: init.ioIpcSab!,
+      };
       const views = createSharedMemoryViews(segments);
       status = views.status;
       guestI32 = views.guestI32;
+      guestU8 = views.guestU8;
       vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
       frameState = init.frameStateSab ? new Int32Array(init.frameStateSab) : null;
 
@@ -173,8 +195,11 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       });
 
       const regions = ringRegionsForWorker(role);
-      commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
-      eventRing = new RingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
+      commandRing = new RuntimeRingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
+      eventRing = new RuntimeRingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
+
+      ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
+      ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
 
       try {
         const { api, variant } = await perf.spanAsync("wasm:init", () =>
@@ -286,6 +311,10 @@ async function runLoop(): Promise<void> {
         nextHeartbeatMs = performance.now();
         nextFrameMs = performance.now();
         nextModeSwitchMs = performance.now() + modeSwitchIntervalMs;
+        if (!diskDemoStarted) {
+          diskDemoStarted = true;
+          void runDiskReadDemo();
+        }
       } else if (cmd.type === MessageType.STOP) {
         Atomics.store(status, StatusIndex.StopRequested, 1);
       }
@@ -373,6 +402,64 @@ async function runLoop(): Promise<void> {
   setReadyFlag(status, role, false);
   detachAudioOutput();
   ctx.close();
+}
+
+async function runDiskReadDemo(): Promise<void> {
+  const cmdRing = ioCmdRing;
+  const evtRing = ioEvtRing;
+  if (!cmdRing || !evtRing) return;
+
+  // Wait until the I/O worker reports ready.
+  while (Atomics.load(status, StatusIndex.IoReady) !== 1) {
+    if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  // Read the first sector into guest RAM at an arbitrary scratch offset.
+  const id = (nextIoIpcId++ >>> 0) || (nextIoIpcId++ >>> 0);
+  const guestOffset = 0x1000n;
+  const len = 512;
+  const cmdBytes = encodeCommand({ kind: "diskRead", id, diskOffset: 0n, len, guestOffset });
+
+  // Best-effort retry if the ring is temporarily full.
+  while (!cmdRing.tryPush(cmdBytes)) {
+    if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  const deadlineMs = performance.now() + 2000;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    while (true) {
+      const bytes = evtRing.tryPop();
+      if (!bytes) break;
+      const evt = decodeEvent(bytes);
+      if (evt.kind !== "diskReadResp") continue;
+      if (evt.id !== id) continue;
+
+      diskDemoResponses += 1;
+      perf.counter("diskReadDemoResponses", diskDemoResponses);
+      if (perf.traceEnabled) perf.instant("diskReadDemoResp", "t", evt as unknown as Record<string, unknown>);
+
+      if (evt.ok && evt.bytes >= 4) {
+        const firstDword = new DataView(guestU8.buffer, Number(guestOffset), 4).getUint32(0, true);
+        perf.counter("diskReadDemoFirstDword", firstDword);
+      }
+      return;
+    }
+
+    const now = performance.now();
+    if (now >= deadlineMs) {
+      if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
+      return;
+    }
+
+    const res = await evtRing.waitForDataAsync(Math.max(0, deadlineMs - now));
+    if (res === "timed-out") {
+      if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
+      return;
+    }
+  }
 }
 
 function renderTestPattern(

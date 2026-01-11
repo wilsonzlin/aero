@@ -1,5 +1,6 @@
 import { RingBuffer } from "./ring_buffer";
 import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
+import { createIpcBuffer } from "../ipc/ipc";
 
 export const WORKER_ROLES = ["cpu", "gpu", "io", "jit"] as const;
 export type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -30,6 +31,14 @@ export enum StatusIndex {
 export const COMMAND_RING_CAPACITY_BYTES = 32 * 1024;
 export const EVENT_RING_CAPACITY_BYTES = 32 * 1024;
 
+// CPU<->I/O AIPC queues used for high-frequency device operations (disk I/O, etc).
+//
+// These queues use the AIPC layout/protocol defined in `web/src/ipc` /
+// `crates/aero-ipc` and are separate from the runtime START/STOP rings.
+export const IO_IPC_CMD_QUEUE_KIND = 0;
+export const IO_IPC_EVT_QUEUE_KIND = 1;
+export const IO_IPC_RING_CAPACITY_BYTES = 32 * 1024;
+
 /**
  * Guest memory placeholder.
  *
@@ -43,9 +52,12 @@ export const EVENT_RING_CAPACITY_BYTES = 32 * 1024;
  * - Without `memory64`, wasm32 linear memory is limited to 2^32 bytes (~4 GiB),
  *   i.e. 65,536 64KiB pages.
  *
- * Therefore we deliberately use *two* shared memory segments:
- * - `control`: a small SharedArrayBuffer for IPC (status + ring buffers).
+ * Therefore we deliberately use multiple shared memory segments:
+ * - `control`: a small SharedArrayBuffer for runtime IPC (status + START/STOP rings).
+ * - `ioIpc`: a SharedArrayBuffer carrying the high-frequency AIPC command/event queues
+ *   (disk I/O, device access, etc).
  * - `guestMemory`: a shared WebAssembly.Memory for guest RAM.
+ * - `vgaFramebuffer`: a shared framebuffer region for early VGA/VBE display.
  *
  * This keeps IPC cache-friendly and avoids tying worker bring-up to a massive
  * monolithic allocation.
@@ -79,6 +91,7 @@ export interface SharedMemorySegments {
   control: SharedArrayBuffer;
   guestMemory: WebAssembly.Memory;
   vgaFramebuffer: SharedArrayBuffer;
+  ioIpc: SharedArrayBuffer;
 }
 
 export interface RingRegions {
@@ -171,6 +184,10 @@ export function allocateSharedMemorySegments(options?: {
     vgaFramebuffer: new SharedArrayBuffer(
       requiredFramebufferBytes(VGA_FRAMEBUFFER_MAX_WIDTH, VGA_FRAMEBUFFER_MAX_HEIGHT, VGA_FRAMEBUFFER_MAX_WIDTH * 4),
     ),
+    ioIpc: createIpcBuffer([
+      { kind: IO_IPC_CMD_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
+      { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
+    ]).buffer,
   };
 }
 

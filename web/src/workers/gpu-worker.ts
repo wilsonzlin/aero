@@ -509,7 +509,7 @@ async function initPresenter(
 
 const handleRuntimeInit = (init: WorkerInitMessage) => {
   role = init.role ?? 'gpu';
-  const segments = { control: init.controlSab, guestMemory: init.guestMemory, vgaFramebuffer: init.vgaFramebuffer };
+  const segments = { control: init.controlSab, guestMemory: init.guestMemory, vgaFramebuffer: init.vgaFramebuffer, ioIpc: init.ioIpcSab };
   status = createSharedMemoryViews(segments).status;
   setReadyFlag(status, role, true);
 

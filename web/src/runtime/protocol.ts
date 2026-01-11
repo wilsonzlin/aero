@@ -102,6 +102,11 @@ export type WorkerInitMessage = {
   guestMemory: WebAssembly.Memory;
   vgaFramebuffer: SharedArrayBuffer;
   /**
+   * CPU<->I/O AIPC buffer used for high-frequency device operations (disk I/O,
+   * etc). Contains at least a command queue and an event queue.
+   */
+  ioIpcSab: SharedArrayBuffer;
+  /**
    * Optional platform feature report captured by the main thread.
    *
    * Workers may use this to avoid redundant capability probing and to gate

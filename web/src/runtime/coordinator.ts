@@ -186,6 +186,7 @@ export class WorkerCoordinator {
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
         vgaFramebuffer: segments.vgaFramebuffer,
+        ioIpcSab: segments.ioIpc,
         frameStateSab: this.frameStateSab,
         platformFeatures: this.platformFeatures ?? undefined,
       };

@@ -8,7 +8,9 @@ export type Command =
   | { kind: "mmioRead"; id: number; addr: bigint; size: number }
   | { kind: "mmioWrite"; id: number; addr: bigint; data: Uint8Array }
   | { kind: "portRead"; id: number; port: number; size: number }
-  | { kind: "portWrite"; id: number; port: number; size: number; value: number };
+  | { kind: "portWrite"; id: number; port: number; size: number; value: number }
+  | { kind: "diskRead"; id: number; diskOffset: bigint; len: number; guestOffset: bigint }
+  | { kind: "diskWrite"; id: number; diskOffset: bigint; len: number; guestOffset: bigint };
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
 
@@ -18,6 +20,8 @@ export type Event =
   | { kind: "portReadResp"; id: number; value: number }
   | { kind: "mmioWriteResp"; id: number }
   | { kind: "portWriteResp"; id: number }
+  | { kind: "diskReadResp"; id: number; ok: boolean; bytes: number; errorCode?: number }
+  | { kind: "diskWriteResp"; id: number; ok: boolean; bytes: number; errorCode?: number }
   | { kind: "frameReady"; frameId: bigint }
   | { kind: "irqRaise"; irq: number }
   | { kind: "irqLower"; irq: number }
@@ -34,12 +38,16 @@ const CMD_TAG_MMIO_READ = 0x0100;
 const CMD_TAG_MMIO_WRITE = 0x0101;
 const CMD_TAG_PORT_READ = 0x0102;
 const CMD_TAG_PORT_WRITE = 0x0103;
+const CMD_TAG_DISK_READ = 0x0104;
+const CMD_TAG_DISK_WRITE = 0x0105;
 
 const EVT_TAG_ACK = 0x1000;
 const EVT_TAG_MMIO_READ_RESP = 0x1100;
 const EVT_TAG_PORT_READ_RESP = 0x1101;
 const EVT_TAG_MMIO_WRITE_RESP = 0x1102;
 const EVT_TAG_PORT_WRITE_RESP = 0x1103;
+const EVT_TAG_DISK_READ_RESP = 0x1104;
+const EVT_TAG_DISK_WRITE_RESP = 0x1105;
 const EVT_TAG_FRAME_READY = 0x1200;
 const EVT_TAG_IRQ_RAISE = 0x1300;
 const EVT_TAG_IRQ_LOWER = 0x1301;
@@ -105,6 +113,20 @@ export function encodeCommand(cmd: Command): Uint8Array {
       pushU32(cmd.size);
       pushU32(cmd.value);
       break;
+    case "diskRead":
+      pushU16(CMD_TAG_DISK_READ);
+      pushU32(cmd.id);
+      pushU64(cmd.diskOffset);
+      pushU32(cmd.len);
+      pushU64(cmd.guestOffset);
+      break;
+    case "diskWrite":
+      pushU16(CMD_TAG_DISK_WRITE);
+      pushU32(cmd.id);
+      pushU64(cmd.diskOffset);
+      pushU32(cmd.len);
+      pushU64(cmd.guestOffset);
+      break;
   }
   return Uint8Array.from(out);
 }
@@ -154,6 +176,12 @@ export function decodeCommand(bytes: Uint8Array): Command {
       break;
     case CMD_TAG_PORT_WRITE:
       cmd = { kind: "portWrite", id: readU32(), port: readU16(), size: readU32(), value: readU32() };
+      break;
+    case CMD_TAG_DISK_READ:
+      cmd = { kind: "diskRead", id: readU32(), diskOffset: readU64(), len: readU32(), guestOffset: readU64() };
+      break;
+    case CMD_TAG_DISK_WRITE:
+      cmd = { kind: "diskWrite", id: readU32(), diskOffset: readU64(), len: readU32(), guestOffset: readU64() };
       break;
     default:
       throw new Error(`unknown command tag 0x${tag.toString(16)}`);
@@ -207,6 +235,20 @@ export function encodeEvent(evt: Event): Uint8Array {
     case "portWriteResp":
       pushU16(EVT_TAG_PORT_WRITE_RESP);
       pushU32(evt.id);
+      break;
+    case "diskReadResp":
+      pushU16(EVT_TAG_DISK_READ_RESP);
+      pushU32(evt.id);
+      pushU8(evt.ok ? 1 : 0);
+      pushU32(evt.bytes);
+      if (!evt.ok) pushU32(evt.errorCode ?? 0);
+      break;
+    case "diskWriteResp":
+      pushU16(EVT_TAG_DISK_WRITE_RESP);
+      pushU32(evt.id);
+      pushU8(evt.ok ? 1 : 0);
+      pushU32(evt.bytes);
+      if (!evt.ok) pushU32(evt.errorCode ?? 0);
       break;
     case "frameReady":
       pushU16(EVT_TAG_FRAME_READY);
@@ -300,6 +342,30 @@ export function decodeEvent(bytes: Uint8Array): Event {
     case EVT_TAG_PORT_WRITE_RESP:
       evt = { kind: "portWriteResp", id: readU32() };
       break;
+    case EVT_TAG_DISK_READ_RESP: {
+      const id = readU32();
+      const ok = readU8() !== 0;
+      const bytesRead = readU32();
+      if (ok) {
+        evt = { kind: "diskReadResp", id, ok, bytes: bytesRead };
+      } else {
+        const errorCode = readU32();
+        evt = { kind: "diskReadResp", id, ok, bytes: bytesRead, errorCode };
+      }
+      break;
+    }
+    case EVT_TAG_DISK_WRITE_RESP: {
+      const id = readU32();
+      const ok = readU8() !== 0;
+      const bytesWritten = readU32();
+      if (ok) {
+        evt = { kind: "diskWriteResp", id, ok, bytes: bytesWritten };
+      } else {
+        const errorCode = readU32();
+        evt = { kind: "diskWriteResp", id, ok, bytes: bytesWritten, errorCode };
+      }
+      break;
+    }
     case EVT_TAG_FRAME_READY:
       evt = { kind: "frameReady", frameId: readU64() };
       break;

@@ -1,13 +1,23 @@
 /// <reference lib="webworker" />
 
 import type { AeroConfig } from "../config/aero_config";
+import { openRingByKind } from "../ipc/ipc";
+import { decodeCommand, encodeEvent, type Command as IpcCommand } from "../ipc/protocol";
+import type { RingBuffer as IpcRingBuffer } from "../ipc/ring_buffer";
 import { InputEventType } from "../input/event_queue";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
-import { RingBuffer } from "../runtime/ring_buffer";
-import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
+import { RingBuffer as RuntimeRingBuffer } from "../runtime/ring_buffer";
+import {
+  IO_IPC_CMD_QUEUE_KIND,
+  IO_IPC_EVT_QUEUE_KIND,
+  StatusIndex,
+  createSharedMemoryViews,
+  ringRegionsForWorker,
+  setReadyFlag,
+} from "../runtime/shared_layout";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
@@ -29,7 +39,18 @@ type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayB
 
 let role: "cpu" | "gpu" | "io" | "jit" = "io";
 let status!: Int32Array;
-let commandRing!: RingBuffer;
+let runtimeCommandRing!: RuntimeRingBuffer;
+
+let guestU8!: Uint8Array;
+
+let ioCmdRing: IpcRingBuffer | null = null;
+let ioEvtRing: IpcRingBuffer | null = null;
+const pendingIoEvents: Uint8Array[] = [];
+
+const DISK_ERROR_NO_ACTIVE_DISK = 1;
+const DISK_ERROR_GUEST_OOB = 2;
+const DISK_ERROR_DISK_OFFSET_TOO_LARGE = 3;
+const DISK_ERROR_IO_FAILURE = 4;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
@@ -191,10 +212,19 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       perf.spanBegin("worker:init");
       try {
         role = init.role ?? "io";
-        const segments = { control: init.controlSab!, guestMemory: init.guestMemory!, vgaFramebuffer: init.vgaFramebuffer! };
-        status = createSharedMemoryViews(segments).status;
+        const segments = {
+          control: init.controlSab!,
+          guestMemory: init.guestMemory!,
+          vgaFramebuffer: init.vgaFramebuffer!,
+          ioIpc: init.ioIpcSab!,
+        };
+        const views = createSharedMemoryViews(segments);
+        status = views.status;
+        guestU8 = views.guestU8;
         const regions = ringRegionsForWorker(role);
-        commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
+        runtimeCommandRing = new RuntimeRingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
+        ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
+        ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
 
         if (init.perfChannel) {
           perfWriter = new PerfWriter(init.perfChannel.buffer, {
@@ -242,7 +272,8 @@ function startPolling(): void {
   // here; instead poll the command ring at a low rate.
   pollTimer = setInterval(() => {
     const t0 = performance.now();
-    drainCommands();
+    drainRuntimeCommands();
+    drainIoIpcCommands();
     perfIoMs += performance.now() - t0;
     maybeEmitPerfSample();
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
@@ -251,15 +282,138 @@ function startPolling(): void {
   }, 8) as unknown as number;
 }
 
-function drainCommands(): void {
+function drainRuntimeCommands(): void {
   while (true) {
-    const bytes = commandRing.pop();
+    const bytes = runtimeCommandRing.pop();
     if (!bytes) break;
     const cmd = decodeProtocolMessage(bytes);
     if (!cmd) continue;
     if (cmd.type === MessageType.STOP) {
       Atomics.store(status, StatusIndex.StopRequested, 1);
     }
+  }
+}
+
+function drainIoIpcCommands(): void {
+  const cmdRing = ioCmdRing;
+  if (!cmdRing) return;
+  flushPendingIoEvents();
+
+  while (true) {
+    const bytes = cmdRing.tryPop();
+    if (!bytes) break;
+
+    let cmd: IpcCommand;
+    try {
+      cmd = decodeCommand(bytes);
+    } catch {
+      continue;
+    }
+
+    if (cmd.kind === "diskRead") {
+      handleDiskRead(cmd);
+    } else if (cmd.kind === "diskWrite") {
+      handleDiskWrite(cmd);
+    }
+  }
+}
+
+function flushPendingIoEvents(): void {
+  const evtRing = ioEvtRing;
+  if (!evtRing) return;
+  while (pendingIoEvents.length > 0) {
+    const bytes = pendingIoEvents[0]!;
+    if (!evtRing.tryPush(bytes)) break;
+    pendingIoEvents.shift();
+  }
+}
+
+function enqueueIoEvent(bytes: Uint8Array): void {
+  const evtRing = ioEvtRing;
+  if (!evtRing) return;
+  if (evtRing.tryPush(bytes)) return;
+  pendingIoEvents.push(bytes);
+}
+
+function diskOffsetToJsNumber(diskOffset: bigint, len: number): number | null {
+  if (diskOffset < 0n) return null;
+  const end = diskOffset + BigInt(len >>> 0);
+  if (diskOffset > BigInt(Number.MAX_SAFE_INTEGER) || end > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return Number(diskOffset);
+}
+
+function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
+  const guestBytes = BigInt(guestU8.byteLength);
+  if (guestOffset < 0n) return null;
+  const end = guestOffset + BigInt(len >>> 0);
+  if (end > guestBytes) return null;
+  const start = Number(guestOffset);
+  return guestU8.subarray(start, start + (len >>> 0));
+}
+
+function handleDiskRead(cmd: Extract<IpcCommand, { kind: "diskRead" }>): void {
+  const id = cmd.id >>> 0;
+  const len = cmd.len >>> 0;
+  const handle = activeAccessHandle;
+  if (!handle) {
+    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK }));
+    return;
+  }
+
+  const view = guestRangeView(cmd.guestOffset, len);
+  if (!view) {
+    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_GUEST_OOB }));
+    return;
+  }
+
+  const at = diskOffsetToJsNumber(cmd.diskOffset, len);
+  if (at === null) {
+    enqueueIoEvent(
+      encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE }),
+    );
+    return;
+  }
+
+  try {
+    const bytes = handle.read(view, { at });
+    perfIoReadBytes += bytes >>> 0;
+    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: true, bytes: bytes >>> 0 }));
+  } catch {
+    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE }));
+  }
+}
+
+function handleDiskWrite(cmd: Extract<IpcCommand, { kind: "diskWrite" }>): void {
+  const id = cmd.id >>> 0;
+  const len = cmd.len >>> 0;
+  const handle = activeAccessHandle;
+  if (!handle) {
+    enqueueIoEvent(
+      encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK }),
+    );
+    return;
+  }
+
+  const view = guestRangeView(cmd.guestOffset, len);
+  if (!view) {
+    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_GUEST_OOB }));
+    return;
+  }
+
+  const at = diskOffsetToJsNumber(cmd.diskOffset, len);
+  if (at === null) {
+    enqueueIoEvent(
+      encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE }),
+    );
+    return;
+  }
+
+  try {
+    const bytes = handle.write(view, { at });
+    perfIoWriteBytes += bytes >>> 0;
+    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: true, bytes: bytes >>> 0 }));
+  } catch {
+    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE }));
   }
 }
 
