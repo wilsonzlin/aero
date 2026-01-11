@@ -5284,6 +5284,13 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     if (track_resource_allocation_locked(dev, src, /*write=*/false) < 0) {
       return trace.ret(E_FAIL);
     }
+    // Allocation tracking can flush/split the current submission if the runtime
+    // allocation list is full. If tracking `src` forced a split, the allocation
+    // list has been reset and we must re-track `dst` so the final submission
+    // references both allocations.
+    if (track_resource_allocation_locked(dev, dst, /*write=*/true) < 0) {
+      return trace.ret(E_FAIL);
+    }
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_copy_texture2d>(dev, AEROGPU_CMD_COPY_TEXTURE2D);
     if (!cmd) {
@@ -5363,6 +5370,9 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
         return trace.ret(E_FAIL);
       }
       if (track_resource_allocation_locked(dev, src, /*write=*/false) < 0) {
+        return trace.ret(E_FAIL);
+      }
+      if (track_resource_allocation_locked(dev, dst, /*write=*/true) < 0) {
         return trace.ret(E_FAIL);
       }
 
