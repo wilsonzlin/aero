@@ -11,6 +11,33 @@ pub struct AcpiInfo {
     pub nvs: (u64, u64),
 }
 
+pub trait AcpiBuilder: Send {
+    fn build_and_write(
+        &mut self,
+        bus: &mut dyn BiosBus,
+        memory_size_bytes: u64,
+        cpu_count: u8,
+        pirq_to_gsi: [u32; 4],
+        placement: AcpiPlacement,
+    ) -> Option<AcpiInfo>;
+}
+
+#[derive(Debug, Default)]
+pub struct AeroAcpiBuilder;
+
+impl AcpiBuilder for AeroAcpiBuilder {
+    fn build_and_write(
+        &mut self,
+        bus: &mut dyn BiosBus,
+        memory_size_bytes: u64,
+        cpu_count: u8,
+        pirq_to_gsi: [u32; 4],
+        placement: AcpiPlacement,
+    ) -> Option<AcpiInfo> {
+        build_and_write(bus, memory_size_bytes, cpu_count, pirq_to_gsi, placement)
+    }
+}
+
 pub fn build_and_write(
     bus: &mut dyn BiosBus,
     memory_size_bytes: u64,
@@ -96,4 +123,3 @@ fn acpi_reclaimable_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
 
     (start, end.saturating_sub(start))
 }
-

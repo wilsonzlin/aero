@@ -35,6 +35,7 @@ use crate::video::VideoDevice;
 use machine::{BlockDevice, CpuState, DiskError, FirmwareMemory, MemoryAccess, Segment};
 
 pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
+pub use acpi::{AcpiBuilder, AcpiInfo};
 pub use interrupts::E820Entry;
 pub use pci::{PciConfigSpace, PciDevice};
 pub use snapshot::BiosSnapshot;
@@ -155,6 +156,7 @@ pub struct Bios {
     bda_time: BdaTime,
 
     config: BiosConfig,
+    acpi_builder: Box<dyn AcpiBuilder>,
     e820_map: Vec<E820Entry>,
     pci_devices: Vec<PciDevice>,
     keyboard_queue: VecDeque<u16>,
@@ -189,6 +191,7 @@ impl Bios {
             video: VideoDevice::new(),
             bda_time,
             config,
+            acpi_builder: Box::new(acpi::AeroAcpiBuilder::default()),
             e820_map: Vec::new(),
             pci_devices: Vec::new(),
             keyboard_queue: VecDeque::new(),
@@ -258,6 +261,10 @@ impl Bios {
         disk: &mut dyn BlockDevice,
     ) {
         interrupts::dispatch_interrupt(self, vector, cpu, bus, disk);
+    }
+
+    pub fn set_acpi_builder(&mut self, builder: Box<dyn AcpiBuilder>) {
+        self.acpi_builder = builder;
     }
 }
 

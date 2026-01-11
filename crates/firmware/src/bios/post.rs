@@ -1,7 +1,7 @@
 use machine::{CpuState, FLAG_ALWAYS_ON, FLAG_IF};
 
 use super::{
-    acpi, ivt,
+    ivt,
     pci::PciConfigSpace,
     rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
 };
@@ -80,7 +80,7 @@ impl Bios {
 
         // 7) ACPI tables (generated via `aero-acpi`).
         if self.config.enable_acpi {
-            if let Some(info) = acpi::build_and_write(
+            if let Some(info) = self.acpi_builder.build_and_write(
                 bus,
                 self.config.memory_size_bytes,
                 self.config.cpu_count,

@@ -139,10 +139,11 @@ impl PlatformInterrupts {
             *slot = idx as u32;
         }
 
-        // Match the firmware MADT Interrupt Source Override (ISO) entries.
+        // Match the MADT Interrupt Source Override (ISO) entries published by firmware.
         //
-        // We publish ISA IRQ0 -> GSI2 (the legacy PIT interrupt) in `firmware/src/acpi/builder.rs`.
-        // Windows and other ACPI/APIC OSes will program the IOAPIC expecting that mapping.
+        // The ACPI tables (emitted by `aero-acpi`) publish ISA IRQ0 -> GSI2 (the legacy PIT
+        // interrupt). Windows and other ACPI/APIC OSes will program the IOAPIC expecting that
+        // mapping.
         isa_irq_to_gsi[0] = 2;
 
         let lapic_clock = Arc::new(AtomicClock::default());

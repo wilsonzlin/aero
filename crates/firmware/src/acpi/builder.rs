@@ -1,11 +1,8 @@
 use crate::acpi::constants::{
     ACPI_TABLE_ALIGNMENT, DEFAULT_ACPI_NVS_WINDOW_SIZE, DEFAULT_ACPI_RECLAIM_WINDOW_SIZE,
-    DEFAULT_EBDA_BASE, DEFAULT_PCI_MMIO_START, HPET_BASE, IO_APIC_BASE, LOCAL_APIC_BASE,
+    DEFAULT_EBDA_BASE, DEFAULT_PCI_MMIO_START,
 };
-use crate::acpi::structures::{
-    as_bytes, AcpiHeader, Facs, Fadt, GenericAddress, Hpet, RsdpV2, ACPI_HEADER_CHECKSUM_OFFSET,
-    ACPI_HEADER_SIZE, RSDP_CHECKSUM_LEN_V1, RSDP_V2_SIZE,
-};
+use crate::acpi::structures::{RSDP_CHECKSUM_LEN_V1, RSDP_V2_SIZE};
 use memory::{GuestMemory, GuestMemoryError};
 
 pub type PhysAddr = u64;
@@ -35,7 +32,8 @@ impl AcpiConfig {
             cpu_count,
             guest_memory_size,
             pci_mmio_start: DEFAULT_PCI_MMIO_START,
-            rsdp_addr: DEFAULT_EBDA_BASE,
+            // Keep the RSDP within the EBDA so it is discoverable via the legacy BIOS scan.
+            rsdp_addr: DEFAULT_EBDA_BASE + 0x100,
             reclaim_window_size: DEFAULT_ACPI_RECLAIM_WINDOW_SIZE,
             nvs_window_size: DEFAULT_ACPI_NVS_WINDOW_SIZE,
         }
@@ -103,6 +101,8 @@ pub struct AcpiTables {
 
 impl AcpiTables {
     pub fn build(config: &AcpiConfig) -> Result<Self, AcpiBuildError> {
+        const ONE_MIB: u64 = 0x0010_0000;
+
         if config.cpu_count == 0 {
             return Err(AcpiBuildError::CpuCountMustBeNonZero);
         }
@@ -115,88 +115,115 @@ impl AcpiTables {
             .reclaim_window_size
             .checked_add(config.nvs_window_size)
             .expect("ACPI window sizes should not overflow u64");
-        if low_ram_top < total_acpi_window {
+
+        // Keep SDTs above 1MiB so we don't overlap the BIOS/EBDA scan regions.
+        if low_ram_top < ONE_MIB.saturating_add(total_acpi_window) {
             return Err(AcpiBuildError::GuestMemoryTooSmall {
                 guest_memory_size: config.guest_memory_size,
-                required: total_acpi_window,
+                required: ONE_MIB.saturating_add(total_acpi_window),
             });
         }
 
         // Place ACPI windows at the top of low RAM, below the PCI MMIO hole.
-        let reclaim_base = align_down(low_ram_top - total_acpi_window, ACPI_TABLE_ALIGNMENT);
+        let end = align_down(low_ram_top, ACPI_TABLE_ALIGNMENT);
+        let reclaim_base = align_down(end - total_acpi_window, ACPI_TABLE_ALIGNMENT);
         let nvs_base = reclaim_base + config.reclaim_window_size;
 
-        // NVS: allocate FACS first.
-        let facs_addr = align_up(nvs_base, ACPI_TABLE_ALIGNMENT);
-        let facs = build_facs();
-        let nvs_used = (facs_addr - nvs_base) + facs.len() as u64;
-        if nvs_used > config.nvs_window_size {
+        // Ensure the guest is large enough to hold the RSDP.
+        let rsdp_end = config.rsdp_addr.saturating_add(RSDP_V2_SIZE as u64);
+        if config.guest_memory_size < rsdp_end {
+            return Err(AcpiBuildError::GuestMemoryTooSmall {
+                guest_memory_size: config.guest_memory_size,
+                required: rsdp_end,
+            });
+        }
+
+        let mut aero_cfg = aero_acpi::AcpiConfig::default();
+        aero_cfg.cpu_count = config.cpu_count;
+
+        aero_cfg.pci_mmio_base = u32::try_from(config.pci_mmio_start).map_err(|_| {
+            AcpiBuildError::AddressDoesNotFitInU32 {
+                table: "PCI MMIO base",
+                addr: config.pci_mmio_start,
+            }
+        })?;
+
+        // Keep the MMIO window ending right below the IOAPIC base (matching the default).
+        if aero_cfg.io_apic_addr <= aero_cfg.pci_mmio_base {
+            aero_cfg.pci_mmio_size = 0;
+        } else {
+            aero_cfg.pci_mmio_size = aero_cfg.io_apic_addr - aero_cfg.pci_mmio_base;
+        }
+
+        let placement = aero_acpi::AcpiPlacement {
+            tables_base: reclaim_base,
+            nvs_base,
+            nvs_size: config.nvs_window_size,
+            rsdp_addr: config.rsdp_addr,
+            alignment: ACPI_TABLE_ALIGNMENT,
+        };
+
+        let tables = aero_acpi::AcpiTables::build(&aero_cfg, placement);
+
+        let reclaim_end = reclaim_base + config.reclaim_window_size;
+        let mut reclaim_max_end = reclaim_base;
+        for &(_, addr, len) in &[
+            ("DSDT", tables.addresses.dsdt, tables.dsdt.len()),
+            ("FADT", tables.addresses.fadt, tables.fadt.len()),
+            ("MADT", tables.addresses.madt, tables.madt.len()),
+            ("HPET", tables.addresses.hpet, tables.hpet.len()),
+            ("RSDT", tables.addresses.rsdt, tables.rsdt.len()),
+            ("XSDT", tables.addresses.xsdt, tables.xsdt.len()),
+        ] {
+            let end = addr + len as u64;
+            reclaim_max_end = reclaim_max_end.max(end);
+            if addr < reclaim_base || end > reclaim_end {
+                return Err(AcpiBuildError::TablesOverflowReclaimWindow {
+                    reclaim_window_size: config.reclaim_window_size,
+                    used: reclaim_max_end - reclaim_base,
+                });
+            }
+        }
+
+        let facs_end = tables.addresses.facs + tables.facs.len() as u64;
+        let nvs_end = nvs_base + config.nvs_window_size;
+        if tables.addresses.facs < nvs_base || facs_end > nvs_end {
             return Err(AcpiBuildError::TablesOverflowNvsWindow {
                 nvs_window_size: config.nvs_window_size,
-                used: nvs_used,
+                used: facs_end.saturating_sub(nvs_base),
             });
         }
 
-        // Reclaimable: DSDT, FADT, MADT, HPET, RSDT, XSDT.
-        let mut cursor = reclaim_base;
+        let rsdp: [u8; RSDP_V2_SIZE] = tables
+            .rsdp
+            .as_slice()
+            .try_into()
+            .expect("aero-acpi must always emit a v2 RSDP");
 
-        let dsdt_addr = align_up(cursor, ACPI_TABLE_ALIGNMENT);
-        let dsdt = build_dsdt();
-        cursor = align_up(dsdt_addr + dsdt.len() as u64, ACPI_TABLE_ALIGNMENT);
-
-        let fadt_addr = cursor;
-        let fadt = build_fadt(dsdt_addr, facs_addr)?;
-        cursor = align_up(fadt_addr + fadt.len() as u64, ACPI_TABLE_ALIGNMENT);
-
-        let madt_addr = cursor;
-        let madt = build_madt(config.cpu_count);
-        cursor = align_up(madt_addr + madt.len() as u64, ACPI_TABLE_ALIGNMENT);
-
-        let hpet_addr = cursor;
-        let hpet = build_hpet();
-        cursor = align_up(hpet_addr + hpet.len() as u64, ACPI_TABLE_ALIGNMENT);
-
-        let rsdt_addr = cursor;
-        let rsdt = build_rsdt(&[fadt_addr, madt_addr, hpet_addr])?;
-        cursor = align_up(rsdt_addr + rsdt.len() as u64, ACPI_TABLE_ALIGNMENT);
-
-        let xsdt_addr = cursor;
-        let xsdt = build_xsdt(&[fadt_addr, madt_addr, hpet_addr]);
-        cursor = align_up(xsdt_addr + xsdt.len() as u64, ACPI_TABLE_ALIGNMENT);
-
-        let reclaim_used = cursor - reclaim_base;
-        if reclaim_used > config.reclaim_window_size {
-            return Err(AcpiBuildError::TablesOverflowReclaimWindow {
-                reclaim_window_size: config.reclaim_window_size,
-                used: reclaim_used,
-            });
-        }
-
-        // RSDP (separately placed in EBDA/scan region).
-        let mut rsdp = build_rsdp(config.rsdp_addr, rsdt_addr, xsdt_addr)?;
-        finalize_rsdp_checksums(&mut rsdp);
+        debug_assert_eq!(checksum8(&rsdp[..RSDP_CHECKSUM_LEN_V1]), 0);
+        debug_assert_eq!(checksum8(&rsdp), 0);
 
         Ok(Self {
             reclaim_base,
             reclaim_size: config.reclaim_window_size,
             nvs_base,
             nvs_size: config.nvs_window_size,
-            rsdp_addr: config.rsdp_addr,
-            rsdt_addr,
-            xsdt_addr,
-            fadt_addr,
-            madt_addr,
-            hpet_addr,
-            dsdt_addr,
-            facs_addr,
+            rsdp_addr: tables.addresses.rsdp,
+            rsdt_addr: tables.addresses.rsdt,
+            xsdt_addr: tables.addresses.xsdt,
+            fadt_addr: tables.addresses.fadt,
+            madt_addr: tables.addresses.madt,
+            hpet_addr: tables.addresses.hpet,
+            dsdt_addr: tables.addresses.dsdt,
+            facs_addr: tables.addresses.facs,
             rsdp,
-            rsdt,
-            xsdt,
-            fadt,
-            madt,
-            hpet,
-            dsdt,
-            facs,
+            rsdt: tables.rsdt,
+            xsdt: tables.xsdt,
+            fadt: tables.fadt,
+            madt: tables.madt,
+            hpet: tables.hpet,
+            dsdt: tables.dsdt,
+            facs: tables.facs,
         })
     }
 
@@ -216,12 +243,12 @@ impl AcpiTables {
         }
 
         mem.write_from(self.dsdt_addr, &self.dsdt)?;
+        mem.write_from(self.facs_addr, &self.facs)?;
         mem.write_from(self.fadt_addr, &self.fadt)?;
         mem.write_from(self.madt_addr, &self.madt)?;
         mem.write_from(self.hpet_addr, &self.hpet)?;
         mem.write_from(self.rsdt_addr, &self.rsdt)?;
         mem.write_from(self.xsdt_addr, &self.xsdt)?;
-        mem.write_from(self.facs_addr, &self.facs)?;
         mem.write_from(self.rsdp_addr, &self.rsdp)?;
         Ok(())
     }
@@ -248,263 +275,4 @@ pub fn align_down(value: u64, alignment: u64) -> u64 {
 
 pub fn checksum8(data: &[u8]) -> u8 {
     data.iter().fold(0u8, |acc, b| acc.wrapping_add(*b))
-}
-
-fn set_checksum(data: &mut [u8], checksum_offset: usize) {
-    data[checksum_offset] = 0;
-    let sum = checksum8(data);
-    data[checksum_offset] = (0u8).wrapping_sub(sum);
-}
-
-fn finalize_rsdp_checksums(rsdp: &mut [u8; RSDP_V2_SIZE]) {
-    rsdp[8] = 0;
-    rsdp[32] = 0;
-    let sum_v1 = checksum8(&rsdp[..RSDP_CHECKSUM_LEN_V1]);
-    rsdp[8] = (0u8).wrapping_sub(sum_v1);
-    let sum_v2 = checksum8(&rsdp[..RSDP_V2_SIZE]);
-    rsdp[32] = (0u8).wrapping_sub(sum_v2);
-}
-
-fn make_header(signature: [u8; 4], length: u32, revision: u8, oem_table_id: [u8; 8]) -> AcpiHeader {
-    AcpiHeader {
-        signature,
-        length: length.to_le(),
-        revision,
-        checksum: 0,
-        oem_id: *b"AERO  ",
-        oem_table_id,
-        oem_revision: 1u32.to_le(),
-        creator_id: u32::from_le_bytes(*b"Aero").to_le(),
-        creator_revision: 1u32.to_le(),
-    }
-}
-
-fn build_dsdt() -> Vec<u8> {
-    // Use the clean-room DSDT bundled with the firmware crate.
-    crate::acpi::dsdt::DSDT_AML.to_vec()
-}
-
-fn build_facs() -> Vec<u8> {
-    let mut facs = Facs::default();
-    facs.signature = *b"FACS";
-    facs.length = (core::mem::size_of::<Facs>() as u32).to_le();
-    facs.version = 1;
-    as_bytes(&facs).to_vec()
-}
-
-fn ensure_u32(table: &'static str, addr: u64) -> Result<u32, AcpiBuildError> {
-    if addr > u32::MAX as u64 {
-        return Err(AcpiBuildError::AddressDoesNotFitInU32 { table, addr });
-    }
-    Ok(addr as u32)
-}
-
-fn build_fadt(dsdt_addr: PhysAddr, facs_addr: PhysAddr) -> Result<Vec<u8>, AcpiBuildError> {
-    let mut fadt = Fadt::default();
-    fadt.header = make_header(
-        *b"FACP",
-        core::mem::size_of::<Fadt>() as u32,
-        4, // ACPI 3.0-era FADT revision; widely accepted by Windows 7.
-        *b"AEROFACP",
-    );
-
-    fadt.FirmwareCtrl = ensure_u32("FADT.FirmwareCtrl", facs_addr)?.to_le();
-    fadt.Dsdt = ensure_u32("FADT.Dsdt", dsdt_addr)?.to_le();
-    fadt.X_FirmwareCtrl = (facs_addr as u64).to_le();
-    fadt.X_Dsdt = (dsdt_addr as u64).to_le();
-
-    // Desktop profile.
-    fadt.PreferredPmProfile = 2;
-
-    // SCI is traditionally IRQ9 on PC platforms; the MADT includes an ISO for
-    // ISA IRQ9 -> GSI9.
-    fadt.SciInt = 9u16.to_le();
-
-    // ACPI enable/disable handshake + minimal fixed register blocks.
-    //
-    // Windows expects firmware to expose an `SMI_CMD` port plus `ACPI_ENABLE` /
-    // `ACPI_DISABLE` values. When the OS writes `ACPI_ENABLE`, firmware sets the
-    // `SCI_EN` bit in `PM1a_CNT` and starts delivering SCI interrupts for enabled
-    // events.
-    //
-    // We only advertise the PM1 event/control blocks that we model today.
-    // Leaving PM timer / GPE blocks absent avoids the guest touching unhandled
-    // I/O ports during early boot.
-    const SMI_CMD_PORT: u32 = 0xB2;
-    const ACPI_ENABLE: u8 = 0xA0;
-    const ACPI_DISABLE: u8 = 0xA1;
-    const PM1A_EVT_BLK: u32 = 0x400;
-    const PM1A_CNT_BLK: u32 = 0x404;
-
-    fadt.SmiCmd = SMI_CMD_PORT.to_le();
-    fadt.AcpiEnable = ACPI_ENABLE;
-    fadt.AcpiDisable = ACPI_DISABLE;
-
-    fadt.Pm1aEvtBlk = PM1A_EVT_BLK.to_le();
-    fadt.Pm1aCntBlk = PM1A_CNT_BLK.to_le();
-
-    fadt.Pm1EvtLen = 4;
-    fadt.Pm1CntLen = 2;
-    fadt.Pm2CntLen = 0;
-    fadt.PmTmrLen = 0;
-    fadt.Gpe0BlkLen = 0;
-    fadt.Gpe1BlkLen = 0;
-
-    fadt.X_Pm1aEvtBlk = GenericAddress {
-        address_space_id: 1, // System I/O
-        register_bit_width: 32,
-        register_bit_offset: 0,
-        access_size: 0, // unspecified
-        address: (PM1A_EVT_BLK as u64).to_le(),
-    };
-    fadt.X_Pm1aCntBlk = GenericAddress {
-        address_space_id: 1, // System I/O
-        register_bit_width: 16,
-        register_bit_offset: 0,
-        access_size: 0, // unspecified
-        address: (PM1A_CNT_BLK as u64).to_le(),
-    };
-
-    // Legacy devices present (PIC/PIT/RTC), 8042 present, VGA present.
-    fadt.IapcBootArch = 0x0007u16.to_le();
-
-    // ACPI reset register support (FADT.ResetReg/ResetValue).
-    //
-    // Windows (and other OSes) commonly use the ACPI-defined reset register for
-    // reboot, which on PC platforms conventionally points at the chipset reset
-    // control port 0xCF9.
-    const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10;
-    fadt.Flags = FADT_FLAG_RESET_REG_SUP.to_le();
-    fadt.ResetReg = GenericAddress {
-        address_space_id: 1, // System I/O
-        register_bit_width: 8,
-        register_bit_offset: 0,
-        access_size: 1, // byte access
-        address: 0x0CF9u64.to_le(),
-    };
-    fadt.ResetValue = 0x06;
-
-    let mut bytes = as_bytes(&fadt).to_vec();
-    set_checksum(&mut bytes, ACPI_HEADER_CHECKSUM_OFFSET);
-    Ok(bytes)
-}
-
-fn build_madt(cpu_count: u8) -> Vec<u8> {
-    let header = make_header(*b"APIC", 0, 3, *b"AEROAPIC");
-    let mut table = Vec::new();
-    table.extend_from_slice(as_bytes(&header));
-    table.extend_from_slice(&LOCAL_APIC_BASE.to_le_bytes());
-    table.extend_from_slice(&1u32.to_le_bytes()); // PCAT_COMPAT
-
-    for cpu in 0..cpu_count {
-        // Processor Local APIC (type 0).
-        table.push(0);
-        table.push(8);
-        table.push(cpu); // ACPI Processor ID
-        table.push(cpu); // APIC ID
-        table.extend_from_slice(&1u32.to_le_bytes()); // Enabled
-    }
-
-    // I/O APIC (type 1).
-    table.push(1);
-    table.push(12);
-    table.push(0); // I/O APIC ID
-    table.push(0); // reserved
-    table.extend_from_slice(&IO_APIC_BASE.to_le_bytes());
-    table.extend_from_slice(&0u32.to_le_bytes()); // GSI base
-
-    // Interrupt Source Override (type 2): ISA IRQ0 -> GSI2.
-    add_iso(&mut table, 0, 0, 2, 0);
-    // Interrupt Source Override (type 2): ISA IRQ9 -> GSI9 (SCI).
-    add_iso(&mut table, 0, 9, 9, 0x000D);
-
-    // Patch length and checksum.
-    let len = table.len() as u32;
-    table[4..8].copy_from_slice(&len.to_le_bytes());
-    set_checksum(&mut table, ACPI_HEADER_CHECKSUM_OFFSET);
-    table
-}
-
-fn add_iso(table: &mut Vec<u8>, bus: u8, source_irq: u8, gsi: u32, flags: u16) {
-    table.push(2);
-    table.push(10);
-    table.push(bus);
-    table.push(source_irq);
-    table.extend_from_slice(&gsi.to_le_bytes());
-    table.extend_from_slice(&flags.to_le_bytes());
-}
-
-fn build_hpet() -> Vec<u8> {
-    let mut hpet = Hpet::default();
-    hpet.header = make_header(
-        *b"HPET",
-        core::mem::size_of::<Hpet>() as u32,
-        1,
-        *b"AEROHPET",
-    );
-    hpet.EventTimerBlockId = 0x8086_A201u32.to_le();
-    hpet.BaseAddress = GenericAddress {
-        address_space_id: 0, // System Memory
-        register_bit_width: 0,
-        register_bit_offset: 0,
-        access_size: 0,
-        address: HPET_BASE.to_le(),
-    };
-    hpet.HpetNumber = 0;
-    hpet.MinimumTick = 0x0080u16.to_le();
-    hpet.PageProtection = 0;
-
-    let mut bytes = as_bytes(&hpet).to_vec();
-    set_checksum(&mut bytes, ACPI_HEADER_CHECKSUM_OFFSET);
-    bytes
-}
-
-fn build_rsdt(entries: &[PhysAddr]) -> Result<Vec<u8>, AcpiBuildError> {
-    let mut table = Vec::with_capacity(ACPI_HEADER_SIZE + entries.len() * 4);
-    let header = make_header(
-        *b"RSDT",
-        (ACPI_HEADER_SIZE + entries.len() * 4) as u32,
-        1,
-        *b"AERORSDT",
-    );
-    table.extend_from_slice(as_bytes(&header));
-    for &addr in entries {
-        table.extend_from_slice(&ensure_u32("RSDT entry", addr)?.to_le_bytes());
-    }
-    set_checksum(&mut table, ACPI_HEADER_CHECKSUM_OFFSET);
-    Ok(table)
-}
-
-fn build_xsdt(entries: &[PhysAddr]) -> Vec<u8> {
-    let mut table = Vec::with_capacity(ACPI_HEADER_SIZE + entries.len() * 8);
-    let header = make_header(
-        *b"XSDT",
-        (ACPI_HEADER_SIZE + entries.len() * 8) as u32,
-        1,
-        *b"AEROXSDT",
-    );
-    table.extend_from_slice(as_bytes(&header));
-    for &addr in entries {
-        table.extend_from_slice(&(addr as u64).to_le_bytes());
-    }
-    set_checksum(&mut table, ACPI_HEADER_CHECKSUM_OFFSET);
-    table
-}
-
-fn build_rsdp(
-    _rsdp_addr: RsdpPhysAddr,
-    rsdt_addr: PhysAddr,
-    xsdt_addr: PhysAddr,
-) -> Result<[u8; RSDP_V2_SIZE], AcpiBuildError> {
-    let mut rsdp = RsdpV2::default();
-    rsdp.signature = *b"RSD PTR ";
-    rsdp.oem_id = *b"AERO  ";
-    rsdp.revision = 2;
-    rsdp.rsdt_address = ensure_u32("RSDP.rsdt_address", rsdt_addr)?.to_le();
-    rsdp.length = (RSDP_V2_SIZE as u32).to_le();
-    rsdp.xsdt_address = (xsdt_addr as u64).to_le();
-
-    let mut bytes = [0u8; RSDP_V2_SIZE];
-    bytes.copy_from_slice(as_bytes(&rsdp));
-    Ok(bytes)
 }

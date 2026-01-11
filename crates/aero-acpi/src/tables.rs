@@ -622,7 +622,11 @@ fn build_madt(cfg: &AcpiConfig) -> Vec<u8> {
     // Interrupt Source Override: ISA IRQ0 -> GSI2 (PIT).
     body.extend_from_slice(&madt_iso(0, 0, 2, 0x0000));
     // Interrupt Source Override: ISA IRQ9 -> GSI9 (SCI), active low, level triggered.
-    body.extend_from_slice(&madt_iso(0, cfg.sci_irq, cfg.sci_irq as u32, 0x000D));
+    //
+    // Flags use the MPS INTI encoding:
+    // - polarity: Active Low (0b11)
+    // - trigger:  Level (0b11)
+    body.extend_from_slice(&madt_iso(0, cfg.sci_irq, cfg.sci_irq as u32, 0x000F));
 
     // Local APIC NMI: LINT1 for all processors.
     body.extend_from_slice(&madt_lapic_nmi(0xFF, 0x0000, 1));

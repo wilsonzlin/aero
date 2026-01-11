@@ -21,7 +21,7 @@ const GEN_CONF_ENABLE: u64 = 1 << 0;
 const GEN_CONF_LEGACY_ROUTE: u64 = 1 << 1;
 
 /// In ACPI/MADT setups with an interrupt source override (ISO), the legacy PIT IRQ0
-/// is commonly mapped to GSI2 in APIC mode (see `firmware/src/acpi/builder.rs`).
+/// is commonly mapped to GSI2 in APIC mode (see the MADT emitted by `aero-acpi`).
 ///
 /// HPET "LegacyReplacementRoute" mode routes Timer0 to the legacy timer interrupt
 /// and Timer1 to the legacy RTC interrupt; we model that using these GSIs.

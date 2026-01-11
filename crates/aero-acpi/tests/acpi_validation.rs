@@ -376,7 +376,7 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
                 if src == cfg.sci_irq && gsi == cfg.sci_irq as u32 {
                     found_sci_iso = true;
                     let flags = read_u16_le(madt, off + 8);
-                    assert_eq!(flags, 0x000D);
+                    assert_eq!(flags, 0x000F);
                 }
             }
             _ => {}
