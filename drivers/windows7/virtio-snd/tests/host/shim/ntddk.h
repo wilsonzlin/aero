@@ -24,6 +24,8 @@ typedef uint32_t ULONG;
 typedef uint64_t ULONGLONG;
 typedef int32_t LONG;
 typedef int64_t LONGLONG;
+typedef uint8_t UINT8;
+typedef uint16_t UINT16;
 typedef uint32_t UINT32;
 typedef uint64_t UINT64;
 typedef unsigned int UINT;
@@ -299,4 +301,3 @@ typedef DMA_ADAPTER* PDMA_ADAPTER;
 typedef struct _PHYSICAL_ADDRESS {
     LONGLONG QuadPart;
 } PHYSICAL_ADDRESS;
-
