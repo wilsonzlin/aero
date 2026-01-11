@@ -35,7 +35,7 @@ By default this will:
   - `drivers/x86/<driver>/...`
   - `drivers/amd64/<driver>/...`
 - map CI package roots (`out/packages/<driverRel>/{x86,x64}`) into stable Guest Tools-facing driver
-  directory names (e.g. `drivers/aerogpu` → `aerogpu`, `windows7/virtio/blk` → `virtio-blk`)
+  directory names (e.g. `drivers/aerogpu` → `aerogpu`, `windows7/virtio-blk` → `virtio-blk`, `windows7/virtio-net` → `virtio-net`)
 - stage `guest-tools/` and normalize `certs/` based on signing policy:
   - `signing_policy=test`: inject `out/certs/aero-test.cer` (keeping `certs/README.md` if present)
   - `signing_policy=production|none`: do **not** inject certs (any existing `*.cer/*.crt/*.p7b` are stripped, leaving docs)

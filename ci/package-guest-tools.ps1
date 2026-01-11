@@ -60,7 +60,7 @@ $ErrorActionPreference = "Stop"
 
 # Optional driver rename overrides loaded from -DriverNameMapJson.
 # Keys may be either:
-# - a driverRel (relative path under out/packages, e.g. "windows7/virtio/blk"), or
+# - a driverRel (relative path under out/packages, e.g. "windows7/virtio-blk"), or
 # - a leaf driver folder name (e.g. "blk")
 $script:DriverNameMap = @{}
 
@@ -378,8 +378,12 @@ function Get-GuestToolsDriverNameFromDriverRel {
   # Default: last path segment of <driverRel>
   # Overrides: known non-leaf driverRel where the leaf is ambiguous.
   $overrides = @{
+    # Historical layout used nested paths (windows7/virtio/{blk,net}).
     "windows7/virtio/blk" = "virtio-blk"
     "windows7/virtio/net" = "virtio-net"
+    # Current canonical layout uses top-level virtio-{blk,net} directories.
+    "windows7/virtio-blk" = "virtio-blk"
+    "windows7/virtio-net" = "virtio-net"
     # Support staging from historical layouts that used a dash in the driver directory name.
     "aero-gpu"            = "aerogpu"
   }
