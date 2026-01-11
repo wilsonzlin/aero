@@ -8,6 +8,7 @@ pub const AEROGPU_RING_MAGIC: u32 = 0x474E_5241; // "ARNG" little-endian
 pub const AEROGPU_RING_HEADER_SIZE_BYTES: u64 = 64;
 
 pub const AEROGPU_ALLOC_TABLE_MAGIC: u32 = 0x434F_4C41; // "ALOC"
+pub const AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES: u32 = 24;
 
 pub const AEROGPU_FENCE_PAGE_MAGIC: u32 = 0x434E_4546; // "FENC"
 pub const AEROGPU_FENCE_PAGE_SIZE_BYTES: u64 = 56;
@@ -128,6 +129,65 @@ impl AeroGpuSubmitDesc {
             alloc_table_gpa,
             alloc_table_size_bytes,
             signal_fence,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AeroGpuAllocTableHeader {
+    pub magic: u32,
+    pub abi_version: u32,
+    pub size_bytes: u32,
+    pub entry_count: u32,
+    pub entry_stride_bytes: u32,
+    pub reserved0: u32,
+}
+
+impl AeroGpuAllocTableHeader {
+    pub const SIZE_BYTES: u32 = AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES;
+
+    pub fn read_from(mem: &mut dyn MemoryBus, gpa: u64) -> Self {
+        let magic = mem.read_u32(gpa + 0);
+        let abi_version = mem.read_u32(gpa + 4);
+        let size_bytes = mem.read_u32(gpa + 8);
+        let entry_count = mem.read_u32(gpa + 12);
+        let entry_stride_bytes = mem.read_u32(gpa + 16);
+        let reserved0 = mem.read_u32(gpa + 20);
+
+        Self {
+            magic,
+            abi_version,
+            size_bytes,
+            entry_count,
+            entry_stride_bytes,
+            reserved0,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AeroGpuAllocEntry {
+    pub alloc_id: u32,
+    pub flags: u32,
+    pub gpa: u64,
+    pub size_bytes: u64,
+}
+
+impl AeroGpuAllocEntry {
+    pub const SIZE_BYTES: u32 = 32;
+
+    pub fn read_from(mem: &mut dyn MemoryBus, gpa: u64) -> Self {
+        let alloc_id = mem.read_u32(gpa + 0);
+        let flags = mem.read_u32(gpa + 4);
+        let gpa_val = mem.read_u64(gpa + 8);
+        let size_bytes = mem.read_u64(gpa + 16);
+        let _reserved0 = mem.read_u64(gpa + 24);
+
+        Self {
+            alloc_id,
+            flags,
+            gpa: gpa_val,
+            size_bytes,
         }
     }
 }

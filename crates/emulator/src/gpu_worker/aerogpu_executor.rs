@@ -2,13 +2,14 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader, AEROGPU_PRESENT_FLAG_VSYNC,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use memory::MemoryBus;
 
 use crate::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs, FEATURE_VBLANK};
 use crate::devices::aerogpu_ring::{
-    AeroGpuRingHeader, AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
+    AeroGpuAllocEntry, AeroGpuAllocTableHeader, AeroGpuRingHeader, AeroGpuSubmitDesc,
+    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
     AEROGPU_RING_HEADER_SIZE_BYTES,
 };
 
@@ -55,7 +56,66 @@ impl Default for AeroGpuExecutorConfig {
 pub struct AeroGpuSubmissionRecord {
     pub ring_head: u32,
     pub ring_tail: u32,
+    pub submission: AeroGpuSubmission,
+    pub decode_errors: Vec<AeroGpuSubmissionDecodeError>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AeroGpuCmdStreamHeader {
+    pub magic: u32,
+    pub abi_version: u32,
+    pub size_bytes: u32,
+    pub flags: u32,
+}
+
+impl From<ProtocolCmdStreamHeader> for AeroGpuCmdStreamHeader {
+    fn from(value: ProtocolCmdStreamHeader) -> Self {
+        Self {
+            magic: value.magic,
+            abi_version: value.abi_version,
+            size_bytes: value.size_bytes,
+            flags: value.flags,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AeroGpuSubmission {
     pub desc: AeroGpuSubmitDesc,
+    pub alloc_table_header: Option<AeroGpuAllocTableHeader>,
+    pub allocs: Vec<AeroGpuAllocEntry>,
+    pub cmd_stream_header: Option<AeroGpuCmdStreamHeader>,
+    pub cmd_stream: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AeroGpuSubmissionDecodeError {
+    AllocTable(AeroGpuAllocTableDecodeError),
+    CmdStream(AeroGpuCmdStreamDecodeError),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AeroGpuAllocTableDecodeError {
+    InconsistentDescriptor,
+    TooLarge,
+    BadMagic,
+    BadAbiVersion,
+    SizeTooSmall,
+    SizeExceedsDescriptor,
+    BadEntryStride,
+    EntriesOutOfBounds,
+    InvalidEntry,
+    DuplicateAllocId,
+    AddressOverflow,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AeroGpuCmdStreamDecodeError {
+    InconsistentDescriptor,
+    TooLarge,
+    TooSmall,
+    BadHeader,
+    StreamSizeTooLarge,
 }
 
 #[derive(Clone, Debug)]
@@ -248,17 +308,43 @@ impl AeroGpuExecutor {
                 regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
             }
 
+            let mut decode_errors = Vec::new();
+            let (alloc_table_header, allocs) =
+                decode_alloc_table(mem, regs.abi_version, &desc, &mut decode_errors);
+            let (cmd_stream_header, cmd_stream) =
+                decode_cmd_stream(mem, regs.abi_version, &desc, &mut decode_errors);
+
+            if !decode_errors.is_empty() {
+                regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+                regs.irq_status |= irq_bits::ERROR;
+            }
+
+            let alloc_count = allocs.len();
+            let cmd_header_size = cmd_stream_header
+                .as_ref()
+                .map(|h| h.size_bytes)
+                .unwrap_or(0);
+            let decode_error_count = decode_errors.len();
+
             match self.cfg.fence_completion {
                 AeroGpuFenceCompletionMode::Immediate => {
                     let mut vsync_present = false;
-                    if desc.cmd_size_bytes != 0 {
+                    let cmd_stream_ok = desc.cmd_gpa != 0
+                        && desc.cmd_size_bytes != 0
+                        && cmd_stream_header.is_some()
+                        && !decode_errors
+                            .iter()
+                            .any(|e| matches!(e, AeroGpuSubmissionDecodeError::CmdStream(_)));
+                    if cmd_stream_ok {
                         match cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes) {
                             Ok(vsync) => vsync_present = vsync,
                             Err(_) => {
                                 // Malformed streams still execute as "immediate" for pacing
                                 // purposes (to avoid deadlocks) but are counted for diagnostics.
-                                regs.stats.malformed_submissions =
-                                    regs.stats.malformed_submissions.saturating_add(1);
+                                if decode_errors.is_empty() {
+                                    regs.stats.malformed_submissions =
+                                        regs.stats.malformed_submissions.saturating_add(1);
+                                }
                             }
                         }
                     }
@@ -290,8 +376,7 @@ impl AeroGpuExecutor {
                 }
                 AeroGpuFenceCompletionMode::Deferred => {
                     if desc.signal_fence > regs.completed_fence {
-                        let already_completed =
-                            self.completed_before_submit.remove(&desc.signal_fence);
+                        let already_completed = self.completed_before_submit.remove(&desc.signal_fence);
                         self.in_flight.insert(
                             desc.signal_fence,
                             InFlightSubmission {
@@ -314,14 +399,22 @@ impl AeroGpuExecutor {
                 self.last_submissions.push_back(AeroGpuSubmissionRecord {
                     ring_head: head,
                     ring_tail: tail,
-                    desc: desc.clone(),
+                    submission: AeroGpuSubmission {
+                        desc: desc.clone(),
+                        alloc_table_header,
+                        allocs,
+                        cmd_stream_header,
+                        cmd_stream,
+                    },
+                    decode_errors,
                 });
             }
 
             if self.cfg.verbose {
                 eprintln!(
-                    "aerogpu: submit head={} tail={} fence={} flags=0x{:x} cmd_gpa=0x{:x} cmd_size={}",
+                    "aerogpu: submit head={} tail={} fence={} flags=0x{:x} cmd_gpa=0x{:x} cmd_size={} allocs={} cmd_stream_size={} decode_errors={}",
                     head, tail, desc.signal_fence, desc.flags, desc.cmd_gpa, desc.cmd_size_bytes
+                    , alloc_count, cmd_header_size, decode_error_count,
                 );
             }
 
@@ -400,17 +493,229 @@ impl AeroGpuExecutor {
     }
 }
 
+const MAX_ALLOC_TABLE_SIZE_BYTES: u32 = 16 * 1024 * 1024;
+const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+
+fn decode_alloc_table(
+    mem: &mut dyn MemoryBus,
+    device_abi_version: u32,
+    desc: &AeroGpuSubmitDesc,
+    decode_errors: &mut Vec<AeroGpuSubmissionDecodeError>,
+) -> (Option<AeroGpuAllocTableHeader>, Vec<AeroGpuAllocEntry>) {
+    if desc.alloc_table_gpa == 0 && desc.alloc_table_size_bytes == 0 {
+        return (None, Vec::new());
+    }
+    if desc.alloc_table_gpa == 0 || desc.alloc_table_size_bytes == 0 {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::InconsistentDescriptor,
+        ));
+        return (None, Vec::new());
+    }
+
+    let header = AeroGpuAllocTableHeader::read_from(mem, desc.alloc_table_gpa);
+
+    if header.magic != AEROGPU_ALLOC_TABLE_MAGIC {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::BadMagic,
+        ));
+        return (Some(header), Vec::new());
+    }
+    if (header.abi_version >> 16) != (device_abi_version >> 16) {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::BadAbiVersion,
+        ));
+        return (Some(header), Vec::new());
+    }
+    if header.size_bytes < AeroGpuAllocTableHeader::SIZE_BYTES {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::SizeTooSmall,
+        ));
+        return (Some(header), Vec::new());
+    }
+    if header.size_bytes > desc.alloc_table_size_bytes {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::SizeExceedsDescriptor,
+        ));
+        return (Some(header), Vec::new());
+    }
+    if header.size_bytes > MAX_ALLOC_TABLE_SIZE_BYTES {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::TooLarge,
+        ));
+        return (Some(header), Vec::new());
+    }
+    if header.entry_stride_bytes != AeroGpuAllocEntry::SIZE_BYTES {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::BadEntryStride,
+        ));
+        return (Some(header), Vec::new());
+    }
+
+    let Some(entry_bytes) =
+        u64::from(header.entry_count).checked_mul(u64::from(header.entry_stride_bytes))
+    else {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::AddressOverflow,
+        ));
+        return (Some(header), Vec::new());
+    };
+    let Some(required) = u64::from(AeroGpuAllocTableHeader::SIZE_BYTES).checked_add(entry_bytes) else {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::AddressOverflow,
+        ));
+        return (Some(header), Vec::new());
+    };
+    if required > u64::from(header.size_bytes) {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::EntriesOutOfBounds,
+        ));
+        return (Some(header), Vec::new());
+    }
+
+    let mut allocs = Vec::new();
+    let Ok(entry_count) = usize::try_from(header.entry_count) else {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::AddressOverflow,
+        ));
+        return (Some(header), Vec::new());
+    };
+    if allocs.try_reserve_exact(entry_count).is_err() {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::TooLarge,
+        ));
+        return (Some(header), Vec::new());
+    }
+
+    let mut seen = HashSet::new();
+    for idx in 0..header.entry_count {
+        let Some(entry_offset) = u64::from(idx).checked_mul(u64::from(header.entry_stride_bytes)) else {
+            decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::AddressOverflow,
+            ));
+            break;
+        };
+        let Some(offset) = u64::from(AeroGpuAllocTableHeader::SIZE_BYTES).checked_add(entry_offset) else {
+            decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::AddressOverflow,
+            ));
+            break;
+        };
+        let Some(entry_gpa) = desc.alloc_table_gpa.checked_add(offset) else {
+            decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::AddressOverflow,
+            ));
+            break;
+        };
+
+        let entry = AeroGpuAllocEntry::read_from(mem, entry_gpa);
+        if entry.alloc_id == 0 || entry.size_bytes == 0 || entry.gpa == 0 {
+            decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::InvalidEntry,
+            ));
+            break;
+        }
+        if !seen.insert(entry.alloc_id) {
+            decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::DuplicateAllocId,
+            ));
+            break;
+        }
+        allocs.push(entry);
+    }
+
+    (Some(header), allocs)
+}
+
+fn decode_cmd_stream(
+    mem: &mut dyn MemoryBus,
+    _device_abi_version: u32,
+    desc: &AeroGpuSubmitDesc,
+    decode_errors: &mut Vec<AeroGpuSubmissionDecodeError>,
+) -> (Option<AeroGpuCmdStreamHeader>, Vec<u8>) {
+    if desc.cmd_gpa == 0 && desc.cmd_size_bytes == 0 {
+        return (None, Vec::new());
+    }
+    if desc.cmd_gpa == 0 || desc.cmd_size_bytes == 0 {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::InconsistentDescriptor,
+        ));
+        return (None, Vec::new());
+    }
+
+    if desc.cmd_size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooLarge,
+        ));
+
+        let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+        mem.read_physical(desc.cmd_gpa, &mut prefix);
+        let header = decode_cmd_stream_header_le(&prefix)
+            .ok()
+            .map(AeroGpuCmdStreamHeader::from);
+        if let Some(header) = header {
+            if header.size_bytes > desc.cmd_size_bytes {
+                decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                    AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
+                ));
+            }
+        }
+        return (header, Vec::new());
+    }
+
+    let Ok(cmd_size) = usize::try_from(desc.cmd_size_bytes) else {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooLarge,
+        ));
+        return (None, Vec::new());
+    };
+
+    let mut cmd_stream = Vec::new();
+    if cmd_stream.try_reserve_exact(cmd_size).is_err() {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooLarge,
+        ));
+        return (None, Vec::new());
+    }
+    cmd_stream.resize(cmd_size, 0u8);
+    mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
+
+    if cmd_stream.len() < ProtocolCmdStreamHeader::SIZE_BYTES {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooSmall,
+        ));
+        return (None, cmd_stream);
+    }
+
+    let header = match decode_cmd_stream_header_le(&cmd_stream) {
+        Ok(header) => AeroGpuCmdStreamHeader::from(header),
+        Err(_) => {
+            decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::BadHeader,
+            ));
+            return (None, cmd_stream);
+        }
+    };
+
+    if header.size_bytes > desc.cmd_size_bytes {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
+        ));
+    }
+
+    (Some(header), cmd_stream)
+}
+
 fn cmd_stream_has_vsync_present(
     mem: &mut dyn MemoryBus,
     cmd_gpa: u64,
     cmd_size_bytes: u32,
 ) -> Result<bool, ()> {
     let cmd_size = usize::try_from(cmd_size_bytes).map_err(|_| ())?;
-    if cmd_size < AerogpuCmdStreamHeader::SIZE_BYTES {
+    if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
         return Err(());
     }
 
-    let mut stream_hdr_bytes = [0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
+    let mut stream_hdr_bytes = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
     mem.read_physical(cmd_gpa, &mut stream_hdr_bytes);
     let stream_hdr = decode_cmd_stream_header_le(&stream_hdr_bytes).map_err(|_| ())?;
 
@@ -419,7 +724,7 @@ fn cmd_stream_has_vsync_present(
         return Err(());
     }
 
-    let mut offset = AerogpuCmdStreamHeader::SIZE_BYTES;
+    let mut offset = ProtocolCmdStreamHeader::SIZE_BYTES;
     while offset < declared_size {
         let rem = declared_size - offset;
         if rem < AerogpuCmdHdr::SIZE_BYTES {
