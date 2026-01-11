@@ -251,22 +251,35 @@ Dev escape hatch:
 
 - `AERO_L2_OPEN=1` disables Origin enforcement (trusted local development only).
 
-### Token authentication (WebSocket-compatible)
+### Authentication (`AERO_L2_AUTH_MODE`)
 
 Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
 
 - Non-browser WebSocket clients can omit `Origin`.
 - Non-browser clients can trivially forge an `Origin` header.
 
-If `AERO_L2_TOKEN` is set, `aero-l2-proxy` requires a matching token during the WebSocket upgrade:
+`aero-l2-proxy` supports multiple auth modes via `AERO_L2_AUTH_MODE`:
 
-- Recommended: `?token=<value>` query parameter.
-- Optional: include an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (alongside
-  `aero-l2-tunnel-v1`) to avoid placing tokens in URLs/logs; requires a header-safe token value.
-  - The negotiated subprotocol MUST still be `aero-l2-tunnel-v1`; the token entry is used only for
-    authentication and MUST NOT replace the tunnel framing subprotocol.
+- `none`: no auth (dev only; do not expose publicly).
+- `cookie` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
+  by the gateway `POST /session`.
+  - Configure the cookie signing secret via `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET`).
+- `api_key`: requires `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`).
+  - Clients can provide credentials via `?apiKey=<value>` / `?token=<value>` query params, or
+    `Sec-WebSocket-Protocol: aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`).
+- `jwt`: requires `AERO_L2_JWT_SECRET` and a JWT provided via `?token=<value>` or
+  `Sec-WebSocket-Protocol: aero-l2-token.<value>`.
+- `cookie_or_jwt`: accepts either a valid gateway session cookie or a valid JWT.
 
-Missing/incorrect tokens MUST reject the upgrade with **HTTP 401** (no WebSocket).
+Notes:
+
+- When using an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>`, the negotiated
+  subprotocol MUST still be `aero-l2-tunnel-v1`; the token entry is used only for authentication and
+  MUST NOT replace the tunnel framing subprotocol.
+- `AERO_L2_TOKEN` is a legacy alias for API-key auth when `AERO_L2_AUTH_MODE` is unset (and is also
+  accepted as a fallback value for `AERO_L2_API_KEY`).
+
+Missing/incorrect credentials MUST reject the upgrade with **HTTP 401** (no WebSocket).
 
 ### Quotas
 
