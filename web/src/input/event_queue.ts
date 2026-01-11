@@ -50,7 +50,7 @@ export enum InputEventType {
    *   b = packed bytes 4..7 of the report (little-endian)
    *
    * The canonical report layout is defined by `crates/aero-usb/src/hid.rs::GamepadReport`
-   * (and mirrored by the native emulator stack under `crates/emulator/src/io/usb/hid/gamepad.rs`).
+   * (and mirrored by the native emulator stack under `crates/emulator`).
    */
   GamepadReport = 5,
 }

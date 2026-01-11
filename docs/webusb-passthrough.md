@@ -24,7 +24,7 @@ Implementation references (current repo):
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
 - (Legacy repo-root harness) TS main-thread broker + worker client RPC: `src/platform/webusb_{broker,client,protocol}.ts`
 
-Note: `crates/emulator/src/io/usb/*` also contains an older UHCI + passthrough model used by
+Note: `crates/emulator` also contains an older UHCI + passthrough model used by
 native/emulator tests. The browser/WASM runtime uses `aero-usb` + `aero-wasm` + `web/`.
 
 ---

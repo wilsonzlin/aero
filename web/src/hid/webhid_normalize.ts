@@ -12,7 +12,7 @@
 // - shape matches the Rust `HidCollectionInfo`/`HidReportInfo`/`HidReportItem`
 //   structs in `crates/aero-usb/src/hid/webhid.rs` and is locked down by fixtures
 //   under `tests/fixtures/hid/` (the native emulator stack mirrors the same schema
-//   under `crates/emulator/src/io/usb/hid/webhid.rs`).
+//   under `crates/emulator`).
 
 export type HidCollectionType =
   | "physical"
