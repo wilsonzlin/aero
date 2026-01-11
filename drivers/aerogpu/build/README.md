@@ -48,12 +48,12 @@ For the recommended CI-style flow (packages staged under `out/packages/` and sig
 
 - `drivers/aerogpu/packaging/win7/README.md` (host-signed install flow via `trust_test_cert.cmd` + `pnputil`)
 
-### WDK 7.1 DDI header mode (D3D10/11 UMD)
+### Win7 DDI header mode (D3D10/11 UMD)
 
-The D3D10/11 UMD can optionally be built against the **WDK 7.1** D3D10/11 DDI headers
-(`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`).
+The D3D10/11 UMD can optionally be built against the Win7-era D3D10/11 DDI headers
+(`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`) from a Windows SDK/WDK install.
 
-The legacy `drivers\\aerogpu\\build\\build_all.cmd` wrapper detects a WDK 7.1 root via
+The repo-local `drivers\\aerogpu\\build\\build_all.cmd` wrapper detects a WDK root via
 `WINDDK` (or `WDK_ROOT`) and, when present, passes these MSBuild properties for the
 D3D10/11 UMD build:
 

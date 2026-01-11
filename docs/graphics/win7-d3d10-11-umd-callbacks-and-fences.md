@@ -447,8 +447,8 @@ In AeroGPU this is handled by `.def` files:
 ## 6) Optional: Win7 WDK layout probe tool (sizeof/offsetof)
 
 To catch header/version mismatches early (especially when switching between SDKs/WDKs or x86/x64),
-the repo includes a small Windows-only probe you can build with **WDK 7.1** (or any toolchain
-that provides the same Win7-era D3D10/11 UMD DDI headers):
+the repo includes a small Windows-only probe you can build with any toolchain that provides the
+Win7-era D3D10/11 UMD DDI headers:
 
 - `drivers/aerogpu/tools/win7_wdk_probe/`
 

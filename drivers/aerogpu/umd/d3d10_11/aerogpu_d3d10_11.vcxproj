@@ -65,7 +65,7 @@
       Set /p:AeroGpuUseWdkHeaders=0 to build against the repository's minimal
       compat ABI subset instead.
 
-      When enabled, /p:AeroGpuWdkRoot should point at a WDK 7.1 layout root
+      When enabled, /p:AeroGpuWdkRoot should point at a Win7-era WDK layout root
       (typically %WINDDK% / C:\WinDDK\7600.16385.1) so d3d10umddi.h/d3d11umddi.h
       resolve via $(AeroGpuWdkRoot)\inc\{api,ddk}.
     -->
@@ -174,7 +174,7 @@
 
   <Target Name="AeroGpuValidateWdkHeaders" BeforeTargets="ClCompile" Condition="'$(AeroGpuUseWdkHeaders)'=='1'">
     <Error Condition="'$(AeroGpuWdkRoot)'==''"
-           Text="AeroGpuUseWdkHeaders=1 but AeroGpuWdkRoot is not set. Pass /p:AeroGpuWdkRoot=C:\\WinDDK\\7600.16385.1 (WDK 7.1) or set WINDDK/WDKROOT." />
+           Text="AeroGpuUseWdkHeaders=1 but AeroGpuWdkRoot is not set. Pass /p:AeroGpuWdkRoot=C:\\WinDDK\\7600.16385.1 or set WINDDK/WDKROOT." />
     <Error Condition="!Exists('$(AeroGpuWdkRoot)\\inc\\api\\d3d10umddi.h')"
            Text="WDK header not found: $(AeroGpuWdkRoot)\\inc\\api\\d3d10umddi.h" />
     <Error Condition="!Exists('$(AeroGpuWdkRoot)\\inc\\api\\d3d10_1umddi.h')"
