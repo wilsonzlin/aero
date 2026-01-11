@@ -387,7 +387,7 @@ VirtioSndQueueSplitDrainUsed(VIRTIOSND_QUEUE_SPLIT* qs,
             break;
         }
 
-        if (count >= ARRAYSIZE(used)) {
+        if (count >= RTL_NUMBER_OF(used)) {
             VIRTIOSND_TRACE_ERROR("queue[%u] used drain overflow\n", (UINT)qs->QueueIndex);
             break;
         }
