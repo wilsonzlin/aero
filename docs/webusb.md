@@ -1,6 +1,6 @@
 # WebUSB constraints for USB passthrough (Chromium)
 
-This document describes what **WebUSB can and cannot do** in Chromium-based browsers, and how those constraints shape Aero’s planned **“non-HID USB passthrough”** feature.
+This document describes what **WebUSB can and cannot do** in Chromium-based browsers, and how those constraints shape Aero’s **“non-HID USB passthrough”** integration (guest-visible WebUSB passthrough is possible, but remains limited/experimental).
 
 > Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB stack
 > selection for the browser runtime (`aero-usb` + `aero-wasm` + `web/`).
@@ -13,7 +13,7 @@ In practice, WebUSB failures are dominated by two constraints:
 2. **Host OS driver / permissions**: even when `navigator.usb` exists, `open()` / `claimInterface()` can fail if the OS driver binding or permissions are incorrect (especially on Windows).
 
 See also: [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md) for the end-to-end passthrough
-architecture and security model (WebHID MVP + future WebUSB).
+architecture and security model (WebHID MVP + experimental WebUSB passthrough).
 
 For the detailed UHCI ↔ WebUSB transfer/TD mapping and the host action/completion bridge,
 see [`docs/webusb-passthrough.md`](./webusb-passthrough.md).

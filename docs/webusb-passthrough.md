@@ -562,6 +562,11 @@ The fast path is opportunistic: when a ring is full (or a record is too large to
 to `postMessage` (`usb.action` / `usb.completion`) so passthrough continues to make forward progress even under
 temporary backpressure.
 
+If a worker-side runtime starts after the initial `usb.ringAttach` (e.g. WASM finished loading late), it can
+request the ring handles via `{ type: "usb.ringAttachRequest" }`. The production `UsbBroker` responds by
+re-sending the ring buffers when possible; older brokers may ignore this message and the runtime should keep
+functioning via the `postMessage` path.
+
 Implementation pointers (current code):
 
 - Ring buffer: `web/src/usb/usb_proxy_ring.ts` (`UsbProxyRing`)
@@ -569,18 +574,6 @@ Implementation pointers (current code):
 - Main thread setup + action-ring drain: `web/src/usb/usb_broker.ts` (`attachRings`, `drainActionRing`)
 - Worker-side attach + action/completion forwarding: `web/src/usb/webusb_passthrough_runtime.ts` (`attachRings`, `pollOnce`, `drainCompletionRing`)
 - Integration tests: `web/src/usb/usb_proxy_ring_integration.test.ts`
-
-#### SharedArrayBuffer ring fast path (optional)
-
-When `SharedArrayBuffer` is available (cross-origin isolated deployments), `UsbBroker` can
-optionally provide a shared-memory fast path (`web/src/usb/usb_proxy_ring.ts`) to avoid
-per-action structured-clone overhead:
-
-- The broker sends `{type:"usb.ringAttach"}` with `actionRing` and `completionRing` SAB handles.
-- Worker runtimes can push actions into the ring and pop completions from the ring.
-- If a worker-side runtime starts after the initial `usb.ringAttach` (e.g. WASM finishes loading
-  late), it can request the rings via `{type:"usb.ringAttachRequest"}`; the broker will resend
-  `usb.ringAttach` when possible.
 
 If the emulator uses WASM threads / SharedArrayBuffer (preferred), use the existing
 cross-thread IPC mechanism described in [`docs/11-browser-apis.md`](./11-browser-apis.md)
