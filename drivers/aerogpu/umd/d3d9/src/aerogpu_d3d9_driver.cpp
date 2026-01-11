@@ -185,9 +185,18 @@ FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
     uint64_t submitted = 0;
     uint64_t completed = 0;
     if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
-      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-      adapter->last_submitted_fence = std::max<uint64_t>(adapter->last_submitted_fence, submitted);
-      adapter->completed_fence = std::max<uint64_t>(adapter->completed_fence, completed);
+      bool updated = false;
+      {
+        std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+        const uint64_t prev_submitted = adapter->last_submitted_fence;
+        const uint64_t prev_completed = adapter->completed_fence;
+        adapter->last_submitted_fence = std::max<uint64_t>(adapter->last_submitted_fence, submitted);
+        adapter->completed_fence = std::max<uint64_t>(adapter->completed_fence, completed);
+        updated = (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
+      }
+      if (updated) {
+        adapter->fence_cv.notify_all();
+      }
     }
   }
 #endif
