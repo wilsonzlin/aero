@@ -1025,4 +1025,71 @@ mod tests {
             wgpu::VertexFormat::Float32x3
         );
     }
+
+    #[test]
+    fn rejects_layout_with_too_many_vertex_attributes() {
+        let element_count = MAX_WGPU_VERTEX_ATTRIBUTES + 1;
+
+        let mut blob = Vec::new();
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, element_count);
+        push_u32(&mut blob, 0); // reserved0
+
+        for i in 0..element_count {
+            push_u32(&mut blob, i); // semantic hash (arbitrary)
+            push_u32(&mut blob, 0); // semantic index
+            push_u32(&mut blob, 41); // DXGI_FORMAT_R32_FLOAT
+            push_u32(&mut blob, 0); // input_slot
+            push_u32(&mut blob, 0); // offset
+            push_u32(&mut blob, 0); // per-vertex
+            push_u32(&mut blob, 0); // step rate
+        }
+
+        let layout = InputLayoutDesc::parse(&blob).expect("parse failed");
+        let binding = InputLayoutBinding::new(&layout, &[]);
+        assert!(matches!(
+            map_layout_to_shader_locations_compact(&binding, &[]),
+            Err(InputLayoutError::TooManyVertexAttributes { count, max })
+                if count == element_count && max == MAX_WGPU_VERTEX_ATTRIBUTES
+        ));
+    }
+
+    #[test]
+    fn rejects_layout_that_needs_too_many_vertex_buffers_after_compaction() {
+        let element_count = MAX_WGPU_VERTEX_BUFFERS + 1;
+
+        let mut blob = Vec::new();
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, element_count);
+        push_u32(&mut blob, 0); // reserved0
+
+        let mut signature = Vec::new();
+        let mut strides = vec![0u32; element_count as usize];
+        for i in 0..element_count {
+            push_u32(&mut blob, i); // semantic hash (arbitrary)
+            push_u32(&mut blob, 0); // semantic index
+            push_u32(&mut blob, 41); // DXGI_FORMAT_R32_FLOAT
+            push_u32(&mut blob, i); // input_slot
+            push_u32(&mut blob, 0); // offset
+            push_u32(&mut blob, 0); // per-vertex
+            push_u32(&mut blob, 0); // step rate
+
+            signature.push(VsInputSignatureElement {
+                semantic_name_hash: i,
+                semantic_index: 0,
+                input_register: i,
+            });
+            strides[i as usize] = 4;
+        }
+
+        let layout = InputLayoutDesc::parse(&blob).expect("parse failed");
+        let binding = InputLayoutBinding::new(&layout, &strides);
+        assert!(matches!(
+            map_layout_to_shader_locations_compact(&binding, &signature),
+            Err(InputLayoutError::TooManyUsedVertexBuffers { count, max })
+                if count == element_count && max == MAX_WGPU_VERTEX_BUFFERS
+        ));
+    }
 }
