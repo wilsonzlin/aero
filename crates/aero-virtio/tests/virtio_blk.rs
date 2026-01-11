@@ -255,11 +255,15 @@ fn virtio_blk_config_exposes_capacity_and_block_size() {
 
     let size_max = bar_read_u32(&mut dev, caps.device + 8);
     let seg_max = bar_read_u32(&mut dev, caps.device + 12);
+    let geometry = bar_read_u32(&mut dev, caps.device + 16);
     let blk_size = bar_read_u32(&mut dev, caps.device + 20);
+    let trailing = bar_read_u32(&mut dev, caps.device + 24);
 
     assert_eq!(size_max, 0);
     assert_eq!(seg_max, 126);
+    assert_eq!(geometry, 0);
     assert_eq!(blk_size, 512);
+    assert_eq!(trailing, 0);
 }
 
 #[test]

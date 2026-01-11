@@ -334,6 +334,22 @@ fn virtio_snd_eventq_buffers_are_not_completed_without_events() {
 }
 
 #[test]
+fn virtio_snd_device_cfg_matches_contract_v1() {
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+
+    // Contract v1 device config: jacks=0, streams=2, chmaps=0.
+    assert_eq!(bar_read_u32(&mut dev, caps.device + 0), 0);
+    assert_eq!(bar_read_u32(&mut dev, caps.device + 4), 2);
+    assert_eq!(bar_read_u32(&mut dev, caps.device + 8), 0);
+
+    // Remaining fields are not required by contract v1 and must read as zero.
+    assert_eq!(bar_read_u32(&mut dev, caps.device + 12), 0);
+    assert_eq!(bar_read_u32(&mut dev, caps.device + 0x40), 0);
+}
+
+#[test]
 fn virtio_snd_tx_pushes_samples_to_backend() {
     let samples = Rc::new(RefCell::new(Vec::<f32>::new()));
     let output = CaptureSink(samples.clone());
