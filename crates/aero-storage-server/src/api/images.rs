@@ -13,10 +13,15 @@ use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/v1/images", get(list_images).head(head_images))
+        .route(
+            "/v1/images",
+            get(list_images).head(head_images).options(options_images),
+        )
         .route(
             "/v1/images/:id/meta",
-            get(get_image_meta).head(head_image_meta),
+            get(get_image_meta)
+                .head(head_image_meta)
+                .options(options_image_meta),
         )
 }
 
@@ -114,6 +119,51 @@ fn metadata_cache_headers(state: &AppState) -> HeaderMap {
     );
     headers.insert(VARY, HeaderValue::from_static("Origin"));
     headers
+}
+
+fn insert_metadata_preflight_headers(headers: &mut HeaderMap, state: &AppState) {
+    headers.insert(
+        HeaderName::from_static("access-control-allow-origin"),
+        state.cors_allow_origin.clone(),
+    );
+    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
+        headers.insert(
+            HeaderName::from_static("access-control-allow-credentials"),
+            HeaderValue::from_static("true"),
+        );
+    }
+    headers.insert(
+        VARY,
+        HeaderValue::from_static(
+            "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+        ),
+    );
+    headers.insert(
+        HeaderName::from_static("access-control-allow-methods"),
+        HeaderValue::from_static("GET, HEAD, OPTIONS"),
+    );
+    headers.insert(
+        HeaderName::from_static("access-control-allow-headers"),
+        HeaderValue::from_static(
+            "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type",
+        ),
+    );
+    headers.insert(
+        HeaderName::from_static("access-control-max-age"),
+        HeaderValue::from_static("86400"),
+    );
+}
+
+pub async fn options_images(State(state): State<AppState>) -> Response {
+    let mut resp = StatusCode::NO_CONTENT.into_response();
+    insert_metadata_preflight_headers(resp.headers_mut(), &state);
+    resp
+}
+
+pub async fn options_image_meta(State(state): State<AppState>) -> Response {
+    let mut resp = StatusCode::NO_CONTENT.into_response();
+    insert_metadata_preflight_headers(resp.headers_mut(), &state);
+    resp
 }
 
 pub async fn list_images(
