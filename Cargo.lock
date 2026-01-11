@@ -144,6 +144,7 @@ dependencies = [
  "aero-snapshot",
  "aero_cpu_core",
  "memory",
+ "serde_json",
 ]
 
 [[package]]
