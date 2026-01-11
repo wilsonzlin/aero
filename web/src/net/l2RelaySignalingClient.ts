@@ -10,17 +10,17 @@ import { connectRelaySignaling, type ConnectRelaySignalingOptions } from "./webr
 
 export type ConnectL2RelaySignalingOptions = ConnectRelaySignalingOptions & {
   /**
-    * Advanced: additional RTCDataChannel init options. The helper enforces the
-    * L2 tunnel's reliability requirements (see below). Ordering is optional and
-    * is forwarded as-is.
-    */
+     * Advanced: additional RTCDataChannel init options. The helper enforces the
+     * L2 tunnel's reliability requirements (see below). Ordering is optional and
+     * is forwarded as-is.
+     */
   l2ChannelOptions?: RTCDataChannelInit;
 };
 
-// `docs/adr/0013-networking-l2-tunnel.md` + `docs/l2-tunnel-protocol.md` require
+// `docs/adr/0005-networking-l2-tunnel.md` + `docs/l2-tunnel-protocol.md` require
 // the L2 tunnel DataChannel to be reliable (no partial reliability settings).
-// Ordering is optional; default helpers create an ordered channel for more
-// predictable throughput.
+// Ordering is optional; default helpers use `ordered=false` to reduce
+// head-of-line blocking.
 function createL2DataChannel(pc: RTCPeerConnection, opts?: RTCDataChannelInit): RTCDataChannel {
   if (!opts) return createL2TunnelDataChannel(pc);
   if (opts.maxRetransmits !== undefined || opts.maxPacketLifeTime !== undefined) {

@@ -16,8 +16,8 @@ export function assertL2TunnelDataChannelSemantics(channel: RTCDataChannel): voi
   if (channel.label !== L2_TUNNEL_DATA_CHANNEL_LABEL) {
     throw new Error(`expected DataChannel label=${L2_TUNNEL_DATA_CHANNEL_LABEL} (got ${channel.label})`);
   }
-  // Ordering is optional; some deployments prefer ordered delivery for more
-  // predictable throughput, while others use unordered delivery to reduce
+  // Ordering is optional. For L2 tunneling over WebRTC, reliable delivery is the
+  // key requirement; we generally recommend `ordered=false` to reduce
   // head-of-line blocking.
   if (channel.maxRetransmits != null) {
     throw new Error(`l2 DataChannel must be fully reliable (maxRetransmits must be unset)`);
@@ -28,9 +28,10 @@ export function assertL2TunnelDataChannelSemantics(channel: RTCDataChannel): voi
 }
 
 export function createL2TunnelDataChannel(pc: RTCPeerConnection): RTCDataChannel {
-  // L2 tunnel MUST be reliable. Ordering is optional; we default to ordered
-  // delivery for more predictable throughput.
-  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, { ordered: true });
+  // L2 tunnel MUST be reliable. `ordered=false` is recommended to reduce
+  // head-of-line blocking; the server-side tunnel/stack must tolerate
+  // out-of-order delivery.
+  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, { ordered: false });
   assertL2TunnelDataChannelSemantics(channel);
   return channel;
 }
@@ -577,10 +578,10 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
  * already-created data channel.
  *
  * Recommended channel options for low-latency forwarding:
- * - `ordered: true` (recommended default; unordered is OK)
+ * - `ordered: false` (reduces head-of-line blocking)
  * - do NOT set `maxRetransmits` or `maxPacketLifeTime` (fully reliable)
  *
- * See `docs/adr/0013-networking-l2-tunnel.md` and `docs/l2-tunnel-protocol.md`.
+ * See `docs/adr/0005-networking-l2-tunnel.md` and `docs/l2-tunnel-protocol.md`.
  */
 export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
   constructor(

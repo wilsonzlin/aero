@@ -48,9 +48,8 @@ For Aero production deployments (ADR 0005):
   - `maxRetransmits` MUST be unset
   - `maxPacketLifeTime` MUST be unset
 - WebRTC DataChannels that carry the L2 tunnel MAY be **ordered or unordered**.
-  - Recommended default: `ordered = true` (more predictable throughput).
-  - `ordered = false` is allowed and may reduce head-of-line blocking, but can increase out-of-order
-    delivery seen by the proxy-side stack.
+  - Recommended: `ordered = false` (reduces head-of-line blocking).
+  - `ordered = true` is allowed if a deployment prefers in-order delivery.
 
 Rationale: when the proxy terminates TCP on behalf of the guest (slirp-style), it can acknowledge
 upstream TCP data before the guest has received it. If the L2 tunnel can drop messages (partial

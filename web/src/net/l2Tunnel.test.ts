@@ -20,7 +20,7 @@ function microtask(): Promise<void> {
 
 class FakeRtcDataChannel {
   label = "l2";
-  ordered = true;
+  ordered = false;
   maxRetransmits: number | null = null;
   maxPacketLifeTime: number | null = null;
   binaryType: BinaryType = "arraybuffer";
