@@ -14,6 +14,7 @@ Common flags:
   * `--validate-sharing` – for `d3d9ex_shared_surface`: kept for backwards compatibility (pixel sharing is validated by default; `--dump` always validates).
   * `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
   * `--samples=N` – control sample count for pacing/sampling tests (defaults vary per test).
+  * `--iterations=N` – for `d3d9ex_event_query`: number of query submissions to run (default 6).
   * `--wait-timeout-ms=N` – for `wait_vblank_pacing` and `vblank_wait_sanity`: per-wait timeout for `D3DKMTWaitForVerticalBlankEvent` (default 2000).
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
