@@ -1,7 +1,8 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::mem::CpuBus as _;
-use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE, CR0_PG, RFLAGS_IF, RFLAGS_RESERVED1};
+use aero_cpu_core::state::{CpuMode, CR0_PE, CR0_PG, RFLAGS_IF, RFLAGS_RESERVED1};
 use aero_cpu_core::{Exception, PagingBus};
 use aero_mmu::MemoryBus;
 use aero_x86::Register;
@@ -162,27 +163,27 @@ fn tier0_assist_protected_int_stack_switch_ignores_user_supervisor_paging_bit() 
     phys.write_u16(tss_base + 8, 0x10);
 
     let mut bus = PagingBus::new(phys);
-    let mut state = CpuState::new(CpuMode::Protected);
-    state.control.cr0 = CR0_PE | CR0_PG;
-    state.control.cr3 = pd_base;
-    state.update_mode();
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.update_mode();
 
-    state.set_rip(0);
-    state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
-    state.segments.cs.selector = 0x1B; // ring3 code selector (0x18 | RPL3)
-    state.segments.ss.selector = 0x23; // ring3 data selector (0x20 | RPL3)
-    state.write_reg(Register::ESP, user_stack_top as u64);
-    state.tables.gdtr.base = gdt_base;
-    state.tables.gdtr.limit = 0x28 - 1;
-    state.tables.idtr.base = idt_base;
-    state.tables.idtr.limit = (0x80 * 8 + 7) as u16;
+    cpu.state.set_rip(0);
+    cpu.state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
+    cpu.state.segments.cs.selector = 0x1B; // ring3 code selector (0x18 | RPL3)
+    cpu.state.segments.ss.selector = 0x23; // ring3 data selector (0x20 | RPL3)
+    cpu.state.write_reg(Register::ESP, user_stack_top as u64);
+    cpu.state.tables.gdtr.base = gdt_base;
+    cpu.state.tables.gdtr.limit = 0x28 - 1;
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = (0x80 * 8 + 7) as u16;
 
-    state.tables.tr.selector = 0x28;
-    state.tables.tr.base = tss_base;
-    state.tables.tr.limit = 0x67;
-    state.tables.tr.access = aero_cpu_core::state::SEG_ACCESS_PRESENT | 0x9;
+    cpu.state.tables.tr.selector = 0x28;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = aero_cpu_core::state::SEG_ACCESS_PRESENT | 0x9;
 
-    bus.sync(&state);
+    bus.sync(&cpu.state);
 
     // Sanity: direct CPL3 reads of the supervisor-only IDT page should fault.
     assert_eq!(
@@ -194,17 +195,20 @@ fn tier0_assist_protected_int_stack_switch_ignores_user_supervisor_paging_bit() 
     );
 
     let mut ctx = AssistContext::default();
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1);
     assert_eq!(res.executed, 1);
     assert_eq!(res.exit, BatchExit::Branch);
 
-    assert_eq!(state.segments.cs.selector, 0x08);
-    assert_eq!(state.segments.ss.selector, 0x10);
-    assert_eq!(state.rip(), handler as u64);
-    assert_eq!(state.read_reg(Register::ESP) as u32, kernel_stack_top - 20);
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.segments.ss.selector, 0x10);
+    assert_eq!(cpu.state.rip(), handler as u64);
+    assert_eq!(
+        cpu.state.read_reg(Register::ESP) as u32,
+        kernel_stack_top - 20
+    );
 
     // Stack frame (top -> bottom): EIP, CS, EFLAGS, old ESP, old SS.
-    bus.sync(&state);
+    bus.sync(&cpu.state);
     let frame_base = (kernel_stack_top - 20) as u64;
     assert_eq!(bus.read_u32(frame_base).unwrap(), 2); // return EIP
     assert_eq!(bus.read_u32(frame_base + 4).unwrap() as u16, 0x1B); // old CS

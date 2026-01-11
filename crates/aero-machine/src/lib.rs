@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, Segment as CoreSegment};
 use aero_cpu_core::{AssistReason, Exception};
@@ -390,7 +391,7 @@ pub struct Machine {
     chipset: ChipsetState,
     reset_latch: ResetLatch,
 
-    cpu: CpuState,
+    cpu: CpuCore,
     assist: AssistContext,
     mem: SystemMemory,
     io: IoPortBus,
@@ -418,7 +419,7 @@ impl Machine {
             cfg,
             chipset,
             reset_latch: ResetLatch::new(),
-            cpu: CpuState::new(CpuMode::Real),
+            cpu: CpuCore::new(CpuMode::Real),
             assist: AssistContext::default(),
             mem,
             io: IoPortBus::new(),
@@ -437,12 +438,12 @@ impl Machine {
 
     /// Returns the current CPU state.
     pub fn cpu(&self) -> &CpuState {
-        &self.cpu
+        &self.cpu.state
     }
 
     /// Mutable access to the current CPU state (debug/testing only).
     pub fn cpu_mut(&mut self) -> &mut CpuState {
-        &mut self.cpu
+        &mut self.cpu.state
     }
 
     /// Replace the attached disk image.
@@ -594,9 +595,12 @@ impl Machine {
         let bus: &mut dyn BiosBus = &mut self.mem;
         self.bios.post(&mut fw_cpu, bus, &mut self.disk);
 
-        sync_firmware_to_core(&fw_cpu, &mut self.cpu);
-        self.cpu.halted = false;
-        self.cpu.a20_enabled = self.chipset.a20().enabled();
+        // Reset non-ABI CPU bookkeeping (pending events + virtual time) before syncing the
+        // firmware-provided register state back into the Tier-0 core state.
+        self.cpu = CpuCore::new(CpuMode::Real);
+        sync_firmware_to_core(&fw_cpu, &mut self.cpu.state);
+        self.cpu.state.halted = false;
+        self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         self.mem.clear_dirty();
     }
 
@@ -610,7 +614,7 @@ impl Machine {
             }
 
             // Keep the core's A20 view coherent with the chipset latch.
-            self.cpu.a20_enabled = self.chipset.a20().enabled();
+            self.cpu.state.a20_enabled = self.chipset.a20().enabled();
 
             let remaining = max_insts - executed;
             let mut bus = Bus {
@@ -655,11 +659,11 @@ impl Machine {
 
     fn handle_bios_interrupt(&mut self, vector: u8) {
         let mut fw_cpu = FirmwareCpuState::default();
-        sync_core_to_firmware(&self.cpu, &mut fw_cpu);
+        sync_core_to_firmware(&self.cpu.state, &mut fw_cpu);
         let bus: &mut dyn BiosBus = &mut self.mem;
         self.bios
             .dispatch_interrupt(vector, &mut fw_cpu, bus, &mut self.disk);
-        sync_firmware_to_core(&fw_cpu, &mut self.cpu);
+        sync_firmware_to_core(&fw_cpu, &mut self.cpu.state);
     }
 
     fn flush_serial(&mut self) {

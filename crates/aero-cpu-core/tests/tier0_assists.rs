@@ -1,8 +1,9 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::msr;
-use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
+use aero_cpu_core::state::{CpuMode, RFLAGS_IF};
 use aero_cpu_core::CpuBus;
 use aero_cpu_core::Exception;
 use aero_x86::Register;
@@ -134,30 +135,30 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
     ];
     bus.load(CODE_BASE, &code);
 
-    let mut state = CpuState::new(CpuMode::Bit32);
-    state.set_rip(CODE_BASE);
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
+    cpu.state.set_rip(CODE_BASE);
 
     // Set up a near return address so the snippet can stop via `ret`.
     let sp_pushed = STACK_TOP - 4;
     bus.write_u32(sp_pushed, RETURN_IP).expect("stack write");
-    state.write_reg(Register::ESP, sp_pushed);
+    cpu.state.write_reg(Register::ESP, sp_pushed);
 
     let mut ctx = AssistContext::default();
 
     let mut executed_total = 0u64;
     loop {
-        if state.rip() == RETURN_IP as u64 {
+        if cpu.state.rip() == RETURN_IP as u64 {
             break;
         }
-        let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1024);
+        let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);
         executed_total += res.executed;
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
-            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
+            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", cpu.state.rip()),
             BatchExit::BiosInterrupt(vector) => {
                 panic!(
                     "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
-                    state.rip()
+                    cpu.state.rip()
                 )
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
@@ -173,8 +174,9 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
     assert_eq!(bus.read_u32(0x50C).unwrap(), u32::from_le_bytes(*b"ineI"));
     assert_eq!(bus.read_u32(0x508).unwrap(), u32::from_le_bytes(*b"ntel"));
 
-    // RDMSR should roundtrip the IA32_TSC value we wrote.
-    assert_eq!(bus.read_u32(0x510).unwrap(), 0x9ABC_DEF0);
+    // RDMSR should reflect the TSC value we wrote, plus the instructions retired
+    // since the WRMSR (WRMSR itself + the intervening MOV).
+    assert_eq!(bus.read_u32(0x510).unwrap(), 0x9ABC_DEF2);
     assert_eq!(bus.read_u32(0x514).unwrap(), 0x1234_5678);
 
     // RDTSC should be at least the written value (the deterministic model may
@@ -185,7 +187,7 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
     assert!(rdtsc >= 0x1234_5678_9ABC_DEF0);
 
     // CLI/STI should leave IF set.
-    assert!(state.get_flag(RFLAGS_IF));
+    assert!(cpu.state.get_flag(RFLAGS_IF));
 }
 
 #[test]
@@ -195,28 +197,28 @@ fn tier0_assists_outsb_respects_addr_size_override_and_segment_prefix() {
     let code: [u8; 4] = [0x64, 0x67, 0x6E, 0xF4];
     bus.load(CODE_BASE, &code);
 
-    let mut state = CpuState::new(CpuMode::Bit64);
-    state.set_rip(CODE_BASE);
-    state.segments.cs.selector = 0x08; // CPL0 for OUTSB/HLT
-    state.set_rflags(0x2);
+    let mut cpu = CpuCore::new(CpuMode::Bit64);
+    cpu.state.set_rip(CODE_BASE);
+    cpu.state.segments.cs.selector = 0x08; // CPL0 for OUTSB/HLT
+    cpu.state.set_rflags(0x2);
 
-    state.msr.fs_base = 0x1000;
-    state.segments.fs.base = 0x1000;
+    cpu.state.msr.fs_base = 0x1000;
+    cpu.state.segments.fs.base = 0x1000;
 
-    state.write_reg(Register::RSI, 0xAAAA_BBBB_0000_0010);
-    state.write_reg(Register::DX, 0x3F8);
+    cpu.state.write_reg(Register::RSI, 0xAAAA_BBBB_0000_0010);
+    cpu.state.write_reg(Register::DX, 0x3F8);
 
     // Put distinct bytes in DS:[ESI] and FS:[ESI] so we can tell which segment is used.
     bus.write_u8(0x10, 0xCD).unwrap();
     bus.write_u8(0x1000 + 0x10, 0xAB).unwrap();
 
     let mut ctx = AssistContext::default();
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 16);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 16);
     assert_eq!(res.exit, BatchExit::Halted);
 
     assert_eq!(bus.io_writes, vec![(0x3F8, 1, 0xAB)]);
     // Addr-size override should use ESI (32-bit) and zero-extend into RSI.
-    assert_eq!(state.read_reg(Register::RSI), 0x0000_0000_0000_0011);
+    assert_eq!(cpu.state.read_reg(Register::RSI), 0x0000_0000_0000_0011);
 }
 
 #[test]
@@ -227,21 +229,21 @@ fn tier0_assists_insb_respects_addr_size_override_in_long_mode() {
     let code: [u8; 3] = [0x67, 0x6C, 0xF4];
     bus.load(CODE_BASE, &code);
 
-    let mut state = CpuState::new(CpuMode::Bit64);
-    state.set_rip(CODE_BASE);
-    state.segments.cs.selector = 0x08; // CPL0
-    state.set_rflags(0x2);
-    state.write_reg(Register::RDI, 0xAAAA_BBBB_0000_0020);
-    state.write_reg(Register::DX, 0x3F8);
+    let mut cpu = CpuCore::new(CpuMode::Bit64);
+    cpu.state.set_rip(CODE_BASE);
+    cpu.state.segments.cs.selector = 0x08; // CPL0
+    cpu.state.set_rflags(0x2);
+    cpu.state.write_reg(Register::RDI, 0xAAAA_BBBB_0000_0020);
+    cpu.state.write_reg(Register::DX, 0x3F8);
 
     let mut ctx = AssistContext::default();
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 16);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 16);
     assert_eq!(res.exit, BatchExit::Halted);
 
     assert_eq!(bus.io_reads, vec![(0x3F8, 1)]);
     assert_eq!(bus.read_u8(0x20).unwrap(), 0x5A);
     // Addr-size override should use EDI and zero-extend into RDI.
-    assert_eq!(state.read_reg(Register::RDI), 0x0000_0000_0000_0021);
+    assert_eq!(cpu.state.read_reg(Register::RDI), 0x0000_0000_0000_0021);
 }
 
 #[test]
@@ -253,27 +255,27 @@ fn tier0_assists_rep_insb_with_addr_size_override_uses_ecx_and_noops_when_zero()
     let code: [u8; 4] = [0x67, 0xF3, 0x6C, 0xF4];
     bus.load(CODE_BASE, &code);
 
-    let mut state = CpuState::new(CpuMode::Bit64);
-    state.set_rip(CODE_BASE);
-    state.segments.cs.selector = 0x08; // CPL0
-    state.set_rflags(0x2);
+    let mut cpu = CpuCore::new(CpuMode::Bit64);
+    cpu.state.set_rip(CODE_BASE);
+    cpu.state.segments.cs.selector = 0x08; // CPL0
+    cpu.state.set_rflags(0x2);
 
     // RCX has high bits set but ECX=0. In long mode with address-size override,
     // REP should use ECX as the counter and treat this as a no-op.
-    state.write_reg(Register::RCX, 0x1_0000_0000);
-    state.write_reg(Register::RDI, 0xAAAA_BBBB_0000_0020);
-    state.write_reg(Register::DX, 0x3F8);
+    cpu.state.write_reg(Register::RCX, 0x1_0000_0000);
+    cpu.state.write_reg(Register::RDI, 0xAAAA_BBBB_0000_0020);
+    cpu.state.write_reg(Register::DX, 0x3F8);
 
     bus.write_u8(0x20, 0xAA).unwrap();
 
     let mut ctx = AssistContext::default();
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 16);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 16);
     assert_eq!(res.exit, BatchExit::Halted);
 
     assert!(bus.io_reads.is_empty());
     assert_eq!(bus.read_u8(0x20).unwrap(), 0xAA);
-    assert_eq!(state.read_reg(Register::RCX), 0x1_0000_0000);
-    assert_eq!(state.read_reg(Register::RDI), 0xAAAA_BBBB_0000_0020);
+    assert_eq!(cpu.state.read_reg(Register::RCX), 0x1_0000_0000);
+    assert_eq!(cpu.state.read_reg(Register::RDI), 0xAAAA_BBBB_0000_0020);
 }
 
 #[test]
@@ -309,27 +311,27 @@ fn tier0_assists_rdtscp_reads_ia32_tsc_aux_from_cpu_state() {
     ];
     bus.load(CODE_BASE, &code);
 
-    let mut state = CpuState::new(CpuMode::Bit32);
-    state.set_rip(CODE_BASE);
-    state.segments.cs.selector = 0x08; // CPL0 for WRMSR
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
+    cpu.state.set_rip(CODE_BASE);
+    cpu.state.segments.cs.selector = 0x08; // CPL0 for WRMSR
 
     let sp_pushed = STACK_TOP - 4;
     bus.write_u32(sp_pushed, RETURN_IP).expect("stack write");
-    state.write_reg(Register::ESP, sp_pushed);
+    cpu.state.write_reg(Register::ESP, sp_pushed);
 
     let mut ctx = AssistContext::default();
     loop {
-        if state.rip() == RETURN_IP as u64 {
+        if cpu.state.rip() == RETURN_IP as u64 {
             break;
         }
-        let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1024);
+        let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
-            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
+            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", cpu.state.rip()),
             BatchExit::BiosInterrupt(vector) => {
                 panic!(
                     "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
-                    state.rip()
+                    cpu.state.rip()
                 )
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
@@ -338,5 +340,5 @@ fn tier0_assists_rdtscp_reads_ia32_tsc_aux_from_cpu_state() {
     }
 
     assert_eq!(bus.read_u32(0x500).unwrap(), 0xAABB_CCDD);
-    assert_eq!(state.msr.tsc_aux, 0xAABB_CCDD);
+    assert_eq!(cpu.state.msr.tsc_aux, 0xAABB_CCDD);
 }

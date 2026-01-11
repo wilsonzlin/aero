@@ -1,7 +1,8 @@
 use aero_cpu_core::assist::{handle_assist, AssistContext};
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::mem::CpuBus as _;
-use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE, CR0_PG};
+use aero_cpu_core::state::{CpuMode, CR0_PE, CR0_PG};
 use aero_cpu_core::{AssistReason, Exception, PagingBus};
 use aero_mmu::MemoryBus;
 use aero_x86::Register;
@@ -95,21 +96,21 @@ fn assist_page_fault_updates_cr2() {
     }
 
     let mut bus = PagingBus::new(phys);
-    let mut state = CpuState::new(CpuMode::Protected);
-    state.control.cr3 = pd_base;
-    state.control.cr0 = CR0_PE | CR0_PG;
-    state.control.cr4 = 0;
-    state.update_mode();
-    state.set_rip(0);
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr4 = 0;
+    cpu.state.update_mode();
+    cpu.state.set_rip(0);
 
     let mut ctx = AssistContext::default();
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1);
     match res.exit {
         BatchExit::Exception(Exception::PageFault { addr, .. }) => assert_eq!(addr, 0x4000),
         other => panic!("expected #PF from assist, got {other:?}"),
     }
 
-    assert_eq!(state.control.cr2, 0x4000);
+    assert_eq!(cpu.state.control.cr2, 0x4000);
 }
 
 #[test]
@@ -136,20 +137,27 @@ fn handle_assist_syncs_bus_and_updates_cr2() {
     }
 
     let mut bus = PagingBus::new(phys);
-    let mut state = CpuState::new(CpuMode::Protected);
-    state.control.cr3 = pd_base;
-    state.control.cr0 = CR0_PE | CR0_PG;
-    state.control.cr4 = 0;
-    state.update_mode();
-    state.set_rip(0);
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr4 = 0;
+    cpu.state.update_mode();
+    cpu.state.set_rip(0);
 
     let mut ctx = AssistContext::default();
-    let err = handle_assist(&mut ctx, &mut state, &mut bus, AssistReason::Privileged).unwrap_err();
+    let err = handle_assist(
+        &mut ctx,
+        &mut cpu.time,
+        &mut cpu.state,
+        &mut bus,
+        AssistReason::Privileged,
+    )
+    .unwrap_err();
     match err {
         Exception::PageFault { addr, .. } => assert_eq!(addr, 0x4000),
         other => panic!("expected #PF from assist, got {other:?}"),
     }
-    assert_eq!(state.control.cr2, 0x4000);
+    assert_eq!(cpu.state.control.cr2, 0x4000);
 }
 
 #[test]
@@ -186,16 +194,23 @@ fn handle_assist_syncs_bus_after_cr3_write() {
     }
 
     let mut bus = PagingBus::new(phys);
-    let mut state = CpuState::new(CpuMode::Protected);
-    state.control.cr3 = pd1_base;
-    state.control.cr0 = CR0_PE | CR0_PG;
-    state.control.cr4 = 0;
-    state.update_mode();
-    state.set_rip(0);
-    state.write_reg(Register::EAX, pd2_base);
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr3 = pd1_base;
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr4 = 0;
+    cpu.state.update_mode();
+    cpu.state.set_rip(0);
+    cpu.state.write_reg(Register::EAX, pd2_base);
 
     let mut ctx = AssistContext::default();
-    handle_assist(&mut ctx, &mut state, &mut bus, AssistReason::Privileged).expect("assist");
+    handle_assist(
+        &mut ctx,
+        &mut cpu.time,
+        &mut cpu.state,
+        &mut bus,
+        AssistReason::Privileged,
+    )
+    .expect("assist");
 
     // If the bus wasn't synced after the MOV CR3, this read would still use PD1 and
     // return page A's value.
@@ -238,29 +253,29 @@ fn invlpg_flushes_pagingbus_translation() {
     }
 
     let mut bus = PagingBus::new(phys);
-    let mut state = CpuState::new(CpuMode::Protected);
-    state.control.cr3 = pd_base;
-    state.control.cr0 = CR0_PE | CR0_PG;
-    state.control.cr4 = 0;
-    state.update_mode();
-    state.set_rip(0);
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr4 = 0;
+    cpu.state.update_mode();
+    cpu.state.set_rip(0);
 
     let mut ctx = AssistContext::default();
 
     // First load: should observe page A and populate the TLB.
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1);
     assert_eq!(res.exit, BatchExit::Completed);
-    assert_eq!(state.read_reg(Register::EAX) as u32, 0x1111_1111);
+    assert_eq!(cpu.state.read_reg(Register::EAX) as u32, 0x1111_1111);
 
     // Patch the PTE to point to page B without changing CR3.
     bus.inner_mut()
         .write_u32_raw(pt_base + 1 * 4, (page_b as u32) | flags);
 
     // INVLPG should flush the cached translation so the second load sees page B.
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 2);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 2);
     assert_eq!(res.exit, BatchExit::Completed);
     assert_eq!(ctx.invlpg_log, vec![0x1000]);
-    assert_eq!(state.read_reg(Register::EAX) as u32, 0x2222_2222);
+    assert_eq!(cpu.state.read_reg(Register::EAX) as u32, 0x2222_2222);
 }
 
 #[test]
@@ -303,20 +318,20 @@ fn invlpg_flushes_translation_for_wrapped_linear_address() {
     }
 
     let mut bus = PagingBus::new(phys);
-    let mut state = CpuState::new(CpuMode::Protected);
-    state.control.cr3 = pd_base;
-    state.control.cr0 = CR0_PE | CR0_PG;
-    state.control.cr4 = 0;
-    state.update_mode();
-    state.set_rip(0);
-    state.segments.ds.base = 0xFFFF_F000;
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr4 = 0;
+    cpu.state.update_mode();
+    cpu.state.set_rip(0);
+    cpu.state.segments.ds.base = 0xFFFF_F000;
 
     let mut ctx = AssistContext::default();
 
     // First load: should observe page A and populate the TLB for linear 0x1000.
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1);
     assert_eq!(res.exit, BatchExit::Completed);
-    assert_eq!(state.read_reg(Register::EAX) as u32, 0x1111_1111);
+    assert_eq!(cpu.state.read_reg(Register::EAX) as u32, 0x1111_1111);
 
     // Patch the PTE for linear 0x1000 to point to page B without changing CR3.
     bus.inner_mut()
@@ -324,8 +339,8 @@ fn invlpg_flushes_translation_for_wrapped_linear_address() {
 
     // INVLPG must invalidate based on the architecturally correct linear address
     // (32-bit wrap), so the second load sees page B.
-    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 2);
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 2);
     assert_eq!(res.exit, BatchExit::Completed);
     assert_eq!(ctx.invlpg_log, vec![0x1000]);
-    assert_eq!(state.read_reg(Register::EAX) as u32, 0x2222_2222);
+    assert_eq!(cpu.state.read_reg(Register::EAX) as u32, 0x2222_2222);
 }

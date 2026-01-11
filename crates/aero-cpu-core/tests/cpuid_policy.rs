@@ -5,6 +5,7 @@ use aero_cpu_core::cpuid::{
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::msr;
 use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE};
+use aero_cpu_core::time::TimeSource;
 use aero_cpu_core::AssistReason;
 use aero_x86::Register;
 
@@ -12,6 +13,7 @@ const CODE_BASE: u64 = 0x100;
 
 fn exec_wrmsr(
     ctx: &mut AssistContext,
+    time: &mut TimeSource,
     state: &mut CpuState,
     bus: &mut FlatTestBus,
     msr: u32,
@@ -23,7 +25,7 @@ fn exec_wrmsr(
     state.write_reg(Register::EDX, (val >> 32) as u32 as u64);
     state.set_rip(CODE_BASE);
     bus.load(CODE_BASE, &[0x0F, 0x30]);
-    aero_cpu_core::assist::handle_assist(ctx, state, bus, AssistReason::Msr).unwrap();
+    aero_cpu_core::assist::handle_assist(ctx, time, state, bus, AssistReason::Msr).unwrap();
 }
 
 #[test]
@@ -70,9 +72,11 @@ fn msr_efer_masks_nxe_when_cpuid_nx_is_disabled() {
     state.control.cr0 |= CR0_PE;
     state.segments.cs.selector = 0x08; // CPL0 for WRMSR.
     let mut bus = FlatTestBus::new(0x1000);
+    let mut time = TimeSource::default();
 
     exec_wrmsr(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         msr::IA32_EFER,
@@ -110,9 +114,11 @@ fn msr_efer_masks_sce_when_cpuid_syscall_is_disabled() {
     state.control.cr0 |= CR0_PE;
     state.segments.cs.selector = 0x08; // CPL0 for WRMSR.
     let mut bus = FlatTestBus::new(0x1000);
+    let mut time = TimeSource::default();
 
     exec_wrmsr(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         msr::IA32_EFER,

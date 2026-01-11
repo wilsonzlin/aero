@@ -253,21 +253,25 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
             match step {
                 StepExit::Continue => {
                     cpu.cpu.pending.retire_instruction();
+                    cpu.cpu.time.advance_cycles(1);
                     executed += 1;
                     continue;
                 }
                 StepExit::ContinueInhibitInterrupts => {
                     cpu.cpu.pending.retire_instruction();
+                    cpu.cpu.time.advance_cycles(1);
                     cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
                     executed += 1;
                     continue;
                 }
                 StepExit::Branch => {
                     cpu.cpu.pending.retire_instruction();
+                    cpu.cpu.time.advance_cycles(1);
                     break;
                 }
                 StepExit::Halted => {
                     cpu.cpu.pending.retire_instruction();
+                    cpu.cpu.time.advance_cycles(1);
                     break;
                 }
                 StepExit::BiosInterrupt(vector) => {
@@ -278,6 +282,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     // it before resuming execution at the stub's `IRET`.
                     cpu.cpu.state.set_pending_bios_int(vector);
                     cpu.cpu.pending.retire_instruction();
+                    cpu.cpu.time.advance_cycles(1);
                     break;
                 }
                 StepExit::Assist(AssistReason::Interrupt) => {
@@ -327,6 +332,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                 }
                             } else {
                                 cpu.cpu.pending.retire_instruction();
+                                cpu.cpu.time.advance_cycles(1);
                                 cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, false);
                                 cpu.cpu.state.set_rip(next_ip);
                             }
@@ -352,6 +358,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                 }
                             } else {
                                 cpu.cpu.pending.retire_instruction();
+                                cpu.cpu.time.advance_cycles(1);
                                 cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, true);
                                 cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
                                 cpu.cpu.state.set_rip(next_ip);
@@ -365,6 +372,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                 break;
                             }
                             cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.time.advance_cycles(1);
                         }
                         Mnemonic::Int3 => {
                             cpu.cpu.pending.raise_software_interrupt(3, next_ip);
@@ -373,6 +381,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                 break;
                             }
                             cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.time.advance_cycles(1);
                         }
                         Mnemonic::Int1 => {
                             cpu.cpu.pending.raise_software_interrupt(1, next_ip);
@@ -381,6 +390,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                 break;
                             }
                             cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.time.advance_cycles(1);
                         }
                         Mnemonic::Into => {
                             if cpu.cpu.state.get_flag(crate::state::RFLAGS_OF) {
@@ -393,6 +403,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                 cpu.cpu.state.set_rip(next_ip);
                             }
                             cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.time.advance_cycles(1);
                         }
                         Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq => {
                             if let Err(exit) = cpu.cpu.iret(&mut cpu.bus) {
@@ -400,6 +411,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                 break;
                             }
                             cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.time.advance_cycles(1);
                         }
                         _ => {
                             cpu.exit = Some(crate::interrupts::CpuExit::UnimplementedInstruction(
@@ -451,6 +463,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     cpu.bus.sync(&cpu.cpu.state);
                     let res = handle_assist_decoded(
                         &mut self.assist,
+                        &mut cpu.cpu.time,
                         &mut cpu.cpu.state,
                         &mut cpu.bus,
                         &decoded,
@@ -461,6 +474,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     match res {
                         Ok(()) => {
                             cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.time.advance_cycles(1);
                             if inhibits_interrupt {
                                 cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
                             }

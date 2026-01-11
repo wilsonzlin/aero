@@ -1,6 +1,7 @@
 use super::{exec_decoded, ExecOutcome, Tier0Config};
 use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext};
 use crate::exception::{AssistReason, Exception};
+use crate::interrupts::CpuCore;
 use crate::mem::CpuBus;
 use crate::state::CpuState;
 use aero_x86::Register;
@@ -204,22 +205,22 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
 /// execute privileged/IO/time instructions required by OS boot code.
 pub fn run_batch_with_assists<B: CpuBus>(
     ctx: &mut AssistContext,
-    state: &mut CpuState,
+    cpu: &mut CpuCore,
     bus: &mut B,
     max_insts: u64,
 ) -> BatchResult {
     let cfg = Tier0Config::default();
-    run_batch_with_assists_with_config(&cfg, ctx, state, bus, max_insts)
+    run_batch_with_assists_with_config(&cfg, ctx, cpu, bus, max_insts)
 }
 
 pub fn run_batch_with_assists_with_config<B: CpuBus>(
     cfg: &Tier0Config,
     ctx: &mut AssistContext,
-    state: &mut CpuState,
+    cpu: &mut CpuCore,
     bus: &mut B,
     max_insts: u64,
 ) -> BatchResult {
-    if state.halted {
+    if cpu.state.halted {
         return BatchResult {
             executed: 0,
             exit: BatchExit::Halted,
@@ -228,14 +229,16 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
 
     let mut executed = 0u64;
     while executed < max_insts {
-        bus.sync(state);
+        bus.sync(&cpu.state);
 
-        let ip = state.rip();
-        let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
+        let ip = cpu.state.rip();
+        let fetch_addr = cpu
+            .state
+            .apply_a20(cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
         let bytes = match bus.fetch(fetch_addr, 15) {
             Ok(bytes) => bytes,
             Err(e) => {
-                state.apply_exception_side_effects(&e);
+                cpu.state.apply_exception_side_effects(&e);
                 return BatchResult {
                     executed,
                     exit: BatchExit::Exception(e),
@@ -243,12 +246,12 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
             }
         };
 
-        let addr_size_override = has_addr_size_override(&bytes, state.bitness());
-        let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {
+        let addr_size_override = has_addr_size_override(&bytes, cpu.state.bitness());
+        let decoded = match aero_x86::decode(&bytes, ip, cpu.state.bitness()) {
             Ok(decoded) => decoded,
             Err(_) => {
                 let e = Exception::InvalidOpcode;
-                state.apply_exception_side_effects(&e);
+                cpu.state.apply_exception_side_effects(&e);
                 return BatchResult {
                     executed,
                     exit: BatchExit::Exception(e),
@@ -256,21 +259,25 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
             }
         };
         let next_ip_raw = ip.wrapping_add(decoded.len as u64);
-        let next_ip = next_ip_raw & state.mode.ip_mask();
+        let next_ip = next_ip_raw & cpu.state.mode.ip_mask();
 
-        let outcome = match exec_decoded(cfg, state, bus, &decoded, next_ip, addr_size_override) {
+        let outcome = match exec_decoded(cfg, &mut cpu.state, bus, &decoded, next_ip, addr_size_override) {
             Ok(v) => v,
             Err(e) => {
-                if matches!(e, Exception::InvalidOpcode) && is_x87_opcode(&bytes, state.bitness()) {
-                    if let Err(fp_e) = super::check_fp_available(state, crate::fpu::FpKind::X87) {
-                        state.apply_exception_side_effects(&fp_e);
+                if matches!(e, Exception::InvalidOpcode)
+                    && is_x87_opcode(&bytes, cpu.state.bitness())
+                {
+                    if let Err(fp_e) =
+                        super::check_fp_available(&mut cpu.state, crate::fpu::FpKind::X87)
+                    {
+                        cpu.state.apply_exception_side_effects(&fp_e);
                         return BatchResult {
                             executed,
                             exit: BatchExit::Exception(fp_e),
                         };
                     }
                 }
-                state.apply_exception_side_effects(&e);
+                cpu.state.apply_exception_side_effects(&e);
                 return BatchResult {
                     executed,
                     exit: BatchExit::Exception(e),
@@ -280,30 +287,39 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
 
         match outcome {
             ExecOutcome::Continue => {
-                state.set_rip(next_ip);
+                cpu.state.set_rip(next_ip);
                 executed += 1;
+                cpu.pending.retire_instruction();
+                cpu.time.advance_cycles(1);
             }
             ExecOutcome::ContinueInhibitInterrupts => {
-                state.set_rip(next_ip);
+                cpu.state.set_rip(next_ip);
                 executed += 1;
+                cpu.pending.retire_instruction();
+                cpu.time.advance_cycles(1);
+                cpu.pending.inhibit_interrupts_for_one_instruction();
             }
             ExecOutcome::Branch => {
                 executed += 1;
+                cpu.pending.retire_instruction();
+                cpu.time.advance_cycles(1);
                 return BatchResult {
                     executed,
                     exit: BatchExit::Branch,
                 };
             }
             ExecOutcome::Halt => {
-                state.set_rip(next_ip);
+                cpu.state.set_rip(next_ip);
                 executed += 1;
-                if let Some(vector) = state.take_pending_bios_int() {
+                cpu.pending.retire_instruction();
+                cpu.time.advance_cycles(1);
+                if let Some(vector) = cpu.state.take_pending_bios_int() {
                     return BatchResult {
                         executed,
                         exit: BatchExit::BiosInterrupt(vector),
                     };
                 }
-                state.halted = true;
+                cpu.state.halted = true;
                 return BatchResult {
                     executed,
                     exit: BatchExit::Halted,
@@ -311,7 +327,20 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
             }
             ExecOutcome::Assist(_reason) => {
                 // Execute the instruction via the assist layer using the already decoded form.
-                if let Err(e) = handle_assist_decoded(ctx, state, bus, &decoded, addr_size_override)
+                let inhibits_interrupt = matches!(
+                    decoded.instr.mnemonic(),
+                    aero_x86::Mnemonic::Mov | aero_x86::Mnemonic::Pop
+                ) && decoded.instr.op_count() > 0
+                    && decoded.instr.op_kind(0) == aero_x86::OpKind::Register
+                    && decoded.instr.op0_register() == aero_x86::Register::SS;
+                if let Err(e) = handle_assist_decoded(
+                    ctx,
+                    &mut cpu.time,
+                    &mut cpu.state,
+                    bus,
+                    &decoded,
+                    addr_size_override,
+                )
                 {
                     return BatchResult {
                         executed,
@@ -319,11 +348,16 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                     };
                 }
                 executed += 1;
+                cpu.pending.retire_instruction();
+                cpu.time.advance_cycles(1);
+                if inhibits_interrupt {
+                    cpu.pending.inhibit_interrupts_for_one_instruction();
+                }
 
                 // Preserve the "basic block" behavior of `run_batch`: treat any
                 // control-transfer assist (i.e. RIP != fallthrough) as a branch.
-                let expected_next = next_ip_raw & state.mode.ip_mask();
-                if state.rip() != expected_next {
+                let expected_next = next_ip_raw & cpu.state.mode.ip_mask();
+                if cpu.state.rip() != expected_next {
                     return BatchResult {
                         executed,
                         exit: BatchExit::Branch,

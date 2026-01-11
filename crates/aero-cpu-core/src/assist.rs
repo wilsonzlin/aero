@@ -6,6 +6,7 @@ use crate::mem::CpuBus;
 use crate::msr;
 use crate::segmentation::{LoadReason, Seg};
 use crate::state::{mask_bits, CpuMode, CpuState, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_TF};
+use crate::time::TimeSource;
 
 /// Runtime context needed by the Tier-0 assist layer.
 ///
@@ -19,9 +20,6 @@ pub struct AssistContext {
     /// CPUID feature policy used for `CPUID` and for masking MSR writes (e.g.
     /// keeping `IA32_EFER` coherent with advertised features).
     pub features: CpuFeatures,
-    /// Deterministic increment applied to `state.msr.tsc` after each `RDTSC` /
-    /// `RDTSCP`.
-    pub tsc_step: u64,
     /// Optional log of `INVLPG` linear addresses (useful for integration tests).
     pub invlpg_log: Vec<u64>,
 }
@@ -30,7 +28,6 @@ impl Default for AssistContext {
     fn default() -> Self {
         Self {
             features: CpuFeatures::default(),
-            tsc_step: 1,
             invlpg_log: Vec::new(),
         }
     }
@@ -44,6 +41,7 @@ impl Default for AssistContext {
 /// - advances RIP (or transfers control) so the caller can resume execution
 pub fn handle_assist<B: CpuBus>(
     ctx: &mut AssistContext,
+    time: &mut TimeSource,
     state: &mut CpuState,
     bus: &mut B,
     _reason: AssistReason,
@@ -67,7 +65,7 @@ pub fn handle_assist<B: CpuBus>(
         }
     };
 
-    exec_decoded(ctx, state, bus, &decoded, addr_size_override).map_err(|e| {
+    exec_decoded(ctx, time, state, bus, &decoded, addr_size_override).map_err(|e| {
         state.apply_exception_side_effects(&e);
         e
     })?;
@@ -86,12 +84,13 @@ pub fn handle_assist<B: CpuBus>(
 /// like `INS*`/`OUTS*` can pick the correct implicit index/counter registers.
 pub fn handle_assist_decoded<B: CpuBus>(
     ctx: &mut AssistContext,
+    time: &mut TimeSource,
     state: &mut CpuState,
     bus: &mut B,
     decoded: &DecodedInst,
     addr_size_override: bool,
 ) -> Result<(), Exception> {
-    exec_decoded(ctx, state, bus, decoded, addr_size_override).map_err(|e| {
+    exec_decoded(ctx, time, state, bus, decoded, addr_size_override).map_err(|e| {
         state.apply_exception_side_effects(&e);
         e
     })
@@ -99,6 +98,7 @@ pub fn handle_assist_decoded<B: CpuBus>(
 
 fn exec_decoded<B: CpuBus>(
     ctx: &mut AssistContext,
+    time: &mut TimeSource,
     state: &mut CpuState,
     bus: &mut B,
     decoded: &DecodedInst,
@@ -115,22 +115,22 @@ fn exec_decoded<B: CpuBus>(
             Ok(())
         }
         Mnemonic::Rdmsr => {
-            instr_rdmsr(ctx, state)?;
+            instr_rdmsr(ctx, time, state)?;
             state.set_rip(next_ip_raw);
             Ok(())
         }
         Mnemonic::Wrmsr => {
-            instr_wrmsr(ctx, state)?;
+            instr_wrmsr(ctx, time, state)?;
             state.set_rip(next_ip_raw);
             Ok(())
         }
         Mnemonic::Rdtsc => {
-            instr_rdtsc(ctx, state);
+            instr_rdtsc(time, state);
             state.set_rip(next_ip_raw);
             Ok(())
         }
         Mnemonic::Rdtscp => {
-            instr_rdtscp(ctx, state);
+            instr_rdtscp(time, state);
             state.set_rip(next_ip_raw);
             Ok(())
         }
@@ -467,7 +467,12 @@ fn instr_cpuid(ctx: &AssistContext, state: &mut CpuState) {
 // MSRs
 // -------------------------------------------------------------------------------------------------
 
-fn msr_read(_ctx: &AssistContext, state: &CpuState, msr_index: u32) -> Result<u64, Exception> {
+fn msr_read(
+    _ctx: &AssistContext,
+    time: &mut TimeSource,
+    state: &mut CpuState,
+    msr_index: u32,
+) -> Result<u64, Exception> {
     match msr_index {
         msr::IA32_EFER => Ok(state.msr.efer),
         msr::IA32_STAR => Ok(state.msr.star),
@@ -481,7 +486,11 @@ fn msr_read(_ctx: &AssistContext, state: &CpuState, msr_index: u32) -> Result<u6
         msr::IA32_GS_BASE => Ok(state.msr.gs_base),
         msr::IA32_KERNEL_GS_BASE => Ok(state.msr.kernel_gs_base),
         msr::IA32_APIC_BASE => Ok(state.msr.apic_base),
-        msr::IA32_TSC => Ok(state.msr.tsc),
+        msr::IA32_TSC => {
+            let tsc = time.read_tsc();
+            state.msr.tsc = tsc;
+            Ok(tsc)
+        }
         msr::IA32_TSC_AUX => Ok(state.msr.tsc_aux as u64),
         _ => Err(Exception::gp0()),
     }
@@ -489,6 +498,7 @@ fn msr_read(_ctx: &AssistContext, state: &CpuState, msr_index: u32) -> Result<u6
 
 fn msr_write(
     ctx: &mut AssistContext,
+    time: &mut TimeSource,
     state: &mut CpuState,
     msr_index: u32,
     value: u64,
@@ -565,6 +575,7 @@ fn msr_write(
             Ok(())
         }
         msr::IA32_TSC => {
+            time.set_tsc(value);
             state.msr.tsc = value;
             Ok(())
         }
@@ -576,22 +587,30 @@ fn msr_write(
     }
 }
 
-fn instr_rdmsr(ctx: &AssistContext, state: &mut CpuState) -> Result<(), Exception> {
+fn instr_rdmsr(
+    ctx: &AssistContext,
+    time: &mut TimeSource,
+    state: &mut CpuState,
+) -> Result<(), Exception> {
     require_cpl0(state)?;
     let msr_index = state.read_reg(Register::ECX) as u32;
-    let value = msr_read(ctx, state, msr_index)?;
+    let value = msr_read(ctx, time, state, msr_index)?;
     state.write_reg(Register::EAX, value as u32 as u64);
     state.write_reg(Register::EDX, (value >> 32) as u32 as u64);
     Ok(())
 }
 
-fn instr_wrmsr(ctx: &mut AssistContext, state: &mut CpuState) -> Result<(), Exception> {
+fn instr_wrmsr(
+    ctx: &mut AssistContext,
+    time: &mut TimeSource,
+    state: &mut CpuState,
+) -> Result<(), Exception> {
     require_cpl0(state)?;
     let msr_index = state.read_reg(Register::ECX) as u32;
     let eax = state.read_reg(Register::EAX) as u32 as u64;
     let edx = state.read_reg(Register::EDX) as u32 as u64;
     let value = (edx << 32) | eax;
-    msr_write(ctx, state, msr_index, value)?;
+    msr_write(ctx, time, state, msr_index, value)?;
     Ok(())
 }
 
@@ -599,19 +618,19 @@ fn instr_wrmsr(ctx: &mut AssistContext, state: &mut CpuState) -> Result<(), Exce
 // Time
 // -------------------------------------------------------------------------------------------------
 
-fn instr_rdtsc(ctx: &AssistContext, state: &mut CpuState) {
-    let tsc = state.msr.tsc;
+fn instr_rdtsc(time: &mut TimeSource, state: &mut CpuState) {
+    let tsc = time.read_tsc();
+    state.msr.tsc = tsc;
     state.write_reg(Register::EAX, tsc as u32 as u64);
     state.write_reg(Register::EDX, (tsc >> 32) as u32 as u64);
-    state.msr.tsc = state.msr.tsc.wrapping_add(ctx.tsc_step);
 }
 
-fn instr_rdtscp(ctx: &AssistContext, state: &mut CpuState) {
-    let tsc = state.msr.tsc;
+fn instr_rdtscp(time: &mut TimeSource, state: &mut CpuState) {
+    let tsc = time.read_tsc();
+    state.msr.tsc = tsc;
     state.write_reg(Register::EAX, tsc as u32 as u64);
     state.write_reg(Register::EDX, (tsc >> 32) as u32 as u64);
     state.write_reg(Register::ECX, state.msr.tsc_aux as u64);
-    state.msr.tsc = state.msr.tsc.wrapping_add(ctx.tsc_step);
 }
 
 // -------------------------------------------------------------------------------------------------

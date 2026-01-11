@@ -1,8 +1,10 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::msr;
 use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE};
+use aero_cpu_core::time::{TimeSource, DEFAULT_TSC_HZ};
 use aero_cpu_core::time_insn::{decode_instruction, BasicBlockBuilder};
 use aero_x86::Register;
 
@@ -15,8 +17,8 @@ fn tsc_from_edx_eax(state: &CpuState) -> u64 {
     (hi << 32) | lo
 }
 
-fn exec_one(ctx: &mut AssistContext, state: &mut CpuState, bus: &mut FlatTestBus) {
-    let res = run_batch_with_assists(ctx, state, bus, 1);
+fn exec_one(ctx: &mut AssistContext, cpu: &mut CpuCore, bus: &mut FlatTestBus) {
+    let res = run_batch_with_assists(ctx, cpu, bus, 1);
     assert_eq!(res.executed, 1);
     assert_eq!(res.exit, BatchExit::Completed);
 }
@@ -27,21 +29,45 @@ fn rdtsc_is_monotonic_across_retired_instructions() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     bus.load(CODE_BASE, &code);
 
-    let mut state = CpuState::new(CpuMode::Bit32);
-    state.set_rip(CODE_BASE);
-    state.msr.tsc = 1234;
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
+    cpu.state.set_rip(CODE_BASE);
+    cpu.time.set_tsc(1234);
+    cpu.state.msr.tsc = 1234;
+    let mut ctx = AssistContext::default();
+
+    exec_one(&mut ctx, &mut cpu, &mut bus);
+    let tsc1 = tsc_from_edx_eax(&cpu.state);
+
+    exec_one(&mut ctx, &mut cpu, &mut bus); // NOP
+    exec_one(&mut ctx, &mut cpu, &mut bus);
+    let tsc2 = tsc_from_edx_eax(&cpu.state);
+
+    assert_eq!(tsc1, 1234);
+    assert_eq!(tsc2, 1236);
+}
+
+#[test]
+fn tsc_advances_without_rdtsc() {
+    let code = [0x90, 0x90, 0x0F, 0x31, 0x90, 0x0F, 0x31]; // nop; nop; rdtsc; nop; rdtsc
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    bus.load(CODE_BASE, &code);
+
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
+    cpu.state.set_rip(CODE_BASE);
 
     let mut ctx = AssistContext::default();
-    ctx.tsc_step = 1;
 
-    exec_one(&mut ctx, &mut state, &mut bus);
-    let tsc1 = tsc_from_edx_eax(&state);
+    exec_one(&mut ctx, &mut cpu, &mut bus); // NOP
+    exec_one(&mut ctx, &mut cpu, &mut bus); // NOP
+    exec_one(&mut ctx, &mut cpu, &mut bus); // RDTSC
+    let tsc1 = tsc_from_edx_eax(&cpu.state);
 
-    exec_one(&mut ctx, &mut state, &mut bus); // NOP
-    exec_one(&mut ctx, &mut state, &mut bus);
-    let tsc2 = tsc_from_edx_eax(&state);
+    exec_one(&mut ctx, &mut cpu, &mut bus); // NOP
+    exec_one(&mut ctx, &mut cpu, &mut bus); // RDTSC
+    let tsc2 = tsc_from_edx_eax(&cpu.state);
 
-    assert!(tsc2 > tsc1, "expected monotonic TSC: {tsc2} <= {tsc1}");
+    assert_eq!(tsc1, 2);
+    assert_eq!(tsc2, 4);
 }
 
 #[test]
@@ -49,24 +75,24 @@ fn rdtscp_reads_tsc_aux_into_ecx() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
 
-    let mut state = CpuState::new(CpuMode::Bit32);
-    state.control.cr0 |= CR0_PE;
-    state.segments.cs.selector = 0x08; // CPL0 for WRMSR.
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
+    cpu.state.control.cr0 |= CR0_PE;
+    cpu.state.segments.cs.selector = 0x08; // CPL0 for WRMSR.
 
-    state.write_reg(Register::ECX, msr::IA32_TSC_AUX as u64);
-    state.write_reg(Register::EAX, 0xAABB_CCDD);
-    state.write_reg(Register::EDX, 0);
-    state.set_rip(CODE_BASE);
+    cpu.state.write_reg(Register::ECX, msr::IA32_TSC_AUX as u64);
+    cpu.state.write_reg(Register::EAX, 0xAABB_CCDD);
+    cpu.state.write_reg(Register::EDX, 0);
+    cpu.state.set_rip(CODE_BASE);
     bus.load(CODE_BASE, &[0x0F, 0x30]); // WRMSR
-    exec_one(&mut ctx, &mut state, &mut bus);
+    exec_one(&mut ctx, &mut cpu, &mut bus);
 
     // User-mode read (RDTSCP is unprivileged).
-    state.segments.cs.selector = 0x23;
-    state.set_rip(CODE_BASE);
+    cpu.state.segments.cs.selector = 0x23;
+    cpu.state.set_rip(CODE_BASE);
     bus.load(CODE_BASE, &[0x0F, 0x01, 0xF9]); // RDTSCP
-    exec_one(&mut ctx, &mut state, &mut bus);
+    exec_one(&mut ctx, &mut cpu, &mut bus);
 
-    assert_eq!(state.read_reg(Register::ECX) as u32, 0xAABB_CCDD);
+    assert_eq!(cpu.state.read_reg(Register::ECX) as u32, 0xAABB_CCDD);
 }
 
 #[test]
@@ -77,29 +103,29 @@ fn fences_are_noops_for_register_state_and_terminate_blocks() {
 
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
-    let mut state = CpuState::new(CpuMode::Bit32);
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
 
-    state.write_reg(Register::RAX, 0x1111_2222_3333_4444);
-    state.write_reg(Register::RBX, 0x5555_6666_7777_8888);
-    state.write_reg(Register::RCX, 0x9999_AAAA_BBBB_CCCC);
-    state.write_reg(Register::RDX, 0xDDDD_EEEE_FFFF_0000);
+    cpu.state.write_reg(Register::RAX, 0x1111_2222_3333_4444);
+    cpu.state.write_reg(Register::RBX, 0x5555_6666_7777_8888);
+    cpu.state.write_reg(Register::RCX, 0x9999_AAAA_BBBB_CCCC);
+    cpu.state.write_reg(Register::RDX, 0xDDDD_EEEE_FFFF_0000);
     let before = (
-        state.read_reg(Register::RAX),
-        state.read_reg(Register::RBX),
-        state.read_reg(Register::RCX),
-        state.read_reg(Register::RDX),
+        cpu.state.read_reg(Register::RAX),
+        cpu.state.read_reg(Register::RBX),
+        cpu.state.read_reg(Register::RCX),
+        cpu.state.read_reg(Register::RDX),
     );
 
-    state.set_rip(CODE_BASE);
+    cpu.state.set_rip(CODE_BASE);
     bus.load(CODE_BASE, &[0x0F, 0xAE, 0xE8]); // LFENCE
-    exec_one(&mut ctx, &mut state, &mut bus);
+    exec_one(&mut ctx, &mut cpu, &mut bus);
 
     assert_eq!(
         (
-            state.read_reg(Register::RAX),
-            state.read_reg(Register::RBX),
-            state.read_reg(Register::RCX),
-            state.read_reg(Register::RDX),
+            cpu.state.read_reg(Register::RAX),
+            cpu.state.read_reg(Register::RBX),
+            cpu.state.read_reg(Register::RCX),
+            cpu.state.read_reg(Register::RDX),
         ),
         before
     );
@@ -125,24 +151,38 @@ fn wrmsr_ia32_tsc_updates_subsequent_rdtsc() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
 
-    let mut state = CpuState::new(CpuMode::Bit32);
-    state.control.cr0 |= CR0_PE;
-    state.segments.cs.selector = 0x08; // CPL0
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
+    cpu.state.control.cr0 |= CR0_PE;
+    cpu.state.segments.cs.selector = 0x08; // CPL0
 
-    state.write_reg(Register::ECX, msr::IA32_TSC as u64);
-    state.write_reg(Register::EAX, 0x9ABC_DEF0);
-    state.write_reg(Register::EDX, 0x1234_5678);
-    state.set_rip(CODE_BASE);
+    cpu.state.write_reg(Register::ECX, msr::IA32_TSC as u64);
+    cpu.state.write_reg(Register::EAX, 0x9ABC_DEF0);
+    cpu.state.write_reg(Register::EDX, 0x1234_5678);
+    cpu.state.set_rip(CODE_BASE);
     bus.load(CODE_BASE, &[0x0F, 0x30]); // WRMSR
-    exec_one(&mut ctx, &mut state, &mut bus);
+    exec_one(&mut ctx, &mut cpu, &mut bus);
 
-    state.set_rip(CODE_BASE);
+    cpu.state.set_rip(CODE_BASE);
     bus.load(CODE_BASE, &[0x0F, 0x31]); // RDTSC
-    exec_one(&mut ctx, &mut state, &mut bus);
-    let tsc = tsc_from_edx_eax(&state);
+    exec_one(&mut ctx, &mut cpu, &mut bus);
+    let tsc = tsc_from_edx_eax(&cpu.state);
 
-    assert!(
-        tsc >= 0x1234_5678_9ABC_DEF0,
-        "expected RDTSC to reflect IA32_TSC write: {tsc:#x}"
-    );
+    assert_eq!(tsc, 0x1234_5678_9ABC_DEF1);
+}
+
+#[test]
+fn wallclock_time_source_is_monotonic() {
+    let mut time = TimeSource::new_wallclock(DEFAULT_TSC_HZ);
+    let t0 = time.read_tsc();
+
+    // `Instant` resolution varies by platform, so avoid asserting tight bounds.
+    // Give the host a small window to observe time progressing.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+    let mut t1 = t0;
+    while t1 <= t0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        t1 = time.read_tsc();
+    }
+
+    assert!(t1 > t0);
 }

@@ -75,11 +75,11 @@ fn cpu_core_bus_routes_port_io_to_toggle_a20() {
     let code_base = 0x200u64;
     bus.platform.memory.write_physical(code_base, &code);
 
-    let mut cpu = CpuState::new(CpuMode::Real);
-    cpu.set_stack_ptr(0x1000);
-    cpu.segments.cs.selector = 0;
-    cpu.segments.cs.base = 0;
-    cpu.set_rip(code_base);
+    let mut cpu = CpuCore::new(CpuMode::Real);
+    cpu.state.set_stack_ptr(0x1000);
+    cpu.state.segments.cs.selector = 0;
+    cpu.state.segments.cs.base = 0;
+    cpu.state.set_rip(code_base);
 
     let mut ctx = AssistContext::default();
     let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);

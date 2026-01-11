@@ -13,6 +13,7 @@ use aero_x86::Register;
 use crate::exceptions::{Exception, InterruptSource, PendingEvent};
 use crate::mem::CpuBus;
 use crate::state::{self, gpr, CpuMode, RFLAGS_IF, RFLAGS_RESERVED1, RFLAGS_TF};
+use crate::time::TimeSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CpuExit {
@@ -214,13 +215,18 @@ impl PendingEventState {
 pub struct CpuCore {
     pub state: state::CpuState,
     pub pending: PendingEventState,
+    pub time: TimeSource,
 }
 
 impl CpuCore {
     pub fn new(mode: CpuMode) -> Self {
+        let state = state::CpuState::new(mode);
+        let mut time = TimeSource::default();
+        time.set_tsc(state.msr.tsc);
         Self {
-            state: state::CpuState::new(mode),
+            state,
             pending: PendingEventState::default(),
+            time,
         }
     }
 
@@ -242,6 +248,20 @@ impl CpuCore {
 
     pub fn iret<B: CpuBus>(&mut self, bus: &mut B) -> Result<(), CpuExit> {
         iret(&mut self.state, bus, &mut self.pending)
+    }
+}
+
+impl core::ops::Deref for CpuCore {
+    type Target = state::CpuState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl core::ops::DerefMut for CpuCore {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
     }
 }
 

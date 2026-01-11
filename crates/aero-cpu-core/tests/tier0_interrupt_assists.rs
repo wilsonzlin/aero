@@ -1,8 +1,9 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::state::{
-    CpuMode, CpuState, CR0_PE, RFLAGS_IF, RFLAGS_RESERVED1, SEG_ACCESS_PRESENT,
+    CpuMode, CR0_PE, RFLAGS_IF, RFLAGS_RESERVED1, SEG_ACCESS_PRESENT,
 };
 use aero_cpu_core::CpuBus;
 use aero_x86::Register;
@@ -78,37 +79,37 @@ fn tier0_assists_protected_int_iret_no_privilege_change() {
     // IDT[0x80] -> HANDLER_BASE (interrupt gate, DPL0).
     write_idt_gate32(&mut bus, IDT_BASE, 0x80, 0x08, HANDLER_BASE as u32, 0x8E);
 
-    let mut state = CpuState::new(CpuMode::Bit32);
-    state.control.cr0 |= CR0_PE;
-    state.set_rip(CODE_BASE);
-    state.segments.cs.selector = 0x08;
-    state.segments.ss.selector = 0x10;
-    state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
-    state.tables.gdtr.base = GDT_BASE;
-    state.tables.gdtr.limit = 0x18 - 1;
-    state.tables.idtr.base = IDT_BASE;
-    state.tables.idtr.limit = (0x80 * 8 + 7) as u16;
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
+    cpu.state.control.cr0 |= CR0_PE;
+    cpu.state.set_rip(CODE_BASE);
+    cpu.state.segments.cs.selector = 0x08;
+    cpu.state.segments.ss.selector = 0x10;
+    cpu.state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
+    cpu.state.tables.gdtr.base = GDT_BASE;
+    cpu.state.tables.gdtr.limit = 0x18 - 1;
+    cpu.state.tables.idtr.base = IDT_BASE;
+    cpu.state.tables.idtr.limit = (0x80 * 8 + 7) as u16;
 
     // Push sentinel return address.
     let sp_pushed = STACK_TOP - 4;
     bus.write_u32(sp_pushed, RETURN_IP).unwrap();
-    state.write_reg(Register::ESP, sp_pushed);
+    cpu.state.write_reg(Register::ESP, sp_pushed);
 
     let mut ctx = AssistContext::default();
     let mut executed = 0u64;
     loop {
-        if state.rip() == RETURN_IP as u64 {
+        if cpu.state.rip() == RETURN_IP as u64 {
             break;
         }
-        let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1024);
+        let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);
         executed += res.executed;
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
-            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
+            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", cpu.state.rip()),
             BatchExit::BiosInterrupt(vector) => {
                 panic!(
                     "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
-                    state.rip()
+                    cpu.state.rip()
                 )
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
@@ -117,7 +118,7 @@ fn tier0_assists_protected_int_iret_no_privilege_change() {
     }
 
     assert_eq!(bus.read_u32(0x500).unwrap(), 0xCAFE_BABE);
-    assert!(state.get_flag(RFLAGS_IF));
+    assert!(cpu.state.get_flag(RFLAGS_IF));
 }
 
 #[test]
@@ -166,42 +167,42 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     let handler: [u8; 6] = [0xB8, 0x37, 0x13, 0x00, 0x00, 0xCF];
     bus.load(HANDLER_BASE, &handler);
 
-    let mut state = CpuState::new(CpuMode::Bit32);
-    state.control.cr0 |= CR0_PE;
-    state.set_rip(CODE_BASE);
-    state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
-    state.segments.cs.selector = 0x1B; // user code selector (0x18 | RPL3)
-    state.segments.ss.selector = 0x23; // user data selector (0x20 | RPL3)
-    state.tables.gdtr.base = GDT_BASE;
-    state.tables.gdtr.limit = 0x28 - 1; // 5 entries * 8 - 1
-    state.tables.idtr.base = IDT_BASE;
-    state.tables.idtr.limit = (0x80 * 8 + 7) as u16;
+    let mut cpu = CpuCore::new(CpuMode::Bit32);
+    cpu.state.control.cr0 |= CR0_PE;
+    cpu.state.set_rip(CODE_BASE);
+    cpu.state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
+    cpu.state.segments.cs.selector = 0x1B; // user code selector (0x18 | RPL3)
+    cpu.state.segments.ss.selector = 0x23; // user data selector (0x20 | RPL3)
+    cpu.state.tables.gdtr.base = GDT_BASE;
+    cpu.state.tables.gdtr.limit = 0x28 - 1; // 5 entries * 8 - 1
+    cpu.state.tables.idtr.base = IDT_BASE;
+    cpu.state.tables.idtr.limit = (0x80 * 8 + 7) as u16;
     // Mark TR as usable and point it at the in-memory TSS.
-    state.tables.tr.selector = 0x28;
-    state.tables.tr.base = TSS_BASE;
-    state.tables.tr.limit = 0x67;
-    state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+    cpu.state.tables.tr.selector = 0x28;
+    cpu.state.tables.tr.base = TSS_BASE;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
 
     // Push sentinel return address on the user stack.
     let sp_pushed = USER_STACK_TOP - 4;
     bus.write_u32(sp_pushed, RETURN_IP).unwrap();
-    state.write_reg(Register::ESP, sp_pushed);
+    cpu.state.write_reg(Register::ESP, sp_pushed);
 
     let mut ctx = AssistContext::default();
     let mut executed = 0u64;
     loop {
-        if state.rip() == RETURN_IP as u64 {
+        if cpu.state.rip() == RETURN_IP as u64 {
             break;
         }
-        let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1024);
+        let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);
         executed += res.executed;
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
-            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
+            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", cpu.state.rip()),
             BatchExit::BiosInterrupt(vector) => {
                 panic!(
                     "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
-                    state.rip()
+                    cpu.state.rip()
                 )
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
@@ -210,9 +211,9 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     }
 
     assert_eq!(bus.read_u32(0x500).unwrap(), 0x1337);
-    assert_eq!(state.segments.cs.selector, 0x1B);
-    assert_eq!(state.segments.ss.selector, 0x23);
-    assert!(state.get_flag(RFLAGS_IF));
+    assert_eq!(cpu.state.segments.cs.selector, 0x1B);
+    assert_eq!(cpu.state.segments.ss.selector, 0x23);
+    assert!(cpu.state.get_flag(RFLAGS_IF));
 
     // Kernel stack frame should have been constructed at KERNEL_STACK_TOP - 20.
     let frame_base = KERNEL_STACK_TOP - 20;

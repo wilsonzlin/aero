@@ -6,6 +6,7 @@ use aero_cpu_core::msr;
 use aero_cpu_core::state::{
     CpuMode, CpuState, CR0_PE, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_RESERVED1,
 };
+use aero_cpu_core::time::TimeSource;
 use aero_cpu_core::{AssistReason, Exception};
 use aero_x86::Register;
 
@@ -121,6 +122,7 @@ impl LoadableBus for IoBus {
 
 fn exec_assist<B: LoadableBus>(
     ctx: &mut AssistContext,
+    time: &mut TimeSource,
     state: &mut CpuState,
     bus: &mut B,
     rip: u64,
@@ -129,11 +131,12 @@ fn exec_assist<B: LoadableBus>(
 ) -> Result<(), Exception> {
     state.set_rip(rip);
     bus.load(rip, bytes);
-    aero_cpu_core::assist::handle_assist(ctx, state, bus, reason)
+    aero_cpu_core::assist::handle_assist(ctx, time, state, bus, reason)
 }
 
 fn exec_wrmsr<B: LoadableBus>(
     ctx: &mut AssistContext,
+    time: &mut TimeSource,
     state: &mut CpuState,
     bus: &mut B,
     msr_index: u32,
@@ -142,17 +145,18 @@ fn exec_wrmsr<B: LoadableBus>(
     state.write_reg(Register::ECX, msr_index as u64);
     state.write_reg(Register::EAX, value as u32 as u64);
     state.write_reg(Register::EDX, (value >> 32) as u32 as u64);
-    exec_assist(ctx, state, bus, CODE_BASE, &[0x0F, 0x30], AssistReason::Msr).unwrap();
+    exec_assist(ctx, time, state, bus, CODE_BASE, &[0x0F, 0x30], AssistReason::Msr).unwrap();
 }
 
 fn exec_rdmsr<B: LoadableBus>(
     ctx: &mut AssistContext,
+    time: &mut TimeSource,
     state: &mut CpuState,
     bus: &mut B,
     msr_index: u32,
 ) -> Result<u64, Exception> {
     state.write_reg(Register::ECX, msr_index as u64);
-    exec_assist(ctx, state, bus, CODE_BASE, &[0x0F, 0x32], AssistReason::Msr)?;
+    exec_assist(ctx, time, state, bus, CODE_BASE, &[0x0F, 0x32], AssistReason::Msr)?;
     let lo = state.read_reg(Register::EAX) as u32 as u64;
     let hi = state.read_reg(Register::EDX) as u32 as u64;
     Ok((hi << 32) | lo)
@@ -203,28 +207,31 @@ fn cpuid_leafs_are_deterministic() {
 fn msr_roundtrip_supported() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_PE;
     state.segments.cs.selector = 0x08; // CPL0
 
     exec_wrmsr(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         msr::IA32_EFER,
         msr::EFER_SCE | msr::EFER_NXE,
     );
     assert_eq!(
-        exec_rdmsr(&mut ctx, &mut state, &mut bus, msr::IA32_EFER).unwrap(),
+        exec_rdmsr(&mut ctx, &mut time, &mut state, &mut bus, msr::IA32_EFER).unwrap(),
         msr::EFER_SCE | msr::EFER_NXE
     );
 
     // Unknown MSRs raise #GP(0).
-    let err = exec_rdmsr(&mut ctx, &mut state, &mut bus, 0xDEAD_BEEF).unwrap_err();
+    let err = exec_rdmsr(&mut ctx, &mut time, &mut state, &mut bus, 0xDEAD_BEEF).unwrap_err();
     assert_eq!(err, Exception::gp0());
 
     // IA32_APIC_BASE reset value has enable + BSP bits set.
-    let apic_base = exec_rdmsr(&mut ctx, &mut state, &mut bus, msr::IA32_APIC_BASE).unwrap();
+    let apic_base =
+        exec_rdmsr(&mut ctx, &mut time, &mut state, &mut bus, msr::IA32_APIC_BASE).unwrap();
     assert_ne!(apic_base & (1 << 11), 0);
     assert_ne!(apic_base & (1 << 8), 0);
 }
@@ -233,6 +240,7 @@ fn msr_roundtrip_supported() {
 fn syscall_sysret_transitions_privilege() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit64);
 
     // User mode starting state.
@@ -251,6 +259,7 @@ fn syscall_sysret_transitions_privilege() {
 
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         0x1000,
@@ -272,6 +281,7 @@ fn syscall_sysret_transitions_privilege() {
     state.write_reg(Register::RCX, 0x2000);
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -291,6 +301,7 @@ fn syscall_sysret_transitions_privilege() {
 fn syscall_rejects_noncanonical_lstar() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit64);
 
     // User mode starting state.
@@ -306,6 +317,7 @@ fn syscall_rejects_noncanonical_lstar() {
 
     let err = exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         0x1000,
@@ -320,6 +332,7 @@ fn syscall_rejects_noncanonical_lstar() {
 fn sysret_rejects_noncanonical_target() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit64);
 
     // CPL0 state required for SYSRET.
@@ -337,6 +350,7 @@ fn sysret_rejects_noncanonical_target() {
 
     let err = exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -351,6 +365,7 @@ fn sysret_rejects_noncanonical_target() {
 fn sysenter_sysexit_transitions_32bit() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_PE;
 
@@ -367,6 +382,7 @@ fn sysenter_sysexit_transitions_32bit() {
 
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -386,6 +402,7 @@ fn sysenter_sysexit_transitions_32bit() {
     state.write_reg(Register::ECX, 0x0012_3400); // user ESP (ECX)
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -405,6 +422,7 @@ fn sysenter_sysexit_transitions_32bit() {
 fn privilege_violations_raise_gp() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_PE;
     state.segments.cs.selector = 0x23; // CPL3
@@ -413,6 +431,7 @@ fn privilege_violations_raise_gp() {
     state.write_reg(Register::EAX, 0x1234);
     let err = exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -426,6 +445,7 @@ fn privilege_violations_raise_gp() {
     state.write_reg(Register::ECX, msr::IA32_EFER as u64);
     let err = exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -440,6 +460,7 @@ fn privilege_violations_raise_gp() {
 fn in_out_routes_to_port_io() {
     let mut bus = IoBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_PE;
 
@@ -452,6 +473,7 @@ fn in_out_routes_to_port_io() {
 
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -465,6 +487,7 @@ fn in_out_routes_to_port_io() {
     state.write_reg(Register::AL, 0x55);
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -479,6 +502,7 @@ fn in_out_routes_to_port_io() {
 fn io_privilege_checks_raise_gp_and_do_not_touch_device() {
     let mut bus = IoBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_PE;
 
@@ -489,6 +513,7 @@ fn io_privilege_checks_raise_gp_and_do_not_touch_device() {
 
     let err = exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -501,6 +526,7 @@ fn io_privilege_checks_raise_gp_and_do_not_touch_device() {
 
     let err = exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -516,6 +542,7 @@ fn io_privilege_checks_raise_gp_and_do_not_touch_device() {
 fn cli_sti_are_privileged_by_iopl() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_PE;
 
@@ -524,6 +551,7 @@ fn cli_sti_are_privileged_by_iopl() {
 
     let err = exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -535,6 +563,7 @@ fn cli_sti_are_privileged_by_iopl() {
 
     let err = exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -549,6 +578,7 @@ fn cli_sti_are_privileged_by_iopl() {
 
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -560,6 +590,7 @@ fn cli_sti_are_privileged_by_iopl() {
 
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -574,6 +605,7 @@ fn cli_sti_are_privileged_by_iopl() {
 fn real_mode_treats_privileged_checks_as_cpl0() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
     let mut ctx = AssistContext::default();
+    let mut time = TimeSource::default();
     let mut state = CpuState::new(CpuMode::Bit16);
 
     // Real-mode CS values are not selectors; the low bits are not an RPL and may be non-zero.
@@ -583,6 +615,7 @@ fn real_mode_treats_privileged_checks_as_cpl0() {
     state.write_reg(Register::EAX, 0);
     exec_assist(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         CODE_BASE,
@@ -594,13 +627,15 @@ fn real_mode_treats_privileged_checks_as_cpl0() {
     // RDMSR/WRMSR still require CPL0, which real mode provides.
     exec_wrmsr(
         &mut ctx,
+        &mut time,
         &mut state,
         &mut bus,
         msr::IA32_EFER,
         msr::EFER_SCE,
     );
     assert_eq!(
-        exec_rdmsr(&mut ctx, &mut state, &mut bus, msr::IA32_EFER).unwrap() & msr::EFER_SCE,
+        exec_rdmsr(&mut ctx, &mut time, &mut state, &mut bus, msr::IA32_EFER).unwrap()
+            & msr::EFER_SCE,
         msr::EFER_SCE
     );
 

@@ -2,6 +2,7 @@
 
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit, StepExit};
+use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::mem::CpuBus as CoreCpuBus;
 use aero_cpu_core::state::{
     gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF,
@@ -236,7 +237,7 @@ impl CoreCpuBus for BiosTestMemory {
 }
 
 struct CoreVm<D: BlockDevice> {
-    cpu: CoreCpuState,
+    cpu: CpuCore,
     mem: BiosTestMemory,
     bios: Bios,
     disk: D,
@@ -246,7 +247,7 @@ struct CoreVm<D: BlockDevice> {
 impl<D: BlockDevice> CoreVm<D> {
     fn new(mem_size: usize, bios: Bios, disk: D) -> Self {
         Self {
-            cpu: CoreCpuState::new(CoreCpuMode::Real),
+            cpu: CpuCore::new(CoreCpuMode::Real),
             mem: BiosTestMemory::new(mem_size),
             bios,
             disk,
@@ -265,7 +266,9 @@ impl<D: BlockDevice> CoreVm<D> {
         // Start from the architectural reset vector (alias at 0xFFFF_FFF0) and run
         // until the ROM fallback stub halts. The real BIOS POST is performed in host
         // code, so this just validates that ROM + reset mapping is wired correctly.
-        self.cpu = core_reset_state();
+        self.cpu = CpuCore::new(CoreCpuMode::Real);
+        self.cpu.state = core_reset_state();
+        self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
         let mut executed = 0u64;
         while executed < 32 {
             let res = run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut self.mem, 1);
@@ -286,8 +289,8 @@ impl<D: BlockDevice> CoreVm<D> {
         let bus: &mut dyn BiosBus = &mut self.mem;
         self.bios.post(&mut machine_cpu, bus, &mut self.disk);
 
-        sync_machine_to_core(&machine_cpu, &mut self.cpu);
-        self.cpu.halted = false;
+        sync_machine_to_core(&machine_cpu, &mut self.cpu.state);
+        self.cpu.state.halted = false;
     }
 
     fn step(&mut self) -> StepExit {
@@ -303,11 +306,11 @@ impl<D: BlockDevice> CoreVm<D> {
 
         if let StepExit::BiosInterrupt(vector) = exit {
             let mut machine_cpu = MachineCpuState::default();
-            sync_core_to_machine(&self.cpu, &mut machine_cpu);
+            sync_core_to_machine(&self.cpu.state, &mut machine_cpu);
             let bus: &mut dyn BiosBus = &mut self.mem;
             self.bios
                 .dispatch_interrupt(vector, &mut machine_cpu, bus, &mut self.disk);
-            sync_machine_to_core(&machine_cpu, &mut self.cpu);
+            sync_machine_to_core(&machine_cpu, &mut self.cpu.state);
         }
 
         exit
@@ -322,15 +325,15 @@ fn aero_cpu_core_vm_resets_to_0x7c00_with_dl_set() {
     let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
     vm.reset();
 
-    assert_eq!(vm.cpu.segments.cs.selector, 0x0000);
-    assert_eq!(vm.cpu.rip(), 0x7C00);
-    assert_eq!(vm.cpu.gpr[gpr::RSP] as u16, 0x7C00);
-    assert_eq!(vm.cpu.gpr[gpr::RDX] as u8, 0x80);
+    assert_eq!(vm.cpu.state.segments.cs.selector, 0x0000);
+    assert_eq!(vm.cpu.state.rip(), 0x7C00);
+    assert_eq!(vm.cpu.state.gpr[gpr::RSP] as u16, 0x7C00);
+    assert_eq!(vm.cpu.state.gpr[gpr::RDX] as u8, 0x80);
 
     assert!(matches!(vm.step(), StepExit::Continue)); // first NOP
-    assert_eq!(vm.cpu.rip(), 0x7C01);
+    assert_eq!(vm.cpu.state.rip(), 0x7C01);
     assert!(matches!(vm.step(), StepExit::Continue)); // second NOP
-    assert_eq!(vm.cpu.rip(), 0x7C02);
+    assert_eq!(vm.cpu.state.rip(), 0x7C02);
 }
 
 #[test]
