@@ -1965,12 +1965,7 @@ impl AeroGpuSoftwareExecutor {
         // backend should ignore them rather than failing compilation.
         #[allow(unreachable_patterns)]
         match op {
-            cmd::AerogpuCmdOpcode::Nop
-            | cmd::AerogpuCmdOpcode::DebugMarker
-            | cmd::AerogpuCmdOpcode::CreateSampler
-            | cmd::AerogpuCmdOpcode::DestroySampler
-            | cmd::AerogpuCmdOpcode::SetSamplers
-            | cmd::AerogpuCmdOpcode::SetConstantBuffers => {}
+            cmd::AerogpuCmdOpcode::Nop | cmd::AerogpuCmdOpcode::DebugMarker => {}
             cmd::AerogpuCmdOpcode::CreateBuffer => {
                 let packet_cmd =
                     match Self::read_packed_prefix::<cmd::AerogpuCmdCreateBuffer>(packet) {

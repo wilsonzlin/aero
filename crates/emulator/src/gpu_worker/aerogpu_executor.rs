@@ -1352,6 +1352,35 @@ mod tests {
         assert_eq!(regs.completed_fence, 3);
         assert_eq!(regs.irq_status & irq_bits::FENCE, 0);
     }
+
+    #[test]
+    fn scanout_writeback_converts_rgba_to_16bpp_formats() {
+        let mut mem = Bus::new(0x4000);
+        let fb_gpa = 0x1000u64;
+
+        let scanout = AeroGpuBackendScanout {
+            width: 1,
+            height: 1,
+            rgba8: vec![255, 0, 0, 255], // opaque red
+        };
+
+        let mut regs = AeroGpuRegs::default();
+        regs.scanout0.enable = true;
+        regs.scanout0.width = 1;
+        regs.scanout0.height = 1;
+        regs.scanout0.fb_gpa = fb_gpa;
+        regs.scanout0.pitch_bytes = 2;
+
+        // RGB565: R=31 -> 0xF800.
+        regs.scanout0.format = AeroGpuFormat::B5G6R5Unorm;
+        write_scanout0_rgba8(&regs, &mut mem, &scanout).unwrap();
+        assert_eq!(mem.read_u16(fb_gpa), 0xF800);
+
+        // BGRA5551: A=1, R=31 -> 0xFC00.
+        regs.scanout0.format = AeroGpuFormat::B5G5R5A1Unorm;
+        write_scanout0_rgba8(&regs, &mut mem, &scanout).unwrap();
+        assert_eq!(mem.read_u16(fb_gpa), 0xFC00);
+    }
 }
 
 #[cfg(feature = "aerogpu-trace")]
