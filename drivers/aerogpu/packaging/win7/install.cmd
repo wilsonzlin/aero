@@ -9,6 +9,8 @@ rem
 rem Examples:
 rem   install.cmd
 rem   install.cmd aerogpu_dx11.inf
+rem   install.cmd legacy\aerogpu.inf
+rem   install.cmd legacy\aerogpu_dx11.inf
 rem   install.cmd C:\path\to\signed\package\aerogpu.inf
 
 set "SCRIPT_DIR=%~dp0"

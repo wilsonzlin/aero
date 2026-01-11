@@ -154,7 +154,11 @@ depending on the emulator/device model (the emulator legacy device model is behi
 The Win7 KMD still has a compatibility path for the legacy bring-up device model, but the primary INFs in this
 directory (`aerogpu.inf` and `aerogpu_dx11.inf`) intentionally match only the canonical `A3A0:0001` device model (to
 discourage accidental installs against the legacy device model). If you need the legacy `1AED:0001` device model for
-bring-up/compatibility, install using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`.
+bring-up/compatibility, install using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and build the
+emulator with the legacy device model enabled (feature `emulator/aerogpu-legacy`).
+
+Note: these legacy INFs are kept in the repo source tree for compatibility/regression and are intentionally **not**
+included in the CI-staged packages under `out/packages/` by default.
 
 See `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD
 supports multiple ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
@@ -414,8 +418,8 @@ build_all_vs2010.cmd
 :: Choose the VID/DID that matches your VM's Hardware Ids:
 run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
 :: If using the deprecated legacy device model, pass the matching VID/DID (see docs/abi/aerogpu-pci-identity.md).
-:: Note: legacy bring-up requires the legacy INFs under drivers/aerogpu/packaging/win7/legacy/ and enabling the emulator
-:: legacy device model (feature emulator/aerogpu-legacy).
+:: Note: legacy bring-up requires the legacy INFs under drivers/aerogpu/packaging/win7/legacy/ (repo-only; not shipped
+:: in CI packages by default) and enabling the emulator legacy device model (feature emulator/aerogpu-legacy).
 ```
 
 Use the VID/DID shown in Device Manager → Display adapters → Properties → Details → **Hardware Ids** (or the HW ID used in the `[AeroGPU_Models.*]` sections of the INF).
