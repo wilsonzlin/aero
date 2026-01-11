@@ -34,8 +34,12 @@ relative INF path during provisioning and ensure only one matching INF is presen
 ## Contents
 
 - `common/` – shared Windows 7 virtio helpers (INTx helper, contract checks, legacy I/O-port transport, host-test helpers).
-  - Note: the canonical virtio-pci modern transport and canonical split-ring virtqueue engine used by the
-    contract-v1 drivers live under `drivers/windows/virtio/` (`pci-modern/`, `common/`).
+  - Used by the Win7 virtio **miniport** drivers (`virtio-blk`, `virtio-net`), which compile:
+    - `common/include/virtio_pci_modern_miniport.h` + `common/src/virtio_pci_modern_miniport.c`
+    - `common/include/virtqueue_split_legacy.h` + `common/src/virtqueue_split_legacy.c`
+  - Other Win7 virtio drivers use shared code under `drivers/windows/virtio/` as well:
+    - `virtio-input` and `virtio-snd` compile the canonical split-ring engine: `drivers/windows/virtio/common/virtqueue_split.c`
+    - `virtio-snd` also compiles the canonical WDF-free virtio-pci modern transport: `drivers/windows/virtio/pci-modern/`
 
 Note: the contract-v1 driver packages live under:
 
