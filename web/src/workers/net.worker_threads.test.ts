@@ -95,7 +95,7 @@ describe("workers/net.worker (worker_threads)", () => {
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
-    const registerUrl = new URL("./test_workers/register_ts_strip_loader.mjs", import.meta.url);
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
