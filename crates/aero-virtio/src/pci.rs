@@ -698,7 +698,9 @@ impl VirtioPciDevice {
         buf[22..24].copy_from_slice(&self.queue_select.to_le_bytes());
 
         if let Some(q) = self.selected_queue() {
-            buf[24..26].copy_from_slice(&q.size.to_le_bytes());
+            // Contract v1 fixes queue sizes; `queue_size` is treated as read-only and always
+            // returns the maximum supported size.
+            buf[24..26].copy_from_slice(&q.max_size.to_le_bytes());
             buf[26..28].copy_from_slice(&q.msix_vector.to_le_bytes());
             buf[28..30].copy_from_slice(&(q.enable as u16).to_le_bytes());
             buf[30..32].copy_from_slice(&q.notify_off.to_le_bytes());
@@ -743,14 +745,6 @@ impl VirtioPciDevice {
                 }
             }
             (0x16, 2) => self.queue_select = u16::from_le_bytes(data.try_into().unwrap()),
-            (0x18, 2) => {
-                let val = u16::from_le_bytes(data.try_into().unwrap());
-                if let Some(q) = self.selected_queue_mut() {
-                    if val != 0 && val <= q.max_size && val.is_power_of_two() {
-                        q.size = val;
-                    }
-                }
-            }
             (0x1a, 2) => {
                 if let Some(q) = self.selected_queue_mut() {
                     q.msix_vector = u16::from_le_bytes(data.try_into().unwrap());

@@ -485,6 +485,22 @@ fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes
 }
 
 #[test]
+fn virtio_pci_queue_size_is_read_only() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    let original_size = bar_read_u16(&mut dev, caps.common + 0x18);
+    assert_eq!(original_size, 64);
+
+    // Contract v1 fixes queue sizes; writes must be ignored.
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x18, 8);
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), original_size);
+}
+
+#[test]
 fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
