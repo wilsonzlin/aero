@@ -20,18 +20,18 @@ What this test plan verifies:
 
 References:
 
-- PCI ID/HWID reference: `drivers/windows7/virtio-snd/docs/pci-hwids.md`
+- PCI ID/HWID reference: `../../docs/pci-hwids.md`
 - Optional: offline/slipstream staging so Windows binds the driver on first boot:
-  - `drivers/windows7/virtio-snd/tests/offline-install/README.md`
+  - `../offline-install/README.md`
 
 ## Prerequisites
 
 - A QEMU build new enough to expose a virtio-snd PCI device.
   - Known-good reference: QEMU **8.2.x**.
 - A Windows 7 SP1 VM disk image (x86 or x64).
-- The virtio-snd driver package for the target architecture:
-  - `drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf`
-  - `virtiosnd.sys` built for x86 or x64 and placed next to the INF for installation
+- The virtio-snd driver package directory for the target architecture (must contain `aero-virtio-snd.inf` + `virtiosnd.sys`):
+  - Repo layout (staging): `drivers/windows7/virtio-snd/inf/`
+  - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
 - Test signing enabled in the guest (or a properly production-signed driver package).
 
 Optional (but recommended for headless hosts):

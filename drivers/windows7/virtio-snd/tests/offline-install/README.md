@@ -20,6 +20,13 @@ In this repo, the packaging/staging directory is:
 drivers/windows7/virtio-snd/inf/
 ```
 
+In packaged driver bundles (ZIP/ISO), the same driver package payload files are located under:
+
+```text
+drivers\virtio-snd\x86\   (Windows 7 x86)
+drivers\virtio-snd\x64\   (Windows 7 x64)
+```
+
 > `virtio-snd` is **not boot-critical** (it’s a PnP media device, StartType=3). If staging fails or the driver is blocked by signature policy at runtime, Windows should still boot; you’ll just have an unbound device to troubleshoot.
 
 ---
@@ -83,7 +90,9 @@ dism /Mount-Wim /WimFile:%WIM% /Index:1 /MountDir:%MOUNT%
 
 ### 3) Add (stage) the virtio-snd driver
 
-Assuming this repo is checked out at `C:\src\aero` and your driver package is prepared under `drivers\windows7\virtio-snd\inf\`:
+Set `VIRTIO_SND_INF_DIR` to a folder containing `aero-virtio-snd.inf` + `virtiosnd.sys` for the correct architecture.
+
+Example (repo checkout at `C:\src\aero`):
 
 ```bat
 set REPO=C:\src\aero
@@ -92,6 +101,14 @@ REM Point this at a folder containing aero-virtio-snd.inf + virtiosnd.sys for th
 REM correct architecture.
 set VIRTIO_SND_INF_DIR=%REPO%\drivers\windows7\virtio-snd\inf
 
+dism /Image:%MOUNT% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
+```
+
+Example (bundle extracted to `C:\aero-drivers\`):
+
+```bat
+REM Use x64 for Windows 7 x64; use x86 for Windows 7 x86.
+set VIRTIO_SND_INF_DIR=C:\aero-drivers\drivers\virtio-snd\x64
 dism /Image:%MOUNT% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
 ```
 
@@ -173,6 +190,15 @@ set OFFLINE=W:\
 set REPO=C:\src\aero
 set VIRTIO_SND_INF_DIR=%REPO%\drivers\windows7\virtio-snd\inf
 
+dism /Image:%OFFLINE% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
+```
+
+Example (bundle extracted to `C:\aero-drivers\`):
+
+```bat
+set OFFLINE=W:\
+REM Use x64 for Windows 7 x64; use x86 for Windows 7 x86.
+set VIRTIO_SND_INF_DIR=C:\aero-drivers\drivers\virtio-snd\x64
 dism /Image:%OFFLINE% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
 ```
 
