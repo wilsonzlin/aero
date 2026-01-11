@@ -121,7 +121,6 @@ test("gpu trace replays deterministically (AeroGPU A3A0 command stream clear-red
     await replayer.replayFrame(0);
 
     const pixels = replayer.readPixels();
-
     let nonRed = 0;
     for (let i = 0; i < pixels.length; i += 4) {
       const r = pixels[i + 0];
@@ -131,7 +130,6 @@ test("gpu trace replays deterministically (AeroGPU A3A0 command stream clear-red
       // Allow tiny error. (In practice, this should be exact.)
       if (r < 250 || g > 5 || b > 5 || a < 250) nonRed++;
     }
-
     return { nonRed, totalPixels: pixels.length / 4 };
   }, traceB64);
 
