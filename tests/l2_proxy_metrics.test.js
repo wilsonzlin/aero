@@ -142,7 +142,7 @@ async function waitForClose(ws, timeoutMs = 2_000) {
   });
 }
 
-test("l2 proxy exposes /metrics and counts rx frames", { timeout: 660_000 }, async () => {
+test("l2 proxy exposes /metrics and counts rx frames", { timeout: 900_000 }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",

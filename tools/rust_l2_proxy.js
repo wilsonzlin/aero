@@ -8,7 +8,11 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Keep enough stdout/stderr to surface useful errors without risking runaway logs in CI.
 const COMMAND_OUTPUT_LIMIT = 200_000;
-const BUILD_LOCK_TIMEOUT_MS = 35 * 60_000;
+// Keep the spawned `cargo build` timeout below the Node test timeouts so we fail with an
+// actionable error (and kill the build process) instead of letting the Node test runner time out
+// while Cargo is still running.
+const BUILD_TIMEOUT_MS = 10 * 60_000;
+const BUILD_LOCK_TIMEOUT_MS = BUILD_TIMEOUT_MS + 2 * 60_000;
 const BUILD_LOCK_RETRY_MS = 200;
 
 function appendLimitedOutput(prev, chunk) {
@@ -117,7 +121,7 @@ async function ensureProxyBuilt() {
         env,
         // A cold `cargo build` of the full dependency graph can be slow on CI runners.
         // Keep this bounded (deterministic) but generous enough to avoid flakes.
-        timeoutMs: 30 * 60_000,
+        timeoutMs: BUILD_TIMEOUT_MS,
       });
       await access(binPath);
     });
