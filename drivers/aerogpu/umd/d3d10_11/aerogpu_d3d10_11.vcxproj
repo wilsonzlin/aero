@@ -187,10 +187,12 @@
     <ClCompile Include="src\aerogpu_d3d10_11_umd.cpp" />
     <ClCompile Include="src\aerogpu_d3d10_11_log.cpp" />
     <ClCompile Include="src\aerogpu_d3d10_1_umd_wdk.cpp" />
+    <ClCompile Include="src\aerogpu_d3d11_umd_wdk.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\aerogpu_d3d10_11_umd.h" />
     <ClInclude Include="src\aerogpu_cmd_writer.h" />
+    <ClInclude Include="src\aerogpu_d3d10_11_internal.h" />
     <ClInclude Include="..\common\aerogpu_cmd_stream_writer.h" />
     <ClInclude Include="src\aerogpu_d3d10_11_log.h" />
     <ClInclude Include="..\..\protocol\aerogpu_cmd.h" />

@@ -1912,24 +1912,9 @@ HRESULT OpenAdapter11Wdk(D3D10DDIARG_OPENADAPTER* pOpenData) {
 
 } // namespace
 
-extern "C" {
-
-HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
-#if defined(_WIN32)
-  LogModulePathOnce();
-  char buf[256];
-  snprintf(buf,
-           sizeof(buf),
-           "aerogpu-d3d10_11: OpenAdapter11 Interface=%u Version=%u\n",
-           (unsigned)(pOpenData ? pOpenData->Interface : 0),
-           (unsigned)(pOpenData ? pOpenData->Version : 0));
-  OutputDebugStringA(buf);
-#endif
-  AEROGPU_D3D10_11_LOG_CALL();
-  return OpenAdapter11Wdk(pOpenData);
-}
-
-} // extern "C"
+// NOTE: The real WDK-backed D3D11 `OpenAdapter11` export lives in
+// `aerogpu_d3d11_umd_wdk.cpp`. This TU retains the portable (non-WDK) fallback
+// implementation under the `#else` below.
 
 #else
 
