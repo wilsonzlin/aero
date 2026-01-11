@@ -4322,6 +4322,10 @@ static uint32_t D3D11BlendFactorToAerogpu(uint32_t factor, uint32_t fallback) {
       return AEROGPU_BLEND_DEST_ALPHA;
     case D3D11_BLEND_INV_DEST_ALPHA:
       return AEROGPU_BLEND_INV_DEST_ALPHA;
+    case D3D11_BLEND_BLEND_FACTOR:
+      return AEROGPU_BLEND_BLEND_FACTOR;
+    case D3D11_BLEND_INV_BLEND_FACTOR:
+      return AEROGPU_BLEND_INV_BLEND_FACTOR;
     default:
       break;
   }
@@ -4409,12 +4413,18 @@ static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
   uint32_t src_blend = static_cast<uint32_t>(D3D11_BLEND_ONE);
   uint32_t dst_blend = static_cast<uint32_t>(D3D11_BLEND_ZERO);
   uint32_t blend_op = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+  uint32_t src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
+  uint32_t dst_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+  uint32_t blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
   uint32_t write_mask = 0xFu;
   if (bs) {
     blend_enable = bs->blend_enable;
     src_blend = bs->src_blend;
     dst_blend = bs->dest_blend;
     blend_op = bs->blend_op;
+    src_blend_alpha = bs->src_blend_alpha;
+    dst_blend_alpha = bs->dest_blend_alpha;
+    blend_op_alpha = bs->blend_op_alpha;
     write_mask = bs->render_target_write_mask;
   }
 
@@ -4432,6 +4442,16 @@ static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
   cmd->state.reserved0[0] = 0;
   cmd->state.reserved0[1] = 0;
   cmd->state.reserved0[2] = 0;
+
+  cmd->state.src_factor_alpha = D3D11BlendFactorToAerogpu(src_blend_alpha, cmd->state.src_factor);
+  cmd->state.dst_factor_alpha = D3D11BlendFactorToAerogpu(dst_blend_alpha, cmd->state.dst_factor);
+  cmd->state.blend_op_alpha = D3D11BlendOpToAerogpu(blend_op_alpha);
+
+  cmd->state.blend_constant_rgba_f32[0] = f32_bits(dev->current_blend_factor[0]);
+  cmd->state.blend_constant_rgba_f32[1] = f32_bits(dev->current_blend_factor[1]);
+  cmd->state.blend_constant_rgba_f32[2] = f32_bits(dev->current_blend_factor[2]);
+  cmd->state.blend_constant_rgba_f32[3] = f32_bits(dev->current_blend_factor[3]);
+  cmd->state.sample_mask = dev->current_sample_mask;
 }
 
 static void EmitDepthStencilStateLocked(Device* dev, const DepthStencilState* dss) {
