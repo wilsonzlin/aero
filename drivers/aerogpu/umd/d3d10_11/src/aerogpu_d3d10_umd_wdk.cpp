@@ -2231,7 +2231,9 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   }
 
   const bool want_read = (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite);
-  if (want_read) {
+  // Only apply implicit synchronization for staging-style resources. For D3D10
+  // this maps to resources with no bind flags (typical staging readback).
+  if (want_read && res->bind_flags == 0) {
     if (!dev->cmd.empty()) {
       HRESULT submit_hr = S_OK;
       submit_locked(dev, /*want_present=*/false, &submit_hr);
