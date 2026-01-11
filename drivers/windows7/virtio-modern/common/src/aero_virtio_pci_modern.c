@@ -2,7 +2,7 @@
 
 #include "aero_virtio_pci_modern.h"
 
-#if !defined(_KERNEL_MODE)
+#if !AERO_VIRTIO_PCI_MODERN_KERNEL_MODE
 #include <string.h>
 #endif
 
@@ -42,7 +42,7 @@ extern void AeroVirtioPciModernTestStallExecutionProcessor(ULONG Microseconds);
 #define AV_BARRIER() AeroVirtioPciModernTestBarrier()
 #define AV_STALL(us) AeroVirtioPciModernTestStallExecutionProcessor((us))
 
-#elif defined(_KERNEL_MODE)
+#elif AERO_VIRTIO_PCI_MODERN_KERNEL_MODE
 
 #define AV_READ8(addr) READ_REGISTER_UCHAR((volatile UCHAR *)(addr))
 #define AV_READ16(addr) READ_REGISTER_USHORT((volatile USHORT *)(addr))
@@ -71,7 +71,7 @@ extern void AeroVirtioPciModernTestStallExecutionProcessor(ULONG Microseconds);
 
 #endif
 
-#if defined(_KERNEL_MODE)
+#if AERO_VIRTIO_PCI_MODERN_KERNEL_MODE
 #define AV_MEMCPY(dst, src, len) RtlCopyMemory((dst), (src), (len))
 #define AV_MEMZERO(dst, len) RtlZeroMemory((dst), (len))
 #else
@@ -162,7 +162,7 @@ NTSTATUS AeroVirtioPciModernInitFromBar0(AERO_VIRTIO_PCI_MODERN_DEVICE *device, 
     device->DeviceCfg = base + AERO_VIRTIO_PCI_MODERN_DEVICE_CFG_OFFSET;
     device->NotifyOffMultiplier = AERO_VIRTIO_PCI_MODERN_NOTIFY_OFF_MULTIPLIER;
 
-#if defined(_KERNEL_MODE)
+#if AERO_VIRTIO_PCI_MODERN_KERNEL_MODE
     KeInitializeSpinLock(&device->CommonCfgLock);
 #else
     device->CommonCfgLock = 0;
@@ -173,7 +173,7 @@ NTSTATUS AeroVirtioPciModernInitFromBar0(AERO_VIRTIO_PCI_MODERN_DEVICE *device, 
 
 KIRQL AeroVirtioCommonCfgLock(AERO_VIRTIO_PCI_MODERN_DEVICE *device)
 {
-#if defined(_KERNEL_MODE)
+#if AERO_VIRTIO_PCI_MODERN_KERNEL_MODE
     if (device == NULL) {
         return 0;
     }
@@ -187,7 +187,7 @@ KIRQL AeroVirtioCommonCfgLock(AERO_VIRTIO_PCI_MODERN_DEVICE *device)
 
 void AeroVirtioCommonCfgUnlock(AERO_VIRTIO_PCI_MODERN_DEVICE *device, KIRQL old_irql)
 {
-#if defined(_KERNEL_MODE)
+#if AERO_VIRTIO_PCI_MODERN_KERNEL_MODE
     if (device == NULL) {
         return;
     }

@@ -21,7 +21,21 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(_KERNEL_MODE)
+/*
+ * Kernel-mode build detection.
+ *
+ * WDK toolchains commonly define _KERNEL_MODE, but some driver build setups only
+ * expose the WDK header guards (_NTDDK_, _NTIFS_, _WDMDDK_). Treat those as
+ * kernel-mode as well so consumers (StorPort/NDIS/WDM) can include this header
+ * without having to define _KERNEL_MODE explicitly.
+ */
+#if defined(_WIN32) && (defined(_KERNEL_MODE) || defined(_NTDDK_) || defined(_NTIFS_) || defined(_WDMDDK_))
+#define AERO_VIRTIO_PCI_MODERN_KERNEL_MODE 1
+#else
+#define AERO_VIRTIO_PCI_MODERN_KERNEL_MODE 0
+#endif
+
+#if AERO_VIRTIO_PCI_MODERN_KERNEL_MODE
 #include <ntddk.h>
 #endif
 
@@ -29,7 +43,7 @@
  * Host-side unit tests build this header without WDK headers.
  * Provide a minimal set of WDK-compatible types/constants for that case.
  */
-#if !defined(_KERNEL_MODE)
+#if !AERO_VIRTIO_PCI_MODERN_KERNEL_MODE
 
 typedef uint8_t UCHAR;
 typedef uint16_t USHORT;
@@ -76,7 +90,7 @@ typedef int32_t NTSTATUS;
 #define C_ASSERT(e) typedef char AERO_VIRTIO_C_ASSERT_XGLUE(_aero_virtio_c_assert_, __LINE__)[(e) ? 1 : -1]
 #endif
 
-#endif /* !_KERNEL_MODE */
+#endif /* !AERO_VIRTIO_PCI_MODERN_KERNEL_MODE */
 
 /* -------------------------------------------------------------------------- */
 /* Fixed contract v1 MMIO layout                                              */
