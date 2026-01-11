@@ -2093,11 +2093,19 @@ impl AerogpuD3d11Executor {
             self.state.scissor = None;
             return Ok(());
         }
+        let left = x.max(0);
+        let top = y.max(0);
+        let right = x.saturating_add(w).max(0);
+        let bottom = y.saturating_add(h).max(0);
+        if right <= left || bottom <= top {
+            self.state.scissor = None;
+            return Ok(());
+        }
         self.state.scissor = Some(Scissor {
-            x: x.max(0) as u32,
-            y: y.max(0) as u32,
-            width: w as u32,
-            height: h as u32,
+            x: left as u32,
+            y: top as u32,
+            width: (right - left) as u32,
+            height: (bottom - top) as u32,
         });
         Ok(())
     }

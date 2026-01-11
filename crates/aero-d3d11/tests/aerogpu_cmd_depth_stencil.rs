@@ -427,12 +427,12 @@ fn aerogpu_cmd_rasterizer_state_enables_scissor() {
         stream.extend_from_slice(&1f32.to_bits().to_le_bytes());
         end_cmd(&mut stream, start);
 
-        // SET_SCISSOR (0,0)-(2,2)
+        // SET_SCISSOR (-2,-2)-(2,2) (negative origin should be clipped)
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetScissor as u32);
-        stream.extend_from_slice(&0i32.to_le_bytes());
-        stream.extend_from_slice(&0i32.to_le_bytes());
-        stream.extend_from_slice(&2i32.to_le_bytes());
-        stream.extend_from_slice(&2i32.to_le_bytes());
+        stream.extend_from_slice(&(-2i32).to_le_bytes());
+        stream.extend_from_slice(&(-2i32).to_le_bytes());
+        stream.extend_from_slice(&4i32.to_le_bytes());
+        stream.extend_from_slice(&4i32.to_le_bytes());
         end_cmd(&mut stream, start);
 
         // SET_RASTERIZER_STATE with scissor_enable=1.
