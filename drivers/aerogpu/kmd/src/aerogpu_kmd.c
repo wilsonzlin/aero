@@ -4245,8 +4245,27 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             }
         }
 
+        /*
+         * Tooling/tests want to be able to inspect the most recent submissions even
+         * when the device consumes ring entries very quickly (for example, when the
+         * emulator processes the doorbell synchronously). To make this robust, the
+         * v2 dump returns a *recent window* of descriptors for the AGPU ring format
+         * (ending at tail-1), rather than only the currently-pending [head, tail)
+         * region.
+         *
+         * Legacy format is kept as a pending-only view because its head/tail are
+         * not monotonic (masked indices).
+         */
         ULONG outCount = pending;
-        if (outCount > io->desc_capacity) {
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            outCount = io->desc_capacity;
+            if (outCount > adapter->RingEntryCount) {
+                outCount = adapter->RingEntryCount;
+            }
+            if (tail < outCount) {
+                outCount = tail;
+            }
+        } else if (outCount > io->desc_capacity) {
             outCount = io->desc_capacity;
         }
         io->desc_count = outCount;
@@ -4257,7 +4276,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 struct aerogpu_submit_desc* ring =
                     (struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
                 for (ULONG i = 0; i < outCount; ++i) {
-                    const ULONG idx = (head + i) & (adapter->RingEntryCount - 1);
+                    const ULONG start = tail - outCount;
+                    const ULONG idx = (start + i) & (adapter->RingEntryCount - 1);
                     const struct aerogpu_submit_desc entry = ring[idx];
                     io->desc[i].fence = (uint64_t)entry.signal_fence;
                     io->desc[i].cmd_gpa = (uint64_t)entry.cmd_gpa;

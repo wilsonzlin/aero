@@ -195,6 +195,92 @@ static inline bool AerogpuEscape(const D3DKMT_FUNCS* f,
   return NtSuccess(st);
 }
 
+struct AerogpuTimedEscapeCtx {
+  const D3DKMT_FUNCS* f;
+  D3DKMT_HANDLE adapter;
+  std::vector<unsigned char> buf;
+  NTSTATUS status;
+};
+
+static DWORD WINAPI AerogpuTimedEscapeThreadProc(LPVOID param) {
+  AerogpuTimedEscapeCtx* ctx = (AerogpuTimedEscapeCtx*)param;
+  if (!ctx || !ctx->f || !ctx->f->Escape || !ctx->adapter || ctx->buf.empty()) {
+    if (ctx) {
+      ctx->status = kStatusInvalidParameter;
+    }
+    return 0;
+  }
+
+  D3DKMT_ESCAPE e;
+  ZeroMemory(&e, sizeof(e));
+  e.hAdapter = ctx->adapter;
+  e.hDevice = 0;
+  e.hContext = 0;
+  e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+  e.Flags.Value = 0;
+  e.pPrivateDriverData = &ctx->buf[0];
+  e.PrivateDriverDataSize = (UINT)ctx->buf.size();
+  ctx->status = ctx->f->Escape(&e);
+  return 0;
+}
+
+static inline bool AerogpuEscapeWithTimeout(const D3DKMT_FUNCS* f,
+                                            D3DKMT_HANDLE adapter,
+                                            void* buf,
+                                            UINT buf_size,
+                                            DWORD timeout_ms,
+                                            NTSTATUS* out_status) {
+  if (out_status) {
+    *out_status = 0;
+  }
+  if (!f || !adapter || !f->Escape || !buf || buf_size == 0) {
+    if (out_status) {
+      *out_status = kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  // Run D3DKMTEscape on a worker thread so a buggy kernel driver cannot hang the test process
+  // indefinitely. If the call times out, we intentionally leak the context (the worker thread may
+  // still be running) and rely on process termination to clean up.
+  AerogpuTimedEscapeCtx* ctx = new AerogpuTimedEscapeCtx();
+  ctx->f = f;
+  ctx->adapter = adapter;
+  ctx->status = 0;
+  ctx->buf.assign((const unsigned char*)buf, (const unsigned char*)buf + buf_size);
+
+  HANDLE thread = CreateThread(NULL, 0, AerogpuTimedEscapeThreadProc, ctx, 0, NULL);
+  if (!thread) {
+    if (out_status) {
+      *out_status = (NTSTATUS)GetLastError();
+    }
+    delete ctx;
+    return false;
+  }
+
+  DWORD w = WaitForSingleObject(thread, timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    CloseHandle(thread);
+    if (out_status) {
+      *out_status = ctx->status;
+    }
+    if (NtSuccess(ctx->status)) {
+      memcpy(buf, &ctx->buf[0], buf_size);
+      delete ctx;
+      return true;
+    }
+    delete ctx;
+    return false;
+  }
+
+  // Timeout or wait failure. Close the handle but do not free ctx (thread may still access it).
+  CloseHandle(thread);
+  if (out_status) {
+    *out_status = (w == WAIT_TIMEOUT) ? (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */ : (NTSTATUS)GetLastError();
+  }
+  return false;
+}
+
 static inline bool AerogpuQueryFence(const D3DKMT_FUNCS* f,
                                      D3DKMT_HANDLE adapter,
                                      unsigned long long* out_submitted,
@@ -214,7 +300,7 @@ static inline bool AerogpuQueryFence(const D3DKMT_FUNCS* f,
   q.hdr.size = sizeof(q);
   q.hdr.reserved0 = 0;
 
-  if (!AerogpuEscape(f, adapter, &q, sizeof(q), out_status)) {
+  if (!AerogpuEscapeWithTimeout(f, adapter, &q, sizeof(q), 2000, out_status)) {
     return false;
   }
 
@@ -249,7 +335,7 @@ static inline bool AerogpuDumpRingV2(const D3DKMT_FUNCS* f,
   out_dump->ring_id = ring_id;
   out_dump->desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
 
-  return AerogpuEscape(f, adapter, out_dump, sizeof(*out_dump), out_status);
+  return AerogpuEscapeWithTimeout(f, adapter, out_dump, sizeof(*out_dump), 2000, out_status);
 }
 
 static inline bool FindRingDescByFence(const aerogpu_escape_dump_ring_v2_inout& dump,
@@ -302,16 +388,8 @@ static inline bool GetLastWrittenRingDesc(const aerogpu_escape_dump_ring_v2_inou
     count = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
   }
 
-  // The KMD returns descriptors in submission order starting at `head` (oldest pending).
-  // The most recently written descriptor is therefore the one at `tail - 1`, which is
-  // at offset `(tail - head - 1)` from `head` when the dump isn't truncated.
+  // Newest descriptor is expected to be last in the returned array.
   uint32_t idx = count - 1;
-  if (dump.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
-    const uint32_t pending = dump.tail - dump.head;  // head/tail are monotonically increasing (not masked).
-    if (pending != 0 && pending <= count) {
-      idx = pending - 1;
-    }
-  }
 
   if (out_desc) {
     *out_desc = dump.desc[idx];
@@ -324,4 +402,3 @@ static inline bool GetLastWrittenRingDesc(const aerogpu_escape_dump_ring_v2_inou
 
 }  // namespace kmt
 }  // namespace aerogpu_test
-
