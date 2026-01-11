@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <type_traits>
 #include <vector>
 
@@ -134,7 +135,11 @@ class SpanCmdStreamWriter {
   T* append_fixed(uint32_t opcode) {
     static_assert(std::is_trivial<T>::value, "packets must be POD");
     static_assert(sizeof(T) >= sizeof(aerogpu_cmd_hdr), "packets must contain aerogpu_cmd_hdr");
-    return reinterpret_cast<T*>(append_raw(opcode, sizeof(T)));
+    uint8_t* base = append_raw(opcode, sizeof(T));
+    if (!base) {
+      return nullptr;
+    }
+    return new (base) T;
   }
 
   template <typename HeaderT>
@@ -162,10 +167,11 @@ class SpanCmdStreamWriter {
       return nullptr;
     }
 
+    auto* packet = new (base) HeaderT;
     if (payload_size) {
       std::memcpy(base + sizeof(HeaderT), payload, payload_size);
     }
-    return reinterpret_cast<HeaderT*>(base);
+    return packet;
   }
 
  private:
@@ -293,7 +299,11 @@ class VectorCmdStreamWriter {
   T* append_fixed(uint32_t opcode) {
     static_assert(std::is_trivial<T>::value, "packets must be POD");
     static_assert(sizeof(T) >= sizeof(aerogpu_cmd_hdr), "packets must contain aerogpu_cmd_hdr");
-    return reinterpret_cast<T*>(append_raw(opcode, sizeof(T)));
+    uint8_t* base = append_raw(opcode, sizeof(T));
+    if (!base) {
+      return nullptr;
+    }
+    return new (base) T;
   }
 
   template <typename HeaderT>
@@ -320,7 +330,7 @@ class VectorCmdStreamWriter {
     if (!base) {
       return nullptr;
     }
-    auto* packet = reinterpret_cast<HeaderT*>(base);
+    auto* packet = new (base) HeaderT;
     if (payload_size) {
       std::memcpy(base + sizeof(HeaderT), payload, payload_size);
     }
