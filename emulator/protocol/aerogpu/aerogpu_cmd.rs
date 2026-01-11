@@ -555,6 +555,12 @@ pub enum AerogpuCullMode {
     Back = 2,
 }
 
+// AerogpuRasterizerState.flags bits.
+//
+// Default value 0 corresponds to D3D11 defaults:
+// - DepthClipEnable = TRUE
+pub const AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE: u32 = 1u32 << 0;
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuRasterizerState {
@@ -563,7 +569,7 @@ pub struct AerogpuRasterizerState {
     pub front_ccw: u32,
     pub scissor_enable: u32,
     pub depth_bias: i32,
-    pub reserved0: u32,
+    pub flags: u32,
 }
 
 impl AerogpuRasterizerState {

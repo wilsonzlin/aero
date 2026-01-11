@@ -385,6 +385,12 @@ export const AerogpuCullMode = {
 } as const;
 
 export type AerogpuCullMode = (typeof AerogpuCullMode)[keyof typeof AerogpuCullMode];
+
+// AerogpuRasterizerState.flags bits.
+//
+// Default value 0 corresponds to D3D11 defaults:
+// - DepthClipEnable = TRUE
+export const AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE = 1 << 0;
 export const AerogpuPrimitiveTopology = {
   PointList: 1,
   LineList: 2,
@@ -1239,6 +1245,7 @@ export class AerogpuCmdWriter {
     frontCcw: boolean | number,
     scissorEnable: boolean | number,
     depthBias: number,
+    flags = 0,
   ): void {
     const base = this.appendRaw(AerogpuCmdOpcode.SetRasterizerState, AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE);
     this.view.setUint32(base + 8, fillMode, true);
@@ -1246,6 +1253,7 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 16, frontCcw ? 1 : 0, true);
     this.view.setUint32(base + 20, scissorEnable ? 1 : 0, true);
     this.view.setInt32(base + 24, depthBias, true);
+    this.view.setUint32(base + 28, flags, true);
   }
 
   setRenderTargets(colors: readonly AerogpuHandle[], depthStencil: AerogpuHandle): void {

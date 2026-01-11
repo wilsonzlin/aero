@@ -102,11 +102,11 @@ fn aerogpu_cmd_depth_enable_controls_overdraw() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.1],
+                pos: [-1.0, 3.0, 0.1],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.1],
+                pos: [3.0, -1.0, 0.1],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             // Far
@@ -115,11 +115,11 @@ fn aerogpu_cmd_depth_enable_controls_overdraw() {
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.9],
+                pos: [-1.0, 3.0, 0.9],
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.9],
+                pos: [3.0, -1.0, 0.9],
                 color: [0.0, 1.0, 0.0, 1.0],
             },
         ];
@@ -457,11 +457,11 @@ fn aerogpu_cmd_depth_less_allows_near_overwrite_after_far_then_rejects_far() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.5],
+                pos: [-1.0, 3.0, 0.5],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.5],
+                pos: [3.0, -1.0, 0.5],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             // Near (green)
@@ -470,11 +470,11 @@ fn aerogpu_cmd_depth_less_allows_near_overwrite_after_far_then_rejects_far() {
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.25],
+                pos: [-1.0, 3.0, 0.25],
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.25],
+                pos: [3.0, -1.0, 0.25],
                 color: [0.0, 1.0, 0.0, 1.0],
             },
         ];
@@ -709,11 +709,11 @@ fn aerogpu_cmd_d24s8_depth_testing_keeps_near_fragment() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.5],
+                pos: [-1.0, 3.0, 0.5],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.5],
+                pos: [3.0, -1.0, 0.5],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             // Near
@@ -722,11 +722,11 @@ fn aerogpu_cmd_d24s8_depth_testing_keeps_near_fragment() {
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.25],
+                pos: [-1.0, 3.0, 0.25],
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.25],
+                pos: [3.0, -1.0, 0.25],
                 color: [0.0, 1.0, 0.0, 1.0],
             },
         ];

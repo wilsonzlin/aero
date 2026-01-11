@@ -280,12 +280,12 @@ fn aerogpu_cmd_renders_textured_fullscreen_triangle() {
                 uv: [0.0, 0.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0],
-                uv: [2.0, 0.0],
-            },
-            Vertex {
                 pos: [-1.0, 3.0, 0.0],
                 uv: [0.0, 2.0],
+            },
+            Vertex {
+                pos: [3.0, -1.0, 0.0],
+                uv: [2.0, 0.0],
             },
         ];
 

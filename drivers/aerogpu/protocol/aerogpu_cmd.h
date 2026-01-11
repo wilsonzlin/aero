@@ -632,6 +632,18 @@ enum aerogpu_cull_mode {
   AEROGPU_CULL_BACK = 2,
 };
 
+/*
+ * Rasterizer state flags (aerogpu_rasterizer_state.flags).
+ *
+ * Default value 0 corresponds to D3D11 defaults:
+ * - DepthClipEnable = TRUE
+ */
+enum aerogpu_rasterizer_flags {
+  AEROGPU_RASTERIZER_FLAG_NONE = 0,
+  /* When set: DepthClipEnable = FALSE (i.e. depth clamp). */
+  AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE = (1u << 0),
+};
+
 #pragma pack(push, 1)
 struct aerogpu_rasterizer_state {
   uint32_t fill_mode; /* aerogpu_fill_mode */
@@ -639,7 +651,7 @@ struct aerogpu_rasterizer_state {
   uint32_t front_ccw; /* 0/1 */
   uint32_t scissor_enable; /* 0/1 */
   int32_t depth_bias;
-  uint32_t reserved0;
+  uint32_t flags; /* aerogpu_rasterizer_flags */
 };
 #pragma pack(pop)
 

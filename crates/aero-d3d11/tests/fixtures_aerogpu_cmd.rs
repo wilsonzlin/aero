@@ -238,8 +238,8 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
             assert_eq!(*size_bytes as usize, data.len());
             assert_eq!(*size_bytes, 8);
             assert_eq!(u16::from_le_bytes([data[0], data[1]]), 0);
-            assert_eq!(u16::from_le_bytes([data[2], data[3]]), 1);
-            assert_eq!(u16::from_le_bytes([data[4], data[5]]), 2);
+            assert_eq!(u16::from_le_bytes([data[2], data[3]]), 2);
+            assert_eq!(u16::from_le_bytes([data[4], data[5]]), 1);
             assert_eq!(&data[6..8], &[0, 0]);
         }
         other => panic!("unexpected cmd[3]: {other:?}"),

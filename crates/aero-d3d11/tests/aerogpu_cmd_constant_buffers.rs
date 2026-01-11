@@ -229,10 +229,10 @@ fn aerogpu_cmd_renders_with_bound_constant_buffer() {
                 pos: [-1.0, -1.0, 0.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
             },
         ];
         let vb_bytes = bytemuck::bytes_of(&vertices);

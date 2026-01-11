@@ -102,11 +102,11 @@ fn aerogpu_cmd_depth_write_disable_allows_far_overwrite() {
                 color: [0.0, 0.0, 1.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.25, 1.0],
+                pos: [-1.0, 3.0, 0.25, 1.0],
                 color: [0.0, 0.0, 1.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.25, 1.0],
+                pos: [3.0, -1.0, 0.25, 1.0],
                 color: [0.0, 0.0, 1.0, 1.0],
             },
             // far (z=0.75), drawn second
@@ -115,11 +115,11 @@ fn aerogpu_cmd_depth_write_disable_allows_far_overwrite() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.75, 1.0],
+                pos: [-1.0, 3.0, 0.75, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.75, 1.0],
+                pos: [3.0, -1.0, 0.75, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];
@@ -349,11 +349,11 @@ fn aerogpu_cmd_rasterizer_state_enables_scissor() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0, 1.0],
+                pos: [-1.0, 3.0, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0, 1.0],
+                pos: [3.0, -1.0, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];
@@ -575,11 +575,11 @@ fn aerogpu_cmd_scissor_rect_is_clamped_to_render_target() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0, 1.0],
+                pos: [-1.0, 3.0, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0, 1.0],
+                pos: [3.0, -1.0, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];
@@ -801,11 +801,11 @@ fn aerogpu_cmd_viewport_is_clamped_to_render_target() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0, 1.0],
+                pos: [-1.0, 3.0, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0, 1.0],
+                pos: [3.0, -1.0, 0.0, 1.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];

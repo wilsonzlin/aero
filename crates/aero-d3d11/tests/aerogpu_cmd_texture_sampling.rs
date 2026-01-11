@@ -370,11 +370,11 @@ fn aerogpu_cmd_renders_with_texture_sampling_ps() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];
@@ -638,11 +638,11 @@ fn aerogpu_cmd_set_samplers_binds_created_sampler() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];
@@ -917,11 +917,11 @@ fn aerogpu_cmd_renders_with_texture_load_ps() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];
@@ -1176,11 +1176,11 @@ fn aerogpu_cmd_renders_with_allocation_backed_texture_mip() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];
@@ -1555,10 +1555,10 @@ fn aerogpu_cmd_set_constant_buffers_binds_cb0_ranges() {
                 pos: [-1.0, -1.0, 0.0],
             },
             VertexPos {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
             },
             VertexPos {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
             },
         ];
         let vb_bytes = bytemuck::bytes_of(&vertices);

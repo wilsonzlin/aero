@@ -18,6 +18,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
     AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
     AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
     AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
     AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
     AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
@@ -209,6 +210,9 @@ struct Texture2dResource {
 struct ShaderResource {
     stage: ShaderStage,
     wgsl_hash: ShaderHash,
+    /// Variant with depth clamp applied to `@builtin(position).z` (used when
+    /// `DepthClipEnable = FALSE`).
+    depth_clamp_wgsl_hash: Option<ShaderHash>,
     dxbc_hash_fnv1a64: u64,
     entry_point: &'static str,
     vs_input_signature: Vec<VsInputSignatureElement>,
@@ -302,6 +306,7 @@ struct AerogpuD3d11State {
     front_face: wgpu::FrontFace,
     scissor_enable: bool,
     depth_bias: i32,
+    depth_clip_enabled: bool,
 }
 
 impl Default for AerogpuD3d11State {
@@ -328,10 +333,12 @@ impl Default for AerogpuD3d11State {
             stencil_enable: false,
             stencil_read_mask: 0xFF,
             stencil_write_mask: 0xFF,
-            cull_mode: None,
-            front_face: wgpu::FrontFace::Ccw,
+            // D3D11 default rasterizer state when RS state object is NULL.
+            cull_mode: Some(wgpu::Face::Back),
+            front_face: wgpu::FrontFace::Cw,
             scissor_enable: false,
             depth_bias: 0,
+            depth_clip_enabled: true,
         }
     }
 }
@@ -2480,10 +2487,24 @@ impl AerogpuD3d11Executor {
             Vec::new()
         };
 
+        let depth_clamp_wgsl_hash = if stage == ShaderStage::Vertex {
+            let clamped = wgsl_depth_clamp_variant(&wgsl);
+            let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                &self.device,
+                map_pipeline_cache_stage(stage),
+                &clamped,
+                Some("aerogpu_cmd VS (depth clamp)"),
+            );
+            Some(hash)
+        } else {
+            None
+        };
+
         #[cfg(debug_assertions)]
         let shader = ShaderResource {
             stage,
             wgsl_hash: hash,
+            depth_clamp_wgsl_hash,
             dxbc_hash_fnv1a64,
             entry_point,
             vs_input_signature,
@@ -2494,6 +2515,7 @@ impl AerogpuD3d11Executor {
         let shader = ShaderResource {
             stage,
             wgsl_hash: hash,
+            depth_clamp_wgsl_hash,
             dxbc_hash_fnv1a64,
             entry_point,
             vs_input_signature,
@@ -3131,7 +3153,6 @@ impl AerogpuD3d11Executor {
                 cmd_bytes.len()
             );
         }
-
         let cmd: AerogpuCmdSetDepthStencilState = read_packed_unaligned(cmd_bytes)?;
         let state = cmd.state;
 
@@ -3168,6 +3189,7 @@ impl AerogpuD3d11Executor {
         let front_ccw = u32::from_le(state.front_ccw) != 0;
         let scissor_enable = u32::from_le(state.scissor_enable) != 0;
         let depth_bias = i32::from_le(state.depth_bias);
+        let flags = u32::from_le(state.flags);
 
         self.state.cull_mode = match cull_mode {
             0 => None,
@@ -3182,6 +3204,7 @@ impl AerogpuD3d11Executor {
         };
         self.state.scissor_enable = scissor_enable;
         self.state.depth_bias = depth_bias;
+        self.state.depth_clip_enabled = flags & AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE == 0;
         Ok(())
     }
 
@@ -3851,6 +3874,28 @@ struct BuiltVertexState {
     wgpu_slot_to_d3d_slot: Vec<u32>,
 }
 
+fn wgsl_depth_clamp_variant(wgsl: &str) -> String {
+    // WebGPU requires `PrimitiveState::unclipped_depth` to implement depth clamp, but that feature
+    // is optional. As a backend-agnostic fallback we rewrite the VS to clamp the clip-space z
+    // component into D3D's legal range (0..w) after the position is assigned.
+    //
+    // This intentionally changes the WGSL source (and therefore its ShaderHash), so the shader and
+    // pipeline cache can distinguish depth-clamped variants.
+    let mut out = String::with_capacity(wgsl.len() + 96);
+    for line in wgsl.lines() {
+        out.push_str(line);
+        out.push('\n');
+
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("out.pos =") {
+            let indent_len = line.len() - trimmed.len();
+            out.push_str(&line[..indent_len]);
+            out.push_str("out.pos.z = clamp(out.pos.z, 0.0, out.pos.w);\n");
+        }
+    }
+    out
+}
+
 fn exec_draw<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()> {
     // struct aerogpu_cmd_draw (24 bytes)
     if cmd_bytes.len() < 24 {
@@ -4172,7 +4217,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let ps_handle = state
         .ps
         .ok_or_else(|| anyhow!("render draw without bound PS"))?;
-    let (vs_wgsl_hash, vs_dxbc_hash_fnv1a64, vs_entry_point, vs_input_signature) = {
+    let (vs_wgsl_hash, vs_depth_clamp_wgsl_hash, vs_dxbc_hash_fnv1a64, vs_entry_point, vs_input_signature) = {
         let vs = resources
             .shaders
             .get(&vs_handle)
@@ -4182,6 +4227,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
         }
         (
             vs.wgsl_hash,
+            vs.depth_clamp_wgsl_hash,
             vs.dxbc_hash_fnv1a64,
             vs.entry_point,
             vs.vs_input_signature.clone(),
@@ -4208,6 +4254,12 @@ fn get_or_create_render_pipeline_for_state<'a>(
         vs_dxbc_hash_fnv1a64,
         &vs_input_signature,
     )?;
+
+    let vertex_shader = if state.depth_clip_enabled {
+        vs_wgsl_hash
+    } else {
+        vs_depth_clamp_wgsl_hash.unwrap_or(vs_wgsl_hash)
+    };
 
     let mut color_targets = Vec::with_capacity(state.render_targets.len());
     let mut color_target_states = Vec::with_capacity(state.render_targets.len());
@@ -4273,7 +4325,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
 
     let key = RenderPipelineKey {
-        vertex_shader: vs_wgsl_hash,
+        vertex_shader,
         fragment_shader: ps_wgsl_hash,
         color_targets,
         depth_stencil: depth_stencil_key,

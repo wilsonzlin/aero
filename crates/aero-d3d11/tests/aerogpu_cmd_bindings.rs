@@ -353,10 +353,10 @@ fn aerogpu_cmd_binds_constant_buffer_cb0() {
                 pos: [-1.0, -1.0, 0.0],
             },
             VertexPos3 {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
             },
             VertexPos3 {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
             },
         ];
         let vb_bytes = bytemuck::bytes_of(&vertices);
@@ -586,12 +586,12 @@ fn aerogpu_cmd_binds_texture_and_sampler() {
                 uv: [0.0, 0.0],
             },
             VertexPos3Tex2 {
-                pos: [3.0, -1.0, 0.0],
-                uv: [2.0, 0.0],
-            },
-            VertexPos3Tex2 {
                 pos: [-1.0, 3.0, 0.0],
                 uv: [0.0, 2.0],
+            },
+            VertexPos3Tex2 {
+                pos: [3.0, -1.0, 0.0],
+                uv: [2.0, 0.0],
             },
         ];
         let vb_bytes = bytemuck::bytes_of(&vertices);
@@ -821,11 +821,11 @@ fn aerogpu_cmd_rebinds_texture_between_draws() {
                 uv: [0.5, 0.5],
             },
             VertexPos3Tex2 {
-                pos: [3.0, 1.0, 0.0],
+                pos: [-1.0, 1.0, 0.0],
                 uv: [0.5, 0.5],
             },
             VertexPos3Tex2 {
-                pos: [-1.0, 1.0, 0.0],
+                pos: [3.0, 1.0, 0.0],
                 uv: [0.5, 0.5],
             },
         ];

@@ -103,10 +103,10 @@ fn aerogpu_cmd_compacts_sparse_vertex_buffer_slots() {
                 pos: [-1.0, -1.0, 0.0],
             },
             PosVertex {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
             },
             PosVertex {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
             },
         ];
         let colors = [

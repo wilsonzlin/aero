@@ -70,11 +70,11 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.2],
+                pos: [-1.0, 3.0, 0.2],
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.2],
+                pos: [3.0, -1.0, 0.2],
                 color: [0.0, 1.0, 0.0, 1.0],
             },
             // Far triangle (red) - drawn after, but should be rejected.
@@ -83,11 +83,11 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.8],
+                pos: [-1.0, 3.0, 0.8],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.8],
+                pos: [3.0, -1.0, 0.8],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];

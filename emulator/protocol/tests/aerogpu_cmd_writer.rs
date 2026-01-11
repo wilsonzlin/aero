@@ -199,7 +199,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
     use aero_protocol::aerogpu::aerogpu_cmd::{
         AerogpuBlendState, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState,
         AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState, AerogpuCmdSetSamplerState,
-        AerogpuDepthStencilState, AerogpuRasterizerState,
+        AerogpuDepthStencilState, AerogpuRasterizerState, AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
     };
 
     let mut w = AerogpuCmdWriter::new();
@@ -409,15 +409,15 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         u32::from_le_bytes(
             buf[rast_base
                 + offset_of!(AerogpuCmdSetRasterizerState, state)
-                + offset_of!(AerogpuRasterizerState, reserved0)
+                + offset_of!(AerogpuRasterizerState, flags)
                 ..rast_base
                     + offset_of!(AerogpuCmdSetRasterizerState, state)
-                    + offset_of!(AerogpuRasterizerState, reserved0)
+                    + offset_of!(AerogpuRasterizerState, flags)
                     + 4]
                 .try_into()
                 .unwrap()
         ),
-        1,
+        AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
         "depth_clip_disable flag"
     );
 }

@@ -54,11 +54,11 @@ fn build_stream(blend_constant: [f32; 4], sample_mask: u32) -> Vec<u8> {
             color: [0.0, 1.0, 0.0, 0.5],
         },
         Vertex {
-            pos: [3.0, -1.0, 0.0],
+            pos: [-1.0, 3.0, 0.0],
             color: [0.0, 1.0, 0.0, 0.5],
         },
         Vertex {
-            pos: [-1.0, 3.0, 0.0],
+            pos: [3.0, -1.0, 0.0],
             color: [0.0, 1.0, 0.0, 0.5],
         },
     ];

@@ -239,11 +239,11 @@ fn aerogpu_cmd_sampler_repeat_address_mode_is_honored() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
             Vertex {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];

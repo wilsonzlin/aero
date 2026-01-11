@@ -27,7 +27,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_PRESENT_FLAG_NONE, AEROGPU_PRESENT_FLAG_VSYNC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
@@ -1592,9 +1592,9 @@ fn rust_layout_matches_c_headers() {
     );
     assert_off!(
         AerogpuRasterizerState,
-        reserved0,
+        flags,
         "aerogpu_rasterizer_state",
-        "reserved0"
+        "flags"
     );
     assert_cmd_hdr_off!(
         AerogpuCmdSetRasterizerState,
@@ -3339,6 +3339,10 @@ fn rust_layout_matches_c_headers() {
         &mut cmd_consts_seen,
         "AEROGPU_CULL_BACK",
         AerogpuCullMode::Back as u64,
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE"),
+        AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE as u64
     );
 
     check_const(

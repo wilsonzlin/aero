@@ -246,7 +246,7 @@ int main(void) {
   PRINT_OFF("aerogpu_rasterizer_state", struct aerogpu_rasterizer_state, front_ccw);
   PRINT_OFF("aerogpu_rasterizer_state", struct aerogpu_rasterizer_state, scissor_enable);
   PRINT_OFF("aerogpu_rasterizer_state", struct aerogpu_rasterizer_state, depth_bias);
-  PRINT_OFF("aerogpu_rasterizer_state", struct aerogpu_rasterizer_state, reserved0);
+  PRINT_OFF("aerogpu_rasterizer_state", struct aerogpu_rasterizer_state, flags);
 
   PRINT_OFF("aerogpu_cmd_set_rasterizer_state", struct aerogpu_cmd_set_rasterizer_state, hdr);
   PRINT_OFF("aerogpu_cmd_set_rasterizer_state", struct aerogpu_cmd_set_rasterizer_state, state);
@@ -688,6 +688,7 @@ int main(void) {
   PRINT_CONST(AEROGPU_CULL_NONE);
   PRINT_CONST(AEROGPU_CULL_FRONT);
   PRINT_CONST(AEROGPU_CULL_BACK);
+  PRINT_CONST(AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE);
 
   PRINT_CONST(AEROGPU_FORMAT_INVALID);
   PRINT_CONST(AEROGPU_FORMAT_B8G8R8A8_UNORM);

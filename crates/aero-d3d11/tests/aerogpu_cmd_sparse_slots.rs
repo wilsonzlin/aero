@@ -111,7 +111,8 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         const PS: u32 = 11;
         const IL: u32 = 20;
 
-        let positions: [[f32; 3]; 3] = [[-1.0, -1.0, 0.0], [3.0, -1.0, 0.0], [-1.0, 3.0, 0.0]];
+        let positions: [[f32; 3]; 3] =
+            [[-1.0, -1.0, 0.0], [-1.0, 3.0, 0.0], [3.0, -1.0, 0.0]];
         let colors: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 1.0]; 3];
 
         let pos_bytes = bytemuck::cast_slice(&positions);
