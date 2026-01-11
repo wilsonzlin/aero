@@ -484,6 +484,83 @@ fn aero_cpu_core_int13_ext_read_reads_lba_into_memory() {
 }
 
 #[test]
+fn aero_cpu_core_int13_ext_read_24_byte_dap_uses_flat_pointer_when_present() {
+    let bios = Bios::new(test_bios_config());
+
+    let boot_sector = boot_sector_with(&[]);
+    let mut disk_bytes = vec![0u8; 512 * 4];
+    disk_bytes[..512].copy_from_slice(&boot_sector);
+    disk_bytes[512..1024].fill(0xBB);
+    let disk = machine::InMemoryDisk::new(disk_bytes);
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x13, 0xF4]);
+
+    // 24-byte DAP at 0000:0500, using the 64-bit flat pointer field.
+    let dap = 0x0500u64;
+    MemoryAccess::write_u8(&mut vm.mem, dap + 0, 0x18);
+    MemoryAccess::write_u8(&mut vm.mem, dap + 1, 0x00);
+    MemoryAccess::write_u16(&mut vm.mem, dap + 2, 1); // count
+    MemoryAccess::write_u16(&mut vm.mem, dap + 4, 0x0000); // offset (ignored)
+    MemoryAccess::write_u16(&mut vm.mem, dap + 6, 0x0000); // segment (ignored)
+    MemoryAccess::write_u64(&mut vm.mem, dap + 8, 1); // LBA
+    MemoryAccess::write_u64(&mut vm.mem, dap + 16, 0x2000); // flat buffer pointer
+
+    vm.cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
+    vm.cpu.gpr[gpr::RDX] = 0x0080; // DL=0x80
+    vm.cpu.gpr[gpr::RSI] = 0x0500;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+
+    let mut buf = vec![0u8; 512];
+    vm.mem.read_physical(0x2000, &mut buf);
+    assert_eq!(buf, vec![0xBB; 512]);
+}
+
+#[test]
+fn aero_cpu_core_int13_ext_read_rejects_invalid_dap_size() {
+    let bios = Bios::new(test_bios_config());
+
+    let boot_sector = boot_sector_with(&[]);
+    let mut disk_bytes = vec![0u8; 512 * 2];
+    disk_bytes[..512].copy_from_slice(&boot_sector);
+    disk_bytes[512] = 0xCC;
+    let disk = machine::InMemoryDisk::new(disk_bytes);
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x13, 0xF4]);
+
+    // Bogus DAP size (must be 0x10 or 0x18).
+    let dap = 0x0500u64;
+    MemoryAccess::write_u8(&mut vm.mem, dap + 0, 0x11);
+    MemoryAccess::write_u8(&mut vm.mem, dap + 1, 0x00);
+
+    vm.cpu.gpr[gpr::RAX] = 0x4200;
+    vm.cpu.gpr[gpr::RDX] = 0x0080;
+    vm.cpu.gpr[gpr::RSI] = 0x0500;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0x01);
+}
+
+#[test]
 fn aero_cpu_core_int13_ext_get_drive_params_reports_sector_count() {
     let bios = Bios::new(test_bios_config());
 
