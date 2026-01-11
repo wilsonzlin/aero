@@ -45,6 +45,7 @@ AddReg    = VirtioSndLegacy.AddReg
 [VirtioSndLegacy_Install.NT.Interfaces]
 AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%,     VirtioSndLegacy.Wave.Interface
 AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%,     VirtioSndLegacy.Wave.Interface
+AddInterface = %KSCATEGORY_CAPTURE%,  %KSNAME_Wave%,     VirtioSndLegacy.Capture.Interface
 AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%,     VirtioSndLegacy.Wave.Interface
 AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topology%, VirtioSndLegacy.Topology.Interface
 AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, VirtioSndLegacy.Topology.Interface
@@ -55,6 +56,13 @@ AddReg = VirtioSndLegacy.Wave.Interface.AddReg
 [VirtioSndLegacy.Wave.Interface.AddReg]
 HKR,,CLSID,,%KSProxy.CLSID%
 HKR,,FriendlyName,,%VirtioSndLegacy.EndpointDesc%
+
+[VirtioSndLegacy.Capture.Interface]
+AddReg = VirtioSndLegacy.Capture.Interface.AddReg
+
+[VirtioSndLegacy.Capture.Interface.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSndLegacy.CaptureEndpointDesc%
 
 [VirtioSndLegacy.Topology.Interface]
 AddReg = VirtioSndLegacy.Topology.Interface.AddReg
@@ -116,6 +124,7 @@ VirtioSndLegacy.ServiceDesc  = "Aero VirtIO Sound Driver (Legacy)"
 KSProxy.CLSID        = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
 KSCATEGORY_AUDIO     = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
 KSCATEGORY_RENDER    = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_CAPTURE   = "{65E8773D-8F56-11D0-A3B9-00A0C9223196}"
 KSCATEGORY_REALTIME  = "{EB115FF2-0D1B-11D0-A8E0-00A0C9223196}"
 KSCATEGORY_TOPOLOGY  = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
 
@@ -125,4 +134,5 @@ KSNAME_Topology      = "Topology"
 
 ; Names shown to users (MMDevice / Sound control panel).
 VirtioSndLegacy.EndpointDesc  = "Aero VirtIO Sound Output (Legacy)"
+VirtioSndLegacy.CaptureEndpointDesc  = "Aero VirtIO Sound Input (Legacy)"
 VirtioSndLegacy.TopologyDesc  = "Aero VirtIO Sound Topology (Legacy)"
