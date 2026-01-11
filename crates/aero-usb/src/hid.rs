@@ -2149,7 +2149,7 @@ impl UsbHidCompositeInput {
                 if setup.value != FEATURE_ENDPOINT_HALT {
                     return false;
                 }
-                match (setup.index & 0xFF) as u8 {
+                match setup.index {
                     0x81 => self.interrupt_in_halted[0] = false,
                     0x82 => self.interrupt_in_halted[1] = false,
                     0x83 => self.interrupt_in_halted[2] = false,
@@ -2161,7 +2161,7 @@ impl UsbHidCompositeInput {
                 if setup.value != FEATURE_ENDPOINT_HALT {
                     return false;
                 }
-                match (setup.index & 0xFF) as u8 {
+                match setup.index {
                     0x81 => self.interrupt_in_halted[0] = true,
                     0x82 => self.interrupt_in_halted[1] = true,
                     0x83 => self.interrupt_in_halted[2] = true,

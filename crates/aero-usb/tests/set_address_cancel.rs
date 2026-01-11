@@ -783,3 +783,61 @@ fn invalid_set_feature_remote_wakeup_nonzero_windex_stalls_passthrough() {
 
     assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
 }
+
+#[test]
+fn composite_endpoint_feature_requires_windex_high_byte_zero() {
+    let mut dev = UsbHidCompositeInput::new();
+
+    // SET_FEATURE(ENDPOINT_HALT) with a nonzero high byte in wIndex is invalid and must STALL.
+    dev.handle_setup(SetupPacket {
+        request_type: 0x02, // OUT | Standard | Endpoint
+        request: 0x03,      // SET_FEATURE
+        value: 0,           // ENDPOINT_HALT
+        index: 0x0181,      // invalid (endpoint address must be in low byte only)
+        length: 0,
+    });
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+
+    // Endpoint status should remain not-halted.
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x82, // IN | Standard | Endpoint
+                request: 0x00,      // GET_STATUS
+                value: 0,
+                index: 0x81,
+                length: 2,
+            }
+        ),
+        vec![0, 0]
+    );
+}
+
+#[test]
+fn hub_endpoint_feature_requires_windex_high_byte_zero() {
+    let mut dev = UsbHubDevice::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x02, // OUT | Standard | Endpoint
+        request: 0x03,      // SET_FEATURE
+        value: 0,           // ENDPOINT_HALT
+        index: 0x0181,      // invalid
+        length: 0,
+    });
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x82, // IN | Standard | Endpoint
+                request: 0x00,      // GET_STATUS
+                value: 0,
+                index: 0x81,
+                length: 2,
+            }
+        ),
+        vec![0, 0]
+    );
+}

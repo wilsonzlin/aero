@@ -497,8 +497,7 @@ impl UsbHubDevice {
                 if setup.value != 0 {
                     return None;
                 }
-                let ep = (setup.index & 0x00ff) as u8;
-                if ep != HUB_INTERRUPT_IN_EP_ADDR {
+                if setup.index != u16::from(HUB_INTERRUPT_IN_EP_ADDR) {
                     return None;
                 }
                 let status: u16 = u16::from(self.interrupt_ep_halted);
@@ -600,8 +599,7 @@ impl UsbHubDevice {
                 if setup.value != USB_FEATURE_ENDPOINT_HALT {
                     return false;
                 }
-                let ep = (setup.index & 0x00ff) as u8;
-                if ep != HUB_INTERRUPT_IN_EP_ADDR {
+                if setup.index != u16::from(HUB_INTERRUPT_IN_EP_ADDR) {
                     return false;
                 }
                 self.interrupt_ep_halted = false;
@@ -611,8 +609,7 @@ impl UsbHubDevice {
                 if setup.value != USB_FEATURE_ENDPOINT_HALT {
                     return false;
                 }
-                let ep = (setup.index & 0x00ff) as u8;
-                if ep != HUB_INTERRUPT_IN_EP_ADDR {
+                if setup.index != u16::from(HUB_INTERRUPT_IN_EP_ADDR) {
                     return false;
                 }
                 self.interrupt_ep_halted = true;
