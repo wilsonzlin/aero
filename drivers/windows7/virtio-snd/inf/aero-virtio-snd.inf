@@ -2,14 +2,15 @@
 ;
 ; aero-virtio-snd.inf (Windows 7) - clean-room PortCls (WaveRT) audio driver.
 ;
-; Matches the Aero Windows PCI device contract for virtio-snd:
-;   - PCI\VEN_1AF4&DEV_1059 (virtio-snd modern ID)
-;   - PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4 (optional subsystem qualifier)
-;   - PCI\VEN_1AF4&DEV_1018 (virtio-snd transitional ID)
-;   - PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4 (optional subsystem qualifier)
+; Matches the Aero Windows 7 virtio device contract v1 (AERO-W7-VIRTIO):
+;   - modern-only virtio-snd PCI ID (`DEV_1059`)
+;   - contract major version encoded in PCI Revision ID (`REV_01`)
 ;
-; Note: Some environments also expose a PCI revision ID of 0x01. This INF
-; matches both REV_01 and the short form to avoid over-constraining installs.
+; This INF is intentionally strict and matches only:
+;   - PCI\VEN_1AF4&DEV_1059&REV_01
+;
+; Optional (commented out): further restrict binding to Aero’s subsystem ID:
+;   - PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [Version]
 Signature   = "$WINDOWS NT$"
@@ -24,23 +25,11 @@ CatalogFile = aero-virtio-snd.cat
 
 [VirtioSndModels.NTx86]
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4
+; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [VirtioSndModels.NTamd64]
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018&SUBSYS_00191AF4
+; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
