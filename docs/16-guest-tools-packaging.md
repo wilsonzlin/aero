@@ -127,6 +127,11 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
       ...
 ```
 
+When building Guest Tools from an upstream `virtio-win.iso` via
+`drivers/scripts/make-guest-tools-from-virtio-win.ps1`, the wrapper will also attempt to
+populate `licenses/virtio-win/` with upstream license/notice files (when present) and
+include `driver-pack-manifest.json` for virtio-win ISO provenance.
+
 ## Running locally
 
 ### CI-style flow (signed drivers → Guest Tools ISO/zip)
