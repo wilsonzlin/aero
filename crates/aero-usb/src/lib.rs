@@ -5,6 +5,19 @@
 //!
 //! This crate intentionally focuses on correctness and testability over completeness. It is
 //! designed to be wired into the emulator's PCI + I/O port framework later.
+//!
+//! ## Snapshot/restore
+//!
+//! Several models implement `aero_io_snapshot::io::state::IoSnapshot` using the canonical
+//! `aero-io-snapshot` TLV encoding so they can participate in VM save/restore:
+//!
+//! | Type | `IoSnapshot::DEVICE_ID` |
+//! |------|------------------------|
+//! | `uhci::UhciController` | `b"UHCI"` |
+//! | `hub::UsbHubDevice` | `b"UHUB"` |
+//! | `hid::passthrough::UsbHidPassthrough` | `b"HIDP"` |
+//! | `passthrough::UsbPassthroughDevice` | `b"USBP"` |
+//! | `passthrough_device::UsbWebUsbPassthroughDevice` | `b"WUSB"` |
 
 mod memory;
 pub mod passthrough;
