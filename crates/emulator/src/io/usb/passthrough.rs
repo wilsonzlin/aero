@@ -264,7 +264,19 @@ impl UsbDeviceModel for UsbPassthroughDevice {
         }
     }
 
-    fn handle_in_transfer(&mut self, ep: u8, len: usize) -> UsbInResult {
+    fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
+        debug_assert!(
+            (ep & 0x80) != 0,
+            "handle_in_transfer expects an IN endpoint address (bit7=1), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x70) == 0,
+            "handle_in_transfer expects a valid endpoint number (0..=15), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x0f) != 0,
+            "handle_in_transfer should not be used for control endpoint 0, got {ep:#04x}"
+        );
         if let Some(inflight) = self.ep_inflight.get(&ep) {
             let inflight_id = inflight.id;
             let inflight_len = inflight.len;
@@ -288,12 +300,25 @@ impl UsbDeviceModel for UsbPassthroughDevice {
 
         let id = self.alloc_id();
         self.actions
-            .push_back(UsbHostAction::BulkIn { id, ep, len });
-        self.ep_inflight.insert(ep, EpInflight { id, len });
+            .push_back(UsbHostAction::BulkIn { id, ep, len: max_len });
+        self.ep_inflight
+            .insert(ep, EpInflight { id, len: max_len });
         UsbInResult::Nak
     }
 
     fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
+        debug_assert!(
+            (ep & 0x80) == 0,
+            "handle_out_transfer expects an OUT endpoint address (bit7=0), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x70) == 0,
+            "handle_out_transfer expects a valid endpoint number (0..=15), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x0f) != 0,
+            "handle_out_transfer should not be used for control endpoint 0, got {ep:#04x}"
+        );
         if let Some(inflight) = self.ep_inflight.get(&ep) {
             if let Some(result) = self.take_result(inflight.id) {
                 self.ep_inflight.remove(&ep);
