@@ -1990,18 +1990,20 @@ FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
 #if defined(_WIN32)
   // DWM and many D3D9Ex clients poll EVENT queries in tight loops. Querying the
   // KMD fence counter (last completed) requires a D3DKMTEscape call, so throttle
-  // it to at most once per millisecond tick to avoid burning CPU in the kernel.
+  // it to a small interval to avoid burning CPU in the kernel.
   //
   // Note: we intentionally do *not* use the escape's \"last submitted\" fence as
   // a per-submission fence ID when polling. Under multi-process workloads (DWM +
   // apps) it is global and can be dominated by another process's submissions.
   // Per-submission fence IDs must come from the runtime callbacks (e.g.
   // SubmissionFenceId / NewFenceValue).
+  constexpr uint64_t kMinFenceQueryIntervalMs = 4;
   const uint64_t now_ms = monotonic_ms();
   bool should_query_kmd = false;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    if (adapter->last_kmd_fence_query_ms != now_ms) {
+    if (now_ms >= adapter->last_kmd_fence_query_ms &&
+        (now_ms - adapter->last_kmd_fence_query_ms) >= kMinFenceQueryIntervalMs) {
       adapter->last_kmd_fence_query_ms = now_ms;
       should_query_kmd = true;
     }
