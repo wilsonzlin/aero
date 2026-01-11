@@ -183,6 +183,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-edid"
+version = "0.1.0"
+
+[[package]]
 name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
@@ -205,10 +209,6 @@ dependencies = [
  "wgpu",
  "xxhash-rust",
 ]
-
-[[package]]
-name = "aero-gpu-device"
-version = "0.1.0"
 
 [[package]]
 name = "aero-gpu-trace"
@@ -1656,6 +1656,7 @@ version = "0.1.0"
 dependencies = [
  "aero-d3d11",
  "aero-devices",
+ "aero-edid",
  "aero-gpu",
  "aero-gpu-trace",
  "aero-io-snapshot",
@@ -1759,9 +1760,9 @@ version = "0.1.0"
 dependencies = [
  "aero-acpi",
  "aero-devices",
+ "aero-edid",
  "aero-pc-constants",
  "aero-platform",
- "emulator",
  "machine",
  "memory",
 ]

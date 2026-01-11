@@ -1,4 +1,3 @@
-use emulator::devices::vga::vbe;
 use firmware::{
     bios::Bios,
     cpu::CpuState,
@@ -198,7 +197,7 @@ fn int10_vbe_misc_services() {
     assert_eq!(cpu.bx(), 0x0200);
 
     // 4F15 DDC: read EDID block.
-    let edid = vbe::read_edid(0).expect("missing base EDID");
+    let edid = aero_edid::read_edid(0).expect("missing base EDID");
     let edid_seg = 0x3100;
     let edid_off = 0x0400;
     let edid_addr = real_addr(edid_seg, edid_off);

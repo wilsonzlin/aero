@@ -9,11 +9,10 @@
 
 use core::mem::size_of;
 
-use super::edid;
 use memory::{GuestMemory, GuestMemoryResult};
 
-pub fn read_edid(block: u16) -> Option<[u8; edid::EDID_BLOCK_SIZE]> {
-    edid::read_edid(block)
+pub fn read_edid(block: u16) -> Option<[u8; aero_edid::EDID_BLOCK_SIZE]> {
+    aero_edid::read_edid(block)
 }
 
 /// Physical address where the BIOS-visible VBE data blob is written.

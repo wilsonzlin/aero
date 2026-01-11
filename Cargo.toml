@@ -15,6 +15,7 @@ members = [
     "crates/aero-gpu-utils",
     "crates/aero-gpu-wasm",
     "crates/aero-shared",
+    "crates/aero-edid",
     "crates/aero-core",
     "crates/aero-tests",
     "crates/aero-http-range",

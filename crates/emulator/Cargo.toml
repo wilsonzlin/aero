@@ -20,6 +20,7 @@ aerogpu-legacy = []
 
 [dependencies]
 aero-devices = { path = "../devices" }
+aero-edid = { path = "../aero-edid" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-platform = { path = "../platform" }

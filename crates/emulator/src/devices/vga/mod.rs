@@ -1,5 +1,4 @@
 pub mod dac;
-pub mod edid;
 pub mod memory;
 mod mmio;
 mod modeset;

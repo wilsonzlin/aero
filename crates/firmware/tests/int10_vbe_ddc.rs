@@ -1,4 +1,3 @@
-use emulator::devices::vga::vbe;
 use firmware::{
     bios::Bios,
     cpu::CpuState,
@@ -8,7 +7,7 @@ use firmware::{
 
 #[test]
 fn int10_vbe_ddc_copies_edid_block() {
-    let expected = vbe::read_edid(0).expect("missing base EDID");
+    let expected = aero_edid::read_edid(0).expect("missing base EDID");
 
     let mut bios = Bios::new(firmware::rtc::CmosRtc::new(DateTime::new(
         2026, 1, 1, 0, 0, 0,

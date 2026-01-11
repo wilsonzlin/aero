@@ -1,5 +1,3 @@
-use emulator::devices::vga::vbe;
-
 use crate::{
     bda::BiosDataArea,
     cpu::CpuState,
@@ -241,7 +239,7 @@ fn handle_ddc(cpu: &mut CpuState, memory: &mut impl MemoryBus) {
             cpu.clear_cf();
         }
         0x01 => {
-            let Some(edid) = vbe::read_edid(cpu.dx()) else {
+            let Some(edid) = aero_edid::read_edid(cpu.dx()) else {
                 vbe_failure(cpu);
                 return;
             };
