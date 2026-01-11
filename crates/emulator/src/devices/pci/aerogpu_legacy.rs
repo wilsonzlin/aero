@@ -24,7 +24,7 @@ use crate::devices::aerogpu_scanout::{AeroGpuFormat, AeroGpuScanoutConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 
 // Constants mirrored from `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`.
-const AEROGPU_LEGACY_PCI_VENDOR_ID: u16 = 0x1aed;
+const AEROGPU_LEGACY_PCI_VENDOR_ID: u16 = u16::from_be_bytes([0x1A, 0xED]);
 const AEROGPU_LEGACY_PCI_DEVICE_ID: u16 = 0x0001;
 
 const AEROGPU_LEGACY_MMIO_MAGIC: u32 = 0x4152_4750; // 'A''R''G''P'

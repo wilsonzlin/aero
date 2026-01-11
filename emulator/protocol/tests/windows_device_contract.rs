@@ -370,7 +370,8 @@ fn no_aerogpu_1ae0_tokens_outside_archived_prototype_tree() {
     // Build forbidden needles without embedding the full token in the source, so this file
     // doesn't itself trip the repo-wide grep rule we're trying to enforce.
     let forbidden_vendor = format!("VEN_{}", "1AE0");
-    let forbidden_hex = format!("0x{}", "1AE0");
+    // Convert the needle to uppercase so we can match case-insensitively against the file bytes.
+    let forbidden_hex = format!("0x{}", "1AE0").to_ascii_uppercase();
     let forbidden_vendor = forbidden_vendor.as_bytes();
     let forbidden_hex = forbidden_hex.as_bytes();
 
@@ -384,10 +385,11 @@ fn no_aerogpu_1ae0_tokens_outside_archived_prototype_tree() {
         }
         let rel_str = String::from_utf8_lossy(rel);
         let path = root.join(rel_str.as_ref());
-        let Ok(buf) = std::fs::read(&path) else {
+        let Ok(mut buf) = std::fs::read(&path) else {
             // Skip unreadable files (shouldn't happen for tracked files, but keep this robust).
             continue;
         };
+        buf.make_ascii_uppercase();
 
         if buf
             .windows(forbidden_vendor.len())
@@ -439,7 +441,8 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
     // Build forbidden needles without embedding the full tokens in this source file so repo-wide
     // greps for deprecated AeroGPU IDs can stay focused on legacy/archived locations.
     let forbidden_vendor = format!("VEN_{}", "1AED");
-    let forbidden_hex = format!("0x{}", "1AED");
+    // Convert the needle to uppercase so we can match case-insensitively against the file bytes.
+    let forbidden_hex = format!("0x{}", "1AED").to_ascii_uppercase();
     let forbidden_vendor = forbidden_vendor.as_bytes();
     let forbidden_hex = forbidden_hex.as_bytes();
 
@@ -456,9 +459,10 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
         }
         let rel_str = String::from_utf8_lossy(rel);
         let path = root.join(rel_str.as_ref());
-        let Ok(buf) = std::fs::read(&path) else {
+        let Ok(mut buf) = std::fs::read(&path) else {
             continue;
         };
+        buf.make_ascii_uppercase();
 
         if buf
             .windows(forbidden_vendor.len())
