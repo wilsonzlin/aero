@@ -230,14 +230,20 @@ impl AerogpuCmdRuntime {
 
     pub fn create_shader_dxbc(&mut self, handle: AerogpuHandle, dxbc_bytes: &[u8]) -> Result<()> {
         let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC")?;
-        let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse DXBC shader chunk")?;
         let stage = match program.stage {
             crate::ShaderStage::Vertex => ShaderStage::Vertex,
             crate::ShaderStage::Pixel => ShaderStage::Fragment,
+            // Geometry/hull/domain stages are not supported by the AeroGPU/WebGPU pipeline. Accept
+            // the create call (so guests can compile/pass these shaders around) but ignore the
+            // resulting shader since there is no way to bind it.
+            crate::ShaderStage::Geometry | crate::ShaderStage::Hull | crate::ShaderStage::Domain => {
+                return Ok(());
+            }
             other => bail!("unsupported shader stage for aerogpu_cmd executor: {other:?}"),
         };
 
+        let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
         let vs_input_signature = if stage == ShaderStage::Vertex {
             extract_vs_input_signature(&signatures).context("extract VS input signature")?
         } else {
