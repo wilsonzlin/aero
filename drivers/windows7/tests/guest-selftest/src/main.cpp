@@ -97,6 +97,8 @@ static std::wstring NormalizeGuidLikeString(std::wstring s) {
   return s;
 }
 
+static bool EqualsInsensitive(const std::wstring& a, const std::wstring& b) { return ToLower(a) == ToLower(b); }
+
 static std::string WideToUtf8(const std::wstring& w) {
   if (w.empty()) return {};
   const int needed = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
@@ -449,6 +451,12 @@ struct VirtioSndPciDevice {
   std::wstring description;
 };
 
+// KSCATEGORY_TOPOLOGY {DDA54A40-1E4C-11D1-A050-405705C10000}
+static const GUID kKsCategoryTopology = {0xdda54a40,
+                                         0x1e4c,
+                                         0x11d1,
+                                         {0xa0, 0x50, 0x40, 0x57, 0x05, 0xc1, 0x00, 0x00}};
+
 static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log) {
   std::vector<VirtioSndPciDevice> out;
 
@@ -492,6 +500,64 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log) {
 
   SetupDiDestroyDeviceInfoList(devinfo);
   return out;
+}
+
+static bool HasDeviceInterfaceForInstance(Logger& log, const GUID& iface_guid,
+                                          const std::wstring& target_instance_id,
+                                          const char* iface_name_for_log) {
+  HDEVINFO devinfo =
+      SetupDiGetClassDevsW(&iface_guid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+  if (devinfo == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-snd: SetupDiGetClassDevs(%s) failed: %lu", iface_name_for_log, GetLastError());
+    return false;
+  }
+
+  bool found = false;
+  for (DWORD idx = 0;; idx++) {
+    SP_DEVICE_INTERFACE_DATA iface{};
+    iface.cbSize = sizeof(iface);
+    if (!SetupDiEnumDeviceInterfaces(devinfo, nullptr, &iface_guid, idx, &iface)) {
+      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      continue;
+    }
+
+    DWORD detail_size = 0;
+    SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, nullptr, 0, &detail_size, nullptr);
+    if (detail_size == 0) continue;
+
+    std::vector<BYTE> detail_buf(detail_size);
+    auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detail_buf.data());
+    detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+    SP_DEVINFO_DATA dev{};
+    dev.cbSize = sizeof(dev);
+    if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, detail_size, nullptr, &dev)) {
+      continue;
+    }
+
+    const auto inst_id = GetDeviceInstanceIdString(devinfo, &dev);
+    if (!inst_id) continue;
+    if (!EqualsInsensitive(*inst_id, target_instance_id)) continue;
+
+    log.Logf("virtio-snd: found %s interface path=%s", iface_name_for_log,
+             WideToUtf8(std::wstring(detail->DevicePath)).c_str());
+    found = true;
+    break;
+  }
+
+  SetupDiDestroyDeviceInfoList(devinfo);
+  return found;
+}
+
+static bool VirtioSndHasTopologyInterface(Logger& log, const std::vector<VirtioSndPciDevice>& devices) {
+  bool found_any = false;
+  for (const auto& dev : devices) {
+    if (dev.instance_id.empty()) continue;
+    if (HasDeviceInterfaceForInstance(log, kKsCategoryTopology, dev.instance_id, "KSCATEGORY_TOPOLOGY")) {
+      found_any = true;
+    }
+  }
+  return found_any;
 }
 
 static std::set<DWORD> DetectVirtioDiskNumbers(Logger& log) {
@@ -1779,48 +1845,10 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
   }
 
   if (!chosen) {
-    log.LogLine("virtio-snd: no matching ACTIVE render endpoint found; checking default endpoint");
-    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, chosen.Put());
-    if (FAILED(hr) || !chosen) {
-      out.fail_reason = "no_default_endpoint";
-      out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-      log.LogLine("virtio-snd: no default render endpoint available");
-      return out;
-    }
-
-    ComPtr<IPropertyStore> props;
-    hr = chosen->OpenPropertyStore(STGM_READ, props.Put());
-    std::wstring friendly = L"";
-    std::wstring instance_id = L"";
-    if (SUCCEEDED(hr)) {
-      friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
-      if (friendly.empty()) friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
-      instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
-    }
-    const auto hwids = GetHardwareIdsForInstanceId(instance_id);
-    log.Logf("virtio-snd: default endpoint name=%s instance_id=%s", WideToUtf8(friendly).c_str(),
-             WideToUtf8(instance_id).c_str());
-    if (!LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
-      log.LogLine("virtio-snd: warning: default endpoint does not look like virtio-snd; using it for playback anyway");
-    }
-
-    best_score = 0;
-    chosen_friendly.clear();
-    chosen_id.clear();
-
-    LPWSTR dev_id_raw = nullptr;
-    hr = chosen->GetId(&dev_id_raw);
-    if (SUCCEEDED(hr) && dev_id_raw) {
-      chosen_id = dev_id_raw;
-      CoTaskMemFree(dev_id_raw);
-    }
-
-    props.Reset();
-    hr = chosen->OpenPropertyStore(STGM_READ, props.Put());
-    if (SUCCEEDED(hr)) {
-      chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
-      if (chosen_friendly.empty()) chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
-    }
+    out.fail_reason = "no_matching_endpoint";
+    out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    log.LogLine("virtio-snd: no matching ACTIVE render endpoint found");
+    return out;
   }
 
   log.Logf("virtio-snd: selected endpoint name=%s id=%s score=%d", WideToUtf8(chosen_friendly).c_str(),
@@ -2918,6 +2946,21 @@ int wmain(int argc, wchar_t** argv) {
         all_ok = false;
       } else {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
+      }
+    } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
+      log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
+
+      if (want_snd_playback) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing");
+        all_ok = false;
+      }
+
+      if (opt.require_snd_capture) {
+        log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
+        all_ok = false;
+      } else {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
       }
     } else {
       std::vector<std::wstring> match_names;
