@@ -276,3 +276,88 @@ fn new_setup_aborts_pending_set_configuration_hub() {
         vec![0]
     );
 }
+
+#[test]
+fn invalid_set_configuration_nonzero_windex_stalls_keyboard() {
+    let mut dev = UsbHidKeyboard::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+}
+
+#[test]
+fn invalid_set_configuration_nonzero_windex_stalls_passthrough() {
+    let mut dev = UsbHidPassthrough::default();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+    assert!(!dev.configured());
+}
+
+#[test]
+fn invalid_set_configuration_nonzero_windex_stalls_hub() {
+    let mut dev = UsbHubDevice::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+}

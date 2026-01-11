@@ -438,6 +438,9 @@ impl UsbHidPassthrough {
                 true
             }
             (0x00, REQ_SET_CONFIGURATION) => {
+                if setup.index != 0 || (setup.value & 0xFF00) != 0 {
+                    return false;
+                }
                 let cfg = (setup.value & 0xFF) as u8;
                 if cfg > 1 {
                     return false;

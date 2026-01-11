@@ -564,6 +564,9 @@ impl UsbHubDevice {
                 if setup.index != 0 {
                     return false;
                 }
+                if (setup.value & 0xff00) != 0 {
+                    return false;
+                }
                 let cfg = (setup.value & 0x00ff) as u8;
                 if cfg > 1 {
                     return false;
