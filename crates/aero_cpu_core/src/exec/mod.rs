@@ -259,15 +259,53 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
 
                     match decoded.instr.mnemonic() {
                         Mnemonic::Cli => {
-                            cpu.cpu.pending.retire_instruction();
-                            cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, false);
-                            cpu.cpu.state.set_rip(next_ip);
+                            let cpl = cpu.cpu.state.cpl();
+                            let iopl = ((cpu.cpu.state.rflags() & crate::state::RFLAGS_IOPL_MASK) >> 12) as u8;
+                            if !matches!(
+                                cpu.cpu.state.mode,
+                                crate::state::CpuMode::Real | crate::state::CpuMode::Vm86
+                            ) && cpl > iopl
+                            {
+                                cpu.cpu.pending.raise_exception_fault(
+                                    &mut cpu.cpu.state,
+                                    crate::exceptions::Exception::GeneralProtection,
+                                    ip,
+                                    Some(0),
+                                    None,
+                                );
+                                cpu.cpu
+                                    .deliver_pending_event(&mut cpu.bus)
+                                    .expect("deliver #GP for CLI");
+                            } else {
+                                cpu.cpu.pending.retire_instruction();
+                                cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, false);
+                                cpu.cpu.state.set_rip(next_ip);
+                            }
                         }
                         Mnemonic::Sti => {
-                            cpu.cpu.pending.retire_instruction();
-                            cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, true);
-                            cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
-                            cpu.cpu.state.set_rip(next_ip);
+                            let cpl = cpu.cpu.state.cpl();
+                            let iopl = ((cpu.cpu.state.rflags() & crate::state::RFLAGS_IOPL_MASK) >> 12) as u8;
+                            if !matches!(
+                                cpu.cpu.state.mode,
+                                crate::state::CpuMode::Real | crate::state::CpuMode::Vm86
+                            ) && cpl > iopl
+                            {
+                                cpu.cpu.pending.raise_exception_fault(
+                                    &mut cpu.cpu.state,
+                                    crate::exceptions::Exception::GeneralProtection,
+                                    ip,
+                                    Some(0),
+                                    None,
+                                );
+                                cpu.cpu
+                                    .deliver_pending_event(&mut cpu.bus)
+                                    .expect("deliver #GP for STI");
+                            } else {
+                                cpu.cpu.pending.retire_instruction();
+                                cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, true);
+                                cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
+                                cpu.cpu.state.set_rip(next_ip);
+                            }
                         }
                         Mnemonic::Int => {
                             let vector = decoded.instr.immediate8() as u8;

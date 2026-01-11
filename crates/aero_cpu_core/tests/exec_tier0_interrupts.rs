@@ -187,6 +187,51 @@ fn tier0_mov_ss_inhibits_external_interrupt_for_one_instruction() {
 }
 
 #[test]
+fn tier0_cli_in_user_mode_raises_gp() {
+    let mut bus = FlatTestBus::new(0x20000);
+
+    let idt_base = 0x1000u64;
+    let handler = 0x2000u32;
+    let tss_base = 0x3000u64;
+
+    // Code (CPL3): CLI; (should fault); HLT (should never execute)
+    bus.load(0, &[0xFA, 0xF4]);
+
+    // #GP handler: HLT (CPL0).
+    bus.load(handler as u64, &[0xF4]);
+    write_idt_gate32(&mut bus, idt_base, 13, 0x08, handler, 0x8E);
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Protected, bus);
+    cpu.cpu.state.tables.idtr.base = idt_base;
+    cpu.cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.cpu.state.segments.cs.selector = 0x1B; // CPL3
+    cpu.cpu.state.segments.ss.selector = 0x23;
+    cpu.cpu.state.segments.cs.base = 0;
+    cpu.cpu.state.segments.ss.base = 0;
+    cpu.cpu.state.write_gpr32(gpr::RSP, 0x7000);
+    cpu.cpu.state.set_rflags(0x202); // IF=1, IOPL=0
+    cpu.cpu.state.set_rip(0);
+
+    // Provide a ring-0 stack in a 32-bit TSS so the exception can switch privilege levels.
+    cpu.cpu.state.tables.tr.selector = 0x28;
+    cpu.cpu.state.tables.tr.base = tss_base;
+    cpu.cpu.state.tables.tr.limit = 0x67;
+    cpu.cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+    cpu.bus.write_u32(tss_base + 4, 0x9000).unwrap(); // ESP0
+    cpu.bus.write_u16(tss_base + 8, 0x10).unwrap(); // SS0
+
+    let mut interp = Tier0Interpreter::new(1024);
+
+    // First block should deliver #GP and transfer to the handler.
+    interp.exec_block(&mut cpu);
+    assert_eq!(cpu.cpu.state.rip(), handler as u64);
+    assert_eq!(cpu.cpu.state.segments.cs.selector, 0x08);
+
+    run_to_halt(&mut cpu, &mut interp, 16);
+    assert!(cpu.cpu.state.halted);
+}
+
+#[test]
 fn tier0_preserves_bios_interrupt_vector_for_hlt_hypercall() {
     let mut bus = FlatTestBus::new(0x100000);
 
