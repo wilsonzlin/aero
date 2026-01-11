@@ -774,6 +774,60 @@ fn aero_cpu_core_int15_e820_returns_first_entry() {
 }
 
 #[test]
+fn aero_cpu_core_int15_e820_rejects_invalid_smap_signature() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 15h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x15, 0xF4]);
+
+    vm.cpu.gpr[gpr::RAX] = 0xE820;
+    vm.cpu.gpr[gpr::RDX] = 0; // wrong signature
+    vm.cpu.gpr[gpr::RBX] = 0;
+    vm.cpu.gpr[gpr::RCX] = 24;
+    set_real_mode_seg(&mut vm.cpu.segments.es, 0x0000);
+    vm.cpu.gpr[gpr::RDI] = 0x0600;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x15)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0x86);
+}
+
+#[test]
+fn aero_cpu_core_int15_e820_rejects_buffer_sizes_smaller_than_20_bytes() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 15h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x15, 0xF4]);
+
+    vm.cpu.gpr[gpr::RAX] = 0xE820;
+    vm.cpu.gpr[gpr::RDX] = 0x534D_4150;
+    vm.cpu.gpr[gpr::RBX] = 0;
+    vm.cpu.gpr[gpr::RCX] = 19;
+    set_real_mode_seg(&mut vm.cpu.segments.es, 0x0000);
+    vm.cpu.gpr[gpr::RDI] = 0x0600;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x15)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0xE820);
+}
+
+#[test]
 fn aero_cpu_core_int15_e820_loop_reports_pci_hole_and_high_memory_remap() {
     // Exercise the full E820 iterator contract using the real CPU engine. The guest program loops
     // over INT 15h AX=E820h until BX returns 0 and stores each 24-byte entry contiguously.
@@ -835,7 +889,10 @@ fn aero_cpu_core_int15_e820_loop_reports_pci_hole_and_high_memory_remap() {
             panic!("E820 loop did not halt (steps={steps})");
         }
         match vm.step() {
-            StepExit::Continue | StepExit::Branch | StepExit::BiosInterrupt(_) => continue,
+            StepExit::Continue
+            | StepExit::ContinueInhibitInterrupts
+            | StepExit::Branch
+            | StepExit::BiosInterrupt(_) => continue,
             StepExit::Halted => break,
             StepExit::Assist(r) => panic!("unexpected assist while running E820 loop: {r:?}"),
         }
