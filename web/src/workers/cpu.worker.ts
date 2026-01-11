@@ -1035,9 +1035,17 @@ function publishSharedFramebufferFrame(): void {
   const tileColor = sharedTileToggle ? 0xff0000ff /* RGBA red */ : base;
   sharedTileToggle = !sharedTileToggle;
 
+  const backSlotSeq = Atomics.load(
+    sharedHeader,
+    back === 0 ? SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ : SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ,
+  );
+  const backSlotInitialized = backSlotSeq !== 0;
+
   // Full frame is constant green; only the top-left tile toggles, allowing dirty-rect
   // uploads (when supported) to preserve the rest of the texture.
-  backPixels.fill(base);
+  if (!backSlotInitialized) {
+    backPixels.fill(base);
+  }
 
   const tileSize = sharedLayout.tileSize || sharedLayout.width;
   const tileW = Math.min(tileSize, sharedLayout.width);
@@ -1052,8 +1060,9 @@ function publishSharedFramebufferFrame(): void {
   const newSeq = (prevSeq + 1) | 0;
 
   if (backDirty) {
-    if (prevSeq === 0) {
-      // Initialize the presenter texture with a full upload on the first frame.
+    if (!backSlotInitialized) {
+      // Initialize the presenter texture for each slot with a full upload the first
+      // time we write it (double buffering means slot 1 is uninitialized on frame 1).
       backDirty.fill(0xffffffff);
     } else {
       backDirty.fill(0);

@@ -27,6 +27,7 @@ import {
 } from "../shared/frameProtocol";
 
 import {
+  dirtyTilesToRects,
   type DirtyRect,
   layoutFromHeader,
   SHARED_FRAMEBUFFER_HEADER_U32_LEN,
@@ -457,6 +458,7 @@ type CurrentFrameInfo = {
   pixels: Uint8Array;
   frameSeq: number;
   sharedLayout?: SharedFramebufferLayout;
+  dirtyRects?: DirtyRect[] | null;
 };
 
 const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
@@ -465,6 +467,8 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
   if (sharedFramebufferViews) {
     const active = Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
     const pixels = active === 0 ? sharedFramebufferViews.slot0 : sharedFramebufferViews.slot1;
+    const dirtyWords = active === 0 ? sharedFramebufferViews.dirty0 : sharedFramebufferViews.dirty1;
+    const dirtyRects = dirtyWords ? dirtyTilesToRects(sharedFramebufferViews.layout, dirtyWords) : null;
     const frameSeq = Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.FRAME_SEQ);
     return {
       width: sharedFramebufferViews.layout.width,
@@ -473,6 +477,7 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
       pixels,
       frameSeq,
       sharedLayout: sharedFramebufferViews.layout,
+      dirtyRects,
     };
   }
 
@@ -500,13 +505,15 @@ const presentOnce = async (): Promise<boolean> => {
   const t0 = performance.now();
 
   try {
+    const frame = getCurrentFrameInfo();
+    const dirtyRects = frame?.dirtyRects ?? null;
+
     if (presentFn) {
-      const result = await presentFn(null);
+      const result = await presentFn(dirtyRects);
       return typeof result === "boolean" ? result : true;
     }
 
     if (presenter) {
-      const frame = getCurrentFrameInfo();
       if (!frame) return false;
 
       if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
@@ -781,11 +788,11 @@ const handleTick = async () => {
         telemetry.beginFrame(lastFrameStartMs);
 
         const frame = getCurrentFrameInfo();
-          const textureUploadBytes = frame?.sharedLayout
-            ? estimateTextureUploadBytes(frame.sharedLayout, null)
-            : frame
-              ? estimateFullFrameUploadBytes(frame.width, frame.height)
-              : 0;
+        const textureUploadBytes = frame?.sharedLayout
+          ? estimateTextureUploadBytes(frame.sharedLayout, frame.dirtyRects ?? null)
+          : frame
+            ? estimateFullFrameUploadBytes(frame.width, frame.height)
+            : 0;
           telemetry.recordTextureUploadBytes(textureUploadBytes);
           perf.counter("textureUploadBytes", textureUploadBytes);
           perfUploadBytes += textureUploadBytes;
