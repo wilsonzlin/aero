@@ -2854,6 +2854,30 @@ struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<
     : std::true_type {};
 
 template <typename ArgsT>
+constexpr bool submit_args_can_signal_present() {
+  if constexpr (has_member_Present<ArgsT>::value) {
+    using PresentT = std::remove_reference_t<decltype(std::declval<ArgsT>().Present)>;
+    if constexpr (std::is_integral_v<PresentT>) {
+      return true;
+    }
+  }
+  if constexpr (has_member_Flags<ArgsT>::value) {
+    using FlagsT = std::remove_reference_t<decltype(std::declval<ArgsT>().Flags)>;
+    if constexpr (has_member_Present<FlagsT>::value) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename CallbackFn>
+constexpr bool submit_callback_can_signal_present() {
+  using ArgPtr = typename fn_first_param<CallbackFn>::type;
+  using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+  return submit_args_can_signal_present<Arg>();
+}
+
+template <typename ArgsT>
 void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, bool is_present) {
   const bool patch_list_available = (dev->wddm_context.pPatchLocationList != nullptr);
   if constexpr (has_member_hDevice<ArgsT>::value) {
@@ -2875,7 +2899,11 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, b
     args.CommandBufferSize = dev->wddm_context.CommandBufferSize;
   }
   if constexpr (has_member_DmaBufferSize<ArgsT>::value) {
-    args.DmaBufferSize = dev->wddm_context.CommandBufferSize;
+    // DmaBufferSize is consistently interpreted by Win7-era callback structs as
+    // the number of bytes used in the DMA buffer (not the total capacity).
+    // Populate it with the used byte count to avoid dxgkrnl/KMD reading
+    // uninitialized command buffer bytes.
+    args.DmaBufferSize = command_length_bytes;
   }
   if constexpr (has_member_pAllocationList<ArgsT>::value) {
     args.pAllocationList = dev->wddm_context.pAllocationList;
@@ -2912,12 +2940,23 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, b
     args.pDmaBufferPrivateData = dev->wddm_context.pDmaBufferPrivateData;
   }
   if constexpr (has_member_DmaBufferPrivateDataSize<ArgsT>::value) {
+    // Clamp to the driver-private ABI size so dxgkrnl doesn't copy extra
+    // user-mode bytes into kernel buffers.
     args.DmaBufferPrivateDataSize = dev->wddm_context.DmaBufferPrivateDataSize;
+    if (args.DmaBufferPrivateDataSize > AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
+      args.DmaBufferPrivateDataSize = AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES;
+    }
   }
 
   // Some WDDM callback arg structs include flags distinguishing render vs present.
   // If such flags are present, populate them so present submissions prefer the
   // DxgkDdiPresent path when routed via RenderCb fallback.
+  if constexpr (has_member_Present<ArgsT>::value) {
+    using PresentT = std::remove_reference_t<decltype(args.Present)>;
+    if constexpr (std::is_integral_v<PresentT>) {
+      args.Present = is_present ? 1 : 0;
+    }
+  }
   if constexpr (has_member_Flags<ArgsT>::value) {
     using FlagsT = std::remove_reference_t<decltype(args.Flags)>;
     if constexpr (has_member_Present<FlagsT>::value) {
@@ -3246,37 +3285,73 @@ uint64_t submit(Device* dev, bool is_present) {
       dev->wddm_context.allocation_list_entries_used = dev->alloc_list_tracker.list_len();
       dev->wddm_context.patch_location_entries_used = 0;
 
-      HRESULT submit_hr = E_NOTIMPL;
-      const uint32_t cmd_len = static_cast<uint32_t>(cmd_bytes);
-      // Win7-era D3D9 runtimes commonly wire submissions through
-      // `pfnSubmitCommandCb` (D3DDDIARG_SUBMITCOMMAND). Newer header vintages (or
-      // other APIs) may instead use Render/Present callbacks. Try
-      // SubmitCommandCb first so we reliably reach the KMD's
-      // DxgkDdiSubmitCommand path and obtain a per-submission SubmissionFenceId.
-      if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
-        if (dev->wddm_callbacks.pfnSubmitCommandCb) {
-          submission_fence = 0;
-          submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/is_present,
-                                             &submission_fence);
-        }
+      // Clear the driver-private per-DMA-buffer metadata so the KMD never observes
+      // stale submission state (in particular, stale MetaHandle values from a
+      // previous submission).
+      if (dev->wddm_context.pDmaBufferPrivateData &&
+          dev->wddm_context.DmaBufferPrivateDataSize >= AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
+        AEROGPU_DMA_PRIV priv{};
+        priv.Type = is_present ? AEROGPU_SUBMIT_PRESENT : AEROGPU_SUBMIT_RENDER;
+        priv.Reserved0 = 0;
+        priv.MetaHandle = 0;
+        std::memcpy(dev->wddm_context.pDmaBufferPrivateData, &priv, sizeof(priv));
+      } else if (dev->wddm_context.pDmaBufferPrivateData && dev->wddm_context.DmaBufferPrivateDataSize) {
+        std::memset(dev->wddm_context.pDmaBufferPrivateData, 0, dev->wddm_context.DmaBufferPrivateDataSize);
       }
 
-      if (!SUCCEEDED(submit_hr)) {
+      HRESULT submit_hr = E_NOTIMPL;
+      const uint32_t cmd_len = static_cast<uint32_t>(cmd_bytes);
+      // Win7 D3D9 runtimes expose several possible submission callbacks. Prefer
+      // the Render/Present entrypoints so the KMD sees an unambiguous submission
+      // type (DxgkDdiRender vs DxgkDdiPresent) and can stamp the per-submit
+      // metadata handle used by DxgkDdiSubmitCommand.
+      if (is_present) {
         if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
-          if (is_present && dev->wddm_callbacks.pfnPresentCb) {
+          if (dev->wddm_callbacks.pfnPresentCb) {
             submission_fence = 0;
             submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnPresentCb, cmd_len, /*is_present=*/true,
                                                &submission_fence);
           }
         }
-      }
 
-      if (!SUCCEEDED(submit_hr)) {
+        if (!SUCCEEDED(submit_hr)) {
+          if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
+            if (dev->wddm_callbacks.pfnSubmitCommandCb) {
+              using SubmitCbT = decltype(dev->wddm_callbacks.pfnSubmitCommandCb);
+              if constexpr (submit_callback_can_signal_present<SubmitCbT>()) {
+                submission_fence = 0;
+                submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/true,
+                                                   &submission_fence);
+              }
+            }
+          }
+        }
+
+        if (!SUCCEEDED(submit_hr)) {
+          if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
+            if (dev->wddm_callbacks.pfnRenderCb) {
+              submission_fence = 0;
+              submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
+                                                 &submission_fence);
+            }
+          }
+        }
+      } else {
         if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
           if (dev->wddm_callbacks.pfnRenderCb) {
             submission_fence = 0;
-            submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/is_present,
+            submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/false,
                                                &submission_fence);
+          }
+        }
+
+        if (!SUCCEEDED(submit_hr)) {
+          if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
+            if (dev->wddm_callbacks.pfnSubmitCommandCb) {
+              submission_fence = 0;
+              submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/false,
+                                                 &submission_fence);
+            }
           }
         }
       }
@@ -9231,6 +9306,32 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
 
   dev->wddm_callbacks = *pCreateDevice->pCallbacks;
+
+  {
+    static std::once_flag wddm_cb_once;
+    std::call_once(wddm_cb_once, [dev] {
+      const void* submit_cb = nullptr;
+      const void* render_cb = nullptr;
+      const void* present_cb = nullptr;
+      bool submit_cb_can_present = false;
+      if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
+        submit_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnSubmitCommandCb);
+        using SubmitCbT = decltype(dev->wddm_callbacks.pfnSubmitCommandCb);
+        submit_cb_can_present = submit_callback_can_signal_present<SubmitCbT>();
+      }
+      if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
+        render_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnRenderCb);
+      }
+      if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
+        present_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnPresentCb);
+      }
+      aerogpu::logf("aerogpu-d3d9: WDDM callbacks SubmitCommandCb=%p RenderCb=%p PresentCb=%p\n",
+                    submit_cb, render_cb, present_cb);
+      if (submit_cb) {
+        aerogpu::logf("aerogpu-d3d9: SubmitCommandCb can_signal_present=%u\n", submit_cb_can_present ? 1u : 0u);
+      }
+    });
+  }
 
   HRESULT hr = wddm_create_device(dev->wddm_callbacks, adapter, &dev->wddm_device);
   if (FAILED(hr)) {

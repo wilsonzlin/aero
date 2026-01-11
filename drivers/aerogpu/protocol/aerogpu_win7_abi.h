@@ -44,6 +44,18 @@ typedef uint64_t aerogpu_win7_u64;
 #define AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES 16u
 
 /*
+ * Driver-private submission types written into AEROGPU_DMA_PRIV::Type.
+ *
+ * These values are part of the stable Win7 user↔kernel ABI (UMD -> dxgkrnl -> KMD)
+ * and must remain consistent across architectures and header sets.
+ */
+#ifndef AEROGPU_SUBMIT_RENDER
+#define AEROGPU_SUBMIT_RENDER 1u
+#define AEROGPU_SUBMIT_PRESENT 2u
+#define AEROGPU_SUBMIT_PAGING 3u
+#endif
+
+/*
  * Per-DMA-buffer private data.
  *
  * NOTE: This is a driver-private user→kernel ABI blob (UMD -> dxgkrnl -> KMD).

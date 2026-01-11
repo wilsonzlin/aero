@@ -22,6 +22,20 @@ The command stream does **not** reference resources by a per-submission “alloc
 - For **shared** allocations, `alloc_id` should avoid collisions across guest processes: DWM may open and compose many redirected surfaces from different processes in a single submission, and the per-submit allocation table is keyed by `alloc_id`.
 - `backing_alloc_id = 0` means “host allocated” (no guest backing). Portable/non-WDDM builds typically use host-allocated resources and leave `backing_alloc_id = 0`. In Win7/WDDM builds, most default-pool resources are backed by WDDM allocations and use non-zero `alloc_id` values so the KMD can build a per-submit `alloc_id → GPA` table for the emulator.
 
+## Win7/WDDM submission callbacks (render vs present)
+
+On Win7/WDDM 1.1, the D3D9 runtime provides a `D3DDDI_DEVICECALLBACKS` table during `CreateDevice`. The UMD must submit DMA buffers back to dxgkrnl via these callbacks so the KMD can:
+
+- distinguish **render** vs **present** submissions (`DxgkDdiRender` vs `DxgkDdiPresent`), and
+- build/attach the per-submit allocation table (`alloc_id → GPA`) for guest-backed resources.
+
+In practice, different header/runtime combinations can expose different callback entrypoints. The AeroGPU D3D9 UMD prefers:
+
+1. `pfnPresentCb` for present submissions and `pfnRenderCb` for render submissions, and
+2. falls back to `pfnSubmitCommandCb` (`D3DDDIARG_SUBMITCOMMAND`) when needed (only using it for present submissions when the callback args can unambiguously signal “present”).
+
+The UMD logs the available callback pointers once at `CreateDevice` so Win7 bring-up can confirm which path the runtime is using.
+
 ## Command stream writer
 
 UMD command emission uses a small serialization helper in:

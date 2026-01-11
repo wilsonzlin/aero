@@ -3654,6 +3654,8 @@ bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
 
   size_t vb_uploaded_bytes = 0;
   size_t ib_uploaded_bytes = 0;
+  // Buffer uploads are padded to 4-byte alignment so host-side WebGPU copies
+  // remain valid for non-4-byte-sized payloads (e.g. 3x u16 indices).
   const size_t expected_ib_bytes = AlignUp(sizeof(indices), 4);
   std::vector<uint8_t> ib_upload(expected_ib_bytes, 0);
   bool saw_set_ib = false;
