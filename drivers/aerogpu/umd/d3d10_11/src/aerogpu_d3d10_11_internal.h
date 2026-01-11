@@ -175,6 +175,10 @@ struct Adapter {
 
   aerogpu_umd_private_v1 umd_private = {};
   bool umd_private_valid = false;
+  // Optional kernel adapter handle (D3DKMT_HANDLE in the WDK headers), opened via
+  // D3DKMTOpenAdapterFromHdc for direct D3DKMT calls. Stored as u32 so this
+  // shared header stays WDK-independent.
+  uint32_t kmt_adapter = 0;
 
   std::mutex fence_mutex;
   std::condition_variable fence_cv;
