@@ -1,37 +1,20 @@
 use aero_gpu_trace::{AerogpuMemoryRangeCapture, TraceMeta, TraceReader, TraceWriter};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::{
     AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
+    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_SUBMIT_FLAG_PRESENT,
 };
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-const AEROGPU_CMD_STREAM_MAGIC: u32 = 0x444D_4341; // "ACMD"
-
-// Submission flags (see drivers/aerogpu/protocol/aerogpu_ring.h)
-const AEROGPU_SUBMIT_FLAG_PRESENT: u32 = 1 << 0;
-
-// Command opcodes (see drivers/aerogpu/protocol/aerogpu_cmd.h)
-const CMD_CREATE_BUFFER: u32 = 0x100;
-const CMD_CREATE_TEXTURE2D: u32 = 0x101;
-const CMD_SET_RENDER_TARGETS: u32 = 0x400;
-const CMD_SET_VIEWPORT: u32 = 0x401;
-const CMD_SET_VERTEX_BUFFERS: u32 = 0x500;
-const CMD_SET_PRIMITIVE_TOPOLOGY: u32 = 0x502;
-const CMD_CLEAR: u32 = 0x600;
-const CMD_DRAW: u32 = 0x601;
-const CMD_PRESENT: u32 = 0x700;
-
-const AEROGPU_ALLOC_TABLE_MAGIC: u32 = 0x434F_4C41; // "ALOC"
-
-const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
-
-const AEROGPU_CLEAR_COLOR: u32 = 1 << 0;
-const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = 4;
+const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = AerogpuPrimitiveTopology::TriangleList as u32;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -71,13 +54,14 @@ fn emit_packet(bytes: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u
 
 fn build_cmd_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let mut bytes = Vec::new();
-    // aerogpu_cmd_stream_header (24 bytes)
+    // aerogpu_cmd_stream_header
     push_u32(&mut bytes, AEROGPU_CMD_STREAM_MAGIC);
     push_u32(&mut bytes, AEROGPU_ABI_VERSION_U32);
     push_u32(&mut bytes, 0); // size_bytes (patched later)
     push_u32(&mut bytes, 0); // flags
     push_u32(&mut bytes, 0); // reserved0
     push_u32(&mut bytes, 0); // reserved1
+    assert_eq!(bytes.len(), ProtocolCmdStreamHeader::SIZE_BYTES);
 
     packets(&mut bytes);
 
@@ -89,6 +73,7 @@ fn build_cmd_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
 
 fn build_alloc_table(vertex_gpa: u64, vertex_bytes: &[u8]) -> Vec<u8> {
     let entry_stride = ProtocolAllocEntry::SIZE_BYTES as u32;
+    let header_size = ProtocolAllocTableHeader::SIZE_BYTES as u32;
 
     let mut bytes = Vec::new();
     push_u32(&mut bytes, AEROGPU_ALLOC_TABLE_MAGIC);
@@ -97,6 +82,7 @@ fn build_alloc_table(vertex_gpa: u64, vertex_bytes: &[u8]) -> Vec<u8> {
     push_u32(&mut bytes, 1); // entry_count
     push_u32(&mut bytes, entry_stride);
     push_u32(&mut bytes, 0); // reserved0
+    assert_eq!(bytes.len(), header_size as usize);
 
     // aerogpu_alloc_entry
     push_u32(&mut bytes, 1); // alloc_id
@@ -130,9 +116,9 @@ fn generate_trace() -> Vec<u8> {
 
     let cmd_stream = build_cmd_stream(|out| {
         // CREATE_BUFFER (handle=1), backed by alloc_id 1.
-        emit_packet(out, CMD_CREATE_BUFFER, |p| {
+        emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |p| {
             push_u32(p, 1); // buffer_handle
-            push_u32(p, 1 << 0); // usage_flags: VERTEX_BUFFER
+            push_u32(p, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
             push_u64(p, vertex_bytes.len() as u64);
             push_u32(p, 1); // backing_alloc_id
             push_u32(p, 0); // backing_offset_bytes
@@ -140,9 +126,9 @@ fn generate_trace() -> Vec<u8> {
         });
 
         // CREATE_TEXTURE2D (handle=2) as render target.
-        emit_packet(out, CMD_CREATE_TEXTURE2D, |p| {
+        emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |p| {
             push_u32(p, 2); // texture_handle
-            push_u32(p, 1 << 4); // usage_flags: RENDER_TARGET
+            push_u32(p, AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
             push_u32(p, AEROGPU_FORMAT_R8G8B8A8_UNORM);
             push_u32(p, 64); // width
             push_u32(p, 64); // height
@@ -155,7 +141,7 @@ fn generate_trace() -> Vec<u8> {
         });
 
         // SET_RENDER_TARGETS: color0 = texture 2.
-        emit_packet(out, CMD_SET_RENDER_TARGETS, |p| {
+        emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |p| {
             push_u32(p, 1); // color_count
             push_u32(p, 0); // depth_stencil
             push_u32(p, 2); // colors[0]
@@ -165,7 +151,7 @@ fn generate_trace() -> Vec<u8> {
         });
 
         // SET_VIEWPORT: full target.
-        emit_packet(out, CMD_SET_VIEWPORT, |p| {
+        emit_packet(out, AerogpuCmdOpcode::SetViewport as u32, |p| {
             push_f32_bits(p, 0.0);
             push_f32_bits(p, 0.0);
             push_f32_bits(p, 64.0);
@@ -175,7 +161,7 @@ fn generate_trace() -> Vec<u8> {
         });
 
         // CLEAR: opaque black.
-        emit_packet(out, CMD_CLEAR, |p| {
+        emit_packet(out, AerogpuCmdOpcode::Clear as u32, |p| {
             push_u32(p, AEROGPU_CLEAR_COLOR);
             push_f32_bits(p, 0.0);
             push_f32_bits(p, 0.0);
@@ -186,7 +172,7 @@ fn generate_trace() -> Vec<u8> {
         });
 
         // SET_VERTEX_BUFFERS: slot0 = buffer 1.
-        emit_packet(out, CMD_SET_VERTEX_BUFFERS, |p| {
+        emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |p| {
             push_u32(p, 0); // start_slot
             push_u32(p, 1); // buffer_count
                             // aerogpu_vertex_buffer_binding
@@ -196,13 +182,13 @@ fn generate_trace() -> Vec<u8> {
             push_u32(p, 0); // reserved0
         });
 
-        emit_packet(out, CMD_SET_PRIMITIVE_TOPOLOGY, |p| {
+        emit_packet(out, AerogpuCmdOpcode::SetPrimitiveTopology as u32, |p| {
             push_u32(p, AEROGPU_TOPOLOGY_TRIANGLELIST);
             push_u32(p, 0);
         });
 
         // DRAW: 3 vertices, 1 instance.
-        emit_packet(out, CMD_DRAW, |p| {
+        emit_packet(out, AerogpuCmdOpcode::Draw as u32, |p| {
             push_u32(p, 3); // vertex_count
             push_u32(p, 1); // instance_count
             push_u32(p, 0); // first_vertex
@@ -210,7 +196,7 @@ fn generate_trace() -> Vec<u8> {
         });
 
         // PRESENT.
-        emit_packet(out, CMD_PRESENT, |p| {
+        emit_packet(out, AerogpuCmdOpcode::Present as u32, |p| {
             push_u32(p, 0); // scanout_id
             push_u32(p, 0); // flags
         });

@@ -1,7 +1,7 @@
 use aero_gpu_trace::{BlobKind, TraceReadError, TraceReader, TraceRecord};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuPrimitiveTopology,
-    AEROGPU_CLEAR_COLOR,
+    AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use sha2::{Digest, Sha256};
@@ -241,7 +241,9 @@ impl AerogpuSoftwareExecutor {
             match packet.opcode {
                 Some(AerogpuCmdOpcode::Nop) | Some(AerogpuCmdOpcode::DebugMarker) => {}
                 Some(AerogpuCmdOpcode::CreateBuffer) => self.cmd_create_buffer(packet.payload, mem)?,
-                Some(AerogpuCmdOpcode::CreateTexture2d) => self.cmd_create_texture2d(packet.payload, mem)?,
+                Some(AerogpuCmdOpcode::CreateTexture2d) => {
+                    self.cmd_create_texture2d(packet.payload, mem)?
+                }
                 Some(AerogpuCmdOpcode::DestroyResource) => self.cmd_destroy_resource(packet.payload)?,
                 Some(AerogpuCmdOpcode::SetRenderTargets) => self.cmd_set_render_targets(packet.payload)?,
                 Some(AerogpuCmdOpcode::SetViewport) => self.cmd_set_viewport(packet.payload)?,
@@ -394,7 +396,7 @@ impl AerogpuSoftwareExecutor {
         if start_slot != 0 {
             return Err("only start_slot=0 supported".into());
         }
-        let expected = 8 + buffer_count * 16;
+        let expected = 8 + buffer_count * AerogpuVertexBufferBinding::SIZE_BYTES;
         if payload.len() < expected {
             return Err("SET_VERTEX_BUFFERS payload truncated".into());
         }
