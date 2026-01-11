@@ -190,6 +190,13 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnSetClipPlane);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetShaderConstI);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetShaderConstB);
 
+// OpenResource arg fields (vary across WDK versions).
+AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
+AEROGPU_DEFINE_HAS_MEMBER(hAllocations);
+AEROGPU_DEFINE_HAS_MEMBER(phAllocation);
+AEROGPU_DEFINE_HAS_MEMBER(pOpenAllocationInfo);
+AEROGPU_DEFINE_HAS_MEMBER(NumAllocations);
+
 #undef AEROGPU_DEFINE_HAS_MEMBER
 #endif
 
@@ -3018,6 +3025,50 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   return trace.ret(S_OK);
 }
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+template <typename OpenResourceT>
+WddmAllocationHandle get_wddm_allocation_from_openresource(const OpenResourceT* open_resource) {
+  if (!open_resource) {
+    return 0;
+  }
+
+  if constexpr (aerogpu_has_member_hAllocation<OpenResourceT>::value) {
+    return static_cast<WddmAllocationHandle>(open_resource->hAllocation);
+  }
+
+  if constexpr (aerogpu_has_member_hAllocations<OpenResourceT>::value) {
+    const auto& h_allocations = open_resource->hAllocations;
+    using AllocationsT = std::remove_reference_t<decltype(h_allocations)>;
+    if constexpr (std::is_array_v<AllocationsT>) {
+      return static_cast<WddmAllocationHandle>(h_allocations[0]);
+    } else if constexpr (std::is_pointer_v<AllocationsT>) {
+      if (h_allocations) {
+        return static_cast<WddmAllocationHandle>(h_allocations[0]);
+      }
+    } else if constexpr (std::is_integral_v<AllocationsT>) {
+      return static_cast<WddmAllocationHandle>(h_allocations);
+    }
+  }
+
+  if constexpr (aerogpu_has_member_phAllocation<OpenResourceT>::value && aerogpu_has_member_NumAllocations<OpenResourceT>::value) {
+    if (open_resource->phAllocation && open_resource->NumAllocations) {
+      return static_cast<WddmAllocationHandle>(open_resource->phAllocation[0]);
+    }
+  }
+
+  if constexpr (aerogpu_has_member_pOpenAllocationInfo<OpenResourceT>::value && aerogpu_has_member_NumAllocations<OpenResourceT>::value) {
+    if (open_resource->pOpenAllocationInfo && open_resource->NumAllocations) {
+      using InfoT = std::remove_pointer_t<decltype(open_resource->pOpenAllocationInfo)>;
+      if constexpr (aerogpu_has_member_hAllocation<InfoT>::value) {
+        return static_cast<WddmAllocationHandle>(open_resource->pOpenAllocationInfo[0].hAllocation);
+      }
+    }
+  }
+
+  return 0;
+}
+#endif
+
 static HRESULT device_open_resource_impl(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
@@ -3054,6 +3105,16 @@ static HRESULT device_open_resource_impl(
   res->share_token = priv.share_token;
   res->backing_alloc_id = priv.alloc_id;
   res->backing_offset_bytes = 0;
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  res->wddm_hAllocation = get_wddm_allocation_from_openresource(reinterpret_cast<const D3D9DDIARG_OPENRESOURCE*>(pOpenResource));
+#else
+  res->wddm_hAllocation = static_cast<WddmAllocationHandle>(pOpenResource->wddm_hAllocation);
+#endif
+  if (dev->wddm_context.hContext != 0 && res->backing_alloc_id != 0 && res->wddm_hAllocation == 0) {
+    logf("aerogpu-d3d9: OpenResource missing WDDM hAllocation (alloc_id=%u)\n", res->backing_alloc_id);
+    return E_FAIL;
+  }
 
   res->type = pOpenResource->type;
   res->format = pOpenResource->format;
@@ -3120,10 +3181,11 @@ static HRESULT device_open_resource_impl(
     return E_OUTOFMEMORY;
   }
 
-  logf("aerogpu-d3d9: import shared_surface out_res=%u token=%llu alloc_id=%u\n",
+  logf("aerogpu-d3d9: import shared_surface out_res=%u token=%llu alloc_id=%u hAllocation=0x%08x\n",
        res->handle,
        static_cast<unsigned long long>(res->share_token),
-       static_cast<unsigned>(res->backing_alloc_id));
+       static_cast<unsigned>(res->backing_alloc_id),
+       static_cast<unsigned>(res->wddm_hAllocation));
 
   pOpenResource->hResource.pDrvPrivate = res.release();
   return S_OK;

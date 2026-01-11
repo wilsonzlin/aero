@@ -148,6 +148,8 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnBlt)
 AEROGPU_DEFINE_HAS_MEMBER(pfnColorFill)
 AEROGPU_DEFINE_HAS_MEMBER(pfnUpdateSurface)
 AEROGPU_DEFINE_HAS_MEMBER(pfnUpdateTexture)
+AEROGPU_DEFINE_HAS_MEMBER(pfnOpenResource)
+AEROGPU_DEFINE_HAS_MEMBER(pfnOpenResource2)
 
 // Commonly hit by DWM and simple D3D9 apps (fixed function / legacy paths).
 AEROGPU_DEFINE_HAS_MEMBER(pfnBeginScene)
@@ -201,6 +203,8 @@ AEROGPU_DEFINE_HAS_MEMBER(EngineAffinity)
 AEROGPU_DEFINE_HAS_MEMBER(Flags)
 AEROGPU_DEFINE_HAS_MEMBER(pPrivateDriverData)
 AEROGPU_DEFINE_HAS_MEMBER(PrivateDriverDataSize)
+AEROGPU_DEFINE_HAS_MEMBER(phAllocation)
+AEROGPU_DEFINE_HAS_MEMBER(pOpenAllocationInfo)
 
 AEROGPU_DEFINE_HAS_MEMBER(pCommandBuffer)
 AEROGPU_DEFINE_HAS_MEMBER(CommandLength)
@@ -331,6 +335,22 @@ static void probe_function_tables() {
   AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnSetTransform)
   AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnMultiplyTransform)
   AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnSetClipPlane)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnOpenResource)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnOpenResource2)
+}
+
+static void probe_openresource_structs() {
+  print_header("OpenResource arg structs");
+
+  print_sizeof("D3D9DDIARG_OPENRESOURCE", sizeof(D3D9DDIARG_OPENRESOURCE));
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDIARG_OPENRESOURCE, hResource)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDIARG_OPENRESOURCE, hAllocation)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDIARG_OPENRESOURCE, hAllocations)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDIARG_OPENRESOURCE, phAllocation)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDIARG_OPENRESOURCE, pOpenAllocationInfo)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDIARG_OPENRESOURCE, NumAllocations)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDIARG_OPENRESOURCE, pPrivateDriverData)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDIARG_OPENRESOURCE, PrivateDriverDataSize)
 }
 
 static void probe_device_callbacks() {
@@ -512,6 +532,7 @@ int main() {
   probe_export_decorations();
   probe_openadapter_structs();
   probe_function_tables();
+  probe_openresource_structs();
   probe_device_callbacks();
   probe_submit_structs();
   probe_submit_callbacks();

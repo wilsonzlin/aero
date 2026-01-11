@@ -658,6 +658,12 @@ typedef struct AEROGPU_D3D9DDIARG_OPENRESOURCE {
   uint32_t size; // for buffers
 
   AEROGPU_D3D9DDI_HRESOURCE hResource; // out
+
+  // Optional WDDM allocation handle for this resource's backing store
+  // (per-process). This is required to build the WDDM allocation list for
+  // submissions when using `backing_alloc_id` references (no patch list).
+  // 0 if not provided / not applicable in compat builds.
+  uint32_t wddm_hAllocation;
 } AEROGPU_D3D9DDIARG_OPENRESOURCE;
 
 typedef struct AEROGPU_D3D9DDIARG_LOCK {
