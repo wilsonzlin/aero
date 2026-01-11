@@ -120,13 +120,18 @@ errors.push(
 // Any other Compose manifests are treated as reference-only examples, since the
 // canonical production entry point is `deploy/docker-compose.yml`.
 const tracked = gitTrackedFiles();
-const composeManifests = [
-  ...tracked.filter((path) => {
-    const base = path.split('/').at(-1) ?? path;
-    return (base.startsWith('docker-compose') && (base.endsWith('.yml') || base.endsWith('.yaml'))) || false;
-  }),
-  ...tracked.filter((path) => path.endsWith('compose.yaml') || path.endsWith('compose.yml')),
-];
+const composeManifests = Array.from(
+  new Set([
+    ...tracked.filter((path) => {
+      const base = path.split('/').at(-1) ?? path;
+      return (base.startsWith('docker-compose') && (base.endsWith('.yml') || base.endsWith('.yaml'))) || false;
+    }),
+    ...tracked.filter((path) => {
+      const base = path.split('/').at(-1) ?? path;
+      return base === 'compose.yaml' || base === 'compose.yml';
+    }),
+  ]),
+);
 
 for (const relPath of composeManifests) {
   if (relPath === 'deploy/docker-compose.yml') continue;
