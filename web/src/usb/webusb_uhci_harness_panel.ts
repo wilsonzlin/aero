@@ -19,10 +19,19 @@ export type UhciHarnessDrainResult = {
 };
 
 function normalizeActionId(value: unknown): number {
-  if (typeof value === "number") return value;
+  const maxU32 = 0xffff_ffff;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0 || value > maxU32) {
+      throw new Error(`Expected action id to be uint32, got ${String(value)}`);
+    }
+    return value;
+  }
   if (typeof value === "bigint") {
-    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new Error(`USB action id is too large for JS number: ${value.toString()}`);
+    if (value < 0n) {
+      throw new Error(`Expected action id to be non-negative, got ${value.toString()}`);
+    }
+    if (value > BigInt(maxU32)) {
+      throw new Error(`Expected action id to fit in uint32, got ${value.toString()}`);
     }
     return Number(value);
   }
@@ -36,8 +45,12 @@ function normalizeBytes(value: unknown): Uint8Array {
     return new Uint8Array(value);
   }
   if (Array.isArray(value)) {
-    if (!value.every((v) => typeof v === "number")) {
-      throw new Error("Expected byte array to contain only numbers");
+    if (
+      !value.every(
+        (v) => typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) && v >= 0 && v <= 0xff,
+      )
+    ) {
+      throw new Error("Expected byte array to contain only uint8 numbers");
     }
     return Uint8Array.from(value as number[]);
   }
