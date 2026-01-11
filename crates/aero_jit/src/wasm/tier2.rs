@@ -5,10 +5,14 @@ use wasm_encoder::{
 
 use aero_types::{Flag, Gpr, Width};
 
-use crate::cpu::CpuState;
+use crate::abi::{CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, RFLAGS_RESERVED1};
 use crate::opt::RegAllocPlan;
 use crate::t2_ir::{BinOp, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
-use crate::wasm::{IMPORT_MEMORY, IMPORT_MODULE};
+use crate::wasm::{
+    IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
+    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
+    IMPORT_MEMORY, IMPORT_MODULE,
+};
 
 /// Export name for a compiled Tier-2 trace.
 pub const EXPORT_TRACE_FN: &str = "trace";
@@ -16,12 +20,19 @@ pub const EXPORT_TRACE_FN: &str = "trace";
 /// Import that returns the current code page version for self-modifying code guards.
 pub const IMPORT_CODE_PAGE_VERSION: &str = "code_page_version";
 
-/// `CpuState` does not currently contain architectural flags. Tier-2 traces store a full `u64`
-/// RFLAGS value in linear memory so that guards can deopt with a consistent architectural state.
-///
-/// We place it after the Tier-1 JIT TLB region (`CpuState::TOTAL_BYTE_SIZE`) so Tier-2 execution
-/// does not clobber the baseline fast-path metadata.
-pub const RFLAGS_OFFSET: u32 = CpuState::TOTAL_BYTE_SIZE as u32;
+#[derive(Clone, Copy)]
+struct ImportedFuncs {
+    mem_read_u8: u32,
+    mem_read_u16: u32,
+    mem_read_u32: u32,
+    mem_read_u64: u32,
+    mem_write_u8: u32,
+    mem_write_u16: u32,
+    mem_write_u32: u32,
+    mem_write_u64: u32,
+    code_page_version: u32,
+    count: u32,
+}
 
 pub struct Tier2WasmCodegen;
 
@@ -35,9 +46,8 @@ impl Tier2WasmCodegen {
     /// ABI:
     /// - export `trace(cpu_ptr: i32) -> i64` (returns `next_rip`)
     /// - import `env.memory`
+    /// - import memory helpers described by the `IMPORT_MEM_*` constants
     /// - import `env.code_page_version(page: i64) -> i64`
-    ///
-    /// The trace spills cached registers + the `RFLAGS_OFFSET` value on every side exit.
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
         let value_count = max_value_id(trace).max(1);
         let i64_locals = 2 + plan.local_count + value_count; // next_rip + rflags + cached regs + values
@@ -45,6 +55,38 @@ impl Tier2WasmCodegen {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
+        let ty_mem_read_u8 = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64], [ValType::I32]);
+        let ty_mem_read_u16 = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64], [ValType::I32]);
+        let ty_mem_read_u32 = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64], [ValType::I32]);
+        let ty_mem_read_u64 = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64], [ValType::I64]);
+        let ty_mem_write_u8 = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64, ValType::I32], []);
+        let ty_mem_write_u16 = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64, ValType::I32], []);
+        let ty_mem_write_u32 = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64, ValType::I32], []);
+        let ty_mem_write_u64 = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64, ValType::I64], []);
         let ty_code_page_version = types.len();
         types.ty().function([ValType::I64], [ValType::I64]);
         let ty_trace = types.len();
@@ -63,6 +105,62 @@ impl Tier2WasmCodegen {
                 page_size_log2: None,
             },
         );
+
+        let func_base = 0u32;
+        let mut next_func = func_base;
+        let imported = ImportedFuncs {
+            mem_read_u8: next(&mut next_func),
+            mem_read_u16: next(&mut next_func),
+            mem_read_u32: next(&mut next_func),
+            mem_read_u64: next(&mut next_func),
+            mem_write_u8: next(&mut next_func),
+            mem_write_u16: next(&mut next_func),
+            mem_write_u32: next(&mut next_func),
+            mem_write_u64: next(&mut next_func),
+            code_page_version: next(&mut next_func),
+            count: next_func - func_base,
+        };
+
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEM_READ_U8,
+            EntityType::Function(ty_mem_read_u8),
+        );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEM_READ_U16,
+            EntityType::Function(ty_mem_read_u16),
+        );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEM_READ_U32,
+            EntityType::Function(ty_mem_read_u32),
+        );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEM_READ_U64,
+            EntityType::Function(ty_mem_read_u64),
+        );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEM_WRITE_U8,
+            EntityType::Function(ty_mem_write_u8),
+        );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEM_WRITE_U16,
+            EntityType::Function(ty_mem_write_u16),
+        );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEM_WRITE_U32,
+            EntityType::Function(ty_mem_write_u32),
+        );
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_MEM_WRITE_U64,
+            EntityType::Function(ty_mem_write_u64),
+        );
         imports.import(
             IMPORT_MODULE,
             IMPORT_CODE_PAGE_VERSION,
@@ -76,7 +174,7 @@ impl Tier2WasmCodegen {
 
         let mut exports = ExportSection::new();
         // function indices include imported functions. Memory imports do not count.
-        exports.export(EXPORT_TRACE_FN, ExportKind::Func, 1);
+        exports.export(EXPORT_TRACE_FN, ExportKind::Func, imported.count);
         module.section(&exports);
 
         let layout = Layout::new(plan, value_count, i64_locals);
@@ -86,21 +184,22 @@ impl Tier2WasmCodegen {
 
         // Load cached regs into locals.
         for reg in all_gprs() {
-            if let Some(local) = plan.local_for_reg[reg.as_u8() as usize] {
+            let idx = reg.as_u8() as usize;
+            if let Some(local) = plan.local_for_reg[idx] {
                 f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-                f.instruction(&Instruction::I64Load(memarg(CpuState::gpr_offset(reg), 3)));
+                f.instruction(&Instruction::I64Load(memarg(CPU_GPR_OFF[idx], 3)));
                 f.instruction(&Instruction::LocalSet(layout.reg_local(local)));
             }
         }
 
         // next_rip defaults to current cpu.rip.
         f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        f.instruction(&Instruction::I64Load(memarg(CpuState::RIP_OFFSET, 3)));
+        f.instruction(&Instruction::I64Load(memarg(CPU_RIP_OFF, 3)));
         f.instruction(&Instruction::LocalSet(layout.next_rip_local()));
 
-        // Load initial RFLAGS value. Missing flag state defaults to 0.
+        // Load RFLAGS.
         f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        f.instruction(&Instruction::I64Load(memarg(RFLAGS_OFFSET, 3)));
+        f.instruction(&Instruction::I64Load(memarg(CPU_RFLAGS_OFF, 3)));
         f.instruction(&Instruction::LocalSet(layout.rflags_local()));
 
         // Single exit block.
@@ -109,8 +208,8 @@ impl Tier2WasmCodegen {
         let mut emitter = Emitter {
             f: &mut f,
             layout,
+            imported,
             depth: 0,
-            code_page_version_func: 0,
         };
 
         emitter.emit_instrs(&trace.prologue);
@@ -134,10 +233,11 @@ impl Tier2WasmCodegen {
 
         // Spill cached regs (only those that are written by the trace).
         for reg in all_gprs() {
-            if !written_cached_regs[reg.as_u8() as usize] {
+            let idx = reg.as_u8() as usize;
+            if !written_cached_regs[idx] {
                 continue;
             }
-            if let Some(local) = plan.local_for_reg[reg.as_u8() as usize] {
+            if let Some(local) = plan.local_for_reg[idx] {
                 emitter
                     .f
                     .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
@@ -146,11 +246,11 @@ impl Tier2WasmCodegen {
                     .instruction(&Instruction::LocalGet(layout.reg_local(local)));
                 emitter
                     .f
-                    .instruction(&Instruction::I64Store(memarg(CpuState::gpr_offset(reg), 3)));
+                    .instruction(&Instruction::I64Store(memarg(CPU_GPR_OFF[idx], 3)));
             }
         }
 
-        // Spill RFLAGS.
+        // Spill RFLAGS (force reserved bit 1).
         emitter
             .f
             .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
@@ -159,7 +259,11 @@ impl Tier2WasmCodegen {
             .instruction(&Instruction::LocalGet(layout.rflags_local()));
         emitter
             .f
-            .instruction(&Instruction::I64Store(memarg(RFLAGS_OFFSET, 3)));
+            .instruction(&Instruction::I64Const(RFLAGS_RESERVED1 as i64));
+        emitter.f.instruction(&Instruction::I64Or);
+        emitter
+            .f
+            .instruction(&Instruction::I64Store(memarg(CPU_RFLAGS_OFF, 3)));
 
         // Store RIP.
         emitter
@@ -170,7 +274,7 @@ impl Tier2WasmCodegen {
             .instruction(&Instruction::LocalGet(layout.next_rip_local()));
         emitter
             .f
-            .instruction(&Instruction::I64Store(memarg(CpuState::RIP_OFFSET, 3)));
+            .instruction(&Instruction::I64Store(memarg(CPU_RIP_OFF, 3)));
 
         // Return next_rip.
         emitter
@@ -244,9 +348,9 @@ impl Layout {
 struct Emitter<'a> {
     f: &'a mut Function,
     layout: Layout,
+    imported: ImportedFuncs,
     /// Current nesting depth inside the exit block.
     depth: u32,
-    code_page_version_func: u32,
 }
 
 impl Emitter<'_> {
@@ -268,10 +372,11 @@ impl Emitter<'_> {
                 if let Some(local) = self.reg_local_for(reg) {
                     self.f.instruction(&Instruction::LocalGet(local));
                 } else {
+                    let idx = reg.as_u8() as usize;
                     self.f
                         .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
                     self.f
-                        .instruction(&Instruction::I64Load(memarg(CpuState::gpr_offset(reg), 3)));
+                        .instruction(&Instruction::I64Load(memarg(CPU_GPR_OFF[idx], 3)));
                 }
                 self.f
                     .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
@@ -281,11 +386,12 @@ impl Emitter<'_> {
                     self.emit_operand(src);
                     self.f.instruction(&Instruction::LocalSet(local));
                 } else {
+                    let idx = reg.as_u8() as usize;
                     self.f
                         .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
                     self.emit_operand(src);
                     self.f
-                        .instruction(&Instruction::I64Store(memarg(CpuState::gpr_offset(reg), 3)));
+                        .instruction(&Instruction::I64Store(memarg(CPU_GPR_OFF[idx], 3)));
                 }
             }
             Instr::LoadFlag { dst, flag } => {
@@ -326,27 +432,10 @@ impl Emitter<'_> {
                     .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
             }
             Instr::LoadMem { dst, addr, width } => {
-                self.emit_operand(addr);
-                self.f.instruction(&Instruction::I32WrapI64);
-                match width {
-                    Width::W8 => self.f.instruction(&Instruction::I64Load8U(memarg(0, 0))),
-                    Width::W16 => self.f.instruction(&Instruction::I64Load16U(memarg(0, 1))),
-                    Width::W32 => self.f.instruction(&Instruction::I64Load32U(memarg(0, 2))),
-                    Width::W64 => self.f.instruction(&Instruction::I64Load(memarg(0, 3))),
-                };
-                self.f
-                    .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
+                self.emit_load_mem(dst, addr, width);
             }
             Instr::StoreMem { addr, src, width } => {
-                self.emit_operand(addr);
-                self.f.instruction(&Instruction::I32WrapI64);
-                self.emit_operand(src);
-                match width {
-                    Width::W8 => self.f.instruction(&Instruction::I64Store8(memarg(0, 0))),
-                    Width::W16 => self.f.instruction(&Instruction::I64Store16(memarg(0, 1))),
-                    Width::W32 => self.f.instruction(&Instruction::I64Store32(memarg(0, 2))),
-                    Width::W64 => self.f.instruction(&Instruction::I64Store(memarg(0, 3))),
-                };
+                self.emit_store_mem(addr, src, width);
             }
             Instr::Guard {
                 cond,
@@ -377,7 +466,7 @@ impl Emitter<'_> {
             } => {
                 self.f.instruction(&Instruction::I64Const(page as i64));
                 self.f
-                    .instruction(&Instruction::Call(self.code_page_version_func));
+                    .instruction(&Instruction::Call(self.imported.code_page_version));
                 self.f.instruction(&Instruction::I64Const(expected as i64));
                 self.f.instruction(&Instruction::I64Ne);
                 self.f.instruction(&Instruction::If(BlockType::Empty));
@@ -657,6 +746,72 @@ impl Emitter<'_> {
         self.f.instruction(&Instruction::I32And);
         self.f.instruction(&Instruction::I32Eqz);
     }
+
+    fn emit_load_mem(&mut self, dst: ValueId, addr: Operand, width: Width) {
+        self.f
+            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+        self.emit_operand(addr);
+
+        match width {
+            Width::W8 => {
+                self.f.instruction(&Instruction::Call(self.imported.mem_read_u8));
+                self.f.instruction(&Instruction::I64ExtendI32U);
+            }
+            Width::W16 => {
+                self.f
+                    .instruction(&Instruction::Call(self.imported.mem_read_u16));
+                self.f.instruction(&Instruction::I64ExtendI32U);
+            }
+            Width::W32 => {
+                self.f
+                    .instruction(&Instruction::Call(self.imported.mem_read_u32));
+                self.f.instruction(&Instruction::I64ExtendI32U);
+            }
+            Width::W64 => {
+                self.f
+                    .instruction(&Instruction::Call(self.imported.mem_read_u64));
+            }
+        }
+
+        self.f
+            .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
+    }
+
+    fn emit_store_mem(&mut self, addr: Operand, src: Operand, width: Width) {
+        self.f
+            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+        self.emit_operand(addr);
+        self.emit_operand(src);
+
+        match width {
+            Width::W8 => {
+                self.f.instruction(&Instruction::I64Const(0xff));
+                self.f.instruction(&Instruction::I64And);
+                self.f.instruction(&Instruction::I32WrapI64);
+                self.f
+                    .instruction(&Instruction::Call(self.imported.mem_write_u8));
+            }
+            Width::W16 => {
+                self.f.instruction(&Instruction::I64Const(0xffff));
+                self.f.instruction(&Instruction::I64And);
+                self.f.instruction(&Instruction::I32WrapI64);
+                self.f
+                    .instruction(&Instruction::Call(self.imported.mem_write_u16));
+            }
+            Width::W32 => {
+                self.f
+                    .instruction(&Instruction::I64Const(0xffff_ffffu64 as i64));
+                self.f.instruction(&Instruction::I64And);
+                self.f.instruction(&Instruction::I32WrapI64);
+                self.f
+                    .instruction(&Instruction::Call(self.imported.mem_write_u32));
+            }
+            Width::W64 => {
+                self.f
+                    .instruction(&Instruction::Call(self.imported.mem_write_u64));
+            }
+        }
+    }
 }
 
 fn memarg(offset: u32, align: u32) -> MemArg {
@@ -665,6 +820,12 @@ fn memarg(offset: u32, align: u32) -> MemArg {
         align,
         memory_index: 0,
     }
+}
+
+fn next(idx: &mut u32) -> u32 {
+    let cur = *idx;
+    *idx += 1;
+    cur
 }
 
 fn max_value_id(trace: &TraceIr) -> u32 {
