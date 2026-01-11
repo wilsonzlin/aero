@@ -182,9 +182,11 @@ fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
     }
 
     let stride = header.entry_stride_bytes as usize;
-    if stride != AerogpuAllocEntry::SIZE_BYTES {
+    // Forward-compat: newer guests may extend `aerogpu_alloc_entry` by increasing the stride. The
+    // native backend only requires the entry prefix we understand.
+    if stride < AerogpuAllocEntry::SIZE_BYTES {
         return Err(format!(
-            "alloc table entry_stride_bytes={} does not match expected {}",
+            "alloc table entry_stride_bytes={} is smaller than expected {}",
             header.entry_stride_bytes,
             AerogpuAllocEntry::SIZE_BYTES
         ));
