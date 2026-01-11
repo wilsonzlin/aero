@@ -25,6 +25,10 @@ for %%A in (%*) do (
   )
 )
 if defined SHOW_HELP goto :help
+if defined EXPECT_TIMEOUT_VALUE (
+  echo ERROR: --timeout-ms requires a value
+  exit /b 1
+)
 
 set "ROOT=%~dp0"
 set "MANIFEST=%ROOT%tests_manifest.txt"
