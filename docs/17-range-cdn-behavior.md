@@ -178,10 +178,10 @@ Choose a chunk size that:
 - Is **well under** CloudFront’s max cacheable response size (50&nbsp;GB) and any object-store limits.
 - Is not so large that a single cache miss is painful.
 
-Practical ranges:
+Practical ranges (chunk objects with optional intra-chunk `Range`):
 
-- **64 MiB – 512 MiB** per chunk (typical CDN-friendly range)
-- If you want to avoid `Range` preflights entirely, you can set chunk size to your client fetch unit and do plain `GET` of whole chunk objects.
+- **64 MiB – 512 MiB** per chunk (keeps object counts low while still allowing `Range` reads within each chunk object).
+- If you want to avoid `Range` preflights entirely (plain `GET` of whole chunk objects), choose a chunk size closer to your client fetch unit. For Aero’s no-Range chunked disk format, the recommended default is **4&nbsp;MiB** (see [`18-chunked-disk-image-format.md`](./18-chunked-disk-image-format.md)).
 
 #### Client mapping: offset → chunk + intra-chunk range
 
