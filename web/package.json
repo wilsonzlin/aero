@@ -32,7 +32,7 @@
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@types/wicg-file-system-access": "^2023.10.7",
-    "@vitest/coverage-v8": "^1.6.0",
+    "@vitest/coverage-v8": "^4.0.16",
     "@webgpu/types": "^0.1.68",
     "typescript": "^5.5.4",
     "vite": "^5.4.10",
