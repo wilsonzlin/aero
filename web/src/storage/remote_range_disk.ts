@@ -269,7 +269,10 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    (timer as unknown as { unref?: () => void }).unref?.();
+  });
 }
 
 function isRetryableHttpStatus(status: number): boolean {

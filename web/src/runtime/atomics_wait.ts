@@ -65,7 +65,10 @@ function sleepMs(ms: number): Promise<void> {
     return new Promise(resolve => requestAnimationFrame(() => resolve()));
   }
 
-  return new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, Math.max(0, ms));
+    (timer as unknown as { unref?: () => void }).unref?.();
+  });
 }
 
 function remainingTimeoutMs(startMs: number, timeoutMs: number | undefined, now: () => number): number | undefined {

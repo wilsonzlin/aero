@@ -54,7 +54,10 @@ async function waitForStateChangeAsync(
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       if (now - start > timeoutMs) return "timed-out";
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 0);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
   }
 }
 

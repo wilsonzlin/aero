@@ -546,7 +546,10 @@ function parseUrlMaybe(url: string): URL | null {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    (timer as unknown as { unref?: () => void }).unref?.();
+  });
 }
 
 async function retryWithBackoff<T>(

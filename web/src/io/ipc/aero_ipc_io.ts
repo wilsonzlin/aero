@@ -369,13 +369,16 @@ export class AeroIpcIoServer implements IrqSink {
         this.#handleCommand(cmd);
 
         drained++;
-        if (opts.yieldEveryNCommands && drained >= opts.yieldEveryNCommands) {
-          drained = 0;
-          // Yield to allow other tasks (e.g. worker `onmessage`) to run.
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          if (opts.signal?.aborted) return;
-        }
-      }
+         if (opts.yieldEveryNCommands && drained >= opts.yieldEveryNCommands) {
+           drained = 0;
+           // Yield to allow other tasks (e.g. worker `onmessage`) to run.
+           await new Promise((resolve) => {
+             const timer = setTimeout(resolve, 0);
+             (timer as unknown as { unref?: () => void }).unref?.();
+           });
+           if (opts.signal?.aborted) return;
+         }
+       }
 
       const now = this.#nowMs();
       if (now >= nextTickAt) {
