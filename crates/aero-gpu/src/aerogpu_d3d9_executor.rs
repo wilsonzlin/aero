@@ -3337,7 +3337,7 @@ impl AerogpuD3d9Executor {
             } => {
                 let Some(backing) = backing.as_ref() else {
                     return Err(AerogpuD3d9Error::Validation(format!(
-                        "RESOURCE_DIRTY_RANGE on host-owned buffer {resource_handle}"
+                        "RESOURCE_DIRTY_RANGE on host-owned buffer {resource_handle} is not supported (use UPLOAD_RESOURCE)"
                     )));
                 };
                 ctx.alloc_table
@@ -3361,7 +3361,7 @@ impl AerogpuD3d9Executor {
             } => {
                 let Some(backing) = backing.as_ref() else {
                     return Err(AerogpuD3d9Error::Validation(format!(
-                        "RESOURCE_DIRTY_RANGE on host-owned texture {resource_handle}"
+                        "RESOURCE_DIRTY_RANGE on host-owned texture {resource_handle} is not supported (use UPLOAD_RESOURCE)"
                     )));
                 };
                 ctx.alloc_table

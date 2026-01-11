@@ -1475,7 +1475,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     })?;
             } else {
                 return Err(ExecutorError::Validation(format!(
-                    "RESOURCE_DIRTY_RANGE on host-owned buffer {handle}"
+                    "RESOURCE_DIRTY_RANGE on host-owned buffer {handle} is not supported (use UPLOAD_RESOURCE)"
                 )));
             }
             let end = offset_bytes.checked_add(size_bytes).ok_or_else(|| {
@@ -1497,7 +1497,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         if let Some(tex) = self.textures.get_mut(&handle) {
             let Some(backing) = tex.backing else {
                 return Err(ExecutorError::Validation(format!(
-                    "RESOURCE_DIRTY_RANGE on host-owned texture {handle}"
+                    "RESOURCE_DIRTY_RANGE on host-owned texture {handle} is not supported (use UPLOAD_RESOURCE)"
                 )));
             };
             alloc_table
