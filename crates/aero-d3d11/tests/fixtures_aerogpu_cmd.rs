@@ -6,6 +6,9 @@ use aero_d3d11::input_layout::{
 };
 use aero_d3d11::{parse_signatures, DxbcFile, ShaderStage, Sm4Program};
 use aero_gpu::{parse_cmd_stream, AeroGpuCmd, AEROGPU_CMD_STREAM_MAGIC};
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+};
 
 fn load_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -149,36 +152,98 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
     let ilay_bytes = load_fixture("ilay_pos3_color.bin");
 
     // Spot-check the key packets.
-    assert!(matches!(
-        &parsed.cmds[0],
+    match &parsed.cmds[0] {
         AeroGpuCmd::CreateBuffer {
             buffer_handle: 1,
-            ..
+            usage_flags,
+            size_bytes,
+            backing_alloc_id,
+            backing_offset_bytes,
+        } => {
+            assert_eq!(*usage_flags, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+            assert_eq!(*size_bytes, 84);
+            assert_eq!(*backing_alloc_id, 0);
+            assert_eq!(*backing_offset_bytes, 0);
         }
-    ));
-    assert!(matches!(
-        &parsed.cmds[1],
+        other => panic!("unexpected cmd[0]: {other:?}"),
+    }
+
+    match &parsed.cmds[1] {
         AeroGpuCmd::UploadResource {
             resource_handle: 1,
             offset_bytes: 0,
-            ..
+            size_bytes,
+            data,
+        } => {
+            assert_eq!(*size_bytes as usize, data.len());
+            assert_eq!(*size_bytes, 84);
+
+            fn f32_le(bytes: &[u8]) -> f32 {
+                f32::from_le_bytes(bytes.try_into().unwrap())
+            }
+
+            // 3 vertices: float3 pos + float4 color (28 bytes each).
+            let v0 = &data[0..28];
+            let v1 = &data[28..56];
+            let v2 = &data[56..84];
+            for (idx, vtx, expected_pos) in [
+                (0, v0, [-1.0, -1.0, 0.0]),
+                (1, v1, [3.0, -1.0, 0.0]),
+                (2, v2, [-1.0, 3.0, 0.0]),
+            ] {
+                let pos = [
+                    f32_le(&vtx[0..4]),
+                    f32_le(&vtx[4..8]),
+                    f32_le(&vtx[8..12]),
+                ];
+                assert_eq!(pos, expected_pos, "unexpected pos for vertex {idx}");
+
+                let color = [
+                    f32_le(&vtx[12..16]),
+                    f32_le(&vtx[16..20]),
+                    f32_le(&vtx[20..24]),
+                    f32_le(&vtx[24..28]),
+                ];
+                assert_eq!(color, [1.0, 0.0, 0.0, 1.0], "unexpected color for vertex {idx}");
+            }
         }
-    ));
-    assert!(matches!(
-        &parsed.cmds[2],
+        other => panic!("unexpected cmd[1]: {other:?}"),
+    }
+
+    match &parsed.cmds[2] {
         AeroGpuCmd::CreateBuffer {
             buffer_handle: 2,
-            ..
+            usage_flags,
+            size_bytes,
+            backing_alloc_id,
+            backing_offset_bytes,
+        } => {
+            assert_eq!(*usage_flags, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER);
+            // The protocol uses a byte-size field, but WebGPU requires COPY_BUFFER_ALIGNMENT (4B).
+            // This fixture stores 3 u16 indices + 2 bytes padding (6 -> 8).
+            assert_eq!(*size_bytes, 8);
+            assert_eq!(*backing_alloc_id, 0);
+            assert_eq!(*backing_offset_bytes, 0);
         }
-    ));
-    assert!(matches!(
-        &parsed.cmds[3],
+        other => panic!("unexpected cmd[2]: {other:?}"),
+    }
+
+    match &parsed.cmds[3] {
         AeroGpuCmd::UploadResource {
             resource_handle: 2,
             offset_bytes: 0,
-            ..
+            size_bytes,
+            data,
+        } => {
+            assert_eq!(*size_bytes as usize, data.len());
+            assert_eq!(*size_bytes, 8);
+            assert_eq!(u16::from_le_bytes([data[0], data[1]]), 0);
+            assert_eq!(u16::from_le_bytes([data[2], data[3]]), 1);
+            assert_eq!(u16::from_le_bytes([data[4], data[5]]), 2);
+            assert_eq!(&data[6..8], &[0, 0]);
         }
-    ));
+        other => panic!("unexpected cmd[3]: {other:?}"),
+    }
 
     match &parsed.cmds[5] {
         AeroGpuCmd::CreateShaderDxbc {

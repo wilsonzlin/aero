@@ -84,7 +84,10 @@ Semantic names are represented as a 32-bit FNV-1a hash of the ASCII name, per
 `cmd_triangle_sm4.bin` is a minimal AeroGPU command stream (byte-packed per
 `drivers/aerogpu/protocol/aerogpu_cmd.h`) that:
 
-1. Creates a vertex buffer + index buffer and uploads a single triangle
+1. Creates a vertex buffer + index buffer and uploads a fullscreen triangle
+   (solid red vertex colors)
+   - Note: the index buffer upload is padded to 8 bytes to satisfy
+     `wgpu::COPY_BUFFER_ALIGNMENT` (4-byte alignment).
 2. Creates a render-target texture
 3. Creates SM4 vertex/pixel shaders from the DXBC fixtures
 4. Creates an input layout from `ilay_pos3_color.bin`
