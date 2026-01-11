@@ -73,7 +73,7 @@ HKR,,NTMPDriver,,virtiosnd_legacy.sys
 HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 ; WDMAudio expects a list of audio subdevices exposed by the adapter.
 HKR,Drivers,SubClasses,,"wave,topology"
-HKR,Drivers,Driver,,wdmaudio.sys
+HKR,Drivers,Driver,,wdmaud.sys
 HKR,Drivers\wave,Driver,,virtiosnd_legacy.sys
 HKR,Drivers\wave,Description,,%VirtioSndLegacy.EndpointDesc%
 HKR,Drivers\topology,Driver,,virtiosnd_legacy.sys
@@ -81,9 +81,11 @@ HKR,Drivers\topology,Description,,%VirtioSndLegacy.TopologyDesc%
 
 HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
 HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSndLegacy.EndpointDesc%
+HKR,%KSNAME_Wave%,Driver,,virtiosnd_legacy.sys
 
 HKR,%KSNAME_Topology%,CLSID,,%KSProxy.CLSID%
 HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSndLegacy.TopologyDesc%
+HKR,%KSNAME_Topology%,Driver,,virtiosnd_legacy.sys
 
 [VirtioSndLegacy.CopyFiles]
 virtiosnd_legacy.sys
