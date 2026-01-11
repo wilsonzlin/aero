@@ -3,6 +3,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+fn default_true() -> bool {
+    true
+}
+
 /// WebHID-like view of a parsed HID report descriptor.
 ///
 /// This is intentionally a minimal subset that is sufficient for:
@@ -28,10 +32,22 @@ pub struct HidReportInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HidReportItem {
+    // Main-item (Input/Output/Feature) flag booleans, aligned with WebHID `HIDReportItem`.
+    // See `docs/webhid-hid-report-descriptor-synthesis.md` for the HID bit mapping.
     pub is_array: bool,
     pub is_absolute: bool,
     pub is_buffered_bytes: bool,
+    #[serde(default)]
+    pub is_volatile: bool,
     pub is_constant: bool,
+    #[serde(default)]
+    pub is_wrapped: bool,
+    #[serde(default = "default_true")]
+    pub is_linear: bool,
+    #[serde(default = "default_true")]
+    pub has_preferred_state: bool,
+    #[serde(default)]
+    pub has_null: bool,
     pub is_range: bool,
     pub logical_minimum: i32,
     pub logical_maximum: i32,
@@ -278,7 +294,22 @@ pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, H
                         let is_constant = (flags & (1 << 0)) != 0;
                         let is_array = (flags & (1 << 1)) == 0;
                         let is_absolute = (flags & (1 << 2)) == 0;
-                        let is_buffered_bytes = (flags & (1 << 8)) != 0;
+                        let is_wrapped = (flags & (1 << 3)) != 0;
+                        let is_linear = (flags & (1 << 4)) == 0;
+                        let has_preferred_state = (flags & (1 << 5)) == 0;
+                        let has_null = (flags & (1 << 6)) != 0;
+                        // HID 1.11:
+                        // - Input: bit7 is Bit Field / Buffered Bytes, bit8+ reserved.
+                        // - Output/Feature: bit7 is Non Volatile / Volatile, bit8 is Bit Field /
+                        //   Buffered Bytes.
+                        let (is_buffered_bytes, is_volatile) = match tag {
+                            // Input main items have no Volatile flag; bit7 is Buffered Bytes.
+                            8 => ((flags & (1 << 7)) != 0, false),
+                            // Output/Feature main items use bit7 for Volatile and bit8 for
+                            // Buffered Bytes.
+                            9 | 11 => ((flags & (1 << 8)) != 0, (flags & (1 << 7)) != 0),
+                            _ => unreachable!(),
+                        };
 
                         let usage_page = local.usage_page_override.unwrap_or(global.usage_page);
                         let (is_range, usages) = match (local.usage_minimum, local.usage_maximum) {
@@ -291,7 +322,12 @@ pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, H
                             is_array,
                             is_absolute,
                             is_buffered_bytes,
+                            is_volatile,
                             is_constant,
+                            is_wrapped,
+                            is_linear,
+                            has_preferred_state,
+                            has_null,
                             is_range,
                             logical_minimum: global.logical_minimum,
                             logical_maximum: global.logical_maximum,
@@ -582,14 +618,49 @@ fn synthesize_report(
         if !item.is_absolute {
             flags |= 1 << 2;
         }
-        if item.is_buffered_bytes {
-            flags |= 1 << 8;
+        if item.is_wrapped {
+            flags |= 1 << 3;
+        }
+        if !item.is_linear {
+            flags |= 1 << 4;
+        }
+        if !item.has_preferred_state {
+            flags |= 1 << 5;
+        }
+        if item.has_null {
+            flags |= 1 << 6;
+        }
+        match kind {
+            // HID 1.11 Input main item uses bit7 for Buffered Bytes and has no Volatile flag.
+            ReportKind::Input => {
+                if item.is_buffered_bytes {
+                    flags |= 1 << 7;
+                }
+            }
+            // HID 1.11 Output/Feature main items use bit7 for Volatile and bit8 for Buffered
+            // Bytes.
+            ReportKind::Output | ReportKind::Feature => {
+                if item.is_volatile {
+                    flags |= 1 << 7;
+                }
+                if item.is_buffered_bytes {
+                    flags |= 1 << 8;
+                }
+            }
         }
 
-        if item.is_buffered_bytes {
-            emit_item(out, ItemType::Main, main_tag, &flags.to_le_bytes())?;
-        } else {
-            emit_item(out, ItemType::Main, main_tag, &[flags as u8])?;
+        match kind {
+            ReportKind::Input => {
+                // Prefer the canonical 1-byte encoding for Input items (bit7 is in-range).
+                emit_item(out, ItemType::Main, main_tag, &[flags as u8])?;
+            }
+            ReportKind::Output | ReportKind::Feature => {
+                if flags <= u8::MAX as u16 {
+                    emit_item(out, ItemType::Main, main_tag, &[flags as u8])?;
+                } else {
+                    emit_item(out, ItemType::Main, main_tag, &flags.to_le_bytes())?;
+                }
+            }
         }
     }
 
@@ -846,7 +917,12 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -886,7 +962,12 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -930,7 +1011,12 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: -127,
                     logical_maximum: 127,
@@ -970,7 +1056,12 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -1035,7 +1126,12 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -1063,7 +1159,7 @@ mod tests {
     }
 
     #[test]
-    fn buffered_bytes_forces_two_byte_main_item_payload() {
+    fn buffered_bytes_uses_bit7_for_input_main_items() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
             usage: 0x02,
@@ -1074,7 +1170,12 @@ mod tests {
                     is_array: true,
                     is_absolute: true,
                     is_buffered_bytes: true,
+                    is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 0,
@@ -1095,19 +1196,155 @@ mod tests {
 
         let desc = synthesize_report_descriptor(&collections).unwrap();
 
-        // Input main item with 2-byte payload is encoded as:
-        //   0x82, <low>, <high>
-        // and "Buffered Bytes" is bit8, i.e. bit0 of <high>.
-        let mut found = false;
-        for win in desc.windows(3) {
-            if win[0] == 0x82 && (win[2] & 0x01) != 0 {
-                found = true;
-                break;
-            }
-        }
         assert!(
-            found,
-            "expected 2-byte Input item with Buffered Bytes flag: {desc:02x?}"
+            desc.windows(2).any(|w| w == [0x81, 0x80]),
+            "expected spec-canonical Input Buffered Bytes encoding (0x81 0x80): {desc:02x?}"
+        );
+        assert!(
+            !desc.windows(3).any(|w| w == [0x82, 0x00, 0x01]),
+            "did not expect Input Buffered Bytes to be encoded as a 2-byte payload (0x82 0x00 0x01): {desc:02x?}"
+        );
+
+        let reparsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(collections, reparsed);
+    }
+
+    #[test]
+    fn buffered_bytes_uses_bit8_for_output_main_items() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: true,
+                    is_absolute: true,
+                    is_buffered_bytes: true,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 0,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+
+        assert!(
+            desc.windows(3).any(|w| w == [0x92, 0x00, 0x01]),
+            "expected spec-canonical Output Buffered Bytes encoding (0x92 0x00 0x01): {desc:02x?}"
+        );
+
+        let reparsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(collections, reparsed);
+    }
+
+    #[test]
+    fn volatile_sets_bit7_for_output_main_items() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: true,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: true,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 0,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+
+        assert!(
+            desc.windows(2).any(|w| w == [0x91, 0x80]),
+            "expected spec-canonical Output Volatile encoding (0x91 0x80): {desc:02x?}"
+        );
+
+        let reparsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(collections, reparsed);
+    }
+
+    #[test]
+    fn hat_switch_null_state_synthesizes_to_input_0x42() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    // Spec-canonical hat switch main item flags: Data,Var,Abs,Null (0x42).
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: true,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 0,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+
+        assert!(
+            desc.windows(2).any(|w| w == [0x81, 0x42]),
+            "expected Input item with Null State flag (0x81 0x42): {desc:02x?}"
         );
 
         let reparsed = parse_report_descriptor(&desc).unwrap();
@@ -1119,7 +1356,12 @@ mod tests {
             is_array: false,
             is_absolute: true,
             is_buffered_bytes: false,
+            is_volatile: false,
             is_constant: false,
+            is_wrapped: false,
+            is_linear: true,
+            has_preferred_state: true,
+            has_null: false,
             is_range: false,
             logical_minimum: 0,
             logical_maximum: 0,
@@ -1238,7 +1480,12 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 127,

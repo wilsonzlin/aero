@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::report_descriptor;
+fn default_true() -> bool {
+    true
+}
 
 /// JSON-compatible representation of WebHID collection metadata.
 ///
@@ -52,12 +55,18 @@ pub struct HidReportItem {
     pub is_array: bool,
     pub is_buffered_bytes: bool,
     pub is_constant: bool,
+    #[serde(default = "default_true")]
     pub is_linear: bool,
     pub is_range: bool,
+    #[serde(default)]
     pub is_relative: bool,
+    #[serde(default)]
     pub is_volatile: bool,
+    #[serde(default)]
     pub has_null: bool,
+    #[serde(default = "default_true")]
     pub has_preferred_state: bool,
+    #[serde(default, alias = "wrap")]
     pub is_wrapped: bool,
 }
 
@@ -94,6 +103,13 @@ pub fn synthesize_report_descriptor(collections: &[HidCollectionInfo]) -> Result
     Ok(report_descriptor::synthesize_report_descriptor(&converted)?)
 }
 
+#[derive(Debug, Clone, Copy)]
+enum HidReportKindPath {
+    Input,
+    Output,
+    Feature,
+}
+
 fn convert_collection(
     collection: &HidCollectionInfo,
 ) -> Result<report_descriptor::HidCollectionInfo> {
@@ -104,17 +120,17 @@ fn convert_collection(
         input_reports: collection
             .input_reports
             .iter()
-            .map(convert_report)
+            .map(|report| convert_report(HidReportKindPath::Input, report))
             .collect::<Result<_>>()?,
         output_reports: collection
             .output_reports
             .iter()
-            .map(convert_report)
+            .map(|report| convert_report(HidReportKindPath::Output, report))
             .collect::<Result<_>>()?,
         feature_reports: collection
             .feature_reports
             .iter()
-            .map(convert_report)
+            .map(|report| convert_report(HidReportKindPath::Feature, report))
             .collect::<Result<_>>()?,
         children: collection
             .children
@@ -124,7 +140,10 @@ fn convert_collection(
     })
 }
 
-fn convert_report(report: &HidReportInfo) -> Result<report_descriptor::HidReportInfo> {
+fn convert_report(
+    kind: HidReportKindPath,
+    report: &HidReportInfo,
+) -> Result<report_descriptor::HidReportInfo> {
     if report.report_id > 0xFF {
         return Err(HidDescriptorSynthesisError::ReportIdOutOfRange {
             report_id: report.report_id,
@@ -136,12 +155,15 @@ fn convert_report(report: &HidReportInfo) -> Result<report_descriptor::HidReport
         items: report
             .items
             .iter()
-            .map(convert_item)
+            .map(|item| convert_item(kind, item))
             .collect::<Result<_>>()?,
     })
 }
 
-fn convert_item(item: &HidReportItem) -> Result<report_descriptor::HidReportItem> {
+fn convert_item(
+    kind: HidReportKindPath,
+    item: &HidReportItem,
+) -> Result<report_descriptor::HidReportItem> {
     if !(-8..=7).contains(&item.unit_exponent) {
         return Err(HidDescriptorSynthesisError::UnitExponentOutOfRange {
             unit_exponent: item.unit_exponent,
@@ -164,7 +186,15 @@ fn convert_item(item: &HidReportItem) -> Result<report_descriptor::HidReportItem
         is_array: item.is_array,
         is_absolute: item.is_absolute,
         is_buffered_bytes: item.is_buffered_bytes,
+        is_volatile: match kind {
+            HidReportKindPath::Input => false,
+            HidReportKindPath::Output | HidReportKindPath::Feature => item.is_volatile,
+        },
         is_constant: item.is_constant,
+        is_wrapped: item.is_wrapped,
+        is_linear: item.is_linear,
+        has_preferred_state: item.has_preferred_state,
+        has_null: item.has_null,
         is_range: item.is_range,
         logical_minimum: item.logical_minimum,
         logical_maximum: item.logical_maximum,
