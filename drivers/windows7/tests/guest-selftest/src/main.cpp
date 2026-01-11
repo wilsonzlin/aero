@@ -4539,9 +4539,8 @@ int wmain(int argc, wchar_t** argv) {
   // exercise the playback + capture + duplex paths automatically so audio regressions are caught
   // even if the image runs the selftest without extra flags. Use `--disable-snd` to skip all
   // virtio-snd testing, or `--test-snd/--require-snd` to fail if the device is missing.
-  auto snd_pci =
-      opt.disable_snd ? std::vector<VirtioSndPciDevice>{}
-                      : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
+  auto snd_pci = opt.disable_snd ? std::vector<VirtioSndPciDevice>{}
+                                : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
   if (!opt.disable_snd && snd_pci.empty()) {
     // The scheduled task that runs the selftest can sometimes start very early during boot,
     // before PnP fully enumerates the virtio-snd PCI function. Give the bus a short grace
@@ -4558,6 +4557,7 @@ int wmain(int argc, wchar_t** argv) {
       log.Logf("virtio-snd: pci device detected after wait (attempt=%d)", attempt);
     }
   }
+
   const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
   const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence || want_snd_playback;
   const bool want_snd_capture =
@@ -4569,7 +4569,8 @@ int wmain(int argc, wchar_t** argv) {
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
-  } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture && !opt.require_non_silence) {
+  } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture &&
+             !opt.require_non_silence) {
     log.LogLine("virtio-snd: skipped (enable with --test-snd)");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
     log.LogLine(opt.disable_snd_capture ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled"
@@ -4584,7 +4585,8 @@ int wmain(int argc, wchar_t** argv) {
 
     if (snd_pci.empty()) {
       if (opt.allow_virtio_snd_transitional) {
-        log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 (or legacy PCI\\VEN_1AF4&DEV_1018) device not detected");
+        log.LogLine(
+            "virtio-snd: PCI\\VEN_1AF4&DEV_1059 (or legacy PCI\\VEN_1AF4&DEV_1018) device not detected");
       } else {
         log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 device not detected (contract v1 modern-only)");
       }
@@ -4603,9 +4605,10 @@ int wmain(int argc, wchar_t** argv) {
       } else {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
       }
-      log.LogLine(opt.disable_snd_capture   ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled"
-                  : !capture_smoke_test     ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set"
-                                            : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|device_missing");
+
+      log.LogLine(opt.disable_snd_capture ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled"
+                  : !capture_smoke_test   ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set"
+                                          : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|device_missing");
     } else {
       auto binding = CheckVirtioSndPciBinding(log, snd_pci);
 
@@ -4634,8 +4637,8 @@ int wmain(int argc, wchar_t** argv) {
         }
       }
 
-       if (!binding.ok) {
-         const char* reason = binding.any_wrong_service   ? "wrong_service"
+      if (!binding.ok) {
+        const char* reason = binding.any_wrong_service   ? "wrong_service"
                              : binding.any_missing_service ? "driver_not_bound"
                              : binding.any_problem         ? "device_error"
                                                            : "driver_not_bound";
@@ -4645,202 +4648,207 @@ int wmain(int argc, wchar_t** argv) {
           all_ok = false;
         }
 
-         if (opt.disable_snd_capture) {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-         } else if (opt.require_snd_capture) {
-           log.LogLine("virtio-snd: --require-snd-capture set; failing (driver binding not healthy)");
-           log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|%s", reason);
-           all_ok = false;
-         } else {
-           log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|%s", reason);
-         }
+        if (opt.disable_snd_capture) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+        } else if (opt.require_snd_capture) {
+          log.LogLine("virtio-snd: --require-snd-capture set; failing (driver binding not healthy)");
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|%s", reason);
+          all_ok = false;
+        } else {
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|%s", reason);
+        }
 
-         if (opt.disable_snd_capture) {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
-         } else if (!capture_smoke_test) {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
-         } else {
-           log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|%s", reason);
-         }
-       } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
-         log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
+        if (opt.disable_snd_capture) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
+        } else if (!capture_smoke_test) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
+        } else {
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|%s", reason);
+        }
+      } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
+        log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
 
-         if (want_snd_playback) {
+        if (want_snd_playback) {
           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
           all_ok = false;
         }
 
         if (opt.disable_snd_capture) {
           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-         } else if (opt.require_snd_capture) {
-           log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
-           all_ok = false;
-         } else {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
-         }
-
-         if (opt.disable_snd_capture) {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
-         } else if (!capture_smoke_test) {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
-         } else {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|topology_interface_missing");
-         }
+        } else if (opt.require_snd_capture) {
+          log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
+          all_ok = false;
         } else {
-          std::vector<std::wstring> match_names;
-          for (const auto& d : snd_pci) {
-            if (!d.description.empty()) match_names.push_back(d.description);
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
+        }
+
+        if (opt.disable_snd_capture) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
+        } else if (!capture_smoke_test) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
+        } else {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|topology_interface_missing");
+        }
+      } else {
+        std::vector<std::wstring> match_names;
+        for (const auto& d : snd_pci) {
+          if (!d.description.empty()) match_names.push_back(d.description);
+        }
+
+        bool force_null_backend = false;
+        for (const auto& dev : snd_pci) {
+          if (dev.force_null_backend.has_value() && *dev.force_null_backend != 0) {
+            force_null_backend = true;
+            break;
+          }
+        }
+
+        if (force_null_backend) {
+          log.LogLine(
+              "virtio-snd: ForceNullBackend=1 set; virtio transport disabled (host wav capture will be silent)");
+
+          if (want_snd_playback) {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend");
+            all_ok = false;
+          } else {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
           }
 
-          bool force_null_backend = false;
-          for (const auto& dev : snd_pci) {
-            if (dev.force_null_backend.has_value() && *dev.force_null_backend != 0) {
-              force_null_backend = true;
-              break;
-            }
-          }
+          if (opt.disable_snd_capture) {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
+          } else if (want_snd_capture) {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|force_null_backend");
+            all_ok = false;
 
-          if (force_null_backend) {
-            log.LogLine(
-                "virtio-snd: ForceNullBackend=1 set; virtio transport disabled (host wav capture will be silent)");
-
-            if (want_snd_playback) {
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend");
+            if (want_snd_playback && capture_smoke_test) {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|force_null_backend");
               all_ok = false;
             } else {
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
-            }
-
-            if (opt.disable_snd_capture) {
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
-            } else if (want_snd_capture) {
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|force_null_backend");
-              all_ok = false;
-              if (want_snd_playback && capture_smoke_test) {
-                log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|force_null_backend");
-                all_ok = false;
-              } else {
-                log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
-              }
-            } else {
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
               log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
             }
           } else {
-            // The scheduled task that runs the selftest can start before the Windows audio services are
-            // fully initialized. Wait briefly for AudioSrv/AudioEndpointBuilder so endpoint enumeration
-            // doesn't fail spuriously (which would make host-side virtio-snd wav verification flaky).
-            if (want_snd_playback || want_snd_capture) {
-              WaitForWindowsAudioServices(log, 30000);
-            }
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
+          }
+        } else {
+          // The scheduled task that runs the selftest can start before the Windows audio services are
+          // fully initialized. Wait briefly for AudioSrv/AudioEndpointBuilder so endpoint enumeration
+          // doesn't fail spuriously (which would make host-side virtio-snd wav verification flaky).
+          if (want_snd_playback || want_snd_capture) {
+            WaitForWindowsAudioServices(log, 30000);
+          }
 
-         if (want_snd_playback) {
+          if (want_snd_playback) {
             bool snd_ok = false;
             const auto snd = VirtioSndTest(log, match_names, opt.allow_virtio_snd_transitional);
             if (snd.ok) {
               snd_ok = true;
-          } else {
-            log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
-                     snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
-                     static_cast<unsigned long>(snd.hr));
-            log.LogLine("virtio-snd: trying waveOut fallback");
-            snd_ok = WaveOutToneTest(log, match_names, opt.allow_virtio_snd_transitional);
-          }
+            } else {
+              log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
+                       snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
+                       static_cast<unsigned long>(snd.hr));
+              log.LogLine("virtio-snd: trying waveOut fallback");
+              snd_ok = WaveOutToneTest(log, match_names, opt.allow_virtio_snd_transitional);
+            }
 
-          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
-           all_ok = all_ok && snd_ok;
-         }
+            log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
+            all_ok = all_ok && snd_ok;
+          }
 
           if (opt.disable_snd_capture) {
             log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-         } else if (want_snd_capture) {
-           const DWORD capture_wait_ms =
-               (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
-           bool capture_ok = false;
-           const char* capture_method = "wasapi";
-           bool capture_silence_only = false;
-          bool capture_non_silence = false;
-          UINT64 capture_frames = 0;
+          } else if (want_snd_capture) {
+            const DWORD capture_wait_ms =
+                (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
+            bool capture_ok = false;
+            const char* capture_method = "wasapi";
+            bool capture_silence_only = false;
+            bool capture_non_silence = false;
+            UINT64 capture_frames = 0;
 
-          auto capture = VirtioSndCaptureTest(log, match_names, capture_smoke_test, capture_wait_ms,
-                                              opt.allow_virtio_snd_transitional, opt.require_non_silence);
-          if (capture.ok) {
-            capture_ok = true;
-            capture_silence_only = capture.captured_silence_only;
-            capture_non_silence = capture.captured_non_silence;
-            capture_frames = capture.captured_frames;
-          } else if (capture_smoke_test) {
-            log.Logf("virtio-snd: capture WASAPI failed reason=%s hr=0x%08lx",
-                     capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
-                     static_cast<unsigned long>(capture.hr));
-            log.LogLine("virtio-snd: trying waveIn fallback");
-            const auto wavein = WaveInCaptureTest(log, match_names, opt.allow_virtio_snd_transitional,
-                                                  opt.require_non_silence);
-            if (wavein.ok) {
+            auto capture = VirtioSndCaptureTest(log, match_names, capture_smoke_test, capture_wait_ms,
+                                                opt.allow_virtio_snd_transitional, opt.require_non_silence);
+            if (capture.ok) {
               capture_ok = true;
-              capture_method = "waveIn";
-              capture_silence_only = wavein.captured_silence_only;
-              capture_non_silence = wavein.captured_non_silence;
-              capture_frames = wavein.captured_frames;
+              capture_silence_only = capture.captured_silence_only;
+              capture_non_silence = capture.captured_non_silence;
+              capture_frames = capture.captured_frames;
+            } else if (capture_smoke_test) {
+              log.Logf("virtio-snd: capture WASAPI failed reason=%s hr=0x%08lx",
+                       capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
+                       static_cast<unsigned long>(capture.hr));
+              log.LogLine("virtio-snd: trying waveIn fallback");
+
+              const auto wavein = WaveInCaptureTest(log, match_names, opt.allow_virtio_snd_transitional,
+                                                    opt.require_non_silence);
+              if (wavein.ok) {
+                capture_ok = true;
+                capture_method = "waveIn";
+                capture_silence_only = wavein.captured_silence_only;
+                capture_non_silence = wavein.captured_non_silence;
+                capture_frames = wavein.captured_frames;
+              }
             }
+
+            if (capture_ok) {
+              if (capture_smoke_test) {
+                log.Logf(
+                    "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=%s|frames=%llu|non_silence=%d|silence_only=%d",
+                    capture_method, capture_frames, capture_non_silence ? 1 : 0,
+                    capture_silence_only ? 1 : 0);
+              } else {
+                log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present");
+              }
+            } else if (capture.fail_reason == "no_matching_endpoint") {
+              if (opt.require_snd_capture) {
+                log.LogLine("virtio-snd: --require-snd-capture set; failing");
+                log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|endpoint_missing");
+                all_ok = false;
+              } else {
+                log.LogLine(
+                    "virtio-snd: no capture endpoint; skipping (use --require-snd-capture to require)");
+                log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing");
+              }
+            } else if (capture.fail_reason == "captured_silence") {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence");
+              all_ok = false;
+            } else {
+              log.Logf("virtio-snd: capture failed reason=%s hr=0x%08lx",
+                       capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
+                       static_cast<unsigned long>(capture.hr));
+              if (opt.require_snd_capture || capture_smoke_test) {
+                log.LogLine(
+                    capture.endpoint_found
+                        ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|stream_init_failed"
+                        : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|error");
+                all_ok = false;
+              } else {
+                log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|error");
+              }
+            }
+          } else {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
           }
 
-          if (capture_ok) {
-            if (capture_smoke_test) {
-              log.Logf(
-                  "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=%s|frames=%llu|non_silence=%d|silence_only=%d",
-                  capture_method, capture_frames, capture_non_silence ? 1 : 0,
-                  capture_silence_only ? 1 : 0);
-            } else {
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present");
-            }
-          } else if (capture.fail_reason == "no_matching_endpoint") {
-            if (opt.require_snd_capture) {
-              log.LogLine("virtio-snd: --require-snd-capture set; failing");
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|endpoint_missing");
-              all_ok = false;
-            } else {
-              log.LogLine("virtio-snd: no capture endpoint; skipping (use --require-snd-capture to require)");
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing");
-            }
-          } else if (capture.fail_reason == "captured_silence") {
-            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence");
-            all_ok = false;
+          if (opt.disable_snd_capture) {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
+          } else if (!(want_snd_playback && capture_smoke_test)) {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
           } else {
-            log.Logf("virtio-snd: capture failed reason=%s hr=0x%08lx",
-                     capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
-                     static_cast<unsigned long>(capture.hr));
-            if (opt.require_snd_capture || capture_smoke_test) {
+            const auto duplex = VirtioSndDuplexTest(log, match_names, opt.allow_virtio_snd_transitional);
+            if (duplex.ok) {
+              log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS|frames=%llu|non_silence=%d",
+                       duplex.captured_frames, duplex.captured_non_silence ? 1 : 0);
+            } else if (duplex.fail_reason == "no_matching_endpoint") {
               log.LogLine(
-                  capture.endpoint_found ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|stream_init_failed"
-                                        : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|error");
-              all_ok = false;
+                  "virtio-snd: duplex endpoint missing; skipping (use --require-snd-capture to require)");
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|endpoint_missing");
             } else {
-              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|error");
-            }
-          }
-         } else {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
-         }
- 
-         if (opt.disable_snd_capture) {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
-         } else if (!(want_snd_playback && capture_smoke_test)) {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
-         } else {
-           const auto duplex = VirtioSndDuplexTest(log, match_names, opt.allow_virtio_snd_transitional);
-           if (duplex.ok) {
-             log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS|frames=%llu|non_silence=%d",
-                      duplex.captured_frames, duplex.captured_non_silence ? 1 : 0);
-           } else if (duplex.fail_reason == "no_matching_endpoint") {
-             log.LogLine("virtio-snd: duplex endpoint missing; skipping (use --require-snd-capture to require)");
-             log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|endpoint_missing");
-           } else {
-             log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|reason=%s|hr=0x%08lx",
-                      duplex.fail_reason.empty() ? "unknown" : duplex.fail_reason.c_str(),
-                      static_cast<unsigned long>(duplex.hr));
+              log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|reason=%s|hr=0x%08lx",
+                       duplex.fail_reason.empty() ? "unknown" : duplex.fail_reason.c_str(),
+                       static_cast<unsigned long>(duplex.hr));
               all_ok = false;
             }
           }
