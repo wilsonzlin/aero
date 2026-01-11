@@ -449,10 +449,6 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
                               (long)map.RowPitch,
                               kWidth * 4);
   }
-  if (!map.pData) {
-    context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
-  }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 0, 0);
   const uint32_t center =

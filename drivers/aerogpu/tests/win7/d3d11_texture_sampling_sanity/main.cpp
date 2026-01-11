@@ -508,10 +508,6 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
                               (long)map.RowPitch,
                               kWidth * 4);
   }
-  if (!map.pData) {
-    context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
-  }
 
   const int x0 = 8;
   const int y0 = 8;
