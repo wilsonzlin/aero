@@ -25,6 +25,7 @@
 #include <condition_variable>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <limits>
