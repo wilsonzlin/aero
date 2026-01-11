@@ -659,6 +659,7 @@ class ContractDevice:
     name: str
     pci_vendor_id: int
     pci_device_id: int
+    pci_device_id_transitional: Optional[int]
     hardware_id_patterns: list[str]
     driver_service_name: str
     inf_name: str
@@ -684,6 +685,12 @@ def _load_contract(contract_path: Path) -> dict[str, ContractDevice]:
 
         vendor_id = _parse_hex_u16(entry.get("pci_vendor_id"), ctx=f"[{name}].pci_vendor_id")
         device_id = _parse_hex_u16(entry.get("pci_device_id"), ctx=f"[{name}].pci_device_id")
+        pci_device_id_transitional: Optional[int] = None
+        if "pci_device_id_transitional" in entry:
+            pci_device_id_transitional = _parse_hex_u16(
+                entry.get("pci_device_id_transitional"),
+                ctx=f"[{name}].pci_device_id_transitional",
+            )
 
         hwids_raw = entry.get("hardware_id_patterns")
         hwids_list = _require_list(hwids_raw, ctx=f"[{name}].hardware_id_patterns")
@@ -706,6 +713,7 @@ def _load_contract(contract_path: Path) -> dict[str, ContractDevice]:
             name=name,
             pci_vendor_id=vendor_id,
             pci_device_id=device_id,
+            pci_device_id_transitional=pci_device_id_transitional,
             hardware_id_patterns=hwids,
             driver_service_name=driver_service_name,
             inf_name=inf_name,
@@ -746,6 +754,20 @@ def _validate_contract_devices(devices: dict[str, ContractDevice], errors: list[
                     f"(0x1040 + virtio_device_type={dev.virtio_device_type}), got 0x{dev.pci_device_id:04X}"
                 )
 
+            # Transitional virtio-pci device IDs are out of scope for the contract v1 binding rules
+            # (modern-only + REV_01), but we still record the corresponding ID as metadata for
+            # documentation and for derived tooling.
+            expected_transitional = 0x1000 + (dev.virtio_device_type - 1)
+            if dev.pci_device_id_transitional is None:
+                errors.append(
+                    f"[{name}] missing pci_device_id_transitional (expected 0x{expected_transitional:04X} = 0x1000 + (virtio_device_type - 1))"
+                )
+            elif dev.pci_device_id_transitional != expected_transitional:
+                errors.append(
+                    f"[{name}] pci_device_id_transitional mismatch: expected 0x{expected_transitional:04X} "
+                    f"(0x1000 + (virtio_device_type={dev.virtio_device_type} - 1)), got 0x{dev.pci_device_id_transitional:04X}"
+                )
+
             short = expected_prefix
             rev = f"{expected_prefix}&REV_01"
             patterns_upper = {p.upper() for p in dev.hardware_id_patterns}
@@ -753,6 +775,11 @@ def _validate_contract_devices(devices: dict[str, ContractDevice], errors: list[
                 errors.append(f"[{name}] hardware_id_patterns is missing short form HWID: {short!r}")
             if rev.upper() not in patterns_upper:
                 errors.append(f"[{name}] hardware_id_patterns is missing contract-v1 REV_01 HWID: {rev!r}")
+        else:
+            if dev.pci_device_id_transitional is not None:
+                errors.append(
+                    f"[{name}] pci_device_id_transitional is only valid for virtio-* devices (found: 0x{dev.pci_device_id_transitional:04X})"
+                )
 
 
 def _validate_inf_bindings(devices: dict[str, ContractDevice], errors: list[str]) -> None:
