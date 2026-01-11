@@ -1706,6 +1706,189 @@ bool TestPresentStatsAndFrameLatency() {
   return true;
 }
 
+bool TestPresentExSubmitsOnceWhenNoPendingRenderWork() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnPresentEx != nullptr, "PresentEx must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
+  if (!Check(dev != nullptr && adapter != nullptr, "device/adapter pointers")) {
+    return false;
+  }
+
+  uint64_t base_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    base_fence = adapter->last_submitted_fence;
+  }
+
+  D3D9DDIARG_PRESENTEX present{};
+  present.hSrc.pDrvPrivate = nullptr;
+  present.hWnd = nullptr;
+  present.sync_interval = 1;
+  present.d3d9_present_flags = 0;
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx")) {
+    return false;
+  }
+
+  uint64_t final_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    final_fence = adapter->last_submitted_fence;
+  }
+  if (!Check(final_fence == base_fence + 1, "PresentEx submits exactly once when no render work is pending")) {
+    return false;
+  }
+
+  uint64_t present_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->inflight_present_fences.size() == 1, "inflight_present_fences contains one fence")) {
+      return false;
+    }
+    present_fence = dev->inflight_present_fences.front();
+  }
+  return Check(present_fence == base_fence + 1, "present fence matches single submission");
+}
+
+bool TestPresentSubmitsOnceWhenNoPendingRenderWork() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnPresent != nullptr, "Present must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
+  if (!Check(dev != nullptr && adapter != nullptr, "device/adapter pointers")) {
+    return false;
+  }
+
+  uint64_t base_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    base_fence = adapter->last_submitted_fence;
+  }
+
+  D3D9DDIARG_PRESENT present{};
+  present.hSrc.pDrvPrivate = nullptr;
+  present.hSwapChain.pDrvPrivate = nullptr;
+  present.hWnd = nullptr;
+  present.sync_interval = 1;
+  present.flags = 0;
+  hr = cleanup.device_funcs.pfnPresent(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "Present")) {
+    return false;
+  }
+
+  uint64_t final_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    final_fence = adapter->last_submitted_fence;
+  }
+  if (!Check(final_fence == base_fence + 1, "Present submits exactly once when no render work is pending")) {
+    return false;
+  }
+
+  uint64_t present_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->inflight_present_fences.size() == 1, "inflight_present_fences contains one fence")) {
+      return false;
+    }
+    present_fence = dev->inflight_present_fences.front();
+  }
+  return Check(present_fence == base_fence + 1, "present fence matches single submission");
+}
+
 bool TestPresentExSplitsRenderAndPresentSubmissions() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -5539,6 +5722,8 @@ int main() {
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
   failures += !aerogpu::TestSharedResourceCreateAndOpenEmitsExportImport();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
+  failures += !aerogpu::TestPresentExSubmitsOnceWhenNoPendingRenderWork();
+  failures += !aerogpu::TestPresentSubmitsOnceWhenNoPendingRenderWork();
   failures += !aerogpu::TestPresentExSplitsRenderAndPresentSubmissions();
   failures += !aerogpu::TestPresentSplitsRenderAndPresentSubmissions();
   failures += !aerogpu::TestFlushNoopsOnEmptyCommandBuffer();
