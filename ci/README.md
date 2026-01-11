@@ -56,6 +56,11 @@ WDK redistributables (WDF coinstaller):
 - To include `WdfCoInstaller*.dll`, a driver must declare `wdfCoInstaller` in `drivers/<driver>/ci-package.json` and `ci/make-catalogs.ps1` must be run with `-IncludeWdfCoInstaller` (or `-IncludeWdkRedist WdfCoInstaller`).
 - The script will fail if it detects `WdfCoInstaller*.dll` checked into the repo under `drivers/` (to prevent accidental redistribution).
 
+Other per-driver packaging manifest features:
+
+- `infFiles`: explicitly select which INF(s) are staged for a driver (useful when a driver ships multiple INFs with overlapping HWIDs and should not be packaged as a single combined folder).
+- `wow64Files`: for x64 packages that need 32-bit user-mode components, copy specific DLLs from the x86 build output into the x64 staging directory *before* stamping INFs + running Inf2Cat.
+
 See: `docs/16-driver-packaging-and-signing.md`.
 
 ## `ci/sign-drivers.ps1`

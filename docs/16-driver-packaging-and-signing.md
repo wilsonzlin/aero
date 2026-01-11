@@ -18,6 +18,10 @@ Schema: `ci/driver-package.schema.json`
 
 Supported fields:
 
+- `infFiles` (optional): explicit list of `.inf` files to stage (paths relative to the driver directory). If omitted, CI discovers all `.inf` files under the driver directory.
+  - Use this for drivers that ship multiple INFs (feature variants, optional components) where staging all of them together is undesirable (e.g. multiple INFs with the same HWIDs).
+- `wow64Files` (optional): list of **file names** to copy from the driver’s **x86** build output into the **x64** staged package directory *before* INF stamping + Inf2Cat.
+  - Intended for x64 driver packages that also need 32-bit user-mode components (WOW64 UMD DLLs).
 - `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<name>/`) and must not escape it (no absolute paths / `..` traversal).
 - `wdfCoInstaller` (optional): declare that this driver needs the WDF coinstaller and which KMDF version/DLL name.
   - If `dllName` is omitted, CI derives it from `kmdfVersion` (e.g. `1.11` → `WdfCoInstaller01011.dll`).

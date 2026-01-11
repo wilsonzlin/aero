@@ -1,0 +1,5 @@
+{
+  "$schema": "../../ci/driver-package.schema.json",
+  "infFiles": ["packaging/win7/aerogpu.inf"],
+  "wow64Files": ["aerogpu_d3d9.dll"]
+}

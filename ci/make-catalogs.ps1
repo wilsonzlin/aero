@@ -209,12 +209,74 @@ function Read-DriverPackageManifest {
   if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     return @{
       ManifestPath = $manifestPath
+      InfFiles = $null
+      Wow64Files = @()
       AdditionalFiles = @()
       WdfCoInstaller = $null
     }
   }
 
   $data = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+
+  $infFiles = $null
+  if ($null -ne $data.infFiles) {
+    $infFiles = @()
+    $seen = @{}
+    foreach ($entry in @($data.infFiles)) {
+      if ($null -eq $entry) { continue }
+      $s = ([string]$entry).Trim()
+      if ($s.Length -eq 0) { continue }
+
+      $srcInf = Resolve-ChildPathUnderRoot -Root $DriverSourceDir -ChildPath $s
+      if (-not (Test-Path -LiteralPath $srcInf -PathType Leaf)) {
+        throw "Invalid manifest '$manifestPath': infFiles entry not found: $s"
+      }
+      if ([IO.Path]::GetExtension($srcInf) -ne '.inf') {
+        throw "Invalid manifest '$manifestPath': infFiles entry '$s' must have a .inf extension."
+      }
+
+      $key = $srcInf.ToLowerInvariant()
+      if ($seen.ContainsKey($key)) { continue }
+      $seen[$key] = $true
+
+      $infFiles += (Get-Item -LiteralPath $srcInf)
+    }
+
+    if ($infFiles.Count -eq 0) {
+      throw "Invalid manifest '$manifestPath': infFiles is present but empty."
+    }
+
+    $infFiles = $infFiles | Sort-Object -Property FullName
+  }
+
+  $wow64Files = @()
+  if ($null -ne $data.wow64Files) {
+    $seen = @{}
+    foreach ($entry in @($data.wow64Files)) {
+      if ($null -eq $entry) { continue }
+      $s = ([string]$entry).Trim()
+      if ($s.Length -eq 0) { continue }
+
+      if ([System.IO.Path]::IsPathRooted($s)) {
+        throw "Invalid manifest '$manifestPath': wow64Files entry '$s' must be a file name, not a path."
+      }
+      [char[]]$sepChars = @([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+      if ($s.IndexOfAny($sepChars) -ge 0) {
+        throw "Invalid manifest '$manifestPath': wow64Files entry '$s' must be a file name, not a path."
+      }
+
+      $ext = [IO.Path]::GetExtension($s)
+      if ($ext -ne '.dll') {
+        throw "Invalid manifest '$manifestPath': wow64Files entry '$s' must have a .dll extension."
+      }
+
+      $key = $s.ToLowerInvariant()
+      if ($seen.ContainsKey($key)) { continue }
+      $seen[$key] = $true
+
+      $wow64Files += $s
+    }
+  }
 
   $additional = @()
   if ($null -ne $data.additionalFiles) {
@@ -254,6 +316,8 @@ function Read-DriverPackageManifest {
 
   return @{
     ManifestPath = $manifestPath
+    InfFiles = $infFiles
+    Wow64Files = $wow64Files
     AdditionalFiles = $additional
     WdfCoInstaller = $wdf
   }
@@ -419,9 +483,13 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     throw "Driver '$driverNameForLog' contains WdfCoInstaller*.dll under '$driverSourceDir'. Do not commit Microsoft WDK redistributables into the repo; use -IncludeWdfCoInstaller and '$($manifest.ManifestPath)' instead."
   }
 
-  $infFiles = Get-ChildItem -LiteralPath $driverSourceDir -Recurse -File -Filter '*.inf' |
-    Where-Object { $_.FullName -notmatch '[\\\\/](obj|out|build|target)[\\\\/]' } |
-    Sort-Object -Property FullName
+  $infFiles = if ($null -ne $manifest.InfFiles) {
+    $manifest.InfFiles
+  } else {
+    Get-ChildItem -LiteralPath $driverSourceDir -Recurse -File -Filter '*.inf' |
+      Where-Object { $_.FullName -notmatch '[\\\\/](obj|out|build|target)[\\\\/]' } |
+      Sort-Object -Property FullName
+  }
 
   if (-not $infFiles) {
     throw "No INF files found under $driverSourceDir"
@@ -443,6 +511,26 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     Write-Host "     Using build outputs: $buildOutDir"
 
     Copy-Item -Path (Join-Path -Path $buildOutDir -ChildPath '*') -Destination $packageDir -Recurse -Force -ErrorAction Stop
+
+    if ($arch -eq 'x64' -and $manifest.Wow64Files -and $manifest.Wow64Files.Count -gt 0) {
+      $x86OsListForArch = $osByArch['x86']
+      if (-not $x86OsListForArch -or $x86OsListForArch.Count -eq 0) {
+        # Resolve-DriverBuildOutputDir prefers OS-id directory names when present (e.g. 7_X86).
+        # Even when catalog generation is x64-only, WOW64 payloads still require x86 build outputs.
+        $x86OsListForArch = @('7_X86')
+      }
+
+      $x86BuildOutDir = Resolve-DriverBuildOutputDir -DriverBuildDir $driverBuildDir.FullName -Arch x86 -OsListForArch $x86OsListForArch
+      Write-Host "     Including WOW64 file(s) from x86 build outputs: $x86BuildOutDir"
+      foreach ($fileName in $manifest.Wow64Files) {
+        $src = Join-Path -Path $x86BuildOutDir -ChildPath $fileName
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+          throw "Driver '$driverNameForLog' requests WOW64 file '$fileName' via '$($manifest.ManifestPath)', but it was not found in x86 build output directory: $src"
+        }
+
+        Copy-Item -LiteralPath $src -Destination (Join-Path -Path $packageDir -ChildPath $fileName) -Force
+      }
+    }
 
     $infNameMap = @{}
     $stagedInfPaths = @()

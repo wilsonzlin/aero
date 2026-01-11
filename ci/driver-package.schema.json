@@ -4,6 +4,26 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "infFiles": {
+      "type": "array",
+      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^.+\\.[iI][nN][fF]$"
+      },
+      "uniqueItems": true
+    },
+    "wow64Files": {
+      "type": "array",
+      "description": "Optional list of WOW64 payload files to copy from the x86 build output into the x64 staged package directory *before* stamping INFs and running Inf2Cat. Entries must be file names only (no path separators). Intended for x64 driver packages that also need 32-bit user-mode components (WOW64 UMD DLLs).",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\\\/]+\\.[dD][lL][lL]$"
+      },
+      "uniqueItems": true
+    },
     "additionalFiles": {
       "type": "array",
       "description": "Additional files (relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts.",
