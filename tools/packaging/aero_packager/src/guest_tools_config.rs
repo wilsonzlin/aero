@@ -68,6 +68,7 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
     overrides: &GuestToolsDevicesCmdServiceOverrides,
 ) -> Result<Vec<u8>> {
     let contract = load_windows_device_contract(contract_path)?;
+    let contract_name = contract.contract_name.trim();
     let contract_version = contract.contract_version.trim();
 
     let virtio_blk = device_by_name(contract_path, &contract.devices, "virtio-blk")?;
@@ -117,7 +118,10 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
     out.push_str("rem -----------------------------------------------------------------------------\r\n");
     out.push_str("rem GENERATED FILE - DO NOT EDIT MANUALLY\r\n");
     out.push_str("rem\r\n");
-    out.push_str("rem Source of truth: docs/windows-device-contract.json\r\n");
+    out.push_str("rem Source of truth: Windows device contract JSON\r\n");
+    if !contract_name.is_empty() {
+        out.push_str(&format!("rem Contract name: {contract_name}\r\n"));
+    }
     out.push_str("rem Generator: scripts/generate-guest-tools-devices-cmd.py\r\n");
     if !contract_version.is_empty() {
         out.push_str(&format!("rem Contract version: {contract_version}\r\n"));
