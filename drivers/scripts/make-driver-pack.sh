@@ -20,6 +20,9 @@ Options:
 Any arguments after `--` are passed through to `make-driver-pack.ps1` (e.g. `-NoZip`,
 `-Drivers viostor,netkvm`, `-StrictOptional`).
 
+The produced pack includes `manifest.json`, `THIRD_PARTY_NOTICES.md`, and (best-effort)
+`licenses/virtio-win/` copied from the virtio-win ISO root when present.
+
 Examples:
   # Default (best-effort include audio/input):
   drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso
@@ -125,4 +128,3 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File "$pack_ps1" \
   -VirtioWinRoot "$extract_root" \
   -OutDir "$out_dir" \
   "${passthru_args[@]}"
-

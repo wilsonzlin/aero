@@ -10,6 +10,12 @@ On Linux/macOS, `Mount-DiskImage` is not available. Use the cross-platform extra
 (`python3 tools/virtio-win/extract.py --virtio-win-iso … --out-root …`) and then pass
 `-VirtioWinRoot` to the extracted directory.
 
+The produced driver pack staging directory/zip includes:
+
+- `manifest.json` (source provenance: virtio-win ISO hash/volume label/version hints)
+- `THIRD_PARTY_NOTICES.md` (redistribution attribution template)
+- `licenses/virtio-win/` (best-effort copy of upstream virtio-win LICENSE/NOTICE files when present)
+
 .EXAMPLE
 # Windows:
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-driver-pack.ps1 `
