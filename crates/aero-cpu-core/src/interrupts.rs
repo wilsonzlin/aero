@@ -18,6 +18,10 @@ use crate::state::{self, gpr, CpuMode, RFLAGS_IF, RFLAGS_RESERVED1, RFLAGS_TF};
 pub enum CpuExit {
     /// Failure to deliver an exception (including #DF) that results in a reset.
     TripleFault,
+    /// Non-architectural failure to access memory (e.g. unmapped physical memory).
+    MemoryFault,
+    /// The interpreter decoded an instruction but has no implementation for it.
+    UnimplementedInstruction(&'static str),
 }
 
 /// External interrupt controller interface.

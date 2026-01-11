@@ -1,6 +1,8 @@
 use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext};
 use crate::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitRuntime};
 
+mod exception_bridge;
+
 pub trait ExecCpu {
     fn rip(&self) -> u64;
     fn set_rip(&mut self, rip: u64);
@@ -105,7 +107,7 @@ where
 pub struct Vcpu<B: crate::mem::CpuBus> {
     pub cpu: crate::interrupts::CpuCore,
     pub bus: B,
-    /// Sticky CPU exit status (e.g. triple fault) observed during event delivery.
+    /// Sticky CPU exit status (e.g. triple fault, memory fault) observed during execution.
     pub exit: Option<crate::interrupts::CpuExit>,
 }
 
@@ -194,16 +196,44 @@ impl Tier0Interpreter {
     }
 }
 
+fn deliver_tier0_exception<B: crate::mem::CpuBus>(
+    cpu: &mut Vcpu<B>,
+    faulting_rip: u64,
+    exception: crate::exception::Exception,
+) {
+    match exception_bridge::map_tier0_exception(&exception) {
+        Ok(mapped) => {
+            cpu.cpu.pending.raise_exception_fault(
+                &mut cpu.cpu.state,
+                mapped.exception,
+                faulting_rip,
+                mapped.error_code,
+                mapped.cr2,
+            );
+            if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
+                cpu.exit = Some(exit);
+            }
+        }
+        Err(exit) => {
+            cpu.exit = Some(exit);
+        }
+    }
+}
+
 impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
     fn exec_block(&mut self, cpu: &mut Vcpu<B>) -> u64 {
         use aero_x86::{Mnemonic, OpKind, Register};
 
-        use crate::exception::AssistReason;
+        use crate::exception::{AssistReason, Exception};
         use crate::interp::tier0::exec::StepExit;
 
         let max = self.max_insts.max(1);
         let mut executed = 0u64;
         while executed < max {
+            if cpu.exit.is_some() {
+                break;
+            }
+
             // Interrupts are delivered at instruction boundaries.
             if cpu.maybe_deliver_interrupt() {
                 continue;
@@ -212,11 +242,11 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                 break;
             }
 
-            let ip = cpu.cpu.state.rip();
+            let faulting_rip = cpu.cpu.state.rip();
             let step = match crate::interp::tier0::exec::step(&mut cpu.cpu.state, &mut cpu.bus) {
                 Ok(step) => step,
                 Err(e) => {
-                    deliver_tier0_exception(cpu, ip, e);
+                    deliver_tier0_exception(cpu, faulting_rip, e);
                     break;
                 }
             };
@@ -257,9 +287,21 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         .cpu
                         .state
                         .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
-                    let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
-                    let decoded = aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness())
-                        .expect("decode interrupt assist");
+                    let bytes = match cpu.bus.fetch(fetch_addr, 15) {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            cpu.cpu.state.apply_exception_side_effects(&e);
+                            deliver_tier0_exception(cpu, ip, e);
+                            break;
+                        }
+                    };
+                    let decoded = match aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness()) {
+                        Ok(decoded) => decoded,
+                        Err(_) => {
+                            deliver_tier0_exception(cpu, ip, Exception::InvalidOpcode);
+                            break;
+                        }
+                    };
                     let next_ip =
                         ip.wrapping_add(decoded.len as u64) & cpu.cpu.state.mode.ip_mask();
 
@@ -280,9 +322,9 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                     Some(0),
                                     None,
                                 );
-                                cpu.cpu
-                                    .deliver_pending_event(&mut cpu.bus)
-                                    .expect("deliver #GP for CLI");
+                                if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
+                                    cpu.exit = Some(exit);
+                                }
                             } else {
                                 cpu.cpu.pending.retire_instruction();
                                 cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, false);
@@ -305,9 +347,9 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                                     Some(0),
                                     None,
                                 );
-                                cpu.cpu
-                                    .deliver_pending_event(&mut cpu.bus)
-                                    .expect("deliver #GP for STI");
+                                if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
+                                    cpu.exit = Some(exit);
+                                }
                             } else {
                                 cpu.cpu.pending.retire_instruction();
                                 cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, true);
@@ -318,41 +360,53 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         Mnemonic::Int => {
                             let vector = decoded.instr.immediate8() as u8;
                             cpu.cpu.pending.raise_software_interrupt(vector, next_ip);
-                            cpu.cpu
-                                .deliver_pending_event(&mut cpu.bus)
-                                .expect("deliver software INT");
+                            if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
+                                cpu.exit = Some(exit);
+                                break;
+                            }
                             cpu.cpu.pending.retire_instruction();
                         }
                         Mnemonic::Int3 => {
                             cpu.cpu.pending.raise_software_interrupt(3, next_ip);
-                            cpu.cpu
-                                .deliver_pending_event(&mut cpu.bus)
-                                .expect("deliver INT3");
+                            if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
+                                cpu.exit = Some(exit);
+                                break;
+                            }
                             cpu.cpu.pending.retire_instruction();
                         }
                         Mnemonic::Int1 => {
                             cpu.cpu.pending.raise_software_interrupt(1, next_ip);
-                            cpu.cpu
-                                .deliver_pending_event(&mut cpu.bus)
-                                .expect("deliver INT1");
+                            if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
+                                cpu.exit = Some(exit);
+                                break;
+                            }
                             cpu.cpu.pending.retire_instruction();
                         }
                         Mnemonic::Into => {
                             if cpu.cpu.state.get_flag(crate::state::RFLAGS_OF) {
                                 cpu.cpu.pending.raise_software_interrupt(4, next_ip);
-                                cpu.cpu
-                                    .deliver_pending_event(&mut cpu.bus)
-                                    .expect("deliver INTO");
+                                if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
+                                    cpu.exit = Some(exit);
+                                    break;
+                                }
                             } else {
                                 cpu.cpu.state.set_rip(next_ip);
                             }
                             cpu.cpu.pending.retire_instruction();
                         }
                         Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq => {
-                            cpu.cpu.iret(&mut cpu.bus).expect("iret");
+                            if let Err(exit) = cpu.cpu.iret(&mut cpu.bus) {
+                                cpu.exit = Some(exit);
+                                break;
+                            }
                             cpu.cpu.pending.retire_instruction();
                         }
-                        other => panic!("unsupported interrupt assist mnemonic: {other:?}"),
+                        _ => {
+                            cpu.exit = Some(crate::interrupts::CpuExit::UnimplementedInstruction(
+                                "interrupt assist mnemonic",
+                            ));
+                            break;
+                        }
                     }
 
                     // Preserve basic-block behavior: treat this instruction as a block boundary.
@@ -368,12 +422,24 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         .cpu
                         .state
                         .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
-                    let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
+                    let bytes = match cpu.bus.fetch(fetch_addr, 15) {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            cpu.cpu.state.apply_exception_side_effects(&e);
+                            deliver_tier0_exception(cpu, ip, e);
+                            break;
+                        }
+                    };
                     let bitness = cpu.cpu.state.bitness();
                     // Keep address-size override prefix state in sync with `assist::handle_assist`.
                     let addr_size_override = has_addr_size_override(&bytes, bitness);
-                    let decoded =
-                        aero_x86::decode(&bytes, ip, bitness).expect("decode tier0 assist");
+                    let decoded = match aero_x86::decode(&bytes, ip, bitness) {
+                        Ok(decoded) => decoded,
+                        Err(_) => {
+                            deliver_tier0_exception(cpu, ip, Exception::InvalidOpcode);
+                            break;
+                        }
+                    };
                     let inhibits_interrupt =
                         matches!(decoded.instr.mnemonic(), Mnemonic::Mov | Mnemonic::Pop)
                             && decoded.instr.op_count() > 0
@@ -409,44 +475,5 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
         }
 
         cpu.cpu.state.rip()
-    }
-}
-
-fn deliver_tier0_exception<B: crate::mem::CpuBus>(
-    cpu: &mut Vcpu<B>,
-    faulting_rip: u64,
-    exception: crate::exception::Exception,
-) {
-    use crate::exception::Exception as InterpException;
-    use crate::exceptions::Exception as ArchException;
-
-    let (arch, error_code, cr2) = match exception {
-        InterpException::DivideError => (ArchException::DivideError, None, None),
-        InterpException::GeneralProtection(code) => {
-            (ArchException::GeneralProtection, Some(code as u32), None)
-        }
-        InterpException::PageFault { addr, error_code } => {
-            (ArchException::PageFault, Some(error_code), Some(addr))
-        }
-        InterpException::SegmentNotPresent(code) => {
-            (ArchException::SegmentNotPresent, Some(code as u32), None)
-        }
-        InterpException::StackSegment(code) => (ArchException::StackFault, Some(code as u32), None),
-        InterpException::InvalidTss(code) => (ArchException::InvalidTss, Some(code as u32), None),
-        InterpException::InvalidOpcode => (ArchException::InvalidOpcode, None, None),
-        InterpException::DeviceNotAvailable => (ArchException::DeviceNotAvailable, None, None),
-        InterpException::X87Fpu => (ArchException::X87Fpu, None, None),
-        InterpException::SimdFloatingPointException => {
-            (ArchException::SimdFloatingPoint, None, None)
-        }
-        InterpException::MemoryFault => (ArchException::GeneralProtection, Some(0), None),
-        InterpException::Unimplemented(_) => (ArchException::InvalidOpcode, None, None),
-    };
-
-    cpu.cpu
-        .pending
-        .raise_exception_fault(&mut cpu.cpu.state, arch, faulting_rip, error_code, cr2);
-    if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
-        cpu.exit = Some(exit);
     }
 }
