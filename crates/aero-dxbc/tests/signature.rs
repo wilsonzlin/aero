@@ -1,5 +1,8 @@
 use aero_dxbc::{parse_signature_chunk, DxbcError, DxbcFile, FourCC};
 
+const VS_2_0_SIMPLE_DXBC: &[u8] =
+    include_bytes!("../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc");
+
 fn build_signature_chunk() -> Vec<u8> {
     // Header:
     //   u32 param_count
@@ -163,4 +166,35 @@ fn signature_chunk_bad_semantic_offset_is_rejected() {
     let err = parse_signature_chunk(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::InvalidChunk { .. }));
     assert!(err.context().contains("semantic_name"));
+}
+
+#[test]
+fn signature_chunk_from_real_dxbc_fixture_parses() {
+    let dxbc = DxbcFile::parse(VS_2_0_SIMPLE_DXBC).expect("DXBC fixture should parse");
+
+    let isgn = dxbc
+        .get_signature(FourCC(*b"ISGN"))
+        .expect("fixture should contain ISGN")
+        .expect("ISGN should parse");
+
+    assert_eq!(
+        isgn.entries
+            .iter()
+            .map(|e| (e.semantic_name.as_str(), e.semantic_index, e.register, e.mask))
+            .collect::<Vec<_>>(),
+        vec![("POSITION", 0, 0, 0xF), ("TEXCOORD", 0, 1, 0x3)]
+    );
+
+    let osgn = dxbc
+        .get_signature(FourCC(*b"OSGN"))
+        .expect("fixture should contain OSGN")
+        .expect("OSGN should parse");
+
+    assert_eq!(
+        osgn.entries
+            .iter()
+            .map(|e| (e.semantic_name.as_str(), e.semantic_index, e.register, e.mask))
+            .collect::<Vec<_>>(),
+        vec![("POSITION", 0, 0, 0xF), ("TEXCOORD", 0, 1, 0x3)]
+    );
 }
