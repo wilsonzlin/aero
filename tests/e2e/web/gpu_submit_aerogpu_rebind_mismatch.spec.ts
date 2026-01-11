@@ -1,0 +1,247 @@
+import { expect, test } from '@playwright/test';
+
+test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stays alive', async ({ page }) => {
+  await page.goto('/web/blank.html');
+
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; padding: 0; background: #000; }
+      canvas { width: 64px; height: 64px; }
+    </style>
+     <canvas id="c"></canvas>
+     <script type="module">
+        import { fnv1a32Hex } from "/web/src/utils/fnv1a.ts";
+        import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "/web/src/ipc/gpu-protocol.ts";
+        import {
+          AerogpuCmdWriter,
+          AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+          AEROGPU_RESOURCE_USAGE_SCANOUT,
+          AEROGPU_RESOURCE_USAGE_TEXTURE,
+        } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
+        import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
+  
+        const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
+  
+        const W = 64;
+        const H = 64;
+        const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+
+        function triangleRgba(w, h) {
+          const out = new Uint8Array(w * h * 4);
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              const inside = (x + y) < w;
+              out[i + 0] = inside ? 255 : 0;
+              out[i + 1] = 0;
+              out[i + 2] = 0;
+              out[i + 3] = 255;
+            }
+          }
+          return out;
+        }
+
+        function buildTriangleCmdStream(texHandle, textureRgba, w, h) {
+          const tightRowBytes = (w * 4) >>> 0;
+          // Force a non-tight row pitch to exercise row_pitch_bytes repacking in the GPU worker.
+          const rowPitchBytes = (tightRowBytes + 16) >>> 0;
+          const padded = new Uint8Array(rowPitchBytes * h);
+          for (let y = 0; y < h; y++) {
+            padded.set(
+              textureRgba.subarray(y * tightRowBytes, (y + 1) * tightRowBytes),
+              y * rowPitchBytes,
+            );
+          }
+          const writer = new AerogpuCmdWriter();
+          writer.createTexture2d(
+            texHandle,
+            AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT,
+            AerogpuFormat.R8G8B8A8Unorm,
+            w >>> 0,
+            h >>> 0,
+            1,
+            1,
+            rowPitchBytes,
+            0,
+            0,
+          );
+          writer.setRenderTargets([texHandle], 0);
+          writer.uploadResource(texHandle, 0n, padded);
+          writer.present(0, 0);
+          return writer.finish().buffer;
+        }
+
+        function buildRebindMismatchCmdStream(texHandle) {
+          const writer = new AerogpuCmdWriter();
+          // Re-create the same handle with mismatched immutable properties (width differs).
+          writer.createTexture2d(
+            texHandle,
+            AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT,
+            AerogpuFormat.R8G8B8A8Unorm,
+            32,
+            H >>> 0,
+            1,
+            1,
+            (32 * 4) >>> 0,
+            0,
+            0,
+          );
+          return writer.finish().buffer;
+        }
+
+        (async () => {
+          try {
+            const worker = new Worker("/web/src/workers/gpu.worker.ts", { type: "module" });
+
+            let readyResolve;
+            let readyReject;
+            const ready = new Promise((resolve, reject) => {
+              readyResolve = resolve;
+              readyReject = reject;
+            });
+
+            let nextRequestId = 1;
+            const pending = new Map();
+
+            /** @type {string[]} */
+            const errors = [];
+            let nextErrorResolve = null;
+            const waitForNextError = () =>
+              new Promise((resolve) => {
+                nextErrorResolve = resolve;
+              });
+
+            const onMessage = (event) => {
+              const msg = event.data;
+              if (!isGpuWorkerMessageBase(msg) || typeof msg.type !== "string") return;
+              if (msg.type === "ready") {
+                readyResolve(msg);
+                return;
+              }
+              if (msg.type === "error") {
+                errors.push(String(msg.message ?? ""));
+                if (nextErrorResolve) {
+                  nextErrorResolve(msg);
+                  nextErrorResolve = null;
+                }
+                return;
+              }
+              if (msg.type === "submit_complete" || msg.type === "screenshot") {
+                const entry = pending.get(msg.requestId);
+                if (!entry) return;
+                pending.delete(msg.requestId);
+                entry.resolve(msg);
+              }
+            };
+            worker.addEventListener("message", onMessage);
+            worker.addEventListener("error", (event) => {
+              readyReject((event && event.error) || event);
+            });
+
+            const offscreen = canvas.transferControlToOffscreen();
+            // Simple framebuffer_protocol (AERO) layout: 8 i32 header + RGBA bytes.
+            const strideBytes = W * 4;
+            const headerBytes = 8 * 4;
+            const sharedFramebuffer = new SharedArrayBuffer(headerBytes + strideBytes * H);
+            const header = new Int32Array(sharedFramebuffer, 0, 8);
+            // Header fields from src/display/framebuffer_protocol.ts (inlined).
+            header[0] = 0x4f524541; // FRAMEBUFFER_MAGIC ("AERO")
+            header[1] = 1; // FRAMEBUFFER_VERSION
+            header[2] = W;
+            header[3] = H;
+            header[4] = strideBytes;
+            header[5] = 1; // FRAMEBUFFER_FORMAT_RGBA8888
+            header[6] = 0; // frame counter
+            header[7] = 1; // config counter
+
+            const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+            const frameState = new Int32Array(sharedFrameState);
+            frameState[0] = 0; // FRAME_PRESENTED
+            frameState[1] = 0; // seq
+
+            worker.postMessage(
+              {
+                ...GPU_MESSAGE_BASE,
+                type: "init",
+                canvas: offscreen,
+                sharedFrameState,
+                sharedFramebuffer,
+                sharedFramebufferOffsetBytes: 0,
+                options: {
+                  forceBackend: "webgl2_raw",
+                  outputWidth: W,
+                  outputHeight: H,
+                  dpr: 1,
+                },
+              },
+              [offscreen],
+            );
+
+            await ready;
+
+            // Valid submission.
+            const expected0 = triangleRgba(W, H);
+            const cmdStream0 = buildTriangleCmdStream(1, expected0, W, H);
+            const submit0 = nextRequestId++;
+            const submit0Promise = new Promise((resolve, reject) => pending.set(submit0, { resolve, reject }));
+            worker.postMessage(
+              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: submit0, signalFence: 1n, cmdStream: cmdStream0 },
+              [cmdStream0],
+            );
+            await submit0Promise;
+
+            // Rebind mismatch should emit an error.
+            const cmdStreamBad = buildRebindMismatchCmdStream(1);
+            const badSubmit = nextRequestId++;
+            const badSubmitPromise = new Promise((resolve, reject) => pending.set(badSubmit, { resolve, reject }));
+            const badErrorPromise = waitForNextError();
+            worker.postMessage(
+              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: badSubmit, signalFence: 2n, cmdStream: cmdStreamBad },
+              [cmdStreamBad],
+            );
+            await Promise.all([badSubmitPromise, badErrorPromise]);
+
+            // Another valid submit should still work.
+            const expected1 = triangleRgba(W, H);
+            const cmdStream1 = buildTriangleCmdStream(2, expected1, W, H);
+            const submit1 = nextRequestId++;
+            const submit1Promise = new Promise((resolve, reject) => pending.set(submit1, { resolve, reject }));
+            worker.postMessage(
+              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: submit1, signalFence: 3n, cmdStream: cmdStream1 },
+              [cmdStream1],
+            );
+            await submit1Promise;
+
+            const screenshotRequestId = nextRequestId++;
+            const screenshotPromise = new Promise((resolve, reject) => pending.set(screenshotRequestId, { resolve, reject }));
+            worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId: screenshotRequestId });
+            const screenshot = await screenshotPromise;
+            const actual = new Uint8Array(screenshot.rgba8);
+
+            const hash = fnv1a32Hex(actual);
+            const expectedHash = fnv1a32Hex(expected1);
+
+            window.__AERO_REBIND_MISMATCH_RESULT__ = {
+              pass: hash === expectedHash,
+              hash,
+              expectedHash,
+              errors,
+            };
+
+            worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
+            worker.terminate();
+          } catch (e) {
+            window.__AERO_REBIND_MISMATCH_RESULT__ = { pass: false, error: String(e) };
+          }
+        })();
+     </script>
+  `);
+
+  await page.waitForFunction(() => (window as any).__AERO_REBIND_MISMATCH_RESULT__);
+  const result = await page.evaluate(() => (window as any).__AERO_REBIND_MISMATCH_RESULT__);
+  expect(result.error ?? null).toBeNull();
+  expect(result.errors.length).toBeGreaterThan(0);
+  expect(result.errors.some((e: string) => e.includes("rebind mismatch"))).toBe(true);
+  expect(result.pass).toBe(true);
+});
+
