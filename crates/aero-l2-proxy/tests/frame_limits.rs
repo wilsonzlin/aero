@@ -173,8 +173,7 @@ async fn oversized_stack_frames_are_dropped_and_increment_metric() {
     let _session_secret_alias = EnvVarGuard::unset("SESSION_SECRET");
     let _gateway_session_secret = EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET");
     let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
-    let _max_connections_per_session =
-        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_connections_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
     let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
