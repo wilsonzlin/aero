@@ -154,6 +154,12 @@ impl GuestMemory for PhasedGuestMemory {
             self.after.read(gpa, dst)
         }
     }
+
+    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+        // Keep both phases coherent so writeback/dirty-range tests see consistent memory.
+        self.before.write(gpa, src)?;
+        self.after.write(gpa, src)
+    }
 }
 
 #[test]

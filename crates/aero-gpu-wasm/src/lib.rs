@@ -65,6 +65,24 @@ mod wasm {
             self.view.subarray(start_u32, end_u32).copy_to(dst);
             Ok(())
         }
+
+        fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+            let len = src.len();
+            let start = usize::try_from(gpa).map_err(|_| GuestMemoryError { gpa, len })?;
+            let end = start
+                .checked_add(len)
+                .ok_or(GuestMemoryError { gpa, len })?;
+
+            let max = self.view.length() as usize;
+            if end > max {
+                return Err(GuestMemoryError { gpa, len });
+            }
+
+            let start_u32 = u32::try_from(start).map_err(|_| GuestMemoryError { gpa, len })?;
+            let end_u32 = u32::try_from(end).map_err(|_| GuestMemoryError { gpa, len })?;
+            self.view.subarray(start_u32, end_u32).copy_from(src);
+            Ok(())
+        }
     }
 
     thread_local! {

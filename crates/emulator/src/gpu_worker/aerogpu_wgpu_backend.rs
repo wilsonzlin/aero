@@ -53,6 +53,15 @@ impl GuestMemory for MemoryBusGuestMemory<'_> {
         self.mem.borrow_mut().read_physical(gpa, dst);
         Ok(())
     }
+
+    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+        let len = src.len();
+        let _end = gpa
+            .checked_add(len as u64)
+            .ok_or(GuestMemoryError { gpa, len })?;
+        self.mem.borrow_mut().write_physical(gpa, src);
+        Ok(())
+    }
 }
 
 fn decode_alloc_table_bytes(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
