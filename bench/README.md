@@ -162,18 +162,19 @@ npm run bench:storage -- --out-dir storage-perf-results/head
 ### Comparing two runs
 
 ```bash
-node --experimental-strip-types bench/compare.ts \
+node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
   --baseline storage-perf-results/base/storage_bench.json \
-  --candidate storage-perf-results/head/storage_bench.json \
-  --out-dir storage-perf-results \
-  --thresholds-file bench/perf_thresholds.json \
-  --profile pr-smoke
+  --current storage-perf-results/head/storage_bench.json \
+  --outDir storage-perf-results \
+  --thresholdPct 15 \
+  --json
 
 cat storage-perf-results/compare.md
 ```
 
 The compare script writes `compare.md` + `summary.json` to `--out-dir` and exits non-zero if any metric
 regresses by more than the configured threshold (exit code 2 indicates extreme variance / missing data).
+`scripts/compare_storage_benchmarks.ts --json` also writes `compare.json` (a copy of `summary.json`) for legacy tooling.
 The per-metric table includes the baseline/current coefficient-of-variation (CV) computed from the
 per-run samples for quick noise inspection.
 
