@@ -134,7 +134,12 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
 
         addr = qs->NotifyAddr;
         if (addr == NULL && qs->NotifyBase != NULL && qs->NotifyOffMultiplier != 0) {
-            addr = (volatile UINT16*)(qs->NotifyBase + (ULONG)qs->QueueNotifyOff * qs->NotifyOffMultiplier);
+            ULONGLONG offset;
+
+            offset = (ULONGLONG)qs->QueueNotifyOff * (ULONGLONG)qs->NotifyOffMultiplier;
+            if (qs->NotifyLength == 0 || offset + sizeof(UINT16) <= (ULONGLONG)qs->NotifyLength) {
+                addr = (volatile UINT16*)(qs->NotifyBase + (SIZE_T)offset);
+            }
         }
 
         if (addr != NULL) {
@@ -165,6 +170,7 @@ VirtioSndQueueSplitCreate(
     BOOLEAN indirect,
     volatile UCHAR* notify_base,
     ULONG notify_off_multiplier,
+    SIZE_T notify_length,
     USHORT queue_notify_off,
     VIRTIOSND_QUEUE* out_queue,
     UINT64* out_desc_pa,
@@ -207,10 +213,19 @@ VirtioSndQueueSplitCreate(
     qs->QueueSize = queue_size;
     qs->NotifyBase = notify_base;
     qs->NotifyOffMultiplier = notify_off_multiplier;
+    qs->NotifyLength = notify_length;
     qs->QueueNotifyOff = queue_notify_off;
 
     if (notify_base != NULL && notify_off_multiplier != 0) {
-        qs->NotifyAddr = (volatile UINT16*)(notify_base + (ULONG)queue_notify_off * notify_off_multiplier);
+        ULONGLONG offset;
+
+        offset = (ULONGLONG)queue_notify_off * (ULONGLONG)notify_off_multiplier;
+        if (notify_length != 0 && offset + sizeof(UINT16) > (ULONGLONG)notify_length) {
+            status = STATUS_DEVICE_CONFIGURATION_ERROR;
+            goto Fail;
+        }
+
+        qs->NotifyAddr = (volatile UINT16*)(notify_base + (SIZE_T)offset);
     }
 
     ring_bytes = VirtqSplitRingMemSize(queue_size, VIRTIOSND_SPLIT_RING_ALIGN, event_idx);

@@ -140,6 +140,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             indirect,
             Dx->Transport.NotifyBase,
             Dx->Transport.NotifyOffMultiplier,
+            Dx->Transport.NotifyLength,
             notifyOff,
             &Dx->Queues[q],
             &descPa,
