@@ -51,7 +51,7 @@ Example (explicit INF selection + WOW64 payload DLL in x64 package):
 }
 ```
 
-For a real in-tree example (multiple INFs + WOW64 payloads), see: `drivers/aerogpu/ci-package.json`.
+For a real in-tree example (driver ships multiple INFs; manifest selects an explicit subset; plus WOW64 payload + helper scripts), see: `drivers/aerogpu/ci-package.json`.
 
 Example (requires WDF coinstaller; `dllName` derived from `kmdfVersion`):
 
