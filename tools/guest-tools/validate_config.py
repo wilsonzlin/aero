@@ -143,27 +143,43 @@ def load_packaging_spec_expected_hwids(path: Path) -> Mapping[str, Tuple[str, ..
     except json.JSONDecodeError as e:
         raise ValidationError(f"Failed to parse JSON spec: {path}\n{e}") from e
 
-    required = spec.get("required_drivers")
-    if not isinstance(required, list):
-        raise ValidationError(f"Spec {path} must contain a list field 'required_drivers'.")
+    # Support both schemas:
+    # - New: {"drivers": [{"name": "...", "required": true/false, "expected_hardware_ids": [...]}, ...]}
+    # - Legacy: {"required_drivers": [{"name": "...", "expected_hardware_ids": [...]}, ...]}
+    #
+    # We merge both if present, matching aero_packager behavior.
+    def add_entries(field: str) -> None:
+        entries = spec.get(field)
+        if entries is None:
+            return
+        if not isinstance(entries, list):
+            raise ValidationError(f"Spec {path} must contain a list field '{field}'.")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValidationError(f"Spec {path} contains a non-object entry in {field}: {entry!r}")
+            name = entry.get("name")
+            hwids = entry.get("expected_hardware_ids")
+            if not isinstance(name, str) or not name:
+                raise ValidationError(f"Spec {path} driver entry missing valid 'name': {entry!r}")
+            if hwids is None:
+                hwids = []
+            if not isinstance(hwids, list) or not all(isinstance(x, str) for x in hwids):
+                raise ValidationError(
+                    f"Spec {path} driver {name!r} has invalid 'expected_hardware_ids' (expected list[str])."
+                )
+            existing = out.setdefault(name, [])
+            for pattern in hwids:
+                if pattern not in existing:
+                    existing.append(pattern)
 
-    out: Dict[str, Tuple[str, ...]] = {}
-    for entry in required:
-        if not isinstance(entry, dict):
-            raise ValidationError(f"Spec {path} contains a non-object entry in required_drivers: {entry!r}")
-        name = entry.get("name")
-        hwids = entry.get("expected_hardware_ids")
-        if not isinstance(name, str) or not name:
-            raise ValidationError(f"Spec {path} driver entry missing valid 'name': {entry!r}")
-        if hwids is None:
-            hwids = []
-        if not isinstance(hwids, list) or not all(isinstance(x, str) for x in hwids):
-            raise ValidationError(
-                f"Spec {path} driver {name!r} has invalid 'expected_hardware_ids' (expected list[str])."
-            )
-        out[name] = tuple(hwids)
+    out: Dict[str, List[str]] = {}
+    add_entries("drivers")
+    add_entries("required_drivers")
 
-    return out
+    if not out:
+        raise ValidationError(f"Spec {path} must contain a list field 'drivers' or 'required_drivers'.")
+
+    return {name: tuple(patterns) for name, patterns in out.items()}
 
 
 def _find_first_match(patterns: Sequence[str], hwids: Sequence[str]) -> Tuple[str, str] | None:
@@ -275,4 +291,3 @@ def main(argv: Sequence[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-
