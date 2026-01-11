@@ -2188,6 +2188,11 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
 
   DebugLog("aerogpu-d3d10: GetCaps type=%u size=%u\n", (unsigned)pCaps->Type, (unsigned)pCaps->DataSize);
 
+  DXGI_FORMAT in_format = DXGI_FORMAT_UNKNOWN;
+  if (pCaps->Type == D3D10DDICAPS_TYPE_FORMAT_SUPPORT && pCaps->DataSize >= sizeof(D3D10DDIARG_FORMAT_SUPPORT)) {
+    in_format = reinterpret_cast<const D3D10DDIARG_FORMAT_SUPPORT*>(pCaps->pData)->Format;
+  }
+
   if (pCaps->DataSize) {
     std::memset(pCaps->pData, 0, pCaps->DataSize);
   }
@@ -2202,7 +2207,8 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
     case D3D10DDICAPS_TYPE_FORMAT_SUPPORT:
       if (pCaps->DataSize >= sizeof(D3D10DDIARG_FORMAT_SUPPORT)) {
         auto* fmt = reinterpret_cast<D3D10DDIARG_FORMAT_SUPPORT*>(pCaps->pData);
-        const uint32_t format = static_cast<uint32_t>(fmt->Format);
+        fmt->Format = in_format;
+        const uint32_t format = static_cast<uint32_t>(in_format);
 
         UINT support = 0;
         switch (format) {
