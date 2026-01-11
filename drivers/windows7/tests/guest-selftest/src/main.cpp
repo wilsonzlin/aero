@@ -10,6 +10,7 @@
 #include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
 #include <mmsystem.h>
+#include <mmddk.h>
 #include <propsys.h>
 #include <setupapi.h>
 
@@ -2074,6 +2075,17 @@ static std::wstring WinmmErrorToWide(MMRESULT rc) {
   return L"";
 }
 
+static std::optional<std::wstring> WaveOutDeviceInstanceId(UINT device_id) {
+  wchar_t buf[512]{};
+  const MMRESULT rc = waveOutMessage(reinterpret_cast<HWAVEOUT>(static_cast<UINT_PTR>(device_id)),
+                                     DRV_QUERYDEVICEINSTANCEID, reinterpret_cast<DWORD_PTR>(buf),
+                                     sizeof(buf));
+  if (rc != MMSYSERR_NOERROR) return std::nullopt;
+  buf[(sizeof(buf) / sizeof(buf[0])) - 1] = L'\0';
+  if (buf[0] == L'\0') return std::nullopt;
+  return std::wstring(buf);
+}
+
 static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_names) {
   const UINT num = waveOutGetNumDevs();
   log.Logf("virtio-snd: waveOut devices=%u", num);
@@ -2088,21 +2100,41 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
   };
 
   UINT device_id = UINT_MAX;
+  int best_score = 0;
   for (UINT i = 0; i < num; i++) {
     WAVEOUTCAPSW caps{};
     const MMRESULT rc = waveOutGetDevCapsW(i, &caps, sizeof(caps));
     if (rc != MMSYSERR_NOERROR) continue;
-    log.Logf("virtio-snd: waveOut[%u]=%s", i, WideToUtf8(caps.szPname).c_str());
-    if (device_id == UINT_MAX && name_matches(caps.szPname)) {
+
+    int score = 0;
+    if (name_matches(caps.szPname)) score += 100;
+
+    const auto inst_id = WaveOutDeviceInstanceId(i);
+    if (inst_id.has_value()) {
+      log.Logf("virtio-snd: waveOut[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
+               WideToUtf8(*inst_id).c_str());
+      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
+        score += 500;
+      }
+      const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
+      if (IsVirtioSndPciHardwareId(hwids)) score += 1000;
+      if (IsVirtioHardwareId(hwids)) score += 200;
+    } else {
+      log.Logf("virtio-snd: waveOut[%u]=%s instance_id=<unavailable>", i,
+               WideToUtf8(caps.szPname).c_str());
+    }
+
+    if (score > best_score) {
+      best_score = score;
       device_id = i;
     }
   }
 
-  if (device_id == UINT_MAX) {
-    log.LogLine("virtio-snd: waveOut no matching device name found");
+  if (device_id == UINT_MAX || best_score <= 0) {
+    log.LogLine("virtio-snd: waveOut no matching device found");
     return false;
   } else {
-    log.Logf("virtio-snd: waveOut using device_id=%u", device_id);
+    log.Logf("virtio-snd: waveOut using device_id=%u score=%d", device_id, best_score);
   }
 
   HANDLE done_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
