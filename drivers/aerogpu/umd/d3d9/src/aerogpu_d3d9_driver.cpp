@@ -1097,20 +1097,25 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 #if defined(_WIN32)
     const uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
     /*
-     * PIDs on Windows are multiples of 4, so drop the bottom two bits and fold
-     * 20 PID bits + 11 sequence bits into a 31-bit alloc_id:
+     * PIDs on Windows are typically multiples of 4, so drop the bottom two bits
+     * and fold PID + a per-process sequence counter into a 31-bit alloc_id:
      *
-     *   alloc_id = ((pid >> 2) & 0xFFFFF) << 11 | seq
+     *   alloc_id = ((pid >> 2) & 0x1FFFF) << 14 | seq
      *
-     * This is not a formal Windows contract, but in practice keeps alloc_id
-     * collision risk negligible for Win7 DWM redirected surfaces.
+     * This yields:
+     * - 17 PID bits (enough for typical Win7 sessions; collisions only after PID
+     *   reuse across a ~500k range),
+     * - 14 sequence bits (16383 allocations per process before wrap).
+     *
+     * DWM can create thousands of redirected surfaces; keep the sequence range
+     * large enough to avoid collisions in long-running sessions.
      */
-    const uint32_t pid_bits = (pid >> 2) & 0xFFFFFu;
-    uint32_t seq = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed) & 0x7FFu;
+    const uint32_t pid_bits = (pid >> 2) & 0x1FFFFu;
+    uint32_t seq = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed) & 0x3FFFu;
     if (seq == 0) {
-      seq = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed) & 0x7FFu;
+      seq = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed) & 0x3FFFu;
     }
-    alloc_id = (pid_bits << 11) | seq;
+    alloc_id = (pid_bits << 14) | seq;
 #else
     alloc_id = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed);
     alloc_id &= AEROGPU_WDDM_ALLOC_ID_UMD_MAX;
