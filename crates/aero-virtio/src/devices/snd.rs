@@ -9,6 +9,8 @@ use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
 
+use std::collections::VecDeque;
+
 pub const VIRTIO_DEVICE_TYPE_SND: u16 = 25;
 
 pub const VIRTIO_SND_QUEUE_CONTROL: u16 = 0;
@@ -121,6 +123,8 @@ pub struct VirtioSnd<O: AudioSink, I: AudioCaptureSource = NullCaptureSource> {
     capture_frames_scratch: Vec<[f32; 2]>,
     capture_interleaved_scratch: Vec<f32>,
     capture_samples_scratch: Vec<f32>,
+    event_buffers: VecDeque<DescriptorChain>,
+    pending_events: VecDeque<Vec<u8>>,
 }
 
 impl<O: AudioSink> VirtioSnd<O, NullCaptureSource> {
@@ -173,6 +177,8 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             capture_frames_scratch: Vec::new(),
             capture_interleaved_scratch: Vec::new(),
             capture_samples_scratch: Vec::new(),
+            event_buffers: VecDeque::new(),
+            pending_events: VecDeque::new(),
         }
     }
 
@@ -248,6 +254,48 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         queue
             .add_used(mem, chain.head_index(), written)
             .map_err(|_| VirtioDeviceError::IoError)
+    }
+
+    fn flush_eventq(
+        &mut self,
+        queue: &mut VirtQueue,
+        mem: &mut dyn GuestMemory,
+    ) -> Result<bool, VirtioDeviceError> {
+        let mut need_irq = false;
+
+        while let Some(chain) = self.event_buffers.pop_front() {
+            let Some(event) = self.pending_events.pop_front() else {
+                self.event_buffers.push_front(chain);
+                break;
+            };
+
+            let descs = chain.descriptors();
+            if descs.is_empty() {
+                return Err(VirtioDeviceError::BadDescriptorChain);
+            }
+
+            let mut written = 0usize;
+            for d in descs {
+                if !d.is_write_only() {
+                    return Err(VirtioDeviceError::BadDescriptorChain);
+                }
+                if written == event.len() {
+                    break;
+                }
+                let take = (d.len as usize).min(event.len() - written);
+                let dst = mem
+                    .get_slice_mut(d.addr, take)
+                    .map_err(|_| VirtioDeviceError::IoError)?;
+                dst.copy_from_slice(&event[written..written + take]);
+                written += take;
+            }
+
+            need_irq |= queue
+                .add_used(mem, chain.head_index(), written as u32)
+                .map_err(|_| VirtioDeviceError::IoError)?;
+        }
+
+        Ok(need_irq)
     }
 
     fn handle_control_request(&mut self, request: &[u8]) -> Vec<u8> {
@@ -856,11 +904,33 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
         let _ = self.negotiated_features;
         match queue_index {
             VIRTIO_SND_QUEUE_CONTROL => self.process_control(chain, queue, mem),
+            VIRTIO_SND_QUEUE_EVENT => {
+                if chain.descriptors().is_empty()
+                    || chain.descriptors().iter().any(|d| !d.is_write_only())
+                {
+                    return Err(VirtioDeviceError::BadDescriptorChain);
+                }
+
+                self.event_buffers.push_back(chain);
+                self.flush_eventq(queue, mem)
+            }
             VIRTIO_SND_QUEUE_TX => self.process_tx(chain, queue, mem),
             VIRTIO_SND_QUEUE_RX => self.process_rx(chain, queue, mem),
             _ => queue
                 .add_used(mem, chain.head_index(), 0)
                 .map_err(|_| VirtioDeviceError::IoError),
+        }
+    }
+
+    fn poll_queue(
+        &mut self,
+        queue_index: u16,
+        queue: &mut VirtQueue,
+        mem: &mut dyn GuestMemory,
+    ) -> Result<bool, VirtioDeviceError> {
+        match queue_index {
+            VIRTIO_SND_QUEUE_EVENT => self.flush_eventq(queue, mem),
+            _ => Ok(false),
         }
     }
 
@@ -908,6 +978,8 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
         self.capture_frames_scratch.clear();
         self.capture_interleaved_scratch.clear();
         self.capture_samples_scratch.clear();
+        self.event_buffers.clear();
+        self.pending_events.clear();
     }
 
     fn as_any(&self) -> &dyn core::any::Any {

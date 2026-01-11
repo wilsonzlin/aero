@@ -801,6 +801,15 @@ The guest MAY send output/LED events via `statusq`.
 | 2 | `txq` | driver → device (PCM playback) | **256** |
 | 3 | `rxq` | device → driver (PCM capture) | **64** |
 
+#### 3.4.2.1 Event queue behavior (contract v1)
+
+Contract v1 does not define any virtio-snd event messages. The event queue is reserved for future
+extensions.
+
+- The device MUST accept and retain driver-posted `eventq` buffers.
+- The device MUST NOT complete `eventq` buffers unless it has an event to deliver.
+- Drivers MUST NOT depend on any `eventq` completions in contract v1.
+
 #### 3.4.3 Feature bits
 
 The device MUST offer:

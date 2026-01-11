@@ -6,10 +6,10 @@ use aero_virtio::devices::snd::{
 };
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
-    InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_F_RING_INDIRECT_DESC,
-    VIRTIO_F_VERSION_1, VIRTIO_PCI_CAP_COMMON_CFG, VIRTIO_PCI_CAP_DEVICE_CFG,
-    VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG, VIRTIO_STATUS_ACKNOWLEDGE,
-    VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    InterruptLog, InterruptSink, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_F_RING_INDIRECT_DESC,
+    VIRTIO_F_VERSION_1, VIRTIO_PCI_CAP_COMMON_CFG, VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG,
+    VIRTIO_PCI_CAP_NOTIFY_CFG, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
+    VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
@@ -23,6 +23,46 @@ impl AudioSink for CaptureSink {
     fn push_interleaved_f32(&mut self, samples: &[f32]) {
         self.0.borrow_mut().extend_from_slice(samples);
     }
+}
+
+#[derive(Default)]
+struct LegacyIrqState {
+    raised: u32,
+    lowered: u32,
+    asserted: bool,
+}
+
+#[derive(Clone)]
+struct SharedLegacyIrq {
+    state: Rc<RefCell<LegacyIrqState>>,
+}
+
+impl SharedLegacyIrq {
+    fn new() -> (Self, Rc<RefCell<LegacyIrqState>>) {
+        let state = Rc::new(RefCell::new(LegacyIrqState::default()));
+        (
+            Self {
+                state: state.clone(),
+            },
+            state,
+        )
+    }
+}
+
+impl InterruptSink for SharedLegacyIrq {
+    fn raise_legacy_irq(&mut self) {
+        let mut state = self.state.borrow_mut();
+        state.raised = state.raised.saturating_add(1);
+        state.asserted = true;
+    }
+
+    fn lower_legacy_irq(&mut self) {
+        let mut state = self.state.borrow_mut();
+        state.lowered = state.lowered.saturating_add(1);
+        state.asserted = false;
+    }
+
+    fn signal_msix(&mut self, _vector: u16) {}
 }
 
 #[derive(Default)]
@@ -195,6 +235,101 @@ fn submit_chain(
         &queue_index.to_le_bytes(),
         mem,
     );
+}
+
+#[test]
+fn virtio_snd_eventq_buffers_are_not_completed_without_events() {
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let (irq, irq_state) = SharedLegacyIrq::new();
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(irq));
+    let caps = parse_caps(&dev);
+
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure event queue 1.
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_EVENT,
+        desc,
+        avail,
+        used,
+    );
+
+    // Post one writable buffer.
+    let buf = 0x4000;
+    mem.write(buf, &[0u8; 8]).unwrap();
+    write_desc(&mut mem, desc, 0, buf, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+
+    // Kicking the event queue should not complete the buffer (no events are defined in contract v1).
+    dev.bar0_write(
+        caps.notify + u64::from(VIRTIO_SND_QUEUE_EVENT) * u64::from(caps.notify_mult),
+        &VIRTIO_SND_QUEUE_EVENT.to_le_bytes(),
+        &mut mem,
+    );
+    assert_eq!(
+        u16::from_le_bytes(mem.get_slice(used + 2, 2).unwrap().try_into().unwrap()),
+        0
+    );
+    assert_eq!(irq_state.borrow().raised, 0);
+
+    // Polling should remain silent and should not generate used entries.
+    dev.poll(&mut mem);
+    assert_eq!(
+        u16::from_le_bytes(mem.get_slice(used + 2, 2).unwrap().try_into().unwrap()),
+        0
+    );
+    assert_eq!(irq_state.borrow().raised, 0);
+
+    let mut isr = [0u8; 1];
+    dev.bar0_read(caps.isr, &mut isr);
+    assert_eq!(isr[0], 0);
 }
 
 #[test]
