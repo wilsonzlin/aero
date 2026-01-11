@@ -112,12 +112,12 @@ fn iterates_valid_stream_and_decodes_variable_payloads() {
     push_u32(&mut set_constant_buffers_payload, 0); // start_slot
     push_u32(&mut set_constant_buffers_payload, 2); // buffer_count
     push_u32(&mut set_constant_buffers_payload, 0); // reserved0
-    // binding[0]
+                                                    // binding[0]
     push_u32(&mut set_constant_buffers_payload, 100); // buffer
     push_u32(&mut set_constant_buffers_payload, 0); // offset_bytes
     push_u32(&mut set_constant_buffers_payload, 64); // size_bytes
     push_u32(&mut set_constant_buffers_payload, 0); // reserved0
-    // binding[1]
+                                                    // binding[1]
     push_u32(&mut set_constant_buffers_payload, 101); // buffer
     push_u32(&mut set_constant_buffers_payload, 16); // offset_bytes
     push_u32(&mut set_constant_buffers_payload, 128); // size_bytes
@@ -277,7 +277,7 @@ fn variable_payload_decoders_allow_trailing_bytes() {
     let mut set_vertex_buffers_payload = Vec::new();
     push_u32(&mut set_vertex_buffers_payload, 2); // start_slot
     push_u32(&mut set_vertex_buffers_payload, 1); // buffer_count
-                                                   // binding[0]
+                                                  // binding[0]
     push_u32(&mut set_vertex_buffers_payload, 11); // buffer
     push_u32(&mut set_vertex_buffers_payload, 16); // stride_bytes
     push_u32(&mut set_vertex_buffers_payload, 0); // offset_bytes
@@ -297,7 +297,7 @@ fn variable_payload_decoders_allow_trailing_bytes() {
     push_u32(&mut set_constant_buffers_payload, 0); // start_slot
     push_u32(&mut set_constant_buffers_payload, 1); // buffer_count
     push_u32(&mut set_constant_buffers_payload, 0); // reserved0
-    // binding[0]
+                                                    // binding[0]
     push_u32(&mut set_constant_buffers_payload, 100); // buffer
     push_u32(&mut set_constant_buffers_payload, 0); // offset_bytes
     push_u32(&mut set_constant_buffers_payload, 64); // size_bytes

@@ -1662,7 +1662,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ));
             };
             let dst_backing = dst_backing.ok_or_else(|| {
-                ExecutorError::Validation("COPY_TEXTURE2D: missing dst backing for writeback".into())
+                ExecutorError::Validation(
+                    "COPY_TEXTURE2D: missing dst backing for writeback".into(),
+                )
             })?;
 
             let row_bytes = width.checked_mul(dst_bpp).ok_or_else(|| {
