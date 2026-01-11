@@ -1395,6 +1395,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   if (dim == 1u /* buffer */) {
     res->kind = ResourceKind::Buffer;
     res->size_bytes = pDesc->ByteWidth;
+    const uint64_t padded_size_bytes = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 4);
     const uint64_t alloc_size = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 256);
     bool cpu_visible = false;
     if constexpr (has_CPUAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
@@ -1430,11 +1431,11 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       if (!init.pSysMem) {
         return E_INVALIDARG;
       }
-      if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+      if (padded_size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
         return E_OUTOFMEMORY;
       }
       try {
-        res->storage.resize(static_cast<size_t>(res->size_bytes));
+        res->storage.resize(static_cast<size_t>(padded_size_bytes));
       } catch (...) {
         return E_OUTOFMEMORY;
       }
@@ -1465,7 +1466,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
-    cmd->size_bytes = res->size_bytes;
+    cmd->size_bytes = padded_size_bytes;
     cmd->backing_alloc_id = 0;
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
@@ -1761,24 +1762,27 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   }
 
   uint64_t size = 0;
+  uint64_t storage_size = 0;
   if (res->kind == ResourceKind::Buffer) {
     size = res->size_bytes;
+    storage_size = AlignUpU64(size, 4);
   } else if (res->kind == ResourceKind::Texture2D) {
     size = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+    storage_size = size;
   }
   if (!size) {
     return E_INVALIDARG;
   }
-  if (size > static_cast<uint64_t>(SIZE_MAX)) {
+  if (storage_size > static_cast<uint64_t>(SIZE_MAX)) {
     return E_OUTOFMEMORY;
   }
 
   try {
     if (map_type_u == kD3DMapWriteDiscard) {
       // Approximate DISCARD renaming by allocating a fresh CPU backing store.
-      res->storage.assign(static_cast<size_t>(size), 0);
-    } else if (res->storage.size() < static_cast<size_t>(size)) {
-      res->storage.resize(static_cast<size_t>(size), 0);
+      res->storage.assign(static_cast<size_t>(storage_size), 0);
+    } else if (res->storage.size() < static_cast<size_t>(storage_size)) {
+      res->storage.resize(static_cast<size_t>(storage_size), 0);
     }
   } catch (...) {
     return E_OUTOFMEMORY;
@@ -1950,16 +1954,29 @@ void APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UNMAP* pUnmap) {
   }
 
   if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
-    if (res->mapped_offset > res->storage.size()) {
+    uint64_t upload_offset = res->mapped_offset;
+    uint64_t upload_size = res->mapped_size;
+    if (res->kind == ResourceKind::Buffer) {
+      const uint64_t end = res->mapped_offset + res->mapped_size;
+      if (end < res->mapped_offset) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      upload_offset = res->mapped_offset & ~3ull;
+      const uint64_t upload_end = AlignUpU64(end, 4);
+      upload_size = upload_end - upload_offset;
+    }
+
+    if (upload_offset > static_cast<uint64_t>(res->storage.size())) {
       SetError(hDevice, E_INVALIDARG);
       return;
     }
-    const size_t remaining = res->storage.size() - static_cast<size_t>(res->mapped_offset);
-    if (res->mapped_size > remaining) {
+    const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
+    if (upload_size > static_cast<uint64_t>(remaining)) {
       SetError(hDevice, E_INVALIDARG);
       return;
     }
-    if (res->mapped_size > static_cast<uint64_t>(SIZE_MAX)) {
+    if (upload_size > static_cast<uint64_t>(SIZE_MAX)) {
       SetError(hDevice, E_OUTOFMEMORY);
       return;
     }
@@ -1993,17 +2010,17 @@ void APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UNMAP* pUnmap) {
       }
     }
 
-    const uint8_t* payload = res->storage.data() + static_cast<size_t>(res->mapped_offset);
+    const uint8_t* payload = res->storage.data() + static_cast<size_t>(upload_offset);
     auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-        AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(res->mapped_size));
+        AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(upload_size));
     if (!upload) {
       SetError(hDevice, E_FAIL);
       return;
     }
     upload->resource_handle = res->handle;
     upload->reserved0 = 0;
-    upload->offset_bytes = res->mapped_offset;
-    upload->size_bytes = res->mapped_size;
+    upload->offset_bytes = upload_offset;
+    upload->size_bytes = upload_size;
   }
 
   if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
@@ -2082,13 +2099,14 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       return;
     }
 
-    if (res->storage.size() < static_cast<size_t>(res->size_bytes)) {
-      if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+    const uint64_t storage_needed_u64 = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 4);
+    if (res->storage.size() < static_cast<size_t>(storage_needed_u64)) {
+      if (storage_needed_u64 > static_cast<uint64_t>(SIZE_MAX)) {
         SetError(hDevice, E_OUTOFMEMORY);
         return;
       }
       try {
-        res->storage.resize(static_cast<size_t>(res->size_bytes), 0);
+        res->storage.resize(static_cast<size_t>(storage_needed_u64), 0);
       } catch (...) {
         SetError(hDevice, E_OUTOFMEMORY);
         return;
@@ -2249,8 +2267,9 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     const uint64_t max_dst = (dst_off < dst->size_bytes) ? (dst->size_bytes - dst_off) : 0;
     const uint64_t bytes = std::min(std::min(requested, max_src), max_dst);
 
-    if (dst->size_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
-      const size_t dst_size = static_cast<size_t>(dst->size_bytes);
+    const uint64_t dst_storage_u64 = AlignUpU64(dst->size_bytes ? dst->size_bytes : 1, 4);
+    if (dst_storage_u64 <= static_cast<uint64_t>(SIZE_MAX)) {
+      const size_t dst_size = static_cast<size_t>(dst_storage_u64);
       if (dst->storage.size() < dst_size) {
         try {
           dst->storage.resize(dst_size, 0);
@@ -2260,8 +2279,9 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
         }
       }
     }
-    if (src->size_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
-      const size_t src_size = static_cast<size_t>(src->size_bytes);
+    const uint64_t src_storage_u64 = AlignUpU64(src->size_bytes ? src->size_bytes : 1, 4);
+    if (src_storage_u64 <= static_cast<uint64_t>(SIZE_MAX)) {
+      const size_t src_size = static_cast<size_t>(src_storage_u64);
       if (src->storage.size() < src_size) {
         try {
           src->storage.resize(src_size, 0);

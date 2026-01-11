@@ -2940,6 +2940,11 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
   if (dim == D3D10DDIRESOURCE_BUFFER) {
     res->kind = ResourceKind::Buffer;
     res->size_bytes = static_cast<uint64_t>(pDesc->ByteWidth);
+    const uint64_t padded_size_bytes = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 4);
+    if (padded_size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+      res->~Resource();
+      return E_OUTOFMEMORY;
+    }
     const uint64_t alloc_size = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 256);
     const bool cpu_visible = (res->usage == kD3D11UsageStaging) || (res->cpu_access_flags != 0);
     const bool is_rt = (res->bind_flags & kD3D11BindRenderTarget) != 0;
@@ -2960,7 +2965,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return hr;
     }
     try {
-      res->storage.resize(static_cast<size_t>(res->size_bytes));
+      res->storage.resize(static_cast<size_t>(padded_size_bytes));
     } catch (...) {
       deallocate_if_needed();
       res->~Resource();
@@ -2976,7 +2981,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
-    cmd->size_bytes = res->size_bytes;
+    cmd->size_bytes = padded_size_bytes;
     cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;

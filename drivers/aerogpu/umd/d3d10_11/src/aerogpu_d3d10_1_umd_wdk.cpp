@@ -175,6 +175,10 @@ uint32_t f32_bits(float v) {
   return bits;
 }
 
+constexpr uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
 // FNV-1a 32-bit hash for stable semantic name IDs.
 uint32_t HashSemanticName(const char* s) {
   if (!s) {
@@ -1843,6 +1847,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   if (pDesc->ResourceDimension == D3D10DDIRESOURCE_BUFFER) {
     res->kind = ResourceKind::Buffer;
     res->size_bytes = pDesc->ByteWidth;
+    const uint64_t padded_size_bytes = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 4);
     const uint64_t alloc_size = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 256);
 
     bool cpu_visible = false;
@@ -1892,11 +1897,11 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       if (!init.pSysMem) {
         return E_INVALIDARG;
       }
-      if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+      if (padded_size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
         return E_OUTOFMEMORY;
       }
       try {
-        res->storage.resize(static_cast<size_t>(res->size_bytes));
+        res->storage.resize(static_cast<size_t>(padded_size_bytes));
       } catch (...) {
         return E_OUTOFMEMORY;
       }
@@ -1924,7 +1929,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
-    cmd->size_bytes = res->size_bytes;
+    cmd->size_bytes = padded_size_bytes;
     cmd->backing_alloc_id = 0;
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
@@ -2266,14 +2271,18 @@ HRESULT ensure_resource_storage(AeroGpuResource* res, uint64_t bytes) {
   if (!res) {
     return E_INVALIDARG;
   }
-  if (bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+  uint64_t want = bytes;
+  if (res->kind == ResourceKind::Buffer) {
+    want = AlignUpU64(bytes ? bytes : 1, 4);
+  }
+  if (want > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
     return E_OUTOFMEMORY;
   }
-  if (res->storage.size() >= static_cast<size_t>(bytes)) {
+  if (res->storage.size() >= static_cast<size_t>(want)) {
     return S_OK;
   }
   try {
-    res->storage.resize(static_cast<size_t>(bytes), 0);
+    res->storage.resize(static_cast<size_t>(want), 0);
   } catch (...) {
     return E_OUTOFMEMORY;
   }
@@ -2562,7 +2571,8 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
   }
 
   const uint64_t total = res->size_bytes;
-  HRESULT hr = ensure_resource_storage(res, total);
+  const uint64_t storage_bytes = AlignUpU64(total ? total : 1, 4);
+  HRESULT hr = ensure_resource_storage(res, storage_bytes);
   if (FAILED(hr)) {
     return hr;
   }
@@ -2570,7 +2580,7 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
   if (discard) {
     // Approximate DISCARD renaming by allocating a fresh CPU backing store.
     try {
-      res->storage.assign(static_cast<size_t>(total), 0);
+      res->storage.assign(static_cast<size_t>(storage_bytes), 0);
     } catch (...) {
       return E_OUTOFMEMORY;
     }
@@ -4245,8 +4255,13 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     }
 
     if (res->storage.empty()) {
+      const uint64_t storage_bytes = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 4);
+      if (storage_bytes > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+        set_error(dev, E_OUTOFMEMORY);
+        return;
+      }
       try {
-        res->storage.resize(static_cast<size_t>(res->size_bytes), 0);
+        res->storage.resize(static_cast<size_t>(storage_bytes), 0);
       } catch (...) {
         set_error(dev, E_OUTOFMEMORY);
         return;
