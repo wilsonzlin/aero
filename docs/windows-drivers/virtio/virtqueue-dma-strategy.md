@@ -6,7 +6,7 @@ See also:
 
 * [`../../virtio/virtqueue-split-ring-win7.md`](../../virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue algorithms (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
 * [`../../windows7-virtio-driver-contract.md`](../../windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
-* `drivers/windows/virtio/common/` — reference split virtqueue implementation (helpers like `VirtqSplitRingMemSize`, `VirtqSplitInit`, `VirtqSplitAddBuffer`, ...).
+* `drivers/windows/virtio/common/` — reference split virtqueue implementation (helpers like `VirtqSplitRingMemSize`, `VirtqSplitInit`, `VirtqSplitAddBuffer`, ...), plus a WDF-free PFN/MDL → SG builder (`virtio_sg_pfn.h/.c`).
 
 The focus is on:
 
@@ -398,6 +398,7 @@ direct mapping helper that walks an MDL chain and emits per-page segments, coale
 
 * `windows-drivers/virtio-kmdf/common/virtio_sg.h`
 * `windows-drivers/virtio-kmdf/common/virtio_sg.c`
+* WDF-free (WDM-friendly) variant: `drivers/windows/virtio/common/virtio_sg_pfn.h/.c`
 
 Key API:
 
