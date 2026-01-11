@@ -1,7 +1,6 @@
 import { test, expect } from '@playwright/test';
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { once } from 'node:events';
 import http from 'node:http';
 import https from 'node:https';
 import * as dgram from 'node:dgram';
@@ -80,6 +79,27 @@ type StartedHttpsProxy = {
   port: number;
   close: () => Promise<void>;
 };
+
+function waitForProcessClose(proc: ChildProcess): Promise<void> {
+  if (proc.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onDone = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      proc.off('close', onDone);
+      proc.off('exit', onDone);
+      proc.off('error', onDone);
+    };
+    proc.once('close', onDone);
+    proc.once('exit', onDone);
+    proc.once('error', onDone);
+    // Handle races where the process exits between the first `exitCode` check
+    // and installing the event listeners.
+    if (proc.exitCode !== null) onDone();
+  });
+}
 
 async function getFreePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -301,6 +321,7 @@ async function startGatewayProcess(opts: {
     await waitForHealthy(baseUrl, proc);
   } catch (err) {
     proc.kill('SIGKILL');
+    await Promise.race([waitForProcessClose(proc), delay(2_000, undefined, { ref: false })]).catch(() => {});
     throw new Error(`${err instanceof Error ? err.message : String(err)}\nGateway output:\n${output.join('')}`);
   }
 
@@ -310,8 +331,11 @@ async function startGatewayProcess(opts: {
     stop: async () => {
       if (proc.exitCode !== null) return;
       proc.kill('SIGTERM');
-      await Promise.race([once(proc, 'exit'), delay(5_000)]);
-      if (proc.exitCode === null) proc.kill('SIGKILL');
+      await Promise.race([waitForProcessClose(proc), delay(5_000, undefined, { ref: false })]).catch(() => {});
+      if (proc.exitCode === null) {
+        proc.kill('SIGKILL');
+        await Promise.race([waitForProcessClose(proc), delay(5_000, undefined, { ref: false })]).catch(() => {});
+      }
     },
   };
 }
