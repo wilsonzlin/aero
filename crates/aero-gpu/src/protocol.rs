@@ -637,13 +637,10 @@ pub fn parse_cmd_stream(
             }
 
             Some(AeroGpuOpcode::SetVertexBuffers) => {
-                let cmd: protocol::AerogpuCmdSetVertexBuffers = read_packed_prefix(packet)?;
-                let start_slot = u32::from_le(cmd.start_slot);
-                let buffer_count = u32::from_le(cmd.buffer_count);
-                let bindings_len = (buffer_count as usize)
-                    .checked_mul(protocol::AerogpuVertexBufferBinding::SIZE_BYTES)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let (cmd, bindings) = protocol::decode_cmd_set_vertex_buffers_bindings_le(packet)
+                    .map_err(map_payload_decode_error)?;
                 let bindings_start = size_of::<protocol::AerogpuCmdSetVertexBuffers>();
+                let bindings_len = bindings.len() * protocol::AerogpuVertexBufferBinding::SIZE_BYTES;
                 let bindings_end = bindings_start
                     .checked_add(bindings_len)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
@@ -651,8 +648,8 @@ pub fn parse_cmd_stream(
                     .get(bindings_start..bindings_end)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::SetVertexBuffers {
-                    start_slot,
-                    buffer_count,
+                    start_slot: cmd.start_slot,
+                    buffer_count: cmd.buffer_count,
                     bindings_bytes,
                 }
             }
@@ -760,6 +757,8 @@ pub fn parse_cmd_stream(
                 AeroGpuCmd::Flush
             }
 
+            // Forward-compat: if `aero-protocol` learns about a new opcode but `aero-gpu` doesn't yet
+            // have a typed decoder for it, treat it as unknown and allow higher layers to skip it.
             Some(_) => AeroGpuCmd::Unknown {
                 opcode: cmd_hdr.opcode,
                 payload,
