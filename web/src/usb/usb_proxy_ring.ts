@@ -324,7 +324,7 @@ export class UsbProxyRing {
     if (recordSize > this.#cap) {
       if (completion.status === "error") {
         const fixed = USB_PROXY_COMPLETION_HEADER_BYTES + 4;
-        const maxTotal = this.#cap & ~(USB_PROXY_RING_ALIGN - 1);
+        const maxTotal = this.#cap - (this.#cap % USB_PROXY_RING_ALIGN);
         const maxPayload = maxTotal > fixed ? maxTotal - fixed : 0;
         payload = truncateUtf8(payload ?? new Uint8Array(), maxPayload);
         recordSize = alignUp(fixed + payload.byteLength, USB_PROXY_RING_ALIGN);
