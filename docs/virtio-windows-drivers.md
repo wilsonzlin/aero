@@ -307,6 +307,7 @@ On a machine with Rust (`cargo`) installed:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
+  -Profile full `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
@@ -317,6 +318,7 @@ If you are packaging **test-signed/custom-signed** drivers (not typical for virt
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
+  -Profile full `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local `
@@ -332,6 +334,7 @@ python3 tools/virtio-win/extract.py \
 
 pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
   -VirtioWinRoot /tmp/virtio-win-root \
+  -Profile full \
   -OutDir ./dist/guest-tools \
   -Version 0.0.0 \
   -BuildId local
@@ -341,12 +344,16 @@ This wrapper:
 
 1. Extracts a Win7 driver pack from `virtio-win.iso` (using `drivers/scripts/make-driver-pack.ps1`).
 2. Converts it into the input layout expected by the Rust Guest Tools packager.
-3. Runs `tools/packaging/aero_packager/` with the default "minimal" spec:
-   - `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
+3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `full`):
+   - `-Profile full` (default): `tools/packaging/specs/win7-virtio-full.json`
+     - required: `viostor` + `netkvm`
+     - optional (included if present): `vioinput` + `viosnd`
+   - `-Profile minimal`: `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
 
-To also include optional virtio drivers (if present in the input), pass:
+Advanced overrides:
 
-- `-SpecPath tools/packaging/specs/win7-virtio-full.json` (optional: `vioinput` + `viosnd`)
+- `-SpecPath` overrides the profile’s spec selection.
+- `-Drivers` overrides the profile’s driver extraction list.
 
 Outputs:
 
