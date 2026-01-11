@@ -189,6 +189,7 @@ const aerogpuContexts = new Map<number, AerogpuCpuExecutorState>();
 type AerogpuLastPresentedFrame = NonNullable<AerogpuCpuExecutorState["lastPresentedFrame"]>;
 let aerogpuLastPresentedFrame: AerogpuLastPresentedFrame | null = null;
 let aerogpuPresentCount = 0n;
+let aerogpuLastOutputSource: "framebuffer" | "aerogpu" = "framebuffer";
 
 const getAerogpuContextState = (contextId: number): AerogpuCpuExecutorState => {
   const key = contextId >>> 0;
@@ -1315,6 +1316,7 @@ const presentOnce = async (): Promise<boolean> => {
       lastUploadDirtyRects = dirtyRects;
       const result = await presentFn(dirtyRects);
       if (typeof result === "boolean" ? result : true) {
+        aerogpuLastOutputSource = "framebuffer";
         clearSharedFramebufferDirty();
       }
       return typeof result === "boolean" ? result : true;
@@ -1339,12 +1341,14 @@ const presentOnce = async (): Promise<boolean> => {
       } else {
         presenter.present(frame.pixels, frame.strideBytes);
       }
+      aerogpuLastOutputSource = "framebuffer";
       clearSharedFramebufferDirty();
       return true;
     }
 
     // Headless: treat as successfully presented so the shared frame state can
     // transition back to PRESENTED and avoid DIRTY→tick spam.
+    aerogpuLastOutputSource = "framebuffer";
     clearSharedFramebufferDirty();
     return true;
   } finally {
@@ -1365,6 +1369,7 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
     presenter.resize(tex.width, tex.height, outputDpr);
   }
 
+  aerogpuLastOutputSource = "aerogpu";
   presenter.present(tex.data, tex.width * 4);
 };
 
@@ -1443,6 +1448,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
         presentCount = aerogpuPresentCount;
         if (aerogpuState.lastPresentedFrame) {
           aerogpuLastPresentedFrame = aerogpuState.lastPresentedFrame;
+          aerogpuLastOutputSource = "aerogpu";
         }
       }
       submitOk = true;
@@ -1506,6 +1512,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
           const frame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
           aerogpuState.lastPresentedFrame = frame;
           aerogpuLastPresentedFrame = frame;
+          aerogpuLastOutputSource = "aerogpu";
 
           if (presenter) {
             if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
@@ -1996,6 +2003,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presenterSrcHeight = 0;
 
         resetAerogpuContexts();
+        aerogpuLastOutputSource = "framebuffer";
         // Reset wasm-backed executor state (if it was used previously).
         aerogpuWasmD3d9InitPromise = null;
         aerogpuWasmD3d9InitBackend = null;
@@ -2174,7 +2182,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               return;
             }
 
-            if (!isDeviceLost && shouldPresentWithSharedState()) {
+            if (!isDeviceLost && aerogpuLastOutputSource === "framebuffer" && shouldPresentWithSharedState()) {
               await handleTick();
             }
 
@@ -2187,11 +2195,67 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
 
+          const tryPostWebgl2WgpuFramebufferScreenshot = (): boolean => {
+            if (!presenter || presenter.backend !== "webgl2_wgpu") return false;
+            if (aerogpuLastOutputSource !== "framebuffer") return false;
+            const frame = getCurrentFrameInfo();
+            if (!frame) return false;
+
+            const rowBytes = frame.width * BYTES_PER_PIXEL_RGBA8;
+            const out = new Uint8Array(rowBytes * frame.height);
+            for (let y = 0; y < frame.height; y += 1) {
+              const srcStart = y * frame.strideBytes;
+              const dstStart = y * rowBytes;
+              out.set(frame.pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
+            }
+
+            if (includeCursor) {
+              try {
+                compositeCursorOverRgba8(
+                  out,
+                  frame.width,
+                  frame.height,
+                  cursorEnabled,
+                  cursorImage,
+                  cursorWidth,
+                  cursorHeight,
+                  cursorX,
+                  cursorY,
+                  cursorHotX,
+                  cursorHotY,
+                );
+              } catch {
+                // Ignore; screenshot cursor compositing is best-effort.
+              }
+            }
+
+            postToMain(
+              {
+                type: "screenshot",
+                requestId: req.requestId,
+                width: frame.width,
+                height: frame.height,
+                rgba8: out.buffer,
+                origin: "top-left",
+                ...(typeof frame.frameSeq === "number"
+                  ? { frameSeq: frame.frameSeq }
+                  : typeof seq === "number"
+                    ? { frameSeq: seq }
+                    : {}),
+              },
+              [out.buffer],
+            );
+            return true;
+          };
+
+          if (tryPostWebgl2WgpuFramebufferScreenshot()) return;
+
           const tryPostPresenterScreenshot = async (forceUpload: boolean): Promise<boolean> => {
             if (!presenter || isDeviceLost) return false;
             const frame = forceUpload ? getCurrentFrameInfo() : null;
             if (frame && presenter) {
               presenter.present(frame.pixels, frame.strideBytes);
+              aerogpuLastOutputSource = "framebuffer";
             }
 
             const prevCursorRenderEnabled = cursorRenderEnabled;
@@ -2208,6 +2272,28 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               // WebGPU screenshots read back the source texture only, so cursor composition
               // must be applied explicitly when requested.
               if (includeCursor && presenter.backend === "webgpu") {
+                try {
+                  const out = new Uint8Array(pixels);
+                  compositeCursorOverRgba8(
+                    out,
+                    shot.width,
+                    shot.height,
+                    cursorEnabled,
+                    cursorImage,
+                    cursorWidth,
+                    cursorHeight,
+                    cursorX,
+                    cursorY,
+                    cursorHotX,
+                    cursorHotY,
+                  );
+                  pixels = out.buffer;
+                } catch {
+                  // Ignore; screenshot cursor compositing is best-effort.
+                }
+              }
+
+              if (includeCursor && presenter.backend === "webgl2_wgpu") {
                 try {
                   const out = new Uint8Array(pixels);
                   compositeCursorOverRgba8(
@@ -2444,6 +2530,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       runtimeOptions = null;
       runtimeReadySent = false;
       resetAerogpuContexts();
+      aerogpuLastOutputSource = "framebuffer";
       aerogpuWasmD3d9InitPromise = null;
       aerogpuWasmD3d9InitBackend = null;
       aerogpuWasmD3d9Backend = null;
