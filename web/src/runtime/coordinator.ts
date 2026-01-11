@@ -39,7 +39,12 @@ import {
 } from "./protocol";
 import type { WasmVariant } from "./wasm_context";
 import { precompileWasm } from "./wasm_preload";
-import type { GpuRuntimeCursorSetImageMessage, GpuRuntimeCursorSetStateMessage } from "../workers/gpu_runtime_protocol";
+import {
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+  type GpuRuntimeCursorSetImageMessage,
+  type GpuRuntimeCursorSetStateMessage,
+} from "../ipc/gpu-protocol";
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
@@ -1335,6 +1340,8 @@ export class WorkerCoordinator {
     const img = this.cursorImage;
     if (img) {
       const msg: GpuRuntimeCursorSetImageMessage = {
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
         type: "cursor_set_image",
         width: img.width,
         height: img.height,
@@ -1346,6 +1353,8 @@ export class WorkerCoordinator {
     const state = this.cursorState;
     if (state) {
       const msg: GpuRuntimeCursorSetStateMessage = {
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
         type: "cursor_set_state",
         enabled: state.enabled,
         x: state.x,

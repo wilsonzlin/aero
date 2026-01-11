@@ -8,6 +8,8 @@ import {
   type DemoVmWorkerStepResult,
 } from "./demo_vm_worker_protocol";
 
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
 type PendingEntry = {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
@@ -104,7 +106,7 @@ export class DemoVmWorkerClient {
     }
   }
 
-  async #rpc<T>(msg: Omit<DemoVmWorkerRequest, "id">): Promise<T> {
+  async #rpc<T>(msg: DistributiveOmit<DemoVmWorkerRequest, "id">): Promise<T> {
     if (this.#destroyed) throw new Error("DemoVmWorkerClient is destroyed.");
     const activeWorker = this.#worker;
     if (!activeWorker) throw new Error("DemoVmWorkerClient worker is unavailable.");
