@@ -435,6 +435,12 @@ If your VM settings expose input devices separately (and you want the virtio inp
 2. Switch input from **PS/2** to **virtio-input**.
 3. Boot Windows.
 
+Notes:
+
+- Aero’s in-tree Win7 virtio-input driver package (`virtio-input.inf`) is **revision-gated** to the `AERO-W7-VIRTIO` v1 contract (`REV_01`).
+  If your VMM exposes a `REV_00` virtio-input device (common in QEMU defaults), the driver will not bind; configure the device to report `REV_01`
+  (for example `x-pci-revision=0x01`, ideally with `disable-legacy=on`).
+
 If you lose keyboard/mouse input, power off and switch back to **PS/2**. Then troubleshoot:
 
 - [`docs/windows7-driver-troubleshooting.md`](./windows7-driver-troubleshooting.md#issue-lost-keyboardmouse-after-switching-to-virtio-input)
