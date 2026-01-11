@@ -1368,6 +1368,142 @@ bool TestGetDisplayModeExReturnsPrimaryMode() {
   return Check(rotation == AEROGPU_D3D9DDI_ROTATION_IDENTITY, "display rotation identity");
 }
 
+bool TestDeviceMiscExApisSucceed() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCheckDeviceState != nullptr, "CheckDeviceState must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnWaitForVBlank != nullptr, "WaitForVBlank must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetGPUThreadPriority != nullptr, "SetGPUThreadPriority must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGetGPUThreadPriority != nullptr, "GetGPUThreadPriority must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCheckResourceResidency != nullptr, "CheckResourceResidency must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnQueryResourceResidency != nullptr, "QueryResourceResidency must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnComposeRects != nullptr, "ComposeRects must be available")) {
+    return false;
+  }
+
+  // DWM frequently probes device state without a window handle in some paths.
+  hr = cleanup.device_funcs.pfnCheckDeviceState(create_dev.hDevice, nullptr);
+  if (!Check(hr == S_OK, "CheckDeviceState(NULL)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetGPUThreadPriority(create_dev.hDevice, 100);
+  if (!Check(hr == S_OK, "SetGPUThreadPriority(100)")) {
+    return false;
+  }
+  int32_t priority = 0;
+  hr = cleanup.device_funcs.pfnGetGPUThreadPriority(create_dev.hDevice, &priority);
+  if (!Check(hr == S_OK, "GetGPUThreadPriority")) {
+    return false;
+  }
+  if (!Check(priority == 7, "GPU thread priority clamps to +7")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetGPUThreadPriority(create_dev.hDevice, -100);
+  if (!Check(hr == S_OK, "SetGPUThreadPriority(-100)")) {
+    return false;
+  }
+  priority = 0;
+  hr = cleanup.device_funcs.pfnGetGPUThreadPriority(create_dev.hDevice, &priority);
+  if (!Check(hr == S_OK, "GetGPUThreadPriority after clamp")) {
+    return false;
+  }
+  if (!Check(priority == -7, "GPU thread priority clamps to -7")) {
+    return false;
+  }
+
+  // Residency queries should succeed and report resident in the system-memory
+  // model.
+  uint32_t residency[2] = {0, 0};
+  AEROGPU_D3D9DDIARG_QUERYRESOURCERESIDENCY query{};
+  query.pResources = nullptr;
+  query.resource_count = 2;
+  query.pResidencyStatus = residency;
+  hr = cleanup.device_funcs.pfnQueryResourceResidency(create_dev.hDevice, &query);
+  if (!Check(hr == S_OK, "QueryResourceResidency")) {
+    return false;
+  }
+  if (!Check(residency[0] == 1 && residency[1] == 1, "QueryResourceResidency reports resident")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnCheckResourceResidency(create_dev.hDevice, nullptr, 0);
+  if (!Check(hr == S_OK, "CheckResourceResidency(0)")) {
+    return false;
+  }
+
+  // ComposeRects is a D3D9Ex compositor helper; our bring-up path treats it as a
+  // no-op but must still succeed.
+  AEROGPU_D3D9DDIARG_COMPOSERECTS compose{};
+  compose.reserved0 = 0;
+  compose.reserved1 = 0;
+  hr = cleanup.device_funcs.pfnComposeRects(create_dev.hDevice, &compose);
+  if (!Check(hr == S_OK, "ComposeRects")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnWaitForVBlank(create_dev.hDevice, 0);
+  return Check(hr == S_OK, "WaitForVBlank");
+}
+
 bool TestAllocationListSplitResetsOnEmptySubmit() {
   // Repro for a subtle WDDM-only failure mode:
   //
@@ -3020,6 +3156,7 @@ int main() {
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
   failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
+  failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
