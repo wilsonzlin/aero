@@ -1,6 +1,8 @@
 package signaling
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -194,6 +196,98 @@ func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
 			}
 		}
 	}
+
+	if got := m.Get(metrics.AuthFailure); got != 0 {
+		t.Fatalf("auth_failure=%d, want 0", got)
+	}
+}
+
+func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
+	cfg := config.Config{}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
+
+	srv := NewServer(Config{
+		Sessions:    sm,
+		WebRTC:      webrtc.NewAPI(),
+		RelayConfig: relay.DefaultConfig(),
+		Policy:      policy.NewDevDestinationPolicy(),
+		Authorizer:  failingAuthorizer{},
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	decodeErr := func(t *testing.T, resp *http.Response) httpErrorResponse {
+		t.Helper()
+
+		defer resp.Body.Close()
+		var out httpErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	t.Run("session", func(t *testing.T) {
+		resp, err := http.Post(ts.URL+"/session", "application/json", nil)
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusInternalServerError)
+		}
+		got := decodeErr(t, resp)
+		if got.Code != "internal_error" {
+			t.Fatalf("code=%q, want %q", got.Code, "internal_error")
+		}
+	})
+
+	t.Run("offer", func(t *testing.T) {
+		body, err := json.Marshal(OfferRequest{
+			Version: Version1,
+			Offer: SessionDescription{
+				Type: "offer",
+				SDP:  "v=0",
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		resp, err := http.Post(ts.URL+"/offer", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusInternalServerError)
+		}
+		got := decodeErr(t, resp)
+		if got.Code != "internal_error" {
+			t.Fatalf("code=%q, want %q", got.Code, "internal_error")
+		}
+	})
+
+	t.Run("webrtc_offer", func(t *testing.T) {
+		body, err := json.Marshal(httpOfferRequest{
+			SDP: SDP{Type: "offer", SDP: "v=0"},
+		})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		resp, err := http.Post(ts.URL+"/webrtc/offer", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusInternalServerError)
+		}
+		got := decodeErr(t, resp)
+		if got.Code != "internal_error" {
+			t.Fatalf("code=%q, want %q", got.Code, "internal_error")
+		}
+	})
 
 	if got := m.Get(metrics.AuthFailure); got != 0 {
 		t.Fatalf("auth_failure=%d, want 0", got)
