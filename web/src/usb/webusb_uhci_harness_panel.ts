@@ -2,6 +2,7 @@ import type { PlatformFeatureReport } from "../platform/features";
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import type { WasmInitResult } from "../runtime/wasm_loader";
 import { WebUsbBackend, type SetupPacket, type UsbHostAction, type UsbHostCompletion } from "./webusb_backend";
+import { isUsbSetupPacket } from "./usb_proxy_protocol";
 
 export interface UhciHarnessLike {
   drain_actions(): unknown;
@@ -31,13 +32,34 @@ function normalizeActionId(value: unknown): number {
 function normalizeBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
+    return new Uint8Array(value);
+  }
   if (Array.isArray(value)) {
     if (!value.every((v) => typeof v === "number")) {
       throw new Error("Expected byte array to contain only numbers");
     }
     return Uint8Array.from(value as number[]);
   }
-  throw new Error(`Expected bytes to be Uint8Array, ArrayBuffer, or number[]; got ${typeof value}`);
+  throw new Error(
+    `Expected bytes to be Uint8Array, ArrayBuffer, SharedArrayBuffer, or number[]; got ${typeof value}`,
+  );
+}
+
+function normalizeU8(value: unknown): number {
+  const asNum = typeof value === "number" ? value : typeof value === "bigint" ? Number(value) : NaN;
+  if (!Number.isFinite(asNum) || !Number.isInteger(asNum) || asNum < 0 || asNum > 0xff) {
+    throw new Error(`Expected uint8, got ${String(value)}`);
+  }
+  return asNum;
+}
+
+function normalizeU32(value: unknown): number {
+  const asNum = typeof value === "number" ? value : typeof value === "bigint" ? Number(value) : NaN;
+  if (!Number.isFinite(asNum) || !Number.isInteger(asNum) || asNum < 0 || asNum > 0xffff_ffff) {
+    throw new Error(`Expected uint32, got ${String(value)}`);
+  }
+  return asNum;
 }
 
 function normalizeUsbHostAction(raw: unknown): UsbHostAction {
@@ -50,14 +72,20 @@ function normalizeUsbHostAction(raw: unknown): UsbHostAction {
   if (typeof kind !== "string") throw new Error("USB action missing kind");
 
   switch (kind as UsbHostAction["kind"]) {
-    case "controlIn":
-      return { kind: "controlIn", id, setup: obj.setup as SetupPacket };
-    case "controlOut":
-      return { kind: "controlOut", id, setup: obj.setup as SetupPacket, data: normalizeBytes(obj.data) };
+    case "controlIn": {
+      const setup = obj.setup;
+      if (!isUsbSetupPacket(setup)) throw new Error("controlIn missing/invalid setup packet");
+      return { kind: "controlIn", id, setup };
+    }
+    case "controlOut": {
+      const setup = obj.setup;
+      if (!isUsbSetupPacket(setup)) throw new Error("controlOut missing/invalid setup packet");
+      return { kind: "controlOut", id, setup, data: normalizeBytes(obj.data) };
+    }
     case "bulkIn":
-      return { kind: "bulkIn", id, endpoint: obj.endpoint as number, length: obj.length as number };
+      return { kind: "bulkIn", id, endpoint: normalizeU8(obj.endpoint), length: normalizeU32(obj.length) };
     case "bulkOut":
-      return { kind: "bulkOut", id, endpoint: obj.endpoint as number, data: normalizeBytes(obj.data) };
+      return { kind: "bulkOut", id, endpoint: normalizeU8(obj.endpoint), data: normalizeBytes(obj.data) };
     default:
       throw new Error(`Unknown USB action kind: ${String(kind)}`);
   }
@@ -128,6 +156,27 @@ function maybeCaptureDescriptors(
   if (cls === "config") {
     // Configuration descriptors are frequently requested twice (first the 9-byte header,
     // then the full wTotalLength). Keep the most complete one.
+    if (!capture.configDescriptor || bytes.byteLength >= capture.configDescriptor.byteLength) {
+      capture.configDescriptor = bytes;
+    }
+  }
+}
+
+function maybeCaptureDescriptorsFromHarnessStatus(capture: DescriptorCapture, status: unknown): void {
+  if (!status || typeof status !== "object") return;
+  const obj = status as Record<string, unknown>;
+
+  const deviceDesc = obj.deviceDescriptor;
+  if (deviceDesc !== undefined && deviceDesc !== null) {
+    const bytes = normalizeBytes(deviceDesc);
+    if (!capture.deviceDescriptor || bytes.byteLength >= capture.deviceDescriptor.byteLength) {
+      capture.deviceDescriptor = bytes;
+    }
+  }
+
+  const configDesc = obj.configDescriptor;
+  if (configDesc !== undefined && configDesc !== null) {
+    const bytes = normalizeBytes(configDesc);
     if (!capture.configDescriptor || bytes.byteLength >= capture.configDescriptor.byteLength) {
       capture.configDescriptor = bytes;
     }
@@ -592,7 +641,9 @@ export function renderWebUsbUhciHarnessPanel(
           tickCount += 1;
 
           // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-          (harness as unknown as { tick: () => void }).tick();
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          const tickStatus = (harness as unknown as { tick: () => unknown }).tick();
+          maybeCaptureDescriptorsFromHarnessStatus(capture, tickStatus);
 
           const { actions, completions } = await bridgeHarnessDrainActions(harness as UhciHarnessLike, backend);
           if (actions.length > 0) {
