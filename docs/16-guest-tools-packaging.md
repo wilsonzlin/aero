@@ -270,7 +270,7 @@ packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
   packager's dummy driver fixtures).
 - A lightweight consistency check that ensures `guest-tools/config/devices.cmd` stays consistent with:
   - the Windows device contract (`docs/windows-device-contract.json`) for the boot-critical virtio-blk
-    storage service name, and
+    storage service name and the exact virtio-blk/virtio-net PCI hardware IDs that Guest Tools seeds, and
   - the in-repo packaging specs (HWID regexes):
   - `win7-virtio-win.json`
   - `win7-virtio-full.json`

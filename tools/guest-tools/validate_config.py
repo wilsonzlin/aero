@@ -51,6 +51,7 @@ class SpecDriver:
 @dataclass(frozen=True)
 class ContractDevice:
     driver_service_name: str
+    hardware_id_patterns: Tuple[str, ...]
 
 
 def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
@@ -80,13 +81,21 @@ def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
             raise ValidationError(f"Windows device contract {path} contains a non-object device entry: {entry!r}")
         name = entry.get("device")
         service = entry.get("driver_service_name")
+        hwids = entry.get("hardware_id_patterns")
         if not isinstance(name, str) or not name:
             raise ValidationError(f"Windows device contract {path} has a device entry missing valid 'device': {entry!r}")
         if not isinstance(service, str) or not service:
             raise ValidationError(
                 f"Windows device contract {path} device {name!r} is missing a valid 'driver_service_name': {entry!r}"
             )
-        out[name] = ContractDevice(driver_service_name=service)
+        if hwids is None:
+            hwids = []
+        if not isinstance(hwids, list) or not all(isinstance(x, str) for x in hwids):
+            raise ValidationError(
+                f"Windows device contract {path} device {name!r} has invalid/missing 'hardware_id_patterns' (expected list[str])."
+            )
+
+        out[name] = ContractDevice(driver_service_name=service, hardware_id_patterns=tuple(hwids))
 
     if not out:
         raise ValidationError(f"Windows device contract {path} contains no devices.")
@@ -320,6 +329,19 @@ def _find_unmatched_patterns(patterns: Sequence[str], hwids: Sequence[str]) -> L
     return unmatched
 
 
+def _normalize_hwid(hwid: str) -> str:
+    return hwid.strip().lower()
+
+
+def _find_missing_exact_patterns(patterns: Sequence[str], hwids: Sequence[str]) -> List[str]:
+    hwid_set = {_normalize_hwid(h) for h in hwids}
+    missing: List[str] = []
+    for pattern in patterns:
+        if _normalize_hwid(pattern) not in hwid_set:
+            missing.append(pattern)
+    return missing
+
+
 def _validate_hwid_contract(
     *,
     spec_path: Path,
@@ -444,17 +466,63 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "- Update docs/windows-device-contract.json if the contract/service name intentionally changed.\n"
         )
 
+    virtio_net_contract = contract.get("virtio-net")
+    if virtio_net_contract is None:
+        raise ValidationError(f"Windows device contract {contract_path} is missing the required 'virtio-net' entry.")
+
+    def require_contract_hwids(
+        *, device_name: str, devices_var: str, hwids: Tuple[str, ...], contract_hwids: Tuple[str, ...]
+    ) -> None:
+        if not contract_hwids:
+            raise ValidationError(f"Windows device contract {contract_path} device {device_name!r} has no hardware_id_patterns.")
+        missing_patterns = _find_missing_exact_patterns(contract_hwids, hwids)
+        if missing_patterns:
+            raise ValidationError(
+                f"Mismatch: devices.cmd is missing {device_name} HWID(s) declared by the Windows device contract.\n"
+                "\n"
+                f"Contract: {contract_path}\n"
+                f"Contract {device_name}.hardware_id_patterns:\n{_format_bullets(contract_hwids)}\n"
+                "\n"
+                f"devices.cmd {devices_var}:\n{_format_bullets(hwids)}\n"
+                "\n"
+                f"Missing from devices.cmd {devices_var}:\n{_format_bullets(missing_patterns)}\n"
+                "\n"
+                "Remediation:\n"
+                "- If the emulator/device contract changed, update BOTH:\n"
+                f"  * {contract_path} ({device_name}.hardware_id_patterns)\n"
+                f"  * guest-tools/config/devices.cmd ({devices_var})\n"
+                "- Otherwise, revert the contract change or fix devices.cmd so the boot-critical IDs are seeded correctly.\n"
+            )
+
+    # Validate boot-critical/early-boot device HWID lists against the contract. The packager specs
+    # validate driver binding via regex, but do not encode subsystem/revision-specific IDs; those
+    # are captured in the device contract and must stay in sync with the installer’s seeding list.
+    require_contract_hwids(
+        device_name="virtio-blk",
+        devices_var="AERO_VIRTIO_BLK_HWIDS",
+        hwids=devices.virtio_blk_hwids,
+        contract_hwids=virtio_blk_contract.hardware_id_patterns,
+    )
+    require_contract_hwids(
+        device_name="virtio-net",
+        devices_var="AERO_VIRTIO_NET_HWIDS",
+        hwids=devices.virtio_net_hwids,
+        contract_hwids=virtio_net_contract.hardware_id_patterns,
+    )
+
     # Some specs have an expected minimum set of drivers. Enforce that so the
     # validator fails loudly if someone accidentally edits the spec to remove a
     # boot-critical entry.
     if spec_path.name in ("win7-virtio-win.json", "win7-virtio-full.json"):
-        required_names = ("viostor", "netkvm")
+        required_groups = (("viostor",), ("netkvm",))
     elif spec_path.name == "win7-aero-guest-tools.json":
-        required_names = ("aero-gpu", "virtio-blk", "virtio-net", "virtio-input")
+        # The in-repo driver folder name for AeroGPU is `aerogpu`, but keep
+        # backwards-compatible aliases to avoid renames breaking CI history.
+        required_groups = (("aerogpu", "aero-gpu"), ("virtio-blk",), ("virtio-net",), ("virtio-input",))
     else:
-        required_names = ()
+        required_groups = ()
 
-    missing = [name for name in required_names if name not in spec_expected]
+    missing = ["/".join(group) for group in required_groups if not any(name in spec_expected for name in group)]
     if missing:
         raise ValidationError(
             f"Spec {spec_path} is missing required driver entries: {', '.join(missing)}\n"
@@ -538,6 +606,12 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         hwids=devices.aero_gpu_hwids,
         driver_kind="aero-gpu",
     )
+    maybe_validate(
+        "aerogpu",
+        devices_var="AERO_GPU_HWIDS",
+        hwids=devices.aero_gpu_hwids,
+        driver_kind="aero-gpu",
+    )
 
     if not matches:
         supported = [
@@ -550,6 +624,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "virtio-input",
             "virtio-snd",
             "aero-gpu",
+            "aerogpu",
         ]
         raise ValidationError(
             f"Spec {spec_path} does not contain any driver entries that this validator knows how to check.\n"
