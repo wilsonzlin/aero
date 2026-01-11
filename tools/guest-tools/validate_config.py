@@ -317,31 +317,23 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     )
 
     optional_matches: List[Tuple[str, Tuple[str, str]]] = []
-    if "vioinput" in spec_expected and devices.virtio_input_hwids:
+    for driver_name, devices_var, hwids, kind in [
+        ("vioinput", "AERO_VIRTIO_INPUT_HWIDS", devices.virtio_input_hwids, "virtio-input"),
+        ("viosnd", "AERO_VIRTIO_SND_HWIDS", devices.virtio_snd_hwids, "virtio-snd"),
+    ]:
+        patterns = spec_expected.get(driver_name)
+        if patterns is None or not patterns:
+            continue
         optional_matches.append(
             (
-                "vioinput",
+                driver_name,
                 _validate_hwid_contract(
                     spec_path=spec_path,
-                    driver_name="vioinput",
-                    patterns=spec_expected["vioinput"],
-                    hwids=devices.virtio_input_hwids,
-                    devices_var="AERO_VIRTIO_INPUT_HWIDS",
-                    driver_kind="virtio-input",
-                ),
-            )
-        )
-    if "viosnd" in spec_expected and devices.virtio_snd_hwids:
-        optional_matches.append(
-            (
-                "viosnd",
-                _validate_hwid_contract(
-                    spec_path=spec_path,
-                    driver_name="viosnd",
-                    patterns=spec_expected["viosnd"],
-                    hwids=devices.virtio_snd_hwids,
-                    devices_var="AERO_VIRTIO_SND_HWIDS",
-                    driver_kind="virtio-snd",
+                    driver_name=driver_name,
+                    patterns=patterns,
+                    hwids=hwids,
+                    devices_var=devices_var,
+                    driver_kind=kind,
                 ),
             )
         )
