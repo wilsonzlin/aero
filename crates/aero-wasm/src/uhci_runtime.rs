@@ -7,13 +7,13 @@ use wasm_bindgen::prelude::*;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
+use aero_usb::GuestMemory;
 use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
 use aero_usb::hid::webhid;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::usb::{UsbDevice, UsbSpeed};
-use aero_usb::GuestMemory;
 
 const DEFAULT_IO_BASE: u16 = 0x5000;
 const DEFAULT_IRQ_LINE: u8 = 11;
@@ -716,91 +716,92 @@ impl UhciRuntime {
 
         let webusb_state_bytes = r.bytes(TAG_WEBUSB_STATE);
 
-        let webhid_entries: Vec<WebHidSnapshotEntry> =
-            if let Some(buf) = r.bytes(TAG_WEBHID_DEVICES) {
-                let mut d = Decoder::new(buf);
-                let records = d.vec_bytes().map_err(|e| {
-                    js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+        let webhid_entries: Vec<WebHidSnapshotEntry> = if let Some(buf) =
+            r.bytes(TAG_WEBHID_DEVICES)
+        {
+            let mut d = Decoder::new(buf);
+            let records = d.vec_bytes().map_err(|e| {
+                js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+            })?;
+            d.finish().map_err(|e| {
+                js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+            })?;
+
+            let mut out = Vec::with_capacity(records.len());
+            for (idx, rec) in records.into_iter().enumerate() {
+                let mut rd = Decoder::new(&rec);
+                let device_id = rd
+                    .u32()
+                    .map_err(|e| js_error(&format!("Invalid WebHID record #{idx}: {e}")))?;
+                let loc_kind = rd.u8().map_err(|e| {
+                    js_error(&format!("Invalid WebHID record {device_id} location: {e}"))
                 })?;
-                d.finish().map_err(|e| {
-                    js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+                let loc_port = rd.u8().map_err(|e| {
+                    js_error(&format!("Invalid WebHID record {device_id} location: {e}"))
+                })?;
+                let vendor_id = rd.u16().map_err(|e| {
+                    js_error(&format!("Invalid WebHID record {device_id} vendorId: {e}"))
+                })?;
+                let product_id = rd.u16().map_err(|e| {
+                    js_error(&format!("Invalid WebHID record {device_id} productId: {e}"))
+                })?;
+                let product_bytes = rd.vec_u8().map_err(|e| {
+                    js_error(&format!("Invalid WebHID record {device_id} product: {e}"))
+                })?;
+                let product = String::from_utf8(product_bytes).map_err(|_| {
+                    js_error(&format!(
+                        "Invalid WebHID record {device_id} product: expected UTF-8 string"
+                    ))
+                })?;
+                let report_descriptor = rd.vec_u8().map_err(|e| {
+                    js_error(&format!(
+                        "Invalid WebHID record {device_id} report descriptor: {e}"
+                    ))
+                })?;
+                let has_interrupt_out = rd.bool().map_err(|e| {
+                    js_error(&format!(
+                        "Invalid WebHID record {device_id} hasInterruptOut: {e}"
+                    ))
+                })?;
+                let state = rd.vec_u8().map_err(|e| {
+                    js_error(&format!("Invalid WebHID record {device_id} state: {e}"))
+                })?;
+                rd.finish().map_err(|e| {
+                    js_error(&format!("Invalid WebHID record {device_id} encoding: {e}"))
                 })?;
 
-                let mut out = Vec::with_capacity(records.len());
-                for (idx, rec) in records.into_iter().enumerate() {
-                    let mut rd = Decoder::new(&rec);
-                    let device_id = rd
-                        .u32()
-                        .map_err(|e| js_error(&format!("Invalid WebHID record #{idx}: {e}")))?;
-                    let loc_kind = rd.u8().map_err(|e| {
-                        js_error(&format!("Invalid WebHID record {device_id} location: {e}"))
-                    })?;
-                    let loc_port = rd.u8().map_err(|e| {
-                        js_error(&format!("Invalid WebHID record {device_id} location: {e}"))
-                    })?;
-                    let vendor_id = rd.u16().map_err(|e| {
-                        js_error(&format!("Invalid WebHID record {device_id} vendorId: {e}"))
-                    })?;
-                    let product_id = rd.u16().map_err(|e| {
-                        js_error(&format!("Invalid WebHID record {device_id} productId: {e}"))
-                    })?;
-                    let product_bytes = rd.vec_u8().map_err(|e| {
-                        js_error(&format!("Invalid WebHID record {device_id} product: {e}"))
-                    })?;
-                    let product = String::from_utf8(product_bytes).map_err(|_| {
-                        js_error(&format!(
-                            "Invalid WebHID record {device_id} product: expected UTF-8 string"
-                        ))
-                    })?;
-                    let report_descriptor = rd.vec_u8().map_err(|e| {
-                        js_error(&format!(
-                            "Invalid WebHID record {device_id} report descriptor: {e}"
-                        ))
-                    })?;
-                    let has_interrupt_out = rd.bool().map_err(|e| {
-                        js_error(&format!(
-                            "Invalid WebHID record {device_id} hasInterruptOut: {e}"
-                        ))
-                    })?;
-                    let state = rd.vec_u8().map_err(|e| {
-                        js_error(&format!("Invalid WebHID record {device_id} state: {e}"))
-                    })?;
-                    rd.finish().map_err(|e| {
-                        js_error(&format!("Invalid WebHID record {device_id} encoding: {e}"))
-                    })?;
-
-                    let location = match loc_kind {
-                        0 => WebHidDeviceLocation::RootPort(loc_port as usize),
-                        1 => {
-                            if loc_port == 0 {
-                                return Err(js_error(&format!(
-                                    "Invalid WebHID record {device_id}: hub port 0 is not valid"
-                                )));
-                            }
-                            WebHidDeviceLocation::ExternalHubPort(loc_port)
-                        }
-                        _ => {
+                let location = match loc_kind {
+                    0 => WebHidDeviceLocation::RootPort(loc_port as usize),
+                    1 => {
+                        if loc_port == 0 {
                             return Err(js_error(&format!(
+                                "Invalid WebHID record {device_id}: hub port 0 is not valid"
+                            )));
+                        }
+                        WebHidDeviceLocation::ExternalHubPort(loc_port)
+                    }
+                    _ => {
+                        return Err(js_error(&format!(
                             "Invalid WebHID record {device_id}: unknown location kind {loc_kind}"
                         )));
-                        }
-                    };
+                    }
+                };
 
-                    out.push(WebHidSnapshotEntry {
-                        device_id,
-                        location,
-                        vendor_id,
-                        product_id,
-                        product,
-                        report_descriptor,
-                        has_interrupt_out,
-                        state,
-                    });
-                }
-                out
-            } else {
-                Vec::new()
-            };
+                out.push(WebHidSnapshotEntry {
+                    device_id,
+                    location,
+                    vendor_id,
+                    product_id,
+                    product,
+                    report_descriptor,
+                    has_interrupt_out,
+                    state,
+                });
+            }
+            out
+        } else {
+            Vec::new()
+        };
 
         // Validate WebHID entries against hub/webusb presence so we can fail before mutating state.
         {
