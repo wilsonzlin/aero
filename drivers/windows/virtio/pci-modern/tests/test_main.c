@@ -411,6 +411,17 @@ static void TestRejectBar0Not64BitMmio(void)
 	ExpectInitFail("bar0_not_64bit_mmio", &dev, VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO);
 }
 
+static void TestRejectBar0AddressMismatch(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	/* BAR0 base differs from the Bar0Pa passed to init. */
+	WriteLe32(&dev.Cfg[PCI_BAR0_OFF], 0x20000000u | 0x4u);
+
+	ExpectInitFail("bar0_address_mismatch", &dev, VIRTIO_PCI_MODERN_INIT_ERR_BAR0_ADDRESS_MISMATCH);
+}
+
 static void TestRejectMissingStatusCapList(void)
 {
 	FAKE_DEV dev;
@@ -1183,6 +1194,7 @@ int main(void)
 	TestRejectBadInterruptPin();
 	TestRejectBar0IoSpace();
 	TestRejectBar0Not64BitMmio();
+	TestRejectBar0AddressMismatch();
 	TestRejectMissingStatusCapList();
 	TestRejectUnalignedCapPtr();
 	TestRejectZeroCapPtr();

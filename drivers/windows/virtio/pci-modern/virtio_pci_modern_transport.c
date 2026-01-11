@@ -292,6 +292,8 @@ const char *VirtioPciModernTransportInitErrorStr(VIRTIO_PCI_MODERN_TRANSPORT_INI
 			return "SUBSYSTEM_VENDOR_MISMATCH";
 		case VIRTIO_PCI_MODERN_INIT_ERR_INTERRUPT_PIN_MISMATCH:
 			return "INTERRUPT_PIN_MISMATCH";
+		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_ADDRESS_MISMATCH:
+			return "BAR0_ADDRESS_MISMATCH";
 		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_MMIO:
 			return "BAR0_NOT_MMIO";
 		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO:
@@ -336,6 +338,8 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	UINT8 interrupt_pin;
 	UINT16 status;
 	UINT32 bar0_low;
+	UINT32 bar0_high;
+	UINT64 bar0_cfg_base;
 	virtio_pci_parsed_caps_t caps;
 	virtio_pci_cap_parse_result_t cap_res;
 	UINT64 bar_addrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -432,6 +436,22 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (bar0_low & 0x06u) != 0x04u) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO;
 		return STATUS_NOT_SUPPORTED;
+	}
+
+	/*
+	 * BAR0 base address in PCI config space must match the BAR0 physical address
+	 * supplied by the caller.
+	 *
+	 * This catches driver resource discovery bugs where a different MMIO range
+	 * is mapped than the one the device is programmed to use.
+	 */
+	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) {
+		bar0_high = os->PciRead32(t->OsContext, (UINT16)(PCI_CFG_BAR0_OFF + 4));
+		bar0_cfg_base = ((UINT64)bar0_high << 32) | (UINT64)(bar0_low & ~0x0Fu);
+		if (bar0_cfg_base != bar0_pa) {
+			t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_BAR0_ADDRESS_MISMATCH;
+			return STATUS_NOT_SUPPORTED;
+		}
 	}
 
 	/* PCI capabilities list must be present and aligned (Status bit 4). */
