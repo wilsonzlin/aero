@@ -77,6 +77,14 @@ static bool ContainsInsensitive(const std::wstring& haystack, const std::wstring
   return ToLower(haystack).find(ToLower(needle)) != std::wstring::npos;
 }
 
+static bool StartsWithInsensitive(const std::wstring& s, const std::wstring& prefix) {
+  if (s.size() < prefix.size()) return false;
+  for (size_t i = 0; i < prefix.size(); i++) {
+    if (static_cast<wchar_t>(towlower(s[i])) != static_cast<wchar_t>(towlower(prefix[i]))) return false;
+  }
+  return true;
+}
+
 // Windows 7 SDKs do not consistently ship the HIDClass IOCTL definitions in user-mode headers.
 // Define the subset we need (report descriptor read) locally so the selftest stays buildable with
 // a plain Win7-compatible SDK toolchain.
@@ -457,13 +465,13 @@ struct VirtioSndPciIdInfo {
 
 static VirtioSndPciIdInfo GetVirtioSndPciIdInfoFromString(const std::wstring& s) {
   VirtioSndPciIdInfo out{};
-  if (ContainsInsensitive(s, L"VEN_1AF4&DEV_1059")) {
+  if (StartsWithInsensitive(s, L"PCI\\VEN_1AF4&DEV_1059")) {
     out.modern = true;
     // The Aero contract v1 in-tree INF matches DEV_1059&REV_01, but some callers may only surface
     // the device+subsystem IDs. Treat REV_01 as a "nice to have" signal for logging/scoring.
     if (ContainsInsensitive(s, L"&REV_01")) out.modern_rev01 = true;
   }
-  if (ContainsInsensitive(s, L"VEN_1AF4&DEV_1018")) {
+  if (StartsWithInsensitive(s, L"PCI\\VEN_1AF4&DEV_1018")) {
     out.transitional = true;
   }
   return out;
@@ -926,6 +934,7 @@ static bool VirtioSndHasTopologyInterface(Logger& log, const std::vector<VirtioS
 struct VirtioSndBindingCheckResult {
   bool ok = false;
   bool any_wrong_service = false;
+  bool any_missing_service = false;
   bool any_problem = false;
 };
 
@@ -934,10 +943,15 @@ static VirtioSndBindingCheckResult CheckVirtioSndPciBinding(Logger& log,
   VirtioSndBindingCheckResult out;
 
   for (const auto& dev : devices) {
-    const bool service_ok = !dev.service.empty() && EqualsInsensitive(dev.service, kVirtioSndExpectedService);
+    const bool has_service = !dev.service.empty();
+    const bool service_ok = has_service && EqualsInsensitive(dev.service, kVirtioSndExpectedService);
     const bool problem_ok = (dev.cm_problem == 0) && ((dev.cm_status & DN_HAS_PROBLEM) == 0);
 
-    if (!service_ok) {
+    if (!has_service) {
+      out.any_missing_service = true;
+      log.Logf("virtio-snd: pci device pnp_id=%s has no bound service (expected %s)",
+               WideToUtf8(dev.instance_id).c_str(), "aeroviosnd");
+    } else if (!service_ok) {
       out.any_wrong_service = true;
       log.Logf("virtio-snd: pci device pnp_id=%s bound_service=%s (expected %s)",
                WideToUtf8(dev.instance_id).c_str(), WideToUtf8(dev.service).c_str(), "aeroviosnd");
@@ -3543,9 +3557,10 @@ int wmain(int argc, wchar_t** argv) {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
       }
     } else if (const auto binding = CheckVirtioSndPciBinding(log, snd_pci); !binding.ok) {
-      const char* reason = binding.any_wrong_service ? "wrong_service"
-                          : binding.any_problem      ? "device_error"
-                                                     : "driver_not_bound";
+      const char* reason = binding.any_wrong_service   ? "wrong_service"
+                          : binding.any_missing_service ? "driver_not_bound"
+                          : binding.any_problem         ? "device_error"
+                                                        : "driver_not_bound";
 
       if (want_snd_playback) {
         log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|%s", reason);
