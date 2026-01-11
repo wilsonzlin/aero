@@ -1082,7 +1082,11 @@ uint64_t submit(Device* dev, bool is_present) {
   if (dev->wddm_context.hContext != 0 && dev->wddm_context.pCommandBuffer && dev->wddm_context.CommandBufferSize) {
     const size_t cmd_bytes = dev->cmd.size();
     if (cmd_bytes <= dev->wddm_context.CommandBufferSize) {
-      std::memcpy(dev->wddm_context.pCommandBuffer, dev->cmd.data(), cmd_bytes);
+      // CmdStreamWriter can be span-backed and write directly into the runtime
+      // DMA buffer. Avoid memcpy on identical ranges (overlap is UB for memcpy).
+      if (dev->cmd.data() != dev->wddm_context.pCommandBuffer) {
+        std::memcpy(dev->wddm_context.pCommandBuffer, dev->cmd.data(), cmd_bytes);
+      }
       dev->wddm_context.command_buffer_bytes_used = static_cast<uint32_t>(cmd_bytes);
       dev->wddm_context.allocation_list_entries_used = 0;
       dev->wddm_context.patch_location_entries_used = 0;
