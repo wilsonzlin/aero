@@ -60,6 +60,16 @@ fn write_rx_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, status: u8) {
     dma.write(addr + 14, &0u16.to_le_bytes()); // special
 }
 
+fn build_test_frame(payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(14 + payload.len());
+    // Ethernet header (dst/src/ethertype).
+    frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
+    frame.extend_from_slice(&0x0800u16.to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
 #[test]
 fn pci_bars_probe_and_program() {
     let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
@@ -125,8 +135,8 @@ fn synthetic_guest_tx_and_rx() {
     write_rx_desc(&mut dma, 0x2010, 0x3400, 0);
 
     // Guest TX: descriptor 0 points at packet buffer 0x4000.
-    let pkt_out = b"guest->host";
-    dma.write(0x4000, pkt_out);
+    let pkt_out = build_test_frame(b"guest->host");
+    dma.write(0x4000, &pkt_out);
     write_tx_desc(
         &mut dma,
         0x1000,
@@ -143,8 +153,8 @@ fn synthetic_guest_tx_and_rx() {
     assert_eq!(causes & ICR_TXDW, ICR_TXDW);
 
     // Host RX: deliver frame into guest ring.
-    let pkt_in = b"host->guest";
-    dev.receive_frame(&mut dma, pkt_in);
+    let pkt_in = build_test_frame(b"host->guest");
+    dev.receive_frame(&mut dma, &pkt_in);
 
     assert_eq!(dma.read_vec(0x3000, pkt_in.len()), pkt_in);
     assert!(dev.irq_level());

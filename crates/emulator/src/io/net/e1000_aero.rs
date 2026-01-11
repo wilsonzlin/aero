@@ -99,6 +99,15 @@ mod tests {
         }
     }
 
+    fn build_test_frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(aero_net_e1000::MIN_L2_FRAME_LEN + payload.len());
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
+        frame.extend_from_slice(&0x0800u16.to_be_bytes());
+        frame.extend_from_slice(payload);
+        frame
+    }
+
     #[test]
     fn wrapper_config_space_bar0_probe_roundtrip() {
         let mut dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]));
@@ -133,10 +142,11 @@ mod tests {
         dev.mmio_write(&mut mem, 0x2818, 4, 1); // RDT
         dev.mmio_write(&mut mem, 0x0100, 4, 1 << 1); // RCTL.EN
 
-        dev.receive_frame(&mut mem, b"hi");
+        let frame = build_test_frame(b"hi");
+        dev.receive_frame(&mut mem, &frame);
 
-        let mut out = [0u8; 2];
+        let mut out = vec![0u8; frame.len()];
         mem.read_physical(buf_addr, &mut out);
-        assert_eq!(&out, b"hi");
+        assert_eq!(out, frame);
     }
 }

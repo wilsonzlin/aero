@@ -71,6 +71,7 @@ pub const TXD_STAT_DD: u8 = 1 << 0;
 
 pub const RXD_STAT_DD: u8 = 1 << 0;
 pub const RXD_STAT_EOP: u8 = 1 << 1;
+pub const RXD_ERR_RXE: u8 = 1 << 7;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TxDesc {

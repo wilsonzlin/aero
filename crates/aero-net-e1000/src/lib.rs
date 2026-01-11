@@ -23,6 +23,24 @@ pub const E1000_MMIO_SIZE: u32 = 0x20_000;
 /// Size of the E1000 I/O BAR (IOADDR/IODATA window).
 pub const E1000_IO_SIZE: u32 = 0x40;
 
+/// Minimum Ethernet frame length: destination MAC (6) + source MAC (6) + ethertype (2).
+pub const MIN_L2_FRAME_LEN: usize = 14;
+/// Maximum Ethernet frame length accepted by the device model (no FCS).
+///
+/// We allow a small amount above the usual 1514-byte "Ethernet header + 1500 MTU"
+/// to tolerate VLAN-tagged frames and occasional capture sources that include
+/// extra bytes. Jumbo frames are intentionally not supported.
+pub const MAX_L2_FRAME_LEN: usize = 1522;
+/// Upper bound for a single in-progress guest TX packet being assembled from descriptors.
+///
+/// This must be large enough for common Windows offloads (TSO can exceed 64KiB),
+/// but finite so a malicious guest cannot cause unbounded allocations.
+pub const MAX_TX_AGGREGATE_LEN: usize = 256 * 1024;
+/// Upper bound on the number of TSO segments that may be produced from a single packet.
+pub const MAX_TSO_SEGMENTS: usize = 256;
+/// Upper bound for the host-facing TX output queue.
+pub const MAX_TX_OUT_QUEUE: usize = 256;
+
 // MMIO register offsets (subset).
 const REG_CTRL: u32 = 0x0000;
 const REG_STATUS: u32 = 0x0008;
@@ -109,6 +127,7 @@ const TXD_DTYP_DATA: u8 = 0x3;
 // RX descriptor bits (legacy).
 const RXD_STAT_DD: u8 = 1 << 0;
 const RXD_STAT_EOP: u8 = 1 << 1;
+const RXD_ERR_RXE: u8 = 1 << 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RxDesc {
@@ -457,6 +476,7 @@ pub struct E1000Device {
     tdh: u32,
     tdt: u32,
     tx_partial: Vec<u8>,
+    tx_drop: bool,
     tx_ctx: TxOffloadContext,
     tx_state: Option<TxPacketState>,
 
@@ -497,6 +517,7 @@ impl E1000Device {
             tdh: 0,
             tdt: 0,
             tx_partial: Vec::new(),
+            tx_drop: false,
             tx_ctx: TxOffloadContext::default(),
             tx_state: None,
             mac_addr,
@@ -661,6 +682,9 @@ impl E1000Device {
     /// The caller is expected to invoke [`poll`] (or [`receive_frame`]) to flush
     /// pending frames into the RX descriptor ring when buffers are available.
     pub fn enqueue_rx_frame(&mut self, frame: Vec<u8>) {
+        if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
+            return;
+        }
         // Keep memory bounded even if the guest never enables RX.
         const MAX_PENDING: usize = 256;
         if self.rx_pending.len() >= MAX_PENDING {
@@ -710,6 +734,7 @@ impl E1000Device {
         self.tdh = 0;
         self.tdt = 0;
         self.tx_partial.clear();
+        self.tx_drop = false;
         self.tx_ctx = TxOffloadContext::default();
         self.tx_state = None;
 
@@ -934,6 +959,12 @@ impl E1000Device {
         let buf_len = self.rx_buf_len();
 
         while let Some(frame) = self.rx_pending.front() {
+            if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
+                // Should be filtered at enqueue time, but keep this resilient to
+                // callers bypassing `enqueue_rx_frame`.
+                self.rx_pending.pop_front();
+                continue;
+            }
             // The hardware head (RDH) must not catch up to the software tail (RDT).
             // Keep one descriptor unused to avoid ambiguity in full/empty conditions.
             if self.rdh == self.rdt {
@@ -949,14 +980,22 @@ impl E1000Device {
                 break;
             }
 
-            let copy_len = frame.len().min(buf_len);
-            mem.write_physical(desc.buffer_addr, &frame[..copy_len]);
+            if buf_len < frame.len() {
+                // Avoid delivering truncated frames; drop and surface an error.
+                desc.length = 0;
+                desc.checksum = 0;
+                desc.errors = RXD_ERR_RXE;
+                desc.status = RXD_STAT_DD | RXD_STAT_EOP;
+                write_desc(mem, desc_addr, &desc.to_bytes());
+            } else {
+                mem.write_physical(desc.buffer_addr, frame);
 
-            desc.length = copy_len as u16;
-            desc.checksum = 0;
-            desc.errors = 0;
-            desc.status = RXD_STAT_DD | RXD_STAT_EOP;
-            write_desc(mem, desc_addr, &desc.to_bytes());
+                desc.length = frame.len() as u16;
+                desc.checksum = 0;
+                desc.errors = 0;
+                desc.status = RXD_STAT_DD | RXD_STAT_EOP;
+                write_desc(mem, desc_addr, &desc.to_bytes());
+            }
 
             self.rx_pending.pop_front();
 
@@ -965,6 +1004,44 @@ impl E1000Device {
             self.icr |= ICR_RXT0;
             self.update_irq_level();
         }
+    }
+
+    fn queue_tx_frame(&mut self, frame: Vec<u8>) {
+        if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
+            return;
+        }
+        if self.tx_out.len() >= MAX_TX_OUT_QUEUE {
+            // Bound memory even if the host never drains the TX queue.
+            self.tx_out.pop_front();
+        }
+        self.tx_out.push_back(frame);
+    }
+
+    fn enter_tx_drop_mode(&mut self) {
+        self.tx_drop = true;
+        self.tx_partial.clear();
+        self.tx_state = None;
+    }
+
+    fn append_tx_data(&mut self, mem: &mut dyn MemoryBus, buffer_addr: u64, len: usize, tso: bool) {
+        if self.tx_drop || buffer_addr == 0 || len == 0 {
+            return;
+        }
+
+        let new_len = self
+            .tx_partial
+            .len()
+            .checked_add(len)
+            .unwrap_or(MAX_TX_AGGREGATE_LEN + 1);
+
+        if new_len > MAX_TX_AGGREGATE_LEN || (!tso && new_len > MAX_L2_FRAME_LEN) {
+            self.enter_tx_drop_mode();
+            return;
+        }
+
+        let old_len = self.tx_partial.len();
+        self.tx_partial.resize(new_len, 0);
+        mem.read_physical(buffer_addr, &mut self.tx_partial[old_len..new_len]);
     }
 
     fn process_tx(&mut self, mem: &mut dyn MemoryBus) {
@@ -1039,9 +1116,7 @@ impl E1000Device {
                     }
 
                     if desc.buffer_addr != 0 && desc.length != 0 {
-                        let mut buf = vec![0u8; desc.length as usize];
-                        mem.read_physical(desc.buffer_addr, &mut buf);
-                        self.tx_partial.extend_from_slice(&buf);
+                        self.append_tx_data(mem, desc.buffer_addr, desc.length as usize, false);
                     }
 
                     desc.status |= TXD_STAT_DD;
@@ -1052,6 +1127,14 @@ impl E1000Device {
                     }
 
                     if (desc.cmd & TXD_CMD_EOP) != 0 {
+                        if self.tx_drop {
+                            self.tx_drop = false;
+                            self.tx_partial.clear();
+                            self.tx_state = None;
+                            self.tdh = (self.tdh + 1) % desc_count;
+                            continue;
+                        }
+
                         let Some(TxPacketState::Legacy { cmd, css, cso }) = self.tx_state.take()
                         else {
                             self.tx_partial.clear();
@@ -1073,17 +1156,18 @@ impl E1000Device {
                                 frame[cso..cso + 2].copy_from_slice(&csum.to_be_bytes());
                             }
 
-                            self.tx_out.push_back(frame);
+                            self.queue_tx_frame(frame);
                         }
                     }
                 }
                 TxDescriptor::Data(desc) => {
-                    match self.tx_state {
+                    let cmd = match self.tx_state {
                         None => {
                             self.tx_state = Some(TxPacketState::Advanced {
                                 cmd: desc.cmd,
                                 popts: desc.popts,
                             });
+                            desc.cmd
                         }
                         Some(TxPacketState::Advanced {
                             ref mut cmd,
@@ -1091,6 +1175,7 @@ impl E1000Device {
                         }) => {
                             *cmd |= desc.cmd;
                             *popts |= desc.popts;
+                            *cmd
                         }
                         Some(TxPacketState::Legacy { .. }) => {
                             self.tx_partial.clear();
@@ -1098,13 +1183,13 @@ impl E1000Device {
                                 cmd: desc.cmd,
                                 popts: desc.popts,
                             });
+                            desc.cmd
                         }
-                    }
+                    };
 
+                    let tso = (cmd & TXD_CMD_TSE) != 0;
                     if desc.buffer_addr != 0 && desc.length != 0 {
-                        let mut buf = vec![0u8; desc.length as usize];
-                        mem.read_physical(desc.buffer_addr, &mut buf);
-                        self.tx_partial.extend_from_slice(&buf);
+                        self.append_tx_data(mem, desc.buffer_addr, desc.length as usize, tso);
                     }
 
                     desc_bytes[12] |= TXD_STAT_DD;
@@ -1115,6 +1200,14 @@ impl E1000Device {
                     }
 
                     if (desc.cmd & TXD_CMD_EOP) != 0 {
+                        if self.tx_drop {
+                            self.tx_drop = false;
+                            self.tx_partial.clear();
+                            self.tx_state = None;
+                            self.tdh = (self.tdh + 1) % desc_count;
+                            continue;
+                        }
+
                         let Some(TxPacketState::Advanced { cmd, popts }) = self.tx_state.take()
                         else {
                             self.tx_partial.clear();
@@ -1131,18 +1224,27 @@ impl E1000Device {
                                 match tso_segment(&frame, self.tx_ctx, flags) {
                                     Ok(frames) => {
                                         for frame in frames {
-                                            self.tx_out.push_back(frame);
+                                            self.queue_tx_frame(frame);
                                         }
                                     }
                                     Err(_) => {
-                                        let _ =
-                                            apply_checksum_offload(&mut frame, self.tx_ctx, flags);
-                                        self.tx_out.push_back(frame);
+                                        if (MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN)
+                                            .contains(&frame.len())
+                                        {
+                                            let _ = apply_checksum_offload(
+                                                &mut frame,
+                                                self.tx_ctx,
+                                                flags,
+                                            );
+                                            self.queue_tx_frame(frame);
+                                        }
                                     }
                                 }
                             } else {
-                                let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
-                                self.tx_out.push_back(frame);
+                                if (MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&frame.len()) {
+                                    let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
+                                    self.queue_tx_frame(frame);
+                                }
                             }
                         }
                     }
@@ -1187,6 +1289,42 @@ mod tests {
 
     impl MemoryBus for TestMem {
         fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            let addr = paddr as usize;
+            buf.copy_from_slice(&self.mem[addr..addr + buf.len()]);
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            let addr = paddr as usize;
+            self.mem[addr..addr + buf.len()].copy_from_slice(buf);
+        }
+    }
+
+    struct LimitedReadMem {
+        mem: Vec<u8>,
+        max_read_len: usize,
+    }
+
+    impl LimitedReadMem {
+        fn new(size: usize, max_read_len: usize) -> Self {
+            Self {
+                mem: vec![0u8; size],
+                max_read_len,
+            }
+        }
+
+        fn write_bytes(&mut self, addr: u64, bytes: &[u8]) {
+            let addr = addr as usize;
+            self.mem[addr..addr + bytes.len()].copy_from_slice(bytes);
+        }
+    }
+
+    impl MemoryBus for LimitedReadMem {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            assert!(
+                buf.len() <= self.max_read_len,
+                "unexpected large DMA read: {} bytes",
+                buf.len()
+            );
             let addr = paddr as usize;
             buf.copy_from_slice(&self.mem[addr..addr + buf.len()]);
         }
@@ -1261,8 +1399,8 @@ mod tests {
         dev.ims = ICR_TXDW;
 
         // Packet buffer at 0x2000.
-        let pkt = b"hello";
-        mem.write_bytes(0x2000, pkt);
+        let pkt = [0x11u8; MIN_L2_FRAME_LEN];
+        mem.write_bytes(0x2000, &pkt);
 
         let desc0 = TxDesc {
             buffer_addr: 0x2000,
@@ -1318,8 +1456,8 @@ mod tests {
         mem.write_bytes(0x3000, &desc0.to_bytes());
         mem.write_bytes(0x3010, &desc1.to_bytes());
 
-        let frame = b"frame-data";
-        dev.receive_frame(&mut mem, frame);
+        let frame = vec![0x22u8; MIN_L2_FRAME_LEN];
+        dev.receive_frame(&mut mem, &frame);
 
         assert_eq!(mem.read_bytes(0x4000, frame.len()), frame);
         let updated = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
@@ -1333,5 +1471,98 @@ mod tests {
         let icr = dev.mmio_read_u32(REG_ICR);
         assert_eq!(icr & ICR_RXT0, ICR_RXT0);
         assert!(!dev.irq_level());
+    }
+
+    #[test]
+    fn tx_oversized_descriptor_drops_packet_without_large_dma_reads() {
+        let mut mem = LimitedReadMem::new(0x20_000, 2048);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // TX ring at 0x1000 with 4 descriptors.
+        dev.tdbal = 0x1000;
+        dev.tdlen = (TxDesc::LEN as u32) * 4;
+        dev.tdh = 0;
+        dev.tdt = 0;
+        dev.tctl = TCTL_EN;
+
+        // Two-descriptor packet where the first descriptor claims an absurd length.
+        // The device should enter drop mode and never attempt a huge DMA read.
+        let desc0 = TxDesc {
+            buffer_addr: 0x2000,
+            length: u16::MAX,
+            cso: 0,
+            cmd: TXD_CMD_RS, // no EOP
+            status: 0,
+            css: 0,
+            special: 0,
+        };
+        let desc1 = TxDesc {
+            buffer_addr: 0x3000,
+            length: 64,
+            cso: 0,
+            cmd: TXD_CMD_EOP | TXD_CMD_RS,
+            status: 0,
+            css: 0,
+            special: 0,
+        };
+        mem.write_bytes(0x1000, &desc0.to_bytes());
+        mem.write_bytes(0x1010, &desc1.to_bytes());
+
+        // Guest updates tail to 2.
+        dev.mmio_write_u32(&mut mem, REG_TDT, 2);
+
+        assert!(dev.pop_tx_frame().is_none());
+
+        let updated0 = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
+        let updated1 = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1010));
+        assert_ne!(updated0.status & TXD_STAT_DD, 0);
+        assert_ne!(updated1.status & TXD_STAT_DD, 0);
+        assert_eq!(dev.mmio_read_u32(REG_TDH), 2);
+
+        assert!(!dev.tx_drop);
+        assert!(dev.tx_partial.is_empty());
+        assert!(dev.tx_state.is_none());
+    }
+
+    #[test]
+    fn rx_drops_oversized_frame_without_touching_guest_memory() {
+        let mut mem = TestMem::new(0x20_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // RX ring at 0x3000 with 2 descriptors.
+        dev.rdbal = 0x3000;
+        dev.rdlen = (RxDesc::LEN as u32) * 2;
+        dev.rdh = 0;
+        dev.rdt = 1;
+        dev.rctl = RCTL_EN;
+        dev.ims = ICR_RXT0;
+
+        let desc0 = RxDesc {
+            buffer_addr: 0x4000,
+            length: 0,
+            checksum: 0,
+            status: 0,
+            errors: 0,
+            special: 0,
+        };
+        let desc1 = RxDesc {
+            buffer_addr: 0x5000,
+            ..desc0
+        };
+        mem.write_bytes(0x3000, &desc0.to_bytes());
+        mem.write_bytes(0x3010, &desc1.to_bytes());
+
+        // Sentinel to detect unexpected writes.
+        mem.write_bytes(0x4000, &[0x5a; 32]);
+
+        let frame = vec![0u8; MAX_L2_FRAME_LEN + 1];
+        dev.receive_frame(&mut mem, &frame);
+
+        assert_eq!(mem.read_bytes(0x4000, 32), vec![0x5a; 32]);
+        let updated0 = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
+        assert_eq!(updated0.status, 0);
+        assert_eq!(dev.mmio_read_u32(REG_RDH), 0);
+        assert!(!dev.irq_level());
+        assert_eq!(dev.mmio_read_u32(REG_ICR), 0);
     }
 }

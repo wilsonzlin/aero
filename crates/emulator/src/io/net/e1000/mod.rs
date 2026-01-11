@@ -7,6 +7,18 @@ mod tx;
 
 pub use regs::*;
 
+/// Minimum Ethernet frame length: destination MAC (6) + source MAC (6) + ethertype (2).
+pub const MIN_L2_FRAME_LEN: usize = 14;
+/// Maximum Ethernet frame length accepted by the device model (no FCS).
+///
+/// This is intentionally a bit higher than the common 1514-byte "Ethernet header + 1500 MTU"
+/// to tolerate VLAN-tagged frames and other small overheads. Jumbo frames are not supported.
+pub const MAX_L2_FRAME_LEN: usize = 1522;
+/// Upper bound for a single in-progress guest TX packet being assembled from descriptors.
+pub const MAX_TX_AGGREGATE_LEN: usize = 256 * 1024;
+/// Upper bound on the number of TSO segments that may be produced from a single packet.
+pub const MAX_TSO_SEGMENTS: usize = 256;
+
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -215,6 +227,7 @@ pub struct E1000Device {
     tdh: u32,
     tdt: u32,
     tx_partial: Vec<u8>,
+    tx_drop: bool,
     tx_ctx: TxOffloadContext,
     tx_state: Option<TxPacketState>,
 
@@ -266,6 +279,7 @@ impl E1000Device {
             tdh: 0,
             tdt: 0,
             tx_partial: Vec::new(),
+            tx_drop: false,
             tx_ctx: TxOffloadContext::default(),
             tx_state: None,
             mac,
@@ -310,6 +324,7 @@ impl E1000Device {
         self.tdh = 0;
         self.tdt = 0;
         self.tx_partial.clear();
+        self.tx_drop = false;
         self.tx_ctx = TxOffloadContext::default();
         self.tx_state = None;
 
@@ -613,6 +628,13 @@ impl E1000Device {
     }
 
     pub fn enqueue_rx_frame(&mut self, frame: Vec<u8>) {
+        if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
+            return;
+        }
+        const MAX_PENDING: usize = 256;
+        if self.rx_queue.len() >= MAX_PENDING {
+            self.rx_queue.pop_front();
+        }
         self.rx_queue.push_back(frame);
     }
 
@@ -952,6 +974,37 @@ mod tests {
         }
     }
 
+    struct LimitedReadMemory {
+        buf: Vec<u8>,
+        max_read_len: usize,
+    }
+
+    impl LimitedReadMemory {
+        fn new(size: usize, max_read_len: usize) -> Self {
+            Self {
+                buf: vec![0; size],
+                max_read_len,
+            }
+        }
+    }
+
+    impl GuestMemory for LimitedReadMemory {
+        fn read(&self, addr: u64, buf: &mut [u8]) {
+            assert!(
+                buf.len() <= self.max_read_len,
+                "unexpected large DMA read: {} bytes",
+                buf.len()
+            );
+            let addr = addr as usize;
+            buf.copy_from_slice(&self.buf[addr..addr + buf.len()]);
+        }
+
+        fn write(&mut self, addr: u64, data: &[u8]) {
+            let addr = addr as usize;
+            self.buf[addr..addr + data.len()].copy_from_slice(data);
+        }
+    }
+
     #[derive(Default)]
     struct TestBackend {
         frames: Vec<Vec<u8>>,
@@ -961,6 +1014,16 @@ mod tests {
         fn transmit(&mut self, frame: Vec<u8>) {
             self.frames.push(frame);
         }
+    }
+
+    fn build_test_frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(MIN_L2_FRAME_LEN + payload.len());
+        // Ethernet header (dst/src/ethertype).
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
+        frame.extend_from_slice(&0x0800u16.to_be_bytes());
+        frame.extend_from_slice(payload);
+        frame
     }
 
     fn build_ipv4_tcp_frame(payload_len: usize) -> Vec<u8> {
@@ -1109,7 +1172,7 @@ mod tests {
 
         let ring_base = 0x1000u64;
         let buf_addr = 0x2000u64;
-        let frame = vec![0xde, 0xad, 0xbe, 0xef];
+        let frame = build_test_frame(&[0xde, 0xad, 0xbe, 0xef]);
         mem.write(buf_addr, &frame);
 
         let desc = TxDesc {
@@ -1142,6 +1205,53 @@ mod tests {
         let icr = dev.mmio_read(REG_ICR, 4);
         assert_eq!(icr & ICR_TXDW, ICR_TXDW);
         assert!(!dev.irq_level());
+    }
+
+    #[test]
+    fn tx_oversized_descriptor_drops_packet_without_large_dma_reads() {
+        let mut mem = LimitedReadMemory::new(0x10000, 2048);
+        let mut backend = TestBackend::default();
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        let ring_base = 0x1000u64;
+
+        let desc0 = TxDesc {
+            buffer_addr: 0x2000,
+            length: u16::MAX,
+            cmd: TXD_CMD_RS, // no EOP
+            status: 0,
+            ..TxDesc::default()
+        };
+        let desc1 = TxDesc {
+            buffer_addr: 0x3000,
+            length: 64,
+            cmd: TXD_CMD_EOP | TXD_CMD_RS,
+            status: 0,
+            ..TxDesc::default()
+        };
+        desc0.write(&mut mem, ring_base);
+        desc1.write(&mut mem, ring_base + 16);
+
+        dev.mmio_write(REG_TDBAL, 4, ring_base as u32);
+        dev.mmio_write(REG_TDBAH, 4, 0);
+        dev.mmio_write(REG_TDLEN, 4, 16 * 8);
+        dev.mmio_write(REG_TDH, 4, 0);
+        dev.mmio_write(REG_TDT, 4, 2);
+        dev.mmio_write(REG_TCTL, 4, TCTL_EN);
+        dev.mmio_write(REG_IMS, 4, ICR_TXDW);
+
+        dev.poll(&mut mem, &mut backend);
+
+        assert!(backend.frames.is_empty());
+        let written0 = TxDesc::read(&mem, ring_base);
+        let written1 = TxDesc::read(&mem, ring_base + 16);
+        assert_ne!(written0.status & TXD_STAT_DD, 0);
+        assert_ne!(written1.status & TXD_STAT_DD, 0);
+        assert_eq!(dev.mmio_read(REG_TDH, 4), 2);
+
+        assert!(!dev.tx_drop);
+        assert!(dev.tx_partial.is_empty());
+        assert!(dev.tx_state.is_none());
     }
 
     #[test]
@@ -1290,7 +1400,7 @@ mod tests {
 
         let ring_base = 0x3000u64;
         let buf_addr = 0x4000u64;
-        let frame = vec![1, 2, 3, 4, 5, 6];
+        let frame = build_test_frame(&[1, 2, 3, 4, 5, 6]);
 
         // Build 8 RX descriptors with separate buffers.
         for i in 0..8u64 {
@@ -1339,7 +1449,7 @@ mod tests {
 
         let ring_base = 0x1000u64;
         let buf_addr = 0x2000u64;
-        let frame = vec![0xaa, 0xbb, 0xcc, 0xdd];
+        let frame = build_test_frame(&[0xaa, 0xbb, 0xcc, 0xdd]);
 
         // Descriptor 0 has no buffer address yet.
         RxDesc::default().write(&mut mem, ring_base);
@@ -1383,7 +1493,7 @@ mod tests {
 
         let ring_base = 0x1000u64;
         let buf_addr = 0x2000u64;
-        let frame = vec![0x11, 0x22, 0x33, 0x44];
+        let frame = build_test_frame(&[0x11, 0x22, 0x33, 0x44]);
 
         // Descriptor 0 is still owned by the guest (DD set).
         RxDesc {
@@ -1530,7 +1640,7 @@ mod tests {
 
         let ring_base = 0x3000u64;
         let buf_addr = 0x4000u64;
-        let frame = vec![1, 2, 3, 4, 5, 6];
+        let frame = build_test_frame(&[1, 2, 3, 4, 5, 6]);
 
         for i in 0..8u64 {
             let desc = RxDesc {
@@ -1567,5 +1677,47 @@ mod tests {
         assert_eq!(written, frame);
 
         assert!(restored.irq_level());
+    }
+
+    #[test]
+    fn rx_drops_oversized_frame_without_touching_guest_memory() {
+        let mut mem = TestMemory::new(0x20000);
+        let mut backend = TestBackend::default();
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        let ring_base = 0x3000u64;
+        let buf_addr = 0x4000u64;
+
+        for i in 0..8u64 {
+            RxDesc {
+                buffer_addr: buf_addr + i * 0x800,
+                ..RxDesc::default()
+            }
+            .write(&mut mem, ring_base + i * 16);
+        }
+
+        dev.mmio_write(REG_RDBAL, 4, ring_base as u32);
+        dev.mmio_write(REG_RDBAH, 4, 0);
+        dev.mmio_write(REG_RDLEN, 4, 16 * 8);
+        dev.mmio_write(REG_RDH, 4, 0);
+        dev.mmio_write(REG_RDT, 4, 7);
+        dev.mmio_write(REG_RCTL, 4, RCTL_EN);
+        dev.mmio_write(REG_IMS, 4, ICR_RXT0);
+
+        // Sentinel to detect unexpected writes.
+        mem.write(buf_addr, &[0x5a; 32]);
+
+        dev.enqueue_rx_frame(vec![0u8; MAX_L2_FRAME_LEN + 1]);
+        dev.poll(&mut mem, &mut backend);
+
+        let desc0 = RxDesc::read(&mem, ring_base);
+        assert_eq!(desc0.status, 0);
+        let mut sentinel = [0u8; 32];
+        mem.read(buf_addr, &mut sentinel);
+        assert_eq!(sentinel, [0x5a; 32]);
+
+        assert_eq!(dev.mmio_read(REG_RDH, 4), 0);
+        assert!(!dev.irq_level());
+        assert_eq!(dev.mmio_read(REG_ICR, 4), 0);
     }
 }

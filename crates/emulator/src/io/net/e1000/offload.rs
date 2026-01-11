@@ -14,6 +14,8 @@ use core::net::Ipv4Addr;
 
 use nt_packetlib::io::net::packet::checksum::{ipv4_header_checksum, transport_checksum_ipv4};
 
+use super::{MAX_TSO_SEGMENTS, MAX_TX_AGGREGATE_LEN};
+
 /// Per-packet checksum offload flags (from the Advanced TX data descriptor's `popts` field).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TxChecksumFlags {
@@ -175,6 +177,9 @@ pub fn tso_segment(
     ctx: TxOffloadContext,
     flags: TxChecksumFlags,
 ) -> Result<Vec<Vec<u8>>, OffloadError> {
+    if frame.len() > MAX_TX_AGGREGATE_LEN {
+        return Err(OffloadError::InvalidContext("tso frame too large"));
+    }
     if ctx.mss == 0 {
         return Err(OffloadError::InvalidContext("mss is 0"));
     }
@@ -225,6 +230,9 @@ pub fn tso_segment(
 
     let payload = &frame[hdr_len..];
     let segments = (payload.len() + ctx.mss - 1) / ctx.mss;
+    if segments > MAX_TSO_SEGMENTS {
+        return Err(OffloadError::InvalidContext("tso too many segments"));
+    }
 
     let mut out = Vec::with_capacity(segments);
     for idx in 0..segments {
@@ -261,4 +269,84 @@ pub fn tso_segment(
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_ipv4_tcp_frame(payload_len: usize) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(14 + 20 + 20 + payload_len);
+
+        // Ethernet header.
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src
+        frame.extend_from_slice(&0x0800u16.to_be_bytes()); // IPv4 ethertype
+
+        let total_len = (20 + 20 + payload_len) as u16;
+        // IPv4 header (checksum filled by offload).
+        frame.extend_from_slice(&[
+            0x45,
+            0x00,
+            (total_len >> 8) as u8,
+            total_len as u8,
+            0x12,
+            0x34,
+            0x00,
+            0x00,
+            64,
+            6,
+            0x00,
+            0x00,
+            192,
+            168,
+            0,
+            2,
+            192,
+            168,
+            0,
+            1,
+        ]);
+
+        // TCP header (checksum filled by offload).
+        frame.extend_from_slice(&1234u16.to_be_bytes()); // src port
+        frame.extend_from_slice(&80u16.to_be_bytes()); // dst port
+        frame.extend_from_slice(&0x01020304u32.to_be_bytes()); // seq
+        frame.extend_from_slice(&0u32.to_be_bytes()); // ack
+        frame.push(0x50); // data offset 5
+        frame.push(0x18); // PSH+ACK
+        frame.extend_from_slice(&4096u16.to_be_bytes()); // window
+        frame.extend_from_slice(&0u16.to_be_bytes()); // checksum
+        frame.extend_from_slice(&0u16.to_be_bytes()); // urg ptr
+
+        frame.resize(frame.len() + payload_len, 0);
+        frame
+    }
+
+    #[test]
+    fn tso_rejects_too_many_segments() {
+        let payload_len = MAX_TSO_SEGMENTS + 1;
+        let frame = build_ipv4_tcp_frame(payload_len);
+        let ctx = TxOffloadContext {
+            ipcss: 14,
+            ipcso: 14 + 10,
+            ipcse: 14 + 20 - 1,
+            tucss: 14 + 20,
+            tucso: 14 + 20 + 16,
+            tucse: frame.len() - 1,
+            mss: 1,
+            hdr_len: 14 + 20 + 20,
+        };
+
+        let err = tso_segment(
+            &frame,
+            ctx,
+            TxChecksumFlags {
+                ipv4: true,
+                l4: true,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, OffloadError::InvalidContext(_)));
+    }
 }

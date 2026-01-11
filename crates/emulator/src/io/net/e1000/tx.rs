@@ -1,7 +1,8 @@
 use super::offload::{apply_checksum_offload, tso_segment, TxChecksumFlags, TxOffloadContext};
 use super::{
-    E1000Device, GuestMemory, NetworkBackend, TxDesc, TxPacketState, ICR_TXDW, TCTL_EN,
-    TXD_CMD_DEXT, TXD_CMD_EOP, TXD_CMD_IC, TXD_CMD_RS, TXD_CMD_TSE, TXD_STAT_DD,
+    E1000Device, GuestMemory, NetworkBackend, TxDesc, TxPacketState, ICR_TXDW, MAX_L2_FRAME_LEN,
+    MAX_TX_AGGREGATE_LEN, MIN_L2_FRAME_LEN, TCTL_EN, TXD_CMD_DEXT, TXD_CMD_EOP, TXD_CMD_IC,
+    TXD_CMD_RS, TXD_CMD_TSE, TXD_STAT_DD,
 };
 
 use nt_packetlib::io::net::packet::checksum::internet_checksum;
@@ -106,6 +107,40 @@ fn write_desc<M: GuestMemory>(mem: &mut M, addr: u64, bytes: &[u8; TxDesc::LEN])
 }
 
 impl E1000Device {
+    fn transmit_frame<B: NetworkBackend>(&mut self, backend: &mut B, frame: Vec<u8>) {
+        if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
+            return;
+        }
+        backend.transmit(frame);
+    }
+
+    fn enter_tx_drop_mode(&mut self) {
+        self.tx_drop = true;
+        self.tx_partial.clear();
+        self.tx_state = None;
+    }
+
+    fn append_tx_data<M: GuestMemory>(&mut self, mem: &M, buffer_addr: u64, len: usize, tso: bool) {
+        if self.tx_drop || buffer_addr == 0 || len == 0 {
+            return;
+        }
+
+        let new_len = self
+            .tx_partial
+            .len()
+            .checked_add(len)
+            .unwrap_or(MAX_TX_AGGREGATE_LEN + 1);
+
+        if new_len > MAX_TX_AGGREGATE_LEN || (!tso && new_len > MAX_L2_FRAME_LEN) {
+            self.enter_tx_drop_mode();
+            return;
+        }
+
+        let old_len = self.tx_partial.len();
+        self.tx_partial.resize(new_len, 0);
+        mem.read(buffer_addr, &mut self.tx_partial[old_len..new_len]);
+    }
+
     pub(crate) fn process_tx<M: GuestMemory, B: NetworkBackend>(
         &mut self,
         mem: &mut M,
@@ -178,9 +213,7 @@ impl E1000Device {
                     }
 
                     if desc.buffer_addr != 0 && desc.length != 0 {
-                        let mut buf = vec![0u8; desc.length as usize];
-                        mem.read(desc.buffer_addr, &mut buf);
-                        self.tx_partial.extend_from_slice(&buf);
+                        self.append_tx_data(mem, desc.buffer_addr, desc.length as usize, false);
                     }
 
                     desc.status |= TXD_STAT_DD;
@@ -191,6 +224,14 @@ impl E1000Device {
                     }
 
                     if (desc.cmd & TXD_CMD_EOP) != 0 {
+                        if self.tx_drop {
+                            self.tx_drop = false;
+                            self.tx_partial.clear();
+                            self.tx_state = None;
+                            self.tdh = (self.tdh + 1) % count;
+                            continue;
+                        }
+
                         let Some(TxPacketState::Legacy { cmd, css, cso }) = self.tx_state.take()
                         else {
                             self.tx_partial.clear();
@@ -209,17 +250,18 @@ impl E1000Device {
                                 let csum = internet_checksum(&frame[css..]);
                                 frame[cso..cso + 2].copy_from_slice(&csum.to_be_bytes());
                             }
-                            backend.transmit(frame);
+                            self.transmit_frame(backend, frame);
                         }
                     }
                 }
                 TxDescriptor::Data(desc) => {
-                    match self.tx_state {
+                    let cmd = match self.tx_state {
                         None => {
                             self.tx_state = Some(TxPacketState::Advanced {
                                 cmd: desc.cmd,
                                 popts: desc.popts,
                             });
+                            desc.cmd
                         }
                         Some(TxPacketState::Advanced {
                             ref mut cmd,
@@ -227,6 +269,7 @@ impl E1000Device {
                         }) => {
                             *cmd |= desc.cmd;
                             *popts |= desc.popts;
+                            *cmd
                         }
                         Some(TxPacketState::Legacy { .. }) => {
                             self.tx_partial.clear();
@@ -234,13 +277,13 @@ impl E1000Device {
                                 cmd: desc.cmd,
                                 popts: desc.popts,
                             });
+                            desc.cmd
                         }
-                    }
+                    };
 
+                    let tso = (cmd & TXD_CMD_TSE) != 0;
                     if desc.buffer_addr != 0 && desc.length != 0 {
-                        let mut buf = vec![0u8; desc.length as usize];
-                        mem.read(desc.buffer_addr, &mut buf);
-                        self.tx_partial.extend_from_slice(&buf);
+                        self.append_tx_data(mem, desc.buffer_addr, desc.length as usize, tso);
                     }
 
                     desc_bytes[12] |= TXD_STAT_DD;
@@ -251,6 +294,14 @@ impl E1000Device {
                     }
 
                     if (desc.cmd & TXD_CMD_EOP) != 0 {
+                        if self.tx_drop {
+                            self.tx_drop = false;
+                            self.tx_partial.clear();
+                            self.tx_state = None;
+                            self.tdh = (self.tdh + 1) % count;
+                            continue;
+                        }
+
                         let Some(TxPacketState::Advanced { cmd, popts }) = self.tx_state.take()
                         else {
                             self.tx_partial.clear();
@@ -267,18 +318,27 @@ impl E1000Device {
                                 match tso_segment(&frame, self.tx_ctx, flags) {
                                     Ok(frames) => {
                                         for frame in frames {
-                                            backend.transmit(frame);
+                                            self.transmit_frame(backend, frame);
                                         }
                                     }
                                     Err(_) => {
-                                        let _ =
-                                            apply_checksum_offload(&mut frame, self.tx_ctx, flags);
-                                        backend.transmit(frame);
+                                        if (MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN)
+                                            .contains(&frame.len())
+                                        {
+                                            let _ = apply_checksum_offload(
+                                                &mut frame,
+                                                self.tx_ctx,
+                                                flags,
+                                            );
+                                            self.transmit_frame(backend, frame);
+                                        }
                                     }
                                 }
                             } else {
-                                let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
-                                backend.transmit(frame);
+                                if (MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&frame.len()) {
+                                    let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
+                                    self.transmit_frame(backend, frame);
+                                }
                             }
                         }
                     }

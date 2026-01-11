@@ -1,4 +1,7 @@
-use super::{E1000Device, GuestMemory, RxDesc, ICR_RXT0, RCTL_EN, RXD_STAT_DD, RXD_STAT_EOP};
+use super::{
+    E1000Device, GuestMemory, RxDesc, ICR_RXT0, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN, RCTL_EN, RXD_ERR_RXE, RXD_STAT_DD,
+    RXD_STAT_EOP,
+};
 
 impl E1000Device {
     pub(crate) fn process_rx<M: GuestMemory>(&mut self, mem: &mut M) {
@@ -15,6 +18,10 @@ impl E1000Device {
         let buf_len = self.rx_buffer_size();
 
         while let Some(frame) = self.rx_queue.front() {
+            if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
+                self.rx_queue.pop_front();
+                continue;
+            }
             let idx = self.rdh % count;
             let desc_addr = base + idx as u64 * 16;
             let mut desc = RxDesc::read(mem, desc_addr);
@@ -24,15 +31,24 @@ impl E1000Device {
                 break;
             }
 
-            let copy_len = frame.len().min(buf_len);
-            mem.write(desc.buffer_addr, &frame[..copy_len]);
+            if buf_len < frame.len() {
+                // Avoid delivering truncated frames; drop and surface an error.
+                desc.length = 0;
+                desc.status = RXD_STAT_DD | RXD_STAT_EOP;
+                desc.errors = RXD_ERR_RXE;
+                desc.csum = 0;
+                desc.special = 0;
+                desc.write(mem, desc_addr);
+            } else {
+                mem.write(desc.buffer_addr, frame);
 
-            desc.length = copy_len as u16;
-            desc.status = RXD_STAT_DD | RXD_STAT_EOP;
-            desc.errors = 0;
-            desc.csum = 0;
-            desc.special = 0;
-            desc.write(mem, desc_addr);
+                desc.length = frame.len() as u16;
+                desc.status = RXD_STAT_DD | RXD_STAT_EOP;
+                desc.errors = 0;
+                desc.csum = 0;
+                desc.special = 0;
+                desc.write(mem, desc_addr);
+            }
 
             self.rdh = (self.rdh + 1) % count;
             self.rx_queue.pop_front();
