@@ -196,6 +196,7 @@ On the self-hosted runner you need:
 
 > Note: The harness uses a fixed localhost HTTP port (default `18080`). The workflow enforces
 > `concurrency.group: win7-virtio-harness` to prevent concurrent runs from fighting over ports/images.
+> If `18080` is already in use on your runner, override it via the workflow input `http_port`.
 
 ### Invoking the workflow
 

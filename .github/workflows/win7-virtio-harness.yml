@@ -18,6 +18,11 @@ on:
         required: false
         default: "600"
         type: string
+      http_port:
+        description: HTTP port on the runner for the harness file server (guest reaches it as 10.0.2.2:<port>)
+        required: false
+        default: "18080"
+        type: string
       snapshot:
         description: Run QEMU in snapshot mode (discard disk writes)
         required: false
@@ -104,6 +109,7 @@ jobs:
             echo "  disk_image_path: '${{ inputs.disk_image_path }}'"
             echo "  qemu_system: '${{ inputs.qemu_system }}'"
             echo "  timeout_seconds: '${{ inputs.timeout_seconds }}'"
+            echo "  http_port: '${{ inputs.http_port }}'"
             echo "  snapshot: '${{ inputs.snapshot }}'"
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
             echo "  with_virtio_snd: '${{ inputs.with_virtio_snd }}'"
@@ -116,6 +122,7 @@ jobs:
             disk_image_path="${{ inputs.disk_image_path }}"
             qemu_system="${{ inputs.qemu_system }}"
             timeout_seconds="${{ inputs.timeout_seconds }}"
+            http_port="${{ inputs.http_port }}"
 
             if [[ -z "${disk_image_path}" ]]; then
               echo "ERROR: workflow input 'disk_image_path' is empty."
@@ -142,6 +149,14 @@ jobs:
               echo "ERROR: workflow input 'timeout_seconds' must be an integer number of seconds, got: '${timeout_seconds}'"
               exit 1
             fi
+            if [[ -z "${http_port}" || ! "${http_port}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: workflow input 'http_port' must be an integer TCP port, got: '${http_port}'"
+              exit 1
+            fi
+            if (( http_port < 1 || http_port > 65535 )); then
+              echo "ERROR: workflow input 'http_port' must be in range 1..65535, got: '${http_port}'"
+              exit 1
+            fi
 
             echo "python3: $(python3 --version 2>&1 || true)"
             echo "qemu: $(\"${qemu_system}\" --version 2>&1 | head -n 1 || true)"
@@ -162,6 +177,7 @@ jobs:
               --disk-image "${disk_image_path}"
               --serial-log "${serial_log}"
               --http-log "${http_log}"
+              --http-port "${http_port}"
               --timeout-seconds "${timeout_seconds}"
             )
             if [[ "${{ inputs.snapshot }}" == "true" ]]; then
