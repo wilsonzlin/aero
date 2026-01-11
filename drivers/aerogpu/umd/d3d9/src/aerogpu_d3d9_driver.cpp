@@ -4405,6 +4405,11 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       return trace.ret(D3DERR_INVALIDCALL);
     }
 
+    uint64_t share_token = 0;
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
+    share_token = dev->adapter->share_token_allocator.allocate_share_token();
+#endif
+
     // Allocate a stable cross-process alloc_id (31-bit) and persist it in
     // allocation private data so it survives OpenResource/OpenAllocation in
     // another process.
@@ -4440,13 +4445,13 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
     priv.alloc_id = alloc_id;
     priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
-    priv.share_token = 0;
+    priv.share_token = static_cast<aerogpu_wddm_u64>(share_token);
     priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
     priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
     std::memcpy(pCreateResource->pPrivateDriverData, &priv, sizeof(priv));
 
     res->backing_alloc_id = alloc_id;
-    res->share_token = 0;
+    res->share_token = share_token;
   }
 
   bool has_wddm_allocation = (res->wddm_hAllocation != 0);
