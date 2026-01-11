@@ -25,7 +25,9 @@ same contract-v1 HWIDs.
 
 ## Contents
 
-- `common/` – shared virtio helpers (legacy transport + split-virtqueue library).
+- `common/` – shared Windows 7 virtio helpers (INTx helper, contract checks, legacy I/O-port transport, host-test helpers).
+  - Note: the canonical virtio-pci modern transport and canonical split-ring virtqueue engine used by
+    `blk/` + `net/` live under `drivers/windows/virtio/` (`pci-modern/`, `common/`).
 - `blk/` – `aerovblk` StorPort miniport (Aero contract v1; binds to `PCI\VEN_1AF4&DEV_1042&REV_01`).
 - `net/` – `aerovnet` NDIS 6.20 miniport (Aero contract v1; binds to `PCI\VEN_1AF4&DEV_1041&REV_01`).
 
