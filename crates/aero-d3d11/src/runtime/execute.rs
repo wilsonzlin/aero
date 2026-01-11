@@ -38,6 +38,13 @@ pub struct D3D11Runtime {
     sampler_cache: SamplerCache,
     bind_group_layout_cache: BindGroupLayoutCache,
     bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
+    /// Tracks whether the current command encoder has recorded any GPU work.
+    ///
+    /// `wgpu::Queue::write_buffer` / `write_texture` enqueue work immediately, so they can reorder
+    /// ahead of earlier encoded work if we defer `queue.submit()` until the end of the command
+    /// stream. When an update opcode needs to call `queue.write_*`, we flush the current encoder
+    /// first (only if it has recorded work) to preserve strict stream ordering.
+    encoder_has_commands: bool,
 }
 
 impl D3D11Runtime {
@@ -103,6 +110,7 @@ impl D3D11Runtime {
             sampler_cache: SamplerCache::new(),
             bind_group_layout_cache: BindGroupLayoutCache::new(),
             bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
+            encoder_has_commands: false,
         })
     }
 
@@ -119,6 +127,7 @@ impl D3D11Runtime {
     }
 
     pub fn execute(&mut self, words: &[u32]) -> Result<()> {
+        self.encoder_has_commands = false;
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -132,7 +141,28 @@ impl D3D11Runtime {
         }
 
         self.queue.submit([encoder.finish()]);
+        self.encoder_has_commands = false;
         Ok(())
+    }
+
+    fn submit_encoder(&mut self, encoder: &mut wgpu::CommandEncoder, label: &'static str) {
+        let new_encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        let finished = std::mem::replace(encoder, new_encoder).finish();
+        self.queue.submit([finished]);
+        self.encoder_has_commands = false;
+    }
+
+    fn submit_encoder_if_has_commands(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        label: &'static str,
+    ) {
+        if !self.encoder_has_commands {
+            return;
+        }
+        self.submit_encoder(encoder, label);
     }
 
     pub fn poll_wait(&self) {
@@ -271,9 +301,9 @@ impl D3D11Runtime {
     ) -> Result<()> {
         match packet.header.opcode {
             D3D11Opcode::CreateBuffer => self.exec_create_buffer(packet.payload),
-            D3D11Opcode::UpdateBuffer => self.exec_update_buffer(packet.payload),
+            D3D11Opcode::UpdateBuffer => self.exec_update_buffer(encoder, packet.payload),
             D3D11Opcode::CreateTexture2D => self.exec_create_texture2d(packet.payload),
-            D3D11Opcode::UpdateTexture2D => self.exec_update_texture2d(packet.payload),
+            D3D11Opcode::UpdateTexture2D => self.exec_update_texture2d(encoder, packet.payload),
             D3D11Opcode::CreateTextureView => self.exec_create_texture_view(packet.payload),
             D3D11Opcode::CreateSampler => self.exec_create_sampler(packet.payload),
             D3D11Opcode::CreateShaderModuleWgsl => {
@@ -354,18 +384,23 @@ impl D3D11Runtime {
         Ok(())
     }
 
-    fn exec_update_buffer(&mut self, payload: &[u32]) -> Result<()> {
+    fn exec_update_buffer(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        payload: &[u32],
+    ) -> Result<()> {
         if payload.len() < 4 {
             bail!("UpdateBuffer payload too small");
         }
         let id = payload[0];
         let offset = (payload[1] as u64) | ((payload[2] as u64) << 32);
         let bytes = Self::take_bytes(payload, 3)?;
-        let buffer = self
+        let buffer_size = self
             .resources
             .buffers
             .get(&id)
-            .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
+            .ok_or_else(|| anyhow!("unknown buffer {id}"))?
+            .size;
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
         let size_bytes = bytes.len() as u64;
         if offset % alignment != 0 || size_bytes % alignment != 0 {
@@ -373,6 +408,20 @@ impl D3D11Runtime {
                 "UpdateBuffer offset/size must be {alignment}-byte aligned (offset={offset} size_bytes={size_bytes})"
             );
         }
+        if offset.saturating_add(size_bytes) > buffer_size {
+            bail!(
+                "UpdateBuffer out of bounds: offset={offset} size_bytes={size_bytes} buffer_size={buffer_size}"
+            );
+        }
+
+        // Preserve stream ordering relative to any previously encoded GPU work.
+        self.submit_encoder_if_has_commands(encoder, "aero-d3d11 encoder after UpdateBuffer");
+
+        let buffer = self
+            .resources
+            .buffers
+            .get(&id)
+            .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
         self.queue.write_buffer(&buffer.buffer, offset, bytes);
         Ok(())
     }
@@ -424,7 +473,11 @@ impl D3D11Runtime {
         Ok(())
     }
 
-    fn exec_update_texture2d(&mut self, payload: &[u32]) -> Result<()> {
+    fn exec_update_texture2d(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        payload: &[u32],
+    ) -> Result<()> {
         if payload.len() < 7 {
             bail!("UpdateTexture2D payload too small");
         }
@@ -436,17 +489,19 @@ impl D3D11Runtime {
         let bytes_per_row = payload[5];
         let bytes = Self::take_bytes(payload, 6)?;
 
-        let texture = self
+        let texture_format = self
             .resources
             .textures
             .get(&texture_id)
-            .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
+            .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?
+            .desc
+            .format;
 
         if width == 0 || height == 0 {
             bail!("UpdateTexture2D width/height must be non-zero");
         }
 
-        let bytes_per_texel = match texture.desc.format {
+        let bytes_per_texel = match texture_format {
             wgpu::TextureFormat::Rgba8Unorm
             | wgpu::TextureFormat::Rgba8UnormSrgb
             | wgpu::TextureFormat::Bgra8Unorm
@@ -509,6 +564,14 @@ impl D3D11Runtime {
         };
         let upload_bytes = repacked.as_deref().unwrap_or(bytes);
 
+        // Preserve stream ordering relative to any previously encoded GPU work.
+        self.submit_encoder_if_has_commands(encoder, "aero-d3d11 encoder after UpdateTexture2D");
+
+        let texture = self
+            .resources
+            .textures
+            .get(&texture_id)
+            .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &texture.texture,
@@ -967,6 +1030,7 @@ impl D3D11Runtime {
             dst_offset,
             size,
         );
+        self.encoder_has_commands = true;
         Ok(())
     }
 
@@ -983,6 +1047,7 @@ impl D3D11Runtime {
             );
         }
 
+        self.encoder_has_commands = true;
         let device = &self.device;
         let resources = &self.resources;
         let (state, bind_group_cache) = (&mut self.state, &mut self.bind_group_cache);
@@ -1262,6 +1327,7 @@ impl D3D11Runtime {
         encoder: &mut wgpu::CommandEncoder,
         stream: &mut CmdStream<'_>,
     ) -> Result<()> {
+        self.encoder_has_commands = true;
         let device = &self.device;
         let resources = &self.resources;
         let (state, bind_group_cache) = (&mut self.state, &mut self.bind_group_cache);
