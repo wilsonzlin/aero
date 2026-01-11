@@ -14,6 +14,24 @@ export interface WasmApi {
         snapshot_full(): Uint8Array;
         snapshot_dirty(): Uint8Array;
         restore_snapshot(bytes: Uint8Array): void;
+        /**
+         * Stream a full snapshot directly into OPFS using a `FileSystemSyncAccessHandle`.
+         *
+         * Note: this requires running in a Dedicated Worker (sync access handles are worker-only).
+         */
+        snapshot_full_to_opfs?(path: string): Promise<void>;
+        /**
+         * Stream a dirty-page snapshot directly into OPFS using a `FileSystemSyncAccessHandle`.
+         *
+         * Note: this requires running in a Dedicated Worker (sync access handles are worker-only).
+         */
+        snapshot_dirty_to_opfs?(path: string): Promise<void>;
+        /**
+         * Restore a snapshot by streaming it from OPFS using a `FileSystemSyncAccessHandle`.
+         *
+         * Note: this requires running in a Dedicated Worker (sync access handles are worker-only).
+         */
+        restore_snapshot_from_opfs?(path: string): Promise<void>;
         free(): void;
     };
 
