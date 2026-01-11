@@ -361,6 +361,92 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
 
   context->Unmap(staging_b.get(), 0);
 
+  // Also exercise the dynamic index-buffer map path. Some UMDs route dynamic IA buffer mapping for
+  // vertex and index buffers through different internal codepaths.
+  D3D11_BUFFER_DESC idx_desc = dyn_desc;
+  idx_desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+
+  ComPtr<ID3D11Buffer> dynamic_ib;
+  hr = device->CreateBuffer(&idx_desc, NULL, dynamic_ib.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(dynamic index)", hr);
+  }
+
+  context->IASetIndexBuffer(dynamic_ib.get(), DXGI_FORMAT_R16_UINT, 0);
+
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(dynamic_ib.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(dynamic index, WRITE_DISCARD)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(dynamic_ib.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(dynamic index, WRITE_DISCARD) returned NULL pData");
+  }
+  uint8_t* ib_dst = (uint8_t*)map.pData;
+  for (size_t i = 0; i < kByteWidth; ++i) {
+    ib_dst[i] = (uint8_t)(PatternByte(i) ^ 0x11u);
+  }
+  context->Unmap(dynamic_ib.get(), 0);
+
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(dynamic_ib.get(), 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(
+        kTestName, "Map(dynamic index, WRITE_NO_OVERWRITE)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(dynamic_ib.get(), 0);
+    return aerogpu_test::Fail(kTestName,
+                              "Map(dynamic index, WRITE_NO_OVERWRITE) returned NULL pData");
+  }
+  ib_dst = (uint8_t*)map.pData;
+  for (size_t i = kOverwriteStart; i < kByteWidth; ++i) {
+    ib_dst[i] = (uint8_t)((PatternByte(i) ^ 0x11u) ^ 0x5Au);
+  }
+  context->Unmap(dynamic_ib.get(), 0);
+
+  ComPtr<ID3D11Buffer> staging_ib;
+  hr = device->CreateBuffer(&st_desc, NULL, staging_ib.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging index)", hr);
+  }
+
+  context->CopyResource(staging_ib.get(), dynamic_ib.get());
+  context->Flush();
+
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(staging_ib.get(), 0, D3D11_MAP_READ, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(staging index, READ)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(staging_ib.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging index, READ) returned NULL pData");
+  }
+
+  if (dump) {
+    DumpBytesToFileIfRequested(
+        kTestName, L"d3d11_map_dynamic_buffer_sanity_index.bin", map.pData, kByteWidth);
+  }
+
+  got = (const uint8_t*)map.pData;
+  for (size_t i = 0; i < kByteWidth; ++i) {
+    uint8_t expected = (uint8_t)(PatternByte(i) ^ 0x11u);
+    if (i >= kOverwriteStart) {
+      expected = (uint8_t)(expected ^ 0x5Au);
+    }
+    if (got[i] != expected) {
+      context->Unmap(staging_ib.get(), 0);
+      return aerogpu_test::Fail(kTestName,
+                                "staging index mismatch at offset %lu: got 0x%02X expected 0x%02X",
+                                (unsigned long)i,
+                                (unsigned)got[i],
+                                (unsigned)expected);
+    }
+  }
+  context->Unmap(staging_ib.get(), 0);
+
   // Also exercise the dynamic *constant buffer* map-discard path. On Win7, this is often routed to
   // distinct DDI entrypoints vs dynamic IA buffers.
   D3D11_BUFFER_DESC cb_desc = dyn_desc;
