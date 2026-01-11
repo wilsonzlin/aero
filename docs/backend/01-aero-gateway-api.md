@@ -350,6 +350,18 @@ Recommended error codes:
 
 Policy denials MUST be returned as `ERROR` on the affected `stream_id` without closing the entire mux WebSocket connection.
 
+### Reference implementations
+
+If you want a concrete implementation to compare against:
+
+- Gateway codec + handler:
+  - `backend/aero-gateway/src/protocol/tcpMux.ts`
+  - `backend/aero-gateway/src/routes/tcpMux.ts`
+- Browser client (TypeScript):
+  - `web/src/net/tcpMuxProxy.ts`
+- Dev relay (Node):
+  - `tools/net-proxy-server/src/protocol.js`
+
 ## 4) `/dns-query` DNS-over-HTTPS (DoH)
 
 The gateway exposes a DNS-over-HTTPS endpoint compatible with **RFC 8484** at:
