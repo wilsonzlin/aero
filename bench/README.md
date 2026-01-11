@@ -16,6 +16,20 @@ This directory contains performance/telemetry tooling used for CI regression tra
 Note: `bench/run` also has a **legacy macro mode** (triggered by `--output`/`--results-dir`), but it overlaps with
 `tools/perf` and is considered deprecated for contributor workflows (see “Legacy browser macrobench harness” below).
 
+## Capturing traces / app microbenches (browser perf)
+
+For quick local runs (no preview server), `bench/run` can forward trace + app microbench flags directly to `tools/perf/run.mjs`:
+
+```bash
+node bench/run --scenario all --iterations 7 --include-aero-bench --trace-duration-ms 5000
+```
+
+For CI-parity runs (build + `vite preview`), use the wrapper script instead:
+
+```bash
+PERF_TRACE_DURATION_MS=5000 node scripts/ci/run_browser_perf.mjs --preview --iterations 7 --out-dir perf-results/local
+```
+
 ## Nightly perf history (dashboard)
 
 Files:

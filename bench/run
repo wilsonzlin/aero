@@ -33,6 +33,11 @@ Scenarios:
 This wrapper delegates to:
   node tools/perf/run.mjs --out-dir <dir> --iterations <n> [--url <url>]
 
+Additional flags are passed through to tools/perf/run.mjs:
+  --trace
+  --trace-duration-ms <n>
+  --include-aero-bench
+
 Notes:
   - You must install tool dependencies first:
       ${installCmd}
@@ -46,6 +51,9 @@ function parsePerfWrapperArgs(argv) {
     iterations: 7,
     url: undefined,
     outDir: "perf-results/local",
+    trace: false,
+    traceDurationMs: undefined,
+    includeAeroBench: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -67,6 +75,16 @@ function parsePerfWrapperArgs(argv) {
       case "--out-dir":
         opts.outDir = argv[++i];
         break;
+      case "--trace":
+        opts.trace = true;
+        break;
+      case "--trace-duration-ms":
+        opts.trace = true;
+        opts.traceDurationMs = Number.parseInt(argv[++i], 10);
+        break;
+      case "--include-aero-bench":
+        opts.includeAeroBench = true;
+        break;
       default:
         console.error(`Unknown arg: ${arg}`);
         usagePerfWrapper(1);
@@ -79,6 +97,13 @@ function parsePerfWrapperArgs(argv) {
   }
   if (!Number.isFinite(opts.iterations) || opts.iterations <= 0) {
     console.error("--iterations must be a positive integer");
+    usagePerfWrapper(1);
+  }
+  if (
+    opts.traceDurationMs !== undefined &&
+    (!Number.isFinite(opts.traceDurationMs) || opts.traceDurationMs <= 0)
+  ) {
+    console.error("--trace-duration-ms must be a positive integer");
     usagePerfWrapper(1);
   }
 
@@ -122,6 +147,15 @@ function runPerfWrapper(argv) {
 
   const childArgs = [runnerPath, "--out-dir", outDir, "--iterations", String(opts.iterations)];
   if (opts.url) childArgs.push("--url", opts.url);
+  if (opts.trace) {
+    childArgs.push("--trace");
+    if (opts.traceDurationMs !== undefined) {
+      childArgs.push("--trace-duration-ms", String(opts.traceDurationMs));
+    }
+  }
+  if (opts.includeAeroBench) {
+    childArgs.push("--include-aero-bench");
+  }
 
   const child = spawnSync(process.execPath, childArgs, { stdio: "inherit", cwd: repoRoot });
   if (child.status !== 0) {
@@ -160,7 +194,11 @@ function runPerfWrapper(argv) {
   };
 
   if (opts.scenario === "all") {
-    for (const name of ["chromium_startup_ms", "microbench_ms"]) printBench(name);
+    const names = ["chromium_startup_ms", "microbench_ms"];
+    if (opts.includeAeroBench) {
+      names.push("aero_microbench_suite_ms");
+    }
+    for (const name of names) printBench(name);
     return;
   }
 
