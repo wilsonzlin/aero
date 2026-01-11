@@ -944,6 +944,13 @@ void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
   dev->callbacks.pfnSetErrorCb(hDevice, hr);
 }
 
+static bool SupportsTransfer(const AeroGpuDevice* dev) {
+  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
+    return false;
+  }
+  return (dev->adapter->umd_private.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) != 0;
+}
+
 // -----------------------------------------------------------------------------
 // Generic stubs for unimplemented device DDIs
 // -----------------------------------------------------------------------------
@@ -2220,6 +2227,10 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
                   static_cast<size_t>(bytes));
     }
 
+    if (!SupportsTransfer(dev)) {
+      return;
+    }
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
@@ -2320,6 +2331,10 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
           }
         }
       }
+    }
+
+    if (!SupportsTransfer(dev)) {
+      return;
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);

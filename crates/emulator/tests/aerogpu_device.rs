@@ -5,12 +5,12 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_PRESENT_FLAG_VSYNC,
 };
-use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_VERSION_U32};
+use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::{
     AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
 };
 use aero_protocol::aerogpu::{aerogpu_cmd as cmd, aerogpu_ring as ring};
-use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_MMIO_MAGIC};
+use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_MMIO_MAGIC, FEATURE_TRANSFER};
 use emulator::devices::aerogpu_ring::{
     AeroGpuRingHeader, AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
     AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
@@ -176,6 +176,28 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
     dev.mmio_write(&mut mem, mmio::IRQ_ACK, 4, irq_bits::FENCE);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(!dev.irq_level());
+}
+
+#[test]
+fn mmio_reports_transfer_feature_for_abi_1_1_plus() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+    assert_eq!(
+        dev.mmio_read(&mut mem, mmio::ABI_VERSION, 4),
+        AEROGPU_ABI_VERSION_U32
+    );
+
+    let features = (dev.mmio_read(&mut mem, mmio::FEATURES_LO, 4) as u64)
+        | ((dev.mmio_read(&mut mem, mmio::FEATURES_HI, 4) as u64) << 32);
+
+    if (features & FEATURE_TRANSFER) != 0 {
+        assert!(AEROGPU_ABI_MINOR >= 1);
+        assert_eq!(AerogpuCmdOpcode::CopyBuffer as u32, 0x105);
+        assert_eq!(AerogpuCmdOpcode::CopyTexture2d as u32, 0x106);
+    } else {
+        assert!(AEROGPU_ABI_MINOR < 1);
+    }
 }
 
 #[test]

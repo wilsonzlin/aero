@@ -89,7 +89,7 @@ extern "C" {
 #define AEROGPU_FEATURE_CURSOR (1ull << 1) /* Implements cursor registers */
 #define AEROGPU_FEATURE_SCANOUT (1ull << 2) /* Implements scanout registers */
 #define AEROGPU_FEATURE_VBLANK (1ull << 3) /* Implements vblank IRQ + vblank timing regs */
-#define AEROGPU_FEATURE_TRANSFER (1ull << 4) /* Supports transfer/copy commands + optional guest writeback */
+#define AEROGPU_FEATURE_TRANSFER (1ull << 4) /* Supports transfer/copy commands + optional guest writeback (ABI 1.1+) */
 
 /* Ring setup */
 #define AEROGPU_MMIO_REG_RING_GPA_LO 0x0100u /* RW: GPA of aerogpu_ring_header */

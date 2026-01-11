@@ -82,9 +82,9 @@ enum aerogpu_cmd_opcode {
   AEROGPU_CMD_DESTROY_RESOURCE = 0x102,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE = 0x103,
   AEROGPU_CMD_UPLOAD_RESOURCE = 0x104,
-  /* Requires AEROGPU_FEATURE_TRANSFER (ABI minor >= 1). */
+  /* Requires AEROGPU_FEATURE_TRANSFER (introduced in ABI 1.1). */
   AEROGPU_CMD_COPY_BUFFER = 0x105,
-  /* Requires AEROGPU_FEATURE_TRANSFER (ABI minor >= 1). */
+  /* Requires AEROGPU_FEATURE_TRANSFER (introduced in ABI 1.1). */
   AEROGPU_CMD_COPY_TEXTURE2D = 0x106,
 
   /* Shaders */

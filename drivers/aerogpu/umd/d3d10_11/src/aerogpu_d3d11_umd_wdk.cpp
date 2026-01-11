@@ -1093,6 +1093,13 @@ static void TrackStagingWriteLocked(Device* dev, Resource* dst) {
   dev->pending_staging_writes.push_back(dst);
 }
 
+static bool SupportsTransfer(const Device* dev) {
+  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
+    return false;
+  }
+  return (dev->adapter->umd_private.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) != 0;
+}
+
 static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr) {
   if (out_hr) {
     *out_hr = S_OK;
@@ -5228,6 +5235,10 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
                   static_cast<size_t>(bytes));
     }
 
+    if (!SupportsTransfer(dev)) {
+      return;
+    }
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
@@ -5287,6 +5298,10 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
           std::memcpy(dst->storage.data() + dst_off, src->storage.data() + src_off, row_bytes);
         }
       }
+    }
+
+    if (!SupportsTransfer(dev)) {
+      return;
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
