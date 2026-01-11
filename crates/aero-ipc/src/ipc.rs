@@ -4,7 +4,9 @@
 //! module mirrors it so Rust/WASM can locate ring queues by `kind` without
 //! hard-coded offsets.
 
-use crate::layout::{align_up, ipc_header, queue_desc, ring_ctrl, IPC_MAGIC, IPC_VERSION, RECORD_ALIGN};
+use crate::layout::{
+    align_up, ipc_header, queue_desc, ring_ctrl, IPC_MAGIC, IPC_VERSION, RECORD_ALIGN,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IpcQueueInfo {
@@ -21,13 +23,32 @@ pub struct IpcLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcLayoutError {
-    BufferTooSmallForHeader { actual_bytes: usize },
-    BadMagic { expected: u32, got: u32 },
-    UnsupportedVersion { expected: u32, got: u32 },
-    LengthMismatch { header_total_bytes: u32, actual_bytes: usize },
-    DescriptorRegionOverflow { queue_count: u32 },
-    BufferTooSmallForDescriptors { required_bytes: usize, actual_bytes: usize },
-    QueueReservedNotZero { index: usize, reserved: u32 },
+    BufferTooSmallForHeader {
+        actual_bytes: usize,
+    },
+    BadMagic {
+        expected: u32,
+        got: u32,
+    },
+    UnsupportedVersion {
+        expected: u32,
+        got: u32,
+    },
+    LengthMismatch {
+        header_total_bytes: u32,
+        actual_bytes: usize,
+    },
+    DescriptorRegionOverflow {
+        queue_count: u32,
+    },
+    BufferTooSmallForDescriptors {
+        required_bytes: usize,
+        actual_bytes: usize,
+    },
+    QueueReservedNotZero {
+        index: usize,
+        reserved: u32,
+    },
     QueueOffsetMisaligned {
         index: usize,
         offset_bytes: u32,
@@ -137,11 +158,13 @@ fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, IpcLayoutError> {
         needed: 4,
         actual_bytes: bytes.len(),
     })?;
-    let slice = bytes.get(offset..end).ok_or(IpcLayoutError::UnexpectedEof {
-        offset,
-        needed: 4,
-        actual_bytes: bytes.len(),
-    })?;
+    let slice = bytes
+        .get(offset..end)
+        .ok_or(IpcLayoutError::UnexpectedEof {
+            offset,
+            needed: 4,
+            actual_bytes: bytes.len(),
+        })?;
     Ok(u32::from_le_bytes(slice.try_into().unwrap()))
 }
 
@@ -207,10 +230,7 @@ pub fn parse_ipc_buffer(bytes: &[u8]) -> Result<IpcLayout, IpcLayoutError> {
         let reserved = read_u32_le(bytes, base + queue_desc::RESERVED * 4)?;
 
         if reserved != 0 {
-            return Err(IpcLayoutError::QueueReservedNotZero {
-                index: i,
-                reserved,
-            });
+            return Err(IpcLayoutError::QueueReservedNotZero { index: i, reserved });
         }
 
         if (offset_bytes as usize) % RECORD_ALIGN != 0 {
@@ -246,8 +266,7 @@ pub fn parse_ipc_buffer(bytes: &[u8]) -> Result<IpcLayout, IpcLayoutError> {
             });
         }
 
-        let ring_header_cap =
-            read_u32_le(bytes, offset_bytes as usize + ring_ctrl::CAPACITY * 4)?;
+        let ring_header_cap = read_u32_le(bytes, offset_bytes as usize + ring_ctrl::CAPACITY * 4)?;
         if ring_header_cap != capacity_bytes {
             return Err(IpcLayoutError::RingHeaderCapacityMismatch {
                 index: i,
@@ -321,10 +340,7 @@ pub fn create_ipc_buffer(specs: &[IpcQueueSpec]) -> Vec<u8> {
         });
     }
 
-    assert!(
-        offset <= u32::MAX as usize,
-        "total_bytes exceeds u32::MAX"
-    );
+    assert!(offset <= u32::MAX as usize, "total_bytes exceeds u32::MAX");
 
     let mut bytes = vec![0u8; offset];
     write_u32_le(&mut bytes, ipc_header::MAGIC * 4, IPC_MAGIC);
@@ -361,4 +377,3 @@ pub fn create_ipc_buffer(specs: &[IpcQueueSpec]) -> Vec<u8> {
 
     bytes
 }
-

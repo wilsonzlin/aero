@@ -7,8 +7,8 @@
 //!
 //! The *layout contract* is documented in `docs/ipc-protocol.md`.
 
-pub mod layout;
 pub mod ipc;
+pub mod layout;
 pub mod protocol;
 pub mod ring;
 

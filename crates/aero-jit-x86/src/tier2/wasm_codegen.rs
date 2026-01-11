@@ -644,9 +644,8 @@ impl Emitter<'_> {
                         .instruction(&Instruction::If(BlockType::Result(ValType::I64)));
                     {
                         // addr = table_ptr + page * 4
-                        self.f.instruction(&Instruction::LocalGet(
-                            self.layout.cpu_ptr_local(),
-                        ));
+                        self.f
+                            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
                         self.f.instruction(&Instruction::I32Load(memarg(
                             jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
                             2,

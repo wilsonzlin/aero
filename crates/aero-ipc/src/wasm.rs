@@ -290,10 +290,16 @@ pub fn open_ring_by_kind(
 
     let queue_count = words.get_index(ipc_header::QUEUE_COUNT as u32);
     let desc_bytes = (ipc_header::BYTES as u32)
-        .checked_add(queue_count.checked_mul(queue_desc::BYTES as u32).ok_or_else(|| {
+        .checked_add(
+            queue_count
+                .checked_mul(queue_desc::BYTES as u32)
+                .ok_or_else(|| {
+                    JsValue::from_str("queue descriptor region overflows (queue_count too large)")
+                })?,
+        )
+        .ok_or_else(|| {
             JsValue::from_str("queue descriptor region overflows (queue_count too large)")
-        })?)
-        .ok_or_else(|| JsValue::from_str("queue descriptor region overflows (queue_count too large)"))?;
+        })?;
 
     if byte_len < desc_bytes {
         return Err(JsValue::from_str("buffer too small for queue descriptors"));
@@ -329,7 +335,9 @@ pub fn open_ring_by_kind(
             .and_then(|v| v.checked_add(capacity_bytes))
             .ok_or_else(|| JsValue::from_str(&format!("queue descriptor {i} out of bounds")))?;
         if region_end > byte_len {
-            return Err(JsValue::from_str(&format!("queue descriptor {i} out of bounds")));
+            return Err(JsValue::from_str(&format!(
+                "queue descriptor {i} out of bounds"
+            )));
         }
 
         // Validate ring header capacity matches the descriptor.
