@@ -341,6 +341,40 @@ describe("net/l2Tunnel", () => {
     }
   });
 
+  it("WebSocket client rejects negotiated token subprotocol (must negotiate aero-l2-tunnel-v1)", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = "aero-l2-token.sekrit";
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+      token: "sekrit",
+      tokenTransport: "subprotocol",
+    });
+
+    try {
+      client.connect();
+      FakeWebSocket.last?.open();
+
+      const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
+      expect(errEv?.error).toBeInstanceOf(Error);
+
+      const closeEv = events.find((e) => (e as { type?: string }).type === "close") as { code?: number } | undefined;
+      expect(closeEv?.code).toBe(1002);
+    } finally {
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
   it("rejects tokens that cannot be represented in Sec-WebSocket-Protocol", async () => {
     expect(
       () =>
