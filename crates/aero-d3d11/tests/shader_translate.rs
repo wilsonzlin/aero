@@ -514,11 +514,15 @@ fn translates_texture_load_with_nonzero_lod() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
-    // `ld` expects integer coords/LOD. The current bring-up IR/translator represents these values
-    // as float lanes carrying exact integer values (see `Sm4Inst::Ld` docs), so use f32 immediates.
+    // `ld` expects integer coords/LOD. Coordinates are currently represented as float lanes
+    // containing exact integer values (see `Sm4Inst::Ld` docs), while the mip level is carried as
+    // raw integer bits (decoded as `ImmediateF32` tokens).
     let coord = src_imm([1.0, 2.0, 0.0, 0.0]);
-    let mut lod = src_imm([3.0, 3.0, 3.0, 3.0]);
-    lod.swizzle = Swizzle::XXXX;
+    let lod = SrcOperand {
+        kind: SrcKind::ImmediateF32([3, 3, 3, 3]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
         model: ShaderModel { major: 5, minor: 0 },
@@ -538,8 +542,8 @@ fn translates_texture_load_with_nonzero_lod() {
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
     assert!(
-        translated.wgsl.contains("0x40400000u"),
-        "expected mip LOD 3.0 (0x40400000) to be present in WGSL:\n{}",
+        translated.wgsl.contains("bitcast<i32>(0x00000003u)"),
+        "expected mip LOD 3 (0x00000003) to be present in WGSL:\n{}",
         translated.wgsl
     );
 }
