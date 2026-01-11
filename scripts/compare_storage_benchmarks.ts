@@ -26,6 +26,8 @@ export interface MetricComparison {
   unit: string;
   baseline: number | null;
   current: number | null;
+  baselineCv: number | null;
+  currentCv: number | null;
   deltaPct: number | null;
   regression: boolean;
   note?: string;
@@ -88,6 +90,45 @@ function fmtSignedPct(value: number): string {
 function getNumber(obj: any, getter: (v: any) => unknown): number | null {
   const value = getter(obj);
   return isFiniteNumber(value) ? value : null;
+}
+
+function getCv(params: { mean: number | null; stdev: number | null }): number | null {
+  const mean = params.mean;
+  const stdev = params.stdev;
+  if (!isFiniteNumber(mean) || !isFiniteNumber(stdev) || mean === 0) return null;
+  return Math.abs(stdev / mean);
+}
+
+function metricCv(report: any, metric: string): number | null {
+  switch (metric) {
+    case "sequential_write.mean_mb_per_s": {
+      const mean = getNumber(report, (v) => v?.sequential_write?.mean_mb_per_s);
+      const stdev = getNumber(report, (v) => v?.sequential_write?.stdev_mb_per_s);
+      return getCv({ mean, stdev });
+    }
+    case "sequential_read.mean_mb_per_s": {
+      const mean = getNumber(report, (v) => v?.sequential_read?.mean_mb_per_s);
+      const stdev = getNumber(report, (v) => v?.sequential_read?.stdev_mb_per_s);
+      return getCv({ mean, stdev });
+    }
+    case "random_read_4k.mean_p50_ms": {
+      const mean = getNumber(report, (v) => v?.random_read_4k?.mean_p50_ms);
+      const stdev = getNumber(report, (v) => v?.random_read_4k?.stdev_p50_ms);
+      return getCv({ mean, stdev });
+    }
+    case "random_read_4k.mean_p95_ms": {
+      const mean = getNumber(report, (v) => v?.random_read_4k?.mean_p95_ms);
+      const stdev = getNumber(report, (v) => v?.random_read_4k?.stdev_p95_ms);
+      return getCv({ mean, stdev });
+    }
+    case "random_write_4k.mean_p95_ms": {
+      const mean = getNumber(report, (v) => v?.random_write_4k?.mean_p95_ms);
+      const stdev = getNumber(report, (v) => v?.random_write_4k?.stdev_p95_ms);
+      return getCv({ mean, stdev });
+    }
+    default:
+      return null;
+  }
 }
 
 function getString(obj: any, getter: (v: any) => unknown): string | null {
@@ -219,6 +260,8 @@ export function compareStorageBenchmarks(params: {
   for (const m of metrics) {
     const baselineVal = m.get(params.baseline);
     const currentVal = m.get(params.current);
+    const baselineCv = metricCv(params.baseline, m.metric);
+    const currentCv = metricCv(params.current, m.metric);
 
     if (m.optional && baselineVal === null && currentVal === null) {
       continue;
@@ -231,6 +274,8 @@ export function compareStorageBenchmarks(params: {
         unit: m.unit,
         baseline: baselineVal,
         current: currentVal,
+        baselineCv,
+        currentCv,
         deltaPct: null,
         regression: true,
         note: "missing/invalid baseline or current value",
@@ -251,6 +296,8 @@ export function compareStorageBenchmarks(params: {
       unit: m.unit,
       baseline: baselineVal,
       current: currentVal,
+      baselineCv,
+      currentCv,
       deltaPct,
       regression,
     });
@@ -390,16 +437,22 @@ export function renderCompareMarkdown(params: {
     lines.push("");
   }
 
-  lines.push("| Metric | Better | Baseline | Current | Δ | Status |");
-  lines.push("| --- | --- | ---: | ---: | ---: | --- |");
+  lines.push("| Metric | Better | Baseline | Current | Δ | Base CV | Curr CV | Status |");
+  lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |");
 
   for (const c of params.comparisons) {
     const baselineStr =
       c.baseline === null ? "n/a" : `${fmtNumber(c.baseline)} ${c.unit}`.trim();
     const currentStr = c.current === null ? "n/a" : `${fmtNumber(c.current)} ${c.unit}`.trim();
     const deltaStr = c.deltaPct === null ? "n/a" : fmtSignedPct(c.deltaPct);
+    const baseCvStr =
+      c.baselineCv === null ? "n/a" : `${(c.baselineCv * 100).toFixed(2)}%`;
+    const curCvStr =
+      c.currentCv === null ? "n/a" : `${(c.currentCv * 100).toFixed(2)}%`;
     const statusStr = c.regression ? `FAIL${c.note ? ` (${c.note})` : ""}` : "PASS";
-    lines.push(`| ${c.metric} | ${c.better} | ${baselineStr} | ${currentStr} | ${deltaStr} | ${statusStr} |`);
+    lines.push(
+      `| ${c.metric} | ${c.better} | ${baselineStr} | ${currentStr} | ${deltaStr} | ${baseCvStr} | ${curCvStr} | ${statusStr} |`,
+    );
   }
 
   lines.push("");
