@@ -720,6 +720,51 @@ function Write-AeroQemuStderrTail {
   $lines | ForEach-Object { Write-Host $_ }
 }
 
+function Get-AeroFreeTcpPort {
+  # Reserve an ephemeral port by binding to 0, then immediately releasing it. This is inherently
+  # racy, but good enough for a best-effort QMP channel used only for graceful shutdown.
+  $listener = $null
+  try {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    return $listener.LocalEndpoint.Port
+  } finally {
+    if ($listener) { $listener.Stop() }
+  }
+}
+
+function Try-AeroQmpQuit {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Host,
+    [Parameter(Mandatory = $true)] [int]$Port
+  )
+
+  $client = $null
+  try {
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $client.ReceiveTimeout = 2000
+    $client.SendTimeout = 2000
+    $client.Connect($Host, $Port)
+
+    $stream = $client.GetStream()
+    $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+    $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+    $writer.NewLine = "`n"
+    $writer.AutoFlush = $true
+
+    # Greeting.
+    $null = $reader.ReadLine()
+    $writer.WriteLine('{"execute":"qmp_capabilities"}')
+    $null = $reader.ReadLine()
+    $writer.WriteLine('{"execute":"quit"}')
+    return $true
+  } catch {
+    return $false
+  } finally {
+    if ($client) { $client.Close() }
+  }
+}
+
 $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
 
 $serialParent = Split-Path -Parent $SerialLogPath
@@ -737,6 +782,23 @@ Write-Host "Starting HTTP server on 127.0.0.1:$HttpPort$HttpPath ..."
 $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 
 try {
+  $qmpPort = $null
+  $qmpArgs = @()
+  if ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") {
+    # QEMU's wav audiodev typically finalizes the RIFF header on graceful shutdown. If we kill
+    # the process hard, the host-side wav verification can flake (or always fail).
+    try {
+      $qmpPort = Get-AeroFreeTcpPort
+      $qmpArgs = @(
+        "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
+      )
+    } catch {
+      Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
+      $qmpPort = $null
+      $qmpArgs = @()
+    }
+  }
+
   $serialChardev = "file,id=charserial0,path=$(Quote-AeroWin7QemuKeyvalValue $SerialLogPath)"
   $netdev = "user,id=net0"
   $serialBase = [System.IO.Path]::GetFileNameWithoutExtension((Split-Path -Leaf $SerialLogPath))
@@ -816,7 +878,8 @@ try {
       "-m", "$MemoryMB",
       "-smp", "$Smp",
       "-display", "none",
-      "-no-reboot",
+      "-no-reboot"
+    ) + $qmpArgs + @(
       "-chardev", $serialChardev,
       "-serial", "chardev:charserial0",
       "-netdev", $netdev,
@@ -881,7 +944,8 @@ try {
       "-m", "$MemoryMB",
       "-smp", "$Smp",
       "-display", "none",
-      "-no-reboot",
+      "-no-reboot"
+    ) + $qmpArgs + @(
       "-chardev", $serialChardev,
       "-serial", "chardev:charserial0",
       "-netdev", $netdev,
@@ -903,6 +967,13 @@ try {
     $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd)
   } finally {
     if (-not $proc.HasExited) {
+      $quitOk = $false
+      if ($null -ne $qmpPort) {
+        $quitOk = Try-AeroQmpQuit -Host "127.0.0.1" -Port $qmpPort
+      }
+      if ($quitOk) {
+        try { $proc.WaitForExit(10000) } catch { }
+      }
       Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue
       try { $proc.WaitForExit(5000) } catch { }
       if (-not $proc.HasExited) {
