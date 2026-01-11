@@ -1081,3 +1081,18 @@ For traffic-level debugging, prefer:
 
 - client-side PCAP/trace exports (see **Packet Tracing & Debugging** above), and/or
 - infrastructure-level capture (reverse proxy logs, host packet capture in controlled environments).
+
+## L2 proxy observability (health, readiness, metrics, capture)
+
+The production L2 proxy (`crates/aero-l2-proxy`) also exposes basic operational endpoints:
+
+- `GET /healthz` – liveness
+- `GET /readyz` – readiness
+- `GET /metrics` – Prometheus metrics (tunnel/session counters + stack/proxy activity)
+
+It also supports optional per-session traffic capture for debugging:
+
+- `AERO_L2_CAPTURE_DIR=/path/to/dir` – when set, writes one `.pcapng` file per tunnel session containing:
+  - guest→proxy Ethernet frames (inbound)
+  - proxy→guest Ethernet frames (outbound)
+- `AERO_L2_PING_INTERVAL_MS=1000` – when set, the proxy sends protocol-level PINGs; RTT is recorded as `l2_ping_rtt_ms` histogram in `/metrics`.
