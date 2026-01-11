@@ -420,8 +420,8 @@ This wrapper:
 3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `minimal`):
    - `-Profile minimal` (default): `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
    - `-Profile full`: `tools/packaging/specs/win7-virtio-full.json`
-      - required: `viostor` + `netkvm`
-      - optional (included if present): `vioinput` + `viosnd`
+     - required: `viostor` + `netkvm`
+     - optional (included if present): `vioinput` + `viosnd`
 
 Advanced overrides:
 
