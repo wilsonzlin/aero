@@ -140,6 +140,28 @@ jobs:
                 console.log("");
               }
 
+              const fmtTraceStatus = (trace) => {
+                if (!trace || typeof trace !== "object") return "unknown";
+                const requested = trace.requested === true;
+                const available = trace.available === true;
+                const captured = trace.captured === true;
+                const timedOut = trace.timedOut === true;
+                if (!requested) return available ? "available (not captured)" : "not captured";
+                if (timedOut) return "timed out";
+                if (!available) return "unsupported";
+                return captured ? "captured" : "not captured";
+              };
+
+              const aeroPerf = meta.aeroPerf && typeof meta.aeroPerf === "object" ? meta.aeroPerf : null;
+              if (aeroPerf) {
+                const exportApiTimedOut = aeroPerf.exportApiTimedOut === true;
+                const exportAvailable = aeroPerf.exportAvailable === true;
+                const exportStatus = exportApiTimedOut ? "timed out" : exportAvailable ? "available" : "unavailable";
+                console.log(`Perf export: ${exportStatus} (\`perf-results/nightly/perf_export.json\`)`);
+                console.log(`Trace: ${fmtTraceStatus(aeroPerf.trace)} (\`perf-results/nightly/trace.json\`)`);
+                console.log("");
+              }
+
               const benches = Array.isArray(summary.benchmarks) ? summary.benchmarks : [];
               if (benches.length === 0) {
                 console.log("_No benchmarks found in summary.json._");
