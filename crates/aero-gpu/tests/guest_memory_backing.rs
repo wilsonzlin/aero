@@ -146,7 +146,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
-        let mut guest = VecGuestMemory::new(0x20_000);
+        let guest = VecGuestMemory::new(0x20_000);
         const ALLOC_VB: u32 = 1;
         const ALLOC_TEX: u32 = 2;
         let vb_gpa = 0x1000u64;
@@ -556,7 +556,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
-        let mut guest = VecGuestMemory::new(0x30_000);
+        let guest = VecGuestMemory::new(0x30_000);
         const ALLOC_VB: u32 = 1;
         const ALLOC_TEX: u32 = 2;
         const ALLOC_IB: u32 = 3;
@@ -804,7 +804,7 @@ fn upload_resource_updates_host_owned_resources() {
         };
 
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
-        let mut guest = VecGuestMemory::new(0x20_000);
+        let guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
@@ -968,7 +968,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
-        let mut guest = VecGuestMemory::new(0x40_000);
+        let guest = VecGuestMemory::new(0x40_000);
         const ALLOC_VB: u32 = 1;
         const ALLOC_TEX: u32 = 2;
         let vb_gpa = 0x1000u64;
@@ -1171,7 +1171,7 @@ fn draw_to_bgra_render_target_is_supported() {
         };
 
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
-        let mut guest = VecGuestMemory::new(0x20_000);
+        let guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];

@@ -719,7 +719,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
 }
 
 #[test]
-fn d3d9_copy_buffer_writeback_writes_guest_memory() {
+fn d3d9_copy_buffer_writeback_writes_guest_backing() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
@@ -740,22 +740,19 @@ fn d3d9_copy_buffer_writeback_writes_guest_memory() {
     const DST_ALLOC_ID: u32 = 1;
     const DST_GPA: u64 = 0x1000;
 
-    let src_data: [u8; 16] = [
-        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
-        0x1F,
-    ];
-
     let guest_memory = VecGuestMemory::new(0x4000);
-    guest_memory.write(DST_GPA, &[0u8; 16]).unwrap();
-
     let alloc_table = AllocTable::new([(
         DST_ALLOC_ID,
         AllocEntry {
             gpa: DST_GPA,
-            size_bytes: 4096,
+            size_bytes: 0x1000,
         },
     )]);
 
+    let pattern = [
+        0xDEu8, 0xAD, 0xBE, 0xEF, 0xAA, 0xBB, 0xCC, 0xDD, 0x10, 0x20, 0x30, 0x40, 0x55, 0x66,
+        0x77, 0x88,
+    ];
     let stream = build_stream(|out| {
         emit_packet(out, OPC_CREATE_BUFFER, |out| {
             push_u32(out, SRC_HANDLE);
@@ -770,7 +767,7 @@ fn d3d9_copy_buffer_writeback_writes_guest_memory() {
             push_u32(out, DST_HANDLE);
             push_u32(out, 0); // usage_flags
             push_u64(out, 16); // size_bytes
-            push_u32(out, DST_ALLOC_ID);
+            push_u32(out, DST_ALLOC_ID); // backing_alloc_id
             push_u32(out, 0); // backing_offset_bytes
             push_u64(out, 0); // reserved0
         });
@@ -779,8 +776,8 @@ fn d3d9_copy_buffer_writeback_writes_guest_memory() {
             push_u32(out, SRC_HANDLE);
             push_u32(out, 0); // reserved0
             push_u64(out, 0); // offset_bytes
-            push_u64(out, src_data.len() as u64); // size_bytes
-            out.extend_from_slice(&src_data);
+            push_u64(out, pattern.len() as u64); // size_bytes
+            out.extend_from_slice(&pattern);
         });
 
         emit_packet(out, OPC_COPY_BUFFER, |out| {
@@ -797,13 +794,13 @@ fn d3d9_copy_buffer_writeback_writes_guest_memory() {
     exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
-    let mut out = [0u8; 16];
-    guest_memory.read(DST_GPA, &mut out).unwrap();
-    assert_eq!(out, src_data);
+    let mut out = vec![0u8; pattern.len()];
+    guest_memory.read(DST_GPA, &mut out).expect("read guest backing");
+    assert_eq!(&out, &pattern);
 }
 
 #[test]
-fn d3d9_copy_texture2d_writeback_writes_guest_memory() {
+fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
@@ -817,65 +814,79 @@ fn d3d9_copy_texture2d_writeback_writes_guest_memory() {
     const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
     const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
 
-    const SRC_TEX_HANDLE: u32 = 1;
-    const DST_TEX_HANDLE: u32 = 2;
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+
+    const SRC_TEX: u32 = 1;
+    const DST_TEX: u32 = 2;
 
     const DST_ALLOC_ID: u32 = 1;
     const DST_GPA: u64 = 0x1000;
 
-    let pixel = [0xAAu8, 0xBB, 0xCC, 0xDD];
+    let width = 2u32;
+    let height = 2u32;
+    let row_pitch = 12u32;
+    let bpr = width * 4;
+
+    let src_tex_data: Vec<u8> = vec![
+        // row 0: red, green
+        255, 0, 0, 255, 0, 255, 0, 255, // row 1: blue, white
+        0, 0, 255, 255, 255, 255, 255, 255,
+    ];
+    assert_eq!(src_tex_data.len(), (bpr * height) as usize);
 
     let guest_memory = VecGuestMemory::new(0x4000);
-    guest_memory.write(DST_GPA, &[0u8; 4]).unwrap();
-
+    let dst_init = vec![0xEEu8; (row_pitch * height) as usize];
+    guest_memory.write(DST_GPA, &dst_init).unwrap();
     let alloc_table = AllocTable::new([(
         DST_ALLOC_ID,
         AllocEntry {
             gpa: DST_GPA,
-            size_bytes: 4096,
+            size_bytes: 0x1000,
         },
     )]);
 
     let stream = build_stream(|out| {
+        // Host-owned source texture.
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
-            push_u32(out, SRC_TEX_HANDLE);
+            push_u32(out, SRC_TEX);
             push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-            push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
-            push_u32(out, 1); // width
-            push_u32(out, 1); // height
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
             push_u32(out, 1); // mip_levels
             push_u32(out, 1); // array_layers
-            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // row_pitch_bytes (use tight packing)
             push_u32(out, 0); // backing_alloc_id
             push_u32(out, 0); // backing_offset_bytes
             push_u64(out, 0); // reserved0
         });
 
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, src_tex_data.len() as u64); // size_bytes
+            out.extend_from_slice(&src_tex_data);
+        });
+
+        // Guest-backed destination texture with padded row pitch.
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
-            push_u32(out, DST_TEX_HANDLE);
+            push_u32(out, DST_TEX);
             push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-            push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
-            push_u32(out, 1); // width
-            push_u32(out, 1); // height
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
             push_u32(out, 1); // mip_levels
             push_u32(out, 1); // array_layers
-            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, row_pitch);
             push_u32(out, DST_ALLOC_ID);
             push_u32(out, 0); // backing_offset_bytes
             push_u64(out, 0); // reserved0
         });
 
-        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
-            push_u32(out, SRC_TEX_HANDLE);
-            push_u32(out, 0); // reserved0
-            push_u64(out, 0); // offset_bytes
-            push_u64(out, pixel.len() as u64); // size_bytes
-            out.extend_from_slice(&pixel);
-        });
-
         emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
-            push_u32(out, DST_TEX_HANDLE);
-            push_u32(out, SRC_TEX_HANDLE);
+            push_u32(out, DST_TEX);
+            push_u32(out, SRC_TEX);
             push_u32(out, 0); // dst_mip_level
             push_u32(out, 0); // dst_array_layer
             push_u32(out, 0); // src_mip_level
@@ -884,8 +895,8 @@ fn d3d9_copy_texture2d_writeback_writes_guest_memory() {
             push_u32(out, 0); // dst_y
             push_u32(out, 0); // src_x
             push_u32(out, 0); // src_y
-            push_u32(out, 1); // width
-            push_u32(out, 1); // height
+            push_u32(out, width);
+            push_u32(out, height);
             push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
             push_u32(out, 0); // reserved0
         });
@@ -894,7 +905,11 @@ fn d3d9_copy_texture2d_writeback_writes_guest_memory() {
     exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
-    let mut out = [0u8; 4];
-    guest_memory.read(DST_GPA, &mut out).unwrap();
-    assert_eq!(out, pixel);
+    let mut out = vec![0u8; (row_pitch * height) as usize];
+    guest_memory.read(DST_GPA, &mut out).expect("read dst backing");
+    let mut expected = vec![0xEEu8; (row_pitch * height) as usize];
+    expected[0..bpr as usize].copy_from_slice(&src_tex_data[0..bpr as usize]);
+    expected[row_pitch as usize..row_pitch as usize + bpr as usize]
+        .copy_from_slice(&src_tex_data[bpr as usize..bpr as usize * 2]);
+    assert_eq!(out, expected);
 }

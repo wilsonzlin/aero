@@ -25,7 +25,7 @@ impl fmt::Display for GuestMemoryError {
 
 impl std::error::Error for GuestMemoryError {}
 
-/// Minimal guest memory read interface.
+/// Minimal guest memory interface.
 pub trait GuestMemory {
     fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError>;
     fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError>;
