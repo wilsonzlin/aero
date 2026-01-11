@@ -114,7 +114,18 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
   const config: ProxyConfig = { ...loadConfigFromEnv(), ...overrides };
 
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", "http://localhost");
+    } catch {
+      const body = JSON.stringify({ error: "invalid url" });
+      res.writeHead(400, {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": Buffer.byteLength(body)
+      });
+      res.end(body);
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/healthz") {
       const body = JSON.stringify({ ok: true });
       res.writeHead(200, {
@@ -138,7 +149,13 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
   let nextConnId = 1;
 
   server.on("upgrade", (req, socket, head) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", "http://localhost");
+    } catch {
+      socket.destroy();
+      return;
+    }
     if (url.pathname === "/tcp-mux") {
       const protocolHeader = req.headers["sec-websocket-protocol"];
       const offered = Array.isArray(protocolHeader) ? protocolHeader.join(",") : protocolHeader ?? "";
