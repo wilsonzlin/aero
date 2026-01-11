@@ -25,11 +25,9 @@ cargo run --locked -p aero-l2-proxy
 # Optional: override listen address (default: 0.0.0.0:8090)
 # AERO_L2_PROXY_LISTEN_ADDR=127.0.0.1:8090 cargo run --locked -p aero-l2-proxy
 
-# Security knobs (Rust `crates/aero-l2-proxy`):
-# - Origin is enforced by default; configure an allowlist for your dev origin:
-#   AERO_L2_ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy
-# - Trusted local dev escape hatch (disables Origin enforcement):
-#   AERO_L2_OPEN=1 cargo run --locked -p aero-l2-proxy
+ # Security knobs (Rust `crates/aero-l2-proxy`):
+ # - Origin is enforced by default; configure an allowlist for your dev origin:
+ #   AERO_L2_ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy
 # - Auth (recommended; matches the gateway’s session model):
 #   - Cookie session (single-origin deployments; requires `aero_session` cookie from `POST /session`):
 #     AERO_L2_AUTH_MODE=cookie AERO_L2_SESSION_SECRET=sekrit cargo run --locked -p aero-l2-proxy
@@ -39,6 +37,8 @@ cargo run --locked -p aero-l2-proxy
 #     AERO_L2_AUTH_MODE=jwt AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
 #   - Mixed mode (cookie browser clients + JWT for WebRTC relay bridging):
 #     AERO_L2_AUTH_MODE=cookie_or_jwt AERO_L2_SESSION_SECRET=sekrit AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
+# - Trusted local dev escape hatch (disables Origin enforcement):
+#   AERO_L2_OPEN=1 cargo run --locked -p aero-l2-proxy
 #
 # Observability knobs:
 # - Optional: per-session PCAPNG capture (writes one file per tunnel session):
@@ -217,7 +217,8 @@ Minimum checklist:
   - Enforce `Origin` on WebSocket upgrades; enforce strict CORS on any HTTP endpoints.
   - Consider also validating `Host` / `X-Forwarded-Host` when behind a reverse proxy.
 - **Auth + session binding**
-  - Require a cookie-backed session or short-lived token.
+  - Browser clients: require a cookie-backed gateway session (`aero_session`).
+  - Non-browser/internal clients: require a short-lived token (prefer the WebSocket subprotocol form).
   - Bind tunnel sessions to an authenticated user and enforce per-user quotas.
 - **Blocked destination ranges**
   - Deny loopback, link-local, RFC1918, CGNAT, multicast, and other special-use ranges by default.

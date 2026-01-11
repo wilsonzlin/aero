@@ -445,8 +445,13 @@ avoid hardcoding `/l2`. The `POST /session` response includes `endpoints.l2` (a 
 and `limits.l2` (payload size caps) so the frontend can connect and tune buffering without baking in
 paths or protocol constants.
 
-This endpoint is intended for the “Option C” architecture (tunneling Ethernet
-frames to a server-side network stack / NAT / policy layer).
+For cross-origin deployments or non-browser clients, `aero-l2-proxy` can alternatively enforce
+token-based auth (JWT or API key; see `deploy/.env.example`). For internal bridges, prefer
+forwarding the credential via `Sec-WebSocket-Protocol: aero-l2-token.<token>` to avoid putting
+secrets in URLs.
+
+This endpoint is intended for the “Option C” architecture (tunneling Ethernet frames to a server-side
+network stack / NAT / policy layer).
 
 ### Run locally
 

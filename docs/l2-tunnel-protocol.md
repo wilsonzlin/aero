@@ -192,7 +192,9 @@ This tunnel provides an **egress path** from the guest VM to the public Internet
 It MUST be treated as a high-risk surface (SSRF / open proxy).
 
 - The `/l2` endpoint MUST enforce the same authentication and origin checks as `/tcp`.
-  - If the deployment uses cookies/session tokens, it MUST apply the same CSRF protections.
+  - Browser clients SHOULD authenticate using the gateway session cookie (`aero_session`), matching `/tcp`.
+  - Non-browser clients / internal bridges SHOULD authenticate using a token (see below).
+  - If the deployment uses cookies, it MUST apply the same CSRF protections as `/tcp`.
 - The proxy MUST enforce egress policy:
   - block private/reserved IP ranges by default (RFC1918, link-local, ULA, etc.),
   - apply port allowlists/denylists,

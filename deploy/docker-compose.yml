@@ -90,6 +90,8 @@ services:
       # If unset, the gateway generates a temporary secret at startup and
       # sessions will not survive restarts.
       SESSION_SECRET: ${SESSION_SECRET:-}
+      # Alias supported by the gateway (deploy stack uses SESSION_SECRET as the canonical knob).
+      AERO_GATEWAY_SESSION_SECRET: ${SESSION_SECRET:-}
 
       # Optional explicit origin allowlist (comma-separated). When unset/empty, the
       # gateway defaults to allowing the origin derived from PUBLIC_BASE_URL.
@@ -205,14 +207,19 @@ services:
       #
       # Enable by setting in `deploy/.env`:
       #   L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
+      #
+      # Optional backend hardening:
+      #   L2_BACKEND_ORIGIN=https://example.com       # alias: L2_BACKEND_ORIGIN_OVERRIDE
+      #   L2_BACKEND_TOKEN=sekrit                     # Sec-WebSocket-Protocol: aero-l2-token.<token>
+      #
       # Then ensure the relay can forward auth + Origin to the backend:
       #   L2_BACKEND_AUTH_FORWARD_MODE=query
       #   L2_BACKEND_FORWARD_ORIGIN=1
       - L2_BACKEND_WS_URL
       - L2_BACKEND_ORIGIN
+      - L2_BACKEND_TOKEN
       - L2_BACKEND_ORIGIN_OVERRIDE
       - L2_BACKEND_WS_ORIGIN
-      - L2_BACKEND_TOKEN
       - L2_BACKEND_WS_TOKEN
       - L2_BACKEND_AUTH_FORWARD_MODE=${L2_BACKEND_AUTH_FORWARD_MODE:-query}
       - L2_BACKEND_FORWARD_ORIGIN=${L2_BACKEND_FORWARD_ORIGIN:-1}

@@ -1073,12 +1073,12 @@ fi
 
 # /l2 WebSocket upgrade check (L2 tunnel).
 #
-# We validate the TLS + Upgrade path and subprotocol negotiation without relying
-# on external tools like `wscat`/`websocat`.
+# We validate the TLS + Upgrade path, subprotocol negotiation, and (when enabled)
+# session cookie auth without relying on external tools like `wscat`/`websocat`.
 #
 # If `node` is unavailable, skip this check (local dev convenience script).
 if command -v node >/dev/null 2>&1; then
-  echo "deploy smoke: verifying L2 WebSocket upgrade (endpoints.l2, aero-l2-tunnel-v1)" >&2
+  echo "deploy smoke: verifying L2 WebSocket upgrade (endpoints.l2, aero-l2-tunnel-v1 + session cookie)" >&2
   l2_ok=0
   l2_last_error=""
   for _ in $(seq 1 30); do
