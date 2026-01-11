@@ -26,7 +26,7 @@ Reference code in this repo:
   - `drivers/windows/virtio/common/virtio_sg_pfn.h`
   - Unit tests: `drivers/windows/virtio/common/tests/virtqueue_split_{test,stress_test}.c` (include via `../virtqueue_split.h`)
 
-- Win7 portable split-ring engine (`virtqueue_split_*` + `virtio_os_ops_t` API):
+- Legacy portable split-ring engine (`virtqueue_split_*` + `virtio_os_ops_t` API):
   - `drivers/windows7/virtio/common/src/virtqueue_split_legacy.c`
   - `drivers/windows7/virtio/common/include/virtqueue_split_legacy.h`
   - Used by:
