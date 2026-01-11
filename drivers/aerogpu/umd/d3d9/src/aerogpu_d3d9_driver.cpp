@@ -1498,6 +1498,7 @@ uint64_t submit(Device* dev, bool is_present) {
 #endif
 
   uint64_t fence = 0;
+  bool updated = false;
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
   if (submitted_to_kmd) {
     // Critical: capture the exact `SubmissionFenceId` returned by the runtime
@@ -1523,16 +1524,12 @@ uint64_t submit(Device* dev, bool is_present) {
 #endif
 
     if (fence) {
-      bool updated = false;
-      {
-        std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-        const uint64_t prev_submitted = adapter->last_submitted_fence;
-        adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
-        updated = (adapter->last_submitted_fence != prev_submitted);
-      }
-      if (updated) {
-        adapter->fence_cv.notify_all();
-      }
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      const uint64_t prev_submitted = adapter->last_submitted_fence;
+      adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
+      adapter->next_fence = std::max(adapter->next_fence, adapter->last_submitted_fence + 1);
+      fence = adapter->last_submitted_fence;
+      updated = (adapter->last_submitted_fence != prev_submitted);
     }
   }
 #endif
@@ -1540,10 +1537,24 @@ uint64_t submit(Device* dev, bool is_present) {
   if (fence == 0) {
     {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-      fence = adapter->next_fence++;
-      adapter->last_submitted_fence = fence;
-      adapter->completed_fence = fence;
+      if (adapter->next_fence <= adapter->last_submitted_fence) {
+        adapter->next_fence = adapter->last_submitted_fence + 1;
+      }
+
+      const uint64_t stub_fence = adapter->next_fence++;
+      const uint64_t prev_submitted = adapter->last_submitted_fence;
+      const uint64_t prev_completed = adapter->completed_fence;
+      // Never allow the cached fence values to go backwards: they may be advanced
+      // by the KMD query path (or, in a real WDDM build, by runtime-provided fence
+      // callbacks).
+      adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, stub_fence);
+      adapter->completed_fence = std::max(adapter->completed_fence, stub_fence);
+      fence = adapter->last_submitted_fence;
+      updated = updated || (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
     }
+  }
+
+  if (updated) {
     adapter->fence_cv.notify_all();
   }
 
@@ -4706,13 +4717,14 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter(
   }
 
   const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapter",
-                                     get_interface_version(pOpenAdapter),
-                                     pOpenAdapter->Version,
-                                     pOpenAdapter->pAdapterCallbacks,
-                                     get_adapter_callbacks2(pOpenAdapter),
-                                     luid,
-                                     &pOpenAdapter->hAdapter,
-                                     adapter_funcs);
+                                                get_interface_version(pOpenAdapter),
+                                                pOpenAdapter->Version,
+                                                pOpenAdapter->pAdapterCallbacks,
+                                                get_adapter_callbacks2(pOpenAdapter),
+                                                luid,
+                                                &pOpenAdapter->hAdapter,
+                                                adapter_funcs);
+
 #if defined(_WIN32)
   if (SUCCEEDED(hr) && hdc) {
     auto* adapter = aerogpu::as_adapter(pOpenAdapter->hAdapter);
@@ -4798,13 +4810,14 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
   }
 
   const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapter2",
-                                     get_interface_version(pOpenAdapter),
-                                     pOpenAdapter->Version,
-                                     pOpenAdapter->pAdapterCallbacks,
-                                     get_adapter_callbacks2(pOpenAdapter),
-                                     luid,
-                                     &pOpenAdapter->hAdapter,
-                                     adapter_funcs);
+                                                get_interface_version(pOpenAdapter),
+                                                pOpenAdapter->Version,
+                                                pOpenAdapter->pAdapterCallbacks,
+                                                get_adapter_callbacks2(pOpenAdapter),
+                                                luid,
+                                                &pOpenAdapter->hAdapter,
+                                                adapter_funcs);
+
 #if defined(_WIN32)
   if (SUCCEEDED(hr) && hdc) {
     auto* adapter = aerogpu::as_adapter(pOpenAdapter->hAdapter);
