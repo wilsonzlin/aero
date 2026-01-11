@@ -27,6 +27,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: `sample o0, v0, t0, s0`, `ret`
 
+Note: `Texture2D.Load` / `ld` shaders are currently tested via hand-authored DXBC
+builders in the Rust test suite (see `tests/dxbc_decode_translate.rs` and
+`tests/aerogpu_cmd_texture_sampling.rs`) rather than a checked-in `.dxbc` fixture.
+
 These fixtures are **hand-authored** DXBC containers with the standard D3D10+
 signature chunk layout. The SM4 token streams are intentionally tiny:
 
