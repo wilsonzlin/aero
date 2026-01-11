@@ -395,6 +395,11 @@ The current schema uses a unified `drivers` list where each entry declares wheth
 
 If an optional driver is listed but missing from the input driver directory, the packager emits a warning and continues.
 
+`expected_hardware_ids_from_devices_cmd_var` can be used instead of (or in addition to)
+`expected_hardware_ids` to source expected HWIDs from `guest-tools/config/devices.cmd`. The packager
+and config validator normalize these HWIDs down to the base `PCI\VEN_....&DEV_....` form before
+validating that the driver INF matches.
+
 Legacy specs using the older top-level `required_drivers` list are still accepted and treated as `required=true` entries.
 
 ## CI coverage (packager + config/spec drift)

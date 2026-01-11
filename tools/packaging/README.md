@@ -165,4 +165,8 @@ The current schema uses a unified `drivers` list:
 }
 ```
 
+Drivers can also set `expected_hardware_ids_from_devices_cmd_var` to source expected hardware IDs
+from `guest-tools/config/devices.cmd`. Each token is normalized down to the base
+`PCI\VEN_....&DEV_....` form and regex-escaped before being appended to `expected_hardware_ids`.
+
 Legacy specs using `required_drivers` are still accepted and treated as `required=true` entries.
