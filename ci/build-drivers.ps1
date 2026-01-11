@@ -16,7 +16,8 @@ Discovery conventions (encoded here for CI determinism):
   - Only CI-buildable drivers are selected:
       - Require at least one `.inf` somewhere under the driver directory tree (excluding
         common build-output directories: `obj/`, `out/`, `build/`, `target/`).
-      - Skip WDK 7.1 "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile).
+      - Skip WDK 7.1 "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile)
+        by default (pass `-IncludeMakefileProjects` to opt in).
   - Build outputs are staged under:
       - `out/drivers/<driver-relative-path>/<arch>/...`
 
@@ -347,60 +348,6 @@ function Find-FirstFileInTree {
   return $null
 }
 
-function Test-IsMakefileVcxproj {
-  param([Parameter(Mandatory = $true)][string]$VcxprojPath)
-
-  if (-not (Test-Path -LiteralPath $VcxprojPath -PathType Leaf)) {
-    return $false
-  }
-
-  $content = Get-Content -LiteralPath $VcxprojPath -Raw -ErrorAction SilentlyContinue
-  if ([string]::IsNullOrWhiteSpace($content)) {
-    return $false
-  }
-
-  return ($content -match '<Keyword>\s*MakeFileProj\s*</Keyword>' -or $content -match '<ConfigurationType>\s*Makefile\s*</ConfigurationType>')
-}
-
-function Test-IsMakefileSolution {
-  param([Parameter(Mandatory = $true)][string]$SolutionPath)
-
-  if (-not (Test-Path -LiteralPath $SolutionPath -PathType Leaf)) {
-    return $false
-  }
-
-  $slnDir = Split-Path -Parent $SolutionPath
-  $lines = Get-Content -LiteralPath $SolutionPath -ErrorAction SilentlyContinue
-  if (-not $lines) {
-    return $false
-  }
-
-  $projectPaths = New-Object System.Collections.Generic.List[string]
-  foreach ($line in $lines) {
-    # Example:
-    # Project("{GUID}") = "name", "path\\to\\proj.vcxproj", "{GUID}"
-    if ($line -match '^\s*Project\(\".*?\"\)\s*=\s*\".*?\"\s*,\s*\"(.*?)\"\s*,') {
-      $rel = $Matches[1]
-      if ($rel -and $rel.ToLowerInvariant().EndsWith('.vcxproj')) {
-        $full = Join-Path -Path $slnDir -ChildPath $rel
-        [void]$projectPaths.Add($full)
-      }
-    }
-  }
-
-  if ($projectPaths.Count -eq 0) {
-    return $false
-  }
-
-  foreach ($proj in $projectPaths) {
-    if (Test-IsMakefileVcxproj -VcxprojPath $proj) {
-      return $true
-    }
-  }
-
-  return $false
-}
-
 function Test-HasInfInTree {
   param([Parameter(Mandatory = $true)][string]$DirectoryPath)
 
@@ -431,19 +378,6 @@ function Try-GetDriverBuildTargetFromDirectory {
       return $null
     } else {
       throw "Directory '$($Directory.FullName)' has multiple '*.vcxproj' files but no '$name.sln'."
-    }
-  }
-
-  # Skip legacy WDK 7.1 build.exe wrapper projects (NMake/Makefile).
-  # This CI workflow provisions a modern WDK/MSBuild toolchain and does not guarantee
-  # classic build.exe is available.
-  if ($kind -eq 'vcxproj') {
-    if (Test-IsMakefileVcxproj -VcxprojPath $buildPath) {
-      return $null
-    }
-  } elseif ($kind -eq 'sln') {
-    if (Test-IsMakefileSolution -SolutionPath $buildPath) {
-      return $null
     }
   }
 
