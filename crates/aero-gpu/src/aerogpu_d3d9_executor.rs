@@ -21,7 +21,7 @@ use crate::aerogpu_executor::AllocTable;
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use crate::texture_manager::TextureRegion;
-use crate::{readback_rgba8, readback_stencil8};
+use crate::{readback_depth32f, readback_rgba8, readback_stencil8};
 
 /// Minimal executor for the D3D9 UMD-produced `aerogpu_cmd.h` command stream.
 ///
@@ -74,6 +74,7 @@ pub struct AerogpuD3d9Executor {
     clear_color_buffer: wgpu::Buffer,
     clear_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     clear_depth_pipelines: HashMap<ClearDepthPipelineKey, wgpu::RenderPipeline>,
+    clear_dummy_color_targets: HashMap<(u32, u32), ClearDummyColorTarget>,
 
     presented_scanouts: HashMap<u32, u32>,
 
@@ -178,6 +179,8 @@ pub enum AerogpuD3d9Error {
     ReadbackUnsupported(u32),
     #[error("stencil readback only supported for D24_UNORM_S8_UINT textures (handle {0})")]
     ReadbackStencilUnsupported(u32),
+    #[error("depth readback only supported for D32_FLOAT textures (handle {0})")]
+    ReadbackDepthUnsupported(u32),
     #[error("unknown shared surface token 0x{0:016X}")]
     UnknownShareToken(u64),
     #[error("shared surface token 0x{0:016X} was previously released and cannot be reused")]
@@ -463,18 +466,31 @@ fn vs(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(p.x, p.y, 0.0, 1.0);
 }
 
+@vertex
+fn vs_depth(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    let p = positions[idx];
+    return vec4<f32>(p.x, p.y, params.depth, 1.0);
+}
+
 @fragment
 fn fs() -> @location(0) vec4<f32> {
     return params.color;
 }
 
-struct DepthOut {
+struct DepthColorOut {
+    @location(0) color: vec4<f32>,
     @builtin(frag_depth) depth: f32,
 };
 
 @fragment
-fn fs_depth() -> DepthOut {
-    var out: DepthOut;
+fn fs_depth() -> DepthColorOut {
+    var out: DepthColorOut;
+    out.color = params.color;
     out.depth = params.depth;
     return out;
 }
@@ -589,6 +605,12 @@ struct ClearDepthPipelineKey {
     format: wgpu::TextureFormat,
     write_depth: bool,
     write_stencil: bool,
+}
+
+struct ClearDummyColorTarget {
+    #[allow(dead_code)]
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
 }
 
 impl AerogpuD3d9Executor {
@@ -714,7 +736,7 @@ impl AerogpuD3d9Executor {
                 label: Some("aerogpu-d3d9.clear_bind_group_layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -772,6 +794,7 @@ impl AerogpuD3d9Executor {
             clear_color_buffer,
             clear_pipelines: HashMap::new(),
             clear_depth_pipelines: HashMap::new(),
+            clear_dummy_color_targets: HashMap::new(),
             presented_scanouts: HashMap::new(),
             contexts: HashMap::new(),
             current_context_id: 0,
@@ -793,6 +816,7 @@ impl AerogpuD3d9Executor {
         self.pipelines.clear();
         self.clear_pipelines.clear();
         self.clear_depth_pipelines.clear();
+        self.clear_dummy_color_targets.clear();
         self.contexts.clear();
         self.current_context_id = 0;
         self.bind_group = None;
@@ -1264,6 +1288,14 @@ impl AerogpuD3d9Executor {
         self.readback_texture_stencil8_underlying(underlying).await
     }
 
+    pub async fn readback_texture_depth32f(
+        &self,
+        texture_handle: u32,
+    ) -> Result<(u32, u32, Vec<f32>), AerogpuD3d9Error> {
+        let underlying = self.resolve_resource_handle(texture_handle)?;
+        self.readback_texture_depth32f_underlying(underlying).await
+    }
+
     async fn readback_texture_rgba8_underlying(
         &self,
         texture_handle: u32,
@@ -1354,6 +1386,48 @@ impl AerogpuD3d9Executor {
         .await;
 
         Ok((width, height, bytes))
+    }
+
+    async fn readback_texture_depth32f_underlying(
+        &self,
+        texture_handle: u32,
+    ) -> Result<(u32, u32, Vec<f32>), AerogpuD3d9Error> {
+        let res = self
+            .resources
+            .get(&texture_handle)
+            .ok_or(AerogpuD3d9Error::UnknownResource(texture_handle))?;
+        let (texture, format, width, height) = match res {
+            Resource::Texture2d {
+                texture,
+                format,
+                width,
+                height,
+                ..
+            } => (texture, *format, *width, *height),
+            _ => return Err(AerogpuD3d9Error::ReadbackDepthUnsupported(texture_handle)),
+        };
+
+        if format != wgpu::TextureFormat::Depth32Float {
+            return Err(AerogpuD3d9Error::ReadbackDepthUnsupported(texture_handle));
+        }
+
+        let depth = readback_depth32f(
+            &self.device,
+            &self.queue,
+            texture,
+            TextureRegion {
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            },
+        )
+        .await;
+
+        Ok((width, height, depth))
     }
 
     fn resolve_resource_handle(&self, handle: u32) -> Result<u32, AerogpuD3d9Error> {
@@ -3882,6 +3956,8 @@ impl AerogpuD3d9Executor {
             let write_depth = clear_depth_enabled;
             let write_stencil = clear_stencil_enabled && depth_has_stencil;
             if write_depth || write_stencil {
+                // Preserve pixels outside the scissor region: load the current contents before
+                // applying the scissored clear.
                 self.flush_texture_if_dirty_strict(Some(encoder), depth_handle, ctx)?;
 
                 let Some((x, y, w, h)) = clamp_scissor_rect(
@@ -3895,6 +3971,8 @@ impl AerogpuD3d9Executor {
                     return Ok(());
                 };
 
+                self.ensure_clear_dummy_color_target(depth_width, depth_height);
+
                 let key = ClearDepthPipelineKey {
                     format: depth_format,
                     write_depth,
@@ -3902,6 +3980,7 @@ impl AerogpuD3d9Executor {
                 };
                 self.ensure_clear_depth_pipeline(key);
                 let pipeline = self.clear_depth_pipeline(key);
+
                 let depth_view = match self
                     .resources
                     .get(&underlying)
@@ -3910,6 +3989,22 @@ impl AerogpuD3d9Executor {
                     Resource::Texture2d { view, .. } => view,
                     _ => return Err(AerogpuD3d9Error::UnknownResource(depth_handle)),
                 };
+
+                let dummy_color_view = self.clear_dummy_color_view(depth_width, depth_height);
+
+                let color_attachments = [Some(wgpu::RenderPassColorAttachment {
+                    view: dummy_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: wgpu::StoreOp::Discard,
+                    },
+                })];
 
                 let depth_attachment = wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
@@ -3925,11 +4020,12 @@ impl AerogpuD3d9Executor {
 
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("aerogpu-d3d9.clear_scissor_depth"),
-                    color_attachments: &[],
+                    color_attachments: &color_attachments,
                     depth_stencil_attachment: Some(depth_attachment),
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
+                pass.set_viewport(0.0, 0.0, depth_width as f32, depth_height as f32, 0.0, 1.0);
                 pass.set_scissor_rect(x, y, w, h);
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &self.clear_bind_group, &[]);
@@ -3976,7 +4072,11 @@ impl AerogpuD3d9Executor {
                     module: &self.clear_shader,
                     entry_point: "fs_depth",
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[],
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -3989,7 +4089,7 @@ impl AerogpuD3d9Executor {
                     stencil: wgpu::StencilState {
                         front: stencil_face,
                         back: stencil_face,
-                        read_mask: if depth_has_stencil { 0xFF } else { 0 },
+                        read_mask: 0xFF,
                         write_mask: if stencil_write { 0xFF } else { 0 },
                     },
                     bias: wgpu::DepthBiasState::default(),
@@ -4004,6 +4104,39 @@ impl AerogpuD3d9Executor {
         self.clear_depth_pipelines.get(&key).expect(
             "missing clear depth pipeline; ensure_clear_depth_pipeline should be called first",
         )
+    }
+
+    fn ensure_clear_dummy_color_target(&mut self, width: u32, height: u32) {
+        let key = (width, height);
+        if self.clear_dummy_color_targets.contains_key(&key) {
+            return;
+        }
+
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aerogpu-d3d9.clear_dummy_color"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.clear_dummy_color_targets
+            .insert(key, ClearDummyColorTarget { texture, view });
+    }
+
+    fn clear_dummy_color_view(&self, width: u32, height: u32) -> &wgpu::TextureView {
+        &self
+            .clear_dummy_color_targets
+            .get(&(width, height))
+            .expect("missing clear dummy color target; ensure_clear_dummy_color_target should be called first")
+            .view
     }
 
     fn ensure_clear_pipeline(&mut self, format: wgpu::TextureFormat) {

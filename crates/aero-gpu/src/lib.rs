@@ -80,7 +80,7 @@ pub use protocol::{
     AeroGpuRasterizerState, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
     AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
 };
-pub use readback::{readback_buffer, readback_rgba8, readback_stencil8};
+pub use readback::{readback_buffer, readback_depth32f, readback_rgba8, readback_stencil8};
 pub use recovery::{BackendAvailability, GpuRecoveryMachine, RecoveryOutcome, RecoveryState};
 pub use surface::{
     present_with_retry, GpuPresenter, GpuSurfaceError, PresentOutcome, SimulatedSurface,
