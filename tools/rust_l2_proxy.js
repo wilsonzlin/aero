@@ -229,7 +229,6 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
-    let timedOut = false;
 
     const child = spawn(command, args, {
       cwd,
@@ -287,7 +286,6 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
       child.off("error", onError);
 
       const why = `command timed out after ${timeoutMs}ms: ${command} ${args.join(" ")}`;
-      timedOut = true;
       stopCommand(child)
         .then(() => settle(new Error(`${why}\n\n${stdout}${stderr}`)))
         .catch(() => settle(new Error(`${why}\n\n${stdout}${stderr}`)));
