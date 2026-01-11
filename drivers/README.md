@@ -205,6 +205,7 @@ See: `drivers/docs/wdk-build.md`.
 - **GPU (AeroGPU)**
   - If using the optional AeroGPU WDDM stack, run the guest-side validation suite:
     - `drivers\\aerogpu\\tests\\win7\\run_all.cmd --require-vid=0xA3A0 --require-did=0x0001`
+    - `drivers\\aerogpu\\tests\\win7\\run_all.cmd --require-vid=0x1AED --require-did=0x0001` (legacy AeroGPU device model)
     - (Use `run_all.cmd --help` for flags like `--dump` / `--allow-remote`.)
 
 ## Host-side protocol tests (shared structs)
