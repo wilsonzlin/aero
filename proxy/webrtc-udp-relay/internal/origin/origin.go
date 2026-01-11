@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // NormalizeHeader validates and normalizes a browser Origin header.
@@ -19,6 +20,12 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 	}
 	if trimmed == "null" {
 		return "null", "", true
+	}
+	if !isASCIIOriginString(trimmed) {
+		return "", "", false
+	}
+	if strings.Contains(trimmed, "%") {
+		return "", "", false
 	}
 
 	u, err := url.Parse(trimmed)
@@ -115,6 +122,9 @@ func normalizeRequestHost(requestHost, scheme string) (string, bool) {
 	if trimmed == "" {
 		return "", false
 	}
+	if !isASCIIOriginString(trimmed) {
+		return "", false
+	}
 
 	rawHostname, rawPort, ok := splitHostPort(trimmed)
 	if !ok {
@@ -147,6 +157,15 @@ func normalizeRequestHost(requestHost, scheme string) (string, bool) {
 		host = host + ":" + strconv.FormatUint(port, 10)
 	}
 	return host, true
+}
+
+func isASCIIOriginString(s string) bool {
+	for _, r := range s {
+		if r <= 0x20 || r >= 0x7f || unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // splitHostPort splits an authority host[:port] string.

@@ -8,6 +8,20 @@ pub(crate) fn normalize_origin(input: &str) -> Option<String> {
     if trimmed == "null" {
         return Some("null".to_string());
     }
+    // Origin is an ASCII serialization. Be strict about rejecting non-ASCII or
+    // non-printable characters that URL parsers may normalize away.
+    if !trimmed.chars().all(|c| c.is_ascii_graphic()) {
+        return None;
+    }
+    // Reject percent-encoding / IPv6 zone identifiers to avoid cross-language
+    // parsing differences.
+    if trimmed.contains('%') {
+        return None;
+    }
+    // Reject empty port specs like `https://example.com:` or `https://example.com:/`.
+    if trimmed.ends_with(':') || trimmed.ends_with(":/") {
+        return None;
+    }
 
     let url = Url::parse(trimmed).ok()?;
 
@@ -33,6 +47,9 @@ pub(crate) fn normalize_origin(input: &str) -> Option<String> {
     };
 
     let mut port = url.port();
+    if port == Some(0) {
+        return None;
+    }
     if matches!((&*scheme, port), ("http", Some(80)) | ("https", Some(443))) {
         port = None;
     }
