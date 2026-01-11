@@ -296,37 +296,41 @@ export class L2TunnelForwarder {
 
   private drainNetTx(): void {
     let drained = 0;
-    while (drained < this.maxFramesPerTick) {
-      const frame = this.netTx.tryPop();
-      if (!frame) {
+    let stopOnBackpressure = false;
+    while (drained < this.maxFramesPerTick && !stopOnBackpressure) {
+      const didConsume = this.netTx.consumeNext((frame) => {
+        drained += 1;
+
+        const tunnel = this.tunnel;
+        if (!this.running || !tunnel) {
+          this.txDroppedNoTunnel += 1;
+          return;
+        }
+
+        let ok = true;
+        try {
+          const res = tunnel.sendFrame(frame);
+          if (res === false) ok = false;
+        } catch {
+          ok = false;
+        }
+
+        if (!ok) {
+          this.txDroppedSendError += 1;
+          // Backpressure is usually correlated across subsequent frames; stop
+          // draining NET_TX so we don't convert an ephemeral stall into a burst of drops.
+          stopOnBackpressure = true;
+          return;
+        }
+
+        this.txFrames += 1;
+        this.txBytes += frame.byteLength;
+      });
+
+      if (!didConsume) {
         this.txRingEmpty += 1;
         return;
       }
-      drained += 1;
-
-      const tunnel = this.tunnel;
-      if (!this.running || !tunnel) {
-        this.txDroppedNoTunnel += 1;
-        continue;
-      }
-
-      let ok = true;
-      try {
-        const res = tunnel.sendFrame(frame);
-        if (res === false) ok = false;
-      } catch {
-        ok = false;
-      }
-
-      if (!ok) {
-        this.txDroppedSendError += 1;
-        // Backpressure is usually correlated across subsequent frames; stop
-        // draining NET_TX so we don't convert an ephemeral stall into a burst of drops.
-        return;
-      }
-
-      this.txFrames += 1;
-      this.txBytes += frame.byteLength;
     }
   }
 
