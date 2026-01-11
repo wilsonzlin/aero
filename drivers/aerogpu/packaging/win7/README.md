@@ -13,7 +13,7 @@ It also includes scripts for **test-signing** and **install/uninstall** in a Win
 
 Copy the built driver binaries into this directory (same folder as the `.inf` files):
 
-> Tip: after building (via `drivers\aerogpu\aerogpu.sln` or the CI scripts), you can stage this folder automatically:
+> Tip: if you built via the repo-local wrapper `drivers\aerogpu\build\build_all.cmd` (MSBuild/WDK10; stages outputs under `drivers\aerogpu\build\out\win7\...`), you can stage this folder automatically:
 >
 > ```bat
 > :: For a Win7 x64 VM (copies x64 aerogpu.sys + x86/x64 UMDs)
@@ -23,8 +23,7 @@ Copy the built driver binaries into this directory (same folder as the `.inf` fi
 > drivers\aerogpu\build\stage_packaging_win7.cmd fre x86
 > ```
 >
-> CI note: the end-to-end driver pipeline can also produce a ready-to-install package under `out/packages/aerogpu/<arch>/`
-> (INF + SYS + UMD DLLs + CAT). If you just want something installable in a VM, you can copy that folder instead of staging this one.
+> If you built via the CI scripts, skip staging and instead copy/install the ready-to-install package under `out/packages/aerogpu/<arch>/` (see section 3).
 
 ### Required (D3D9)
 
@@ -130,7 +129,7 @@ If installing the optional D3D10/11 UMD variant, install `aerogpu_dx11.inf` from
 
 1. Copy this directory into the VM and ensure it contains the built binaries next to the INFs (see **1) Expected build outputs** above).
 
-> Tip: you can stage this directory on the build host via:
+> Tip: after running `drivers\aerogpu\build\build_all.cmd`, you can stage this directory on the build host via:
 >
 > ```bat
 > drivers\aerogpu\build\stage_packaging_win7.cmd fre x64
