@@ -196,7 +196,7 @@ impl Tier0Interpreter {
 
 impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
     fn exec_block(&mut self, cpu: &mut Vcpu<B>) -> u64 {
-        use aero_x86::{Mnemonic, Register};
+        use aero_x86::{Mnemonic, OpKind, Register};
 
         use crate::exception::AssistReason;
         use crate::interp::tier0::exec::StepExit;
@@ -307,9 +307,33 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     break;
                 }
                 StepExit::Assist(other) => {
+                    // Some privileged assists (notably `MOV SS, r/m16` and `POP SS`) create an
+                    // interrupt shadow, inhibiting maskable interrupts for the following
+                    // instruction. Decode here so we can update the interrupt bookkeeping in
+                    // `PendingEventState`.
+                    let ip = cpu.cpu.state.rip();
+                    let fetch_addr = cpu
+                        .cpu
+                        .state
+                        .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
+                    let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
+                    let decoded = aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness())
+                        .expect("decode tier0 assist");
+                    let inhibits_interrupt = match decoded.instr.mnemonic() {
+                        Mnemonic::Mov | Mnemonic::Pop => {
+                            decoded.instr.op_count() > 0
+                                && decoded.instr.op_kind(0) == OpKind::Register
+                                && decoded.instr.op0_register() == Register::SS
+                        }
+                        _ => false,
+                    };
+
                     handle_assist(&mut self.assist, &mut cpu.cpu.state, &mut cpu.bus, other)
                         .expect("handle tier0 assist");
                     cpu.cpu.pending.retire_instruction();
+                    if inhibits_interrupt {
+                        cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
+                    }
                     break;
                 }
             }

@@ -3,6 +3,38 @@ use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF, SEG_ACCESS_PRESENT};
 use aero_x86::Register;
 
+fn make_descriptor(
+    base: u32,
+    limit_raw: u32,
+    typ: u8,
+    s: bool,
+    dpl: u8,
+    present: bool,
+    avl: bool,
+    l: bool,
+    db: bool,
+    g: bool,
+) -> u64 {
+    let mut raw = 0u64;
+    raw |= (limit_raw & 0xFFFF) as u64;
+    raw |= ((base & 0xFFFF) as u64) << 16;
+    raw |= (((base >> 16) & 0xFF) as u64) << 32;
+    let access =
+        (typ as u64) | ((s as u64) << 4) | (((dpl as u64) & 0x3) << 5) | ((present as u64) << 7);
+    raw |= access << 40;
+    raw |= (((limit_raw >> 16) & 0xF) as u64) << 48;
+    let flags = (avl as u64) | ((l as u64) << 1) | ((db as u64) << 2) | ((g as u64) << 3);
+    raw |= flags << 52;
+    raw |= (((base >> 24) & 0xFF) as u64) << 56;
+    raw
+}
+
+fn setup_gdt(bus: &mut impl CpuBus, gdt_base: u64, descriptors: &[u64]) {
+    for (i, &desc) in descriptors.iter().enumerate() {
+        bus.write_u64(gdt_base + (i as u64) * 8, desc).unwrap();
+    }
+}
+
 fn write_idt_gate32(
     mem: &mut impl CpuBus,
     base: u64,
@@ -87,6 +119,71 @@ fn tier0_executes_cpuid_assist_in_exec_glue() {
         cpu.cpu.state.read_reg(Register::ECX),
         u64::from(u32::from_le_bytes(*b"ntel"))
     );
+}
+
+#[test]
+fn tier0_mov_ss_inhibits_external_interrupt_for_one_instruction() {
+    let mut bus = FlatTestBus::new(0x20000);
+
+    let gdt_base = 0x0800u64;
+    let idt_base = 0x1000u64;
+    let code_base = 0x2000u64;
+    let handler = 0x3000u32;
+    let data_addr = 0x4000u32;
+
+    // Minimal flat 32-bit GDT: null, code, data.
+    let null = 0u64;
+    let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
+    let data32 = make_descriptor(0, 0xFFFFF, 0x2, true, 0, true, false, false, true, true);
+    setup_gdt(&mut bus, gdt_base, &[null, code32, data32]);
+
+    // Interrupt handler: HLT
+    bus.load(handler as u64, &[0xF4]);
+    write_idt_gate32(&mut bus, idt_base, 0x20, 0x08, handler, 0x8E);
+
+    // Code:
+    //   mov ss, ax
+    //   mov byte ptr [data_addr], 0xAA
+    //   hlt (should not run if interrupt is delivered after the store)
+    let mut code = vec![
+        0x8E, 0xD0, // mov ss, ax
+        0xC6, 0x05, // mov byte ptr [disp32], imm8
+    ];
+    code.extend_from_slice(&data_addr.to_le_bytes());
+    code.push(0xAA);
+    code.push(0xF4);
+    bus.load(code_base, &code);
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Protected, bus);
+    cpu.cpu.state.tables.gdtr.base = gdt_base;
+    cpu.cpu.state.tables.gdtr.limit = (3 * 8 - 1) as u16;
+    cpu.cpu.state.tables.idtr.base = idt_base;
+    cpu.cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.cpu.state.segments.cs.selector = 0x08;
+    cpu.cpu.state.segments.ss.selector = 0x10;
+    cpu.cpu.state.segments.ds.selector = 0x10;
+    cpu.cpu.state.segments.cs.base = 0;
+    cpu.cpu.state.segments.ss.base = 0;
+    cpu.cpu.state.segments.ds.base = 0;
+    cpu.cpu.state.write_gpr32(gpr::RSP, 0x9000);
+    cpu.cpu.state.write_reg(Register::AX, 0x10);
+    cpu.cpu.state.set_rflags(0x202);
+    cpu.cpu.state.set_rip(code_base);
+    cpu.cpu.state.set_protected_enable(true);
+
+    let mut interp = Tier0Interpreter::new(1024);
+
+    // Execute MOV SS. This is a privileged assist and should set the interrupt shadow.
+    interp.exec_block(&mut cpu);
+    assert_eq!(cpu.cpu.state.rip(), code_base + 2);
+    assert_eq!(cpu.bus.read_u8(data_addr as u64).unwrap(), 0);
+
+    // Make an external interrupt pending immediately after MOV SS.
+    cpu.cpu.pending.inject_external_interrupt(0x20);
+
+    // The following instruction (the store) must execute before the interrupt is delivered.
+    run_to_halt(&mut cpu, &mut interp, 32);
+    assert_eq!(cpu.bus.read_u8(data_addr as u64).unwrap(), 0xAA);
 }
 
 #[test]

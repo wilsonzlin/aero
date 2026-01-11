@@ -1,6 +1,6 @@
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
-use aero_cpu_core::state::{CpuMode, CpuState, FLAG_CF, FLAG_ZF};
+use aero_cpu_core::state::{CpuMode, CpuState, FLAG_CF, FLAG_ZF, RFLAGS_IF};
 use aero_cpu_core::AssistReason;
 use aero_x86::Register;
 
@@ -35,6 +35,24 @@ fn mov_add_sub_flags() {
     run_to_halt(&mut state, &mut bus, 100);
     assert_eq!(state.read_reg(aero_x86::Register::EAX), 0);
     assert!(state.get_flag(FLAG_ZF));
+}
+
+#[test]
+fn popf_restores_interrupt_flag_in_real_mode() {
+    // push 0x0202; popf; hlt
+    let code = [
+        0x68, 0x02, 0x02, // push 0x0202 (IF=1, reserved1=1)
+        0x9D, // popf
+        0xF4, // hlt
+    ];
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(0);
+    state.write_reg(Register::SS, 0);
+    state.write_reg(Register::SP, 0x800);
+    run_to_halt(&mut state, &mut bus, 20);
+    assert_ne!(state.rflags() & RFLAGS_IF, 0);
 }
 
 #[test]

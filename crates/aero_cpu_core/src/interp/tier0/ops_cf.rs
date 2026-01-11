@@ -2,7 +2,7 @@ use super::ops_data::{calc_ea, op_bits, read_op_sized};
 use super::ExecOutcome;
 use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
-use crate::state::{mask_bits, CpuMode, CpuState, FLAG_OF, FLAG_ZF, RFLAGS_IF, RFLAGS_TF};
+use crate::state::{mask_bits, CpuMode, CpuState, FLAG_OF, FLAG_ZF, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_TF};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
 
 pub fn handles_mnemonic(m: Mnemonic) -> bool {
@@ -222,16 +222,45 @@ pub fn exec<B: CpuBus>(
         }
         Mnemonic::Popf => {
             let bits = state.bitness();
-            let v = pop(state, bus, (bits / 8) as u32)?;
-            // Only a subset of flags are relevant for Tier-0 integer execution.
-            let mask = crate::state::FLAG_CF
+            let v = pop(state, bus, (bits / 8) as u32)? & mask_bits(bits);
+            let old = state.rflags();
+
+            // POPF can update more than the arithmetic status flags. In particular, real-mode
+            // firmware and OS kernels frequently use `pushf; cli; ...; popf` to restore IF.
+            //
+            // In protected/long mode, updates to IOPL/IF are privilege gated:
+            // - IOPL can only be modified at CPL0.
+            // - IF can only be modified when CPL <= IOPL.
+            let mut write_mask = crate::state::FLAG_CF
                 | crate::state::FLAG_PF
                 | crate::state::FLAG_AF
                 | crate::state::FLAG_ZF
                 | crate::state::FLAG_SF
+                | crate::state::RFLAGS_TF
                 | crate::state::FLAG_DF
-                | crate::state::FLAG_OF;
-            let new = (state.rflags() & !mask) | (v & mask);
+                | crate::state::FLAG_OF
+                | RFLAGS_IF
+                | RFLAGS_IOPL_MASK
+                | crate::state::RFLAGS_AC
+                | crate::state::RFLAGS_ID;
+            write_mask &= mask_bits(bits);
+
+            // Do not allow POPF to toggle virtualization/virtual interrupt bits in this model.
+            write_mask &= !(crate::state::RFLAGS_VM | crate::state::RFLAGS_VIF | crate::state::RFLAGS_VIP);
+
+            if !matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+                let cpl = state.cpl();
+                if cpl != 0 {
+                    write_mask &= !RFLAGS_IOPL_MASK;
+                }
+
+                let iopl = ((old & RFLAGS_IOPL_MASK) >> 12) as u8;
+                if cpl > iopl {
+                    write_mask &= !RFLAGS_IF;
+                }
+            }
+
+            let new = (old & !write_mask) | (v & write_mask);
             state.set_rflags(new);
             Ok(ExecOutcome::Continue)
         }
