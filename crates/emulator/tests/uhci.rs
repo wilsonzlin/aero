@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::PortIO;
@@ -300,6 +301,102 @@ fn uhci_interrupt_in_polling_reads_hid_reports() {
     assert_eq!(
         mem.slice(BUF_INT as usize..BUF_INT as usize + 8),
         [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]
+    );
+
+    // Poll again without new input: should NAK and remain active.
+    mem.write_u32(TD0 as u64 + 4, td_status(true, false));
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    let st = mem.read_u32(TD0 as u64 + 4);
+    assert!(st & TD_STATUS_ACTIVE != 0);
+    assert!(st & (1 << 19) != 0); // NAK
+}
+
+#[test]
+fn uhci_interrupt_in_polling_reads_gamepad_reports() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let gamepad = UsbHidGamepadHandle::new();
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(gamepad.clone()));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // SET_ADDRESS(5).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    // SET_CONFIGURATION(1).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 5, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    gamepad.set_axes(10, -10, 5, -5);
+    gamepad.button_event(1, true);
+
+    // Poll interrupt endpoint 1 at address 5.
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(
+        mem.slice(BUF_INT as usize..BUF_INT as usize + 8),
+        [0x00, 0x00, 0x08, 10u8, 246u8, 5u8, 251u8, 0x00]
+    );
+
+    // Poll again - should receive the button change.
+    mem.write_u32(TD0 as u64 + 4, td_status(true, false));
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_eq!(
+        mem.slice(BUF_INT as usize..BUF_INT as usize + 8),
+        [0x01, 0x00, 0x08, 10u8, 246u8, 5u8, 251u8, 0x00]
     );
 
     // Poll again without new input: should NAK and remain active.
