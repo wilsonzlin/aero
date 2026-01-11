@@ -1,4 +1,4 @@
-#include "../include/aerovblk.h"
+#include "aerovblk.h"
 
 static VOID AerovblkCompleteSrb(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR srbStatus);
 

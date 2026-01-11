@@ -1,4 +1,4 @@
-#include "../include/aerovnet.h"
+#include "aerovnet.h"
 
 #define AEROVNET_TAG 'tNvA'
 
