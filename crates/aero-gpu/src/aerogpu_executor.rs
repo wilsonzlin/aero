@@ -9,13 +9,12 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR as CLEAR_COLOR,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER as USAGE_CONSTANT_BUFFER,
+    decode_cmd_stream_header_le, AerogpuCmdDecodeError, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR as CLEAR_COLOR,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER as USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL as USAGE_DEPTH_STENCIL,
     AEROGPU_RESOURCE_USAGE_INDEX_BUFFER as USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET as USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_TEXTURE as USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET as USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE as USAGE_TEXTURE,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER as USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat};
@@ -49,7 +48,6 @@ const FMT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
 const FMT_R8G8B8X8_UNORM: u32 = AerogpuFormat::R8G8B8X8Unorm as u32;
 
 const STREAM_HEADER_SIZE: usize = ProtocolCmdStreamHeader::SIZE_BYTES;
-const CMD_HDR_SIZE: usize = ProtocolCmdHdr::SIZE_BYTES;
 const ALLOC_TABLE_HEADER_SIZE: usize = ProtocolAllocTableHeader::SIZE_BYTES;
 const ALLOC_ENTRY_SIZE: usize = ProtocolAllocEntry::SIZE_BYTES;
 
@@ -531,86 +529,87 @@ fn fs_main() -> @location(0) vec4<f32> {
         alloc_table: Option<&AllocTable>,
     ) -> Result<u32, (usize, ExecutorError, u32)> {
         let mut packets_processed = 0u32;
-        if bytes.len() < STREAM_HEADER_SIZE {
-            return Err((0, ExecutorError::TruncatedStream, packets_processed));
-        }
 
-        let magic = match bytes.get(0..4) {
-            Some(v) => u32::from_le_bytes(v.try_into().unwrap()),
-            None => return Err((0, ExecutorError::TruncatedStream, packets_processed)),
-        };
-        if magic != AEROGPU_CMD_STREAM_MAGIC {
-            return Err((0, ExecutorError::BadStreamMagic(magic), packets_processed));
-        }
-
-        let abi_version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        match parse_and_validate_abi_version_u32(abi_version) {
-            Ok(_) => {}
-            Err(AerogpuAbiError::UnsupportedMajor { found }) => {
-                return Err((
-                    0,
-                    ExecutorError::Validation(format!("unsupported ABI major version {found}")),
-                    packets_processed,
-                ));
+        let header = match decode_cmd_stream_header_le(bytes) {
+            Ok(header) => header,
+            Err(err) => {
+                let mapped = match err {
+                    AerogpuCmdDecodeError::BufferTooSmall => ExecutorError::TruncatedStream,
+                    AerogpuCmdDecodeError::BadMagic { found } => ExecutorError::BadStreamMagic(found),
+                    AerogpuCmdDecodeError::Abi(AerogpuAbiError::UnsupportedMajor { found }) => {
+                        ExecutorError::Validation(format!("unsupported ABI major version {found}"))
+                    }
+                    AerogpuCmdDecodeError::BadSizeBytes { found } => ExecutorError::BadStreamSize {
+                        size_bytes: found,
+                        buffer_len: bytes.len(),
+                    },
+                    other => ExecutorError::Validation(format!("command stream header decode error: {other:?}")),
+                };
+                return Err((0, mapped, packets_processed));
             }
-        }
+        };
 
-        let size_bytes = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-        let size_bytes_usize = size_bytes as usize;
+        let size_bytes_usize = header.size_bytes as usize;
         if size_bytes_usize < STREAM_HEADER_SIZE || size_bytes_usize > bytes.len() {
             return Err((
                 0,
                 ExecutorError::BadStreamSize {
-                    size_bytes,
+                    size_bytes: header.size_bytes,
                     buffer_len: bytes.len(),
                 },
                 packets_processed,
             ));
         }
 
+        let stream_bytes = &bytes[..size_bytes_usize];
+        let iter = match AerogpuCmdStreamIter::new(stream_bytes) {
+            Ok(iter) => iter,
+            Err(err) => {
+                return Err((
+                    0,
+                    ExecutorError::Validation(format!(
+                        "failed to create command stream iterator: {err:?}"
+                    )),
+                    packets_processed,
+                ))
+            }
+        };
+
         let mut offset = STREAM_HEADER_SIZE;
-        while offset < size_bytes_usize {
-            let cmd_offset = offset;
-            if offset + CMD_HDR_SIZE > size_bytes_usize {
-                return Err((
-                    cmd_offset,
-                    ExecutorError::TruncatedStream,
-                    packets_processed,
-                ));
-            }
+        for packet in iter {
+            let packet = match packet {
+                Ok(packet) => packet,
+                Err(err) => {
+                    let mapped = match err {
+                        AerogpuCmdDecodeError::BufferTooSmall
+                        | AerogpuCmdDecodeError::PacketOverrunsStream { .. } => ExecutorError::TruncatedStream,
+                        AerogpuCmdDecodeError::BadSizeBytes { found } => ExecutorError::InvalidPacketSize(found),
+                        AerogpuCmdDecodeError::SizeNotAligned { found } => ExecutorError::MisalignedPacketSize(found),
+                        other => ExecutorError::Validation(format!("packet decode error: {other:?}")),
+                    };
+                    return Err((offset, mapped, packets_processed));
+                }
+            };
 
-            let opcode =
-                read_u32_le(bytes, offset).map_err(|e| (cmd_offset, e, packets_processed))?;
-            let cmd_size_bytes =
-                read_u32_le(bytes, offset + 4).map_err(|e| (cmd_offset, e, packets_processed))?;
-            if cmd_size_bytes < CMD_HDR_SIZE as u32 {
-                return Err((
-                    cmd_offset,
-                    ExecutorError::InvalidPacketSize(cmd_size_bytes),
-                    packets_processed,
-                ));
-            }
-            if cmd_size_bytes % 4 != 0 {
-                return Err((
-                    cmd_offset,
-                    ExecutorError::MisalignedPacketSize(cmd_size_bytes),
-                    packets_processed,
-                ));
-            }
+            let cmd_size = packet.hdr.size_bytes as usize;
+            let end = match offset.checked_add(cmd_size) {
+                Some(end) => end,
+                None => {
+                    return Err((
+                        offset,
+                        ExecutorError::Validation("packet size overflow".into()),
+                        packets_processed,
+                    ))
+                }
+            };
 
-            let cmd_size = cmd_size_bytes as usize;
-            let end = offset + cmd_size;
-            if end > size_bytes_usize {
-                return Err((
-                    cmd_offset,
-                    ExecutorError::TruncatedStream,
-                    packets_processed,
-                ));
-            }
+            let cmd_bytes = match stream_bytes.get(offset..end) {
+                Some(cmd_bytes) => cmd_bytes,
+                None => return Err((offset, ExecutorError::TruncatedStream, packets_processed)),
+            };
 
-            let cmd_bytes = &bytes[offset..end];
-            self.exec_packet(opcode, cmd_bytes, guest_memory, alloc_table)
-                .map_err(|e| (cmd_offset, e, packets_processed))?;
+            self.exec_packet(packet.hdr.opcode, cmd_bytes, guest_memory, alloc_table)
+                .map_err(|e| (offset, e, packets_processed))?;
 
             packets_processed += 1;
             offset = end;
