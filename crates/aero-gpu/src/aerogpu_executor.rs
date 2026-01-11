@@ -218,9 +218,11 @@ impl AllocTable {
                 "invalid alloc table header size_bytes={size_bytes} (provided buffer size={table_size_bytes})"
             )));
         }
-        if header.entry_stride_bytes != ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
+        // Forward-compat: newer guests may extend `aerogpu_alloc_entry` and increase the declared
+        // stride; we only read the entry prefix we understand.
+        if header.entry_stride_bytes < ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
             return Err(ExecutorError::Validation(format!(
-                "invalid alloc table entry_stride_bytes={} (expected {})",
+                "invalid alloc table entry_stride_bytes={} (expected at least {})",
                 header.entry_stride_bytes,
                 ring::AerogpuAllocEntry::SIZE_BYTES
             )));
@@ -2421,8 +2423,7 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 mod tests {
     use super::*;
 
-    fn build_alloc_table(entries: &[(u32, u64, u64)]) -> Vec<u8> {
-        let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES as u32;
+    fn build_alloc_table_with_stride(entries: &[(u32, u64, u64)], entry_stride: u32) -> Vec<u8> {
         let size_bytes =
             ring::AerogpuAllocTableHeader::SIZE_BYTES as u32 + entries.len() as u32 * entry_stride;
         let mut bytes = vec![0u8; size_bytes as usize];
@@ -2446,6 +2447,10 @@ mod tests {
         bytes
     }
 
+    fn build_alloc_table(entries: &[(u32, u64, u64)]) -> Vec<u8> {
+        build_alloc_table_with_stride(entries, ring::AerogpuAllocEntry::SIZE_BYTES as u32)
+    }
+
     #[test]
     fn coalesce_ranges_merges_overlapping_and_adjacent() {
         let mut ranges = vec![10u64..12, 0..4, 4..8, 11..15, 20..20];
@@ -2465,6 +2470,26 @@ mod tests {
         let guest = crate::guest_memory::VecGuestMemory::new(4096);
         let table_bytes = build_alloc_table(&[(1, 0x1000, 0x2000), (2, 0x3000, 0x4000)]);
         let table_gpa = 0x100u64;
+        guest.write(table_gpa, &table_bytes).unwrap();
+
+        let table =
+            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+                .unwrap();
+        assert_eq!(table.get(1).unwrap().gpa, 0x1000);
+        assert_eq!(table.get(1).unwrap().size_bytes, 0x2000);
+        assert_eq!(table.get(2).unwrap().gpa, 0x3000);
+        assert_eq!(table.get(2).unwrap().size_bytes, 0x4000);
+    }
+
+    #[test]
+    fn alloc_table_decode_accepts_extended_entry_stride_bytes() {
+        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES as u32 + 16;
+        let table_bytes = build_alloc_table_with_stride(
+            &[(1, 0x1000, 0x2000), (2, 0x3000, 0x4000)],
+            entry_stride,
+        );
+        let table_gpa = 0x120u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
         let table =
