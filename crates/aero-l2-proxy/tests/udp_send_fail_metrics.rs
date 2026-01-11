@@ -288,4 +288,3 @@ async fn udp_send_fail_metric_increments_on_icmp_unreachable() {
     ws_tx.send(Message::Close(None)).await.unwrap();
     proxy.shutdown().await;
 }
-

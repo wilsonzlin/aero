@@ -2170,8 +2170,13 @@ fn alloc_table_descriptor_requires_gpa_and_size_bytes_to_match() {
         );
 
         // alloc_table_size_bytes set but gpa=0 must also be rejected.
-        let report =
-            exec.process_submission_from_guest_memory(&mut guest, cmd_gpa, stream.len() as u32, 0, 24);
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_gpa,
+            stream.len() as u32,
+            0,
+            24,
+        );
         assert!(
             !report.is_ok(),
             "expected error for inconsistent alloc_table_gpa/size, got ok"
