@@ -67,6 +67,8 @@ Expected behavior:
     - `GET /metrics` – Prometheus metrics
   - Node harness:
     - `GET /healthz` – liveness
+    - `GET /readyz` – readiness
+    - `GET /version` – build/version info
     - `GET /metrics` – Prometheus metrics (quota/upgrade harness stats)
 - The Rust proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
 

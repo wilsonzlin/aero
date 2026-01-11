@@ -86,6 +86,19 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
       res.end(JSON.stringify({ ok: true }));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/readyz") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/version") {
+      const version = process.env.AERO_L2_PROXY_VERSION ?? "dev";
+      const gitSha = process.env.AERO_L2_PROXY_GIT_SHA ?? process.env.GIT_SHA ?? "dev";
+      const builtAt = process.env.AERO_L2_PROXY_BUILD_TIMESTAMP ?? process.env.BUILD_TIMESTAMP ?? "";
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ version, gitSha, builtAt }));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/metrics") {
       const body = metrics.renderPrometheus();
       res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8" });

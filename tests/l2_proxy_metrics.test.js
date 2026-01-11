@@ -51,6 +51,22 @@ test("node l2 proxy exposes /metrics and counts rx frames", async () => {
   const port = getServerPort(proxy.server);
 
   try {
+    {
+      const res = await fetch(`http://127.0.0.1:${port}/readyz`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.deepEqual(body, { ok: true });
+    }
+
+    {
+      const res = await fetch(`http://127.0.0.1:${port}/version`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(typeof body.version, "string");
+      assert.equal(typeof body.gitSha, "string");
+      assert.equal(typeof body.builtAt, "string");
+    }
+
     const ws = new WebSocket(`ws://127.0.0.1:${port}/l2`, ["aero-l2-tunnel-v1"]);
     await waitForOpen(ws);
     ws.send(Buffer.alloc(60));
