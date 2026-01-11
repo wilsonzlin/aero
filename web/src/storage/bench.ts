@@ -1,4 +1,5 @@
 import type { AsyncSectorDisk } from "./disk";
+import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
 
 export type BenchResult = {
   bytes: number;
@@ -11,7 +12,7 @@ export async function benchSequentialWrite(
   opts: { totalBytes: number; chunkBytes?: number },
 ): Promise<BenchResult> {
   const sectorSize = disk.sectorSize;
-  const chunkBytes = opts.chunkBytes ?? 1024 * 1024;
+  const chunkBytes = opts.chunkBytes ?? RANGE_STREAM_CHUNK_SIZE;
   const chunkAligned = Math.max(sectorSize, Math.floor(chunkBytes / sectorSize) * sectorSize);
   const totalAligned = Math.floor(opts.totalBytes / sectorSize) * sectorSize;
 
@@ -39,7 +40,7 @@ export async function benchSequentialRead(
   opts: { totalBytes: number; chunkBytes?: number },
 ): Promise<BenchResult> {
   const sectorSize = disk.sectorSize;
-  const chunkBytes = opts.chunkBytes ?? 1024 * 1024;
+  const chunkBytes = opts.chunkBytes ?? RANGE_STREAM_CHUNK_SIZE;
   const chunkAligned = Math.max(sectorSize, Math.floor(chunkBytes / sectorSize) * sectorSize);
   const totalAligned = Math.floor(opts.totalBytes / sectorSize) * sectorSize;
 
