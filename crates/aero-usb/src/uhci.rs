@@ -1223,6 +1223,91 @@ mod tests {
         assert_eq!(irq.last_irq, Some(11));
     }
 
+    #[test]
+    fn uhci_short_packet_irq_is_gated_by_usbintr_short_packet() {
+        let io_base = 0x3180;
+        let mut ctrl = UhciController::new(io_base, 11);
+        ctrl.connect_device(0, Box::new(ShortPacketThenNakDevice::new()));
+
+        let mut mem = TestMemory::new(0x9000);
+        let mut irq = TestIrq::default();
+
+        ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PED as u32, &mut irq);
+        ctrl.port_write(io_base + REG_FRBASEADD, 4, 0x1000, &mut irq);
+        for i in 0..1024u32 {
+            mem.write_u32(0x1000 + i * 4, 0x2000 | LINK_PTR_Q);
+        }
+
+        mem.write_u32(0x2000, LINK_PTR_T);
+        mem.write_u32(0x2004, 0x3000);
+
+        let maxlen_field = (8u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
+        let token = 0x69u32 | maxlen_field;
+        mem.write_u32(0x3000, LINK_PTR_T);
+        mem.write_u32(0x3004, TD_CTRL_ACTIVE | TD_CTRL_SPD | 0x7FF);
+        mem.write_u32(0x3008, token);
+        mem.write_u32(0x300C, 0x4000);
+
+        ctrl.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut irq);
+        ctrl.step_frame(&mut mem, &mut irq);
+
+        // Short packet sets USBSTS_USBINT regardless of interrupt enable bits, but IRQ should remain
+        // deasserted until USBINTR_SHORT_PACKET is enabled.
+        assert_ne!(ctrl.usbsts & USBSTS_USBINT, 0);
+        assert_ne!(ctrl.usbint_causes & USBINT_CAUSE_SHORT_PACKET, 0);
+        assert!(!irq.raised);
+
+        ctrl.port_write(
+            io_base + REG_USBINTR,
+            2,
+            USBINTR_SHORT_PACKET as u32,
+            &mut irq,
+        );
+        assert!(irq.raised);
+        assert_eq!(irq.last_irq, Some(11));
+
+        ctrl.port_write(io_base + REG_USBSTS, 2, USBSTS_USBINT as u32, &mut irq);
+        assert!(!irq.raised);
+        assert_eq!(ctrl.usbint_causes, 0);
+    }
+
+    #[test]
+    fn uhci_ioc_irq_is_gated_by_usbintr_ioc() {
+        let io_base = 0x3190;
+        let mut ctrl = UhciController::new(io_base, 11);
+        ctrl.connect_device(0, Box::new(SimpleInDevice::new(b"ABCD")));
+
+        let mut mem = TestMemory::new(0x9000);
+        let mut irq = TestIrq::default();
+
+        ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PED as u32, &mut irq);
+        ctrl.port_write(io_base + REG_FRBASEADD, 4, 0x1000, &mut irq);
+        for i in 0..1024u32 {
+            mem.write_u32(0x1000 + i * 4, 0x2000 | LINK_PTR_Q);
+        }
+
+        mem.write_u32(0x2000, LINK_PTR_T);
+        mem.write_u32(0x2004, 0x3000);
+
+        let maxlen_field = (4u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
+        let token = 0x69u32 | maxlen_field;
+        mem.write_u32(0x3000, LINK_PTR_T);
+        mem.write_u32(0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
+        mem.write_u32(0x3008, token);
+        mem.write_u32(0x300C, 0x4000);
+
+        ctrl.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut irq);
+        ctrl.step_frame(&mut mem, &mut irq);
+
+        assert_ne!(ctrl.usbsts & USBSTS_USBINT, 0);
+        assert_ne!(ctrl.usbint_causes & USBINT_CAUSE_IOC, 0);
+        assert!(!irq.raised);
+
+        ctrl.port_write(io_base + REG_USBINTR, 2, USBINTR_IOC as u32, &mut irq);
+        assert!(irq.raised);
+        assert_eq!(irq.last_irq, Some(11));
+    }
+
     struct StallDevice;
 
     impl UsbDevice for StallDevice {
