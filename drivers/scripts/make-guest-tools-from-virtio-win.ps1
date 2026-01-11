@@ -1,3 +1,37 @@
+<#
+.SYNOPSIS
+Build Aero Guest Tools media (ISO + zip) from an upstream virtio-win ISO/root.
+
+.DESCRIPTION
+This script wraps:
+
+- `drivers/scripts/make-driver-pack.ps1` (extracts Win7 driver packages from virtio-win)
+- `tools/packaging/aero_packager/` (packages Guest Tools scripts + drivers into ISO/zip)
+
+Use `-Profile` to choose a predictable driver set:
+
+- `full` (default): includes optional audio/input drivers when present
+- `minimal`: storage+network only (avoids optional-driver warnings and keeps outputs minimal)
+
+Precedence:
+
+- `-SpecPath` overrides the profile’s spec selection.
+- `-Drivers` overrides the profile’s extraction driver list.
+
+.EXAMPLE
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -Profile full `
+  -OutDir .\dist\guest-tools
+
+.EXAMPLE
+# Minimal packaging (storage+network only).
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -Profile minimal `
+  -OutDir .\dist\guest-tools
+#>
+
 [CmdletBinding(DefaultParameterSetName = "FromIso")]
 param(
   [Parameter(Mandatory = $true, ParameterSetName = "FromIso")]
