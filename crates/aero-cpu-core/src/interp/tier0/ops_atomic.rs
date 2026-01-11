@@ -110,12 +110,12 @@ fn exec_cmpxchg8b<B: CpuBus>(
     if instr.op_count() != 1 || instr.op_kind(0) != OpKind::Memory {
         return Err(Exception::InvalidOpcode);
     }
- 
+
     let addr = calc_ea(state, instr, next_ip, true)?;
-    let expected = (state.read_reg(Register::EDX) << 32)
-        | (state.read_reg(Register::EAX) as u32 as u64);
-    let replacement = (state.read_reg(Register::ECX) << 32)
-        | (state.read_reg(Register::EBX) as u32 as u64);
+    let expected =
+        (state.read_reg(Register::EDX) << 32) | (state.read_reg(Register::EAX) as u32 as u64);
+    let replacement =
+        (state.read_reg(Register::ECX) << 32) | (state.read_reg(Register::EBX) as u32 as u64);
     let lock = instr.has_lock_prefix();
 
     let (old, swapped) = if lock {

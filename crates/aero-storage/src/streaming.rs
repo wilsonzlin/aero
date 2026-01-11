@@ -562,7 +562,10 @@ impl StreamingDisk {
         }
 
         if config.options.chunk_size == 0
-            || !config.options.chunk_size.is_multiple_of(DEFAULT_SECTOR_SIZE)
+            || !config
+                .options
+                .chunk_size
+                .is_multiple_of(DEFAULT_SECTOR_SIZE)
         {
             return Err(StreamingDiskError::Protocol(format!(
                 "chunk_size must be a non-zero multiple of sector size ({DEFAULT_SECTOR_SIZE})"
@@ -760,12 +763,12 @@ impl StreamingDisk {
         let token = self.inner.cancel_token.lock().await.clone();
         let chunk_size = self.inner.options.chunk_size;
 
-            let (sequential, read_ahead_chunks) = {
-                let mut state = self.inner.state.lock().await;
-                let sequential = state.last_read_end.is_none_or(|prev| prev == offset);
-                state.last_read_end = Some(end);
-                (sequential, self.inner.options.read_ahead_chunks)
-            };
+        let (sequential, read_ahead_chunks) = {
+            let mut state = self.inner.state.lock().await;
+            let sequential = state.last_read_end.is_none_or(|prev| prev == offset);
+            state.last_read_end = Some(end);
+            (sequential, self.inner.options.read_ahead_chunks)
+        };
 
         let start_chunk = offset / chunk_size;
         let end_chunk = (end.saturating_sub(1)) / chunk_size;

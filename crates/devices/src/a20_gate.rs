@@ -37,9 +37,7 @@ impl IoSnapshot for A20Gate {
         self.a20.set_enabled(false);
 
         let value = r.u8(TAG_VALUE)?.unwrap_or(0) & !0x01;
-        let enabled = r
-            .bool(TAG_A20_ENABLED)?
-            .unwrap_or((value & 0x02) != 0);
+        let enabled = r.bool(TAG_A20_ENABLED)?.unwrap_or((value & 0x02) != 0);
 
         self.value = value;
         self.a20.set_enabled(enabled);

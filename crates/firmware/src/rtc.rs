@@ -277,8 +277,12 @@ impl CmosRtc {
         daylight_savings: u8,
     ) -> Result<(), RtcError> {
         let hour = self.decode_hour(hour).ok_or(RtcError::InvalidCmosField)?;
-        let minute = self.decode_field(minute).ok_or(RtcError::InvalidCmosField)?;
-        let second = self.decode_field(second).ok_or(RtcError::InvalidCmosField)?;
+        let minute = self
+            .decode_field(minute)
+            .ok_or(RtcError::InvalidCmosField)?;
+        let second = self
+            .decode_field(second)
+            .ok_or(RtcError::InvalidCmosField)?;
         if minute >= 60 || second >= 60 {
             return Err(RtcError::InvalidTimeOfDay);
         }
@@ -297,7 +301,9 @@ impl CmosRtc {
         month: u8,
         day: u8,
     ) -> Result<(), RtcError> {
-        let century = self.decode_field(century).ok_or(RtcError::InvalidCmosField)?;
+        let century = self
+            .decode_field(century)
+            .ok_or(RtcError::InvalidCmosField)?;
         let year = self.decode_field(year).ok_or(RtcError::InvalidCmosField)?;
         let month = self.decode_field(month).ok_or(RtcError::InvalidCmosField)?;
         let day = self.decode_field(day).ok_or(RtcError::InvalidCmosField)?;

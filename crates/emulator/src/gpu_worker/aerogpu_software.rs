@@ -647,7 +647,7 @@ impl AeroGpuSoftwareExecutor {
             AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8X8Unorm => Some([
                 tex.data[off + 2], // r
                 tex.data[off + 1], // g
-                tex.data[off], // b
+                tex.data[off],     // b
                 if matches!(tex.format, AeroGpuFormat::B8G8R8A8Unorm) {
                     tex.data[off + 3]
                 } else {

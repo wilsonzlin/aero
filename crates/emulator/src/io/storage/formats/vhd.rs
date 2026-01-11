@@ -137,8 +137,7 @@ impl<S: ByteStorage> VhdDisk<S> {
                 storage.read_at(footer.data_offset, &mut raw_header)?;
                 let dynamic = VhdDynamicHeader::parse(&raw_header)?;
 
-                let required_entries =
-                    footer.current_size.div_ceil(dynamic.block_size as u64);
+                let required_entries = footer.current_size.div_ceil(dynamic.block_size as u64);
                 if (dynamic.max_table_entries as u64) < required_entries {
                     return Err(DiskError::CorruptImage("vhd bat too small"));
                 }

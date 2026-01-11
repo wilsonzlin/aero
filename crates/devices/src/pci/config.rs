@@ -573,7 +573,10 @@ impl PciConfigSpace {
         // High dword of a 64-bit BAR.
         if self.bars[bar_index].def.is_none()
             && bar_index > 0
-            && matches!(self.bars[bar_index - 1].def, Some(PciBarDefinition::Mmio64 { .. }))
+            && matches!(
+                self.bars[bar_index - 1].def,
+                Some(PciBarDefinition::Mmio64 { .. })
+            )
         {
             return self.write_bar64_high(bar_index - 1, value);
         }
