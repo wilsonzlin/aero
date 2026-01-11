@@ -192,3 +192,14 @@ jobs:
             artifacts/*.vhd
             artifacts/*.exe
           generate_release_notes: true
+
+      - name: Upload Guest Tools artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aero-guest-tools
+          path: |
+            artifacts/aero-guest-tools.iso
+            artifacts/aero-guest-tools.zip
+            artifacts/aero-guest-tools.manifest.json
+            artifacts/manifest.json
+          if-no-files-found: error
