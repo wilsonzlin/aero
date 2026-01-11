@@ -16,6 +16,8 @@ const BUF_SETUP: u32 = 0x4000;
 const BUF_DATA: u32 = 0x5000;
 const BUF_HUB_INT: u32 = 0x6000;
 const BUF_KBD_INT: u32 = 0x6100;
+const BUF_KBD2_INT: u32 = 0x6120;
+const BUF_KBD3_INT: u32 = 0x6140;
 
 const PID_IN: u8 = 0x69;
 const PID_OUT: u8 = 0xe1;
@@ -192,6 +194,117 @@ fn control_no_data(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, addr: u8, set
     );
 
     run_one_frame(uhci, mem, TD0);
+}
+
+fn assert_tds_ok(mem: &mut TestMemBus, tds: &[u32]) {
+    for &td in tds {
+        let st = mem.read_u32(td as u64 + 4);
+        assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED), 0);
+    }
+}
+
+fn power_reset_and_clear_hub_port(
+    uhci: &mut UhciPciDevice,
+    mem: &mut TestMemBus,
+    hub_addr: u8,
+    port: u8,
+) {
+    // SET_FEATURE(PORT_POWER)
+    control_no_data(
+        uhci,
+        mem,
+        hub_addr,
+        [0x23, 0x03, 0x08, 0x00, port, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(mem, &[TD0, TD1]);
+
+    // SET_FEATURE(PORT_RESET)
+    control_no_data(
+        uhci,
+        mem,
+        hub_addr,
+        [0x23, 0x03, 0x04, 0x00, port, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(mem, &[TD0, TD1]);
+
+    // Advance time until reset completes.
+    for _ in 0..50 {
+        uhci.tick_1ms(mem);
+    }
+
+    // Clear change bits so subsequent interrupt polling is deterministic.
+    // CLEAR_FEATURE(C_PORT_RESET)
+    control_no_data(
+        uhci,
+        mem,
+        hub_addr,
+        [0x23, 0x01, 0x14, 0x00, port, 0x00, 0x00, 0x00],
+    );
+    // CLEAR_FEATURE(C_PORT_CONNECTION)
+    control_no_data(
+        uhci,
+        mem,
+        hub_addr,
+        [0x23, 0x01, 0x10, 0x00, port, 0x00, 0x00, 0x00],
+    );
+    // CLEAR_FEATURE(C_PORT_ENABLE)
+    control_no_data(
+        uhci,
+        mem,
+        hub_addr,
+        [0x23, 0x01, 0x11, 0x00, port, 0x00, 0x00, 0x00],
+    );
+}
+
+fn enumerate_keyboard(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, address: u8) {
+    let expected_keyboard_device_descriptor = [
+        0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01, 0x01, 0x02,
+        0x00, 0x01,
+    ];
+
+    // GET_DESCRIPTOR(Device) at address 0 (default-address state).
+    control_in(
+        uhci,
+        mem,
+        0,
+        [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 18, 0x00],
+        BUF_DATA,
+        18,
+    );
+    assert_tds_ok(mem, &[TD0, TD1, TD2]);
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + 18),
+        expected_keyboard_device_descriptor
+    );
+
+    // SET_ADDRESS(address)
+    control_no_data(
+        uhci,
+        mem,
+        0,
+        [0x00, 0x05, address, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(mem, &[TD0, TD1]);
+
+    // GET_DESCRIPTOR(Configuration) at new address.
+    control_in(
+        uhci,
+        mem,
+        address,
+        [0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 34, 0x00],
+        BUF_DATA,
+        34,
+    );
+    assert_tds_ok(mem, &[TD0, TD1, TD2]);
+
+    // SET_CONFIGURATION(1)
+    control_no_data(
+        uhci,
+        mem,
+        address,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(mem, &[TD0, TD1]);
 }
 
 #[test]
@@ -457,3 +570,125 @@ fn uhci_external_hub_enumerates_downstream_hid() {
     );
 }
 
+#[test]
+fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    // Root port 0 has an external hub with 3 keyboards on downstream ports 1..3.
+    let keyboard1 = UsbHidKeyboardHandle::new();
+    let keyboard2 = UsbHidKeyboardHandle::new();
+    let keyboard3 = UsbHidKeyboardHandle::new();
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(keyboard1.clone()));
+    hub.attach(2, Box::new(keyboard2.clone()));
+    hub.attach(3, Box::new(keyboard3.clone()));
+    uhci.controller.hub_mut().attach(0, Box::new(hub));
+
+    // Enable the root port and start the controller.
+    reset_root_port(&mut uhci, &mut mem, 0x10);
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // Enumerate the hub itself at address 0 -> address 1, then configure it.
+    control_in(
+        &mut uhci,
+        &mut mem,
+        0,
+        [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 18, 0x00],
+        BUF_DATA,
+        18,
+    );
+    assert_tds_ok(&mut mem, &[TD0, TD1, TD2]);
+
+    control_no_data(
+        &mut uhci,
+        &mut mem,
+        0,
+        [0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(&mut mem, &[TD0, TD1]);
+
+    control_in(
+        &mut uhci,
+        &mut mem,
+        1,
+        [0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 25, 0x00],
+        BUF_DATA,
+        25,
+    );
+    assert_tds_ok(&mut mem, &[TD0, TD1, TD2]);
+
+    control_no_data(
+        &mut uhci,
+        &mut mem,
+        1,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(&mut mem, &[TD0, TD1]);
+
+    // Power + reset each port, then enumerate each keyboard.
+    power_reset_and_clear_hub_port(&mut uhci, &mut mem, 1, 1);
+    enumerate_keyboard(&mut uhci, &mut mem, 5);
+
+    power_reset_and_clear_hub_port(&mut uhci, &mut mem, 1, 2);
+    enumerate_keyboard(&mut uhci, &mut mem, 6);
+
+    power_reset_and_clear_hub_port(&mut uhci, &mut mem, 1, 3);
+    enumerate_keyboard(&mut uhci, &mut mem, 7);
+
+    // Functional proof: each device has an independent interrupt-in endpoint.
+    keyboard1.key_event(0x04, true); // 'a'
+    keyboard2.key_event(0x05, true); // 'b'
+    keyboard3.key_event(0x06, true); // 'c'
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_KBD_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    let st = mem.read_u32(TD0 as u64 + 4);
+    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        mem.slice(BUF_KBD_INT as usize..BUF_KBD_INT as usize + 8),
+        [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]
+    );
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 6, 1, 0, 8),
+        BUF_KBD2_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    let st = mem.read_u32(TD0 as u64 + 4);
+    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        mem.slice(BUF_KBD2_INT as usize..BUF_KBD2_INT as usize + 8),
+        [0x00, 0x00, 0x05, 0, 0, 0, 0, 0]
+    );
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 7, 1, 0, 8),
+        BUF_KBD3_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    let st = mem.read_u32(TD0 as u64 + 4);
+    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        mem.slice(BUF_KBD3_INT as usize..BUF_KBD3_INT as usize + 8),
+        [0x00, 0x00, 0x06, 0, 0, 0, 0, 0]
+    );
+}
