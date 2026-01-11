@@ -50,10 +50,13 @@ fn assert_common_headers(headers: &axum::http::HeaderMap) {
             .contains("no-transform"),
         "Cache-Control must include no-transform"
     );
-    assert!(
-        !headers.contains_key(header::CONTENT_ENCODING),
-        "Content-Encoding must not be set for disk image responses"
-    );
+    if let Some(encoding) = headers.get(header::CONTENT_ENCODING) {
+        assert_eq!(
+            encoding.to_str().unwrap(),
+            "identity",
+            "Content-Encoding must be identity for disk image responses"
+        );
+    }
 }
 
 #[tokio::test]

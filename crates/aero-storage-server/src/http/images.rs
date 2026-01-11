@@ -249,6 +249,11 @@ async fn full_response(
         header::CONTENT_TYPE,
         HeaderValue::from_static(meta.content_type),
     );
+    headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("identity"));
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
     headers.insert(
         header::CONTENT_LENGTH,
         HeaderValue::from_str(&meta.size.to_string()).unwrap(),
@@ -301,6 +306,11 @@ async fn single_range_response(
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(meta.content_type),
+    );
+    headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("identity"));
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
     );
     headers.insert(
         header::CONTENT_RANGE,
