@@ -160,35 +160,3 @@ Byte 0: buttons
 Byte 1: X delta
 Byte 2: Y delta
 ```
-
----
-
-## Gamepad: Gamepad API → HID report
-
-The emulator models a simple USB HID **Game Pad** device (`Usage 0x05` on the
-Generic Desktop page) with:
-
-- 16 digital buttons (HID usages Button 1..16)
-- 1 hat switch (d-pad)
-- 4 analog axes: X, Y, Rx, Ry (`int8`, `-127..=127`)
-
-### Report model (8 bytes)
-
-The modeled gamepad uses a fixed 8-byte input report (no report ID):
-
-```
-Byte 0..1: Buttons bitfield (u16 little-endian)
-Byte 2:    Hat switch (low 4 bits). 0=Up, 1=Up-Right, … 7=Up-Left. 8 = neutral/null.
-Byte 3:    X  (int8)
-Byte 4:    Y  (int8)
-Byte 5:    Rx (int8)
-Byte 6:    Ry (int8)
-Byte 7:    Padding (0)
-```
-
-Notes:
-
-- The hat switch uses HID “Null state” (`Input (… Null)`) so the centered value
-  is represented by `8` (outside the logical range `0..=7`).
-- The canonical device implementation is `crates/emulator/src/io/usb/hid/gamepad.rs`;
-  host capture should match that layout exactly.
