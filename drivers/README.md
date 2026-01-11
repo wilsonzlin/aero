@@ -92,7 +92,11 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-is
   -OutIso .\dist\aero-virtio-win7-drivers.iso
 ```
 
-On non-Windows hosts, extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot` instead.
+On non-Windows hosts you have three options:
+
+- Use the `.sh` wrapper: `drivers/scripts/make-virtio-driver-iso.sh`
+- Extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot`
+- Run under `pwsh` and pass `-VirtioWinIso` directly (auto-extract fallback when `Mount-DiskImage` is unavailable)
 
 See also: `docs/virtio-windows-drivers.md`.
 
@@ -112,7 +116,11 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
 
 By default, this wrapper builds media with `signing_policy=none` (for WHQL/production-signed virtio-win drivers), so it does **not** require or inject any custom certificate files and `setup.cmd` will not prompt to enable Test Mode by default.
 
-On non-Windows hosts, extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot` instead.
+On non-Windows hosts you have three options:
+
+- Use the `.sh` wrapper: `drivers/scripts/make-guest-tools-from-virtio-win.sh`
+- Extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot`
+- Run under `pwsh` and pass `-VirtioWinIso` directly (auto-extract fallback when `Mount-DiskImage` is unavailable)
 
 Profiles:
 

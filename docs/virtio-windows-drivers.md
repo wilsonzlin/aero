@@ -219,8 +219,13 @@ python3 tools/driver-iso/build.py \
 
 ### Build an ISO from an upstream virtio-win ISO (recommended flow)
 
-On Windows you can mount `virtio-win.iso` directly. On Linux/macOS, extract it first with
-`tools/virtio-win/extract.py` and then pass `-VirtioWinRoot` to the PowerShell scripts.
+On Windows you can mount `virtio-win.iso` directly via `Mount-DiskImage`.
+
+On Linux/macOS, you can:
+
+- extract first with `tools/virtio-win/extract.py` and then pass `-VirtioWinRoot`, or
+- run under `pwsh` and pass `-VirtioWinIso` (auto-extract fallback when `Mount-DiskImage` is unavailable), or
+- use the one-shot `.sh` wrappers under `drivers/scripts/`.
 
 Quick one-liner wrapper (does both steps):
 
@@ -336,7 +341,8 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -SigningPolicy testsigning
 ```
 
-On Linux/macOS, extract first and pass `-VirtioWinRoot`:
+On Linux/macOS, you can either extract first and pass `-VirtioWinRoot`, pass `-VirtioWinIso` directly under `pwsh`
+(auto-extract fallback), or use the `.sh` wrapper (`drivers/scripts/make-guest-tools-from-virtio-win.sh`):
 
 ```bash
 python3 tools/virtio-win/extract.py \
