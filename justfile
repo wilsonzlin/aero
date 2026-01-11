@@ -46,6 +46,14 @@ _detect_wasm_crate_dir:
 
   just _warn_deprecated_env
 
+  # Keep the justfile forgiving for partial setups: if Node is not installed yet,
+  # treat the wasm crate as "not detected" (recipes that actually build WASM will
+  # require Node anyway).
+  if ! command -v node >/dev/null 2>&1; then
+    echo ""
+    exit 0
+  fi
+
   args=(--allow-missing)
   if [[ -n "${AERO_WASM_CRATE_DIR:-}" ]]; then
     args+=(--wasm-crate-dir "${AERO_WASM_CRATE_DIR}")
