@@ -14,4 +14,4 @@ pub mod wasm_codegen;
 pub use builder::{build_function_from_x86, CfgBuildConfig};
 pub use opt::optimize_trace;
 pub use trace::TraceBuilder;
-pub use wasm_codegen::Tier2WasmCodegen;
+pub use wasm_codegen::{Tier2WasmCodegen, Tier2WasmOptions};
