@@ -186,6 +186,23 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   const double kMaxSingleCallMs = 250.0;
 
   // --- Adapter LUID/display mode queries: DWM uses these to correlate adapters ---
+  {
+    D3DCAPS9 caps;
+    ZeroMemory(&caps, sizeof(caps));
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = d3d->GetDeviceCaps(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, &caps);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "GetDeviceCaps appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::GetDeviceCaps", hr);
+    }
+  }
+
   LUID adapter_luid;
   ZeroMemory(&adapter_luid, sizeof(adapter_luid));
   {

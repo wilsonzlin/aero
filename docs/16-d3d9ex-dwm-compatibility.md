@@ -417,6 +417,7 @@ At minimum, validate that:
 This test exists specifically to catch “DWM hang” failure modes caused by Ex-only device probes. It calls:
 
 - `IDirect3D9Ex::GetAdapterLUID`
+- `IDirect3D9Ex::GetDeviceCaps`
 - `IDirect3D9Ex::GetAdapterDisplayModeEx`
 - `IDirect3DDevice9Ex::CheckDeviceState`
 - `::ResetEx` (non-blocking)
