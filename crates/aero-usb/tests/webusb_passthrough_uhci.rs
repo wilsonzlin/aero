@@ -14,6 +14,9 @@ use util::{
     TD_CTRL_NAK, TD_CTRL_STALLED, USBCMD_RUN, USBINTR_IOC,
 };
 
+const USBINTR_SHORT_PACKET: u16 = 1 << 3;
+const TD_CTRL_SPD: u32 = 1 << 29;
+
 fn setup_packet_bytes(setup: SetupPacket) -> [u8; 8] {
     let mut bytes = [0u8; 8];
     bytes[0] = setup.request_type;
@@ -200,6 +203,130 @@ fn control_in_pending_produces_td_nak_until_completion() {
         passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
         "expected no new host actions after completion"
     );
+}
+
+#[test]
+fn control_in_short_completion_with_spd_stops_additional_data_tds_in_frame() {
+    let io_base = 0x5240;
+    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+
+    // Enable short packet interrupts so the test can observe IRQ assertion.
+    ctrl.port_write(
+        io_base + REG_USBINTR,
+        2,
+        (USBINTR_IOC | USBINTR_SHORT_PACKET) as u32,
+        &mut irq,
+    );
+    irq.raised = false;
+
+    // Control-IN request with a large wLength. The host completion will provide fewer bytes,
+    // resulting in a short packet on the first DATA TD.
+    let setup = SetupPacket {
+        request_type: 0x80,
+        request: 0x06,
+        value: 0x0100,
+        index: 0,
+        length: 128,
+    };
+
+    let qh_addr = alloc.alloc(0x20, 0x10);
+    let setup_buf = alloc.alloc(8, 0x10);
+    let setup_td = alloc.alloc(0x20, 0x10);
+    let data1_buf = alloc.alloc(64, 0x10);
+    let data1_td = alloc.alloc(0x20, 0x10);
+    let data2_buf = alloc.alloc(64, 0x10);
+    let data2_td = alloc.alloc(0x20, 0x10);
+    let status_td = alloc.alloc(0x20, 0x10);
+
+    mem.write(setup_buf, &setup_packet_bytes(setup));
+
+    write_td(
+        &mut mem,
+        setup_td,
+        data1_td,
+        td_ctrl(true, false),
+        td_token(0x2D, 0, 0, false, 8),
+        setup_buf,
+    );
+    // DATA stage: two 64-byte IN TDs, both with SPD so a short packet stops further TD processing
+    // within the same frame.
+    write_td(
+        &mut mem,
+        data1_td,
+        data2_td,
+        td_ctrl(true, false) | TD_CTRL_SPD,
+        td_token(0x69, 0, 0, true, 64),
+        data1_buf,
+    );
+    write_td(
+        &mut mem,
+        data2_td,
+        status_td,
+        td_ctrl(true, false) | TD_CTRL_SPD,
+        td_token(0x69, 0, 0, false, 64),
+        data2_buf,
+    );
+    // Status stage: OUT zero-length, DATA1.
+    write_td(
+        &mut mem,
+        status_td,
+        LINK_PTR_T,
+        td_ctrl(true, true),
+        td_token(0xE1, 0, 0, true, 0),
+        0,
+    );
+
+    write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
+    install_frame_list(&mut mem, fl_base, qh_addr);
+
+    // Frame #1: SETUP completes and first DATA TD NAKs (pending).
+    ctrl.step_frame(&mut mem, &mut irq);
+    assert_eq!(mem.read_u32(setup_td + 4) & TD_CTRL_ACTIVE, 0);
+    assert_ne!(mem.read_u32(data1_td + 4) & TD_CTRL_NAK, 0);
+
+    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    assert_eq!(actions.len(), 1);
+    let (id, _) = match actions.pop().unwrap() {
+        UsbHostAction::ControlIn { id, setup } => (id, setup),
+        other => panic!("unexpected action: {other:?}"),
+    };
+
+    // Provide a short completion (18 bytes).
+    let payload: Vec<u8> = (0u8..18u8).collect();
+    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlIn {
+        id,
+        result: UsbHostCompletionIn::Success {
+            data: payload.clone(),
+        },
+    });
+
+    // Frame #2: first DATA TD completes with a short packet and SPD stops processing within this
+    // QH, so the second DATA TD is not NAKed yet.
+    ctrl.step_frame(&mut mem, &mut irq);
+
+    let data1_ctrl = mem.read_u32(data1_td + 4);
+    assert_eq!(data1_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_eq!(actlen(data1_ctrl), payload.len());
+    assert_eq!(
+        &mem.data[data1_buf as usize..data1_buf as usize + payload.len()],
+        payload.as_slice()
+    );
+
+    let data2_ctrl = mem.read_u32(data2_td + 4);
+    assert_ne!(data2_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_eq!(data2_ctrl & TD_CTRL_NAK, 0);
+    assert!(irq.raised, "short packet interrupt should assert IRQ");
+
+    // Simulate a guest driver that handles the short packet interrupt by skipping the remaining
+    // DATA TDs and proceeding directly to the STATUS stage.
+    mem.write_u32(qh_addr + 4, status_td);
+
+    // Frame #3: STATUS stage completes (OUT ZLP).
+    ctrl.step_frame(&mut mem, &mut irq);
+    let status_ctrl = mem.read_u32(status_td + 4);
+    assert_eq!(status_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_eq!(actlen(status_ctrl), 0);
+    assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
 }
 
 #[test]
