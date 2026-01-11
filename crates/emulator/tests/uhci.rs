@@ -4,16 +4,16 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use emulator::io::usb::core::{UsbInResult, UsbOutResult};
-use emulator::io::usb::hid::composite::UsbCompositeHidInputHandle;
-use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
-use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
-use emulator::io::usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
-use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
-use emulator::io::usb::uhci::regs::{USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
-use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
+use emulator::io::usb::hid::{
+    UsbCompositeHidInputHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle, UsbHidPassthroughHandle,
+    UsbHidPassthroughOutputReport,
+};
 use emulator::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
+use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
+use emulator::io::usb::uhci::regs::{USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
+use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::PortIO;
 use memory::MemoryBus;
 
@@ -1547,11 +1547,8 @@ fn uhci_composite_hid_device_exposes_keyboard_mouse_gamepad() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
-    let composite = UsbCompositeHidInputHandle::new();
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(composite.clone()));
+    let (mut uhci, composite): (UhciPciDevice, UsbCompositeHidInputHandle) =
+        UhciPciDevice::new_with_composite_input(0);
     reset_port(&mut uhci, &mut mem, 0x10);
 
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);

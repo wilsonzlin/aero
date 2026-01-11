@@ -9,6 +9,8 @@ pub mod webhid;
 
 pub use composite::UsbCompositeHidInputHandle;
 pub use gamepad::UsbHidGamepadHandle;
+pub use keyboard::UsbHidKeyboardHandle;
+pub use mouse::UsbHidMouseHandle;
 
 pub use report_descriptor::{
     has_report_ids, max_feature_report_bytes, max_input_report_bytes, max_output_report_bytes,
