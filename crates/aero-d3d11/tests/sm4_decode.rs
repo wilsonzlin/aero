@@ -680,6 +680,50 @@ fn decodes_sample_and_sample_l() {
 }
 
 #[test]
+fn decodes_sample_via_structural_fallback() {
+    const DCL_DUMMY: u32 = 0x280;
+    const OPCODE_UNKNOWN_SAMPLE: u32 = 0x44;
+
+    let mut body = Vec::<u32>::new();
+
+    // Decls to skip.
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY, 2), 1]);
+
+    // Unknown-opcode sample: sample r0, v0, t0, s0
+    let mut sample = vec![opcode_token(OPCODE_UNKNOWN_SAMPLE, 1 + 2 + 2 + 2 + 2)];
+    sample.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    sample.extend_from_slice(&reg_src(
+        OPERAND_TYPE_INPUT,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    sample.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    sample.extend_from_slice(&reg_src(
+        OPERAND_TYPE_SAMPLER,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&sample);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = program.decode().expect("decode");
+
+    assert_eq!(module.decls, vec![Sm4Decl::Unknown { opcode: DCL_DUMMY }]);
+    assert!(matches!(module.instructions[0], Sm4Inst::Sample { .. }));
+}
+
+#[test]
 fn decodes_ld_texture_load() {
     let mut body = Vec::<u32>::new();
 
