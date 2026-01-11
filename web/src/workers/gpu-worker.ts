@@ -185,6 +185,7 @@ let presenterSrcHeight = 0;
 // -----------------------------------------------------------------------------
 
 const aerogpuContexts = new Map<number, AerogpuCpuExecutorState>();
+const aerogpuWasmExecutorContexts = new Set<number>();
 
 type AerogpuLastPresentedFrame = NonNullable<AerogpuCpuExecutorState["lastPresentedFrame"]>;
 let aerogpuLastPresentedFrame: AerogpuLastPresentedFrame | null = null;
@@ -205,6 +206,7 @@ const resetAerogpuContexts = (): void => {
     resetAerogpuCpuExecutorState(state);
   }
   aerogpuContexts.clear();
+  aerogpuWasmExecutorContexts.clear();
   aerogpuLastPresentedFrame = null;
   aerogpuPresentCount = 0n;
 };
@@ -1444,6 +1446,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
   const contextId = typeof rawContextId === "number" && Number.isFinite(rawContextId) ? rawContextId >>> 0 : 0;
   const aerogpuState = getAerogpuContextState(contextId);
   const requiresD3d9 = cmdAnalysis.requiresD3d9;
+  const contextPrefersWasmExecutor = aerogpuWasmExecutorContexts.has(contextId);
 
   let presentCount: bigint | undefined = undefined;
   let submitOk = false;
@@ -1473,7 +1476,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
     const selectedBackend = presenter?.backend ?? forcedBackend;
     const isWgpuBackend = selectedBackend === "webgpu" || selectedBackend === "webgl2_wgpu";
 
-    const shouldUseWasmExecutor = !forceRawBackend && (requiresD3d9 || isWgpuBackend);
+    const shouldUseWasmExecutor = !forceRawBackend && (contextPrefersWasmExecutor || requiresD3d9 || isWgpuBackend);
 
     if (shouldUseWasmExecutor) {
       const disableWebGpu = runtimeOptions?.disableWebGpu === true;
@@ -1517,25 +1520,32 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
         const cmdU8 = new Uint8Array(req.cmdStream);
         const allocTableU8 = req.allocTable ? new Uint8Array(req.allocTable) : undefined;
 
-        await wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
+        const wasmSubmitResult = await wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
+        aerogpuWasmExecutorContexts.add(contextId);
 
-        if (cmdAnalysis.presentCount > 0n) {
-          aerogpuPresentCount += cmdAnalysis.presentCount;
+        if (typeof wasmSubmitResult.presentCount === "bigint") {
+          const presentDelta = cmdAnalysis.presentCount > 0n ? cmdAnalysis.presentCount : 1n;
+          aerogpuPresentCount += presentDelta;
           presentCount = aerogpuPresentCount;
           const shot = await wasm.request_screenshot_info();
-          const frame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
-          aerogpuState.lastPresentedFrame = frame;
-          aerogpuLastPresentedFrame = frame;
-          aerogpuLastOutputSource = "aerogpu";
+          const requiredShotBytes = shot.width * shot.height * BYTES_PER_PIXEL_RGBA8;
+          if (shot.width > 0 && shot.height > 0 && shot.rgba8.byteLength >= requiredShotBytes) {
+            const frame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
+            aerogpuState.lastPresentedFrame = frame;
+            aerogpuLastPresentedFrame = frame;
+            aerogpuLastOutputSource = "aerogpu";
 
-          if (presenter) {
-            if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
-              presenterSrcWidth = shot.width;
-              presenterSrcHeight = shot.height;
-              if (presenter.backend === "webgpu") surfaceReconfigures += 1;
-              presenter.resize(shot.width, shot.height, outputDpr);
+            if (presenter) {
+              if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
+                presenterSrcWidth = shot.width;
+                presenterSrcHeight = shot.height;
+                if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+                presenter.resize(shot.width, shot.height, outputDpr);
+              }
+              presenter.present(shot.rgba8, shot.width * BYTES_PER_PIXEL_RGBA8);
             }
-            presenter.present(shot.rgba8, shot.width * BYTES_PER_PIXEL_RGBA8);
+          } else {
+            aerogpuLastOutputSource = "aerogpu";
           }
         }
 
