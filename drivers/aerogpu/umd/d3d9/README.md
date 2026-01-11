@@ -144,6 +144,8 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnSetTextureStageState` (no-op, returns `S_OK`)
 - `pfnSetTransform` / `pfnMultiplyTransform` / `pfnSetClipPlane` (no-op, returns `S_OK`)
 - `pfnSetShaderConstI` / `pfnSetShaderConstB` (no-op, returns `S_OK`)
+- `pfnSetMaterial` / `pfnSetLight` / `pfnLightEnable` (no-op, returns `S_OK`)
+- `pfnSetNPatchMode` / `pfnSetStreamSourceFreq` / `pfnSetGammaRamp` (no-op, returns `S_OK`)
 
 ### Caps/feature gating
 

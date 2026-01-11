@@ -115,6 +115,12 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceSetClipPlane,
   DeviceSetShaderConstI,
   DeviceSetShaderConstB,
+  DeviceSetMaterial,
+  DeviceSetLight,
+  DeviceLightEnable,
+  DeviceSetNPatchMode,
+  DeviceSetStreamSourceFreq,
+  DeviceSetGammaRamp,
 
   kCount,
 };

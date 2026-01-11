@@ -189,6 +189,12 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnMultiplyTransform);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetClipPlane);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetShaderConstI);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetShaderConstB);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetMaterial);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetLight);
+AEROGPU_DEFINE_HAS_MEMBER(pfnLightEnable);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetNPatchMode);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetStreamSourceFreq);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetGammaRamp);
 
 // OpenResource arg fields (vary across WDK versions).
 AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
@@ -281,6 +287,16 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetClipPlane, D3d9TraceFunc::DeviceSetClipPlane,
 // keep DWM alive while we bring up shader translation.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetShaderConstI, D3d9TraceFunc::DeviceSetShaderConstI, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetShaderConstB, D3d9TraceFunc::DeviceSetShaderConstB, S_OK);
+
+// Fixed-function lighting/material, N-Patch, instancing, and gamma ramp are not
+// supported yet. Treat these as no-ops to avoid Win7 runtime crashes when apps
+// use legacy state paths.
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetMaterial, D3d9TraceFunc::DeviceSetMaterial, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetLight, D3d9TraceFunc::DeviceSetLight, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnLightEnable, D3d9TraceFunc::DeviceLightEnable, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetNPatchMode, D3d9TraceFunc::DeviceSetNPatchMode, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetStreamSourceFreq, D3d9TraceFunc::DeviceSetStreamSourceFreq, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetGammaRamp, D3d9TraceFunc::DeviceSetGammaRamp, S_OK);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
@@ -6854,6 +6870,28 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   AEROGPU_SET_D3D9DDI_FN(pfnSetSamplerState, device_set_sampler_state);
   AEROGPU_SET_D3D9DDI_FN(pfnSetRenderState, device_set_render_state);
+  if constexpr (aerogpu_has_member_pfnSetMaterial<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnSetMaterial,
+                           aerogpu_d3d9_stub_pfnSetMaterial<decltype(pDeviceFuncs->pfnSetMaterial)>::pfnSetMaterial);
+  }
+  if constexpr (aerogpu_has_member_pfnSetLight<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnSetLight, aerogpu_d3d9_stub_pfnSetLight<decltype(pDeviceFuncs->pfnSetLight)>::pfnSetLight);
+  }
+  if constexpr (aerogpu_has_member_pfnLightEnable<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnLightEnable,
+        aerogpu_d3d9_stub_pfnLightEnable<decltype(pDeviceFuncs->pfnLightEnable)>::pfnLightEnable);
+  }
+  if constexpr (aerogpu_has_member_pfnSetNPatchMode<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetNPatchMode,
+        aerogpu_d3d9_stub_pfnSetNPatchMode<decltype(pDeviceFuncs->pfnSetNPatchMode)>::pfnSetNPatchMode);
+  }
+  if constexpr (aerogpu_has_member_pfnSetGammaRamp<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetGammaRamp,
+        aerogpu_d3d9_stub_pfnSetGammaRamp<decltype(pDeviceFuncs->pfnSetGammaRamp)>::pfnSetGammaRamp);
+  }
   if constexpr (aerogpu_has_member_pfnSetTransform<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetTransform,
@@ -6893,6 +6931,11 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSource, device_set_stream_source);
+  if constexpr (aerogpu_has_member_pfnSetStreamSourceFreq<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSourceFreq,
+                           aerogpu_d3d9_stub_pfnSetStreamSourceFreq<decltype(
+                               pDeviceFuncs->pfnSetStreamSourceFreq)>::pfnSetStreamSourceFreq);
+  }
   AEROGPU_SET_D3D9DDI_FN(pfnSetIndices, device_set_indices);
   if constexpr (aerogpu_has_member_pfnBeginScene<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnBeginScene, device_begin_scene);

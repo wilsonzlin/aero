@@ -294,6 +294,18 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::SetShaderConstI (stub)";
     case D3d9TraceFunc::DeviceSetShaderConstB:
       return "Device::SetShaderConstB (stub)";
+    case D3d9TraceFunc::DeviceSetMaterial:
+      return "Device::SetMaterial (stub)";
+    case D3d9TraceFunc::DeviceSetLight:
+      return "Device::SetLight (stub)";
+    case D3d9TraceFunc::DeviceLightEnable:
+      return "Device::LightEnable (stub)";
+    case D3d9TraceFunc::DeviceSetNPatchMode:
+      return "Device::SetNPatchMode (stub)";
+    case D3d9TraceFunc::DeviceSetStreamSourceFreq:
+      return "Device::SetStreamSourceFreq (stub)";
+    case D3d9TraceFunc::DeviceSetGammaRamp:
+      return "Device::SetGammaRamp (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }
