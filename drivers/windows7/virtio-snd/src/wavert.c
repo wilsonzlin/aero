@@ -442,7 +442,28 @@ VirtIoSndWaveRtDpcRoutine(
     dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
 
     if (stream->Capture) {
-        if (dx == NULL || dx->Removed || !dx->Started || bufferMdl == NULL) {
+        if (dx == NULL || dx->Removed || !dx->Started) {
+            /*
+             * If the virtio transport is unavailable (e.g. ForceNullBackend bring-up,
+             * START_DEVICE failure, or device removal), keep the WaveRT capture pin
+             * progressing with deterministic silence so user-mode capture clients
+             * don't stall.
+             */
+            startOffsetBytes = stream->RxWriteOffsetBytes;
+            stream->RxPendingOffsetBytes = startOffsetBytes;
+            KeReleaseSpinLock(&stream->Lock, oldIrql);
+
+            VirtIoSndWaveRtRxCompletion(stream,
+                                        STATUS_SUCCESS,
+                                        VIRTIO_SND_S_OK,
+                                        0,
+                                        0,
+                                        (UINT32)sizeof(VIRTIO_SND_PCM_STATUS),
+                                        NULL);
+            goto Exit;
+        }
+
+        if (bufferMdl == NULL) {
             KeReleaseSpinLock(&stream->Lock, oldIrql);
             goto Exit;
         }
