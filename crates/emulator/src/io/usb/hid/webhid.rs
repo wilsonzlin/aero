@@ -180,7 +180,7 @@ pub struct HidReportItem {
     pub has_null: bool,
     #[serde(default = "default_true")]
     pub has_preferred_state: bool,
-    #[serde(default)]
+    #[serde(default, alias = "wrap")]
     pub is_wrapped: bool,
 }
 

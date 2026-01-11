@@ -101,8 +101,10 @@ Collection type codes (as used by the WebHID API, our normalization layer, and b
 
 JSON note:
 
-- In our normalized metadata JSON we keep the WebHID string enum in the `type` field (e.g. `"application"`).
-- The Rust deserializer also accepts a numeric `collectionType` code (`0..=6`) for resilience (e.g. older fixtures/tools or hand-authored metadata).
+- In our normalized metadata JSON we store the numeric HID `collectionType` code (`0..=6`) that matches
+  the `Collection(...)` main item payload.
+- For resilience, the Rust deserializer also accepts the WebHID field name `type` (either the string
+  enum like `"application"` or a numeric code).
 
 ### Reports (`HIDReportInfo`)
 
@@ -129,8 +131,8 @@ Each `HIDReportItem` maps to:
 
 We treat the WebHID `HIDReportInfo` that the item came from as the authoritative “main item kind” (`Input` vs `Output` vs `Feature`).
 
-WebHID exposes the following boolean properties on `HIDReportItem` (as reflected by
-`@types/w3c-web-hid` and preserved by our normalizer):
+WebHID exposes the following boolean properties on `HIDReportItem` (as defined by the WICG spec and
+exposed by Chromium; note that some WebHID type definitions use `wrap` instead of `isWrapped`):
 
 - `isConstant`
 - `isArray`

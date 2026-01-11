@@ -56,11 +56,17 @@ export interface HidReportItem {
   isConstant: boolean;
   isLinear: boolean;
   isRange: boolean;
-  isRelative: boolean;
+  // WebHID exposes both `isAbsolute` and `isRelative` (redundant). Some WebHID type definitions omit
+  // `isRelative`; we derive it as `!isAbsolute` when absent.
+  isRelative?: boolean;
   isVolatile: boolean;
   hasNull: boolean;
   hasPreferredState: boolean;
-  isWrapped: boolean;
+  // Wrap flag (HID main-item bit3).
+  //
+  // Chromium exposes this as `isWrapped`. Some WebHID type definitions use the older `wrap` name.
+  isWrapped?: boolean;
+  wrap?: boolean;
 }
 
 export interface HidReportInfo {
@@ -87,8 +93,13 @@ export interface NormalizedHidCollectionInfo {
   outputReports: readonly NormalizedHidReportInfo[];
   featureReports: readonly NormalizedHidReportInfo[];
 }
-export type NormalizedHidReportInfo = HidReportInfo;
-export type NormalizedHidReportItem = HidReportItem;
+export type NormalizedHidReportItem = Omit<HidReportItem, "isRelative" | "isWrapped" | "wrap"> & {
+  isRelative: boolean;
+  isWrapped: boolean;
+};
+export type NormalizedHidReportInfo = Omit<HidReportInfo, "items"> & {
+  items: readonly NormalizedHidReportItem[];
+};
 
 export const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
 
@@ -180,6 +191,9 @@ function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
       : [usageMinimum, usageMaximum]
     : Array.from(rawUsages);
 
+  const isRelative = item.isRelative ?? !item.isAbsolute;
+  const isWrapped = item.isWrapped ?? item.wrap ?? false;
+
   return {
     usagePage: item.usagePage,
     usages,
@@ -206,11 +220,11 @@ function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
     isConstant: item.isConstant,
     isLinear: item.isLinear,
     isRange,
-    isRelative: item.isRelative,
+    isRelative,
     isVolatile: item.isVolatile,
     hasNull: item.hasNull,
     hasPreferredState: item.hasPreferredState,
-    isWrapped: item.isWrapped,
+    isWrapped,
   };
 }
 

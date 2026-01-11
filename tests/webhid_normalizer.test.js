@@ -87,3 +87,22 @@ test('webhid_normalize: does not iterate huge usages lists for isRange items', (
   assert.ok(out.usages.length <= 2);
   assert.deepEqual(out.usages, [1, 12345]);
 });
+
+test('webhid_normalize: accepts wrap (alias for isWrapped)', () => {
+  const item = makeItem();
+  delete item.isWrapped;
+  item.wrap = true;
+
+  const out = normalizeSingleItem(item);
+  assert.equal(out.isWrapped, true);
+  assert.equal('wrap' in out, false);
+});
+
+test('webhid_normalize: derives isRelative when omitted', () => {
+  const item = makeItem({ isAbsolute: false });
+  delete item.isRelative;
+
+  const out = normalizeSingleItem(item);
+  assert.equal(out.isAbsolute, false);
+  assert.equal(out.isRelative, true);
+});

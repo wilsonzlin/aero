@@ -115,3 +115,57 @@ fn webhid_collection_type_serializes_as_numeric_collection_type_field() {
         "normalized JSON should not use the WebHID string enum field name: {value}"
     );
 }
+
+#[test]
+fn webhid_report_item_accepts_wrap_alias() {
+    let collection = deserialize_collection(
+        r#"{
+          "usagePage": 1,
+          "usage": 0,
+          "collectionType": 1,
+          "children": [],
+          "inputReports": [
+            {
+              "reportId": 0,
+              "items": [
+                {
+                  "usagePage": 1,
+                  "usages": [48],
+                  "usageMinimum": 0,
+                  "usageMaximum": 0,
+                  "reportSize": 8,
+                  "reportCount": 1,
+                  "unitExponent": 0,
+                  "unit": 0,
+                  "logicalMinimum": 0,
+                  "logicalMaximum": 1,
+                  "physicalMinimum": 0,
+                  "physicalMaximum": 0,
+                  "strings": [],
+                  "stringMinimum": 0,
+                  "stringMaximum": 0,
+                  "designators": [],
+                  "designatorMinimum": 0,
+                  "designatorMaximum": 0,
+                  "isAbsolute": true,
+                  "isArray": true,
+                  "isBufferedBytes": false,
+                  "isConstant": false,
+                  "isLinear": true,
+                  "isRange": false,
+                  "isRelative": false,
+                  "isVolatile": false,
+                  "hasNull": false,
+                  "hasPreferredState": true,
+                  "wrap": true
+                }
+              ]
+            }
+          ],
+          "outputReports": [],
+          "featureReports": []
+        }"#,
+    );
+
+    assert!(collection.input_reports[0].items[0].is_wrapped);
+}
