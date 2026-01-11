@@ -140,6 +140,42 @@ if git grep -n "aerogpu_alloc_privdata" -- \
   die "stale references to aerogpu_alloc_privdata found (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
 fi
 
+# Win7 test suite docs: keep the README's "Expected results" list in sync with the
+# test manifest so newly-added tests stay documented.
+if command -v python3 >/dev/null 2>&1; then
+  python3 - <<'PY'
+import re
+from pathlib import Path
+
+manifest_path = Path("drivers/aerogpu/tests/win7/tests_manifest.txt")
+readme_path = Path("drivers/aerogpu/tests/win7/README.md")
+
+manifest_tests = []
+for raw in manifest_path.read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or line.startswith(";"):
+        continue
+    manifest_tests.append(line)
+
+mentioned = set()
+for raw in readme_path.read_text(encoding="utf-8").splitlines():
+    # Only consider top-level bullets (`* ...`), not nested bullets.
+    m = re.match(r"^\* `([a-z0-9_]+)`", raw)
+    if m:
+        mentioned.add(m.group(1))
+
+missing = [t for t in manifest_tests if t not in mentioned]
+if missing:
+    raise SystemExit(
+        f"{readme_path}: missing Expected results bullets for manifest test(s): {', '.join(missing)}"
+    )
+
+print("Win7 test README check: OK")
+PY
+else
+  echo "warning: python3 not found; skipping Win7 test README check" >&2
+fi
+
 # npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
 # (Per-package lockfiles are ignored via .gitignore, but this catches forced adds.)
 mapfile -t npm_lockfiles < <(git ls-files | grep -E '(^|/)package-lock\.json$' || true)
