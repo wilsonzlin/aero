@@ -344,7 +344,7 @@ The exact set can vary, but in practice the Win7 D3D11 runtime usually needs at 
 
 | `D3D11DDIARG_GETCAPS::Type` | Required? | What to return (conservative baseline) |
 |---|---:|---|
-| `D3D11DDICAPS_TYPE_FEATURE_LEVELS` | Yes | Return a feature level list containing `D3D_FEATURE_LEVEL_10_0` (and *only* the levels you truly support). In practice, Win7-era runtimes/headers may interpret the buffer as either `{ UINT NumFeatureLevels; const D3D_FEATURE_LEVEL* pFeatureLevels; }` **or** `{ UINT NumFeatureLevels; D3D_FEATURE_LEVEL FeatureLevels[...]; }` (inline). When possible, populate both layouts to avoid mismatched interpretation; on x86 the pointer field overlaps the first inline element, so you cannot satisfy both simultaneously. |
+| `D3D11DDICAPS_TYPE_FEATURE_LEVELS` | Yes | Return a feature level list containing `D3D_FEATURE_LEVEL_10_0` (and *only* the levels you truly support). In practice, Win7-era runtimes/headers may interpret the buffer as either `{ UINT NumFeatureLevels; const D3D_FEATURE_LEVEL* pFeatureLevels; }` **or** `{ UINT NumFeatureLevels; D3D_FEATURE_LEVEL FeatureLevels[...]; }` (inline). When possible (x64), populate both layouts to avoid mismatched interpretation. On x86 the pointer field overlaps the first inline element, so you **cannot** satisfy both simultaneously; prefer the `{count, pointer}` layout because returning an inline `D3D_FEATURE_LEVEL` value where a pointer is expected can crash the runtime (attempting to dereference e.g. `0xA000`). |
 | `D3D11DDICAPS_TYPE_THREADING` | Yes | Disable advanced threading unless implemented: `DriverConcurrentCreates = FALSE`, `DriverCommandLists = FALSE`. |
 | `D3D11DDICAPS_TYPE_SHADER` | Yes | Claim only SM4.x for FL10_0: VS/GS/PS `*_4_0`-class support; no SM5-only stages. The output begins with per-stage shader-model “version tokens” (`UINT`) in DXBC encoding: `(program_type << 16) | (major << 4) | minor` (typically PS/VS/GS/HS/DS/CS order), with unimplemented stages left as 0. |
 | `D3D11DDICAPS_TYPE_FORMAT` | Yes | Report support for the formats you need for DXGI swapchains + staging readback (see §3.3). |
@@ -352,7 +352,7 @@ The exact set can vary, but in practice the Win7 D3D11 runtime usually needs at 
 | `D3D11DDICAPS_TYPE_D3D11_OPTIONS` | Recommended | Return all options `FALSE` initially (no UAV-only features, no logic ops, etc). |
 | `D3D11DDICAPS_TYPE_ARCHITECTURE_INFO` | Recommended | Conservative: `TileBasedDeferredRenderer = FALSE`, `UMA = FALSE`, `CacheCoherentUMA = FALSE`. |
 | `D3D11DDICAPS_TYPE_DOUBLES` | Recommended | For FL10_0 bring-up: return `DoublePrecisionFloatShaderOps = FALSE`. |
-| `D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS` | Recommended | If asked for `SampleCount==1`, return `NumQualityLevels >= 1` for supported formats (Win7 apps often probe this early). |
+| `D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS` | Recommended | If asked for `SampleCount==1`, return `NumQualityLevels >= 1` **only** for supported formats (Win7 apps often probe this early). Return `0` for unsupported formats so DXGI/D3D won’t pick an MSAA path for a format you can’t create. |
 
 > Why “Recommended” is still important: many apps call `ID3D11Device::CheckFeatureSupport(...)`
 > early. Even if the runtime can create a device without these, returning garbage here causes
