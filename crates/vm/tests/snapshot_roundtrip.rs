@@ -267,3 +267,38 @@ fn snapshot_restore_requires_full_dirty_parent_chain() {
     assert_eq!(restored.mem.read_u8(0x1111), 0xAA);
     assert_eq!(restored.mem.read_u8(0x2222), 0xBB);
 }
+
+#[test]
+fn snapshot_restore_full_snapshot_ignores_existing_last_snapshot_id() {
+    let cfg = BiosConfig {
+        memory_size_bytes: 16 * 1024 * 1024,
+        boot_drive: 0x80,
+        ..BiosConfig::default()
+    };
+    let bios = Bios::new(cfg.clone());
+    let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = Vm::new(16 * 1024 * 1024, bios, disk);
+    vm.reset();
+
+    let base = vm.save_snapshot(SnapshotOptions::default()).unwrap();
+    let expected_rip = vm.cpu.rip;
+    let expected_cs = vm.cpu.cs.selector;
+    let expected_boot_opcode = vm.mem.read_u8(0x7C00);
+
+    // Create a VM that already has a non-None last_snapshot_id, then restore a full snapshot into it.
+    // Full snapshots are standalone and must ignore parent validation.
+    let bios2 = Bios::new(cfg);
+    let disk2 = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+    let mut restored = Vm::new(16 * 1024 * 1024, bios2, disk2);
+    restored.reset();
+
+    // Take any snapshot to set last_snapshot_id, then perturb state so restore definitely does work.
+    let _ = restored.save_snapshot(SnapshotOptions::default()).unwrap();
+    restored.cpu.rip = 0;
+
+    restored.restore_snapshot(&base).unwrap();
+    assert_eq!(restored.cpu.rip, expected_rip);
+    assert_eq!(restored.cpu.cs.selector, expected_cs);
+    assert_eq!(restored.mem.read_u8(0x7C00), expected_boot_opcode);
+}
