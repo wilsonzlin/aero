@@ -117,6 +117,13 @@ jobs:
           test -f web/src/wasm/pkg-single/aero_wasm_bg.wasm
           test -f web/src/wasm/pkg-threaded/aero_wasm_bg.wasm
 
+          variant_count="$(find web/dist -name 'aero_wasm_bg*.wasm' | wc -l | tr -d '[:space:]')"
+          if [[ "${variant_count}" -lt 2 ]]; then
+            echo "Expected both WASM variants to be present in the dist bundle (aero_wasm_bg*.wasm). Found: ${variant_count}" >&2
+            find web/dist -name 'aero_wasm_bg*.wasm' -print >&2 || true
+            exit 1
+          fi
+
           wasm_count="$(find web/dist -name '*.wasm' | wc -l | tr -d '[:space:]')"
           if [[ "${wasm_count}" -lt 2 ]]; then
             echo "Expected at least 2 .wasm files in web/dist (single + threaded), found: ${wasm_count}" >&2
