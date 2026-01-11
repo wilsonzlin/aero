@@ -232,7 +232,7 @@ Some QEMU virtio device types report `REV_00` by default. Once the Aero drivers 
 contract Revision ID, they will refuse to bind unless QEMU is told to advertise `REV_01`.
 
 The harness sets `disable-legacy=on` for virtio-net/virtio-blk/virtio-input so QEMU does **not** expose
-the legacy I/O-port transport (transitional devices enumerate as `DEV_1000/DEV_1001/DEV_1011`). This matches
+the legacy I/O-port transport (transitional devices enumerate with the older `0x1000..` PCI Device IDs such as `1AF4:1000/1001/1011`). This matches
 [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO` v1),
 which is modern-only.
 
@@ -250,7 +250,7 @@ python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-
 
 ### Transitional virtio fallback (older QEMU / legacy drivers)
 
-If your QEMU build does not support `disable-legacy=on` (or you need transitional device IDs like `DEV_1000/DEV_1001`), you can opt back into the previous layout:
+If your QEMU build does not support `disable-legacy=on` (or you need transitional device IDs in the older `0x1000..` range), you can opt back into the previous layout:
 
 - PowerShell: add `-VirtioTransitional`
 - Python: add `--virtio-transitional`
