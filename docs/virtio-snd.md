@@ -173,15 +173,25 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
 
 - Implement a WDM audio miniport (PortCls / WaveRT) that:
   - Enumerates as a standard Windows audio endpoint.
-  - Uses the Aero virtio legacy (I/O-port) transport and split virtqueues to:
+  - Uses the Aero **virtio-pci modern** transport (PCI vendor capabilities + BAR0 MMIO) and split virtqueues to:
     - Query stream capabilities (`PCM_INFO`)
     - Negotiate fixed params (`PCM_SET_PARAMS`)
     - Start/stop streams and submit PCM buffers via the TX queue (playback) and RX queue (capture).
+  - Works with PCI **INTx** (contract v1 requires INTx; ISR status is read-to-ack to deassert the line).
 - Distribute as **test-signed**:
   - Enable test mode in the guest (`bcdedit /set testsigning on`).
   - Install the test certificate into the guest's trusted store.
 
 This is the most controlled path and avoids licensing ambiguity.
+
+In this repo, the in-tree implementation of this approach is:
+
+- `drivers/windows7/virtio-snd/` (WDM PortCls + WaveRT driver skeleton)
+
+See also:
+
+- [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) (definitive device/driver contract; transport + required features)
+- [`docs/windows/virtio-pci-modern-wdm.md`](./windows/virtio-pci-modern-wdm.md) (WDM modern transport + INTx bring-up guide)
 
 ### Option B: Reuse open-source virtio-win (if license-compatible)
 
