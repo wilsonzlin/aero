@@ -958,6 +958,15 @@ function runEmulationLoop() {
 
 ### Processor Registration
 
+> Note: The code below is illustrative. The canonical implementation lives in:
+>
+> - `web/src/platform/audio.ts` (ring buffer layout + producer)
+> - `web/src/platform/audio-worklet-processor.js` (AudioWorklet consumer)
+>
+> The playback ring buffer uses a **16-byte header** (`u32[4]`):
+> `readFrameIndex`, `writeFrameIndex`, `underrunCount`, `overrunCount`, followed by interleaved
+> `f32` samples starting at byte offset 16.
+
 ```javascript
 // audio-worklet-processor.js
 class AeroAudioProcessor extends AudioWorkletProcessor {
@@ -1029,7 +1038,7 @@ async function setupAudio() {
     await audioContext.audioWorklet.addModule('audio-worklet-processor.js');
     
     // Shared buffer for audio data (1 second @ 48kHz stereo)
-    const ringBufferSize = 8 + (48000 * 2 * 4);
+    const ringBufferSize = 16 + (48000 * 2 * 4);
     const ringBuffer = new SharedArrayBuffer(ringBufferSize);
     
     const audioNode = new AudioWorkletNode(audioContext, 'aero-audio-processor', {
