@@ -170,6 +170,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         guestMemory: init.guestMemory!,
         vgaFramebuffer: init.vgaFramebuffer!,
         ioIpc: init.ioIpcSab!,
+        sharedFramebuffer: init.sharedFramebuffer!,
+        sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
       };
       status = createSharedMemoryViews(segments).status;
       const regions = ringRegionsForWorker(role);

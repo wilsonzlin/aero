@@ -1,6 +1,14 @@
 import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 import { createIpcBuffer } from "../ipc/ipc";
+import {
+  computeSharedFramebufferLayout,
+  FramebufferFormat,
+  SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
+  SharedFramebufferHeaderIndex,
+} from "../ipc/shared-layout";
 
 export const WORKER_ROLES = ["cpu", "gpu", "io", "jit"] as const;
 export type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -143,6 +151,13 @@ export interface SharedMemorySegments {
   guestMemory: WebAssembly.Memory;
   vgaFramebuffer: SharedArrayBuffer;
   ioIpc: SharedArrayBuffer;
+  sharedFramebuffer: SharedArrayBuffer;
+  /**
+   * Byte offset within `sharedFramebuffer` where the header begins.
+   *
+   * Kept as a field so we can later embed the framebuffer into guest memory.
+   */
+  sharedFramebufferOffsetBytes: number;
 }
 
 export interface RingRegions {
@@ -157,6 +172,8 @@ export interface SharedMemoryViews {
   guestU8: Uint8Array;
   guestI32: Int32Array;
   vgaFramebuffer: SharedArrayBuffer;
+  sharedFramebuffer: SharedArrayBuffer;
+  sharedFramebufferOffsetBytes: number;
 }
 
 function align(value: number, alignment: number): number {
@@ -299,6 +316,34 @@ export function allocateSharedMemorySegments(options?: {
   Atomics.store(status, StatusIndex.RuntimeReserved, layout.runtime_reserved | 0);
   initControlRings(control);
 
+  // Shared CPU→GPU framebuffer demo region.
+  const sharedFramebufferOffsetBytes = 0;
+  const sharedFramebufferLayout = computeSharedFramebufferLayout(
+    /* width */ 640,
+    /* height */ 480,
+    /* strideBytes */ 640 * 4,
+    FramebufferFormat.RGBA8,
+    /* tileSize */ 32,
+  );
+  const sharedFramebuffer = new SharedArrayBuffer(sharedFramebufferLayout.totalBytes);
+  const sharedHeader = new Int32Array(sharedFramebuffer, sharedFramebufferOffsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.WIDTH, sharedFramebufferLayout.width);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.HEIGHT, sharedFramebufferLayout.height);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.STRIDE_BYTES, sharedFramebufferLayout.strideBytes);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FORMAT, sharedFramebufferLayout.format);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX, 0);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_SEQ, 0);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILE_SIZE, sharedFramebufferLayout.tileSize);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILES_X, sharedFramebufferLayout.tilesX);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILES_Y, sharedFramebufferLayout.tilesY);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, sharedFramebufferLayout.dirtyWordsPerBuffer);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ, 0);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FLAGS, 0);
+
   return {
     control,
     guestMemory,
@@ -312,6 +357,8 @@ export function allocateSharedMemorySegments(options?: {
       { kind: IO_IPC_CMD_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
       { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
     ]).buffer,
+    sharedFramebuffer,
+    sharedFramebufferOffsetBytes,
   };
 }
 
@@ -358,7 +405,16 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
     guestLayout.guest_base,
     Math.floor(guestLayout.guest_size / Int32Array.BYTES_PER_ELEMENT),
   );
-  return { segments, status, guestLayout, guestU8, guestI32, vgaFramebuffer: segments.vgaFramebuffer };
+  return {
+    segments,
+    status,
+    guestLayout,
+    guestU8,
+    guestI32,
+    vgaFramebuffer: segments.vgaFramebuffer,
+    sharedFramebuffer: segments.sharedFramebuffer,
+    sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+  };
 }
 
 export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {

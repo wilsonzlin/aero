@@ -958,7 +958,14 @@ async function maybeSendReady(): Promise<void> {
 
 const handleRuntimeInit = (init: WorkerInitMessage) => {
   role = init.role ?? 'gpu';
-  const segments = { control: init.controlSab, guestMemory: init.guestMemory, vgaFramebuffer: init.vgaFramebuffer, ioIpc: init.ioIpcSab };
+  const segments = {
+    control: init.controlSab,
+    guestMemory: init.guestMemory,
+    vgaFramebuffer: init.vgaFramebuffer,
+    ioIpc: init.ioIpcSab,
+    sharedFramebuffer: init.sharedFramebuffer,
+    sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
+  };
   status = createSharedMemoryViews(segments).status;
 
   const regions = ringRegionsForWorker(role);

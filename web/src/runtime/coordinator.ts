@@ -328,6 +328,12 @@ export class WorkerCoordinator {
     return this.shared?.vgaFramebuffer ?? null;
   }
 
+  getSharedFramebuffer(): { sab: SharedArrayBuffer; offsetBytes: number } | null {
+    const shared = this.shared;
+    if (!shared) return null;
+    return { sab: shared.sharedFramebuffer, offsetBytes: shared.sharedFramebufferOffsetBytes };
+  }
+
   setMicrophoneRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate: number): void {
     if (ringBuffer !== null) {
       const Sab = globalThis.SharedArrayBuffer;
@@ -459,6 +465,8 @@ export class WorkerCoordinator {
         guestMemory: segments.guestMemory,
         vgaFramebuffer: segments.vgaFramebuffer,
         ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
         frameStateSab: this.frameStateSab,
         platformFeatures: this.platformFeatures ?? undefined,
       };

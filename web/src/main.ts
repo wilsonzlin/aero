@@ -38,6 +38,7 @@ import { IoWorkerClient } from "./workers/io_worker_client";
 import { type JitWorkerResponse } from "./workers/jit_protocol";
 import { JitWorkerClient } from "./workers/jit_worker_client";
 import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./shared/frameProtocol";
+import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./ipc/shared-layout";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
@@ -2433,6 +2434,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const statusList = el("ul");
   const heartbeatLine = el("div", { class: "mono", text: "" });
   const frameLine = el("div", { class: "mono", text: "" });
+  const sharedFramebufferLine = el("div", { class: "mono", text: "" });
+  const gpuMetricsLine = el("div", { class: "mono", text: "" });
   const error = el("pre", { text: "" });
   const guestRamValue = el("span", { class: "mono", text: "" });
   const jitDemoLine = el("div", { class: "mono", text: "jit: (idle)" });
@@ -2527,7 +2530,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         }
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
-        const sharedFramebuffer = workerCoordinator.getVgaFramebuffer();
+        const sharedFramebuffer = workerCoordinator.getSharedFramebuffer();
         if (gpuWorker && frameStateSab && sharedFramebuffer) {
           // Reset any previously transferred canvas before re-attaching it to a
           // new worker.
@@ -2558,11 +2561,13 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           frameScheduler = startFrameScheduler({
             gpuWorker,
             sharedFrameState: frameStateSab,
-            sharedFramebuffer,
-            sharedFramebufferOffsetBytes: 0,
+            sharedFramebuffer: sharedFramebuffer.sab,
+            sharedFramebufferOffsetBytes: sharedFramebuffer.offsetBytes,
             canvas: offscreen,
             initOptions: offscreen
               ? {
+                  forceBackend: "webgl2_raw",
+                  disableWebGpu: true,
                   outputWidth: 640,
                   outputHeight: 480,
                   dpr: window.devicePixelRatio || 1,
@@ -2708,6 +2713,24 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       const frameState = new Int32Array(frameStateSab);
       frameLine.textContent = `frame: status=${Atomics.load(frameState, FRAME_STATUS_INDEX)} seq=${Atomics.load(frameState, FRAME_SEQ_INDEX)}`;
     }
+
+    const sharedFramebuffer = workerCoordinator.getSharedFramebuffer();
+    if (!sharedFramebuffer) {
+      sharedFramebufferLine.textContent = "shared framebuffer: (uninitialized)";
+    } else {
+      const header = new Int32Array(sharedFramebuffer.sab, sharedFramebuffer.offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+      const seq = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+      const active = Atomics.load(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
+      sharedFramebufferLine.textContent = `shared framebuffer: seq=${seq} active=${active}`;
+    }
+
+    if (!frameScheduler) {
+      gpuMetricsLine.textContent = "gpu metrics: (uninitialized)";
+    } else {
+      const metrics = frameScheduler.getMetrics();
+      gpuMetricsLine.textContent =
+        `gpu metrics: received=${metrics.framesReceived} presented=${metrics.framesPresented} dropped=${metrics.framesDropped}`;
+    }
     guestRamValue.textContent =
       config.guestMemoryMiB % 1024 === 0 ? `${config.guestMemoryMiB / 1024} GiB` : `${config.guestMemoryMiB} MiB`;
 
@@ -2747,6 +2770,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     vgaInfoLine,
     heartbeatLine,
     frameLine,
+    sharedFramebufferLine,
+    gpuMetricsLine,
     jitDemoLine,
     jitDemoError,
     statusList,

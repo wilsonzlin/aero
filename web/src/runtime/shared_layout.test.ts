@@ -118,5 +118,7 @@ describe("runtime/shared_layout", () => {
     expect(views.guestU8.byteOffset).toBe(views.guestLayout.guest_base);
     expect(views.guestU8.byteLength).toBe(views.guestLayout.guest_size);
     expect(views.guestU8.buffer).toBe(segments.guestMemory.buffer);
+    expect(views.sharedFramebuffer).toBe(segments.sharedFramebuffer);
+    expect(views.sharedFramebufferOffsetBytes).toBe(segments.sharedFramebufferOffsetBytes);
   });
 });

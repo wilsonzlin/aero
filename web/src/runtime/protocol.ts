@@ -58,6 +58,16 @@ export type WorkerInitMessage = {
    */
   ioIpcSab: SharedArrayBuffer;
   /**
+   * Shared CPU→GPU framebuffer region backing the runtime demo.
+   *
+   * Layout is defined in `src/ipc/shared-layout.ts`.
+   */
+  sharedFramebuffer: SharedArrayBuffer;
+  /**
+   * Byte offset within `sharedFramebuffer` where the framebuffer header begins.
+   */
+  sharedFramebufferOffsetBytes: number;
+  /**
    * Optional platform feature report captured by the main thread.
    *
    * Workers may use this to avoid redundant capability probing and to gate

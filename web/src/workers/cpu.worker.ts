@@ -10,6 +10,14 @@ import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { FRAME_DIRTY, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../shared/frameProtocol";
 import {
+  layoutFromHeader,
+  SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
+  SharedFramebufferHeaderIndex,
+  type SharedFramebufferLayout,
+} from "../ipc/shared-layout";
+import {
   FRAMEBUFFER_FORMAT_RGBA8888,
   HEADER_INDEX_CONFIG_COUNTER,
   HEADER_INDEX_FRAME_COUNTER,
@@ -79,6 +87,13 @@ let perfFrameHeader: Int32Array | null = null;
 let perfLastFrameId = 0;
 let perfCpuMs = 0;
 let perfInstructions = 0n;
+let sharedHeader: Int32Array | null = null;
+let sharedLayout: SharedFramebufferLayout | null = null;
+let sharedSlot0: Uint32Array | null = null;
+let sharedSlot1: Uint32Array | null = null;
+let sharedDirty0: Uint32Array | null = null;
+let sharedDirty1: Uint32Array | null = null;
+let sharedTileToggle = false;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
@@ -596,6 +611,8 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         guestMemory: init.guestMemory!,
         vgaFramebuffer: init.vgaFramebuffer!,
         ioIpc: init.ioIpcSab!,
+        sharedFramebuffer: init.sharedFramebuffer!,
+        sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
       };
       const views = createSharedMemoryViews(segments);
       status = views.status;
@@ -628,6 +645,8 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         strideBytes: 320 * 4,
         format: FRAMEBUFFER_FORMAT_RGBA8888,
       });
+
+      initSharedFramebufferViews(segments.sharedFramebuffer, segments.sharedFramebufferOffsetBytes);
 
       const regions = ringRegionsForWorker(role);
       commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
@@ -876,10 +895,7 @@ function runLoopInner(): void {
 
         perfCpuMs += performance.now() - t0;
         addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
-        if (frameState) {
-          Atomics.add(frameState, FRAME_SEQ_INDEX, 1);
-          Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
-        }
+        publishSharedFramebufferFrame();
         nextFrameMs = now + frameIntervalMs;
       }
 
@@ -977,6 +993,88 @@ function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
     eventRing.pushBlocking(payload, timeoutMs);
   } catch {
     // Ignore if the ring is wedged; postMessage ERROR remains a backup.
+  }
+}
+
+function initSharedFramebufferViews(shared: SharedArrayBuffer, offsetBytes: number): void {
+  const header = new Int32Array(shared, offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+  const magic = Atomics.load(header, SharedFramebufferHeaderIndex.MAGIC) >>> 0;
+  const version = Atomics.load(header, SharedFramebufferHeaderIndex.VERSION) >>> 0;
+  if (magic !== SHARED_FRAMEBUFFER_MAGIC || version !== SHARED_FRAMEBUFFER_VERSION) {
+    throw new Error(
+      `shared framebuffer header mismatch: magic=0x${magic.toString(16)} version=${version} expected magic=0x${SHARED_FRAMEBUFFER_MAGIC.toString(
+        16,
+      )} version=${SHARED_FRAMEBUFFER_VERSION}`,
+    );
+  }
+
+  const layout = layoutFromHeader(header);
+  const stridePixels = layout.strideBytes / 4;
+  const pixelWords = stridePixels * layout.height;
+
+  sharedHeader = header;
+  sharedLayout = layout;
+  sharedSlot0 = new Uint32Array(shared, offsetBytes + layout.framebufferOffsets[0], pixelWords);
+  sharedSlot1 = new Uint32Array(shared, offsetBytes + layout.framebufferOffsets[1], pixelWords);
+  sharedDirty0 =
+    layout.dirtyWordsPerBuffer === 0 ? null : new Uint32Array(shared, offsetBytes + layout.dirtyOffsets[0], layout.dirtyWordsPerBuffer);
+  sharedDirty1 =
+    layout.dirtyWordsPerBuffer === 0 ? null : new Uint32Array(shared, offsetBytes + layout.dirtyOffsets[1], layout.dirtyWordsPerBuffer);
+}
+
+function publishSharedFramebufferFrame(): void {
+  if (!sharedHeader || !sharedLayout || !sharedSlot0 || !sharedSlot1) return;
+
+  const active = Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
+  const back = active ^ 1;
+
+  const backPixels = back === 0 ? sharedSlot0 : sharedSlot1;
+  const backDirty = back === 0 ? sharedDirty0 : sharedDirty1;
+
+  const base = 0xff00ff00; // RGBA green in little-endian u32
+  const tileColor = sharedTileToggle ? 0xff0000ff /* RGBA red */ : base;
+  sharedTileToggle = !sharedTileToggle;
+
+  // Full frame is constant green; only the top-left tile toggles, allowing dirty-rect
+  // uploads (when supported) to preserve the rest of the texture.
+  backPixels.fill(base);
+
+  const tileSize = sharedLayout.tileSize || sharedLayout.width;
+  const tileW = Math.min(tileSize, sharedLayout.width);
+  const tileH = Math.min(tileSize, sharedLayout.height);
+  const stridePixels = sharedLayout.strideBytes / 4;
+  for (let y = 0; y < tileH; y += 1) {
+    const row = y * stridePixels;
+    backPixels.fill(tileColor, row, row + tileW);
+  }
+
+  const prevSeq = Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_SEQ);
+  const newSeq = (prevSeq + 1) | 0;
+
+  if (backDirty) {
+    if (prevSeq === 0) {
+      // Initialize the presenter texture with a full upload on the first frame.
+      backDirty.fill(0xffffffff);
+    } else {
+      backDirty.fill(0);
+      backDirty[0] = 1; // mark tile 0 (top-left)
+    }
+  }
+
+  Atomics.store(
+    sharedHeader,
+    back === 0 ? SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ : SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ,
+    newSeq,
+  );
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX, back);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_SEQ, newSeq);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 1);
+  Atomics.notify(sharedHeader, SharedFramebufferHeaderIndex.FRAME_SEQ, 1);
+
+  if (frameState) {
+    Atomics.store(frameState, FRAME_SEQ_INDEX, newSeq);
+    Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+    Atomics.notify(frameState, FRAME_STATUS_INDEX);
   }
 }
 

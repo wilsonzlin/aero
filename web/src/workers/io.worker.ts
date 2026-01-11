@@ -276,6 +276,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
             guestMemory: init.guestMemory!,
             vgaFramebuffer: init.vgaFramebuffer!,
             ioIpc: init.ioIpcSab!,
+            sharedFramebuffer: init.sharedFramebuffer!,
+            sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
           };
           const views = createSharedMemoryViews(segments);
           status = views.status;
