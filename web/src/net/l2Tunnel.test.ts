@@ -111,6 +111,12 @@ function resetFakeWebSocket(): void {
 }
 
 describe("net/l2Tunnel", () => {
+  it("rejects unordered RTCDataChannels", () => {
+    const channel = new FakeRtcDataChannel();
+    channel.ordered = false;
+    expect(() => new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, () => {})).toThrow(/ordered/);
+  });
+
   it("forwards FRAME messages and responds to PING", async () => {
     const channel = new FakeRtcDataChannel();
     const events: L2TunnelEvent[] = [];
