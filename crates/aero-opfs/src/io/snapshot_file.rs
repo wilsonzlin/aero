@@ -351,6 +351,10 @@ where
     H: OpfsSyncFileHandle,
 {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        if self.handle.is_none() {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "file is closed"));
+        }
+
         let current_pos = self.pos;
 
         let base: i128 = match pos {
