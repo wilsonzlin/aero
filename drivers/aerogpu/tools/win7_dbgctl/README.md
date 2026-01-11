@@ -22,6 +22,7 @@ Minimum supported commands:
 
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
+  Use `--vblank-samples` to observe changes over time and estimate the effective Hz/jitter.
 
 - `aerogpu_dbgctl --selftest`  
   Triggers a simple KMD-side self-test.
@@ -44,6 +45,9 @@ aerogpu_dbgctl --dump-vblank
 aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 aerogpu_dbgctl --selftest --timeout-ms 2000
 ```
+
+Notes:
+- `IRQ_ACTIVE` is `IRQ_STATUS & IRQ_ENABLE` (i.e. causes that can currently assert the interrupt line).
 
 ## Build (Windows 7)
 

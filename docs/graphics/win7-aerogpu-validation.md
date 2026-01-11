@@ -377,6 +377,12 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
    ```
 4. **If the desktop is frozen but the VM is alive**, dump again (to see if anything advances).
 
+Optional: if you suspect vblank pacing/jitter, sample a few times:
+
+```bat
+aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
+```
+
 ### 5.2 Suggested `aerogpu_dbgctl` commands (baseline feature set)
 
 | Command | What it should report/do | When to use |
