@@ -400,8 +400,12 @@ int main(void) {
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, struct_version);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_mmio_magic);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_abi_version_u32);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, reserved0);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_features);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, flags);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, reserved1);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, reserved2);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, reserved3);
 
   PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, magic);
   PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, version);

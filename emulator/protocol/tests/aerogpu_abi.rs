@@ -1850,6 +1850,12 @@ fn rust_layout_matches_c_headers() {
     );
     assert_off!(
         AerogpuUmdPrivateV1,
+        reserved0,
+        "aerogpu_umd_private_v1",
+        "reserved0"
+    );
+    assert_off!(
+        AerogpuUmdPrivateV1,
         device_features,
         "aerogpu_umd_private_v1",
         "device_features"
@@ -1859,6 +1865,24 @@ fn rust_layout_matches_c_headers() {
         flags,
         "aerogpu_umd_private_v1",
         "flags"
+    );
+    assert_off!(
+        AerogpuUmdPrivateV1,
+        reserved1,
+        "aerogpu_umd_private_v1",
+        "reserved1"
+    );
+    assert_off!(
+        AerogpuUmdPrivateV1,
+        reserved2,
+        "aerogpu_umd_private_v1",
+        "reserved2"
+    );
+    assert_off!(
+        AerogpuUmdPrivateV1,
+        reserved3,
+        "aerogpu_umd_private_v1",
+        "reserved3"
     );
 
     // Constants / enum numeric values.
