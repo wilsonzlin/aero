@@ -3,6 +3,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use super::report_descriptor;
+fn default_true() -> bool {
+    true
+}
 
 /// JSON-compatible representation of WebHID collection metadata.
 ///
@@ -155,16 +158,26 @@ pub struct HidReportItem {
     pub designators: Vec<u32>,
     pub designator_minimum: u32,
     pub designator_maximum: u32,
+
+    // Boolean properties surfaced by WebHID.
+    //
+    // These correspond to HID main-item (Input/Output/Feature) flag bits 0..=8.
+    // See `docs/webhid-hid-report-descriptor-synthesis.md` for the exact bit mapping.
     pub is_absolute: bool,
     pub is_array: bool,
     pub is_buffered_bytes: bool,
     pub is_constant: bool,
+    #[serde(default = "default_true")]
     pub is_linear: bool,
     pub is_range: bool,
     pub is_relative: bool,
+    #[serde(default)]
     pub is_volatile: bool,
+    #[serde(default)]
     pub has_null: bool,
+    #[serde(default = "default_true")]
     pub has_preferred_state: bool,
+    #[serde(default)]
     pub is_wrapped: bool,
 }
 

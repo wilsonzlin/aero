@@ -1,3 +1,8 @@
+// WebHID spec: https://wicg.github.io/webhid/
+//
+// TypeScript note: WebHID types are provided via `@types/w3c-web-hid` (referenced by
+// `web/src/vite-env.d.ts`).
+
 export type HidCollectionType =
   | "physical"
   | "application"
@@ -31,6 +36,10 @@ export interface HidReportItem {
   designatorMaximum: number;
 
   // Boolean properties surfaced by WebHID.
+  //
+  // Most of these correspond directly to HID main-item (Input/Output/Feature) flag bits.
+  // See `docs/webhid-hid-report-descriptor-synthesis.md` for the full mapping, including the
+  // Input-vs-Output/Feature differences around bit7/bit8.
   isAbsolute: boolean;
   isArray: boolean;
   isBufferedBytes: boolean;

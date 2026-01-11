@@ -40,6 +40,8 @@ pub struct HidReportDescriptorParseResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HidReportItem {
+    // Main-item (Input/Output/Feature) flag booleans, aligned with WebHID `HIDReportItem`.
+    // See `docs/webhid-hid-report-descriptor-synthesis.md` for the HID bit mapping.
     pub is_array: bool,
     pub is_absolute: bool,
     pub is_buffered_bytes: bool,
@@ -1074,17 +1076,44 @@ mod tests {
 
     use crate::io::usb::hid::{gamepad, keyboard, mouse};
 
-    fn roundtrip(desc: &[u8]) {
+    fn roundtrip(desc: &[u8]) -> HidReportDescriptorParseResult {
         let parsed = parse_report_descriptor(desc).unwrap();
         let synthesized = synthesize_report_descriptor(&parsed.collections).unwrap();
         let reparsed = parse_report_descriptor(&synthesized).unwrap();
         assert_eq!(parsed, reparsed);
+        parsed
+    }
+
+    fn assert_default_extra_main_item_flags(collections: &[HidCollectionInfo]) {
+        fn check_reports(reports: &[HidReportInfo]) {
+            for report in reports {
+                for item in &report.items {
+                    assert!(!item.is_wrapped);
+                    assert!(item.is_linear);
+                    assert!(item.has_preferred_state);
+                    assert!(!item.has_null);
+                    assert!(!item.is_volatile);
+                    assert!(!item.is_buffered_bytes);
+                }
+            }
+        }
+
+        for collection in collections {
+            check_reports(&collection.input_reports);
+            check_reports(&collection.output_reports);
+            check_reports(&collection.feature_reports);
+            assert_default_extra_main_item_flags(&collection.children);
+        }
     }
 
     #[test]
     fn roundtrip_keyboard_mouse_and_gamepad() {
-        roundtrip(&keyboard::HID_REPORT_DESCRIPTOR);
-        roundtrip(&mouse::HID_REPORT_DESCRIPTOR);
+        let kb = roundtrip(&keyboard::HID_REPORT_DESCRIPTOR);
+        assert_default_extra_main_item_flags(&kb.collections);
+
+        let mouse = roundtrip(&mouse::HID_REPORT_DESCRIPTOR);
+        assert_default_extra_main_item_flags(&mouse.collections);
+
         roundtrip(&gamepad::HID_REPORT_DESCRIPTOR);
     }
 
@@ -1177,6 +1206,52 @@ mod tests {
     #[should_panic(expected = "overflows u32")]
     fn report_bits_panics_on_overflow() {
         let _ = report_bits(&[simple_item(u32::MAX, 2)]);
+    }
+
+    #[test]
+    fn roundtrip_preserves_extended_main_item_flags() {
+        // One-byte main item payloads only carry bits 0..=7. Use a two-byte *Output* item so we
+        // can exercise bit8 ("Buffered Bytes") alongside bits 3..=7 (including Volatile).
+        //
+        // HID 1.11 mapping:
+        // - bit3: Wrap
+        // - bit4: Non Linear (inverted `is_linear`)
+        // - bit5: No Preferred (inverted `has_preferred_state`)
+        // - bit6: Null State
+        // - bit7: Volatile (Output/Feature only)
+        // - bit8: Buffered Bytes (Output/Feature only)
+        let desc = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x02, // Usage (Mouse)
+            0xA1, 0x01, // Collection (Application)
+            0x09, 0x30, // Usage (X)
+            0x15, 0x00, // Logical Minimum (0)
+            0x25, 0x01, // Logical Maximum (1)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x01, // Report Count (1)
+            0x92, 0xFA, 0x01, // Output (0x01FA): Var,Wrap,NonLinear,NoPreferred,Null,Volatile,BufferedBytes
+            0xC0, // End Collection
+        ];
+
+        let parsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(parsed.collections.len(), 1);
+        assert_eq!(parsed.collections[0].output_reports.len(), 1);
+        assert_eq!(parsed.collections[0].output_reports[0].items.len(), 1);
+
+        let item = &parsed.collections[0].output_reports[0].items[0];
+        assert!(!item.is_constant);
+        assert!(!item.is_array);
+        assert!(item.is_absolute);
+        assert!(item.is_wrapped);
+        assert!(!item.is_linear);
+        assert!(!item.has_preferred_state);
+        assert!(item.has_null);
+        assert!(item.is_volatile);
+        assert!(item.is_buffered_bytes);
+
+        let synthesized = synthesize_report_descriptor(&parsed.collections).unwrap();
+        let reparsed = parse_report_descriptor(&synthesized).unwrap();
+        assert_eq!(parsed, reparsed);
     }
 
     #[test]

@@ -31,6 +31,12 @@ Implementation references:
   - TS contract test: `web/test/webhid_normalize_fixture.test.ts`
   - Rust contract test: `crates/emulator/tests/webhid_normalized_fixture.rs`
 
+TypeScript/WebHID types:
+
+- WebHID is defined by the WICG spec: https://wicg.github.io/webhid/
+- The TypeScript DOM libs do not consistently ship WebHID type definitions across versions, so this
+  repo depends on `@types/w3c-web-hid` and pulls it in via `web/src/vite-env.d.ts`.
+
 For the end-to-end “real device” passthrough architecture (main thread owns the
 `HIDDevice`, worker models UHCI + a generic HID device), see
 [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
@@ -122,6 +128,20 @@ Each `HIDReportItem` maps to:
    - `Feature(flags)` for feature reports
 
 We treat the WebHID `HIDReportInfo` that the item came from as the authoritative “main item kind” (`Input` vs `Output` vs `Feature`).
+
+WebHID exposes the following boolean properties on `HIDReportItem` (as reflected by
+`@types/w3c-web-hid` and preserved by our normalizer):
+
+- `isConstant`
+- `isArray`
+- `isAbsolute` / `isRelative` (redundant but both are provided)
+- `isWrapped`
+- `isLinear`
+- `hasPreferredState`
+- `hasNull`
+- `isVolatile`
+- `isBufferedBytes`
+- `isRange` (controls whether `usages` is treated as a min/max range)
 
 WebHID also exposes less-common HID locals (`strings`, `designators`) and related min/max fields. These are currently ignored by synthesis (see [Known limitations](#known-limitations)).
 
