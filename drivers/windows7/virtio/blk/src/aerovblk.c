@@ -320,6 +320,15 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   }
 
   if (!allocateResources) {
+    /*
+     * Reset the device first to stop DMA before touching ring memory or
+     * completing outstanding SRBs. This matches the legacy driver's sequencing
+     * (reset before abort/reset of software queue state) and avoids races where
+     * the device could still be writing used-ring entries while we recycle
+     * request contexts.
+     */
+    AeroVirtioResetDevice(&devExt->Vdev);
+
     StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
     AerovblkAbortOutstandingRequestsLocked(devExt);
     if (devExt->Vq != NULL) {
