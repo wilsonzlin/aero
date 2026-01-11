@@ -283,6 +283,59 @@ describe("app", () => {
     expect(res.payload).toBe("0123");
   });
 
+  it("serves a full-body 200 response when Range is omitted", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          expect(command.input.Range).toBeUndefined();
+          return {
+            Body: Readable.from([Buffer.from("0123")]),
+            ContentLength: 4,
+            ContentType: "application/octet-stream",
+            CacheControl: CACHE_CONTROL_PRIVATE_NO_STORE,
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(res.headers["content-length"]).toBe("4");
+    expect(res.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
+    expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
+    expect(res.payload).toBe("0123");
+  });
+
   it("rejects non-identity Content-Encoding from S3", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
