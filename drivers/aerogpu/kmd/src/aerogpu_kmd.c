@@ -2651,7 +2651,9 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ UINT AllocationCount,
         meta->Allocations[i].alloc_id = (uint32_t)(alloc ? alloc->AllocationId : 0);
 
         if (alloc) {
+            ExAcquireFastMutex(&alloc->CpuMapMutex);
             alloc->LastKnownPa.QuadPart = AllocationList[i].PhysicalAddress.QuadPart;
+            ExReleaseFastMutex(&alloc->CpuMapMutex);
         }
     }
 
