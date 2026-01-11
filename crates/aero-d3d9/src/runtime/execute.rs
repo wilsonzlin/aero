@@ -276,6 +276,7 @@ pub struct D3D9Runtime {
     config: RuntimeConfig,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    downlevel_flags: wgpu::DownlevelFlags,
 
     buffers: HashMap<u32, BufferResource>,
     swapchains: HashMap<u32, SwapChainResource>,
@@ -325,7 +326,15 @@ impl D3D9Runtime {
             }
         }
 
-        let instance = wgpu::Instance::default();
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                wgpu::Backends::all()
+            },
+            ..Default::default()
+        });
         let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -345,10 +354,17 @@ impl D3D9Runtime {
                 .ok_or(RuntimeError::AdapterNotFound)?,
         };
 
+        let downlevel_flags = adapter.get_downlevel_capabilities().flags;
+
+        let required_limits = if cfg!(target_os = "linux") {
+            wgpu::Limits::downlevel_defaults()
+        } else {
+            wgpu::Limits::default()
+        };
         let descriptor = wgpu::DeviceDescriptor {
             label: Some("aero-d3d9-device"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
+            required_limits,
         };
 
         let (device, queue) = adapter
@@ -489,6 +505,7 @@ impl D3D9Runtime {
             config,
             device,
             queue,
+            downlevel_flags,
             buffers: HashMap::new(),
             swapchains: HashMap::new(),
             textures: HashMap::new(),
@@ -536,10 +553,17 @@ impl D3D9Runtime {
         }
 
         let format = desc.format.to_wgpu();
-        let view_formats = match format {
-            wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
-            wgpu::TextureFormat::Bgra8Unorm => vec![wgpu::TextureFormat::Bgra8UnormSrgb],
-            _ => Vec::new(),
+        let view_formats = if self
+            .downlevel_flags
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+        {
+            match format {
+                wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
+                wgpu::TextureFormat::Bgra8Unorm => vec![wgpu::TextureFormat::Bgra8UnormSrgb],
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
         };
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d9-swapchain-texture"),
@@ -559,22 +583,29 @@ impl D3D9Runtime {
         });
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let view_srgb = match format {
-            wgpu::TextureFormat::Rgba8Unorm => {
-                Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("aero-d3d9-swapchain-view-srgb"),
-                    format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-                    ..Default::default()
-                }))
+        let view_srgb = if self
+            .downlevel_flags
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+        {
+            match format {
+                wgpu::TextureFormat::Rgba8Unorm => {
+                    Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                        label: Some("aero-d3d9-swapchain-view-srgb"),
+                        format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                        ..Default::default()
+                    }))
+                }
+                wgpu::TextureFormat::Bgra8Unorm => {
+                    Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                        label: Some("aero-d3d9-swapchain-view-srgb"),
+                        format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                        ..Default::default()
+                    }))
+                }
+                _ => None,
             }
-            wgpu::TextureFormat::Bgra8Unorm => {
-                Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("aero-d3d9-swapchain-view-srgb"),
-                    format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
-                    ..Default::default()
-                }))
-            }
-            _ => None,
+        } else {
+            None
         };
 
         self.swapchains.insert(
@@ -610,10 +641,17 @@ impl D3D9Runtime {
         }
 
         let format = desc.format.to_wgpu();
-        let view_formats = match format {
-            wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
-            wgpu::TextureFormat::Bgra8Unorm => vec![wgpu::TextureFormat::Bgra8UnormSrgb],
-            _ => Vec::new(),
+        let view_formats = if self
+            .downlevel_flags
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+        {
+            match format {
+                wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
+                wgpu::TextureFormat::Bgra8Unorm => vec![wgpu::TextureFormat::Bgra8UnormSrgb],
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
         };
         let usage = map_texture_usage(desc.usage)
             | wgpu::TextureUsages::COPY_DST
@@ -644,32 +682,39 @@ impl D3D9Runtime {
             format: None,
             aspect: wgpu::TextureAspect::All,
         });
-        let view_mip0_srgb = match format {
-            wgpu::TextureFormat::Rgba8Unorm => {
-                Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("aero-d3d9-texture-mip0-srgb"),
-                    base_mip_level: 0,
-                    mip_level_count: Some(1),
-                    base_array_layer: 0,
-                    array_layer_count: Some(1),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-                    aspect: wgpu::TextureAspect::All,
-                }))
+        let view_mip0_srgb = if self
+            .downlevel_flags
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+        {
+            match format {
+                wgpu::TextureFormat::Rgba8Unorm => {
+                    Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                        label: Some("aero-d3d9-texture-mip0-srgb"),
+                        base_mip_level: 0,
+                        mip_level_count: Some(1),
+                        base_array_layer: 0,
+                        array_layer_count: Some(1),
+                        dimension: Some(wgpu::TextureViewDimension::D2),
+                        format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                        aspect: wgpu::TextureAspect::All,
+                    }))
+                }
+                wgpu::TextureFormat::Bgra8Unorm => {
+                    Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                        label: Some("aero-d3d9-texture-mip0-srgb"),
+                        base_mip_level: 0,
+                        mip_level_count: Some(1),
+                        base_array_layer: 0,
+                        array_layer_count: Some(1),
+                        dimension: Some(wgpu::TextureViewDimension::D2),
+                        format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                        aspect: wgpu::TextureAspect::All,
+                    }))
+                }
+                _ => None,
             }
-            wgpu::TextureFormat::Bgra8Unorm => {
-                Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("aero-d3d9-texture-mip0-srgb"),
-                    base_mip_level: 0,
-                    mip_level_count: Some(1),
-                    base_array_layer: 0,
-                    array_layer_count: Some(1),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
-                    aspect: wgpu::TextureAspect::All,
-                }))
-            }
-            _ => None,
+        } else {
+            None
         };
 
         self.textures.insert(

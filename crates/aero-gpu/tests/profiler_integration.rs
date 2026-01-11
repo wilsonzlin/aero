@@ -5,9 +5,14 @@ use aero_gpu::{GpuBackendKind, GpuCapabilities, GpuProfiler, GpuProfilerConfig};
 #[test]
 fn gpu_profiler_reports_gpu_time_when_supported_otherwise_falls_back() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer "native" backends; this avoids noisy platform warnings from
-        // initializing GL/WAYLAND stacks in headless CI environments.
-        backends: wgpu::Backends::PRIMARY,
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            // Prefer "native" backends; this avoids noisy platform warnings from
+            // initializing GL/WAYLAND stacks in headless CI environments.
+            wgpu::Backends::PRIMARY
+        },
         ..Default::default()
     });
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

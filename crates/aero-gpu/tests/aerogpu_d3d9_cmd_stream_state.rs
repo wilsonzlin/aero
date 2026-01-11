@@ -1719,6 +1719,17 @@ fn d3d9_cmd_stream_srgb_write_enable_encodes_linear_output() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
+    if !exec.supports_view_formats() {
+        common::skip_or_panic(
+            concat!(
+                module_path!(),
+                "::d3d9_cmd_stream_srgb_write_enable_encodes_linear_output"
+            ),
+            "DownlevelFlags::VIEW_FORMATS not supported",
+        );
+        return;
+    }
+
     // Protocol constants from `aero-protocol`.
     const OPC_CREATE_BUFFER: u32 = cmd::AerogpuCmdOpcode::CreateBuffer as u32;
     const OPC_CREATE_TEXTURE2D: u32 = cmd::AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -1913,6 +1924,17 @@ fn d3d9_cmd_stream_sampler_srgb_texture_decodes_srgb_texels() {
         }
         Err(err) => panic!("failed to create executor: {err}"),
     };
+
+    if !exec.supports_view_formats() {
+        common::skip_or_panic(
+            concat!(
+                module_path!(),
+                "::d3d9_cmd_stream_sampler_srgb_texture_decodes_srgb_texels"
+            ),
+            "DownlevelFlags::VIEW_FORMATS not supported",
+        );
+        return;
+    }
 
     // Protocol constants from `aero-protocol`.
     const OPC_CREATE_BUFFER: u32 = cmd::AerogpuCmdOpcode::CreateBuffer as u32;

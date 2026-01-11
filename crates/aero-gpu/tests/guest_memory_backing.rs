@@ -92,8 +92,13 @@ async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
         }
     }
 
+    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::all()
+        },
         dx12_shader_compiler: Default::default(),
         flags: wgpu::InstanceFlags::default(),
         gles_minor_version: wgpu::Gles3MinorVersion::Automatic,

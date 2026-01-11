@@ -92,19 +92,36 @@ fn encode_and_submit_command_list_without_validation_errors() {
         }
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                wgpu::Backends::all()
+            },
             dx12_shader_compiler: Default::default(),
             flags: wgpu::InstanceFlags::default(),
             gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
         });
 
-        let adapter = instance
+        let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: true,
             })
-            .await;
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        };
 
         let Some(adapter) = adapter else {
             common::skip_or_panic(module_path!(), "no wgpu adapter available");

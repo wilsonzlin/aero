@@ -31,9 +31,14 @@ fn try_create_device(test_name: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
     }
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer "native" backends; this avoids noisy platform warnings from
-        // initializing GL/WAYLAND stacks in headless CI environments.
-        backends: wgpu::Backends::PRIMARY,
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            // Prefer "native" backends; this avoids noisy platform warnings from
+            // initializing GL/WAYLAND stacks in headless CI environments.
+            wgpu::Backends::PRIMARY
+        },
         ..Default::default()
     });
 

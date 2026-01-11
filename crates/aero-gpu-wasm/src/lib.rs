@@ -674,6 +674,11 @@ mod wasm {
                 .await
                 .ok_or_else(|| JsValue::from_str("No suitable GPU adapter found"))?;
 
+            let _supports_view_formats = adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+
             let supported = adapter.features();
             if !supported.contains(required_features) {
                 return Err(JsValue::from_str(&format!(
@@ -1329,7 +1334,16 @@ mod wasm {
             scale_mode: ScaleMode,
             filter_mode: wgpu::FilterMode,
             clear_color: wgpu::Color,
-        ) -> Result<(Self, wgpu::Device, wgpu::Queue, AdapterInfo), JsValue> {
+        ) -> Result<
+            (
+                Self,
+                wgpu::Device,
+                wgpu::Queue,
+                AdapterInfo,
+                wgpu::DownlevelFlags,
+            ),
+            JsValue,
+        > {
             let backends = match backend_kind {
                 GpuBackendKind::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
                 GpuBackendKind::WebGl2 => wgpu::Backends::GL,
@@ -1349,6 +1363,8 @@ mod wasm {
             let adapter = request_adapter_robust(&instance, &surface)
                 .await
                 .ok_or_else(|| JsValue::from_str("No suitable GPU adapter found"))?;
+
+            let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
             let supported = adapter.features();
             if !supported.contains(required_features) {
@@ -1553,6 +1569,7 @@ mod wasm {
                 device,
                 queue,
                 adapter_info,
+                downlevel_flags,
             ))
         }
 
@@ -2296,8 +2313,8 @@ mod wasm {
                 )
                 .await
                 {
-                    Ok((presenter, device, queue, adapter_info)) => {
-                        let executor = AerogpuD3d9Executor::new(device, queue);
+                    Ok((presenter, device, queue, adapter_info, downlevel_flags)) => {
+                        let executor = AerogpuD3d9Executor::new(device, queue, downlevel_flags);
 
                         D3D9_STATE.with(|slot| {
                             *slot.borrow_mut() = Some(AerogpuD3d9State {
@@ -2355,6 +2372,7 @@ mod wasm {
                 .map_err(|err| JsValue::from_str(&format!("Failed to request device: {err}")))?;
 
             let info = adapter.get_info();
+            let downlevel_flags = adapter.get_downlevel_capabilities().flags;
             let adapter_info = AdapterInfo {
                 vendor: Some(format!("0x{:04x}", info.vendor)),
                 renderer: Some(info.name.clone()),
@@ -2365,7 +2383,7 @@ mod wasm {
                 },
             };
 
-            let executor = AerogpuD3d9Executor::new(device, queue);
+            let executor = AerogpuD3d9Executor::new(device, queue, downlevel_flags);
             D3D9_STATE.with(|slot| {
                 *slot.borrow_mut() = Some(AerogpuD3d9State {
                     backend_kind: GpuBackendKind::WebGpu,

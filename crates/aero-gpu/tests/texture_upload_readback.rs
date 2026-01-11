@@ -56,7 +56,15 @@ fn upload_blit_readback_roundtrip() {
             }
         }
 
-        let instance = wgpu::Instance::default();
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                wgpu::Backends::all()
+            },
+            ..Default::default()
+        });
         let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
@@ -297,7 +305,15 @@ fn upload_large_rgba8_uses_staging_copy_and_roundtrips() {
             }
         }
 
-        let instance = wgpu::Instance::default();
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                wgpu::Backends::all()
+            },
+            ..Default::default()
+        });
         let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,

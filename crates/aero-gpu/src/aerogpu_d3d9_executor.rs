@@ -57,6 +57,7 @@ pub struct AerogpuD3d9Executor {
     constants_buffer: wgpu::Buffer,
 
     dummy_texture_view: wgpu::TextureView,
+    downlevel_flags: wgpu::DownlevelFlags,
 
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
@@ -637,8 +638,17 @@ impl AerogpuD3d9Executor {
             }
         }
 
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters (seen with
+        // `gpu-alloc` UB checks). The GL backend is sufficient for the headless integration tests
+        // we can run on CI; tests that require higher downlevel capabilities should skip when the
+        // backend does not support them.
+        let backends = if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::all()
+        };
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends,
             ..Default::default()
         });
         let adapter = match instance
@@ -660,6 +670,8 @@ impl AerogpuD3d9Executor {
                 .ok_or(AerogpuD3d9Error::AdapterNotFound)?,
         };
 
+        let downlevel_flags = adapter.get_downlevel_capabilities().flags;
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -672,10 +684,14 @@ impl AerogpuD3d9Executor {
             .await
             .map_err(|e| AerogpuD3d9Error::RequestDevice(e.to_string()))?;
 
-        Ok(Self::new(device, queue))
+        Ok(Self::new(device, queue, downlevel_flags))
     }
 
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        downlevel_flags: wgpu::DownlevelFlags,
+    ) -> Self {
         // The D3D9 token-stream translator packs vertex + pixel constant registers into a single
         // uniform buffer:
         // - c[0..255]   = vertex constants
@@ -780,6 +796,7 @@ impl AerogpuD3d9Executor {
             input_layouts: HashMap::new(),
             constants_buffer,
             dummy_texture_view,
+            downlevel_flags,
             bind_group_layout,
             pipeline_layout,
             bind_group: None,
@@ -841,6 +858,20 @@ impl AerogpuD3d9Executor {
 
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    pub fn downlevel_flags(&self) -> wgpu::DownlevelFlags {
+        self.downlevel_flags
+    }
+
+    pub fn supports_view_formats(&self) -> bool {
+        self.downlevel_flags
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+    }
+
+    pub fn supports_depth_texture_and_buffer_copies(&self) -> bool {
+        self.downlevel_flags
+            .contains(wgpu::DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES)
     }
 
     pub fn poll(&self) {
@@ -1369,6 +1400,15 @@ impl AerogpuD3d9Executor {
             return Err(AerogpuD3d9Error::ReadbackStencilUnsupported(texture_handle));
         }
 
+        if !self
+            .downlevel_flags
+            .contains(wgpu::DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES)
+        {
+            return Err(AerogpuD3d9Error::Validation(
+                "stencil readback requires DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES".into(),
+            ));
+        }
+
         let bytes = readback_stencil8(
             &self.device,
             &self.queue,
@@ -1409,6 +1449,15 @@ impl AerogpuD3d9Executor {
 
         if format != wgpu::TextureFormat::Depth32Float {
             return Err(AerogpuD3d9Error::ReadbackDepthUnsupported(texture_handle));
+        }
+
+        if !self
+            .downlevel_flags
+            .contains(wgpu::DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES)
+        {
+            return Err(AerogpuD3d9Error::Validation(
+                "depth readback requires DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES".into(),
+            ));
         }
 
         let depth = readback_depth32f(
@@ -1784,14 +1833,21 @@ impl AerogpuD3d9Executor {
                         ))),
                     }
                 } else {
-                    let view_formats = match format {
-                        wgpu::TextureFormat::Rgba8Unorm => {
-                            vec![wgpu::TextureFormat::Rgba8UnormSrgb]
+                    let view_formats = if self
+                        .downlevel_flags
+                        .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+                    {
+                        match format {
+                            wgpu::TextureFormat::Rgba8Unorm => {
+                                vec![wgpu::TextureFormat::Rgba8UnormSrgb]
+                            }
+                            wgpu::TextureFormat::Bgra8Unorm => {
+                                vec![wgpu::TextureFormat::Bgra8UnormSrgb]
+                            }
+                            _ => Vec::new(),
                         }
-                        wgpu::TextureFormat::Bgra8Unorm => {
-                            vec![wgpu::TextureFormat::Bgra8UnormSrgb]
-                        }
-                        _ => Vec::new(),
+                    } else {
+                        Vec::new()
                     };
                     let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("aerogpu-d3d9.texture2d"),
@@ -1811,20 +1867,27 @@ impl AerogpuD3d9Executor {
                         view_formats: &view_formats,
                     });
                     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    let view_srgb = match format {
-                        wgpu::TextureFormat::Rgba8Unorm => {
-                            Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-                                ..Default::default()
-                            }))
+                    let view_srgb = if self
+                        .downlevel_flags
+                        .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+                    {
+                        match format {
+                            wgpu::TextureFormat::Rgba8Unorm => {
+                                Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                                    format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                                    ..Default::default()
+                                }))
+                            }
+                            wgpu::TextureFormat::Bgra8Unorm => {
+                                Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                                    format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                                    ..Default::default()
+                                }))
+                            }
+                            _ => None,
                         }
-                        wgpu::TextureFormat::Bgra8Unorm => {
-                            Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                                format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
-                                ..Default::default()
-                            }))
-                        }
-                        _ => None,
+                    } else {
+                        None
                     };
                     self.resources.insert(
                         texture_handle,

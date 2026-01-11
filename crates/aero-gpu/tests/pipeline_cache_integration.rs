@@ -27,12 +27,27 @@ fn create_test_device(test_name: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
         }
     }
 
-    let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::all()
+        },
+        ..Default::default()
+    });
+    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None,
         force_fallback_adapter: true,
-    }));
+    })) {
+        Some(adapter) => Some(adapter),
+        None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })),
+    };
     let Some(adapter) = adapter else {
         common::skip_or_panic(test_name, "no wgpu adapter available");
         return None;

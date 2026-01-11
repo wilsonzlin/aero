@@ -865,6 +865,17 @@ fn d3d9_cmd_stream_clear_stencil_respects_scissor_rect() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
+    if !exec.supports_depth_texture_and_buffer_copies() {
+        common::skip_or_panic(
+            concat!(
+                module_path!(),
+                "::d3d9_cmd_stream_clear_stencil_respects_scissor_rect"
+            ),
+            "DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES not supported",
+        );
+        return;
+    }
+
     const RT_HANDLE: u32 = 1;
     const DS_HANDLE: u32 = 2;
 
@@ -1251,6 +1262,17 @@ fn d3d9_cmd_stream_clear_stencil_masks_to_8_bits() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
+    if !exec.supports_depth_texture_and_buffer_copies() {
+        common::skip_or_panic(
+            concat!(
+                module_path!(),
+                "::d3d9_cmd_stream_clear_stencil_masks_to_8_bits"
+            ),
+            "DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES not supported",
+        );
+        return;
+    }
+
     const RT_HANDLE: u32 = 1;
     const DS_HANDLE: u32 = 2;
 
@@ -1615,6 +1637,17 @@ fn d3d9_cmd_stream_clear_color_depth_stencil_d24s8_respects_scissor_rect() {
         }
         Err(err) => panic!("failed to create executor: {err}"),
     };
+
+    if !exec.supports_depth_texture_and_buffer_copies() {
+        common::skip_or_panic(
+            concat!(
+                module_path!(),
+                "::d3d9_cmd_stream_clear_color_depth_stencil_d24s8_respects_scissor_rect"
+            ),
+            "DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES not supported",
+        );
+        return;
+    }
 
     const RT_HANDLE: u32 = 1;
     const DS_HANDLE: u32 = 2;
