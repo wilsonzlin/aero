@@ -81,14 +81,19 @@ import type { Presenter, PresenterBackendKind, PresenterInitOptions } from "../g
 import { PresenterError } from "../gpu/presenter";
 import { RawWebGl2Presenter } from "../gpu/raw-webgl2-presenter-backend";
 import {
+  AEROGPU_CMD_COPY_BUFFER_SIZE,
+  AEROGPU_CMD_COPY_TEXTURE2D_SIZE,
+  AEROGPU_CMD_CREATE_BUFFER_SIZE,
   AEROGPU_CMD_CREATE_TEXTURE2D_SIZE,
   AEROGPU_CMD_DESTROY_RESOURCE_SIZE,
   AEROGPU_CMD_HDR_SIZE as AEROGPU_CMD_HDR_BYTES,
   AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_PRESENT_SIZE,
+  AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
   AEROGPU_CMD_SET_RENDER_TARGETS_SIZE,
   AEROGPU_CMD_STREAM_HEADER_SIZE as AEROGPU_STREAM_HEADER_BYTES,
   AEROGPU_CMD_UPLOAD_RESOURCE_SIZE,
+  AEROGPU_COPY_FLAG_WRITEBACK_DST,
   AerogpuCmdOpcode,
   decodeCmdHdr,
   decodeCmdStreamHeader,
@@ -181,7 +186,13 @@ type AeroGpuCpuTexture = {
   data: Uint8Array;
 };
 
+type AeroGpuCpuBuffer = {
+  sizeBytes: number;
+  data: Uint8Array;
+};
+
 const aerogpuTextures = new Map<number, AeroGpuCpuTexture>();
+const aerogpuBuffers = new Map<number, AeroGpuCpuBuffer>();
 let aerogpuCurrentRenderTarget: number | null = null;
 let aerogpuPresentCount: bigint = 0n;
 let aerogpuLastPresentedFrame: { width: number; height: number; rgba8: ArrayBuffer } | null = null;
@@ -1129,16 +1140,23 @@ const presentOnce = async (): Promise<boolean> => {
 // AeroGPU command submissions (ACMD)
 // -----------------------------------------------------------------------------
 
+const AEROGPU_CMD_CREATE_BUFFER = AerogpuCmdOpcode.CreateBuffer;
 const AEROGPU_CMD_CREATE_TEXTURE2D = AerogpuCmdOpcode.CreateTexture2d;
 const AEROGPU_CMD_DESTROY_RESOURCE = AerogpuCmdOpcode.DestroyResource;
 const AEROGPU_CMD_UPLOAD_RESOURCE = AerogpuCmdOpcode.UploadResource;
+const AEROGPU_CMD_RESOURCE_DIRTY_RANGE = AerogpuCmdOpcode.ResourceDirtyRange;
+const AEROGPU_CMD_COPY_BUFFER = AerogpuCmdOpcode.CopyBuffer;
+const AEROGPU_CMD_COPY_TEXTURE2D = AerogpuCmdOpcode.CopyTexture2d;
 
 const AEROGPU_CMD_SET_RENDER_TARGETS = AerogpuCmdOpcode.SetRenderTargets;
 
 const AEROGPU_CMD_PRESENT = AerogpuCmdOpcode.Present;
 const AEROGPU_CMD_PRESENT_EX = AerogpuCmdOpcode.PresentEx;
 
+const AEROGPU_FORMAT_B8G8R8A8_UNORM = AerogpuFormat.B8G8R8A8Unorm;
+const AEROGPU_FORMAT_B8G8R8X8_UNORM = AerogpuFormat.B8G8R8X8Unorm;
 const AEROGPU_FORMAT_R8G8B8A8_UNORM = AerogpuFormat.R8G8B8A8Unorm;
+const AEROGPU_FORMAT_R8G8B8X8_UNORM = AerogpuFormat.R8G8B8X8Unorm;
 
 const readU32LeChecked = (dv: DataView, offset: number, limit: number, label: string): number => {
   if (offset < 0 || offset + 4 > limit) {
@@ -1208,6 +1226,20 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
     }
 
     switch (opcode) {
+      case AEROGPU_CMD_CREATE_BUFFER: {
+        if (cmdSizeBytes < AEROGPU_CMD_CREATE_BUFFER_SIZE) {
+          throw new Error(`aerogpu: CREATE_BUFFER packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const handle = readU32LeChecked(dv, offset + 8, end, "buffer_handle");
+        const sizeBytesU64 = readU64LeChecked(dv, offset + 16, end, "size_bytes");
+        const sizeBytes = checkedU64ToNumber(sizeBytesU64, "size_bytes");
+        if (handle === 0) throw new Error("aerogpu: CREATE_BUFFER invalid handle 0");
+        aerogpuTextures.delete(handle);
+        if (aerogpuCurrentRenderTarget === handle) aerogpuCurrentRenderTarget = null;
+        aerogpuBuffers.set(handle, { sizeBytes, data: new Uint8Array(sizeBytes) });
+        break;
+      }
+
       case AEROGPU_CMD_CREATE_TEXTURE2D: {
         if (cmdSizeBytes < AEROGPU_CMD_CREATE_TEXTURE2D_SIZE) {
           throw new Error(`aerogpu: CREATE_TEXTURE2D packet too small (size_bytes=${cmdSizeBytes})`);
@@ -1217,15 +1249,28 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
         const width = readU32LeChecked(dv, offset + 20, end, "width");
         const height = readU32LeChecked(dv, offset + 24, end, "height");
 
+        if (handle === 0) throw new Error("aerogpu: CREATE_TEXTURE2D invalid handle 0");
         if (width === 0 || height === 0) {
           throw new Error(`aerogpu: CREATE_TEXTURE2D invalid dimensions ${width}x${height}`);
         }
-        if (format !== AEROGPU_FORMAT_R8G8B8A8_UNORM) {
-          throw new Error(`aerogpu: CREATE_TEXTURE2D unsupported format ${format} (only RGBA8_UNORM=${AEROGPU_FORMAT_R8G8B8A8_UNORM} supported)`);
+        if (
+          format !== AEROGPU_FORMAT_R8G8B8A8_UNORM &&
+          format !== AEROGPU_FORMAT_R8G8B8X8_UNORM &&
+          format !== AEROGPU_FORMAT_B8G8R8A8_UNORM &&
+          format !== AEROGPU_FORMAT_B8G8R8X8_UNORM
+        ) {
+          throw new Error(`aerogpu: CREATE_TEXTURE2D unsupported format ${format}`);
         }
 
         const byteLen = width * height * 4;
-        aerogpuTextures.set(handle, { width, height, format, data: new Uint8Array(byteLen) });
+        const data = new Uint8Array(byteLen);
+        if (format === AEROGPU_FORMAT_R8G8B8X8_UNORM || format === AEROGPU_FORMAT_B8G8R8X8_UNORM) {
+          for (let i = 3; i < data.length; i += 4) {
+            data[i] = 255;
+          }
+        }
+        aerogpuBuffers.delete(handle);
+        aerogpuTextures.set(handle, { width, height, format, data });
         break;
       }
 
@@ -1235,8 +1280,19 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
         }
         const handle = readU32LeChecked(dv, offset + 8, end, "resource_handle");
         aerogpuTextures.delete(handle);
+        aerogpuBuffers.delete(handle);
         if (aerogpuCurrentRenderTarget === handle) aerogpuCurrentRenderTarget = null;
         break;
+      }
+
+      case AEROGPU_CMD_RESOURCE_DIRTY_RANGE: {
+        if (cmdSizeBytes < AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE) {
+          throw new Error(`aerogpu: RESOURCE_DIRTY_RANGE packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        // This worker-side AeroGPU implementation only supports host-managed resources that are
+        // populated via UPLOAD_RESOURCE. Guest-memory-backed resources (alloc_table + dirty ranges)
+        // are not wired up in the browser runtime yet.
+        throw new Error("aerogpu: RESOURCE_DIRTY_RANGE is not supported by the browser executor (guest backing not implemented)");
       }
 
       case AEROGPU_CMD_UPLOAD_RESOURCE: {
@@ -1254,9 +1310,22 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
           throw new Error(`aerogpu: UPLOAD_RESOURCE payload overruns packet (dataEnd=${dataEnd}, end=${end})`);
         }
 
+        const srcBytes = new Uint8Array(cmdStream, dataStart, uploadBytes);
+
+        const buf = aerogpuBuffers.get(handle);
+        if (buf) {
+          if (offsetBytes + uploadBytes > buf.data.byteLength) {
+            throw new Error(
+              `aerogpu: UPLOAD_RESOURCE out of bounds (offset=${offsetBytes}, size=${uploadBytes}, bufBytes=${buf.data.byteLength})`,
+            );
+          }
+          buf.data.set(srcBytes, offsetBytes);
+          break;
+        }
+
         const tex = aerogpuTextures.get(handle);
         if (!tex) {
-          throw new Error(`aerogpu: UPLOAD_RESOURCE references unknown texture handle ${handle}`);
+          throw new Error(`aerogpu: UPLOAD_RESOURCE references unknown resource handle ${handle}`);
         }
         if (offsetBytes + uploadBytes > tex.data.byteLength) {
           throw new Error(
@@ -1264,7 +1333,147 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
           );
         }
 
-        tex.data.set(new Uint8Array(cmdStream, dataStart, uploadBytes), offsetBytes);
+        const dstBytes = tex.data;
+        if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+          dstBytes.set(srcBytes, offsetBytes);
+        } else {
+          if (offsetBytes % 4 !== 0 || uploadBytes % 4 !== 0) {
+            throw new Error("aerogpu: UPLOAD_RESOURCE texture uploads must be 4-byte aligned");
+          }
+          for (let i = 0; i < uploadBytes; i += 4) {
+            const srcOff = i;
+            const dstOff = offsetBytes + i;
+            const r0 = srcBytes[srcOff + 0]!;
+            const g0 = srcBytes[srcOff + 1]!;
+            const b0 = srcBytes[srcOff + 2]!;
+            const a0 = srcBytes[srcOff + 3]!;
+
+            switch (tex.format) {
+              case AEROGPU_FORMAT_R8G8B8X8_UNORM: {
+                dstBytes[dstOff + 0] = r0;
+                dstBytes[dstOff + 1] = g0;
+                dstBytes[dstOff + 2] = b0;
+                dstBytes[dstOff + 3] = 255;
+                break;
+              }
+              case AEROGPU_FORMAT_B8G8R8A8_UNORM: {
+                dstBytes[dstOff + 0] = b0;
+                dstBytes[dstOff + 1] = g0;
+                dstBytes[dstOff + 2] = r0;
+                dstBytes[dstOff + 3] = a0;
+                break;
+              }
+              case AEROGPU_FORMAT_B8G8R8X8_UNORM: {
+                dstBytes[dstOff + 0] = b0;
+                dstBytes[dstOff + 1] = g0;
+                dstBytes[dstOff + 2] = r0;
+                dstBytes[dstOff + 3] = 255;
+                break;
+              }
+              default:
+                throw new Error(`aerogpu: UPLOAD_RESOURCE unsupported texture format ${tex.format}`);
+            }
+          }
+        }
+        break;
+      }
+
+      case AEROGPU_CMD_COPY_BUFFER: {
+        if (cmdSizeBytes < AEROGPU_CMD_COPY_BUFFER_SIZE) {
+          throw new Error(`aerogpu: COPY_BUFFER packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const dstBuffer = readU32LeChecked(dv, offset + 8, end, "dst_buffer");
+        const srcBuffer = readU32LeChecked(dv, offset + 12, end, "src_buffer");
+        const dstOffsetBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 16, end, "dst_offset_bytes"), "dst_offset_bytes");
+        const srcOffsetBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 24, end, "src_offset_bytes"), "src_offset_bytes");
+        const sizeBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 32, end, "size_bytes"), "size_bytes");
+        const flags = readU32LeChecked(dv, offset + 40, end, "flags");
+
+        if (flags !== 0) {
+          if (flags === AEROGPU_COPY_FLAG_WRITEBACK_DST) {
+            throw new Error("aerogpu: COPY_BUFFER writeback is not supported by the browser executor (guest backing not implemented)");
+          }
+          throw new Error(`aerogpu: COPY_BUFFER unsupported flags 0x${flags.toString(16)}`);
+        }
+        if (sizeBytes === 0) break;
+        if (dstBuffer === 0 || srcBuffer === 0) {
+          throw new Error("aerogpu: COPY_BUFFER resource handles must be non-zero");
+        }
+        if (dstBuffer === srcBuffer) {
+          throw new Error("aerogpu: COPY_BUFFER src==dst is not supported");
+        }
+
+        const src = aerogpuBuffers.get(srcBuffer);
+        if (!src) throw new Error(`aerogpu: COPY_BUFFER unknown src buffer ${srcBuffer}`);
+        const dst = aerogpuBuffers.get(dstBuffer);
+        if (!dst) throw new Error(`aerogpu: COPY_BUFFER unknown dst buffer ${dstBuffer}`);
+
+        if (srcOffsetBytes + sizeBytes > src.data.byteLength || dstOffsetBytes + sizeBytes > dst.data.byteLength) {
+          throw new Error("aerogpu: COPY_BUFFER out of bounds");
+        }
+
+        const tmp = src.data.slice(srcOffsetBytes, srcOffsetBytes + sizeBytes);
+        dst.data.set(tmp, dstOffsetBytes);
+        break;
+      }
+
+      case AEROGPU_CMD_COPY_TEXTURE2D: {
+        if (cmdSizeBytes < AEROGPU_CMD_COPY_TEXTURE2D_SIZE) {
+          throw new Error(`aerogpu: COPY_TEXTURE2D packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const dstTexture = readU32LeChecked(dv, offset + 8, end, "dst_texture");
+        const srcTexture = readU32LeChecked(dv, offset + 12, end, "src_texture");
+        const dstMipLevel = readU32LeChecked(dv, offset + 16, end, "dst_mip_level");
+        const dstArrayLayer = readU32LeChecked(dv, offset + 20, end, "dst_array_layer");
+        const srcMipLevel = readU32LeChecked(dv, offset + 24, end, "src_mip_level");
+        const srcArrayLayer = readU32LeChecked(dv, offset + 28, end, "src_array_layer");
+        const dstX = readU32LeChecked(dv, offset + 32, end, "dst_x");
+        const dstY = readU32LeChecked(dv, offset + 36, end, "dst_y");
+        const srcX = readU32LeChecked(dv, offset + 40, end, "src_x");
+        const srcY = readU32LeChecked(dv, offset + 44, end, "src_y");
+        const width = readU32LeChecked(dv, offset + 48, end, "width");
+        const height = readU32LeChecked(dv, offset + 52, end, "height");
+        const flags = readU32LeChecked(dv, offset + 56, end, "flags");
+
+        if (flags !== 0) {
+          if (flags === AEROGPU_COPY_FLAG_WRITEBACK_DST) {
+            throw new Error("aerogpu: COPY_TEXTURE2D writeback is not supported by the browser executor (guest backing not implemented)");
+          }
+          throw new Error(`aerogpu: COPY_TEXTURE2D unsupported flags 0x${flags.toString(16)}`);
+        }
+        if (width === 0 || height === 0) break;
+        if (dstTexture === 0 || srcTexture === 0) {
+          throw new Error("aerogpu: COPY_TEXTURE2D resource handles must be non-zero");
+        }
+        if (dstMipLevel !== 0 || dstArrayLayer !== 0 || srcMipLevel !== 0 || srcArrayLayer !== 0) {
+          throw new Error("aerogpu: COPY_TEXTURE2D only supports mip0 layer0 in the browser executor");
+        }
+
+        const src = aerogpuTextures.get(srcTexture);
+        if (!src) throw new Error(`aerogpu: COPY_TEXTURE2D unknown src texture ${srcTexture}`);
+        const dst = aerogpuTextures.get(dstTexture);
+        if (!dst) throw new Error(`aerogpu: COPY_TEXTURE2D unknown dst texture ${dstTexture}`);
+        if (src.format !== dst.format) {
+          throw new Error("aerogpu: COPY_TEXTURE2D format mismatch");
+        }
+
+        if (srcX + width > src.width || srcY + height > src.height) {
+          throw new Error("aerogpu: COPY_TEXTURE2D src rect out of bounds");
+        }
+        if (dstX + width > dst.width || dstY + height > dst.height) {
+          throw new Error("aerogpu: COPY_TEXTURE2D dst rect out of bounds");
+        }
+
+        const rowBytes = width * 4;
+        const tmp = new Uint8Array(rowBytes * height);
+        for (let row = 0; row < height; row += 1) {
+          const srcOff = ((srcY + row) * src.width + srcX) * 4;
+          tmp.set(src.data.subarray(srcOff, srcOff + rowBytes), row * rowBytes);
+        }
+        for (let row = 0; row < height; row += 1) {
+          const dstOff = ((dstY + row) * dst.width + dstX) * 4;
+          dst.data.set(tmp.subarray(row * rowBytes, (row + 1) * rowBytes), dstOff);
+        }
         break;
       }
 
@@ -1737,6 +1946,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presenterSrcHeight = 0;
 
         aerogpuTextures.clear();
+        aerogpuBuffers.clear();
         aerogpuCurrentRenderTarget = null;
         aerogpuPresentCount = 0n;
         aerogpuLastPresentedFrame = null;
@@ -2070,6 +2280,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       runtimeOptions = null;
       runtimeReadySent = false;
       aerogpuTextures.clear();
+      aerogpuBuffers.clear();
       aerogpuCurrentRenderTarget = null;
       aerogpuLastPresentedFrame = null;
       ctx.close();
