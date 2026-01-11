@@ -9,7 +9,10 @@ use crate::devices::aerogpu_scanout::AeroGpuFormat;
 
 const MAX_ALLOC_TABLE_SIZE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CMD_STREAM_SIZE_BYTES: usize = 64 * 1024 * 1024;
-const MAX_VERTEX_BUFFER_SLOTS: usize = 16;
+// D3D11 supports 32 input-assembler vertex buffer slots. The software executor shares the
+// `SET_VERTEX_BUFFERS` protocol with the D3D11 path, so keep the full range available even though
+// classic D3D9 only uses 16 streams.
+const MAX_VERTEX_BUFFER_SLOTS: usize = 32;
 const MAX_TEXTURE_SLOTS: usize = 16;
 
 #[derive(Clone, Copy, Debug)]
