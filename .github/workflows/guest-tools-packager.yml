@@ -104,6 +104,33 @@ jobs:
           python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-full.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-virtio-full.log
           python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-guest-tools.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-aero-guest-tools.log
 
+      - name: Smoke-test CI wrapper (ci/package-guest-tools.ps1)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'out/guest-tools-packager/wrapper' | Out-Null
+
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' `
+            -InputRoot 'tools/packaging/aero_packager/testdata/drivers' `
+            -GuestToolsDir 'tools/packaging/aero_packager/testdata/guest-tools' `
+            -CertPath 'tools/packaging/aero_packager/testdata/guest-tools/certs/test.cer' `
+            -SpecPath 'tools/packaging/aero_packager/testdata/spec.json' `
+            -OutDir 'out/guest-tools-packager/wrapper' `
+            -Version '0.0.0' `
+            -BuildId 'ci' `
+            -SourceDateEpoch 0
+
+          foreach ($p in @(
+            'out/guest-tools-packager/wrapper/aero-guest-tools.iso',
+            'out/guest-tools-packager/wrapper/aero-guest-tools.zip',
+            'out/guest-tools-packager/wrapper/manifest.json',
+            'out/guest-tools-packager/wrapper/aero-guest-tools.manifest.json'
+          )) {
+            if (!(Test-Path -LiteralPath $p)) {
+              throw "Missing expected wrapper output: $p"
+            }
+          }
+
       - name: Upload logs (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
