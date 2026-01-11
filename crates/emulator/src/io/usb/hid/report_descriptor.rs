@@ -302,7 +302,15 @@ pub fn parse_report_descriptor(
                         let is_constant = (flags & (1 << 0)) != 0;
                         let is_array = (flags & (1 << 1)) == 0;
                         let is_absolute = (flags & (1 << 2)) == 0;
-                        let is_buffered_bytes = (flags & (1 << 8)) != 0;
+                        // HID 1.11:
+                        // - Input: bit7 is Bit Field / Buffered Bytes, bit8+ reserved.
+                        // - Output/Feature: bit7 is Non Volatile / Volatile, bit8 is Bit Field /
+                        //   Buffered Bytes.
+                        let is_buffered_bytes = match tag {
+                            8 => (flags & (1 << 7)) != 0,
+                            9 | 11 => (flags & (1 << 8)) != 0,
+                            _ => unreachable!(),
+                        };
 
                         let usage_page = local.usage_page_override.unwrap_or(global.usage_page);
                         let (is_range, usages) = match (local.usage_minimum, local.usage_maximum) {
@@ -660,13 +668,26 @@ fn synthesize_report(
             flags |= 1 << 2;
         }
         if item.is_buffered_bytes {
-            flags |= 1 << 8;
+            flags |= match kind {
+                // HID 1.11 Input main item uses bit7 for Buffered Bytes.
+                ReportKind::Input => 1 << 7,
+                // HID 1.11 Output/Feature main items use bit8 for Buffered Bytes.
+                ReportKind::Output | ReportKind::Feature => 1 << 8,
+            };
         }
 
-        if item.is_buffered_bytes {
-            emit_item(out, ItemType::Main, main_tag, &flags.to_le_bytes())?;
-        } else {
-            emit_item(out, ItemType::Main, main_tag, &[flags as u8])?;
+        match kind {
+            ReportKind::Input => {
+                // Prefer the canonical 1-byte encoding for Input items (bit7 is in-range).
+                emit_item(out, ItemType::Main, main_tag, &[flags as u8])?;
+            }
+            ReportKind::Output | ReportKind::Feature => {
+                if item.is_buffered_bytes {
+                    emit_item(out, ItemType::Main, main_tag, &flags.to_le_bytes())?;
+                } else {
+                    emit_item(out, ItemType::Main, main_tag, &[flags as u8])?;
+                }
+            }
         }
     }
 
@@ -1315,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn buffered_bytes_forces_two_byte_main_item_payload() {
+    fn buffered_bytes_encoding_is_kind_specific() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
             usage: 0x02,
@@ -1340,24 +1361,66 @@ mod tests {
                     usages: vec![0x30],
                 }],
             }],
-            output_reports: vec![],
-            feature_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: true,
+                    is_absolute: true,
+                    is_buffered_bytes: true,
+                    is_constant: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 0,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
+            feature_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: true,
+                    is_absolute: true,
+                    is_buffered_bytes: true,
+                    is_constant: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 0,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
             children: vec![],
         }];
 
         let desc = synthesize_report_descriptor(&collections).unwrap();
 
-        // Input main item with 2-byte payload is encoded as:
-        //   0x82, <low>, <high>
-        // and "Buffered Bytes" is bit8, i.e. bit0 of <high>.
-        let mut found = false;
-        for win in desc.windows(3) {
-            if win[0] == 0x82 && (win[2] & 0x01) != 0 {
-                found = true;
-                break;
-            }
-        }
-        assert!(found, "expected 2-byte Input item with Buffered Bytes flag: {desc:02x?}");
+        // HID 1.11:
+        // - Input: Buffered Bytes is bit7 and fits in a 1-byte payload (0x81 0x80).
+        // - Output/Feature: Buffered Bytes is bit8, which requires a 2-byte payload.
+        assert!(
+            desc.windows(2).any(|w| w == [0x81, 0x80]),
+            "expected 1-byte Input item with Buffered Bytes flag (0x81 0x80): {desc:02x?}"
+        );
+        assert!(
+            desc.windows(3).any(|w| w == [0x92, 0x00, 0x01]),
+            "expected 2-byte Output item with Buffered Bytes flag (0x92 0x00 0x01): {desc:02x?}"
+        );
+        assert!(
+            desc.windows(3).any(|w| w == [0xB2, 0x00, 0x01]),
+            "expected 2-byte Feature item with Buffered Bytes flag (0xB2 0x00 0x01): {desc:02x?}"
+        );
 
         let reparsed = parse_report_descriptor(&desc).unwrap();
         assert_eq!(collections, reparsed.collections);
@@ -1467,6 +1530,27 @@ mod tests {
             !desc.windows(4).any(|w| w == [0x19, 0x01, 0x29, 0x04]),
             "did not expect Usage Minimum/Maximum for non-contiguous usages: {desc:02x?}"
         );
+    }
+
+    #[test]
+    fn parse_input_buffered_bytes_flag_is_bit7() {
+        // Minimal descriptor with a single Input item using the spec-canonical "Buffered Bytes"
+        // encoding (bit7).
+        let desc = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x02, // Usage (Mouse)
+            0xA1, 0x01, // Collection (Application)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x01, // Report Count (1)
+            0x81, 0x80, // Input (Data,Array,Abs,Buffered Bytes)
+            0xC0, // End Collection
+        ];
+
+        let parsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(parsed.collections.len(), 1);
+        assert_eq!(parsed.collections[0].input_reports.len(), 1);
+        assert_eq!(parsed.collections[0].input_reports[0].items.len(), 1);
+        assert!(parsed.collections[0].input_reports[0].items[0].is_buffered_bytes);
     }
 
     fn simple_item(report_size: u32, report_count: u32) -> HidReportItem {
