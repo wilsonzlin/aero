@@ -157,6 +157,9 @@ By default (`-SigningPolicy testsigning`), it injects the public signing certifi
 (`out/certs/aero-test.cer`) into the staged Guest Tools tree so the packaged installer media
 trusts the exact certificate used to sign the driver catalogs.
 
+Additionally, when staging from the CI packages layout (`out/packages/<driver>/<arch>`), the script
+refuses to include any driver package that does not have a corresponding `drivers/<driver>/ci-package.json`.
+
 For WHQL/production-signed drivers, pass `-SigningPolicy none` to build Guest Tools media
 without injecting (or requiring) any custom certificate files.
 

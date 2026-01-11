@@ -398,6 +398,12 @@ function Copy-DriversToPackagerLayout {
   )
 
   $inputRootTrimmed = $InputRoot.TrimEnd("\", "/")
+  $expectedCiPackages = (Resolve-RepoPath -Path "out/packages").TrimEnd("\", "/")
+  $enforceCiManifestGate = $inputRootTrimmed -ieq $expectedCiPackages
+  $driversSrcRoot = $null
+  if ($enforceCiManifestGate) {
+    $driversSrcRoot = Resolve-RepoPath -Path "drivers"
+  }
 
   # CI packages layout produced by `ci/make-catalogs.ps1`:
   #   out/packages/<driverRel>/{x86,x64}/...
@@ -454,6 +460,16 @@ function Copy-DriversToPackagerLayout {
     }
 
     $driverRel = Normalize-DriverRel -Value $relative
+
+    if ($enforceCiManifestGate) {
+      $driverRelForPath = $driverRel.Replace("/", [System.IO.Path]::DirectorySeparatorChar)
+      $driverSourceDir = Join-Path $driversSrcRoot $driverRelForPath
+      $manifestPath = Join-Path $driverSourceDir "ci-package.json"
+      if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Refusing to package Guest Tools: driver package '$driverRel' is missing required manifest '$manifestPath'."
+      }
+    }
+
     $driverName = Get-GuestToolsDriverNameFromDriverRel -DriverRel $driverRel
     $driverName = (Normalize-PathComponent -Value $driverName).ToLowerInvariant()
 
