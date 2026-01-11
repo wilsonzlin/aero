@@ -180,6 +180,90 @@ fn iterates_valid_stream_and_decodes_variable_payloads() {
 }
 
 #[test]
+fn variable_payload_decoders_allow_trailing_bytes() {
+    // All payload sizes are multiples of 4 so the additional u32 is unambiguously a trailing
+    // extension field (not alignment padding).
+    let dxbc_bytes = b"DXBC1234";
+    let upload_bytes = b"DATA5678";
+    let input_layout_blob = b"ILAYBLOB";
+
+    let mut create_shader_payload = Vec::new();
+    push_u32(&mut create_shader_payload, 0xAABB_CCDD); // shader_handle
+    push_u32(&mut create_shader_payload, 1); // stage
+    push_u32(&mut create_shader_payload, dxbc_bytes.len() as u32);
+    push_u32(&mut create_shader_payload, 0); // reserved0
+    create_shader_payload.extend_from_slice(dxbc_bytes);
+    push_u32(&mut create_shader_payload, 0xDEAD_BEEF); // trailing extension
+
+    let mut upload_resource_payload = Vec::new();
+    push_u32(&mut upload_resource_payload, 0x1122_3344); // resource_handle
+    push_u32(&mut upload_resource_payload, 0); // reserved0
+    push_u64(&mut upload_resource_payload, 0x10); // offset_bytes
+    push_u64(&mut upload_resource_payload, upload_bytes.len() as u64);
+    upload_resource_payload.extend_from_slice(upload_bytes);
+    push_u32(&mut upload_resource_payload, 0xDEAD_BEEF); // trailing extension
+
+    let mut create_input_layout_payload = Vec::new();
+    push_u32(&mut create_input_layout_payload, 0x5566_7788); // input_layout_handle
+    push_u32(
+        &mut create_input_layout_payload,
+        input_layout_blob.len() as u32,
+    );
+    push_u32(&mut create_input_layout_payload, 0); // reserved0
+    create_input_layout_payload.extend_from_slice(input_layout_blob);
+    push_u32(&mut create_input_layout_payload, 0xDEAD_BEEF); // trailing extension
+
+    let mut set_vertex_buffers_payload = Vec::new();
+    push_u32(&mut set_vertex_buffers_payload, 2); // start_slot
+    push_u32(&mut set_vertex_buffers_payload, 1); // buffer_count
+    // binding[0]
+    push_u32(&mut set_vertex_buffers_payload, 11); // buffer
+    push_u32(&mut set_vertex_buffers_payload, 16); // stride_bytes
+    push_u32(&mut set_vertex_buffers_payload, 0); // offset_bytes
+    push_u32(&mut set_vertex_buffers_payload, 0); // reserved0
+    push_u32(&mut set_vertex_buffers_payload, 0xDEAD_BEEF); // trailing extension
+
+    let stream = build_stream(vec![
+        build_packet(
+            AerogpuCmdOpcode::CreateShaderDxbc as u32,
+            create_shader_payload,
+        ),
+        build_packet(
+            AerogpuCmdOpcode::UploadResource as u32,
+            upload_resource_payload,
+        ),
+        build_packet(
+            AerogpuCmdOpcode::CreateInputLayout as u32,
+            create_input_layout_payload,
+        ),
+        build_packet(
+            AerogpuCmdOpcode::SetVertexBuffers as u32,
+            set_vertex_buffers_payload,
+        ),
+    ]);
+
+    let packets = AerogpuCmdStreamIter::new(&stream)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(packets.len(), 4);
+
+    let (_create_shader, parsed_dxbc) = packets[0].decode_create_shader_dxbc_payload_le().unwrap();
+    assert_eq!(parsed_dxbc, dxbc_bytes);
+
+    let (_upload, parsed_upload) = packets[1].decode_upload_resource_payload_le().unwrap();
+    assert_eq!(parsed_upload, upload_bytes);
+
+    let (_create_layout, parsed_blob) = packets[2].decode_create_input_layout_payload_le().unwrap();
+    assert_eq!(parsed_blob, input_layout_blob);
+
+    let (_set_vbs, bindings) = packets[3].decode_set_vertex_buffers_payload_le().unwrap();
+    assert_eq!(bindings.len(), 1);
+    let buffer = bindings[0].buffer;
+    assert_eq!(buffer, 11);
+}
+
+#[test]
 fn unknown_opcode_is_preserved_and_skipped() {
     let unknown_payload = vec![1u8, 2, 3, 4];
     let stream = build_stream(vec![

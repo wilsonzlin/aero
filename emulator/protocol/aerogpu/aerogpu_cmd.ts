@@ -288,6 +288,33 @@ export const AerogpuBlendFactor = {
 
 export type AerogpuBlendFactor = (typeof AerogpuBlendFactor)[keyof typeof AerogpuBlendFactor];
 
+export interface AerogpuCmdSetBlendStateDecoded {
+  enable: boolean;
+  srcFactor: number;
+  dstFactor: number;
+  blendOp: number;
+  colorWriteMask: number;
+}
+
+export function decodeCmdSetBlendState(view: DataView, cmdByteOffset = 0): AerogpuCmdSetBlendStateDecoded {
+  const hdr = decodeCmdHdr(view, cmdByteOffset);
+  const end = cmdByteOffset + hdr.sizeBytes;
+  if (end > view.byteLength) {
+    throw new Error(`SET_BLEND_STATE packet overruns buffer (end=${end}, buffer_len=${view.byteLength})`);
+  }
+  if (hdr.sizeBytes < AEROGPU_CMD_SET_BLEND_STATE_SIZE) {
+    throw new Error(`SET_BLEND_STATE packet too small (size_bytes=${hdr.sizeBytes})`);
+  }
+
+  return {
+    enable: view.getUint32(cmdByteOffset + 8, true) !== 0,
+    srcFactor: view.getUint32(cmdByteOffset + 12, true),
+    dstFactor: view.getUint32(cmdByteOffset + 16, true),
+    blendOp: view.getUint32(cmdByteOffset + 20, true),
+    colorWriteMask: view.getUint8(cmdByteOffset + 24),
+  };
+}
+
 export const AerogpuBlendOp = {
   Add: 0,
   Subtract: 1,

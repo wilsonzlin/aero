@@ -1344,7 +1344,13 @@ fn validate_expected_payload_size(
     expected: usize,
     payload: &[u8],
 ) -> Result<(), AerogpuCmdDecodeError> {
-    if payload.len() != expected {
+    // Forward-compat: allow packets to grow by appending new fields after the existing payload.
+    //
+    // The command stream format includes a per-packet `size_bytes` specifically so newer guest
+    // drivers can extend packets without breaking older hosts. For variable-sized packets this
+    // means `payload.len()` can be larger than what the current decoder understands; we only
+    // require the prefix we need to be present.
+    if payload.len() < expected {
         return Err(AerogpuCmdDecodeError::PayloadSizeMismatch {
             expected,
             found: payload.len(),
@@ -1492,7 +1498,7 @@ impl<'a> AerogpuCmdPacket<'a> {
             .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
         validate_expected_payload_size(expected_payload_size, self.payload)?;
 
-        let binding_bytes = &self.payload[8..];
+        let binding_bytes = &self.payload[8..8 + binding_bytes_len];
         let (prefix, bindings, suffix) =
             unsafe { binding_bytes.align_to::<AerogpuVertexBufferBinding>() };
         if !prefix.is_empty() || !suffix.is_empty() || bindings.len() != buffer_count_usize {

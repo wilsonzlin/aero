@@ -1,0 +1,103 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
+  AEROGPU_CMD_SET_BLEND_STATE_SIZE,
+  AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
+  AEROGPU_CMD_STREAM_HEADER_SIZE,
+  AEROGPU_CMD_STREAM_MAGIC,
+  AerogpuBlendFactor,
+  AerogpuBlendOp,
+  AerogpuCmdOpcode,
+  decodeCmdStreamView,
+  decodeCmdSetBlendState,
+} from "../aerogpu/aerogpu_cmd.ts";
+import { AEROGPU_ABI_VERSION_U32 } from "../aerogpu/aerogpu_pci.ts";
+
+function pushU32(out: number[], v: number): void {
+  out.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff);
+}
+
+function buildStream(withTrailing: boolean): Uint8Array {
+  const bytes: number[] = [];
+
+  // Stream header.
+  pushU32(bytes, AEROGPU_CMD_STREAM_MAGIC);
+  pushU32(bytes, AEROGPU_ABI_VERSION_U32);
+  pushU32(bytes, 0); // size_bytes (patched later)
+  pushU32(bytes, 0); // flags
+  pushU32(bytes, 0); // reserved0
+  pushU32(bytes, 0); // reserved1
+
+  // Unknown opcode packet (skipped via size_bytes).
+  pushU32(bytes, 0xdead_beef);
+  pushU32(bytes, 12);
+  pushU32(bytes, 0x1234_5678);
+
+  // SET_BLEND_STATE packet.
+  const cmdOffset = bytes.length;
+  pushU32(bytes, AerogpuCmdOpcode.SetBlendState);
+  pushU32(bytes, 0); // size_bytes (patched later)
+
+  pushU32(bytes, 1); // enable
+  pushU32(bytes, AerogpuBlendFactor.One);
+  pushU32(bytes, AerogpuBlendFactor.Zero);
+  pushU32(bytes, AerogpuBlendOp.Add);
+
+  bytes.push(0xf); // color_write_mask
+  bytes.push(0, 0, 0); // reserved0[3]
+
+  // Extended blend state fields added in newer ABI minor versions.
+  pushU32(bytes, AerogpuBlendFactor.One); // src_factor_alpha
+  pushU32(bytes, AerogpuBlendFactor.Zero); // dst_factor_alpha
+  pushU32(bytes, AerogpuBlendOp.Add); // blend_op_alpha
+  // blend_constant_rgba_f32
+  pushU32(bytes, 0);
+  pushU32(bytes, 0);
+  pushU32(bytes, 0);
+  pushU32(bytes, 0);
+  pushU32(bytes, 0xffff_ffff); // sample_mask
+
+  if (withTrailing) {
+    // Forward-compatible extension (ignored by old decoders).
+    pushU32(bytes, 0xdead_beef);
+  }
+
+  const out = new Uint8Array(bytes);
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+
+  dv.setUint32(cmdOffset + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, out.byteLength - cmdOffset, true);
+  dv.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, out.byteLength, true);
+  assert.equal(out.byteLength % 4, 0, "stream not 4-byte aligned");
+  assert.equal(cmdOffset, AEROGPU_CMD_STREAM_HEADER_SIZE + 12);
+
+  return out;
+}
+
+test("AeroGPU command stream decoders accept trailing bytes in fixed-size packets", () => {
+  const base = buildStream(false);
+  const extended = buildStream(true);
+
+  const packetsBase = decodeCmdStreamView(base).packets;
+  const packetsExt = decodeCmdStreamView(extended).packets;
+
+  assert.equal(packetsBase.length, 2);
+  assert.equal(packetsExt.length, 2);
+
+  assert.equal(packetsBase[0]!.hdr.opcode >>> 0, 0xdead_beef);
+  assert.equal(packetsExt[0]!.hdr.opcode >>> 0, 0xdead_beef);
+
+  assert.equal(packetsBase[1]!.hdr.opcode, AerogpuCmdOpcode.SetBlendState);
+  assert.equal(packetsExt[1]!.hdr.opcode, AerogpuCmdOpcode.SetBlendState);
+  assert.equal(packetsBase[1]!.hdr.sizeBytes, AEROGPU_CMD_SET_BLEND_STATE_SIZE);
+  assert.equal(packetsExt[1]!.hdr.sizeBytes, AEROGPU_CMD_SET_BLEND_STATE_SIZE + 4);
+
+  const viewBase = new DataView(base.buffer, base.byteOffset, base.byteLength);
+  const viewExt = new DataView(extended.buffer, extended.byteOffset, extended.byteLength);
+
+  const decodedBase = decodeCmdSetBlendState(viewBase, packetsBase[1]!.offsetBytes);
+  const decodedExt = decodeCmdSetBlendState(viewExt, packetsExt[1]!.offsetBytes);
+
+  assert.deepEqual(decodedExt, decodedBase);
+});

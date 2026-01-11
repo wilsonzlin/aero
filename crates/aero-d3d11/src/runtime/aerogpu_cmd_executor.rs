@@ -1043,8 +1043,11 @@ impl AerogpuD3d11Executor {
     }
     fn exec_create_buffer(&mut self, cmd_bytes: &[u8], allocs: &AllocTable) -> Result<()> {
         // struct aerogpu_cmd_create_buffer (40 bytes)
-        if cmd_bytes.len() != 40 {
-            bail!("CREATE_BUFFER: expected 40 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 40 {
+            bail!(
+                "CREATE_BUFFER: expected at least 40 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let buffer_handle = read_u32_le(cmd_bytes, 8)?;
         let usage_flags = read_u32_le(cmd_bytes, 12)?;
@@ -1092,9 +1095,9 @@ impl AerogpuD3d11Executor {
 
     fn exec_create_texture2d(&mut self, cmd_bytes: &[u8], allocs: &AllocTable) -> Result<()> {
         // struct aerogpu_cmd_create_texture2d (56 bytes)
-        if cmd_bytes.len() != 56 {
+        if cmd_bytes.len() < 56 {
             bail!(
-                "CREATE_TEXTURE2D: expected 56 bytes, got {}",
+                "CREATE_TEXTURE2D: expected at least 56 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -1197,9 +1200,9 @@ impl AerogpuD3d11Executor {
 
     fn exec_destroy_resource(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_destroy_resource (16 bytes)
-        if cmd_bytes.len() != 16 {
+        if cmd_bytes.len() < 16 {
             bail!(
-                "DESTROY_RESOURCE: expected 16 bytes, got {}",
+                "DESTROY_RESOURCE: expected at least 16 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -1249,9 +1252,9 @@ impl AerogpuD3d11Executor {
 
     fn exec_resource_dirty_range(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_resource_dirty_range (32 bytes)
-        if cmd_bytes.len() != 32 {
+        if cmd_bytes.len() < 32 {
             bail!(
-                "RESOURCE_DIRTY_RANGE: expected 32 bytes, got {}",
+                "RESOURCE_DIRTY_RANGE: expected at least 32 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2038,8 +2041,11 @@ impl AerogpuD3d11Executor {
 
     fn exec_destroy_shader(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_destroy_shader (16 bytes)
-        if cmd_bytes.len() != 16 {
-            bail!("DESTROY_SHADER: expected 16 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 16 {
+            bail!(
+                "DESTROY_SHADER: expected at least 16 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let shader_handle = read_u32_le(cmd_bytes, 8)?;
         self.resources.shaders.remove(&shader_handle);
@@ -2048,8 +2054,11 @@ impl AerogpuD3d11Executor {
 
     fn exec_bind_shaders(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_bind_shaders (24 bytes)
-        if cmd_bytes.len() != 24 {
-            bail!("BIND_SHADERS: expected 24 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 24 {
+            bail!(
+                "BIND_SHADERS: expected at least 24 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let vs = read_u32_le(cmd_bytes, 8)?;
         let ps = read_u32_le(cmd_bytes, 12)?;
@@ -2079,9 +2088,9 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_destroy_input_layout(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        if cmd_bytes.len() != 16 {
+        if cmd_bytes.len() < 16 {
             bail!(
-                "DESTROY_INPUT_LAYOUT: expected 16 bytes, got {}",
+                "DESTROY_INPUT_LAYOUT: expected at least 16 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2094,9 +2103,9 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_set_input_layout(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        if cmd_bytes.len() != 16 {
+        if cmd_bytes.len() < 16 {
             bail!(
-                "SET_INPUT_LAYOUT: expected 16 bytes, got {}",
+                "SET_INPUT_LAYOUT: expected at least 16 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2107,9 +2116,9 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_render_targets(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_render_targets (48 bytes)
-        if cmd_bytes.len() != 48 {
+        if cmd_bytes.len() < 48 {
             bail!(
-                "SET_RENDER_TARGETS: expected 48 bytes, got {}",
+                "SET_RENDER_TARGETS: expected at least 48 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2142,8 +2151,11 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_viewport(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_viewport (32 bytes)
-        if cmd_bytes.len() != 32 {
-            bail!("SET_VIEWPORT: expected 32 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 32 {
+            bail!(
+                "SET_VIEWPORT: expected at least 32 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let x = f32::from_bits(read_u32_le(cmd_bytes, 8)?);
         let y = f32::from_bits(read_u32_le(cmd_bytes, 12)?);
@@ -2164,8 +2176,11 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_scissor(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_scissor (24 bytes)
-        if cmd_bytes.len() != 24 {
-            bail!("SET_SCISSOR: expected 24 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 24 {
+            bail!(
+                "SET_SCISSOR: expected at least 24 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let x = read_i32_le(cmd_bytes, 8)?;
         let y = read_i32_le(cmd_bytes, 12)?;
@@ -2222,9 +2237,9 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_index_buffer(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_index_buffer (24 bytes)
-        if cmd_bytes.len() != 24 {
+        if cmd_bytes.len() < 24 {
             bail!(
-                "SET_INDEX_BUFFER: expected 24 bytes, got {}",
+                "SET_INDEX_BUFFER: expected at least 24 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2252,9 +2267,9 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_primitive_topology(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_primitive_topology (16 bytes)
-        if cmd_bytes.len() != 16 {
+        if cmd_bytes.len() < 16 {
             bail!(
-                "SET_PRIMITIVE_TOPOLOGY: expected 16 bytes, got {}",
+                "SET_PRIMITIVE_TOPOLOGY: expected at least 16 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2274,8 +2289,8 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_texture(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_texture (24 bytes)
-        if cmd_bytes.len() != 24 {
-            bail!("SET_TEXTURE: expected 24 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 24 {
+            bail!("SET_TEXTURE: expected at least 24 bytes, got {}", cmd_bytes.len());
         }
         let stage_u32 = read_u32_le(cmd_bytes, 8)?;
         let slot_u32 = read_u32_le(cmd_bytes, 12)?;
@@ -2301,9 +2316,9 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_sampler_state(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_sampler_state (24 bytes)
-        if cmd_bytes.len() != 24 {
+        if cmd_bytes.len() < 24 {
             bail!(
-                "SET_SAMPLER_STATE: expected 24 bytes, got {}",
+                "SET_SAMPLER_STATE: expected at least 24 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2319,8 +2334,8 @@ impl AerogpuD3d11Executor {
 
     fn exec_create_sampler(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_create_sampler (28 bytes)
-        if cmd_bytes.len() != 28 {
-            bail!("CREATE_SAMPLER: expected 28 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 28 {
+            bail!("CREATE_SAMPLER: expected at least 28 bytes, got {}", cmd_bytes.len());
         }
         let sampler_handle = read_u32_le(cmd_bytes, 8)?;
         let filter_u32 = read_u32_le(cmd_bytes, 12)?;
@@ -2371,9 +2386,9 @@ impl AerogpuD3d11Executor {
 
     fn exec_destroy_sampler(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_destroy_sampler (16 bytes)
-        if cmd_bytes.len() != 16 {
+        if cmd_bytes.len() < 16 {
             bail!(
-                "DESTROY_SAMPLER: expected 16 bytes, got {}",
+                "DESTROY_SAMPLER: expected at least 16 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2601,9 +2616,9 @@ impl AerogpuD3d11Executor {
         use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdSetDepthStencilState;
 
         // struct aerogpu_cmd_set_depth_stencil_state (28 bytes)
-        if cmd_bytes.len() != std::mem::size_of::<AerogpuCmdSetDepthStencilState>() {
+        if cmd_bytes.len() < std::mem::size_of::<AerogpuCmdSetDepthStencilState>() {
             bail!(
-                "SET_DEPTH_STENCIL_STATE: expected {} bytes, got {}",
+                "SET_DEPTH_STENCIL_STATE: expected at least {} bytes, got {}",
                 std::mem::size_of::<AerogpuCmdSetDepthStencilState>(),
                 cmd_bytes.len()
             );
@@ -2636,9 +2651,9 @@ impl AerogpuD3d11Executor {
         use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdSetRasterizerState;
 
         // struct aerogpu_cmd_set_rasterizer_state (32 bytes)
-        if cmd_bytes.len() != std::mem::size_of::<AerogpuCmdSetRasterizerState>() {
+        if cmd_bytes.len() < std::mem::size_of::<AerogpuCmdSetRasterizerState>() {
             bail!(
-                "SET_RASTERIZER_STATE: expected {} bytes, got {}",
+                "SET_RASTERIZER_STATE: expected at least {} bytes, got {}",
                 std::mem::size_of::<AerogpuCmdSetRasterizerState>(),
                 cmd_bytes.len()
             );
@@ -2675,8 +2690,8 @@ impl AerogpuD3d11Executor {
         guest_mem: &dyn GuestMemory,
     ) -> Result<()> {
         // struct aerogpu_cmd_clear (36 bytes)
-        if cmd_bytes.len() != 36 {
-            bail!("CLEAR: expected 36 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 36 {
+            bail!("CLEAR: expected at least 36 bytes, got {}", cmd_bytes.len());
         }
         if self.state.render_targets.is_empty() && self.state.depth_stencil.is_none() {
             // Nothing bound; treat as no-op for robustness.
@@ -2764,8 +2779,8 @@ impl AerogpuD3d11Executor {
         report: &mut ExecuteReport,
     ) -> Result<()> {
         // struct aerogpu_cmd_present (16 bytes)
-        if cmd_bytes.len() != 16 {
-            bail!("PRESENT: expected 16 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 16 {
+            bail!("PRESENT: expected at least 16 bytes, got {}", cmd_bytes.len());
         }
         let scanout_id = read_u32_le(cmd_bytes, 8)?;
         let flags = read_u32_le(cmd_bytes, 12)?;
@@ -2793,8 +2808,11 @@ impl AerogpuD3d11Executor {
         report: &mut ExecuteReport,
     ) -> Result<()> {
         // struct aerogpu_cmd_present_ex (24 bytes)
-        if cmd_bytes.len() != 24 {
-            bail!("PRESENT_EX: expected 24 bytes, got {}", cmd_bytes.len());
+        if cmd_bytes.len() < 24 {
+            bail!(
+                "PRESENT_EX: expected at least 24 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let scanout_id = read_u32_le(cmd_bytes, 8)?;
         let flags = read_u32_le(cmd_bytes, 12)?;
@@ -3164,8 +3182,8 @@ struct BuiltVertexState {
 
 fn exec_draw<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()> {
     // struct aerogpu_cmd_draw (24 bytes)
-    if cmd_bytes.len() != 24 {
-        bail!("DRAW: expected 24 bytes, got {}", cmd_bytes.len());
+    if cmd_bytes.len() < 24 {
+        bail!("DRAW: expected at least 24 bytes, got {}", cmd_bytes.len());
     }
     let vertex_count = read_u32_le(cmd_bytes, 8)?;
     let instance_count = read_u32_le(cmd_bytes, 12)?;
@@ -3180,8 +3198,11 @@ fn exec_draw<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()
 
 fn exec_draw_indexed<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()> {
     // struct aerogpu_cmd_draw_indexed (28 bytes)
-    if cmd_bytes.len() != 28 {
-        bail!("DRAW_INDEXED: expected 28 bytes, got {}", cmd_bytes.len());
+    if cmd_bytes.len() < 28 {
+        bail!(
+            "DRAW_INDEXED: expected at least 28 bytes, got {}",
+            cmd_bytes.len()
+        );
     }
     let index_count = read_u32_le(cmd_bytes, 8)?;
     let instance_count = read_u32_le(cmd_bytes, 12)?;
