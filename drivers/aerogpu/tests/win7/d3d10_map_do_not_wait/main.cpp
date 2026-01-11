@@ -29,6 +29,17 @@ static int FailD3D10WithRemovedReason(aerogpu_test::TestReporter* reporter,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D10Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (reason != S_OK) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: device removed reason: %s", test_name, aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
 struct MapThreadArgs {
   ID3D10Texture2D* tex;
   UINT map_flags;
@@ -291,6 +302,7 @@ static int RunD3D10MapDoNotWait(int argc, char** argv) {
       }
       const uint32_t expected = 0xFFFF0000u;  // red in BGRA memory order
       if ((args.pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+        PrintDeviceRemovedReasonIfAny(kTestName, device.get());
         return reporter.Fail("Map(DO_NOT_WAIT) pixel mismatch at (0,0): got 0x%08lX expected ~0x%08lX",
                              (unsigned long)args.pixel,
                              (unsigned long)expected);
@@ -336,6 +348,7 @@ static int RunD3D10MapDoNotWait(int argc, char** argv) {
   const uint32_t expected = 0xFFFF0000u;  // red in BGRA memory order
 
   if ((pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+    PrintDeviceRemovedReasonIfAny(kTestName, device.get());
     return reporter.Fail("pixel mismatch at (0,0): got 0x%08lX expected ~0x%08lX",
                          (unsigned long)pixel,
                          (unsigned long)expected);
