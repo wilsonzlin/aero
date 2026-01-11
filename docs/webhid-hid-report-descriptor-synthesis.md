@@ -198,6 +198,8 @@ The remaining WebHID booleans (`isWrapped`, `isLinear`, `hasPreferredState`, `ha
 
 For `Input` items, the HID specification uses **bit 7** for “Buffered Bytes” instead of volatility; we encode that directly so Input buffered-bytes items synthesize using the spec-canonical 1-byte encoding (`0x81` with bit 7 set in the payload, e.g. `0x81 0x80`).
 
+For `Output`/`Feature` items, the HID specification uses **bit 8** for “Buffered Bytes”; we encode that directly (and thus emit a 2-byte payload when it is set).
+
 ---
 
 ## Encoding rules
