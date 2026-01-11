@@ -1,6 +1,7 @@
 use crate::io::input::ps2_set2_bytes_for_key_event;
 use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
 use crate::io::usb::hid::hid_usage_from_js_code;
+use crate::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use crate::io::usb::hid::mouse::UsbHidMouseHandle;
 use crate::io::virtio::devices::input as vio_input;
@@ -22,6 +23,7 @@ pub struct InputPipeline {
     pub virtio: Option<VirtioInputHub>,
     pub usb_keyboard: Option<UsbHidKeyboardHandle>,
     pub usb_mouse: Option<UsbHidMouseHandle>,
+    pub usb_composite: Option<UsbCompositeHidInputHandle>,
     pub policy: InputRoutingPolicy,
 }
 
@@ -36,6 +38,7 @@ impl InputPipeline {
             virtio,
             usb_keyboard: None,
             usb_mouse: None,
+            usb_composite: None,
             policy,
         }
     }
@@ -47,6 +50,11 @@ impl InputPipeline {
     ) -> Self {
         self.usb_keyboard = Some(keyboard);
         self.usb_mouse = Some(mouse);
+        self
+    }
+
+    pub fn with_usb_composite_hid(mut self, composite: UsbCompositeHidInputHandle) -> Self {
+        self.usb_composite = Some(composite);
         self
     }
 
@@ -63,10 +71,8 @@ impl InputPipeline {
             InputRoutingPolicy::Auto => {
                 if self.virtio.as_ref().is_some_and(|v| v.keyboard.driver_ok()) {
                     self.inject_key_virtio(mem, code, pressed)?
-                } else if self
-                    .usb_keyboard
-                    .as_ref()
-                    .is_some_and(|kbd| kbd.configured())
+                } else if self.usb_composite.as_ref().is_some_and(|d| d.configured())
+                    || self.usb_keyboard.as_ref().is_some_and(|kbd| kbd.configured())
                 {
                     self.inject_key_usb(code, pressed)
                 } else {
@@ -90,10 +96,8 @@ impl InputPipeline {
             InputRoutingPolicy::Auto => {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_move_virtio(mem, dx, dy)?
-                } else if self
-                    .usb_mouse
-                    .as_ref()
-                    .is_some_and(|mouse| mouse.configured())
+                } else if self.usb_composite.as_ref().is_some_and(|d| d.configured())
+                    || self.usb_mouse.as_ref().is_some_and(|mouse| mouse.configured())
                 {
                     self.inject_mouse_move_usb(dx, dy)
                 } else {
@@ -119,10 +123,8 @@ impl InputPipeline {
             InputRoutingPolicy::Auto => {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_button_virtio(mem, button, pressed)?
-                } else if self
-                    .usb_mouse
-                    .as_ref()
-                    .is_some_and(|mouse| mouse.configured())
+                } else if self.usb_composite.as_ref().is_some_and(|d| d.configured())
+                    || self.usb_mouse.as_ref().is_some_and(|mouse| mouse.configured())
                 {
                     self.inject_mouse_button_usb(button, pressed)
                 } else {
@@ -145,10 +147,8 @@ impl InputPipeline {
             InputRoutingPolicy::Auto => {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_wheel_virtio(mem, delta)?
-                } else if self
-                    .usb_mouse
-                    .as_ref()
-                    .is_some_and(|mouse| mouse.configured())
+                } else if self.usb_composite.as_ref().is_some_and(|d| d.configured())
+                    || self.usb_mouse.as_ref().is_some_and(|mouse| mouse.configured())
                 {
                     self.inject_mouse_wheel_usb(delta)
                 } else {
@@ -186,10 +186,14 @@ impl InputPipeline {
     }
 
     fn inject_key_usb(&mut self, code: &str, pressed: bool) {
-        let Some(kbd) = self.usb_keyboard.as_ref().filter(|k| k.configured()) else {
+        let Some(usage) = hid_usage_from_js_code(code) else {
             return;
         };
-        let Some(usage) = hid_usage_from_js_code(code) else {
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.key_event(usage, pressed);
+            return;
+        }
+        let Some(kbd) = self.usb_keyboard.as_ref().filter(|k| k.configured()) else {
             return;
         };
         kbd.key_event(usage, pressed);
@@ -216,6 +220,10 @@ impl InputPipeline {
     }
 
     fn inject_mouse_move_usb(&mut self, dx: i32, dy: i32) {
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.mouse_movement(dx, dy);
+            return;
+        }
         let Some(mouse) = self.usb_mouse.as_ref().filter(|m| m.configured()) else {
             return;
         };
@@ -248,13 +256,17 @@ impl InputPipeline {
     }
 
     fn inject_mouse_button_usb(&mut self, button: Ps2MouseButton, pressed: bool) {
-        let Some(mouse) = self.usb_mouse.as_ref().filter(|m| m.configured()) else {
-            return;
-        };
         let bit = match button {
             Ps2MouseButton::Left => 0x01,
             Ps2MouseButton::Right => 0x02,
             Ps2MouseButton::Middle => 0x04,
+        };
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.mouse_button_event(bit, pressed);
+            return;
+        }
+        let Some(mouse) = self.usb_mouse.as_ref().filter(|m| m.configured()) else {
+            return;
         };
         mouse.button_event(bit, pressed);
     }
@@ -279,6 +291,10 @@ impl InputPipeline {
     }
 
     fn inject_mouse_wheel_usb(&mut self, delta: i32) {
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.mouse_wheel(delta);
+            return;
+        }
         let Some(mouse) = self.usb_mouse.as_ref().filter(|m| m.configured()) else {
             return;
         };

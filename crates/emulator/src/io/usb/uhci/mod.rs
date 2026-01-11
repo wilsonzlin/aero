@@ -13,6 +13,7 @@ pub mod regs;
 use memory::MemoryBus;
 
 use crate::io::pci::{PciConfigSpace, PciDevice};
+use crate::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use crate::io::usb::hid::mouse::UsbHidMouseHandle;
 use crate::io::usb::hub::RootHub;
@@ -195,6 +196,13 @@ impl UhciPciDevice {
         controller.hub_mut().attach(0, Box::new(keyboard.clone()));
         controller.hub_mut().attach(1, Box::new(mouse.clone()));
         (Self::new(controller, io_base), keyboard, mouse)
+    }
+
+    pub fn new_with_composite_hid(io_base: u16) -> (Self, UsbCompositeHidInputHandle) {
+        let mut controller = UhciController::new();
+        let composite = UsbCompositeHidInputHandle::new();
+        controller.hub_mut().attach(0, Box::new(composite.clone()));
+        (Self::new(controller, io_base), composite)
     }
 
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
