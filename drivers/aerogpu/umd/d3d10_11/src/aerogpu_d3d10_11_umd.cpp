@@ -7827,6 +7827,12 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
   if (res->mapped) {
     return E_FAIL;
   }
+  if (res->usage != kD3D11UsageDynamic) {
+    return E_INVALIDARG;
+  }
+  if ((res->cpu_access_flags & kD3D11CpuAccessWrite) == 0) {
+    return E_INVALIDARG;
+  }
 
   const uint64_t total = res->size_bytes;
   if (res->alloc_handle != 0 && dev->device_callbacks && dev->device_callbacks->pfnMapAllocation &&
@@ -7839,7 +7845,13 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
     }
     res->mapped_via_allocation = true;
     res->mapped_ptr = cpu_ptr;
-    *ppData = static_cast<uint8_t*>(cpu_ptr) + res->alloc_offset_bytes;
+
+    auto* data = static_cast<uint8_t*>(cpu_ptr) + res->alloc_offset_bytes;
+    if (discard && total <= static_cast<uint64_t>(SIZE_MAX)) {
+      // Discard contents are undefined; clear for deterministic tests.
+      std::memset(data, 0, static_cast<size_t>(total));
+    }
+    *ppData = data;
   } else {
     HRESULT hr = ensure_resource_storage(res, total);
     if (FAILED(hr)) {

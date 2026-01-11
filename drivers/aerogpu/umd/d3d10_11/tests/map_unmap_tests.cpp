@@ -280,19 +280,25 @@ struct TestResource {
 
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
 
-bool CreateStagingBuffer(TestDevice* dev,
-                          uint32_t byte_width,
-                          uint32_t cpu_access_flags,
-                          TestResource* out) {
+constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
+constexpr uint32_t kD3D11BindIndexBuffer = 0x2;
+constexpr uint32_t kD3D11BindConstantBuffer = 0x4;
+
+bool CreateBuffer(TestDevice* dev,
+                  uint32_t byte_width,
+                  uint32_t usage,
+                  uint32_t bind_flags,
+                  uint32_t cpu_access_flags,
+                  TestResource* out) {
   if (!dev || !out) {
     return false;
   }
 
   AEROGPU_DDIARG_CREATERESOURCE desc = {};
   desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER;
-  desc.BindFlags = 0;
+  desc.BindFlags = bind_flags;
   desc.MiscFlags = 0;
-  desc.Usage = AEROGPU_D3D11_USAGE_STAGING;
+  desc.Usage = usage;
   desc.CPUAccessFlags = cpu_access_flags;
   desc.ByteWidth = byte_width;
   desc.StructureByteStride = 0;
@@ -312,6 +318,18 @@ bool CreateStagingBuffer(TestDevice* dev,
     return false;
   }
   return true;
+}
+
+bool CreateStagingBuffer(TestDevice* dev,
+                         uint32_t byte_width,
+                         uint32_t cpu_access_flags,
+                         TestResource* out) {
+  return CreateBuffer(dev,
+                      byte_width,
+                      AEROGPU_D3D11_USAGE_STAGING,
+                      /*bind_flags=*/0,
+                      cpu_access_flags,
+                      out);
 }
 
 bool CreateStagingTexture2D(TestDevice* dev,
@@ -638,6 +656,17 @@ bool TestGuestBackedBufferUnmapDirtyRange() {
     return false;
   }
 
+  Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+  if (!Check(alloc != nullptr, "backing allocation exists in harness")) {
+    return false;
+  }
+  if (!Check(alloc->bytes.size() >= sizeof(expected), "backing allocation large enough")) {
+    return false;
+  }
+  if (!Check(std::memcmp(alloc->bytes.data(), expected, sizeof(expected)) == 0, "backing allocation bytes")) {
+    return false;
+  }
+
   dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
@@ -824,6 +853,231 @@ bool TestMapFlagsValidation() {
   return true;
 }
 
+bool TestHostOwnedDynamicIABufferUploads() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic ia host-owned)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindVertexBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &buf),
+             "CreateBuffer(dynamic VB)")) {
+    return false;
+  }
+
+  void* data = nullptr;
+  HRESULT hr = dev.device_funcs.pfnDynamicIABufferMapDiscard(dev.hDevice, buf.hResource, &data);
+  if (!Check(hr == S_OK, "DynamicIABufferMapDiscard host-owned")) {
+    return false;
+  }
+  if (!Check(data != nullptr, "DynamicIABufferMapDiscard returned data")) {
+    return false;
+  }
+
+  uint8_t expected[32] = {};
+  for (size_t i = 0; i < sizeof(expected); i++) {
+    expected[i] = static_cast<uint8_t>(i * 7u);
+  }
+  std::memcpy(data, expected, sizeof(expected));
+
+  dev.device_funcs.pfnDynamicIABufferUnmap(dev.hDevice, buf.hResource);
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after DynamicIABufferUnmap")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "host-owned dynamic ia Unmap should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1,
+             "host-owned dynamic ia Unmap should emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_BUFFER);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_BUFFER emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_buffer*>(stream + create_loc.offset);
+  if (!Check(create_cmd->backing_alloc_id == 0, "dynamic VB CREATE_BUFFER backing_alloc_id == 0")) {
+    return false;
+  }
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->offset_bytes == 0, "UPLOAD_RESOURCE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == sizeof(expected), "UPLOAD_RESOURCE size matches dynamic VB")) {
+    return false;
+  }
+
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  const size_t payload_size = static_cast<size_t>(upload_cmd->size_bytes);
+  if (!Check(payload_offset + payload_size <= stream_len, "UPLOAD_RESOURCE payload fits")) {
+    return false;
+  }
+  if (!Check(std::memcmp(stream + payload_offset, expected, payload_size) == 0, "UPLOAD_RESOURCE payload bytes")) {
+    return false;
+  }
+
+  if (!Check(dev.harness.last_allocs.empty(), "host-owned dynamic ia submit alloc list should be empty")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedDynamicIABufferDirtyRange() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(dynamic ia guest-backed)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindVertexBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &buf),
+             "CreateBuffer(dynamic VB)")) {
+    return false;
+  }
+
+  void* data = nullptr;
+  HRESULT hr = dev.device_funcs.pfnDynamicIABufferMapDiscard(dev.hDevice, buf.hResource, &data);
+  if (!Check(hr == S_OK, "DynamicIABufferMapDiscard guest-backed")) {
+    return false;
+  }
+  if (!Check(data != nullptr, "DynamicIABufferMapDiscard returned data")) {
+    return false;
+  }
+
+  uint8_t expected[32] = {};
+  for (size_t i = 0; i < sizeof(expected); i++) {
+    expected[i] = static_cast<uint8_t>(0xA0u + i);
+  }
+  std::memcpy(data, expected, sizeof(expected));
+
+  dev.device_funcs.pfnDynamicIABufferUnmap(dev.hDevice, buf.hResource);
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after DynamicIABufferUnmap")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "guest-backed dynamic ia Unmap should not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 1,
+             "guest-backed dynamic ia Unmap should emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_BUFFER);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_BUFFER emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_buffer*>(stream + create_loc.offset);
+  if (!Check(create_cmd->backing_alloc_id != 0, "dynamic VB CREATE_BUFFER backing_alloc_id != 0")) {
+    return false;
+  }
+
+  CmdLoc dirty_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty_loc.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
+  if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == sizeof(expected), "RESOURCE_DIRTY_RANGE size matches dynamic VB")) {
+    return false;
+  }
+
+  bool found_alloc = false;
+  for (auto h : dev.harness.last_allocs) {
+    if (h == create_cmd->backing_alloc_id) {
+      found_alloc = true;
+    }
+  }
+  if (!Check(found_alloc, "guest-backed dynamic ia submit alloc list contains backing alloc")) {
+    return false;
+  }
+
+  Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+  if (!Check(alloc != nullptr, "backing allocation exists in harness")) {
+    return false;
+  }
+  if (!Check(alloc->bytes.size() >= sizeof(expected), "backing allocation large enough")) {
+    return false;
+  }
+  if (!Check(std::memcmp(alloc->bytes.data(), expected, sizeof(expected)) == 0, "backing allocation bytes")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestDynamicBufferUsageValidation() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic validation)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DEFAULT,
+                          kD3D11BindVertexBuffer,
+                          /*cpu_access_flags=*/0,
+                          &buf),
+             "CreateBuffer(default VB)")) {
+    return false;
+  }
+
+  void* data = nullptr;
+  const HRESULT hr = dev.device_funcs.pfnDynamicIABufferMapDiscard(dev.hDevice, buf.hResource, &data);
+  if (!Check(hr == E_INVALIDARG, "DynamicIABufferMapDiscard on non-dynamic resource should fail")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -834,6 +1088,9 @@ int main() {
   ok &= TestGuestBackedTextureUnmapDirtyRange();
   ok &= TestMapUsageValidation();
   ok &= TestMapFlagsValidation();
+  ok &= TestHostOwnedDynamicIABufferUploads();
+  ok &= TestGuestBackedDynamicIABufferDirtyRange();
+  ok &= TestDynamicBufferUsageValidation();
 
   if (!ok) {
     return 1;
