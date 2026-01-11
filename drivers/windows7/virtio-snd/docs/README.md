@@ -58,11 +58,15 @@ See: [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virti
 
 ## Protocol implemented (Aero subset)
 
-This driver is intended to target the **minimal** virtio-snd subset implemented by the Aero emulator today:
+This driver targets the **Aero Windows 7 virtio device contract v1** (virtio-snd §3.4).
+The contract (and emulator) define two fixed-format PCM streams, but today the driver
+only exposes/uses **stream 0** (playback/output) for render.
 
-- Exactly **one** PCM playback stream: `stream_id = 0`
-- Format is effectively fixed to **stereo**, **48,000 Hz**, **signed 16-bit little-endian** (`S16_LE`)
-- Only the **controlq** and **txq** are used for basic playback
+- Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
+- Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`) (not yet implemented by this driver)
+
+Basic playback uses `controlq` + `txq`. `rxq` is initialized for transport bring-up but
+capture buffers are not submitted yet.
 
 All multi-byte fields described below are **little-endian**.
 
@@ -70,7 +74,8 @@ All multi-byte fields described below are **little-endian**.
 
 The controlq request payload begins with a 32-bit `code` and the response always begins with a 32-bit `status`.
 
-Only these request codes are implemented (all for **stream 0**):
+Contract v1 requires these request codes (for both streams 0 and 1). The current
+driver uses them only for **stream 0** (playback):
 
 - `VIRTIO_SND_R_PCM_INFO (0x0100)`
 - `VIRTIO_SND_R_PCM_SET_PARAMS (0x0101)`
@@ -114,34 +119,47 @@ u32 count
 `PCM_INFO` response:
 
 - `u32 status`
-- Followed by `count` entries of `virtio_snd_pcm_info` (Aero returns **0 or 1** entry depending on whether the range includes stream 0).
+- Followed by zero or more entries of `virtio_snd_pcm_info` (Aero returns **0–2** entries depending on whether the requested `start_id..start_id+count` range includes stream 0 and/or 1).
 
 `virtio_snd_pcm_info` layout returned by Aero (`32` bytes):
 
 ```
-u32 stream_id      = 0
-u32 features       = 0
-u64 formats        = (1 << VIRTIO_SND_PCM_FMT_S16)
-u64 rates          = (1 << VIRTIO_SND_PCM_RATE_48000)
-u8  direction      = VIRTIO_SND_D_OUTPUT (0)
-u8  channels_min   = 2
-u8  channels_max   = 2
-u8  reserved[5]    = 0
+u32 stream_id
+u32 features
+u64 formats
+u64 rates
+u8  direction
+u8  channels_min
+u8  channels_max
+u8  reserved[5]
 ```
+
+Fixed fields used by Aero:
+
+- `features = 0`
+- `formats = (1 << VIRTIO_SND_PCM_FMT_S16)`
+- `rates = (1 << VIRTIO_SND_PCM_RATE_48000)`
+- Stream 0: `direction = VIRTIO_SND_D_OUTPUT (0)`, `channels_min = channels_max = 2`
+- Stream 1: `direction = VIRTIO_SND_D_INPUT (1)`, `channels_min = channels_max = 1`
 
 `PCM_SET_PARAMS` request (`24` bytes):
 
 ```
 u32 code         = 0x0101
-u32 stream_id    = 0
+u32 stream_id
 u32 buffer_bytes
 u32 period_bytes
 u32 features     = 0
-u8  channels     = 2
+u8  channels
 u8  format       = VIRTIO_SND_PCM_FMT_S16 (5)
 u8  rate         = VIRTIO_SND_PCM_RATE_48000 (7)
 u8  padding      = 0
 ```
+
+`channels` must match the stream direction:
+
+- Stream 0 (output): `channels = 2`
+- Stream 1 (input): `channels = 1`
 
 `PCM_SET_PARAMS` response:
 
@@ -153,7 +171,7 @@ For `PCM_PREPARE`, `PCM_START`, `PCM_STOP`, `PCM_RELEASE`, the request and respo
 
 ```
 u32 code
-u32 stream_id = 0
+u32 stream_id
 ```
 
 Response:
