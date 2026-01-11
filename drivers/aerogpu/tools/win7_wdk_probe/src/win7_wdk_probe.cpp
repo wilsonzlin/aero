@@ -194,6 +194,38 @@ int main() {
 #endif
   PrintSeparator();
 
+  // Lock/unlock structs used by Map/Unmap paths (`pfnLockCb` / `pfnUnlockCb`).
+#if defined(_MSC_VER)
+  __if_exists(D3DDDICB_LOCK) {
+    PRINT_SIZE(D3DDDICB_LOCK);
+    PRINT_OFF_OPT(D3DDDICB_LOCK, hAllocation);
+    // Header revisions vary; probe common subresource field spellings.
+    PRINT_OFF_OPT(D3DDDICB_LOCK, SubResourceIndex);
+    PRINT_OFF_OPT(D3DDDICB_LOCK, SubresourceIndex);
+    PRINT_OFF_OPT(D3DDDICB_LOCK, Flags);
+    PRINT_OFF_OPT(D3DDDICB_LOCK, pData);
+    PRINT_OFF_OPT(D3DDDICB_LOCK, Pitch);
+    PRINT_OFF_OPT(D3DDDICB_LOCK, SlicePitch);
+    PrintSeparator();
+  }
+  __if_not_exists(D3DDDICB_LOCK) {
+    printf("%-48s <n/a>\n", "D3DDDICB_LOCK");
+    PrintSeparator();
+  }
+
+  __if_exists(D3DDDICB_UNLOCK) {
+    PRINT_SIZE(D3DDDICB_UNLOCK);
+    PRINT_OFF_OPT(D3DDDICB_UNLOCK, hAllocation);
+    PRINT_OFF_OPT(D3DDDICB_UNLOCK, SubResourceIndex);
+    PRINT_OFF_OPT(D3DDDICB_UNLOCK, SubresourceIndex);
+    PrintSeparator();
+  }
+  __if_not_exists(D3DDDICB_UNLOCK) {
+    printf("%-48s <n/a>\n", "D3DDDICB_UNLOCK");
+    PrintSeparator();
+  }
+#endif
+
   PRINT_SIZE(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT);
   PRINT_OFF_OPT(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT, hContext);
   PRINT_OFF_OPT(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT, ObjectCount);
