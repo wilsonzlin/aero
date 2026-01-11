@@ -1,5 +1,6 @@
 #include "aerogpu_kmd.h"
 #include "aerogpu_dbgctl_escape.h"
+#include "aerogpu_umd_private.h"
 
 /*
  * The miniport driver currently includes `aerogpu_protocol.h` (legacy combined
@@ -459,11 +460,73 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
     }
 
     case DXGKQAITYPE_UMDRIVERPRIVATE: {
-        /* Provide a minimal version blob for bring-up. */
+        /*
+         * User-mode discovery blob used by AeroGPU UMDs (D3D9Ex/D3D10+) to
+         * identify the active device ABI (legacy "ARGP" vs new "AGPU"), ABI
+         * version, and feature bits.
+         *
+         * Backwards compatibility:
+         *   - Older guest tooling expected a single ULONG return value.
+         *   - Preserve that when OutputDataSize == sizeof(ULONG).
+         */
         if (pQueryAdapterInfo->OutputDataSize < sizeof(ULONG)) {
             return STATUS_BUFFER_TOO_SMALL;
         }
-        *(ULONG*)pQueryAdapterInfo->pOutputData = AEROGPU_MMIO_VERSION;
+
+        /*
+         * v0 legacy query: return only the device ABI version.
+         * - Legacy device: MMIO VERSION register (BAR0[0x0004]).
+         * - New device: ABI_VERSION register (same offset).
+         */
+        if (pQueryAdapterInfo->OutputDataSize == sizeof(ULONG)) {
+            ULONG abiVersion = 0;
+            if (adapter->Bar0) {
+                abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION);
+            }
+            *(ULONG*)pQueryAdapterInfo->pOutputData = abiVersion;
+            return STATUS_SUCCESS;
+        }
+
+        if (pQueryAdapterInfo->OutputDataSize < sizeof(aerogpu_umd_private_v1)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        aerogpu_umd_private_v1* out = (aerogpu_umd_private_v1*)pQueryAdapterInfo->pOutputData;
+        RtlZeroMemory(out, sizeof(*out));
+
+        out->size_bytes = sizeof(*out);
+        out->struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
+
+        ULONG magic = 0;
+        ULONG abiVersion = 0;
+        ULONGLONG features = 0;
+
+        if (adapter->Bar0) {
+            magic = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_MAGIC);
+            abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION);
+            if (magic == AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+                const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO);
+                const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI);
+                features = ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
+            }
+        }
+
+        out->device_mmio_magic = magic;
+        out->device_abi_version_u32 = abiVersion;
+        out->device_features = features;
+
+        ULONG flags = 0;
+        if (magic == AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP) {
+            flags |= AEROGPU_UMDPRIV_FLAG_IS_LEGACY;
+        }
+        if (features & AEROGPU_UMDPRIV_FEATURE_VBLANK) {
+            flags |= AEROGPU_UMDPRIV_FLAG_HAS_VBLANK;
+        }
+        if (features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) {
+            flags |= AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE;
+        }
+        out->flags = flags;
+
         return STATUS_SUCCESS;
     }
 
