@@ -90,6 +90,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Treat infra/<module>/ as "root modules" and require that they commit a
+          # provider lockfile. This avoids accidentally treating reusable child
+          # modules as roots, while still catching missing lockfiles early.
+          mapfile -t root_candidates < <(find infra -mindepth 2 -maxdepth 2 -type f -name '*.tf' -print0 | xargs -0 -r -n1 dirname | sort -u)
+          for module in "${root_candidates[@]}"; do
+            if [[ ! -f "$module/.terraform.lock.hcl" ]]; then
+              echo "Terraform module '$module' is missing .terraform.lock.hcl."
+              echo "Run: terraform -chdir=\"$module\" init (and commit the generated lockfile)."
+              exit 1
+            fi
+          done
+
           mapfile -t modules < <(find infra -name '.terraform.lock.hcl' -print0 | xargs -0 -r -n1 dirname | sort -u)
           if [[ ${#modules[@]} -eq 0 ]]; then
             echo "No Terraform modules found under infra/ (expected at least one infra/**/.terraform.lock.hcl)"
