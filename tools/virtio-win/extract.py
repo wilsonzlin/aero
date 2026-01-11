@@ -115,16 +115,20 @@ def _utc_now_iso() -> str:
 
 def _is_notice_file(name: str) -> bool:
     lowered = name.casefold()
+    lowered_norm = _strip_iso9660_version_suffix(name).casefold()
     for pat in NOTICE_FILE_PATTERNS:
-        if fnmatch.fnmatch(lowered, pat.casefold()):
+        pat_cf = pat.casefold()
+        if fnmatch.fnmatch(lowered, pat_cf) or fnmatch.fnmatch(lowered_norm, pat_cf):
             return True
     return False
 
 
 def _is_metadata_file(name: str) -> bool:
     lowered = name.casefold()
+    lowered_norm = _strip_iso9660_version_suffix(name).casefold()
     for pat in METADATA_FILE_PATTERNS:
-        if fnmatch.fnmatch(lowered, pat.casefold()):
+        pat_cf = pat.casefold()
+        if fnmatch.fnmatch(lowered, pat_cf) or fnmatch.fnmatch(lowered_norm, pat_cf):
             return True
     return False
 
@@ -213,12 +217,22 @@ def _strip_iso9660_version_suffix(name: str) -> str:
     path so downstream tooling sees normal filenames.
     """
 
-    if ";" not in name:
-        return name
-    base, sep, ver = name.rpartition(";")
-    if sep and ver.isdigit():
-        return base
-    return name
+    base = name
+    stripped_version = False
+    if ";" in base:
+        candidate, sep, ver = base.rpartition(";")
+        if sep and ver.isdigit():
+            base = candidate
+            stripped_version = True
+
+    # ISO-9660 encoders often represent "no extension" as a trailing dot, e.g.:
+    #   VERSION.;1
+    # Strip that dot when we also stripped a version suffix so downstream tooling sees
+    # the expected filename ("VERSION").
+    if stripped_version and base.endswith("."):
+        base = base[:-1]
+
+    return base
 
 
 def _safe_out_path(out_root: Path, dest_rel_posix: str) -> Path:
