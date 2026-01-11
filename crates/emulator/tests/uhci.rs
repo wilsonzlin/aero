@@ -1071,7 +1071,7 @@ fn uhci_control_in_pending_large_data_stage_completes_after_ready() {
 
     assert_eq!(
         mem.slice(BUF_DATA as usize..BUF_DATA as usize + data.len()),
-        data
+        data.as_slice()
     );
     let st1 = mem.read_u32(TD1 as u64 + 4);
     let st2 = mem.read_u32(TD2 as u64 + 4);
