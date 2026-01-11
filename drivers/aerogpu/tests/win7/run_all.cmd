@@ -8,13 +8,20 @@ if "%TIMEOUT_MS%"=="" set "TIMEOUT_MS=30000"
 
 set "SHOW_HELP="
 set "NO_TIMEOUT="
+set "EXPECT_TIMEOUT_VALUE="
 for %%A in (%*) do (
-  if /I "%%~A"=="--help" set "SHOW_HELP=1"
-  if /I "%%~A"=="-h" set "SHOW_HELP=1"
-  if "%%~A"=="/?" set "SHOW_HELP=1"
-  if /I "%%~A"=="--no-timeout" set "NO_TIMEOUT=1"
-  for /f "tokens=1,2 delims==" %%a in ("%%~A") do (
-    if /I "%%a"=="--timeout-ms" if not "%%b"=="" set "TIMEOUT_MS=%%b"
+  if defined EXPECT_TIMEOUT_VALUE (
+    set "TIMEOUT_MS=%%~A"
+    set "EXPECT_TIMEOUT_VALUE="
+  ) else (
+    if /I "%%~A"=="--help" set "SHOW_HELP=1"
+    if /I "%%~A"=="-h" set "SHOW_HELP=1"
+    if "%%~A"=="/?" set "SHOW_HELP=1"
+    if /I "%%~A"=="--no-timeout" set "NO_TIMEOUT=1"
+    if /I "%%~A"=="--timeout-ms" set "EXPECT_TIMEOUT_VALUE=1"
+    for /f "tokens=1,2 delims==" %%a in ("%%~A") do (
+      if /I "%%a"=="--timeout-ms" if not "%%b"=="" set "TIMEOUT_MS=%%b"
+    )
   )
 )
 if defined SHOW_HELP goto :help
@@ -29,14 +36,20 @@ if not exist "%MANIFEST%" (
 rem The suite uses --timeout-ms=NNNN to configure aerogpu_timeout_runner.exe; avoid forwarding that
 rem flag into tests (vblank_wait_sanity has its own --timeout-ms for per-wait timeouts).
 set "TEST_ARGS="
+set "EXPECT_TIMEOUT_VALUE="
 for %%A in (%*) do (
   set "ARG=%%~A"
-  set "SKIP_ARG="
-  for /f "tokens=1 delims==" %%a in ("!ARG!") do (
-    if /I "%%a"=="--timeout-ms" set "SKIP_ARG=1"
+  if defined EXPECT_TIMEOUT_VALUE (
+    set "EXPECT_TIMEOUT_VALUE="
+  ) else (
+    set "SKIP_ARG="
+    for /f "tokens=1 delims==" %%a in ("!ARG!") do (
+      if /I "%%a"=="--timeout-ms" set "SKIP_ARG=1"
+    )
+    if /I "!ARG!"=="--timeout-ms" set "EXPECT_TIMEOUT_VALUE=1"
+    if /I "!ARG!"=="--no-timeout" set "SKIP_ARG=1"
+    if not defined SKIP_ARG set "TEST_ARGS=!TEST_ARGS! !ARG!"
   )
-  if /I "!ARG!"=="--no-timeout" set "SKIP_ARG=1"
-  if not defined SKIP_ARG set "TEST_ARGS=!TEST_ARGS! !ARG!"
 )
 set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
 set /a FAILURES=0
