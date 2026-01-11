@@ -10,7 +10,7 @@ It is useful for:
 
 ## Requirements
 
-- Node.js **20.11.1+** (**Node 20.x**; repo standard/engines)
+- Node.js (use the repo-pinned version from [`.nvmrc`](../../.nvmrc))
 
 No external npm dependencies are required.
 
