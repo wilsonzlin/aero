@@ -5,13 +5,15 @@ CI guardrail: AeroGPU Win7 shared-surface `share_token` contract.
 Background:
 - D3D shared `HANDLE` numeric values are process-local and must NOT be used as the
   AeroGPU protocol `share_token`.
-- The canonical AeroGPU contract is that `share_token` comes from the KMD-owned
-  per-allocation ShareToken returned to UMD via allocation private driver data
-  (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
+- On Win7/WDDM 1.1, the canonical AeroGPU contract is that the guest UMD generates
+  a collision-resistant `share_token` and persists it in the preserved WDDM
+  allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in
+  `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the exact same
+  bytes on cross-process opens, so both processes observe the same token.
 
 This script is intentionally narrow and fast: it prevents accidental doc/protocol
-comment drift back toward the legacy "UMD-generated share_token stored in
-`aerogpu_wddm_alloc_priv`" wording.
+comment drift back toward older, incorrect descriptions (for example: referencing
+the deleted `aerogpu_alloc_privdata.h` model).
 """
 
 from __future__ import annotations
@@ -40,25 +42,24 @@ SCAN_PATHS: list[pathlib.Path] = [
 ]
 
 # If this identifier shows up in docs/protocol commentary, it almost always means
-# we're (incorrectly) describing the protocol `share_token` as being derived from
-# the preserved WDDM alloc priv blob rather than the KMD ShareToken.
+# we're (incorrectly) referencing an obsolete share-token carrier model.
 BANNED_SUBSTRINGS = [
-    "aerogpu_wddm_alloc_priv.share_token",
+    "aerogpu_alloc_privdata.h",
 ]
 
-# These files must continue to reference the canonical ShareToken carrier header.
+# These files must continue to reference the canonical share_token carrier field.
 REQUIRED_SUBSTRINGS = {
     ROOT / "drivers" / "aerogpu" / "protocol" / "aerogpu_cmd.h": [
-        "aerogpu_alloc_privdata.h",
+        "aerogpu_wddm_alloc_priv.share_token",
     ],
     ROOT / "drivers" / "aerogpu" / "protocol" / "README.md": [
-        "aerogpu_alloc_privdata.h",
+        "aerogpu_wddm_alloc_priv.share_token",
     ],
     ROOT / "docs" / "16-d3d9ex-dwm-compatibility.md": [
-        "aerogpu_alloc_privdata.h",
+        "aerogpu_wddm_alloc_priv.share_token",
     ],
     ROOT / "docs" / "graphics" / "win7-shared-surfaces-share-token.md": [
-        "aerogpu_alloc_privdata.h",
+        "aerogpu_wddm_alloc_priv.share_token",
     ],
 }
 
@@ -115,4 +116,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
