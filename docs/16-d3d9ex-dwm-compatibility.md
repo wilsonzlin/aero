@@ -195,7 +195,8 @@ Define a guest/host handle model that does **not** attempt to expose host OS han
   3. The KMD treats the private-data blob as **UMD → KMD input**: validates it
      (magic/version/flags/size), records the IDs, and uses `alloc_id` when
      building per-submit `aerogpu_alloc_table` entries for the host.
-  4. The UMD informs the host: `(share_token → host_resource_id)` mapping is created.
+  4. The UMD informs the host: `(share_token → host_resource_id)` mapping is created
+     (via `AEROGPU_CMD_EXPORT_SHARED_SURFACE`).
 
 - On “import” (open from a shared handle):
   1. The UMD performs the normal WDDM open. For shared allocations, dxgkrnl
