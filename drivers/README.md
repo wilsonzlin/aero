@@ -17,7 +17,7 @@ Canonical workflows:
 Primary CI artifacts (names matter; these are consumed by downstream workflows/scripts):
 
 - `win7-drivers`
-  - Contents: `out/artifacts/` (installable driver bundle ZIPs + ISO, and optionally a FAT driver disk image)
+  - Contents: `out/artifacts/` (installable driver bundle ZIPs + ISO, packaged Guest Tools outputs, and optionally a FAT driver disk image)
 - `win7-drivers-signed-packages`
   - Contents: `out/packages/**` + `out/certs/aero-test.cer` (raw signed packages)
 - `aero-guest-tools`
