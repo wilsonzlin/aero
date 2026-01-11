@@ -704,6 +704,16 @@ Draw using a dynamic constant buffer updated via `Map(WRITE_DISCARD)`:
 
 **Existing in repo:** `drivers/aerogpu/tests/win7/d3d11_dynamic_constant_buffer_sanity/`.
 
+### 7.6 `Map(READ, DO_NOT_WAIT)` staging readback behavior
+
+Validate that `Map(READ, DO_NOT_WAIT)` behaves like a **non-blocking poll** (returns `DXGI_ERROR_WAS_STILL_DRAWING` while GPU work is still in flight), and that the blocking `Map(READ)` variant waits for GPU completion and returns correct bytes.
+
+**Existing in repo:**
+
+* `drivers/aerogpu/tests/win7/d3d10_map_do_not_wait/`
+* `drivers/aerogpu/tests/win7/d3d10_1_map_do_not_wait/`
+* `drivers/aerogpu/tests/win7/d3d11_map_do_not_wait/`
+
 ---
 
 ### Appendix: practical bring-up order

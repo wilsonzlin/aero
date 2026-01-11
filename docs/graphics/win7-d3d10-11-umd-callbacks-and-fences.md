@@ -508,6 +508,7 @@ Important fields:
 
 - Call the wait callback with `Timeout = 0`.
 - If it indicates not-ready (timeout), return `DXGI_ERROR_WAS_STILL_DRAWING` from the `Map` DDI (D3D11), or (for `void`-returning map variants) call `pfnSetErrorCb(hRTDevice, DXGI_ERROR_WAS_STILL_DRAWING)` and return.
+  - Note: different Win7-era stacks report "not ready" using different HRESULTs (e.g. `HRESULT_FROM_WIN32(WAIT_TIMEOUT)`, `HRESULT_FROM_WIN32(ERROR_TIMEOUT)`, `HRESULT_FROM_NT(STATUS_TIMEOUT)` (0x10000102), and sometimes `HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)` (0xD01E0102)). For DO_NOT_WAIT semantics, normalize these to `DXGI_ERROR_WAS_STILL_DRAWING`.
 
 Practical Win7 note: the wait callback does not always report "not ready" as `DXGI_ERROR_WAS_STILL_DRAWING`. Depending on header/runtime vintage, a poll (`Timeout = 0`) may yield one of several timeout/pending HRESULTs; treat them as still-drawing for `Map(DO_NOT_WAIT)`:
 
