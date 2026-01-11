@@ -98,7 +98,7 @@ These directories are intentionally **not** production code:
 - `prototype/` – larger prototypes / RFC companions
   - `prototype/legacy-win7-aerogpu-1ae0/` – legacy Win7 AeroGPU prototype stack (deprecated; archived)
 - `guest/` – legacy prototype tombstones
-  - `windows/` – Win7 AeroGPU prototype pointer (tombstone; stub files only: README + redirecting install doc).
+  - `windows/` – Win7 AeroGPU prototype pointer (tombstone; stub files only: README + redirecting install doc + stub INF).
     Archived sources live under `prototype/legacy-win7-aerogpu-1ae0/`.
 
 If you add new experiments, keep them under one of these (or a clearly named `legacy/` directory) and document them with a small `README.md`.
