@@ -34,7 +34,8 @@ Virtual NIC (e1000 / virtio-net)
         │   (Ethernet frames)
         ▼
 WASM emulator (Rust)
-  L2TunnelBackend: send_frame/recv_frame
+  L2 tunnel backend (frame pipe)
+    - `L2TunnelRingBackend` (browser runtime): `NET_TX`/`NET_RX` AIPC rings
         │   (Ethernet frames)
         ▼
 Browser transport
@@ -89,6 +90,7 @@ Planned/active code paths:
 
 - Browser tunnel client: `web/src/net/l2Tunnel.ts`
 - Emulator tunnel abstraction: `crates/emulator/src/io/net/tunnel_backend.rs`
+- Emulator ring-backed bridge (browser): `crates/emulator/src/io/net/l2_ring_backend.rs`
 - WebSocket L2 proxy (unprivileged): `crates/aero-l2-proxy`
 - WebRTC transport (optional): `proxy/webrtc-udp-relay` (DataChannel carrying the L2 tunnel)
 
