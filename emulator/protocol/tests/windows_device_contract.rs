@@ -151,6 +151,13 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     // Make sure we don't keep stale contract text around under a different name.
     assert!(!contains_needle(&contract_text, "A0E0"));
     assert!(!contains_needle(&contract_md_text, "A0E0"));
+    // This repository previously had an early prototype AeroGPU Windows stack using `VEN_1AE0`.
+    // That vendor ID is deprecated and must never appear in the canonical binding contract.
+    assert!(!contains_needle(&contract_text, "VEN_1AE0"));
+    // The contract must only reference the canonical driver packages under `drivers/` (not the
+    // removed `guest/windows/` prototype tree).
+    assert!(!contains_needle(&contract_text, "guest/windows"));
+    assert!(!contains_needle(&contract_text, "guest\\\\windows"));
 }
 
 fn contains_needle(haystack: &str, needle: &str) -> bool {
