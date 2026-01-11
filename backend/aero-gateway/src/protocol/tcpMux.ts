@@ -2,28 +2,33 @@ export const TCP_MUX_SUBPROTOCOL = 'aero-tcp-mux-v1';
 
 export const TCP_MUX_HEADER_BYTES = 9;
 
-export enum TcpMuxMsgType {
-  OPEN = 1,
-  DATA = 2,
-  CLOSE = 3,
-  ERROR = 4,
-  PING = 5,
-  PONG = 6,
-}
+// NOTE: Node's `--experimental-strip-types` loader is "strip-only" (no TS transform),
+// so we avoid `enum` here. Use `as const` objects + derived union types instead.
+export const TcpMuxMsgType = {
+  OPEN: 1,
+  DATA: 2,
+  CLOSE: 3,
+  ERROR: 4,
+  PING: 5,
+  PONG: 6,
+} as const;
+export type TcpMuxMsgType = (typeof TcpMuxMsgType)[keyof typeof TcpMuxMsgType];
 
-export enum TcpMuxCloseFlags {
-  FIN = 0x01,
-  RST = 0x02,
-}
+export const TcpMuxCloseFlags = {
+  FIN: 0x01,
+  RST: 0x02,
+} as const;
+export type TcpMuxCloseFlags = (typeof TcpMuxCloseFlags)[keyof typeof TcpMuxCloseFlags];
 
-export enum TcpMuxErrorCode {
-  POLICY_DENIED = 1,
-  DIAL_FAILED = 2,
-  PROTOCOL_ERROR = 3,
-  UNKNOWN_STREAM = 4,
-  STREAM_LIMIT_EXCEEDED = 5,
-  STREAM_BUFFER_OVERFLOW = 6,
-}
+export const TcpMuxErrorCode = {
+  POLICY_DENIED: 1,
+  DIAL_FAILED: 2,
+  PROTOCOL_ERROR: 3,
+  UNKNOWN_STREAM: 4,
+  STREAM_LIMIT_EXCEEDED: 5,
+  STREAM_BUFFER_OVERFLOW: 6,
+} as const;
+export type TcpMuxErrorCode = (typeof TcpMuxErrorCode)[keyof typeof TcpMuxErrorCode];
 
 export type TcpMuxFrame = {
   msgType: TcpMuxMsgType;
