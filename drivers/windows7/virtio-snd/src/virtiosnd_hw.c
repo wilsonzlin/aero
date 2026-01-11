@@ -513,7 +513,7 @@ VOID VirtIoSndUninitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
     InterlockedExchange(&Dx->TxEngineInitialized, 0);
 
     delay.QuadPart = -10 * 1000; /* 1ms */
-    while (InterlockedCompareExchange(&Dx->DpcInFlight, 0, 0) != 0) {
+    while (InterlockedCompareExchange(&Dx->Intx.DpcInFlight, 0, 0) > 0) {
         KeDelayExecutionThread(KernelMode, FALSE, &delay);
     }
 

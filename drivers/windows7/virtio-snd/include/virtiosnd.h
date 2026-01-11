@@ -5,6 +5,7 @@
 #include <ntddk.h>
 
 #include "virtio_snd_proto.h"
+#include "virtio_pci_intx_wdm.h"
 #include "virtio_pci_modern_wdm.h"
 #include "virtiosnd_control.h"
 #include "virtiosnd_queue_split.h"
@@ -97,17 +98,9 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     volatile LONG RxEngineInitialized;
 
     /* INTx plumbing */
-    PKINTERRUPT InterruptObject;
-    KDPC InterruptDpc;
-    volatile LONG PendingIsrStatus;
-    volatile LONG Stopping;
-    volatile LONG DpcInFlight;
-
-    ULONG InterruptVector;
-    KIRQL InterruptIrql;
-    KINTERRUPT_MODE InterruptMode;
-    KAFFINITY InterruptAffinity;
-    BOOLEAN InterruptShareVector;
+    VIRTIO_INTX Intx;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDesc;
+    BOOLEAN InterruptDescPresent;
 
     VIRTIOSND_DMA_CONTEXT DmaCtx;
 
