@@ -18,9 +18,13 @@ namespace aerogpu {
 // the host maintains a global (share_token -> resource) map with no awareness of guest
 // process boundaries.
 //
-// The token value itself is persisted in the WDDM allocation private driver data
-// (aerogpu_wddm_alloc_priv.share_token), which dxgkrnl preserves and returns on
-// OpenResource/OpenAllocation so other processes can IMPORT using the same token.
+// Canonical contract: `share_token` should come from the KMD-generated per-allocation
+// ShareToken returned to the UMD via allocation private driver data
+// (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
+//
+// This allocator is retained as a legacy/compatibility path for stacks that do not
+// provide the KMD ShareToken and instead persist a user-mode generated token in
+// `aerogpu_wddm_alloc_priv.share_token`.
 class ShareTokenAllocator {
  public:
   ShareTokenAllocator() = default;

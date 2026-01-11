@@ -606,10 +606,16 @@ typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {
   // dxgkrnl preserves these bytes and returns them verbatim when another process
   // opens the resource (OpenResource/OpenAllocation).
   //
-  // AeroGPU uses this to persist a UMD-owned `aerogpu_wddm_alloc_priv`
-  // (alloc_id/share_token/size) for shared resources: the UMD writes the blob
-  // during create, and the KMD validates/consumes it. Do not rely on any KMD->UMD
-  // writeback semantics on Win7/WDDM 1.1.
+  // AeroGPU uses this buffer to persist a UMD-owned `aerogpu_wddm_alloc_priv`
+  // (primarily `alloc_id` + size) for shared resources: the UMD writes the blob
+  // during create, and dxgkrnl preserves/returns the bytes verbatim when another
+  // process opens the resource.
+  //
+  // NOTE: The protocol `share_token` used by `EXPORT_SHARED_SURFACE` /
+  // `IMPORT_SHARED_SURFACE` should come from the KMD-generated per-allocation
+  // ShareToken (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`). Older
+  // bring-up paths may also persist a user-mode generated token in
+  // `aerogpu_wddm_alloc_priv.share_token` for compatibility.
   //
   // See also: drivers/aerogpu/protocol/aerogpu_wddm_alloc.h
   //

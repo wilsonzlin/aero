@@ -80,10 +80,9 @@ When running against the **versioned** AGPU device, treat BAR0 as the canonical 
      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO`/`HI`
      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO`/`HI`
      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
-
-   Win7/WDDM note: dxgkrnl gates vblank delivery via `DxgkDdiControlInterrupt` using
-   `DXGK_INTERRUPT_TYPE_CRTC_VSYNC`. The miniport ISR must notify vblank via
-   `DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId`.
+   - Win7/WDDM note: dxgkrnl gates vblank delivery via `DxgkDdiControlInterrupt` using
+     `DXGK_INTERRUPT_TYPE_CRTC_VSYNC`. The miniport ISR must notify vblank via
+     `DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId`.
 
 ## Scanline / raster status (`DxgkDdiGetScanLine`)
 
@@ -96,16 +95,15 @@ This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` ca
 - It derives a frame cadence from the device vblank counter/timestamps and the nominal vblank period.
 - It maps elapsed time within the frame onto a synthetic `[0, height + vblank_lines)` scanline range, where `vblank_lines`
   is clamped to a small constant range (currently 20–40 lines).
-
-If vblank timing registers are not available, the driver falls back to a synthetic cadence based on
-`KeQueryInterruptTime()` (to avoid apps busy-waiting forever).
+- If vblank timing registers are not available, the driver falls back to a synthetic cadence based on
+  `KeQueryInterruptTime()` (to avoid apps busy-waiting forever).
 
 ## Stable `alloc_id` / `share_token` (shared allocations)
 
 To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on stable identifiers:
 
 - `alloc_id` (32-bit, nonzero): UMD-owned allocation ID used by the per-submit allocation table (`alloc_id → {gpa, size_bytes, flags}`).
-- `share_token` (64-bit): stable cross-process token used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
+- `share_token` (64-bit): KMD-owned ShareToken used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
 
 ### `alloc_id` (UMD → KMD input; preserved across `OpenResource`)
 
@@ -121,13 +119,11 @@ The preserved private-data layout is defined in:
 
 - `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
 
-### `share_token` (UMD → KMD input; preserved across `OpenResource`)
+### `share_token` (KMD → UMD output; stable cross-process)
 
-`share_token` is carried in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv.share_token`):
+For shared surfaces, the `share_token` used by the AeroGPU protocol is the **KMD-generated per-allocation `ShareToken`** returned to the UMD via allocation private driver data:
 
-- The blob is treated as **UMD → KMD input**: the UMD generates `share_token` at shared-resource creation time and attaches it to each shared allocation.
-- For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe the same `share_token`.
-- The KMD validates and stores `share_token` in its allocation bookkeeping.
+- `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`
 
 Do **not** derive `share_token` from the numeric value of the D3D shared `HANDLE`: handle values are process-local and not stable cross-process.
 

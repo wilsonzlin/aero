@@ -44,18 +44,23 @@ Cross-process shared resources are expressed explicitly in the command stream:
 - `AEROGPU_CMD_EXPORT_SHARED_SURFACE` associates an existing `resource_handle` with a stable 64-bit `share_token`.
 - `AEROGPU_CMD_IMPORT_SHARED_SURFACE` creates a new `resource_handle` aliasing the exported resource by `share_token`.
 
-`share_token` must be stable across guest processes. On Win7/WDDM 1.1, the token is
-persisted in WDDM allocation private driver data (`aerogpu_wddm_alloc_priv.share_token`
-in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`): the UMD chooses it at creation
-time and dxgkrnl preserves the bytes for shared allocations and returns them
-verbatim on `OpenResource` so another process can observe the same token.
+`share_token` must be stable across guest processes. On Win7/WDDM 1.1, AeroGPU does
+**not** use the numeric value of the D3D shared `HANDLE` as `share_token`: handle
+values are process-local and not stable cross-process.
 
-Do **not** use the numeric value of the D3D shared `HANDLE` as `share_token`: handle values are process-local and not stable cross-process.
+Canonical contract: `share_token` is the **KMD-generated per-allocation ShareToken**
+returned to the UMD via allocation private driver data:
+
+- `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`
+
+Note: the in-tree D3D9 UMD still contains a legacy `ShareTokenAllocator` which can
+generate collision-resistant tokens in user mode. This exists for compatibility
+with older stacks; new work should use the KMD ShareToken.
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). In the current AeroGPU D3D9 UMD:
 
 - `alloc_id` is derived from a cross-process monotonic counter (`allocate_shared_alloc_id_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
-- `share_token` is generated independently via `ShareTokenAllocator::allocate_share_token()` (`src/aerogpu_d3d9_shared_resource.h`, crypto RNG preferred with a fallback entropy + SplitMix64 path).
+- Legacy: `share_token` may be generated via `ShareTokenAllocator::allocate_share_token()` (`src/aerogpu_d3d9_shared_resource.h`) when the KMD does not provide a ShareToken.
 
 See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and the cross-process validation test.
 
