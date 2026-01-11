@@ -594,6 +594,7 @@ exit /b 0
 :validate_storage_service_infs
 call :log ""
 call :log "Validating virtio-blk storage service name against driver INF packages..."
+call :log "Driver directory: %DRIVER_DIR%"
 
 set "TARGET_SVC=%AERO_VIRTIO_BLK_SERVICE%"
 set "SCAN_LIST=%TEMP%\aerogt_infscan_%RANDOM%.txt"
@@ -625,7 +626,7 @@ if "%FOUND_MATCH%"=="1" (
   exit /b 0
 )
 
-call :log "ERROR: Configured AERO_VIRTIO_BLK_SERVICE=%TARGET_SVC% does not match any staged INF AddService name."
+call :log "ERROR: Configured AERO_VIRTIO_BLK_SERVICE=%TARGET_SVC% does not match any driver INF AddService name."
 call :log "Expected to find an INF line (case-insensitive) like:"
 call :log "  AddService = %TARGET_SVC%, ..."
 call :log "  AddService = ^"%TARGET_SVC%^", ..."
