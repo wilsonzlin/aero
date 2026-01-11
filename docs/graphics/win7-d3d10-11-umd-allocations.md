@@ -22,7 +22,8 @@ See also:
 
 * `docs/graphics/win7-d3d11-map-unmap.md` — Win7 `Map`/`Unmap` (`pfnLockCb`/`pfnUnlockCb`), pitch rules, and staging readback synchronization.
 * `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md` — submission callback contracts (DMA buffer acquisition, render/present, fence waits).
-* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — combined Win7/WDDM 1.1 reference for resource backing allocations + Map/Unmap callback wiring.
+* `docs/graphics/win7-dxgi-swapchain-backbuffer.md` — trace guide + invariants for Win7 DXGI swapchain backbuffer `CreateResource` parameters and required allocation flags.
+* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — deprecated redirect (kept for link compatibility; points at the focused docs above).
 
 ## Related AeroGPU code/docs (cross-links)
 
@@ -462,7 +463,7 @@ When the resource is a DXGI swapchain backbuffer / primary, the DDI exposes this
 
 * `const DXGI_DDI_PRIMARY_DESC* pPrimaryDesc`
 
-**Rule of thumb:**
+**Rule of thumb (verify with traces):**
 
 * `pPrimaryDesc != NULL` → treat this resource as a **primary/backbuffer** allocation.
 * Allocate with both:
@@ -470,6 +471,8 @@ When the resource is a DXGI swapchain backbuffer / primary, the DDI exposes this
   * `D3DDDI_ALLOCATIONINFOFLAGS::Primary = 1` (per-allocation, if your header exposes it)
 * And (for all swapchain backbuffers) treat the resource as an RTV-capable surface:
   * `D3DDDICB_ALLOCATE::ResourceFlags.RenderTarget = 1` (header-dependent bitfield)
+
+See: `docs/graphics/win7-dxgi-swapchain-backbuffer.md` for a Win7 trace-based workflow to confirm the exact backbuffer `CreateResource` descriptors and flags your runtime expects.
 
 ### 5.4 D3D10 parity (`D3D10DDIARG_CREATERESOURCE`)
 

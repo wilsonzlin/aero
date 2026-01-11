@@ -20,8 +20,9 @@ This document is an implementation-oriented checklist/spec for bringing up **Dir
 
 * `docs/graphics/win7-wddm11-aerogpu-driver.md` — KMD+UMD architecture, memory model, fence/vblank requirements, and the guest↔emulator command transport.
 * `docs/graphics/win7-aerogpu-validation.md` — bring-up/stability checklist (TDR avoidance, vblank pacing, debug playbook).
-* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — Win7/WDDM 1.1 alloc + Map/Unmap reference (`D3DDDICB_ALLOCATE`, `D3DDDICB_LOCK`/`D3DDDICB_UNLOCK`).
+* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — deprecated redirect (kept for link compatibility; points at the focused allocation + Map/Unmap docs).
 * `docs/graphics/win7-d3d10-11-umd-allocations.md` — CreateResource-side allocation contract details (allocation-info arrays, `pfnAllocateCb`/`pfnDeallocateCb`, and `DXGI_DDI_PRIMARY_DESC` primaries/backbuffers).
+* `docs/graphics/win7-dxgi-swapchain-backbuffer.md` — trace guide + invariants for Win7 DXGI swapchain backbuffer `CreateResource` parameters and allocation flags.
 * `docs/graphics/win7-d3d11-map-unmap.md` — Win7 D3D11 `Map`/`Unmap` contract (`pfnLockCb`/`pfnUnlockCb`, DO_NOT_WAIT, staging readback sync).
 * `docs/graphics/win7-d3d11ddi-function-tables.md` — D3D11 `d3d11umddi.h` function-table checklist (which entries must be non-null vs safely stubbed for FL10_0 bring-up).
 * `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md` — Win7 WDK symbol-name reference for D3D10/11 UMD callbacks (submission, fences, `SetErrorCb`, WOW64 gotchas).

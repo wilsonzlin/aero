@@ -24,7 +24,7 @@ This directory contains “graphics stack” implementation notes and bring-up c
 
 Combined reference:
 
-- `../windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — combined Win7/WDDM 1.1 reference for resource backing allocations + Map/Unmap callback wiring.
+- `../windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — deprecated redirect (kept for link compatibility; points at the focused docs above).
 
 ## Strategy / prototypes
 
