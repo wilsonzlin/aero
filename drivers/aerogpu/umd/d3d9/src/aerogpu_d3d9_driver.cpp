@@ -4102,10 +4102,15 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     // systemmem resources CPU-only (no host object).
     //
     // NOTE: Some portable tests set `wddm_context.hContext` to a non-zero value to
-    // exercise allocation-list tracking logic without a real WDDM runtime. Use
-    // `wddm_device` (created only in real WDDM builds) as the gate so tests can
-    // still create CPU-only systemmem surfaces.
-    if (dev->wddm_device == 0) {
+    // exercise allocation-list tracking logic without a real WDDM runtime. Only
+    // the WDK build provides allocation lock callbacks, so keep systemmem resources
+    // CPU-only unless we're built for WDDM and have a real WDDM device.
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    const bool allow_wddm_systemmem = (dev->wddm_device != 0);
+#else
+    const bool allow_wddm_systemmem = false;
+#endif
+    if (!allow_wddm_systemmem) {
       try {
         res->storage.resize(res->size_bytes);
       } catch (...) {
