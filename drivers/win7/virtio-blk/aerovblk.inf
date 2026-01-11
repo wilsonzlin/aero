@@ -1,0 +1,53 @@
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = SCSIAdapter
+ClassGuid   = {4D36E97B-E325-11CE-BFC1-08002BE10318}
+Provider    = %Aero%
+DriverVer   = 01/10/2026,0.1.0.0
+CatalogFile = aerovblk.cat
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+aerovblk.sys = 1
+
+[Manufacturer]
+%Aero% = Aero,NTx86,NTamd64
+
+[Aero.NTx86]
+%Aerovblk.DeviceDesc% = Aerovblk_Inst, PCI\VEN_1AF4&DEV_1042
+
+[Aero.NTamd64]
+%Aerovblk.DeviceDesc% = Aerovblk_Inst, PCI\VEN_1AF4&DEV_1042
+
+[Aerovblk_Inst]
+CopyFiles = Aerovblk_CopyFiles
+
+[Aerovblk_CopyFiles]
+aerovblk.sys
+
+[Aerovblk_Inst.Services]
+AddService = aerovblk,0x00000002,Aerovblk_Service_Inst
+
+[Aerovblk_Service_Inst]
+DisplayName    = %Aerovblk.ServiceDesc%
+ServiceType    = 1
+StartType      = 0
+ErrorControl   = 1
+ServiceBinary  = %12%\aerovblk.sys
+LoadOrderGroup = SCSI Miniport
+AddReg         = Aerovblk_Service_AddReg
+
+[Aerovblk_Service_AddReg]
+HKR,"Parameters\PnpInterface","5",0x00010001,1
+
+[Strings]
+Aero                 = "Aero Project"
+DiskName             = "Aero virtio-blk Driver"
+Aerovblk.DeviceDesc  = "Aero virtio-blk StorPort Miniport"
+Aerovblk.ServiceDesc = "Aero virtio-blk StorPort Miniport"
+
