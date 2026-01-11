@@ -100,9 +100,6 @@ jobs:
     name: Playwright E2E (Chromium)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: proxy/webrtc-udp-relay/e2e
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -114,31 +111,20 @@ jobs:
           cache: true
           cache-dependency-path: proxy/webrtc-udp-relay/go.sum
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20.x
-          cache: npm
-          cache-dependency-path: proxy/webrtc-udp-relay/e2e/package-lock.json
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('proxy/webrtc-udp-relay/e2e/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-chromium-
-
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node workspace
+        uses: ./.github/actions/setup-node-workspace
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NPM_CONFIG_AUDIT: "false"
+          NPM_CONFIG_FUND: "false"
 
-      - name: Install Playwright (Chromium + OS deps)
-        run: npx playwright install --with-deps chromium
+      - name: Setup Playwright (Chromium)
+        uses: ./.github/actions/setup-playwright
+        with:
+          browsers: chromium
 
       - name: Run Playwright E2E tests
-        run: npm test
+        run: npm -w proxy/webrtc-udp-relay/e2e test
 
       - name: Upload Playwright artifacts
         if: always()
