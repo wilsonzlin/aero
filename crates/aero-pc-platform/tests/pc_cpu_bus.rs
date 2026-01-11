@@ -89,6 +89,69 @@ fn cpu_core_bus_routes_port_io_to_toggle_a20() {
     assert_eq!(bus.platform.memory.read_u8(0x1_00000), 0x33);
 }
 
+#[test]
+fn cpu_core_bus_routes_i8042_output_port_to_toggle_a20() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    // 1) Write 0x11 to [0] with DS=0.
+    // 2) Write 0x22 to [0x10] with DS=0xffff (physical 0x100000). With A20 disabled this aliases
+    //    to [0] and overwrites 0x11.
+    // 3) Enable A20 via the i8042 output port: write command 0xD1 to port 0x64, then output-port
+    //    value 0x03 to port 0x60 (reset deasserted + A20 enabled).
+    // 4) Write 0x33 to [0x10] again; with A20 enabled this should reach 0x100000.
+    // 5) Disable A20 via the i8042 output port (value 0x01), then write 0x44 to [0x10]; this
+    //    aliases back to [0].
+    // 6) HLT.
+    let code = [
+        0x31, 0xC0, // xor ax,ax
+        0x8E, 0xD8, // mov ds,ax
+        0xB0, 0x11, // mov al,0x11
+        0xA2, 0x00, 0x00, // mov [0],al
+        0xB8, 0xFF, 0xFF, // mov ax,0xffff
+        0x8E, 0xD8, // mov ds,ax
+        0xB0, 0x22, // mov al,0x22
+        0xA2, 0x10, 0x00, // mov [0x10],al
+        0xB0, 0xD1, // mov al,0xD1
+        0xE6, 0x64, // out 0x64,al
+        0xB0, 0x03, // mov al,0x03
+        0xE6, 0x60, // out 0x60,al
+        0xB0, 0x33, // mov al,0x33
+        0xA2, 0x10, 0x00, // mov [0x10],al
+        0xB0, 0xD1, // mov al,0xD1
+        0xE6, 0x64, // out 0x64,al
+        0xB0, 0x01, // mov al,0x01
+        0xE6, 0x60, // out 0x60,al
+        0xB0, 0x44, // mov al,0x44
+        0xA2, 0x10, 0x00, // mov [0x10],al
+        0xF4, // hlt
+    ];
+    let code_base = 0x200u64;
+    bus.platform.memory.write_physical(code_base, &code);
+
+    let mut cpu = CpuState::new(CpuMode::Real);
+    cpu.set_stack_ptr(0x1000);
+    cpu.segments.cs.selector = 0;
+    cpu.segments.cs.base = 0;
+    cpu.set_rip(code_base);
+
+    let mut ctx = AssistContext::default();
+    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);
+    assert_eq!(res.exit, BatchExit::Halted);
+
+    // The program disabled A20 before the final write, so reads in the 0x100000 region should
+    // alias to 0x0.
+    assert!(!bus.platform.chipset.a20().enabled());
+    assert_eq!(bus.platform.memory.read_u8(0), 0x44);
+    assert_eq!(bus.platform.memory.read_u8(0x1_00000), 0x44);
+
+    // Re-enable A20 to observe that the earlier write to 0x100000 was preserved and was not
+    // clobbered by the final aliased write.
+    bus.platform.chipset.a20().set_enabled(true);
+    assert_eq!(bus.platform.memory.read_u8(0), 0x44);
+    assert_eq!(bus.platform.memory.read_u8(0x1_00000), 0x33);
+}
+
 fn write_idt_gate32(
     mem: &mut impl CpuBus,
     idt_base: u64,
