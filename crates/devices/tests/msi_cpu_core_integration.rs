@@ -1,11 +1,11 @@
-use aero_cpu_core::bus::{Bus, RamBus};
-use aero_cpu_core::interrupts::{CpuExit, InterruptController as CpuInterruptController};
-use aero_cpu_core::system::{Cpu, CpuMode, DescriptorTableRegister};
+use aero_cpu_core::interrupts::{CpuCore, CpuExit, InterruptController as CpuInterruptController};
+use aero_cpu_core::mem::{CpuBus, FlatTestBus};
+use aero_cpu_core::state::{gpr, CpuMode};
 use aero_devices::pci::{MsiCapability, PciConfigSpace};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 
 fn write_idt_gate32(
-    mem: &mut RamBus,
+    mem: &mut impl CpuBus,
     idt_base: u64,
     vector: u8,
     selector: u16,
@@ -13,11 +13,11 @@ fn write_idt_gate32(
     type_attr: u8,
 ) {
     let entry_addr = idt_base + (vector as u64) * 8;
-    mem.write_u16(entry_addr, (offset & 0xffff) as u16);
-    mem.write_u16(entry_addr + 2, selector);
-    mem.write_u8(entry_addr + 4, 0);
-    mem.write_u8(entry_addr + 5, type_attr);
-    mem.write_u16(entry_addr + 6, (offset >> 16) as u16);
+    mem.write_u16(entry_addr, (offset & 0xffff) as u16).unwrap();
+    mem.write_u16(entry_addr + 2, selector).unwrap();
+    mem.write_u8(entry_addr + 4, 0).unwrap();
+    mem.write_u8(entry_addr + 5, type_attr).unwrap();
+    mem.write_u16(entry_addr + 6, (offset >> 16) as u16).unwrap();
 }
 
 struct PlatformCtrl<'a> {
@@ -54,29 +54,26 @@ fn msi_interrupt_delivers_to_cpu_core_idt() -> Result<(), CpuExit> {
     let msi = config.capability_mut::<MsiCapability>().unwrap();
     assert!(msi.trigger(&mut ints));
 
-    let mut mem = RamBus::new(0x20000);
+    let mut mem = FlatTestBus::new(0x20000);
     let idt_base = 0x1000;
     let handler = 0x6000;
     write_idt_gate32(&mut mem, idt_base, 0x45, 0x08, handler, 0x8e);
 
-    let mut cpu = Cpu::default();
-    cpu.mode = CpuMode::Protected32;
-    cpu.idtr = DescriptorTableRegister {
-        base: idt_base,
-        limit: 0x7ff,
-    };
-    cpu.cs = 0x08;
-    cpu.ss = 0x10;
-    cpu.rsp = 0x9000;
-    cpu.rip = 0x1111;
-    cpu.rflags = 0x202;
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7ff;
+    cpu.state.segments.cs.selector = 0x08;
+    cpu.state.segments.ss.selector = 0x10;
+    cpu.state.write_gpr32(gpr::RSP, 0x9000);
+    cpu.state.set_rip(0x1111);
+    cpu.state.set_rflags(0x202);
 
     let mut ctrl = PlatformCtrl {
         ints: &mut ints,
         last_vector: None,
     };
     cpu.poll_and_deliver_external_interrupt(&mut mem, &mut ctrl)?;
-    assert_eq!(cpu.rip, handler as u64);
+    assert_eq!(cpu.state.rip(), handler as u64);
 
     let vector = ctrl
         .last_vector

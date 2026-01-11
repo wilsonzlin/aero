@@ -4,8 +4,6 @@
 //! instruction surface). This module provides *architectural* exception vectors
 //! used for IDT delivery and stack frame construction.
 
-use crate::system::Cpu;
-
 /// Architecturally defined x86 exception vectors.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,38 +77,3 @@ pub enum PendingEvent {
         source: InterruptSource,
     },
 }
-
-impl Cpu {
-    /// Queue a faulting exception for delivery at the next instruction boundary.
-    ///
-    /// For page faults this will also update CR2.
-    pub fn raise_exception_fault(
-        &mut self,
-        exception: Exception,
-        faulting_rip: u64,
-        error_code: Option<u32>,
-        cr2: Option<u64>,
-    ) {
-        if exception == Exception::PageFault {
-            if let Some(addr) = cr2 {
-                self.cr2 = addr;
-            }
-        }
-
-        self.pending_event = Some(PendingEvent::Fault {
-            exception,
-            saved_rip: faulting_rip,
-            error_code,
-        });
-    }
-
-    /// Queue a software interrupt (e.g. `INT n`).
-    pub fn raise_software_interrupt(&mut self, vector: u8, return_rip: u64) {
-        self.pending_event = Some(PendingEvent::Interrupt {
-            vector,
-            saved_rip: return_rip,
-            source: InterruptSource::Software,
-        });
-    }
-}
-
