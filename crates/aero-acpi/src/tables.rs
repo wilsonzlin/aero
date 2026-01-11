@@ -590,6 +590,18 @@ fn build_fadt(cfg: &AcpiConfig, dsdt_addr: u64, facs_addr: u64) -> Vec<u8> {
     finalize_sdt(out)
 }
 
+// MADT Interrupt Source Override (ISO) flags.
+//
+// Encoding is defined by ACPI ("MPS INTI Flags"):
+// - bits 1:0 = polarity
+// - bits 3:2 = trigger mode
+const ISO_POLARITY_CONFORMS: u16 = 0b00;
+const ISO_POLARITY_ACTIVE_LOW: u16 = 0b11;
+const ISO_TRIGGER_CONFORMS: u16 = 0b00 << 2;
+const ISO_TRIGGER_LEVEL: u16 = 0b11 << 2;
+
+const ISO_ACTIVE_LOW_LEVEL: u16 = ISO_POLARITY_ACTIVE_LOW | ISO_TRIGGER_LEVEL;
+
 fn build_madt(cfg: &AcpiConfig) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&cfg.local_apic_addr.to_le_bytes());
@@ -613,13 +625,19 @@ fn build_madt(cfg: &AcpiConfig) -> Vec<u8> {
     body.extend_from_slice(&0u32.to_le_bytes()); // GSI base
 
     // Interrupt Source Override: ISA IRQ0 -> GSI2 (PIT).
-    body.extend_from_slice(&madt_iso(0, 0, 2, 0x0000));
+    body.extend_from_slice(&madt_iso(
+        0,
+        0,
+        2,
+        ISO_POLARITY_CONFORMS | ISO_TRIGGER_CONFORMS,
+    ));
     // Interrupt Source Override: ISA IRQ9 -> GSI9 (SCI), active low, level triggered.
-    //
-    // Flags use the MPS INTI encoding:
-    // - polarity: Active Low (0b11)
-    // - trigger:  Level (0b11)
-    body.extend_from_slice(&madt_iso(0, cfg.sci_irq, cfg.sci_irq as u32, 0x000F));
+    body.extend_from_slice(&madt_iso(
+        0,
+        cfg.sci_irq,
+        cfg.sci_irq as u32,
+        ISO_ACTIVE_LOW_LEVEL,
+    ));
 
     // Local APIC NMI: LINT1 for all processors.
     body.extend_from_slice(&madt_lapic_nmi(0xFF, 0x0000, 1));

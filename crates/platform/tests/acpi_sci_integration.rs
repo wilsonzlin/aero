@@ -104,20 +104,33 @@ fn ioapic_read_reg(ints: &mut PlatformInterrupts, reg: u8) -> u32 {
     ints.ioapic_mmio_read(0x10)
 }
 
-fn program_level_ioapic_redirection(ints: &mut PlatformInterrupts, gsi: u32, vector: u8) {
-    assert!(
-        gsi <= (u8::MAX / 2) as u32,
-        "GSI too large for IOAPIC register math"
-    );
+fn program_ioapic_redirection_from_iso_flags(
+    ints: &mut PlatformInterrupts,
+    gsi: u32,
+    vector: u8,
+    iso_flags: u16,
+) {
+    assert!(gsi <= (u8::MAX / 2) as u32, "GSI too large for IOAPIC register math");
     let redir_low_index = 0x10u8 + (2 * gsi as u8);
     let redir_high_index = redir_low_index + 1;
 
     // Low dword:
     // - vector in bits 0..7
-    // - bit13 = 1 => active-low (matches our MADT ISO for SCI)
+    // - bit13 = 1 => active-low
     // - bit15 = 1 => level-triggered
     // - bit16 = 0 => unmasked
-    let low = (vector as u32) | (1 << 13) | (1 << 15);
+    let mut low = vector as u32;
+
+    // ACPI MADT ISO flags use the "MPS INTI" encoding (2-bit polarity + 2-bit trigger).
+    let polarity = iso_flags & 0b11;
+    let trigger = (iso_flags >> 2) & 0b11;
+
+    if polarity == 0b11 {
+        low |= 1 << 13;
+    }
+    if trigger == 0b11 {
+        low |= 1 << 15;
+    }
 
     ioapic_write_reg(ints, redir_low_index, low);
     ioapic_write_reg(ints, redir_high_index, 0); // destination APIC ID 0
@@ -207,7 +220,12 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
     {
         let mut ints = interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
-        program_level_ioapic_redirection(&mut ints, u32::from(sci_irq), 0x60);
+        program_ioapic_redirection_from_iso_flags(
+            &mut ints,
+            u32::from(sci_irq),
+            0x60,
+            sci_iso.flags,
+        );
     }
 
     let callbacks = AcpiPmCallbacks {
