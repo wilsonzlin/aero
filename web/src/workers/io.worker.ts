@@ -31,11 +31,13 @@ import { DeviceManager, type IrqSink } from "../io/device_manager";
 import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice } from "../io/devices/uhci";
+import { UhciWebUsbPciDevice } from "../io/devices/uhci_webusb";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
+import { applyUsbSelectedToWebUsbUhciBridge } from "../usb/uhci_webusb_bridge";
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
 import { WebUsbPassthroughRuntime } from "../usb/webusb_passthrough_runtime";
@@ -112,14 +114,74 @@ let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
 
+type WebUsbUhciBridge = InstanceType<NonNullable<WasmApi["WebUsbUhciBridge"]>>;
+let webUsbUhciBridge: WebUsbUhciBridge | null = null;
+let webUsbUhciIrqAsserted = false;
+let lastUsbSelected: UsbSelectedMessage | null = null;
+
+const WEBUSB_UHCI_IRQ_LINE = 11;
+const WEBUSB_UHCI_FRAMES_PER_TICK = 8;
+
 function maybeInitUhciDevice(): void {
-  if (uhciDevice) return;
+  if (webUsbUhciBridge || uhciDevice) return;
   const api = wasmApi;
   const mgr = deviceManager;
   if (!api || !mgr) return;
+  if (!guestBase) return;
+
+  const WebBridge = api.WebUsbUhciBridge;
+  if (WebBridge) {
+    try {
+      webUsbUhciBridge = new WebBridge(guestBase >>> 0);
+
+      mgr.registerPciDevice(new UhciWebUsbPciDevice(webUsbUhciBridge));
+
+      // Tick UHCI at 1kHz-equivalent cadence (approximate: 8 frames per 8ms IO tick).
+      mgr.addTickable({
+        tick: () => {
+          const bridge = webUsbUhciBridge;
+          if (!bridge) return;
+          bridge.step_frames(WEBUSB_UHCI_FRAMES_PER_TICK);
+
+          const level = bridge.irq_level();
+          if (level && !webUsbUhciIrqAsserted) {
+            mgr.irqSink.raiseIrq(WEBUSB_UHCI_IRQ_LINE);
+            webUsbUhciIrqAsserted = true;
+          } else if (!level && webUsbUhciIrqAsserted) {
+            mgr.irqSink.lowerIrq(WEBUSB_UHCI_IRQ_LINE);
+            webUsbUhciIrqAsserted = false;
+          }
+        },
+      });
+
+      if (!usbPassthroughRuntime) {
+        usbPassthroughRuntime = new WebUsbPassthroughRuntime({
+          bridge: webUsbUhciBridge,
+          port: ctx,
+          pollIntervalMs: 0,
+          initiallyBlocked: !usbAvailable,
+        });
+        usbPassthroughRuntime.start();
+        if (import.meta.env.DEV) {
+          usbPassthroughDebugTimer = setInterval(() => {
+            console.debug("[io.worker] WebUSB UHCI pending_summary()", usbPassthroughRuntime?.pendingSummary());
+          }, 1000) as unknown as number;
+        }
+      }
+
+      if (lastUsbSelected) {
+        applyUsbSelectedToWebUsbUhciBridge(webUsbUhciBridge, lastUsbSelected);
+      }
+    } catch (err) {
+      console.warn("[io.worker] Failed to initialize WebUSB UHCI bridge", err);
+      webUsbUhciBridge = null;
+      webUsbUhciIrqAsserted = false;
+    }
+    return;
+  }
+
   const Bridge = api.UhciControllerBridge;
   if (!Bridge) return;
-  if (!guestBase) return;
 
   try {
     const bridge = new Bridge(guestBase >>> 0);
@@ -647,6 +709,8 @@ function maybeEmitPerfSample(): void {
 // the WASM-side `UsbPassthroughDevice` model.
 let usbDemoNextId = 1_000_000_000;
 
+let usbAvailable = false;
+
 function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: number): void {
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
@@ -777,7 +841,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
         }
 
-        if (api.UsbPassthroughBridge && !usbPassthroughRuntime) {
+        if (!api.WebUsbUhciBridge && api.UsbPassthroughBridge && !usbPassthroughRuntime) {
           try {
             const bridge = new api.UsbPassthroughBridge();
             // Poll USB passthrough as part of the main IO tick to avoid a separate timer.
@@ -1071,6 +1135,15 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<UsbSelectedMessage>).type === "usb.selected") {
       const msg = data as UsbSelectedMessage;
+      usbAvailable = msg.ok;
+      lastUsbSelected = msg;
+      if (webUsbUhciBridge) {
+        try {
+          applyUsbSelectedToWebUsbUhciBridge(webUsbUhciBridge, msg);
+        } catch (err) {
+          console.warn("[io.worker] Failed to apply usb.selected to WebUsbUhciBridge", err);
+        }
+      }
 
       // Dev-only smoke test: once a device is selected on the main thread, request the
       // first 18 bytes of the device descriptor to prove the cross-thread broker works.
@@ -1514,8 +1587,19 @@ function shutdown(): void {
 
       usbHid?.free();
       usbHid = null;
-      usbPassthroughRuntime?.destroy();
-      usbPassthroughRuntime = null;
+
+      // Ensure the tickable UHCI pump stops before the wasm bridge is freed.
+      const uhciBridge = webUsbUhciBridge;
+      webUsbUhciBridge = null;
+      webUsbUhciIrqAsserted = false;
+
+      if (usbPassthroughRuntime) {
+        usbPassthroughRuntime.destroy();
+        usbPassthroughRuntime = null;
+      } else {
+        uhciBridge?.free();
+      }
+
       usbUhciHarnessRuntime?.destroy();
       usbUhciHarnessRuntime = null;
       uhciDevice?.destroy();

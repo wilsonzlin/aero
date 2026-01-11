@@ -35,6 +35,12 @@ mod uhci_controller_bridge;
 pub use uhci_controller_bridge::UhciControllerBridge;
 
 #[cfg(target_arch = "wasm32")]
+mod webusb_uhci_bridge;
+
+#[cfg(target_arch = "wasm32")]
+pub use webusb_uhci_bridge::WebUsbUhciBridge;
+
+#[cfg(target_arch = "wasm32")]
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]

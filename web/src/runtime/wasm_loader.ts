@@ -166,6 +166,31 @@ export interface WasmApi {
     };
 
     /**
+     * Worker-side UHCI controller + WebUSB passthrough bridge.
+     *
+     * This exports a guest-visible UHCI controller (PIO registers + TD/QH traversal)
+     * and a host-action passthrough device attached at root port 0.
+     */
+    WebUsbUhciBridge?: new (guestBase: number) => {
+        io_read(offset: number, size: number): number;
+        io_write(offset: number, size: number, value: number): void;
+        step_frames(frames: number): void;
+        irq_level(): boolean;
+        set_connected(connected: boolean): void;
+
+        drain_actions(): UsbHostAction[] | null;
+        push_completion(completion: UsbHostCompletion): void;
+        reset(): void;
+        pending_summary(): {
+            queued_actions: number;
+            queued_completions: number;
+            inflight_control?: number | null;
+            inflight_endpoints: number;
+        } | null;
+        free(): void;
+    };
+
+    /**
      * Synthesize a HID report descriptor from WebHID-normalized collections metadata.
      *
      * Optional while older wasm builds are still in circulation.
