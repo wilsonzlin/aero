@@ -211,3 +211,37 @@ fn vblank_tick_updates_counters_and_latches_irq_status() {
         | ((dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_TIME_NS_HI, 4) as u64) << 32);
     assert_ne!(t_ns, 0);
 }
+
+#[test]
+fn features_regs_advertise_vblank_when_enabled() {
+    let mut mem = VecMemory::new(0x1000);
+    let mut dev = AeroGpuLegacyPciDevice::new(AeroGpuLegacyDeviceConfig::default(), 0);
+
+    let features_lo = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_LO as u64, 4) as u64;
+    let features_hi = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_HI as u64, 4) as u64;
+    let features = features_lo | (features_hi << 32);
+
+    assert_ne!(features & proto::AEROGPU_FEATURE_VBLANK, 0);
+
+    const EXPECTED_60HZ_PERIOD_NS: u32 = 16_666_667;
+    let period = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS as u64, 4);
+    assert_eq!(period, EXPECTED_60HZ_PERIOD_NS);
+}
+
+#[test]
+fn features_regs_clear_vblank_when_disabled() {
+    let mut mem = VecMemory::new(0x1000);
+    let mut cfg = AeroGpuLegacyDeviceConfig::default();
+    cfg.vblank_hz = None;
+    let mut dev = AeroGpuLegacyPciDevice::new(cfg, 0);
+
+    let features_lo = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_LO as u64, 4) as u64;
+    let features_hi = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_HI as u64, 4) as u64;
+    let features = features_lo | (features_hi << 32);
+
+    assert_eq!(features & proto::AEROGPU_FEATURE_VBLANK, 0);
+    assert_eq!(
+        dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS as u64, 4),
+        0
+    );
+}
