@@ -21,6 +21,7 @@ const REG_GCAP: u64 = 0x00;
 const REG_VMIN: u64 = 0x02;
 const REG_VMAJ: u64 = 0x03;
 const REG_GCTL: u64 = 0x08;
+const REG_WAKEEN: u64 = 0x0c;
 const REG_STATESTS: u64 = 0x0e;
 const REG_INTCTL: u64 = 0x20;
 const REG_INTSTS: u64 = 0x24;
@@ -51,10 +52,14 @@ const REG_SD_BASE: u64 = 0x80;
 const SD_STRIDE: u64 = 0x20;
 
 // Stream descriptor register offsets within the SD block.
+// Note: Per the Intel HDA spec, SDnCTL is 3 bytes (0x00..=0x02) and SDnSTS is a
+// single byte at 0x03.
 const SD_REG_CTL: u64 = 0x00;
+const SD_REG_STS: u64 = 0x03;
 const SD_REG_LPIB: u64 = 0x04;
 const SD_REG_CBL: u64 = 0x08;
 const SD_REG_LVI: u64 = 0x0c;
+const SD_REG_FIFOW: u64 = 0x0e;
 const SD_REG_FIFOS: u64 = 0x10;
 const SD_REG_FMT: u64 = 0x12;
 const SD_REG_BDPL: u64 = 0x18;
@@ -100,6 +105,7 @@ pub struct StreamDescriptor {
     pub lpib: u32,
     pub cbl: u32,
     pub lvi: u16,
+    pub fifow: u16,
     pub fifos: u16,
     pub fmt: u16,
     pub bdpl: u32,
@@ -113,6 +119,7 @@ impl Default for StreamDescriptor {
             lpib: 0,
             cbl: 0,
             lvi: 0,
+            fifow: 0,
             fifos: 0,
             fmt: 0,
             bdpl: 0,
@@ -325,6 +332,29 @@ fn supported_pcm_caps() -> u32 {
     // - 16-bit samples
     // - 44.1kHz and 48kHz
     (1 << 1) | (1 << 13) | (1 << 14)
+}
+
+fn mmio_read_sub_u32(value: u32, byte_offset: u64, size: usize) -> u64 {
+    let shift = (byte_offset * 8) as u32;
+    let mask = match size {
+        1 => 0xffu64,
+        2 => 0xffffu64,
+        4 => 0xffff_ffffu64,
+        _ => return 0,
+    };
+    ((value as u64) >> shift) & mask
+}
+
+fn mmio_write_sub_u32(orig: u32, byte_offset: u64, size: usize, value: u64) -> u32 {
+    let shift = (byte_offset * 8) as u32;
+    let mask = match size {
+        1 => 0xffu32,
+        2 => 0xffffu32,
+        4 => 0xffff_ffffu32,
+        _ => return orig,
+    };
+    let mask_shifted = mask << shift;
+    (orig & !mask_shifted) | (((value as u32) & mask) << shift)
 }
 
 /// Minimal Intel HDA codec model.
@@ -766,6 +796,7 @@ pub struct HdaController {
     vmin: u8,
     vmaj: u8,
     gctl: u32,
+    wakeen: u16,
     statests: u16,
     intctl: u32,
     intsts: u32,
@@ -816,6 +847,7 @@ impl HdaController {
             vmin: 0x00,
             vmaj: 0x01,
             gctl: 0,
+            wakeen: 0,
             statests: 0,
             intctl: 0,
             intsts: 0,
@@ -974,7 +1006,7 @@ impl HdaController {
     }
 
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
+        if !matches!(size, 1 | 2 | 4) {
             return 0;
         }
         let end = match offset.checked_add(size as u64) {
@@ -985,69 +1017,116 @@ impl HdaController {
             return 0;
         }
 
-        match (offset, size) {
-            (REG_GCAP, 2) => self.gcap as u64,
-            (REG_VMIN, 1) => self.vmin as u64,
-            (REG_VMAJ, 1) => self.vmaj as u64,
-            (REG_GCTL, 4) => self.gctl as u64,
-            (REG_STATESTS, 2) => self.statests as u64,
-            (REG_INTCTL, 4) => self.intctl as u64,
-            (REG_INTSTS, 4) => self.intsts as u64,
-
-            (REG_CORBLBASE, 4) => self.corblbase as u64,
-            (REG_CORBUBASE, 4) => self.corbubase as u64,
-            (REG_CORBWP, 2) => self.corbwp as u64,
-            (REG_CORBRP, 2) => self.corbrp as u64,
-            (REG_CORBCTL, 1) => self.corbctl as u64,
-            (REG_CORBSTS, 1) => self.corbsts as u64,
-            (REG_CORBSIZE, 1) => self.corbsize as u64,
-
-            (REG_RIRBLBASE, 4) => self.rirblbase as u64,
-            (REG_RIRBUBASE, 4) => self.rirbubase as u64,
-            (REG_RIRBWP, 2) => self.rirbwp as u64,
-            (REG_RINTCNT, 2) => self.rintcnt as u64,
-            (REG_RIRBCTL, 1) => self.rirbctl as u64,
-            (REG_RIRBSTS, 1) => self.rirbsts as u64,
-            (REG_RIRBSIZE, 1) => self.rirbsize as u64,
-
-            (REG_DPLBASE, 4) => self.dplbase as u64,
-            (REG_DPUBASE, 4) => self.dpubase as u64,
-
-            _ if offset >= REG_SD_BASE
-                && offset < REG_SD_BASE + SD_STRIDE * self.streams.len() as u64 =>
-            {
-                let stream = ((offset - REG_SD_BASE) / SD_STRIDE) as usize;
-                let reg = (offset - REG_SD_BASE) % SD_STRIDE;
-                let sd = &self.streams[stream];
-                if reg < SD_REG_LPIB {
-                    let start = (reg - SD_REG_CTL) as usize;
-                    if size > 4 || start.saturating_add(size) > 4 {
-                        return 0;
-                    }
-                    let bytes = sd.ctl.to_le_bytes();
-                    let mut out = 0u64;
-                    for i in 0..size {
-                        out |= (bytes[start + i] as u64) << (8 * i);
-                    }
-                    return out;
-                }
-                match (reg, size) {
-                    (SD_REG_LPIB, 4) => sd.lpib as u64,
-                    (SD_REG_CBL, 4) => sd.cbl as u64,
-                    (SD_REG_LVI, 2) => sd.lvi as u64,
-                    (SD_REG_FIFOS, 2) => sd.fifos as u64,
-                    (SD_REG_FMT, 2) => sd.fmt as u64,
-                    (SD_REG_BDPL, 4) => sd.bdpl as u64,
-                    (SD_REG_BDPU, 4) => sd.bdpu as u64,
-                    _ => 0,
-                }
-            }
-            _ => 0,
+        if offset >= REG_GCAP && end <= REG_VMAJ + 1 {
+            let value = (self.gcap as u32)
+                | ((self.vmin as u32) << (((REG_VMIN - REG_GCAP) * 8) as u32))
+                | ((self.vmaj as u32) << (((REG_VMAJ - REG_GCAP) * 8) as u32));
+            return mmio_read_sub_u32(value, offset - REG_GCAP, size);
         }
+        if offset >= REG_GCTL && end <= REG_GCTL + 4 {
+            return mmio_read_sub_u32(self.gctl, offset - REG_GCTL, size);
+        }
+        if offset >= REG_WAKEEN && end <= REG_STATESTS + 2 {
+            let value = (self.wakeen as u32)
+                | ((self.statests as u32) << (((REG_STATESTS - REG_WAKEEN) * 8) as u32));
+            return mmio_read_sub_u32(value, offset - REG_WAKEEN, size);
+        }
+        if offset >= REG_INTCTL && end <= REG_INTCTL + 4 {
+            return mmio_read_sub_u32(self.intctl, offset - REG_INTCTL, size);
+        }
+        if offset >= REG_INTSTS && end <= REG_INTSTS + 4 {
+            return mmio_read_sub_u32(self.intsts, offset - REG_INTSTS, size);
+        }
+
+        if offset >= REG_CORBLBASE && end <= REG_CORBLBASE + 4 {
+            return mmio_read_sub_u32(self.corblbase, offset - REG_CORBLBASE, size);
+        }
+        if offset >= REG_CORBUBASE && end <= REG_CORBUBASE + 4 {
+            return mmio_read_sub_u32(self.corbubase, offset - REG_CORBUBASE, size);
+        }
+        if offset >= REG_CORBWP && end <= REG_CORBRP + 2 {
+            let value = (self.corbwp as u32)
+                | ((self.corbrp as u32) << (((REG_CORBRP - REG_CORBWP) * 8) as u32));
+            return mmio_read_sub_u32(value, offset - REG_CORBWP, size);
+        }
+        if offset >= REG_CORBCTL && end <= REG_CORBSIZE + 2 {
+            let value = (self.corbctl as u32)
+                | ((self.corbsts as u32) << (((REG_CORBSTS - REG_CORBCTL) * 8) as u32))
+                | ((self.corbsize as u32) << (((REG_CORBSIZE - REG_CORBCTL) * 8) as u32));
+            return mmio_read_sub_u32(value, offset - REG_CORBCTL, size);
+        }
+
+        if offset >= REG_RIRBLBASE && end <= REG_RIRBLBASE + 4 {
+            return mmio_read_sub_u32(self.rirblbase, offset - REG_RIRBLBASE, size);
+        }
+        if offset >= REG_RIRBUBASE && end <= REG_RIRBUBASE + 4 {
+            return mmio_read_sub_u32(self.rirbubase, offset - REG_RIRBUBASE, size);
+        }
+        if offset >= REG_RIRBWP && end <= REG_RINTCNT + 2 {
+            let value = (self.rirbwp as u32)
+                | ((self.rintcnt as u32) << (((REG_RINTCNT - REG_RIRBWP) * 8) as u32));
+            return mmio_read_sub_u32(value, offset - REG_RIRBWP, size);
+        }
+        if offset >= REG_RIRBCTL && end <= REG_RIRBSIZE + 2 {
+            let value = (self.rirbctl as u32)
+                | ((self.rirbsts as u32) << (((REG_RIRBSTS - REG_RIRBCTL) * 8) as u32))
+                | ((self.rirbsize as u32) << (((REG_RIRBSIZE - REG_RIRBCTL) * 8) as u32));
+            return mmio_read_sub_u32(value, offset - REG_RIRBCTL, size);
+        }
+
+        if offset >= REG_DPLBASE && end <= REG_DPLBASE + 4 {
+            return mmio_read_sub_u32(self.dplbase, offset - REG_DPLBASE, size);
+        }
+        if offset >= REG_DPUBASE && end <= REG_DPUBASE + 4 {
+            return mmio_read_sub_u32(self.dpubase, offset - REG_DPUBASE, size);
+        }
+
+        let sd_end = REG_SD_BASE + SD_STRIDE * self.streams.len() as u64;
+        if offset >= REG_SD_BASE && offset < sd_end {
+            let stream = ((offset - REG_SD_BASE) / SD_STRIDE) as usize;
+            let reg = (offset - REG_SD_BASE) % SD_STRIDE;
+            if reg + size as u64 > SD_STRIDE {
+                return 0;
+            }
+            let sd = &self.streams[stream];
+
+            if reg < SD_REG_LPIB {
+                let start = reg - SD_REG_CTL;
+                if start + size as u64 > 4 {
+                    return 0;
+                }
+                return mmio_read_sub_u32(sd.ctl, start, size);
+            }
+
+            if reg >= SD_REG_LPIB && reg + size as u64 <= SD_REG_LPIB + 4 {
+                return mmio_read_sub_u32(sd.lpib, reg - SD_REG_LPIB, size);
+            }
+            if reg >= SD_REG_CBL && reg + size as u64 <= SD_REG_CBL + 4 {
+                return mmio_read_sub_u32(sd.cbl, reg - SD_REG_CBL, size);
+            }
+            if reg >= SD_REG_LVI && reg + size as u64 <= SD_REG_FIFOW + 2 {
+                let value = (sd.lvi as u32)
+                    | ((sd.fifow as u32) << (((SD_REG_FIFOW - SD_REG_LVI) * 8) as u32));
+                return mmio_read_sub_u32(value, reg - SD_REG_LVI, size);
+            }
+            if reg >= SD_REG_FIFOS && reg + size as u64 <= SD_REG_FMT + 2 {
+                let value = (sd.fifos as u32)
+                    | ((sd.fmt as u32) << (((SD_REG_FMT - SD_REG_FIFOS) * 8) as u32));
+                return mmio_read_sub_u32(value, reg - SD_REG_FIFOS, size);
+            }
+            if reg >= SD_REG_BDPL && reg + size as u64 <= SD_REG_BDPL + 4 {
+                return mmio_read_sub_u32(sd.bdpl, reg - SD_REG_BDPL, size);
+            }
+            if reg >= SD_REG_BDPU && reg + size as u64 <= SD_REG_BDPU + 4 {
+                return mmio_read_sub_u32(sd.bdpu, reg - SD_REG_BDPU, size);
+            }
+        }
+
+        0
     }
 
     pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
+        if !matches!(size, 1 | 2 | 4) {
             return;
         }
         let end = match offset.checked_add(size as u64) {
@@ -1058,173 +1137,252 @@ impl HdaController {
             return;
         }
 
-        match (offset, size) {
-            (REG_GCTL, 4) => {
-                let v = value as u32;
-                let prev = self.gctl;
-                self.gctl = v;
-                let prev_crst = (prev & GCTL_CRST) != 0;
-                let new_crst = (v & GCTL_CRST) != 0;
-                if prev_crst && !new_crst {
-                    self.reset();
-                } else if !prev_crst && new_crst {
-                    // Leaving reset: report codec 0 presence.
-                    self.statests |= 1;
-                }
+        if offset >= REG_GCTL && end <= REG_GCTL + 4 {
+            let prev = self.gctl;
+            let new = mmio_write_sub_u32(prev, offset - REG_GCTL, size, value);
+            self.gctl = new;
+            let prev_crst = (prev & GCTL_CRST) != 0;
+            let new_crst = (new & GCTL_CRST) != 0;
+            if prev_crst && !new_crst {
+                self.reset();
+            } else if !prev_crst && new_crst {
+                // Leaving reset: report codec 0 presence.
+                self.statests |= 1;
             }
-            (REG_STATESTS, 2) => {
-                // RW1C
-                self.statests &= !(value as u16);
-            }
-            (REG_INTCTL, 4) => {
-                self.intctl = value as u32;
-                self.update_irq_line();
-            }
-            (REG_INTSTS, 4) => {
-                // RW1C
-                self.intsts &= !(value as u32);
-                if (self.intsts & (INTSTS_CIS | 0x3fff_ffff)) == 0 {
-                    self.intsts &= !INTSTS_GIS;
-                }
-                self.update_irq_line();
-            }
-
-            (REG_CORBLBASE, 4) => self.corblbase = value as u32,
-            (REG_CORBUBASE, 4) => self.corbubase = value as u32,
-            (REG_CORBWP, 2) => self.corbwp = (value as u16) & 0x00ff,
-            (REG_CORBRP, 2) => {
-                let v = value as u16;
-                if (v & 0x8000) != 0 {
-                    self.corbrp = 0;
-                } else {
-                    self.corbrp = v & 0x00ff;
-                }
-            }
-            (REG_CORBCTL, 1) => self.corbctl = value as u8,
-            (REG_CORBSTS, 1) => {
-                self.corbsts &= !(value as u8);
-            }
-            (REG_CORBSIZE, 1) => {
-                // Only the size selection bits (1:0) are writable; capability bits are RO.
-                self.corbsize = (self.corbsize & !0x3) | (value as u8 & 0x3);
-            }
-
-            (REG_RIRBLBASE, 4) => self.rirblbase = value as u32,
-            (REG_RIRBUBASE, 4) => self.rirbubase = value as u32,
-            (REG_RIRBWP, 2) => {
-                let v = value as u16;
-                if (v & 0x8000) != 0 {
-                    self.rirbwp = 0;
-                } else {
-                    self.rirbwp = v & 0x00ff;
-                }
-            }
-            (REG_RINTCNT, 2) => self.rintcnt = value as u16,
-            (REG_RIRBCTL, 1) => self.rirbctl = value as u8,
-            (REG_RIRBSTS, 1) => self.rirbsts &= !(value as u8),
-            (REG_RIRBSIZE, 1) => {
-                self.rirbsize = (self.rirbsize & !0x3) | (value as u8 & 0x3);
-            }
-
-            (REG_DPLBASE, 4) => {
-                let v = value as u32;
-                // Bits 6:1 are reserved and must read as 0; the base is 128-byte aligned.
-                self.dplbase = (v & DPLBASE_ENABLE) | (v & DPLBASE_ADDR_MASK);
-            }
-            (REG_DPUBASE, 4) => self.dpubase = value as u32,
-
-            _ if offset >= REG_SD_BASE
-                && offset < REG_SD_BASE + SD_STRIDE * self.streams.len() as u64 =>
-            {
-                let stream = ((offset - REG_SD_BASE) / SD_STRIDE) as usize;
-                let reg = (offset - REG_SD_BASE) % SD_STRIDE;
-                if reg < SD_REG_LPIB {
-                    if reg == SD_REG_CTL + 3 && size == 1 {
-                        // SDSTS is RW1C.
-                        self.clear_stream_status(stream, value as u8);
-                        return;
+            return;
+        }
+        if offset >= REG_WAKEEN && end <= REG_STATESTS + 2 {
+            for i in 0..size {
+                let byte = ((value >> (i * 8)) & 0xff) as u8;
+                let addr = offset + i as u64;
+                match addr {
+                    REG_WAKEEN => self.wakeen = (self.wakeen & !0x00ff) | byte as u16,
+                    _ if addr == REG_WAKEEN + 1 => {
+                        self.wakeen = (self.wakeen & !0xff00) | ((byte as u16) << 8)
                     }
+                    REG_STATESTS => self.statests &= !((byte as u16) << 0),
+                    _ if addr == REG_STATESTS + 1 => self.statests &= !((byte as u16) << 8),
+                    _ => {}
+                }
+            }
+            return;
+        }
+        if offset >= REG_INTCTL && end <= REG_INTCTL + 4 {
+            self.intctl = mmio_write_sub_u32(self.intctl, offset - REG_INTCTL, size, value);
+            self.update_irq_line();
+            return;
+        }
+        if offset >= REG_INTSTS && end <= REG_INTSTS + 4 {
+            let rel = offset - REG_INTSTS;
+            let mut clear_mask = 0u32;
+            for i in 0..size {
+                let byte = ((value >> (i * 8)) & 0xff) as u32;
+                clear_mask |= byte << (((rel + i as u64) * 8) as u32);
+            }
+            self.intsts &= !clear_mask;
+            self.recalc_intsts_gis();
+            self.update_irq_line();
+            return;
+        }
 
-                    if reg == SD_REG_CTL && size == 4 {
-                        // Combined SDnCTL/SDnSTS dword write.
-                        //
-                        // Real hardware exposes SDnSTS as a separate byte register at offset 0x03.
-                        // Some callers may still issue a dword write where the upper byte is used
-                        // as a RW1C clear mask. To keep the model robust, treat the upper byte as
-                        // status clear, then apply the low 24-bit control update.
-                        let v = value as u32;
-                        let sts_clear = (v >> 24) as u8;
-                        if sts_clear != 0 {
-                            self.clear_stream_status(stream, sts_clear);
-                        }
-
-                        let (prev, now) = {
-                            let sd = &mut self.streams[stream];
-                            let prev = sd.ctl;
-                            let prev_ctl = prev & 0x00ff_ffff;
-                            let status = sd.ctl & 0xff00_0000;
-                            let write_ctl = v & 0x00ff_ffff;
-                            let new_ctl = if write_ctl == 0 && sts_clear != 0 {
-                                // Heuristic: status-only write should not stop the stream.
-                                prev_ctl
-                            } else {
-                                write_ctl
-                            };
-                            sd.ctl = status | new_ctl;
-                            (prev, sd.ctl)
-                        };
-
-                        // SRST cleared -> stream enters reset.
-                        if (prev & SD_CTL_SRST) != 0 && (now & SD_CTL_SRST) == 0 {
-                            self.reset_stream_engine(stream);
-                        }
-                        return;
+        if offset >= REG_CORBLBASE && end <= REG_CORBLBASE + 4 {
+            self.corblbase = mmio_write_sub_u32(self.corblbase, offset - REG_CORBLBASE, size, value);
+            return;
+        }
+        if offset >= REG_CORBUBASE && end <= REG_CORBUBASE + 4 {
+            self.corbubase = mmio_write_sub_u32(self.corbubase, offset - REG_CORBUBASE, size, value);
+            return;
+        }
+        if offset >= REG_CORBWP && end <= REG_CORBRP + 2 {
+            let current = (self.corbwp as u32)
+                | ((self.corbrp as u32) << (((REG_CORBRP - REG_CORBWP) * 8) as u32));
+            let new = mmio_write_sub_u32(current, offset - REG_CORBWP, size, value);
+            let new_wp = (new & 0xffff) as u16;
+            let new_rp = (new >> 16) as u16;
+            self.corbwp = new_wp & 0x00ff;
+            if (new_rp & 0x8000) != 0 {
+                self.corbrp = 0;
+            } else {
+                self.corbrp = new_rp & 0x00ff;
+            }
+            return;
+        }
+        if offset >= REG_CORBCTL && end <= REG_CORBSIZE + 2 {
+            for i in 0..size {
+                let byte = ((value >> (i * 8)) & 0xff) as u8;
+                let addr = offset + i as u64;
+                match addr {
+                    REG_CORBCTL => self.corbctl = byte,
+                    REG_CORBSTS => self.corbsts &= !byte,
+                    REG_CORBSIZE => {
+                        // Only the size selection bits (1:0) are writable; capability bits are RO.
+                        self.corbsize = (self.corbsize & !0x3) | (byte & 0x3);
                     }
+                    _ => {}
+                }
+            }
+            return;
+        }
 
-                    // We only model writes fully contained in the SDnCTL bytes (0..2). Writes
-                    // touching the SDnSTS byte must use the 1-byte RW1C path above.
-                    let start = (reg - SD_REG_CTL) as usize;
-                    if size > 4 || start.saturating_add(size) > 3 {
-                        return;
+        if offset >= REG_RIRBLBASE && end <= REG_RIRBLBASE + 4 {
+            self.rirblbase = mmio_write_sub_u32(self.rirblbase, offset - REG_RIRBLBASE, size, value);
+            return;
+        }
+        if offset >= REG_RIRBUBASE && end <= REG_RIRBUBASE + 4 {
+            self.rirbubase = mmio_write_sub_u32(self.rirbubase, offset - REG_RIRBUBASE, size, value);
+            return;
+        }
+        if offset >= REG_RIRBWP && end <= REG_RINTCNT + 2 {
+            let current = (self.rirbwp as u32)
+                | ((self.rintcnt as u32) << (((REG_RINTCNT - REG_RIRBWP) * 8) as u32));
+            let new = mmio_write_sub_u32(current, offset - REG_RIRBWP, size, value);
+            let new_wp = (new & 0xffff) as u16;
+            let new_cnt = (new >> 16) as u16;
+            if (new_wp & 0x8000) != 0 {
+                self.rirbwp = 0;
+            } else {
+                self.rirbwp = new_wp & 0x00ff;
+            }
+            self.rintcnt = new_cnt;
+            return;
+        }
+        if offset >= REG_RIRBCTL && end <= REG_RIRBSIZE + 2 {
+            for i in 0..size {
+                let byte = ((value >> (i * 8)) & 0xff) as u8;
+                let addr = offset + i as u64;
+                match addr {
+                    REG_RIRBCTL => self.rirbctl = byte,
+                    REG_RIRBSTS => self.rirbsts &= !byte,
+                    REG_RIRBSIZE => {
+                        // Only the size selection bits (1:0) are writable; capability bits are RO.
+                        self.rirbsize = (self.rirbsize & !0x3) | (byte & 0x3);
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+
+        if offset >= REG_DPLBASE && end <= REG_DPLBASE + 4 {
+            let v = mmio_write_sub_u32(self.dplbase, offset - REG_DPLBASE, size, value);
+            // Bits 6:1 are reserved and must read as 0; the base is 128-byte aligned.
+            self.dplbase = (v & DPLBASE_ENABLE) | (v & DPLBASE_ADDR_MASK);
+            return;
+        }
+        if offset >= REG_DPUBASE && end <= REG_DPUBASE + 4 {
+            self.dpubase = mmio_write_sub_u32(self.dpubase, offset - REG_DPUBASE, size, value);
+            return;
+        }
+
+        let sd_end = REG_SD_BASE + SD_STRIDE * self.streams.len() as u64;
+        if offset >= REG_SD_BASE && offset < sd_end {
+            let stream = ((offset - REG_SD_BASE) / SD_STRIDE) as usize;
+            let reg = (offset - REG_SD_BASE) % SD_STRIDE;
+            if reg + size as u64 > SD_STRIDE {
+                return;
+            }
+
+            if reg < SD_REG_LPIB {
+                if reg == SD_REG_STS && size == 1 {
+                    // SDSTS is RW1C.
+                    self.clear_stream_status(stream, value as u8);
+                    return;
+                }
+
+                if reg == SD_REG_CTL && size == 4 {
+                    // Combined SDnCTL/SDnSTS dword write.
+                    //
+                    // Real hardware exposes SDnSTS as a separate byte register at offset 0x03.
+                    // Some callers may still issue a dword write where the upper byte is used
+                    // as a RW1C clear mask. To keep the model robust, treat the upper byte as
+                    // status clear, then apply the low 24-bit control update.
+                    let v = value as u32;
+                    let sts_clear = (v >> 24) as u8;
+                    if sts_clear != 0 {
+                        self.clear_stream_status(stream, sts_clear);
                     }
 
                     let (prev, now) = {
                         let sd = &mut self.streams[stream];
-                        let mut bytes = sd.ctl.to_le_bytes();
-                        for i in 0..size {
-                            bytes[start + i] = ((value >> (8 * i)) & 0xff) as u8;
-                        }
                         let prev = sd.ctl;
-                        sd.ctl = u32::from_le_bytes(bytes);
+                        let prev_ctl = prev & 0x00ff_ffff;
+                        let status = sd.ctl & 0xff00_0000;
+                        let write_ctl = v & 0x00ff_ffff;
+                        let new_ctl = if write_ctl == 0 && sts_clear != 0 {
+                            // Heuristic: status-only write should not stop the stream.
+                            prev_ctl
+                        } else {
+                            write_ctl
+                        };
+                        sd.ctl = status | new_ctl;
                         (prev, sd.ctl)
                     };
 
+                    // SRST cleared -> stream enters reset.
                     if (prev & SD_CTL_SRST) != 0 && (now & SD_CTL_SRST) == 0 {
                         self.reset_stream_engine(stream);
                     }
                     return;
                 }
 
-                let sd = &mut self.streams[stream];
-                match (reg, size) {
-                    (SD_REG_LPIB, 4) => {
-                        // Read-only in hardware.
-                    }
-                    (SD_REG_CBL, 4) => sd.cbl = value as u32,
-                    (SD_REG_LVI, 2) => sd.lvi = value as u16,
-                    (SD_REG_FIFOS, 2) => sd.fifos = value as u16,
-                    (SD_REG_FMT, 2) => sd.fmt = value as u16,
-                    (SD_REG_BDPL, 4) => sd.bdpl = value as u32,
-                    (SD_REG_BDPU, 4) => sd.bdpu = value as u32,
-                    _ => {}
+                // Only model writes fully contained in the SDnCTL bytes (0..2). Writes
+                // touching the SDnSTS byte must use the 1-byte RW1C path above.
+                let start = (reg - SD_REG_CTL) as usize;
+                if start.saturating_add(size) > 3 {
+                    return;
                 }
+
+                let (prev, now) = {
+                    let sd = &mut self.streams[stream];
+                    let prev = sd.ctl;
+                    sd.ctl = mmio_write_sub_u32(sd.ctl, reg - SD_REG_CTL, size, value);
+                    (prev, sd.ctl)
+                };
+
+                if (prev & SD_CTL_SRST) != 0 && (now & SD_CTL_SRST) == 0 {
+                    self.reset_stream_engine(stream);
+                }
+                return;
             }
-            _ => {}
+
+            let sd = &mut self.streams[stream];
+            if reg >= SD_REG_LPIB && reg + size as u64 <= SD_REG_LPIB + 4 {
+                // Read-only in hardware.
+                return;
+            }
+            if reg >= SD_REG_CBL && reg + size as u64 <= SD_REG_CBL + 4 {
+                sd.cbl = mmio_write_sub_u32(sd.cbl, reg - SD_REG_CBL, size, value);
+                return;
+            }
+            if reg >= SD_REG_LVI && reg + size as u64 <= SD_REG_FIFOW + 2 {
+                let current = (sd.lvi as u32)
+                    | ((sd.fifow as u32) << (((SD_REG_FIFOW - SD_REG_LVI) * 8) as u32));
+                let new = mmio_write_sub_u32(current, reg - SD_REG_LVI, size, value);
+                sd.lvi = (new & 0xffff) as u16;
+                sd.fifow = (new >> 16) as u16;
+                return;
+            }
+            if reg >= SD_REG_FIFOS && reg + size as u64 <= SD_REG_FMT + 2 {
+                let current = (sd.fifos as u32)
+                    | ((sd.fmt as u32) << (((SD_REG_FMT - SD_REG_FIFOS) * 8) as u32));
+                let new = mmio_write_sub_u32(current, reg - SD_REG_FIFOS, size, value);
+                sd.fifos = (new & 0xffff) as u16;
+                sd.fmt = (new >> 16) as u16;
+                return;
+            }
+            if reg >= SD_REG_BDPL && reg + size as u64 <= SD_REG_BDPL + 4 {
+                sd.bdpl = mmio_write_sub_u32(sd.bdpl, reg - SD_REG_BDPL, size, value);
+                return;
+            }
+            if reg >= SD_REG_BDPU && reg + size as u64 <= SD_REG_BDPU + 4 {
+                sd.bdpu = mmio_write_sub_u32(sd.bdpu, reg - SD_REG_BDPU, size, value);
+            }
         }
     }
 
     fn reset(&mut self) {
         self.gctl = 0;
+        self.wakeen = 0;
         self.statests = 0;
         self.intctl = 0;
         self.intsts = 0;
@@ -1707,6 +1865,7 @@ impl HdaController {
 
     pub fn restore_state(&mut self, state: &HdaControllerState) {
         self.gctl = state.gctl;
+        self.wakeen = 0;
         self.statests = state.statests;
         self.intctl = state.intctl;
         self.intsts = state.intsts;
@@ -1735,6 +1894,7 @@ impl HdaController {
             sd.lpib = s.lpib;
             sd.cbl = s.cbl;
             sd.lvi = s.lvi;
+            sd.fifow = 0;
             sd.fifos = s.fifos;
             sd.fmt = s.fmt;
             sd.bdpl = s.bdpl;
