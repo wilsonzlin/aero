@@ -18,6 +18,7 @@ const DEFAULT_IRQ_LINE: u8 = 11;
 const PORT_COUNT: usize = 2;
 const EXTERNAL_HUB_ROOT_PORT: usize = 0;
 const DEFAULT_EXTERNAL_HUB_PORT_COUNT: u8 = 16;
+const WEBUSB_ROOT_PORT: usize = 1;
 
 fn js_error(message: &str) -> JsValue {
     js_sys::Error::new(message).into()
@@ -501,13 +502,26 @@ impl UhciRuntime {
     pub fn webusb_attach(&mut self, preferred_port: Option<u8>) -> Result<u32, JsValue> {
         self.webusb_detach();
 
-        let port = if let Some(p) = preferred_port {
-            self.alloc_port(Some(p))?
-        } else if self.port_is_free(1) {
-            1
-        } else {
-            self.alloc_port(None)?
-        };
+        if let Some(preferred) = preferred_port {
+            if preferred as usize != WEBUSB_ROOT_PORT {
+                return Err(js_error(&format!(
+                    "Invalid preferredPort {preferred} for WebUSB (expected {WEBUSB_ROOT_PORT})"
+                )));
+            }
+        }
+
+        // Root port 1 is reserved for WebUSB. Detach any legacy root-port WebHID device
+        // that may have been attached there (older clients may not use the external hub path).
+        if let Some(device_id) = self.webhid_ports[WEBUSB_ROOT_PORT] {
+            self.webhid_detach(device_id);
+        }
+
+        if !self.port_is_free(WEBUSB_ROOT_PORT) {
+            return Err(js_error(&format!(
+                "UHCI root port {WEBUSB_ROOT_PORT} is not available for WebUSB"
+            )));
+        }
+        let port = WEBUSB_ROOT_PORT;
 
         let dev = Rc::new(RefCell::new(aero_usb::UsbWebUsbPassthroughDevice::new()));
         self.ctrl

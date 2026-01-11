@@ -4,6 +4,7 @@ import type { HidAttachMessage, HidDetachMessage, HidInputReportMessage } from "
 import type { HidGuestBridge, HidHostSink } from "./wasm_hid_guest_bridge";
 
 const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
+const EXTERNAL_HUB_ROOT_PORT = 0;
 
 export type UhciRuntimeHidApi = {
   webhid_attach(
@@ -43,7 +44,9 @@ function normalizeExternalHubGuestPath(path: GuestUsbPath | undefined, guestPort
 
   const rootPort = path?.[0] ?? guestPort;
   if (rootPort !== 0 && rootPort !== 1) return null;
-  return [0, rootPort + 1];
+  // Backwards-compatible mapping for root-port-only hints: translate `[0]` -> `[0, 1]` and
+  // `[1]` -> `[0, 2]` (hub ports are 1-based, per USB spec).
+  return [EXTERNAL_HUB_ROOT_PORT, rootPort + 1];
 }
 
 export class WasmUhciHidGuestBridge implements HidGuestBridge {
