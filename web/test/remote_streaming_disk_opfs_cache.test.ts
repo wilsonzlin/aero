@@ -104,7 +104,9 @@ test("RemoteStreamingDisk (OPFS cache)", async (t) => {
     const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
       blockSize,
       cacheBackend: "opfs",
-      cacheLimitBytes: null,
+      // `cacheLimitBytes: null` disables caching; use a generous limit so this
+      // test exercises read-through caching without evictions.
+      cacheLimitBytes: blockSize * 8,
       prefetchSequentialBlocks: 0,
       credentials: "omit",
     });
