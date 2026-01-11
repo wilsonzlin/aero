@@ -242,7 +242,12 @@ impl UhciController {
             }
             REG_PORTSC1_HI => {
                 let cur = self.hub.read_portsc(0);
-                let v = (cur & 0x00ff) | ((value as u16) << 8);
+                // PORTSC contains write-1-to-clear change bits in the low byte (CSC/PEDC). When
+                // the guest performs an 8-bit write to the high byte, we must not feed the
+                // currently-latched change bits back into the 16-bit write handler or they would
+                // be spuriously cleared.
+                let low = (cur & 0x00ff) & !0x000a;
+                let v = low | ((value as u16) << 8);
                 self.hub.write_portsc(0, v);
             }
             REG_PORTSC2 => {
@@ -252,7 +257,8 @@ impl UhciController {
             }
             REG_PORTSC2_HI => {
                 let cur = self.hub.read_portsc(1);
-                let v = (cur & 0x00ff) | ((value as u16) << 8);
+                let low = (cur & 0x00ff) & !0x000a;
+                let v = low | ((value as u16) << 8);
                 self.hub.write_portsc(1, v);
             }
             _ => {}
