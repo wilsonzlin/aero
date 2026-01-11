@@ -110,3 +110,91 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_too_small() {
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }
+
+#[test]
+fn d3d9_create_buffer_rejects_unaligned_size() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_buffer(
+        1, // buffer_handle
+        0, // usage_flags
+        3, // size_bytes (not 4-byte aligned)
+        0, // backing_alloc_id
+        0, // backing_offset_bytes
+    );
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected CREATE_BUFFER with unaligned size_bytes to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("CREATE_BUFFER")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_upload_resource_rejects_unaligned_buffer_range() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_buffer(
+        1,  // buffer_handle
+        0,  // usage_flags
+        16, // size_bytes
+        0,  // backing_alloc_id
+        0,  // backing_offset_bytes
+    );
+    writer.upload_resource(1, 2, &[0u8; 4]); // offset_bytes is not aligned
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected UPLOAD_RESOURCE with unaligned offset_bytes to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("UPLOAD_RESOURCE")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_copy_buffer_rejects_unaligned_range() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_buffer(1, 0, 16, 0, 0); // src
+    writer.create_buffer(2, 0, 16, 0, 0); // dst
+    writer.copy_buffer(
+        2, // dst_buffer
+        1, // src_buffer
+        0, // dst_offset_bytes
+        0, // src_offset_bytes
+        2, // size_bytes (not aligned)
+        0, // flags
+    );
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected COPY_BUFFER with unaligned size_bytes to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("COPY_BUFFER")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}

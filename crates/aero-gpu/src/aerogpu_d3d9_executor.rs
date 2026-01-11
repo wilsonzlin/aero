@@ -704,6 +704,18 @@ impl AerogpuD3d9Executor {
                     return Err(AerogpuD3d9Error::ResourceHandleInUse(buffer_handle));
                 }
 
+                if size_bytes == 0 {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "CREATE_BUFFER: size_bytes must be > 0".into(),
+                    ));
+                }
+                if size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "CREATE_BUFFER: size_bytes must be a multiple of {} (got {size_bytes})",
+                        wgpu::COPY_BUFFER_ALIGNMENT
+                    )));
+                }
+
                 let backing = if backing_alloc_id == 0 {
                     None
                 } else {
@@ -933,16 +945,17 @@ impl AerogpuD3d9Executor {
                                 return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
                             }
 
-                            // WebGPU buffer copy ops require 4-byte alignment. If the guest uploads
-                            // an unaligned slice, fall back to `queue.write_buffer` with a submit
-                            // boundary so ordering remains correct.
-                            if (offset_bytes % 4) != 0 || (size_bytes % 4) != 0 {
-                                let encoder = encoder_opt
-                                    .take()
-                                    .expect("encoder is only consumed by unaligned upload path");
-                                self.queue.submit([encoder.finish()]);
-                                self.queue.write_buffer(buffer, offset_bytes, data);
-                                return Ok(());
+                            let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+                            if (size_bytes % alignment) != 0 {
+                                return Err(AerogpuD3d9Error::Validation(format!(
+                                    "UPLOAD_RESOURCE: buffer size_bytes must be a multiple of {alignment} (handle={resource_handle} size_bytes={size_bytes})"
+                                )));
+                            }
+
+                            if (offset_bytes % alignment) != 0 {
+                                return Err(AerogpuD3d9Error::Validation(format!(
+                                    "UPLOAD_RESOURCE: buffer offset_bytes must be a multiple of {alignment} (handle={resource_handle} offset_bytes={offset_bytes})"
+                                )));
                             }
 
                             let staging =
@@ -1132,6 +1145,16 @@ impl AerogpuD3d9Executor {
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "COPY_BUFFER: unknown flags 0x{flags:08X}"
+                        )));
+                    }
+
+                    if dst_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+                        || src_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+                        || size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+                    {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "COPY_BUFFER: offsets and size must be {}-byte aligned (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})",
+                            wgpu::COPY_BUFFER_ALIGNMENT
                         )));
                     }
 
@@ -1950,7 +1973,9 @@ impl AerogpuD3d9Executor {
                         "buffer dirty range out of bounds (handle={resource_handle} end={end} size={size})"
                     )));
                 }
-                dirty_ranges.push(offset_bytes..end);
+                let aligned_start = align_down_u64(offset_bytes, wgpu::COPY_BUFFER_ALIGNMENT);
+                let aligned_end = align_up_u64(end, wgpu::COPY_BUFFER_ALIGNMENT)?.min(*size);
+                dirty_ranges.push(aligned_start..aligned_end);
                 coalesce_ranges(dirty_ranges);
                 Ok(())
             }
@@ -1986,6 +2011,7 @@ impl AerogpuD3d9Executor {
         };
         let Resource::Buffer {
             buffer,
+            size,
             backing,
             dirty_ranges,
             ..
@@ -2006,15 +2032,20 @@ impl AerogpuD3d9Executor {
 
         let ranges = dirty_ranges.clone();
         for range in &ranges {
-            let len_u64 = range.end.saturating_sub(range.start);
+            let aligned_start = align_down_u64(range.start, wgpu::COPY_BUFFER_ALIGNMENT);
+            let aligned_end = align_up_u64(range.end, wgpu::COPY_BUFFER_ALIGNMENT)?.min(*size);
+            let len_u64 = aligned_end.saturating_sub(aligned_start);
             let len = usize::try_from(len_u64)
                 .map_err(|_| AerogpuD3d9Error::Validation("buffer dirty range too large".into()))?;
             let mut data = vec![0u8; len];
-            let src_gpa = backing.base_gpa.checked_add(range.start).ok_or_else(|| {
+            let src_gpa = backing
+                .base_gpa
+                .checked_add(aligned_start)
+                .ok_or_else(|| {
                 AerogpuD3d9Error::Validation("buffer backing gpa overflow".into())
             })?;
             guest_memory.read(src_gpa, &mut data)?;
-            self.queue.write_buffer(buffer, range.start, &data);
+            self.queue.write_buffer(buffer, aligned_start, &data);
         }
 
         dirty_ranges.clear();
@@ -3004,6 +3035,19 @@ enum DrawParams {
 fn align_to(value: u32, alignment: u32) -> u32 {
     debug_assert!(alignment.is_power_of_two());
     (value + alignment - 1) & !(alignment - 1)
+}
+
+fn align_down_u64(value: u64, alignment: u64) -> u64 {
+    debug_assert!(alignment.is_power_of_two());
+    value & !(alignment - 1)
+}
+
+fn align_up_u64(value: u64, alignment: u64) -> Result<u64, AerogpuD3d9Error> {
+    debug_assert!(alignment.is_power_of_two());
+    value
+        .checked_add(alignment - 1)
+        .map(|v| v & !(alignment - 1))
+        .ok_or_else(|| AerogpuD3d9Error::Validation("alignment overflow".into()))
 }
 
 fn coalesce_ranges(ranges: &mut Vec<Range<u64>>) {

@@ -25,6 +25,19 @@ fn align_to(value: u32, alignment: u32) -> u32 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
+fn align_down_u64(value: u64, alignment: u64) -> u64 {
+    debug_assert!(alignment.is_power_of_two());
+    value & !(alignment - 1)
+}
+
+fn align_up_u64(value: u64, alignment: u64) -> Result<u64, ExecutorError> {
+    debug_assert!(alignment.is_power_of_two());
+    value
+        .checked_add(alignment - 1)
+        .map(|v| v & !(alignment - 1))
+        .ok_or_else(|| ExecutorError::Validation("alignment overflow".into()))
+}
+
 fn map_cmd_stream_parse_error(err: AeroGpuCmdStreamParseError) -> ExecutorError {
     match err {
         AeroGpuCmdStreamParseError::BufferTooSmall => ExecutorError::TruncatedStream,
@@ -620,6 +633,18 @@ fn fs_main() -> @location(0) vec4<f32> {
             )));
         }
 
+        if size_bytes == 0 {
+            return Err(ExecutorError::Validation(
+                "CREATE_BUFFER size_bytes must be > 0".into(),
+            ));
+        }
+        if size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+            return Err(ExecutorError::Validation(format!(
+                "CREATE_BUFFER size_bytes must be a multiple of {} (got {size_bytes})",
+                wgpu::COPY_BUFFER_ALIGNMENT
+            )));
+        }
+
         let backing = if backing_alloc_id == 0 {
             None
         } else {
@@ -877,7 +902,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                     buffer.size_bytes
                 )));
             }
-            buffer.dirty_ranges.push(offset_bytes..end);
+            let aligned_start = align_down_u64(offset_bytes, wgpu::COPY_BUFFER_ALIGNMENT);
+            let aligned_end = align_up_u64(end, wgpu::COPY_BUFFER_ALIGNMENT)?;
+            buffer.dirty_ranges.push(aligned_start..aligned_end);
             coalesce_ranges(&mut buffer.dirty_ranges);
             return Ok(());
         }
@@ -932,6 +959,15 @@ fn fs_main() -> @location(0) vec4<f32> {
             if buffer.backing.is_some() {
                 return Err(ExecutorError::Validation(format!(
                     "UPLOAD_RESOURCE on guest-backed buffer {handle} is not supported (use RESOURCE_DIRTY_RANGE)"
+                )));
+            }
+
+            if offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+                || size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+            {
+                return Err(ExecutorError::Validation(format!(
+                    "UPLOAD_RESOURCE buffer offset_bytes and size_bytes must be multiples of {} (handle={handle} offset_bytes={offset_bytes} size_bytes={size_bytes})",
+                    wgpu::COPY_BUFFER_ALIGNMENT
                 )));
             }
 
@@ -1505,7 +1541,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             )));
         };
         let Some(backing) = buffer.backing else {
-            // Host-owned buffers are updated through UPLOAD_RESOURCE (not implemented yet).
+            // Host-owned buffers are updated through UPLOAD_RESOURCE.
             return Ok(());
         };
         if buffer.dirty_ranges.is_empty() {
@@ -1513,9 +1549,18 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
 
         for range in &buffer.dirty_ranges {
-            let mut data = vec![0u8; (range.end - range.start) as usize];
-            guest_memory.read(backing.base_gpa + range.start, &mut data)?;
-            self.queue.write_buffer(&buffer.buffer, range.start, &data);
+            let aligned_start = align_down_u64(range.start, wgpu::COPY_BUFFER_ALIGNMENT);
+            let aligned_end = align_up_u64(range.end, wgpu::COPY_BUFFER_ALIGNMENT)?
+                .min(buffer.size_bytes);
+            let len = aligned_end
+                .checked_sub(aligned_start)
+                .ok_or_else(|| ExecutorError::Validation("invalid dirty range".into()))?;
+            let len_usize = usize::try_from(len).map_err(|_| {
+                ExecutorError::Validation("buffer dirty range too large".into())
+            })?;
+            let mut data = vec![0u8; len_usize];
+            guest_memory.read(backing.base_gpa + aligned_start, &mut data)?;
+            self.queue.write_buffer(&buffer.buffer, aligned_start, &data);
         }
 
         buffer.dirty_ranges.clear();
@@ -1533,7 +1578,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             )));
         };
         let Some(backing) = tex.backing else {
-            // Host-owned textures are updated through UPLOAD_RESOURCE (not implemented yet).
+            // Host-owned textures are updated through UPLOAD_RESOURCE.
             return Ok(());
         };
         if tex.dirty_ranges.is_empty() {

@@ -195,6 +195,7 @@ enum aerogpu_copy_flags {
  *     submissions.
  * - The host must validate that `backing_offset_bytes + size_bytes` is within
  *   the allocation's size.
+ * - `size_bytes` must be a multiple of 4 (WebGPU `COPY_BUFFER_ALIGNMENT`).
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_create_buffer {
@@ -268,6 +269,10 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_resource_dirty_range) == 32);
  * UPLOAD_RESOURCE:
  * Copies raw bytes into a resource.
  *
+ * Notes:
+ * - For buffers, `offset_bytes` and `size_bytes` must be multiples of 4 (WebGPU
+ *   `COPY_BUFFER_ALIGNMENT`).
+ *
  * Payload format:
  *   struct aerogpu_cmd_upload_resource
  *   uint8_t data[size_bytes]
@@ -294,6 +299,7 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_upload_resource) == 32);
  * - Ranges must be in-bounds:
  *     dst_offset_bytes + size_bytes <= dst_buffer.size_bytes
  *     src_offset_bytes + size_bytes <= src_buffer.size_bytes
+ * - Offsets and size must be multiples of 4 (WebGPU `COPY_BUFFER_ALIGNMENT`).
  * - If AEROGPU_COPY_FLAG_WRITEBACK_DST is set:
  *   - dst_buffer MUST be backed by a guest allocation.
  *   - The host MUST write back the resulting bytes into the guest backing
