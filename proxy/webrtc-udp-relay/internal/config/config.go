@@ -739,7 +739,10 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		// isn't part of the configured URL.
 		l2BackendWSURL = strings.TrimSpace(l2BackendWSURL)
 
-		if strings.TrimSpace(l2BackendWSOrigin) != "" {
+		// If an explicit origin override is set (via L2_BACKEND_ORIGIN or
+		// L2_BACKEND_ORIGIN_OVERRIDE), it takes precedence over L2_BACKEND_WS_ORIGIN.
+		// Avoid rejecting startup due to an invalid *unused* L2_BACKEND_WS_ORIGIN.
+		if strings.TrimSpace(l2BackendWSOrigin) != "" && strings.TrimSpace(l2BackendOriginOverride) == "" {
 			origin, err := normalizeOriginHeaderValue(l2BackendWSOrigin)
 			if err != nil {
 				return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvL2BackendWSOrigin, "--l2-backend-ws-origin", l2BackendWSOrigin, err)

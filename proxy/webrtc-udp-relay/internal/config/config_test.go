@@ -404,6 +404,21 @@ func TestL2BackendTokenAlias_AcceptsHTTPToken(t *testing.T) {
 	}
 }
 
+func TestL2BackendOriginOverride_IgnoresInvalidWSOrigin(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                "secret",
+		EnvL2BackendWSURL:        "ws://127.0.0.1:8090/l2",
+		EnvL2BackendWSOrigin:     "https://invalid.example.com/path",
+		EnvL2BackendOriginOverride: "HTTPS://Example.COM:443/",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.L2BackendWSOrigin != "https://example.com:443" {
+		t.Fatalf("L2BackendWSOrigin=%q, want %q", cfg.L2BackendWSOrigin, "https://example.com:443")
+	}
+}
+
 func TestParseAllowedOrigins_NormalizesAndValidates(t *testing.T) {
 	got, err := parseAllowedOrigins("HTTPS://Example.COM:443, http://localhost:5173/")
 	if err != nil {
