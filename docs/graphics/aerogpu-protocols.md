@@ -21,9 +21,13 @@ Win7/WDDM ABI** described below.
 - `crates/emulator/src/devices/pci/aerogpu.rs` — PCI device + MMIO register behavior.
 - `crates/emulator/src/devices/aerogpu_ring.rs` — ring parsing utilities.
 - `crates/emulator/src/gpu_worker/aerogpu_executor.rs` — execution/translation glue.
+- `crates/aero-gpu/src/protocol.rs` — host-side parser for the versioned command stream (`aerogpu_cmd.h`).
 - `emulator/protocol` — Rust/TypeScript mirror of the C headers (used by tooling/tests).
 
 This is the ABI that the Windows 7 WDDM 1.1 driver stack (KMD + UMD) targets.
+Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`), while
+the Win7 KMD submission transport is still in transition and may use legacy submission paths
+(see `drivers/aerogpu/protocol/README.md` and `drivers/aerogpu/kmd/README.md`).
 
 ### Legacy bring-up ABI (still present, but not the long-term target)
 
