@@ -42,18 +42,24 @@ export class UhciHidTopologyManager {
 
   #uhci: UhciTopologyBridge | null = null;
   readonly #hubPortCountByRoot = new Map<number, number>();
-  readonly #hubAttachedRoots = new Set<number>();
+  readonly #hubAttachedPortCountByRoot = new Map<number, number>();
   readonly #devices = new Map<number, DeviceRecord>();
 
   constructor(options: { defaultHubPortCount?: number } = {}) {
-    this.#defaultHubPortCount = options.defaultHubPortCount ?? DEFAULT_EXTERNAL_HUB_PORT_COUNT;
+    this.#defaultHubPortCount = (() => {
+      const requested = options.defaultHubPortCount;
+      if (typeof requested === "number" && Number.isFinite(requested) && Number.isInteger(requested) && requested > 0) {
+        return Math.min(255, requested);
+      }
+      return DEFAULT_EXTERNAL_HUB_PORT_COUNT;
+    })();
   }
 
   setUhciBridge(bridge: UhciTopologyBridge | null): void {
     if (this.#uhci !== bridge) {
       // Hub attachments are per-controller state; if we swap bridges (or clear),
       // force reattachment on the next active bridge.
-      this.#hubAttachedRoots.clear();
+      this.#hubAttachedPortCountByRoot.clear();
     }
     this.#uhci = bridge;
     if (bridge) this.#flush();
@@ -63,7 +69,8 @@ export class UhciHidTopologyManager {
     const rootPort = path[0] ?? 0;
     const count = clampHubPortCount(portCount ?? this.#defaultHubPortCount);
     this.#hubPortCountByRoot.set(rootPort, count);
-    this.#maybeAttachHub(rootPort);
+    const resized = this.#maybeAttachHub(rootPort);
+    if (resized) this.#reattachDevicesBehindRoot(rootPort);
   }
 
   attachDevice(deviceId: number, path: GuestUsbPath, kind: UhciHidPassthroughDeviceKind, device: unknown): void {
@@ -85,20 +92,21 @@ export class UhciHidTopologyManager {
     }
   }
 
-  #maybeAttachHub(rootPort: number, opts: { minPortCount?: number } = {}): void {
+  #maybeAttachHub(rootPort: number): boolean {
     const uhci = this.#uhci;
-    if (!uhci) return;
-    if (this.#hubAttachedRoots.has(rootPort)) return;
+    if (!uhci) return false;
 
-    const configured = this.#hubPortCountByRoot.get(rootPort) ?? this.#defaultHubPortCount;
-    const minPortCount = opts.minPortCount ?? 0;
-    const portCount = clampHubPortCount(Math.max(configured, minPortCount));
+    const portCount = this.#requiredHubPortCount(rootPort);
+    const existing = this.#hubAttachedPortCountByRoot.get(rootPort);
+    if (existing !== undefined && existing >= portCount) return false;
     try {
       uhci.attach_hub(rootPort >>> 0, portCount >>> 0);
-      this.#hubAttachedRoots.add(rootPort);
+      this.#hubAttachedPortCountByRoot.set(rootPort, portCount);
     } catch {
       // Best-effort: hub attachment failures should not crash the worker.
+      return false;
     }
+    return existing !== undefined;
   }
 
   #maybeDetachPath(path: GuestUsbPath): void {
@@ -118,9 +126,13 @@ export class UhciHidTopologyManager {
 
     const rootPort = rec.path[0] ?? 0;
     if (rec.path.length > 1) {
-      // Ensure the hub has enough downstream ports to cover the requested path.
-      const requestedPort = rec.path[1] ?? 0;
-      this.#maybeAttachHub(rootPort, { minPortCount: requestedPort });
+      const resized = this.#maybeAttachHub(rootPort);
+      if (resized) {
+        // Replacing the hub disconnects all downstream devices. Reattach everything
+        // behind this root port so the guest USB topology returns to the expected state.
+        this.#reattachDevicesBehindRoot(rootPort);
+        return;
+      }
     }
 
     // Clear any existing device at that path first. This keeps the worker resilient
@@ -135,6 +147,29 @@ export class UhciHidTopologyManager {
       }
     } catch {
       // ignore
+    }
+  }
+
+  #requiredHubPortCount(rootPort: number): number {
+    let required = this.#hubPortCountByRoot.get(rootPort) ?? this.#defaultHubPortCount;
+    for (const rec of this.#devices.values()) {
+      const root = rec.path[0] ?? 0;
+      if (root !== rootPort) continue;
+      if (rec.path.length <= 1) continue;
+      const port = rec.path[1] ?? 0;
+      if (typeof port === "number" && Number.isFinite(port) && port > required) {
+        required = port;
+      }
+    }
+    return clampHubPortCount(required);
+  }
+
+  #reattachDevicesBehindRoot(rootPort: number): void {
+    for (const [deviceId, rec] of this.#devices) {
+      const root = rec.path[0] ?? 0;
+      if (root !== rootPort) continue;
+      if (rec.path.length <= 1) continue;
+      this.#maybeAttachDevice(deviceId);
     }
   }
 }

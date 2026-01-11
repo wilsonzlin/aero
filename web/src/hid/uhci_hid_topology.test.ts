@@ -99,4 +99,24 @@ describe("hid/UhciHidTopologyManager", () => {
     mgr.setUhciBridge(uhci2);
     expect(uhci2.attach_hub).toHaveBeenCalledTimes(1);
   });
-});
+
+  it("resizes hubs when a device needs a higher downstream port", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev1 = { kind: "device-1" };
+    const dev2 = { kind: "device-2" };
+
+    mgr.setUhciBridge(uhci);
+    mgr.attachDevice(1, [0, 1], "webhid", dev1);
+    expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
+
+    mgr.attachDevice(2, [0, 20], "webhid", dev2);
+    expect(uhci.attach_hub).toHaveBeenCalledTimes(2);
+    expect(uhci.attach_hub).toHaveBeenNthCalledWith(2, 0, 20);
+
+    const dev1Calls = uhci.attach_webhid_device.mock.calls.filter(([, dev]) => dev === dev1);
+    expect(dev1Calls).toHaveLength(2);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 20], dev2);
+  });
+}); 
