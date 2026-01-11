@@ -423,29 +423,26 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
-    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
-    const OPC_CREATE_BUFFER: u32 = 0x100;
-    const OPC_CREATE_TEXTURE2D: u32 = 0x101;
-    const OPC_RESOURCE_DIRTY_RANGE: u32 = 0x103;
-    const OPC_UPLOAD_RESOURCE: u32 = 0x104;
-    const OPC_COPY_TEXTURE2D: u32 = 0x106;
-    const OPC_CREATE_SHADER_DXBC: u32 = 0x200;
-    const OPC_BIND_SHADERS: u32 = 0x202;
-    const OPC_CREATE_INPUT_LAYOUT: u32 = 0x204;
-    const OPC_SET_INPUT_LAYOUT: u32 = 0x206;
-    const OPC_SET_RENDER_TARGETS: u32 = 0x400;
-    const OPC_SET_VIEWPORT: u32 = 0x401;
-    const OPC_SET_SCISSOR: u32 = 0x402;
-    const OPC_SET_VERTEX_BUFFERS: u32 = 0x500;
-    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = 0x502;
-    const OPC_SET_TEXTURE: u32 = 0x510;
-    const OPC_DRAW: u32 = 0x601;
+    // Protocol constants from `aero-protocol`.
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+    const OPC_CREATE_SHADER_DXBC: u32 = AerogpuCmdOpcode::CreateShaderDxbc as u32;
+    const OPC_BIND_SHADERS: u32 = AerogpuCmdOpcode::BindShaders as u32;
+    const OPC_CREATE_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::CreateInputLayout as u32;
+    const OPC_SET_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::SetInputLayout as u32;
+    const OPC_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+    const OPC_SET_VIEWPORT: u32 = AerogpuCmdOpcode::SetViewport as u32;
+    const OPC_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
+    const OPC_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
+    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = AerogpuCmdOpcode::SetPrimitiveTopology as u32;
+    const OPC_SET_TEXTURE: u32 = AerogpuCmdOpcode::SetTexture as u32;
+    const OPC_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
 
-    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
-    const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1 << 3;
-    const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1 << 4;
-    const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = 1 << 0;
-    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = 4;
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = AerogpuPrimitiveTopology::TriangleList as u32;
 
     const RT_HANDLE: u32 = 1;
     const SRC_TEX_HANDLE: u32 = 2;
@@ -621,7 +618,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
 
         emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
             push_u32(out, VS_HANDLE);
-            push_u32(out, 0); // AEROGPU_SHADER_STAGE_VERTEX
+            push_u32(out, AerogpuShaderStage::Vertex as u32);
             push_u32(out, vs_bytes.len() as u32);
             push_u32(out, 0); // reserved0
             out.extend_from_slice(&vs_bytes);
@@ -629,7 +626,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
 
         emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
             push_u32(out, PS_HANDLE);
-            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
+            push_u32(out, AerogpuShaderStage::Pixel as u32);
             push_u32(out, ps_bytes.len() as u32);
             push_u32(out, 0); // reserved0
             out.extend_from_slice(&ps_bytes);

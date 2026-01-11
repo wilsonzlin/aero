@@ -97,8 +97,8 @@ impl Opcode {
             0x0061 => Self::FenceSignal,
             0x0062 => Self::FenceWait,
             0x0063 => Self::FenceDestroy,
-            0x0710 => Self::ExportSharedSurface,
-            0x0711 => Self::ImportSharedSurface,
+            v if v == Self::ExportSharedSurface as u16 => Self::ExportSharedSurface,
+            v if v == Self::ImportSharedSurface as u16 => Self::ImportSharedSurface,
             _ => return None,
         })
     }

@@ -1,9 +1,11 @@
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AerogpuPrimitiveTopology, AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -130,33 +132,29 @@ fn d3d9_shared_surface_import_export_renders_via_alias_handle() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
-    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
-    const OPC_CREATE_BUFFER: u32 = 0x100;
-    const OPC_CREATE_TEXTURE2D: u32 = 0x101;
-    const OPC_DESTROY_RESOURCE: u32 = 0x102;
-    const OPC_UPLOAD_RESOURCE: u32 = 0x104;
-    const OPC_CREATE_SHADER_DXBC: u32 = 0x200;
-    const OPC_BIND_SHADERS: u32 = 0x202;
-    const OPC_SET_SHADER_CONSTANTS_F: u32 = 0x203;
-    const OPC_CREATE_INPUT_LAYOUT: u32 = 0x204;
-    const OPC_SET_INPUT_LAYOUT: u32 = 0x206;
-    const OPC_SET_RENDER_TARGETS: u32 = 0x400;
-    const OPC_SET_VIEWPORT: u32 = 0x401;
-    const OPC_SET_SCISSOR: u32 = 0x402;
-    const OPC_SET_VERTEX_BUFFERS: u32 = 0x500;
-    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = 0x502;
-    const OPC_CLEAR: u32 = 0x600;
-    const OPC_DRAW: u32 = 0x601;
-    const OPC_PRESENT: u32 = 0x700;
-    const OPC_EXPORT_SHARED_SURFACE: u32 = 0x710;
-    const OPC_IMPORT_SHARED_SURFACE: u32 = 0x711;
+    // Protocol constants from `aero-protocol`.
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_DESTROY_RESOURCE: u32 = AerogpuCmdOpcode::DestroyResource as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_CREATE_SHADER_DXBC: u32 = AerogpuCmdOpcode::CreateShaderDxbc as u32;
+    const OPC_BIND_SHADERS: u32 = AerogpuCmdOpcode::BindShaders as u32;
+    const OPC_SET_SHADER_CONSTANTS_F: u32 = AerogpuCmdOpcode::SetShaderConstantsF as u32;
+    const OPC_CREATE_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::CreateInputLayout as u32;
+    const OPC_SET_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::SetInputLayout as u32;
+    const OPC_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+    const OPC_SET_VIEWPORT: u32 = AerogpuCmdOpcode::SetViewport as u32;
+    const OPC_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
+    const OPC_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
+    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = AerogpuCmdOpcode::SetPrimitiveTopology as u32;
+    const OPC_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
+    const OPC_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
+    const OPC_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
+    const OPC_EXPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ExportSharedSurface as u32;
+    const OPC_IMPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ImportSharedSurface as u32;
 
-    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
-    const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1 << 3;
-    const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1 << 4;
-    const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = 1 << 0;
-    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = 4;
-    const AEROGPU_CLEAR_COLOR: u32 = 1 << 0;
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = AerogpuPrimitiveTopology::TriangleList as u32;
 
     const SHARE_TOKEN: u64 = 0x1122_3344_5566_7788;
 
@@ -269,7 +267,7 @@ fn d3d9_shared_surface_import_export_renders_via_alias_handle() {
 
         emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
             push_u32(out, VS_HANDLE);
-            push_u32(out, 0); // AEROGPU_SHADER_STAGE_VERTEX
+            push_u32(out, AerogpuShaderStage::Vertex as u32);
             push_u32(out, vs_bytes.len() as u32);
             push_u32(out, 0); // reserved0
             out.extend_from_slice(&vs_bytes);
@@ -277,7 +275,7 @@ fn d3d9_shared_surface_import_export_renders_via_alias_handle() {
 
         emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
             push_u32(out, PS_HANDLE);
-            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
+            push_u32(out, AerogpuShaderStage::Pixel as u32);
             push_u32(out, ps_bytes.len() as u32);
             push_u32(out, 0); // reserved0
             out.extend_from_slice(&ps_bytes);
@@ -352,7 +350,7 @@ fn d3d9_shared_surface_import_export_renders_via_alias_handle() {
         });
 
         emit_packet(out, OPC_SET_SHADER_CONSTANTS_F, |out| {
-            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
+            push_u32(out, AerogpuShaderStage::Pixel as u32);
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
@@ -423,19 +421,16 @@ fn d3d9_presented_scanout_survives_destroying_present_alias_handle() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
-    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
-    const OPC_CREATE_TEXTURE2D: u32 = 0x101;
-    const OPC_DESTROY_RESOURCE: u32 = 0x102;
-    const OPC_SET_RENDER_TARGETS: u32 = 0x400;
-    const OPC_CLEAR: u32 = 0x600;
-    const OPC_PRESENT: u32 = 0x700;
-    const OPC_EXPORT_SHARED_SURFACE: u32 = 0x710;
-    const OPC_IMPORT_SHARED_SURFACE: u32 = 0x711;
+    // Protocol constants from `aero-protocol`.
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_DESTROY_RESOURCE: u32 = AerogpuCmdOpcode::DestroyResource as u32;
+    const OPC_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+    const OPC_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
+    const OPC_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
+    const OPC_EXPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ExportSharedSurface as u32;
+    const OPC_IMPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ImportSharedSurface as u32;
 
-    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
-    const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1 << 3;
-    const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1 << 4;
-    const AEROGPU_CLEAR_COLOR: u32 = 1 << 0;
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
 
     const SHARE_TOKEN: u64 = 0x7788_6655_4433_2211;
 
