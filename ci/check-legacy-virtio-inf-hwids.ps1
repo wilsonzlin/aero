@@ -17,6 +17,9 @@ references one of Aero's contract-v1 modern virtio PCI device IDs:
 
 The check ignores comment lines (starting with ';') so documentation inside INFs can
 still mention these IDs.
+
+Additionally, enforce that there is only one MSBuild driver project under `drivers/`
+that produces `aerovblk.sys` (TargetName = aerovblk).
 #>
 
 [CmdletBinding()]
@@ -110,4 +113,33 @@ if ($conflicts.Count -gt 0) {
 }
 
 Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (DEV_1041/DEV_1042)."
+
+# Enforce that there is only one MSBuild project that produces aerovblk.sys.
+$projFiles = @(Get-ChildItem -LiteralPath $driversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
+$aerovblkProjects = New-Object System.Collections.Generic.List[string]
+foreach ($proj in $projFiles) {
+  $content = $null
+  try {
+    $content = Get-Content -LiteralPath $proj.FullName -Raw -ErrorAction Stop
+  } catch {
+    continue
+  }
+  if ([string]::IsNullOrWhiteSpace($content)) { continue }
+  if ($content -match '(?i)<TargetName>\s*aerovblk\s*</TargetName>') {
+    $aerovblkProjects.Add($proj.FullName) | Out-Null
+  }
+}
+
+$uniqueProjPaths = @($aerovblkProjects | Sort-Object -Unique)
+if ($uniqueProjPaths.Count -gt 1) {
+  Write-Host ""
+  Write-Host "ERROR: Found multiple MSBuild projects that produce aerovblk.sys (TargetName=aerovblk)."
+  foreach ($p in $uniqueProjPaths) {
+    Write-Host ("- {0}" -f $p)
+  }
+  Write-Host ""
+  exit 1
+}
+
+Write-Host "OK: aerovblk MSBuild output is unique."
 exit 0
