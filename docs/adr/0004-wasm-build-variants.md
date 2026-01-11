@@ -37,7 +37,8 @@ cd web
 npm run wasm:build        # builds both variants
 ```
 
-For the threaded build, `web/scripts/build_wasm.mjs` uses nightly `build-std` so the standard library is rebuilt with
+For the threaded build, `web/scripts/build_wasm.mjs` uses a **pinned nightly toolchain** (see
+[ADR 0009](./0009-rust-toolchain-policy.md)) and nightly `build-std` so the standard library is rebuilt with
 atomics/bulk-memory enabled (required by `--shared-memory`).
 
 At runtime, select the variant via feature detection:

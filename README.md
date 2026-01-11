@@ -69,6 +69,7 @@ Infrastructure decisions are captured as ADRs in [`docs/adr/`](./docs/adr/):
 - [`docs/adr/0002-cross-origin-isolation.md`](./docs/adr/0002-cross-origin-isolation.md)
 - [`docs/adr/0003-shared-memory-layout.md`](./docs/adr/0003-shared-memory-layout.md)
 - [`docs/adr/0004-wasm-build-variants.md`](./docs/adr/0004-wasm-build-variants.md)
+- [`docs/adr/0009-rust-toolchain-policy.md`](./docs/adr/0009-rust-toolchain-policy.md)
 
 ## Web (Vite)
 
@@ -164,13 +165,18 @@ At runtime, `web/src/runtime/wasm_loader.ts` selects the best variant and return
 
 Prereqs:
 
-- Rust toolchain with `wasm32-unknown-unknown`
+- Rust (managed by `rustup`). The repo pins stable via `rust-toolchain.toml`.
 - `wasm-pack` (`cargo install wasm-pack`)
-- For the **threaded/shared-memory** variant: nightly toolchain + `rust-src` (used to rebuild `std` with atomics enabled)
+- For the **threaded/shared-memory** variant: the pinned nightly toolchain declared in `scripts/toolchains.json`
+  (`rust.nightlyWasm`) + `rust-src` (used to rebuild `std` with atomics enabled). `just setup` installs this automatically.
+
+Manual install (if needed):
 
 ```bash
-rustup toolchain install nightly
-rustup component add rust-src --toolchain nightly
+wasm_nightly="$(node -p "require('./scripts/toolchains.json').rust.nightlyWasm")"
+rustup toolchain install "$wasm_nightly"
+rustup target add wasm32-unknown-unknown --toolchain "$wasm_nightly"
+rustup component add rust-src --toolchain "$wasm_nightly"
 ```
 
 Recommended (repo root):

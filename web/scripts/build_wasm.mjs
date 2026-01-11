@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -68,30 +68,62 @@ if (maxMemoryBytes > MAX_WASM32_BYTES) {
     );
 }
 
-if (isThreaded) {
-    // The shared-memory build requires nightly + rust-src (for build-std).
-    checkCommand(
-        "rustc",
-        ["+nightly", "--version"],
-        "Threaded WASM build requires the nightly Rust toolchain.\n\nRun:\n  rustup toolchain install nightly",
-    );
-
-    const installed = checkCommand(
-        "rustup",
-        ["component", "list", "--installed", "--toolchain", "nightly"],
-        "Threaded WASM build requires rust-src on the nightly toolchain.\n\nRun:\n  rustup component add rust-src --toolchain nightly",
-    );
-    if (!installed.split("\n").some((line) => line.trim() === "rust-src")) {
-        die(
-            "Threaded WASM build requires rust-src on the nightly toolchain.\n\nRun:\n  rustup component add rust-src --toolchain nightly",
-        );
-    }
-}
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const repoRoot = path.resolve(__dirname, "../..");
+const toolchainsPath = path.join(repoRoot, "scripts/toolchains.json");
+
+function loadPinnedNightlyToolchain() {
+    try {
+        const parsed = JSON.parse(readFileSync(toolchainsPath, "utf8"));
+        const toolchain = parsed?.rust?.nightlyWasm;
+        if (typeof toolchain !== "string" || toolchain.trim() === "") {
+            die(`Missing rust.nightlyWasm in ${toolchainsPath}`);
+        }
+        const trimmed = toolchain.trim();
+        if (!/^nightly-\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+            die(`Invalid rust.nightlyWasm in ${toolchainsPath} (expected nightly-YYYY-MM-DD; got '${trimmed}')`);
+        }
+        return trimmed;
+    } catch (err) {
+        die(`Failed to read pinned toolchains from ${toolchainsPath}.\n\n${err?.message ?? String(err)}`);
+    }
+}
+
+const wasmThreadedToolchain = isThreaded ? loadPinnedNightlyToolchain() : null;
+
+if (isThreaded) {
+    // The shared-memory build requires nightly + rust-src (for build-std). We pin the nightly
+    // toolchain to keep threaded WASM builds reproducible (see scripts/toolchains.json).
+    checkCommand(
+        "rustc",
+        [`+${wasmThreadedToolchain}`, "--version"],
+        `Threaded WASM build requires the pinned nightly Rust toolchain (${wasmThreadedToolchain}).\n\nRun:\n  rustup toolchain install ${wasmThreadedToolchain}`,
+    );
+
+    const installedComponents = checkCommand(
+        "rustup",
+        ["component", "list", "--installed", "--toolchain", wasmThreadedToolchain],
+        `Threaded WASM build requires rust-src on ${wasmThreadedToolchain}.\n\nRun:\n  rustup component add rust-src --toolchain ${wasmThreadedToolchain}`,
+    );
+    if (!installedComponents.split("\n").some((line) => line.trim() === "rust-src")) {
+        die(
+            `Threaded WASM build requires rust-src on ${wasmThreadedToolchain}.\n\nRun:\n  rustup component add rust-src --toolchain ${wasmThreadedToolchain}`,
+        );
+    }
+
+    const installedTargets = checkCommand(
+        "rustup",
+        ["target", "list", "--installed", "--toolchain", wasmThreadedToolchain],
+        `Threaded WASM build requires wasm32-unknown-unknown on ${wasmThreadedToolchain}.\n\nRun:\n  rustup target add wasm32-unknown-unknown --toolchain ${wasmThreadedToolchain}`,
+    );
+    if (!installedTargets.split("\n").some((line) => line.trim() === "wasm32-unknown-unknown")) {
+        die(
+            `Threaded WASM build requires wasm32-unknown-unknown on ${wasmThreadedToolchain}.\n\nRun:\n  rustup target add wasm32-unknown-unknown --toolchain ${wasmThreadedToolchain}`,
+        );
+    }
+}
 
 function parseKeyValueLines(output) {
     const values = {};
@@ -209,8 +241,12 @@ if (rustflags) {
 
 if (isThreaded) {
     // `--shared-memory` requires rebuilding std with atomics/bulk-memory enabled.
-    // This uses nightly + rust-src (`rustup component add rust-src --toolchain nightly`).
-    env.RUSTUP_TOOLCHAIN = "nightly";
+    // This uses the pinned nightly toolchain + rust-src (see scripts/toolchains.json).
+    env.RUSTUP_TOOLCHAIN = wasmThreadedToolchain;
+} else {
+    // Keep the single-threaded build on the repo's pinned stable toolchain, regardless of any
+    // user-level overrides.
+    delete env.RUSTUP_TOOLCHAIN;
 }
 
 // Note: wasm-pack treats args *after* the PATH as cargo args, so all wasm-pack

@@ -1,0 +1,5 @@
+{
+  "rust": {
+    "nightlyWasm": "nightly-2025-12-08"
+  }
+}

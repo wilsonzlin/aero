@@ -94,6 +94,61 @@ jobs:
       - name: Check security header templates
         run: node scripts/ci/check-security-headers.mjs
 
+  toolchains:
+    name: Toolchain policy (pinned stable + pinned nightly)
+    needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check pinned Rust toolchains
+        run: node scripts/ci/check-toolchains.mjs
+
+  wasm-threaded:
+    name: WASM (threaded smoke build)
+    needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Read pinned nightly toolchain
+        id: toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          nightly="$(node -p "require('./scripts/toolchains.json').rust.nightlyWasm")"
+          echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain (pinned nightly for threaded WASM)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.toolchains.outputs.nightly }}
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Threaded WASM build (dev, smoke)
+        run: node web/scripts/build_wasm.mjs threaded dev
+
   rust:
     name: Rust (fmt, clippy, test)
     needs: policy

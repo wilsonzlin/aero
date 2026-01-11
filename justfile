@@ -50,22 +50,40 @@ setup:
   #!/usr/bin/env bash
   set -euo pipefail
 
-  echo "==> Rust: installing wasm32 target"
+  echo "==> Rust: installing pinned toolchains + wasm32 target"
   if ! command -v rustup >/dev/null; then
     echo "error: rustup is required (https://rustup.rs)" >&2
     exit 1
   fi
-  rustup target add wasm32-unknown-unknown
+  stable_toolchain="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]\+\)".*/\1/p' rust-toolchain.toml | head -n1)"
+  if [[ -z "${stable_toolchain}" ]]; then
+    echo "error: unable to determine [toolchain].channel from rust-toolchain.toml" >&2
+    exit 1
+  fi
+  echo "==> Rust: ensuring toolchain '${stable_toolchain}' is installed"
+  rustup toolchain install "${stable_toolchain}" --profile minimal
+  rustup target add wasm32-unknown-unknown --toolchain "${stable_toolchain}"
 
   echo "==> Rust: installing formatter/linter components"
-  rustup component add rustfmt clippy
+  rustup component add rustfmt clippy --toolchain "${stable_toolchain}"
 
   # Threaded/shared-memory WASM builds use `-Z build-std` and therefore need
   # nightly + rust-src. The web app's `npm run wasm:build` script depends on this.
-  echo "==> Rust: ensuring nightly + rust-src are available (for threaded WASM builds)"
-  rustup toolchain install nightly
-  rustup target add wasm32-unknown-unknown --toolchain nightly
-  rustup component add rust-src --toolchain nightly
+  toolchains_file="scripts/toolchains.json"
+  if [[ ! -f "${toolchains_file}" ]]; then
+    echo "error: ${toolchains_file} not found (required to determine pinned nightly toolchain)" >&2
+    exit 1
+  fi
+  wasm_nightly="$(sed -n 's/.*"nightlyWasm"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' "${toolchains_file}" | head -n1)"
+  if [[ -z "${wasm_nightly}" ]]; then
+    echo "error: unable to determine rust.nightlyWasm from ${toolchains_file}" >&2
+    exit 1
+  fi
+
+  echo "==> Rust: ensuring '${wasm_nightly}' + rust-src are available (for threaded WASM builds)"
+  rustup toolchain install "${wasm_nightly}" --profile minimal
+  rustup target add wasm32-unknown-unknown --toolchain "${wasm_nightly}"
+  rustup component add rust-src --toolchain "${wasm_nightly}"
 
   wasm_dir="$(just _detect_wasm_crate_dir)"
   if [[ -n "${wasm_dir}" ]]; then

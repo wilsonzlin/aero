@@ -10,6 +10,7 @@ were considered, and what the consequences are.
 - [ADR 0002: Cross-origin isolation (COOP/COEP) for threads + SharedArrayBuffer](./0002-cross-origin-isolation.md)
 - [ADR 0003: Shared memory layout (multiple SABs; WASM 4 GiB constraint)](./0003-shared-memory-layout.md)
 - [ADR 0004: WebAssembly build variants (threaded vs single-threaded; runtime selection)](./0004-wasm-build-variants.md)
+- [ADR 0009: Rust toolchain policy (pinned stable + pinned nightly for threaded WASM)](./0009-rust-toolchain-policy.md)
 
 ## Creating a new ADR
 
@@ -20,4 +21,3 @@ were considered, and what the consequences are.
    - **Decision**
    - **Alternatives considered**
    - **Consequences**
-
