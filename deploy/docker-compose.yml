@@ -6,11 +6,12 @@ name: aero
 services:
   # Shared gateway session secret (cookie signing).
   #
-  # The canonical deploy stack defaults `/l2` to cookie auth (same session cookie as `/tcp`), so
-  # `aero-gateway` and `aero-l2-proxy` must share a signing secret.
+  # `backend/aero-gateway` uses a signed `aero_session` cookie for privileged endpoints (e.g. `/tcp`).
+  # `crates/aero-l2-proxy` can optionally validate the same cookie when `AERO_L2_AUTH_MODE=cookie|cookie_or_*`.
   #
-  # To keep `docker compose up` working out of the box, this helper generates a random secret (once)
-  # and stores it in a Docker volume. You can (and should) override it for production via `.env`.
+  # To keep `docker compose up` working out of the box (and keep sessions stable across restarts),
+  # this helper generates a random secret (once) and stores it in a Docker volume. You can (and should)
+  # override it for production via `.env`.
   aero-session-secret:
     image: alpine:3.19
     restart: "no"
@@ -122,9 +123,9 @@ services:
       # If unset, `aero-session-secret` generates a random secret and persists it in a Docker volume
       # so sessions survive restarts (until `docker compose down -v`).
       #
-      # This deploy stack defaults `/l2` to cookie auth (`AERO_L2_AUTH_MODE=cookie` on `aero-l2-proxy`),
-      # so the L2 proxy must share this secret to validate the same `aero_session` cookies minted by
-      # the gateway.
+      # When using cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=cookie` /
+      # `cookie_or_jwt` / `cookie_or_api_key` on `aero-l2-proxy`), the L2 proxy must share this
+      # secret so it can validate the same `aero_session` cookies minted by the gateway.
       SESSION_SECRET: ${SESSION_SECRET:-}
 
       # Optional explicit origin allowlist (comma-separated). When unset/empty, the
@@ -193,19 +194,17 @@ services:
 
       # L2 tunnel auth (Option C).
       #
-      # Default: cookie session auth (`cookie`), matching the gateway’s privileged endpoints (/tcp).
+      # Default: no authentication (`none`), only Origin allowlisting.
       #
-      # Cookie session auth (recommended for single-origin deployments) validates the
+      # Cookie session auth (recommended for same-origin browser clients) validates the
       # `aero_session` cookie minted by `backend/aero-gateway` at `POST /session`.
       #
       # IMPORTANT: cookie auth requires the L2 proxy and gateway to share the same signing secret.
       # `crates/aero-l2-proxy` reads this from AERO_L2_SESSION_SECRET or falls back to
       # SESSION_SECRET / AERO_GATEWAY_SESSION_SECRET.
       #
-      # Supported auth modes: none, cookie, jwt, api_key, cookie_or_jwt, cookie_or_api_key
-      #
-      # Default: enforce the same cookie-backed session model as the gateway.
-      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-cookie}
+      # Supported auth modes: none, cookie, api_key, jwt, cookie_or_jwt, cookie_or_api_key
+      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-}
       AERO_L2_SESSION_SECRET: ${AERO_L2_SESSION_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
       AERO_GATEWAY_SESSION_SECRET: ${SESSION_SECRET:-}
