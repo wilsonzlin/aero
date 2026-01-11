@@ -97,6 +97,9 @@ Minimum viable behavior:
   - `flags` (`AEROGPU_PRESENT_FLAG_VSYNC` if vsync paced), and
   - `d3d9_present_flags = dwFlags`.
   - Completion tracking is done via the submission fence (`aerogpu_submit_desc.signal_fence` in `drivers/aerogpu/protocol/aerogpu_ring.h`), not via a per-command fence payload.
+  - **Fence ID source of truth (Win7/WDDM):** the UMD must use the exact `SubmissionFenceId` returned by the D3D9 runtime submission callbacks (`D3DDDICB_RENDER` / `D3DDDICB_PRESENT`) as the fence value for *that specific submission*.
+    - Do **not** infer a per-submission “last submitted fence” via a global KMD escape query: under multi-process workloads (DWM + apps) that value can be dominated by another process’s submissions and will break EVENT query completion and PresentEx throttling.
+    - Escape-based fence queries are still useful for polling **last completed** fence values, but should not be used to associate a fence with an individual submission except as a debug-only fallback.
 - Return:
   - `S_OK` if accepted for execution
   - `D3DERR_WASSTILLDRAWING` if `D3DPRESENT_DONOTWAIT` is set and the queue is “full” (see **frame latency** below)
@@ -323,7 +326,7 @@ The supported, in-tree AeroGPU Windows 7 driver stack lives under `drivers/aerog
 
 - Guest Windows UMD (D3D9 + D3D9Ex): `drivers/aerogpu/umd/d3d9/` (or split Ex-specific code into a submodule)
 - Guest Windows KMD (WDDM miniport): `drivers/aerogpu/kmd/` (WDDM kernel-mode display driver)
-- Guest tests / probes (D3D9Ex + DWM): `drivers/aerogpu/tests/win7/` (see `d3d9ex_dwm_probe/` for a smoke test)
+- Guest tests / probes (D3D9Ex + DWM): `drivers/aerogpu/tests/win7/` (see `d3d9ex_dwm_probe/` for a smoke test, `d3d9ex_event_query` for fence/query behavior including `--process-stress`, and `d3d9ex_query_latency` for max-frame-latency pacing)
 - Guest↔host protocol headers (canonical ABI): `drivers/aerogpu/protocol/`
 - Host protocol + command processor:
   - `crates/aero-gpu/src/protocol*.rs` (opcode + payload definitions; event types)
