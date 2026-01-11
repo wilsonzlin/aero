@@ -20,6 +20,17 @@ static int FailD3D11WithRemovedReason(const char* test_name,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (reason != S_OK) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: device removed reason: %s", test_name, aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
 static uint8_t PatternByte(size_t i) {
   // Non-trivial deterministic pattern (avoid a constant buffer full of 0s which may accidentally pass
   // through a buggy copy path).
@@ -317,6 +328,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     const uint8_t expected = PatternByte(i);
     if (got[i] != expected) {
       context->Unmap(staging_a.get(), 0);
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return aerogpu_test::Fail(kTestName,
                                 "staging_a mismatch at offset %lu: got 0x%02X expected 0x%02X",
                                 (unsigned long)i,
@@ -351,6 +363,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     }
     if (got[i] != expected) {
       context->Unmap(staging_b.get(), 0);
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return aerogpu_test::Fail(kTestName,
                                 "staging_b mismatch at offset %lu: got 0x%02X expected 0x%02X",
                                 (unsigned long)i,
@@ -438,6 +451,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     }
     if (got[i] != expected) {
       context->Unmap(staging_ib.get(), 0);
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return aerogpu_test::Fail(kTestName,
                                 "staging index mismatch at offset %lu: got 0x%02X expected 0x%02X",
                                 (unsigned long)i,
@@ -546,6 +560,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     const uint8_t expected = (uint8_t)(PatternByte(i) ^ 0x3Du);
     if (got[i] != expected) {
       context->Unmap(staging_cb_a.get(), 0);
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return aerogpu_test::Fail(kTestName,
                                 "staging constant_a mismatch at offset %lu: got 0x%02X expected 0x%02X",
                                 (unsigned long)i,
@@ -579,6 +594,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     const uint8_t expected = (uint8_t)(PatternByte(i) ^ 0xA7u);
     if (got[i] != expected) {
       context->Unmap(staging_cb_b.get(), 0);
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return aerogpu_test::Fail(kTestName,
                                 "staging constant_b mismatch at offset %lu: got 0x%02X expected 0x%02X",
                                 (unsigned long)i,

@@ -20,6 +20,17 @@ static int FailD3D11WithRemovedReason(const char* test_name,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (reason != S_OK) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: device removed reason: %s", test_name, aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
 static void DumpBytesToFile(const char* test_name,
                             const wchar_t* file_name,
                             const void* data,
@@ -339,6 +350,7 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
           aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, x, y);
       if (got != exp) {
         context->Unmap(staging.get(), 0);
+        PrintDeviceRemovedReasonIfAny(kTestName, device.get());
         return aerogpu_test::Fail(
             kTestName,
             "pixel mismatch at (%d,%d) [%s]: got BGRA=0x%08lX expected BGRA=0x%08lX",
@@ -444,6 +456,7 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
     }
     if (got_cb[i] != expected) {
       context->Unmap(cb_staging.get(), 0);
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return aerogpu_test::Fail(kTestName,
                                 "constant buffer mismatch at offset %lu: got 0x%02X expected 0x%02X",
                                 (unsigned long)i,
