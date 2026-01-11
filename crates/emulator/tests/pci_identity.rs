@@ -77,6 +77,9 @@ fn uhci_pci_config_matches_canonical_profile() {
     let uhci = UhciPciDevice::new(UhciController::new(), 0);
     assert_basic_identity(&uhci, USB_UHCI_PIIX3);
 
+    // Canonical routing is 00:01.2 INTA# -> IRQ 11.
+    assert_eq!(read_u8(&uhci, 0x3c), 0x0b);
+
     // UHCI uses BAR4 (I/O) at 0x20.
     assert_eq!(read_u32(&uhci, 0x20) & 0x1, 0x1);
 

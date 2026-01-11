@@ -170,6 +170,9 @@ impl UhciPciDevice {
         // BAR4 (I/O) at 0x20.
         config.set_u32(0x20, (io_base as u32) | 0x1);
 
+        // Interrupt line: canonical profile routes 00:01.2 INTA# to IRQ 11.
+        config.write(0x3c, 1, 0x0b);
+
         // Interrupt pin INTA#.
         config.write(0x3d, 1, 1);
 
