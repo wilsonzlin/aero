@@ -19,8 +19,8 @@ Additionally, it enforces the workspace naming convention from ADR 0007:
 
   - workspace packages must use kebab-case (no `_`) in `[package].name`.
   - workspace package names must be lowercase.
-  - crate directories under `crates/` must be kebab-case (no `_`).
-  - crate directory names under `crates/` must be lowercase.
+  - directories under `crates/` (including grouping dirs like `crates/legacy/`) must be
+    kebab-case (no `_`) and lowercase.
   - library target crate names must match the normalized package name (rejects
     custom `[lib].name` overrides).
 

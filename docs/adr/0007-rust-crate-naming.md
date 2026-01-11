@@ -25,6 +25,8 @@ dependency renames, and makes long-term maintenance brittle.
 
 - Crate directories under `crates/` must be **`kebab-case`** (no underscores).
 - Crate directories under `crates/` must be **lowercase**.
+- If crates are grouped under intermediate directories (for example `crates/legacy/<name>`),
+  those grouping directories must also be lowercase and must not contain underscores.
 - The directory name should match the package name when practical.
 
 ### 3) Legacy crates
