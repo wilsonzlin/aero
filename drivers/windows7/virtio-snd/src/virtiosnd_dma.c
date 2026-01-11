@@ -99,22 +99,43 @@ VirtIoSndAllocCommonBuffer(PVIRTIOSND_DMA_CONTEXT Ctx, SIZE_T Size, BOOLEAN Cach
         Ctx->Adapter->DmaOperations->AllocateCommonBuffer != NULL) {
         PHYSICAL_ADDRESS logical;
         PVOID va;
+        BOOLEAN cacheEnabled;
 
         if (Size > MAXULONG) {
             return STATUS_INVALID_PARAMETER;
         }
 
+        cacheEnabled = CacheEnabled;
+
         logical.QuadPart = 0;
-        va = Ctx->Adapter->DmaOperations->AllocateCommonBuffer(Ctx->Adapter, (ULONG)Size, &logical, CacheEnabled);
+        va = Ctx->Adapter->DmaOperations->AllocateCommonBuffer(Ctx->Adapter, (ULONG)Size, &logical, cacheEnabled);
+        if (va == NULL && !cacheEnabled) {
+            /*
+             * Best-effort fallback: cached common buffer. This is still correct on
+             * x86/x64 (cache-coherent DMA) and avoids hard failure if the DMA
+             * framework cannot satisfy a non-cached request.
+             */
+            cacheEnabled = TRUE;
+            logical.QuadPart = 0;
+            va = Ctx->Adapter->DmaOperations->AllocateCommonBuffer(Ctx->Adapter, (ULONG)Size, &logical, cacheEnabled);
+        }
         if (va == NULL) {
             return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        if (cacheEnabled != CacheEnabled) {
+            VIRTIOSND_TRACE(
+                "DMA: AllocateCommonBuffer non-cached failed; using cached buffer %Iu bytes VA=%p DMA=%I64x\n",
+                Size,
+                va,
+                (ULONGLONG)logical.QuadPart);
         }
 
         Out->Va = va;
         Out->DmaAddr = (UINT64)logical.QuadPart;
         Out->Size = Size;
         Out->IsCommonBuffer = TRUE;
-        Out->CacheEnabled = CacheEnabled;
+        Out->CacheEnabled = cacheEnabled;
         return STATUS_SUCCESS;
     }
 
