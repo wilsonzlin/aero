@@ -91,8 +91,8 @@ VirtIoSndAcquirePciBusInterface(
     if (NT_SUCCESS(status)) {
         if (Out->InterfaceReference != NULL) {
             Out->InterfaceReference(Out->Context);
+            *AcquiredOut = TRUE;
         }
-        *AcquiredOut = TRUE;
     } else {
         RtlZeroMemory(Out, sizeof(*Out));
     }
@@ -105,7 +105,7 @@ _Use_decl_annotations_
 VOID
 VirtIoSndReleasePciBusInterface(PPCI_BUS_INTERFACE_STANDARD Iface, BOOLEAN* AcquiredInOut)
 {
-    if (Iface == NULL || AcquiredInOut == NULL || !*AcquiredInOut) {
+    if (Iface == NULL || AcquiredInOut == NULL) {
         return;
     }
 
@@ -114,7 +114,7 @@ VirtIoSndReleasePciBusInterface(PPCI_BUS_INTERFACE_STANDARD Iface, BOOLEAN* Acqu
         return;
     }
 
-    if (Iface->InterfaceDereference != NULL) {
+    if (*AcquiredInOut && Iface->InterfaceDereference != NULL) {
         Iface->InterfaceDereference(Iface->Context);
     }
 
