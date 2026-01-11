@@ -47,6 +47,10 @@ systemd-run --user --scope -p MemoryMax=12G cargo build --release --locked
 ./scripts/mem-limit.sh 12G cargo build --release --locked
 ```
 
+`mem-limit.sh` prefers `systemd-run` when available, and falls back to
+`prlimit`/`ulimit` on systems without a working systemd user session (common in
+containers).
+
 ### Option 2: Cgroup (if you have root/sudo)
 
 ```bash
