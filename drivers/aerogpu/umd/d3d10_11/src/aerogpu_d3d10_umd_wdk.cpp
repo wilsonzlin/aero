@@ -164,7 +164,22 @@ static uint64_t AllocateGlobalToken() {
 
   if (!g_view) {
     const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
-    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+
+    // Use a permissive DACL so other processes in the session can open and
+    // update the counter (e.g. DWM, sandboxed apps, different integrity levels).
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = FALSE;
+
+    SECURITY_DESCRIPTOR sd{};
+    if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
+        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
+      sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
+    } else {
+      sa.lpSecurityDescriptor = nullptr;
+    }
+
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
     if (mapping) {
       void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
       if (view) {
@@ -333,7 +348,53 @@ struct AeroGpuAdapter {
   uint64_t completed_fence = 0;
 };
 
+static uint64_t splitmix64(uint64_t x) {
+  x += 0x9E3779B97F4A7C15ULL;
+  x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+  return x ^ (x >> 31);
+}
+
+static uint64_t fallback_entropy(uint64_t counter) {
+  uint64_t entropy = counter;
+  entropy ^= (static_cast<uint64_t>(GetCurrentProcessId()) << 32);
+  entropy ^= static_cast<uint64_t>(GetCurrentThreadId());
+
+  LARGE_INTEGER qpc{};
+  if (QueryPerformanceCounter(&qpc)) {
+    entropy ^= static_cast<uint64_t>(qpc.QuadPart);
+  }
+
+  entropy ^= static_cast<uint64_t>(GetTickCount64());
+  return entropy;
+}
+
+static aerogpu_handle_t allocate_rng_fallback_handle() {
+  static std::atomic<uint64_t> g_counter{1};
+  static const uint64_t g_salt = splitmix64(fallback_entropy(0));
+
+  for (;;) {
+    const uint64_t ctr = g_counter.fetch_add(1, std::memory_order_relaxed);
+    const uint64_t mixed = splitmix64(g_salt ^ fallback_entropy(ctr));
+    const uint32_t low31 = static_cast<uint32_t>(mixed & 0x7FFFFFFFu);
+    if (low31 != 0) {
+      return static_cast<aerogpu_handle_t>(0x80000000u | low31);
+    }
+  }
+}
+
+static void log_global_handle_fallback_once() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    OutputDebugStringA(
+        "aerogpu-d3d10: GlobalHandleCounter mapping unavailable; using RNG fallback\n");
+  });
+}
+
 static aerogpu_handle_t allocate_global_handle(AeroGpuAdapter* adapter) {
+  if (!adapter) {
+    return 0;
+  }
   static std::mutex g_mutex;
   static HANDLE g_mapping = nullptr;
   static void* g_view = nullptr;
@@ -342,7 +403,20 @@ static aerogpu_handle_t allocate_global_handle(AeroGpuAdapter* adapter) {
 
   if (!g_view) {
     const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
-    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = FALSE;
+
+    SECURITY_DESCRIPTOR sd{};
+    if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
+        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
+      sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
+    } else {
+      sa.lpSecurityDescriptor = nullptr;
+    }
+
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
     if (mapping) {
       void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
       if (view) {
@@ -363,14 +437,8 @@ static aerogpu_handle_t allocate_global_handle(AeroGpuAdapter* adapter) {
     return static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
   }
 
-  if (!adapter) {
-    return 0;
-  }
-  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  if (handle == 0) {
-    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  }
-  return handle;
+  log_global_handle_fallback_once();
+  return allocate_rng_fallback_handle();
 }
 
 static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {

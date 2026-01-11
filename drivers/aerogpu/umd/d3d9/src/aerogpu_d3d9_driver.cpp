@@ -1942,8 +1942,6 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
 //
 // The mapping name is stable across processes in the current session and is
 // keyed by the adapter LUID so multiple adapters don't alias the same counter.
-// The same counter is also reused to allocate protocol object handles (see
-// `allocate_global_handle()`).
 uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
   if (!adapter) {
     return 0;
@@ -8698,14 +8696,72 @@ aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
   }
 
 #if defined(_WIN32)
-  // Protocol object handles must be stable and avoid collisions across guest
-  // processes. Prefer deriving them from the same cross-process counter used
-  // for shared alloc_id generation.
+  // Protocol object handles live in a single global namespace on the host (Win7
+  // KMD currently submits context_id=0), so they must be unique across the
+  // entire guest (multi-process, cross-API). Allocate them from a single
+  // cross-process counter shared by all UMDs (D3D9 + D3D10/11).
+  static std::mutex g_mutex;
+  static HANDLE g_mapping = nullptr;
+  static void* g_view = nullptr;
+
+  std::lock_guard<std::mutex> lock(g_mutex);
+
+  if (!g_view) {
+    const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
+
+    // Use a permissive DACL so other processes in the session can open and
+    // update the counter (e.g. DWM, sandboxed apps, different integrity levels).
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = FALSE;
+
+    SECURITY_DESCRIPTOR sd{};
+    if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
+        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
+      sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
+    } else {
+      sa.lpSecurityDescriptor = nullptr;
+    }
+
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    if (mapping) {
+      void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
+      if (view) {
+        g_mapping = mapping;
+        g_view = view;
+      } else {
+        CloseHandle(mapping);
+      }
+    }
+  }
+
+  if (g_view) {
+    auto* counter = reinterpret_cast<volatile LONG64*>(g_view);
+    LONG64 token = InterlockedIncrement64(counter);
+    if ((static_cast<uint64_t>(token) & 0x7FFFFFFFULL) == 0) {
+      token = InterlockedIncrement64(counter);
+    }
+    aerogpu_handle_t handle = static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
+    if (handle == 0) {
+      token = InterlockedIncrement64(counter);
+      handle = static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
+    }
+    return handle;
+  }
+
+  // If we fail to set up the shared counter mapping, fall back to a random
+  // high-bit handle range so collisions with the shared counter (which starts
+  // at 1) are vanishingly unlikely.
+  static std::once_flag warn_once;
+  std::call_once(warn_once, [] {
+    logf("aerogpu-d3d9: global handle allocator: shared mapping unavailable; using RNG fallback\n");
+  });
+
   for (;;) {
-    const uint64_t token = allocate_shared_alloc_id_token(adapter);
-    const aerogpu_handle_t handle = static_cast<aerogpu_handle_t>(token & 0xFFFFFFFFu);
-    if (handle != 0) {
-      return handle;
+    const uint64_t token = adapter->share_token_allocator.allocate_share_token();
+    const uint32_t low31 = static_cast<uint32_t>(token & 0x7FFFFFFFu);
+    if (low31 != 0) {
+      return static_cast<aerogpu_handle_t>(0x80000000u | low31);
     }
   }
 #else
