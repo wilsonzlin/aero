@@ -84,7 +84,7 @@ type Result<T> = core::result::Result<T, HidDescriptorSynthesisError>;
 /// Synthesize a HID report descriptor from normalized WebHID metadata.
 ///
 /// This converts the WebHID JSON schema into the canonical WebHID-like metadata
-/// used by [`crate::io::usb::hid::report_descriptor`] and then reuses the canonical
+/// used by [`crate::hid::report_descriptor`] and then reuses the canonical
 /// short-item encoder.
 pub fn synthesize_report_descriptor(collections: &[HidCollectionInfo]) -> Result<Vec<u8>> {
     let converted: Vec<report_descriptor::HidCollectionInfo> = collections
