@@ -352,8 +352,7 @@ mod wasm {
             });
         }
 
-        let table =
-            AllocTable::new(entries).map_err(|err| JsValue::from_str(&err.to_string()))?;
+        let table = AllocTable::new(entries).map_err(|err| JsValue::from_str(&err.to_string()))?;
         Ok((table, allocations))
     }
 
