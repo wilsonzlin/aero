@@ -421,6 +421,31 @@ fn d3d9_import_shared_surface_rejects_alias_handle_already_used_by_shader() {
 }
 
 #[test]
+fn d3d9_export_shared_surface_rejects_buffer_handle() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const TOKEN: u64 = 0x1122_3344_5566_7788;
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_buffer(1, 0, 16, 0, 0);
+    writer.export_shared_surface(1, TOKEN);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected EXPORT_SHARED_SURFACE on buffer to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("only textures")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn d3d9_export_shared_surface_rejects_zero_handle() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,

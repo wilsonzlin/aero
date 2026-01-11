@@ -2289,6 +2289,15 @@ impl AerogpuD3d9Executor {
                     ));
                 }
                 let underlying = self.resolve_resource_handle(resource_handle)?;
+                match self.resources.get(&underlying) {
+                    Some(Resource::Texture2d { .. }) => {}
+                    Some(Resource::Buffer { .. }) => {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "EXPORT_SHARED_SURFACE: only textures can be shared (handle={resource_handle})"
+                        )));
+                    }
+                    None => return Err(AerogpuD3d9Error::UnknownResource(resource_handle)),
+                }
                 if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
                     if existing != underlying {
                         return Err(AerogpuD3d9Error::ShareTokenAlreadyExported {
@@ -2321,6 +2330,15 @@ impl AerogpuD3d9Executor {
                 };
                 if !self.resource_refcounts.contains_key(&underlying) {
                     return Err(AerogpuD3d9Error::UnknownShareToken(share_token));
+                }
+                match self.resources.get(&underlying) {
+                    Some(Resource::Texture2d { .. }) => {}
+                    Some(Resource::Buffer { .. }) => {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "IMPORT_SHARED_SURFACE: token refers to a non-texture resource (share_token=0x{share_token:016X})"
+                        )));
+                    }
+                    None => return Err(AerogpuD3d9Error::UnknownShareToken(share_token)),
                 }
 
                 if let Some(existing) = self.resource_handles.get(&out_resource_handle).copied() {
