@@ -1,0 +1,913 @@
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
+
+use wasm_bindgen::prelude::*;
+
+use aero_usb::uhci::{InterruptController, UhciController};
+use aero_usb::usb::{SetupPacket as BusSetupPacket, UsbDevice, UsbHandshake};
+use aero_usb::GuestMemory;
+
+use aero_usb::passthrough::{
+    SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
+    UsbHostCompletionOut,
+};
+
+// Minimal UHCI register offsets / bits (mirrors the test harness in `crates/aero-usb/tests/hid_enum.rs`).
+const REG_USBCMD: u16 = 0x00;
+const REG_USBINTR: u16 = 0x04;
+const REG_FRBASEADD: u16 = 0x08;
+const REG_PORTSC1: u16 = 0x10;
+
+const USBCMD_RUN: u16 = 1 << 0;
+const USBINTR_IOC: u16 = 1 << 2;
+const PORTSC_PR: u16 = 1 << 9;
+
+// UHCI link pointer bits.
+const LINK_PTR_T: u32 = 1 << 0;
+const LINK_PTR_Q: u32 = 1 << 1;
+
+// UHCI TD control/token fields.
+const TD_CTRL_ACTIVE: u32 = 1 << 23;
+const TD_CTRL_IOC: u32 = 1 << 24;
+const TD_CTRL_ACTLEN_MASK: u32 = 0x7FF;
+
+const TD_TOKEN_DEVADDR_SHIFT: u32 = 8;
+const TD_TOKEN_ENDPT_SHIFT: u32 = 15;
+const TD_TOKEN_D: u32 = 1 << 19;
+const TD_TOKEN_MAXLEN_SHIFT: u32 = 21;
+
+// PIDs.
+const PID_SETUP: u8 = 0x2D;
+const PID_IN: u8 = 0x69;
+const PID_OUT: u8 = 0xE1;
+
+// Standard requests.
+const REQ_SET_ADDRESS: u8 = 0x05;
+
+fn action_id(action: &UsbHostAction) -> u64 {
+    match action {
+        UsbHostAction::ControlIn { id, .. } => *id,
+        UsbHostAction::ControlOut { id, .. } => *id,
+        UsbHostAction::BulkIn { id, .. } => *id,
+        UsbHostAction::BulkOut { id, .. } => *id,
+    }
+}
+
+fn completion_id(completion: &UsbHostCompletion) -> u64 {
+    match completion {
+        UsbHostCompletion::ControlIn { id, .. } => *id,
+        UsbHostCompletion::ControlOut { id, .. } => *id,
+        UsbHostCompletion::BulkIn { id, .. } => *id,
+        UsbHostCompletion::BulkOut { id, .. } => *id,
+    }
+}
+
+fn td_token(pid: u8, addr: u8, ep: u8, toggle: bool, max_len: usize) -> u32 {
+    let max_len_field = if max_len == 0 {
+        0x7FFu32
+    } else {
+        (max_len as u32).saturating_sub(1)
+    };
+    (pid as u32)
+        | ((addr as u32) << TD_TOKEN_DEVADDR_SHIFT)
+        | ((ep as u32) << TD_TOKEN_ENDPT_SHIFT)
+        | (if toggle { TD_TOKEN_D } else { 0 })
+        | (max_len_field << TD_TOKEN_MAXLEN_SHIFT)
+}
+
+fn td_ctrl(active: bool, ioc: bool) -> u32 {
+    let mut v = 0x7FF;
+    if active {
+        v |= TD_CTRL_ACTIVE;
+    }
+    if ioc {
+        v |= TD_CTRL_IOC;
+    }
+    v
+}
+
+fn td_actlen(ctrl_sts: u32) -> usize {
+    let field = ctrl_sts & TD_CTRL_ACTLEN_MASK;
+    if field == 0x7FF {
+        0
+    } else {
+        (field as usize) + 1
+    }
+}
+
+#[derive(Default)]
+struct DummyIrq;
+
+impl InterruptController for DummyIrq {
+    fn raise_irq(&mut self, _irq: u8) {}
+    fn lower_irq(&mut self, _irq: u8) {}
+}
+
+struct VecMemory {
+    data: Vec<u8>,
+}
+
+impl VecMemory {
+    fn new(size: usize) -> Self {
+        Self { data: vec![0; size] }
+    }
+
+    fn read_u32(&self, addr: u32) -> u32 {
+        let addr = addr as usize;
+        u32::from_le_bytes(self.data[addr..addr + 4].try_into().unwrap())
+    }
+
+    fn write_u32(&mut self, addr: u32, value: u32) {
+        self.write(addr, &value.to_le_bytes());
+    }
+}
+
+impl GuestMemory for VecMemory {
+    fn read(&self, addr: u32, buf: &mut [u8]) {
+        let addr = addr as usize;
+        buf.copy_from_slice(&self.data[addr..addr + buf.len()]);
+    }
+
+    fn write(&mut self, addr: u32, buf: &[u8]) {
+        let addr = addr as usize;
+        self.data[addr..addr + buf.len()].copy_from_slice(buf);
+    }
+}
+
+struct Alloc {
+    next: u32,
+}
+
+impl Alloc {
+    fn new(start: u32) -> Self {
+        Self { next: start }
+    }
+
+    fn alloc(&mut self, size: u32, align: u32) -> u32 {
+        let align = align.max(1);
+        let mask = align - 1;
+        let addr = (self.next + mask) & !mask;
+        self.next = addr + size;
+        addr
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HarnessPhase {
+    ResetPort,
+    GetDeviceDesc8,
+    GetDeviceDesc18,
+    SetAddress,
+    GetConfigDesc9,
+    GetConfigDescFull,
+    Done,
+    Error,
+}
+
+struct ControlChain {
+    first_td: u32,
+    last_td: u32,
+    data_tds: Vec<(u32, u32)>, // (td_addr, buf_addr)
+    direction_in: bool,
+}
+
+impl ControlChain {
+    fn is_complete(&self, mem: &VecMemory) -> bool {
+        mem.read_u32(self.last_td + 4) & TD_CTRL_ACTIVE == 0
+    }
+
+    fn collect_in_bytes(&self, mem: &VecMemory) -> Vec<u8> {
+        if !self.direction_in {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (td_addr, buf_addr) in &self.data_tds {
+            let ctrl_sts = mem.read_u32(*td_addr + 4);
+            let got = td_actlen(ctrl_sts);
+            if got == 0 {
+                continue;
+            }
+            let mut tmp = vec![0u8; got];
+            mem.read(*buf_addr, &mut tmp);
+            out.extend_from_slice(&tmp);
+        }
+        out
+    }
+}
+
+#[derive(Debug)]
+struct WebUsbProxyDeviceInner {
+    address: u8,
+    pending_address: Option<u8>,
+
+    next_id: u64,
+    actions: VecDeque<UsbHostAction>,
+    completions: HashMap<u64, UsbHostCompletion>,
+
+    ctl_setup: Option<BusSetupPacket>,
+    ctl_dir_in: bool,
+    ctl_expected_len: usize,
+    ctl_out_buf: Vec<u8>,
+    ctl_in_buf: Vec<u8>,
+    ctl_in_offset: usize,
+    ctl_action_id: Option<u64>,
+    ctl_action_kind: Option<&'static str>,
+}
+
+impl WebUsbProxyDeviceInner {
+    fn new() -> Self {
+        Self {
+            address: 0,
+            pending_address: None,
+            next_id: 1,
+            actions: VecDeque::new(),
+            completions: HashMap::new(),
+            ctl_setup: None,
+            ctl_dir_in: false,
+            ctl_expected_len: 0,
+            ctl_out_buf: Vec::new(),
+            ctl_in_buf: Vec::new(),
+            ctl_in_offset: 0,
+            ctl_action_id: None,
+            ctl_action_kind: None,
+        }
+    }
+
+    fn alloc_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1).max(1);
+        id
+    }
+
+    fn drain_actions(&mut self) -> Vec<UsbHostAction> {
+        self.actions.drain(..).collect()
+    }
+
+    fn push_completion(&mut self, completion: UsbHostCompletion) {
+        self.completions.insert(completion_id(&completion), completion);
+    }
+
+    fn take_completion(&mut self, id: u64) -> Option<UsbHostCompletion> {
+        self.completions.remove(&id)
+    }
+
+    fn begin_control_transfer(&mut self, setup: BusSetupPacket) {
+        self.ctl_dir_in = (setup.request_type & 0x80) != 0;
+        self.ctl_expected_len = setup.length as usize;
+        self.ctl_out_buf.clear();
+        self.ctl_in_buf.clear();
+        self.ctl_in_offset = 0;
+        self.ctl_action_id = None;
+        self.ctl_action_kind = None;
+        self.ctl_setup = Some(setup);
+    }
+
+    fn host_setup_packet(setup: BusSetupPacket) -> HostSetupPacket {
+        HostSetupPacket {
+            bm_request_type: setup.request_type,
+            b_request: setup.request,
+            w_value: setup.value,
+            w_index: setup.index,
+            w_length: setup.length,
+        }
+    }
+
+    fn ensure_control_action_queued(&mut self) {
+        let Some(setup) = self.ctl_setup else {
+            return;
+        };
+        if self.ctl_action_id.is_some() {
+            return;
+        }
+
+        let id = self.alloc_id();
+        let host_setup = Self::host_setup_packet(setup);
+
+        if self.ctl_dir_in {
+            self.actions.push_back(UsbHostAction::ControlIn { id, setup: host_setup });
+            self.ctl_action_kind = Some("controlIn");
+        } else {
+            // For OUT requests without a data stage (`wLength == 0`) this is a complete transfer.
+            // For requests with a data stage, we defer queuing until we've captured all OUT packets.
+            if self.ctl_expected_len == 0 {
+                self.actions.push_back(UsbHostAction::ControlOut {
+                    id,
+                    setup: host_setup,
+                    data: Vec::new(),
+                });
+                self.ctl_action_kind = Some("controlOut");
+            } else {
+                // queued later.
+                self.ctl_action_kind = Some("controlOut");
+                self.ctl_action_id = Some(id);
+                return;
+            }
+        }
+
+        self.ctl_action_id = Some(id);
+    }
+
+    fn queue_control_out_with_data_if_ready(&mut self) {
+        if self.ctl_dir_in {
+            return;
+        }
+        if self.ctl_expected_len == 0 {
+            // already queued during setup.
+            return;
+        }
+        if self.ctl_out_buf.len() < self.ctl_expected_len {
+            return;
+        }
+        if self.ctl_action_id.is_none() {
+            // This should not happen, but keep it robust.
+            self.ctl_action_id = Some(self.alloc_id());
+        }
+        let id = self.ctl_action_id.expect("id exists");
+        if self.actions.iter().any(|a| action_id(a) == id) {
+            // already queued.
+            return;
+        }
+        let Some(setup) = self.ctl_setup else { return };
+        let host_setup = Self::host_setup_packet(setup);
+        let data = self.ctl_out_buf[..self.ctl_expected_len].to_vec();
+        self.actions.push_back(UsbHostAction::ControlOut {
+            id,
+            setup: host_setup,
+            data,
+        });
+        self.ctl_action_kind = Some("controlOut");
+    }
+
+    fn finish_control_transfer(&mut self) {
+        // Apply pending SET_ADDRESS after the status stage completes.
+        if let Some(addr) = self.pending_address.take() {
+            self.address = addr;
+        }
+
+        self.ctl_setup = None;
+        self.ctl_out_buf.clear();
+        self.ctl_in_buf.clear();
+        self.ctl_in_offset = 0;
+        self.ctl_action_id = None;
+        self.ctl_action_kind = None;
+        self.ctl_expected_len = 0;
+        self.ctl_dir_in = false;
+    }
+}
+
+#[derive(Clone)]
+struct WebUsbProxyDevice(Rc<RefCell<WebUsbProxyDeviceInner>>);
+
+impl WebUsbProxyDevice {
+    fn new() -> (Self, Rc<RefCell<WebUsbProxyDeviceInner>>) {
+        let inner = Rc::new(RefCell::new(WebUsbProxyDeviceInner::new()));
+        (Self(inner.clone()), inner)
+    }
+}
+
+impl UsbDevice for WebUsbProxyDevice {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn reset(&mut self) {
+        let mut inner = self.0.borrow_mut();
+        inner.address = 0;
+        inner.pending_address = None;
+        inner.actions.clear();
+        inner.completions.clear();
+        inner.begin_control_transfer(BusSetupPacket {
+            request_type: 0,
+            request: 0,
+            value: 0,
+            index: 0,
+            length: 0,
+        });
+        inner.finish_control_transfer();
+    }
+
+    fn address(&self) -> u8 {
+        self.0.borrow().address
+    }
+
+    fn handle_setup(&mut self, setup: BusSetupPacket) {
+        let mut inner = self.0.borrow_mut();
+        inner.begin_control_transfer(setup);
+
+        // SET_ADDRESS: apply after status stage.
+        if setup.request == REQ_SET_ADDRESS && (setup.request_type & 0x80) == 0 {
+            inner.pending_address = Some((setup.value & 0x7F) as u8);
+        }
+
+        // Queue control actions early where possible (IN + OUT-without-data).
+        inner.ensure_control_action_queued();
+    }
+
+    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
+        let mut inner = self.0.borrow_mut();
+        if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+
+        let Some(setup) = inner.ctl_setup else {
+            return UsbHandshake::Timeout;
+        };
+
+        if inner.ctl_dir_in {
+            // Status stage for control IN. Accept it and finish.
+            if !data.is_empty() {
+                // Unexpected; still ACK to keep the harness moving.
+            }
+            inner.finish_control_transfer();
+            return UsbHandshake::Ack { bytes: 0 };
+        }
+
+        // Control OUT data stage (may be empty for status stage, but those are IN tokens).
+        if inner.ctl_expected_len != 0 {
+            inner.ctl_out_buf.extend_from_slice(data);
+            // Once we have all data, queue the WebUSB action (the status stage IN TD will wait for completion).
+            inner.queue_control_out_with_data_if_ready();
+        } else {
+            // No data stage; nothing to capture.
+        }
+
+        // Always ACK the OUT packet.
+        let _ = setup; // keep for clarity.
+        UsbHandshake::Ack { bytes: data.len() }
+    }
+
+    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
+        let mut inner = self.0.borrow_mut();
+        if ep != 0 {
+            return UsbHandshake::Stall;
+        }
+
+        let Some(setup) = inner.ctl_setup else {
+            return UsbHandshake::Timeout;
+        };
+
+        if inner.ctl_dir_in {
+            // Data stage for control IN (and later status stage OUT which is handled in handle_out).
+            inner.ensure_control_action_queued();
+            let Some(id) = inner.ctl_action_id else {
+                return UsbHandshake::Timeout;
+            };
+
+            if inner.ctl_in_buf.is_empty() {
+                let Some(completion) = inner.take_completion(id) else {
+                    return UsbHandshake::Nak;
+                };
+                match completion {
+                    UsbHostCompletion::ControlIn { result, .. } => match result {
+                        UsbHostCompletionIn::Success { data } => {
+                            inner.ctl_in_buf = data;
+                            inner.ctl_in_offset = 0;
+                        }
+                        UsbHostCompletionIn::Stall => return UsbHandshake::Stall,
+                        UsbHostCompletionIn::Error { .. } => return UsbHandshake::Timeout,
+                    },
+                    _ => return UsbHandshake::Timeout,
+                }
+            }
+
+            let remaining = inner.ctl_in_buf.len().saturating_sub(inner.ctl_in_offset);
+            let take = remaining.min(buf.len());
+            if take != 0 {
+                buf[..take].copy_from_slice(&inner.ctl_in_buf[inner.ctl_in_offset..inner.ctl_in_offset + take]);
+                inner.ctl_in_offset += take;
+            }
+            return UsbHandshake::Ack { bytes: take };
+        }
+
+        // Control OUT status stage (IN zero-length).
+        // Ensure we have queued a ControlOut action (either early for wLength==0 or once OUT data collected).
+        if inner.ctl_expected_len == 0 {
+            inner.ensure_control_action_queued();
+        } else {
+            inner.queue_control_out_with_data_if_ready();
+        }
+
+        let Some(id) = inner.ctl_action_id else {
+            return UsbHandshake::Timeout;
+        };
+
+        let Some(completion) = inner.take_completion(id) else {
+            return UsbHandshake::Nak;
+        };
+
+        match completion {
+            UsbHostCompletion::ControlOut { result, .. } => match result {
+                UsbHostCompletionOut::Success { .. } => {
+                    // Status stage completes; apply any pending address.
+                    inner.finish_control_transfer();
+                    UsbHandshake::Ack { bytes: 0 }
+                }
+                UsbHostCompletionOut::Stall => UsbHandshake::Stall,
+                UsbHostCompletionOut::Error { .. } => UsbHandshake::Timeout,
+            },
+            _ => UsbHandshake::Timeout,
+        }
+    }
+}
+
+fn install_frame_list(mem: &mut VecMemory, fl_base: u32, qh_addr: u32) {
+    for i in 0..1024u32 {
+        mem.write_u32(fl_base + i * 4, qh_addr | LINK_PTR_Q);
+    }
+}
+
+fn write_qh(mem: &mut VecMemory, addr: u32, head: u32, element: u32) {
+    mem.write_u32(addr, head);
+    mem.write_u32(addr + 4, element);
+}
+
+fn write_td(mem: &mut VecMemory, addr: u32, link_ptr: u32, ctrl_sts: u32, token: u32, buffer: u32) {
+    mem.write_u32(addr, link_ptr);
+    mem.write_u32(addr + 4, ctrl_sts);
+    mem.write_u32(addr + 8, token);
+    mem.write_u32(addr + 12, buffer);
+}
+
+fn build_control_in_chain(
+    mem: &mut VecMemory,
+    alloc: &mut Alloc,
+    qh_addr: u32,
+    fl_base: u32,
+    devaddr: u8,
+    max_packet: usize,
+    setup: BusSetupPacket,
+) -> ControlChain {
+    let setup_buf = alloc.alloc(8, 0x10);
+    let setup_td = alloc.alloc(0x20, 0x10);
+
+    let mut bytes = [0u8; 8];
+    bytes[0] = setup.request_type;
+    bytes[1] = setup.request;
+    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
+    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
+    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
+    mem.write(setup_buf, &bytes);
+
+    let mut tds = Vec::new();
+    tds.push((setup_td, setup_buf, 8usize, PID_SETUP, false));
+
+    let mut remaining = setup.length as usize;
+    let mut toggle = true;
+    let mut data_tds = Vec::new();
+    while remaining != 0 {
+        let chunk = remaining.min(max_packet);
+        let buf = alloc.alloc(chunk as u32, 0x10);
+        let td = alloc.alloc(0x20, 0x10);
+        tds.push((td, buf, chunk, PID_IN, toggle));
+        data_tds.push((td, buf));
+        toggle = !toggle;
+        remaining -= chunk;
+    }
+
+    let status_td = alloc.alloc(0x20, 0x10);
+    tds.push((status_td, 0, 0, PID_OUT, true));
+
+    for i in 0..tds.len() {
+        let (td_addr, buf_addr, len, pid, dtoggle) = tds[i];
+        let link = if i + 1 == tds.len() {
+            LINK_PTR_T
+        } else {
+            tds[i + 1].0
+        };
+        let ioc = i + 1 == tds.len();
+        write_td(
+            mem,
+            td_addr,
+            link,
+            td_ctrl(true, ioc),
+            td_token(pid, devaddr, 0, dtoggle, len),
+            buf_addr,
+        );
+    }
+
+    write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
+    install_frame_list(mem, fl_base, qh_addr);
+
+    ControlChain {
+        first_td: setup_td,
+        last_td: status_td,
+        data_tds,
+        direction_in: true,
+    }
+}
+
+fn build_control_out_no_data_chain(
+    mem: &mut VecMemory,
+    alloc: &mut Alloc,
+    qh_addr: u32,
+    fl_base: u32,
+    devaddr: u8,
+    setup: BusSetupPacket,
+) -> ControlChain {
+    let setup_buf = alloc.alloc(8, 0x10);
+    let setup_td = alloc.alloc(0x20, 0x10);
+    let status_td = alloc.alloc(0x20, 0x10);
+
+    let mut bytes = [0u8; 8];
+    bytes[0] = setup.request_type;
+    bytes[1] = setup.request;
+    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
+    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
+    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
+    mem.write(setup_buf, &bytes);
+
+    write_td(
+        mem,
+        setup_td,
+        status_td,
+        td_ctrl(true, false),
+        td_token(PID_SETUP, devaddr, 0, false, 8),
+        setup_buf,
+    );
+    // Status stage: IN zero-length, DATA1.
+    write_td(
+        mem,
+        status_td,
+        LINK_PTR_T,
+        td_ctrl(true, true),
+        td_token(PID_IN, devaddr, 0, true, 0),
+        0,
+    );
+
+    write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
+    install_frame_list(mem, fl_base, qh_addr);
+
+    ControlChain {
+        first_td: setup_td,
+        last_td: status_td,
+        data_tds: Vec::new(),
+        direction_in: false,
+    }
+}
+
+#[wasm_bindgen]
+pub struct WebUsbUhciPassthroughHarness {
+    ctrl: UhciController,
+    mem: VecMemory,
+    irq: DummyIrq,
+    alloc: Alloc,
+
+    qh_addr: u32,
+    fl_base: u32,
+
+    phase: HarnessPhase,
+    phase_detail: String,
+    reset_remaining: u8,
+
+    max_packet: usize,
+    pending_chain: Option<ControlChain>,
+
+    device: Rc<RefCell<WebUsbProxyDeviceInner>>,
+    device_descriptor: Vec<u8>,
+    config_descriptor: Vec<u8>,
+    config_total_len: usize,
+    config_value: u8,
+}
+
+#[wasm_bindgen]
+impl WebUsbUhciPassthroughHarness {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        let io_base = 0x5000;
+        let mut ctrl = UhciController::new(io_base, 11);
+
+        let (device, device_handle) = WebUsbProxyDevice::new();
+        ctrl.connect_device(0, Box::new(device));
+
+        let mut mem = VecMemory::new(0x40000);
+        let mut irq = DummyIrq::default();
+        let mut alloc = Alloc::new(0x3000);
+
+        let fl_base = 0x1000;
+        let qh_addr = 0x2000;
+
+        // Program frame list base and enable IOC interrupts (not strictly needed, but keeps the model realistic).
+        ctrl.port_write(io_base + REG_FRBASEADD, 4, fl_base, &mut irq);
+        ctrl.port_write(io_base + REG_USBINTR, 2, USBINTR_IOC as u32, &mut irq);
+
+        // Start port reset; we will tick for 50 frames before enabling RUN.
+        ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PR as u32, &mut irq);
+
+        // Install a terminating QH so we can patch in TD chains later.
+        write_qh(&mut mem, qh_addr, LINK_PTR_T, LINK_PTR_T);
+        install_frame_list(&mut mem, fl_base, qh_addr);
+
+        Self {
+            ctrl,
+            mem,
+            irq,
+            alloc,
+            qh_addr,
+            fl_base,
+            phase: HarnessPhase::ResetPort,
+            phase_detail: "resetting port".to_string(),
+            reset_remaining: 50,
+            max_packet: 8,
+            pending_chain: None,
+            device: device_handle,
+            device_descriptor: Vec::new(),
+            config_descriptor: Vec::new(),
+            config_total_len: 0,
+            config_value: 1,
+        }
+    }
+
+    /// Human-readable state for UI debugging.
+    pub fn state(&self) -> String {
+        format!("{:?}: {}", self.phase, self.phase_detail)
+    }
+
+    pub fn tick(&mut self) {
+        // Drive one UHCI frame worth of work.
+        self.ctrl.step_frame(&mut self.mem, &mut self.irq);
+
+        match self.phase {
+            HarnessPhase::ResetPort => {
+                if self.reset_remaining > 0 {
+                    self.reset_remaining -= 1;
+                    self.phase_detail = format!("port reset... {}/50", 50 - self.reset_remaining);
+                    return;
+                }
+
+                // Enable the controller once the port reset window is done.
+                let io_base = self.ctrl.io_base();
+                self.ctrl
+                    .port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut self.irq);
+
+                self.phase = HarnessPhase::GetDeviceDesc8;
+                self.phase_detail = "GET_DESCRIPTOR(Device, 8)".to_string();
+                self.pending_chain = Some(build_control_in_chain(
+                    &mut self.mem,
+                    &mut self.alloc,
+                    self.qh_addr,
+                    self.fl_base,
+                    0,
+                    self.max_packet,
+                    BusSetupPacket {
+                        request_type: 0x80,
+                        request: 0x06,
+                        value: 0x0100,
+                        index: 0,
+                        length: 8,
+                    },
+                ));
+            }
+            HarnessPhase::GetDeviceDesc8 => {
+                if let Some(chain) = &self.pending_chain {
+                    if !chain.is_complete(&self.mem) {
+                        return;
+                    }
+                    let bytes = chain.collect_in_bytes(&self.mem);
+                    if bytes.len() >= 8 {
+                        self.max_packet = bytes[7] as usize;
+                        if self.max_packet == 0 {
+                            self.max_packet = 8;
+                        }
+                    }
+                    self.phase = HarnessPhase::GetDeviceDesc18;
+                    self.phase_detail = format!("GET_DESCRIPTOR(Device, 18) max_packet={}", self.max_packet);
+                    self.pending_chain = Some(build_control_in_chain(
+                        &mut self.mem,
+                        &mut self.alloc,
+                        self.qh_addr,
+                        self.fl_base,
+                        0,
+                        self.max_packet,
+                        BusSetupPacket {
+                            request_type: 0x80,
+                            request: 0x06,
+                            value: 0x0100,
+                            index: 0,
+                            length: 18,
+                        },
+                    ));
+                }
+            }
+            HarnessPhase::GetDeviceDesc18 => {
+                if let Some(chain) = &self.pending_chain {
+                    if !chain.is_complete(&self.mem) {
+                        return;
+                    }
+                    self.device_descriptor = chain.collect_in_bytes(&self.mem);
+
+                    self.phase = HarnessPhase::SetAddress;
+                    self.phase_detail = "SET_ADDRESS(1)".to_string();
+                    self.pending_chain = Some(build_control_out_no_data_chain(
+                        &mut self.mem,
+                        &mut self.alloc,
+                        self.qh_addr,
+                        self.fl_base,
+                        0,
+                        BusSetupPacket {
+                            request_type: 0x00,
+                            request: REQ_SET_ADDRESS,
+                            value: 1,
+                            index: 0,
+                            length: 0,
+                        },
+                    ));
+                }
+            }
+            HarnessPhase::SetAddress => {
+                if let Some(chain) = &self.pending_chain {
+                    if !chain.is_complete(&self.mem) {
+                        return;
+                    }
+
+                    self.phase = HarnessPhase::GetConfigDesc9;
+                    self.phase_detail = "GET_DESCRIPTOR(Config, 9)".to_string();
+                    self.pending_chain = Some(build_control_in_chain(
+                        &mut self.mem,
+                        &mut self.alloc,
+                        self.qh_addr,
+                        self.fl_base,
+                        1,
+                        self.max_packet,
+                        BusSetupPacket {
+                            request_type: 0x80,
+                            request: 0x06,
+                            value: 0x0200,
+                            index: 0,
+                            length: 9,
+                        },
+                    ));
+                }
+            }
+            HarnessPhase::GetConfigDesc9 => {
+                if let Some(chain) = &self.pending_chain {
+                    if !chain.is_complete(&self.mem) {
+                        return;
+                    }
+                    let bytes = chain.collect_in_bytes(&self.mem);
+                    if bytes.len() >= 9 {
+                        self.config_total_len = u16::from_le_bytes([bytes[2], bytes[3]]) as usize;
+                        self.config_value = bytes[5];
+                    }
+                    if self.config_total_len == 0 {
+                        self.config_total_len = 9;
+                    }
+
+                    self.phase = HarnessPhase::GetConfigDescFull;
+                    self.phase_detail = format!("GET_DESCRIPTOR(Config, {})", self.config_total_len);
+                    self.pending_chain = Some(build_control_in_chain(
+                        &mut self.mem,
+                        &mut self.alloc,
+                        self.qh_addr,
+                        self.fl_base,
+                        1,
+                        self.max_packet,
+                        BusSetupPacket {
+                            request_type: 0x80,
+                            request: 0x06,
+                            value: 0x0200,
+                            index: 0,
+                            length: self.config_total_len.min(u16::MAX as usize) as u16,
+                        },
+                    ));
+                }
+            }
+            HarnessPhase::GetConfigDescFull => {
+                if let Some(chain) = &self.pending_chain {
+                    if !chain.is_complete(&self.mem) {
+                        return;
+                    }
+                    self.config_descriptor = chain.collect_in_bytes(&self.mem);
+                    self.phase = HarnessPhase::Done;
+                    self.phase_detail = format!(
+                        "done (device_desc={} bytes, config_desc={} bytes, config_value={})",
+                        self.device_descriptor.len(),
+                        self.config_descriptor.len(),
+                        self.config_value
+                    );
+                    self.pending_chain = None;
+                }
+            }
+            HarnessPhase::Done | HarnessPhase::Error => {}
+        }
+    }
+
+    /// Drain all queued UsbHostAction objects.
+    pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
+        let mut dev = self.device.borrow_mut();
+        let actions = dev.drain_actions();
+        serde_wasm_bindgen::to_value(&actions).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Push a single host completion into the harness.
+    pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
+        let completion: UsbHostCompletion =
+            serde_wasm_bindgen::from_value(completion).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.device.borrow_mut().push_completion(completion);
+        Ok(())
+    }
+}
