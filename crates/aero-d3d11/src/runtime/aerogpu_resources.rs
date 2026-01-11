@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuHandle, AerogpuInputLayoutBlobHeader as ProtoInputLayoutBlobHeader,
-    AerogpuInputLayoutElementDxgi as ProtoInputLayoutElementDxgi,
-    AerogpuShaderStage, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
-    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuHandle, AerogpuShaderStage, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
@@ -15,7 +13,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use crate::{parse_signatures, translate_sm4_to_wgsl, DxbcFile, ShaderStage, Sm4Program};
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations, InputLayoutBinding, InputLayoutDesc,
-    InputLayoutElementDxgi, VsInputSignatureElement,
+    VsInputSignatureElement,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,18 +64,17 @@ pub struct ShaderResource {
     pub reflection: ShaderReflection,
 }
 
-#[derive(Clone, Debug)]
-pub struct InputLayoutResource {
-    pub blob: Vec<u8>,
-    pub parsed_elements: Vec<InputLayoutElementDxgi>,
-    pub mapping_cache: HashMap<u64, Vec<CachedVertexBufferLayout>>,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct CachedVertexBufferLayout {
     pub array_stride: u64,
     pub step_mode: wgpu::VertexStepMode,
     pub attributes: Vec<wgpu::VertexAttribute>,
+}
+
+#[derive(Clone, Debug)]
+pub struct InputLayoutResource {
+    pub layout: InputLayoutDesc,
+    pub mapping_cache: HashMap<u64, Vec<CachedVertexBufferLayout>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -309,12 +306,11 @@ impl AerogpuResourceManager {
     pub fn create_input_layout(&mut self, handle: AerogpuHandle, blob: Vec<u8>) -> Result<()> {
         self.ensure_handle_unused(handle)?;
 
-        let parsed_elements = parse_input_layout_blob(&blob)?;
         self.input_layouts.insert(
             handle,
             InputLayoutResource {
-                blob,
-                parsed_elements,
+                layout: InputLayoutDesc::parse(&blob)
+                    .map_err(|e| anyhow!("failed to parse ILAY input layout blob: {e}"))?,
                 mapping_cache: HashMap::new(),
             },
         );
@@ -397,15 +393,15 @@ impl AerogpuResourceManager {
 
         let cache_key = hash_input_layout_mapping_key(vs.dxbc_hash_fnv1a64, slot_strides);
         if !layout.mapping_cache.contains_key(&cache_key) {
-            let desc = InputLayoutDesc::parse(&layout.blob).map_err(|e| anyhow!("{e}"))?;
+            let desc = &layout.layout;
 
             let vs_signature = if vs.reflection.vs_input_signature.is_empty() {
-                build_fallback_vs_signature(&desc)
+                build_fallback_vs_signature(desc)
             } else {
                 vs.reflection.vs_input_signature.clone()
             };
 
-            let binding = InputLayoutBinding::new(&desc, slot_strides);
+            let binding = InputLayoutBinding::new(desc, slot_strides);
             let mapped =
                 map_layout_to_shader_locations(&binding, &vs_signature).map_err(|e| anyhow!("{e}"))?;
 
@@ -877,60 +873,6 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-fn parse_u32_le(buf: &[u8], offset: usize) -> Result<u32> {
-    let b = buf
-        .get(offset..offset + 4)
-        .ok_or_else(|| anyhow!("unexpected end of blob"))?;
-    Ok(u32::from_le_bytes(b.try_into().unwrap()))
-}
-
-fn parse_input_layout_blob(blob: &[u8]) -> Result<Vec<InputLayoutElementDxgi>> {
-    const HEADER_SIZE: usize = ProtoInputLayoutBlobHeader::SIZE_BYTES;
-    const ELEM_SIZE: usize = ProtoInputLayoutElementDxgi::SIZE_BYTES;
-
-    if blob.len() < HEADER_SIZE {
-        return Ok(Vec::new());
-    }
-
-    let magic = parse_u32_le(blob, 0)?;
-    if magic != AEROGPU_INPUT_LAYOUT_BLOB_MAGIC {
-        return Ok(Vec::new());
-    }
-    let version = parse_u32_le(blob, 4)?;
-    if version != AEROGPU_INPUT_LAYOUT_BLOB_VERSION {
-        bail!("unsupported input layout blob version {version}");
-    }
-
-    let count = parse_u32_le(blob, 8)? as usize;
-    let bytes_needed = HEADER_SIZE
-        .checked_add(count.checked_mul(ELEM_SIZE).ok_or_else(|| anyhow!("element_count overflow"))?)
-        .ok_or_else(|| anyhow!("input layout blob size overflow"))?;
-    if blob.len() < bytes_needed {
-        bail!(
-            "input layout blob truncated: need {} bytes for {} elements, got {}",
-            bytes_needed,
-            count,
-            blob.len()
-        );
-    }
-
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        let base = HEADER_SIZE + i * ELEM_SIZE;
-        out.push(InputLayoutElementDxgi {
-            semantic_name_hash: parse_u32_le(blob, base + 0)?,
-            semantic_index: parse_u32_le(blob, base + 4)?,
-            dxgi_format: parse_u32_le(blob, base + 8)?,
-            input_slot: parse_u32_le(blob, base + 12)?,
-            aligned_byte_offset: parse_u32_le(blob, base + 16)?,
-            input_slot_class: parse_u32_le(blob, base + 20)?,
-            instance_data_step_rate: parse_u32_le(blob, base + 24)?,
-        });
-    }
-
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -998,8 +940,8 @@ mod tests {
     #[test]
     fn parses_input_layout_blob_v1() {
         let mut blob = Vec::new();
-        blob.extend_from_slice(&AEROGPU_INPUT_LAYOUT_BLOB_MAGIC.to_le_bytes());
-        blob.extend_from_slice(&AEROGPU_INPUT_LAYOUT_BLOB_VERSION.to_le_bytes());
+        blob.extend_from_slice(&crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC.to_le_bytes());
+        blob.extend_from_slice(&crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION.to_le_bytes());
         blob.extend_from_slice(&1u32.to_le_bytes()); // element_count
         blob.extend_from_slice(&0u32.to_le_bytes()); // reserved0
                                                      // element
@@ -1011,9 +953,9 @@ mod tests {
         blob.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class
         blob.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
 
-        let elems = parse_input_layout_blob(&blob).unwrap();
-        assert_eq!(elems.len(), 1);
-        assert_eq!(elems[0].semantic_name_hash, 123);
-        assert_eq!(elems[0].dxgi_format, 28);
+        let layout = InputLayoutDesc::parse(&blob).unwrap();
+        assert_eq!(layout.elements.len(), 1);
+        assert_eq!(layout.elements[0].semantic_name_hash, 123);
+        assert_eq!(layout.elements[0].dxgi_format, 28);
     }
 }
