@@ -30,6 +30,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 @dataclass
 class CreateResourceDesc:
     api: str = "unknown"
+    primary: int = 0
     dim: int = 0
     bind: int = 0
     usage: int = 0
@@ -116,6 +117,10 @@ def parse_create_resource(line: str) -> Optional[CreateResourceDesc]:
     d = CreateResourceDesc()
     d.api = _parse_api(line)
     d.raw_line = line.strip()
+
+    primary = _parse_int(line, "primary")
+    if primary is not None:
+        d.primary = primary
 
     dim = _parse_dim(line)
     if dim is not None:
@@ -305,7 +310,7 @@ def main(argv: List[str]) -> int:
             continue
 
         print(
-            f"handle {h}: {d.api} dim={d.dim} fmt={d.fmt} bind=0x{d.bind:08X} usage={d.usage} "
+            f"handle {h}: {d.api} primary={d.primary} dim={d.dim} fmt={d.fmt} bind=0x{d.bind:08X} usage={d.usage} "
             f"cpu=0x{d.cpu:08X} misc=0x{d.misc:08X} w={d.width} h={d.height} mips={d.mips} array={d.array} "
             f"sample=({d.sample_count},{d.sample_quality}) rflags=0x{d.rflags:X} rflags_size={d.rflags_size} "
             f"num_alloc={d.num_alloc} primary_desc={d.primary_desc or 'n/a'} "

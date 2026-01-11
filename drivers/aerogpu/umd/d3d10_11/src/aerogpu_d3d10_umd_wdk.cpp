@@ -119,6 +119,7 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
   uint32_t num_allocations = 0;
   const void* allocation_info = nullptr;
   const void* primary_desc = nullptr;
+  uint32_t primary = 0;
   __if_exists(D3D10DDIARG_CREATERESOURCE::NumAllocations) {
     num_allocations = static_cast<uint32_t>(pDesc->NumAllocations);
   }
@@ -127,6 +128,7 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
   }
   __if_exists(D3D10DDIARG_CREATERESOURCE::pPrimaryDesc) {
     primary_desc = pDesc->pPrimaryDesc;
+    primary = (primary_desc != nullptr) ? 1u : 0u;
   }
 
   const void* init_ptr = nullptr;
@@ -141,7 +143,7 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
 
   AEROGPU_D3D10_11_LOG(
       "trace_resources: D3D10 CreateResource dim=%u bind=0x%08X usage=%u cpu=0x%08X misc=0x%08X fmt=%u "
-      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u init=%p "
+      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u primary=%u init=%p "
       "num_alloc=%u alloc_info=%p primary_desc=%p",
       static_cast<unsigned>(pDesc->ResourceDimension),
       static_cast<unsigned>(pDesc->BindFlags),
@@ -158,6 +160,7 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
       static_cast<unsigned>(sample_quality),
       static_cast<unsigned long long>(resource_flags_bits),
       static_cast<unsigned>(resource_flags_size),
+      static_cast<unsigned>(primary),
       init_ptr,
       static_cast<unsigned>(num_allocations),
       allocation_info,

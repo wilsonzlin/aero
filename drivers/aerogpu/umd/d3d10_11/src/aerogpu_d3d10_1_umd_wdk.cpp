@@ -1637,10 +1637,15 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   const uint32_t tex_h =
       (pDesc && pDesc->pMipInfoList) ? static_cast<uint32_t>(pDesc->pMipInfoList[0].TexelHeight) : 0;
 
+  uint32_t primary = 0;
+  __if_exists(D3D10DDIARG_CREATERESOURCE::pPrimaryDesc) {
+    primary = (pDesc && pDesc->pPrimaryDesc != nullptr) ? 1u : 0u;
+  }
+
   AEROGPU_D3D10_11_LOG(
       "trace_resources: D3D10.1 CreateResource dim=%u bind=0x%08X usage=%u cpu=0x%08X misc=0x%08X fmt=%u "
-      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u mipInfoList=%p init=%p "
-      "num_alloc=%u alloc_info=%p primary_desc=%p",
+      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u primary=%u "
+      "mipInfoList=%p init=%p num_alloc=%u alloc_info=%p primary_desc=%p",
       pDesc ? static_cast<unsigned>(pDesc->ResourceDimension) : 0u,
       pDesc ? static_cast<unsigned>(pDesc->BindFlags) : 0u,
       static_cast<unsigned>(usage),
@@ -1656,6 +1661,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       static_cast<unsigned>(sample_quality),
       static_cast<unsigned long long>(resource_flags_bits),
       static_cast<unsigned>(resource_flags_size),
+      static_cast<unsigned>(primary),
       pDesc ? pDesc->pMipInfoList : nullptr,
       init_ptr,
       static_cast<unsigned>(num_allocations),
