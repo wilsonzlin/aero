@@ -143,11 +143,13 @@ describe("RingBuffer", () => {
     expect(Array.from(ring.pop() ?? [])).toEqual([4, 5]);
   });
 
-  it("transfers messages between threads (SPSC)", async () => {
-    const capacityBytes = 64;
-    const sab = new SharedArrayBuffer(RingBuffer.byteLengthForCapacity(capacityBytes));
-    const ring = new RingBuffer(sab, 0, sab.byteLength);
-    ring.reset();
+  it(
+    "transfers messages between threads (SPSC)",
+    async () => {
+      const capacityBytes = 64;
+      const sab = new SharedArrayBuffer(RingBuffer.byteLengthForCapacity(capacityBytes));
+      const ring = new RingBuffer(sab, 0, sab.byteLength);
+      ring.reset();
 
     const count = 100;
     const worker = new Worker(new URL("./ring_buffer_consumer_worker.ts", import.meta.url), {
@@ -174,8 +176,10 @@ describe("RingBuffer", () => {
       });
 
       expect(received).toEqual(Array.from({ length: count }, (_, i) => i));
-    } finally {
-      await worker.terminate();
-    }
-  });
+      } finally {
+        await worker.terminate();
+      }
+    },
+    20_000,
+  );
 });

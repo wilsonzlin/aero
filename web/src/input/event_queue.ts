@@ -30,7 +30,15 @@ export enum InputEventType {
    *   a = dz (signed 32-bit, positive = wheel up)
    *   b = unused
    */
-  MouseWheel = 4
+  MouseWheel = 4,
+  /**
+   * USB HID gamepad input report (8 bytes).
+   *
+   * Payload:
+   *   a = packed bytes 0..3 of an 8-byte gamepad report (little-endian)
+   *   b = packed bytes 4..7 of the report (little-endian)
+   */
+  GamepadReport = 5,
 }
 
 export interface InputBatchMessage {
@@ -121,6 +129,10 @@ export class InputEventQueue {
       }
     }
     this.push(InputEventType.MouseWheel, timestampUs, dz | 0, 0);
+  }
+
+  pushGamepadReport(timestampUs: number, packedLo: number, packedHi: number): void {
+    this.push(InputEventType.GamepadReport, timestampUs, packedLo | 0, packedHi | 0);
   }
 
   /**

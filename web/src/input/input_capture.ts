@@ -1,4 +1,5 @@
 import { InputEventQueue, type InputBatchRecycleMessage, type InputBatchTarget } from "./event_queue";
+import { GamepadCapture } from "./gamepad";
 import { PointerLock } from "./pointer_lock";
 import {
   ps2Set2ScancodeForCode,
@@ -50,12 +51,27 @@ export interface InputCaptureOptions {
    * respond with `{ type: "in:input-batch-recycle", buffer }`.
    */
   recycleBuffers?: boolean;
+  /**
+   * If enabled, polls the Gamepad API and emits USB HID gamepad reports.
+   */
+  enableGamepad?: boolean;
+  /**
+   * Analog stick deadzone in normalized units ([0, 1]).
+   */
+  gamepadDeadzone?: number;
+  /**
+   * How often to poll the Gamepad API (max: `flushHz`).
+   */
+  gamepadPollHz?: number;
 }
 
 export class InputCapture {
   private readonly queue: InputEventQueue;
   private readonly pointerLock: PointerLock;
   private readonly pressedCodes = new Set<string>();
+  private readonly gamepad: GamepadCapture | null;
+  private readonly gamepadPollIntervalMs: number;
+  private gamepadLastPollMs = 0;
 
   private readonly flushHz: number;
   private readonly mouseSensitivity: number;
@@ -111,6 +127,7 @@ export class InputCapture {
     this.pointerLock.exit();
     this.releaseAllKeys();
     this.setMouseButtons(0);
+    this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -239,6 +256,9 @@ export class InputCapture {
       releasePointerLockChord,
       logCaptureLatency = false,
       recycleBuffers = true,
+      enableGamepad = true,
+      gamepadDeadzone = 0.12,
+      gamepadPollHz,
     }: InputCaptureOptions = {}
   ) {
     this.mouseSensitivity = mouseSensitivity;
@@ -246,6 +266,10 @@ export class InputCapture {
     this.releaseChord = releasePointerLockChord;
     this.logCaptureLatency = logCaptureLatency;
     this.recycleBuffers = recycleBuffers;
+
+    this.gamepad = enableGamepad ? new GamepadCapture({ deadzone: gamepadDeadzone }) : null;
+    const effectivePollHz = Math.max(1, Math.round(gamepadPollHz ?? flushHz));
+    this.gamepadPollIntervalMs = Math.max(1, Math.round(1000 / effectivePollHz));
 
     // Ensure the canvas can receive keyboard focus.
     if (this.canvas.tabIndex < 0) {
@@ -322,6 +346,7 @@ export class InputCapture {
   }
 
   flushNow(): void {
+    this.pollGamepad();
     const latencyUs = this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
     if (latencyUs === null || !this.logCaptureLatency) {
       return;
@@ -408,6 +433,20 @@ export class InputCapture {
       }
     }
     return new ArrayBuffer(byteLength);
+  }
+
+  private pollGamepad(): void {
+    if (!this.gamepad) {
+      return;
+    }
+
+    const nowMs = performance.now();
+    if (nowMs - this.gamepadLastPollMs < this.gamepadPollIntervalMs) {
+      return;
+    }
+    this.gamepadLastPollMs = nowMs;
+
+    this.gamepad.poll(this.queue, toTimestampUs(nowMs), { active: this.isCapturingKeyboard() });
   }
 }
 

@@ -279,9 +279,21 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   for (let i = 0; i < count; i++) {
     const off = base + i * 4;
     const type = words[off] >>> 0;
-    if (type === InputEventType.KeyScancode) {
-      // Key payload is packed bytes + len. No-op for now.
-      continue;
+    switch (type) {
+      case InputEventType.KeyScancode:
+        // Key payload is packed bytes + len. No-op for now.
+        break;
+      case InputEventType.MouseMove:
+      case InputEventType.MouseButtons:
+      case InputEventType.MouseWheel:
+        // PS/2 mouse events (not yet wired into the device model here).
+        break;
+      case InputEventType.GamepadReport:
+        // HID gamepad report: a/b are packed 8 bytes.
+        break;
+      default:
+        // Unknown event type; ignore.
+        break;
     }
   }
 

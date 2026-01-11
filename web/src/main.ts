@@ -1778,6 +1778,13 @@ function renderInputPanel(): HTMLElement {
           const bytes = [];
           for (let j = 0; j < len; j += 1) bytes.push((packed >>> (j * 8)) & 0xff);
           append(`kbd: ${bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ")}`);
+        } else if (type === InputEventType.GamepadReport) {
+          const lo = words[off + 2] >>> 0;
+          const hi = words[off + 3] >>> 0;
+          const bytes = [];
+          for (let j = 0; j < 4; j += 1) bytes.push((lo >>> (j * 8)) & 0xff);
+          for (let j = 0; j < 4; j += 1) bytes.push((hi >>> (j * 8)) & 0xff);
+          append(`pad: ${bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ")}`);
         } else if (type === InputEventType.MouseButtons) {
           append(`mouse: buttons=0x${(words[off + 2] >>> 0).toString(16)}`);
         } else if (type === InputEventType.MouseWheel) {
