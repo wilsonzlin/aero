@@ -153,7 +153,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
   * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token` via allocation private driver data: the miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
 * `d3d9ex_shared_allocations` creates shared D3D9Ex resources (shared render-target surface + shared mipmapped texture) to exercise shared-surface allocation behavior
 * `d3d10_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
-* `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware) and confirms **corner red + center green** via readback
+* `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 
