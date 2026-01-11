@@ -18,9 +18,9 @@
 //
 // On Win7, the exported UMD entrypoints are provided by the WDK-specific
 // translation units instead:
-//   - `aerogpu_d3d10_umd_wdk.cpp`     (OpenAdapter10)
-//   - `aerogpu_d3d10_1_umd_wdk.cpp`   (OpenAdapter10_2)
+//   - `aerogpu_d3d10_1_umd_wdk.cpp`   (OpenAdapter10 / OpenAdapter10_2)
 //   - `aerogpu_d3d11_umd_wdk.cpp`     (OpenAdapter11)
+// plus shared D3D10 helper code in `aerogpu_d3d10_umd_wdk.cpp`.
 // which submit AeroGPU command streams via the shared Win7/WDDM backend in
 // `aerogpu_d3d10_11_wddm_submit.{h,cpp}`.
 //
@@ -43,33 +43,10 @@
 #include <utility>
 #include <vector>
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  #include <d3dkmthk.h>
-  #include <d3dumddi.h>
-#endif
-
 #include "aerogpu_cmd_writer.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
 #include "../../common/aerogpu_win32_security.h"
-
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  #include <d3dkmthk.h>
-  #include "../../../protocol/aerogpu_dbgctl_escape.h"
-  #include "../../../protocol/aerogpu_umd_private.h"
- 
-  #ifndef NT_SUCCESS
-    #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
-  #endif
-
-  #ifndef STATUS_TIMEOUT
-    #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
-  #endif
-
-  #ifndef STATUS_NOT_SUPPORTED
-    #define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBL)
-  #endif
-#endif
 
 #ifndef FAILED
 #define FAILED(hr) (((HRESULT)(hr)) < 0)
