@@ -86,32 +86,47 @@ def main() -> None:
     # With only one header of that name, include order cannot matter; drivers should
     # be able to use `#include "virtqueue_split.h"` and rely on their include dirs.
     offenders: list[str] = []
-    for root in WIN7_DIRS:
-        if not root.is_dir():
-            continue
-
-        for path in root.rglob("*"):
-            if not path.is_file():
+    source_paths: list[Path] = []
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(REPO_ROOT), "ls-files"], text=True
+        )
+        tracked = [line.strip() for line in out.splitlines() if line.strip()]
+        for rel in tracked:
+            if not (rel.startswith("drivers/windows7/") or rel.startswith("drivers/win7/")):
                 continue
+            path = REPO_ROOT / rel
             if path.suffix.lower() not in {".c", ".h", ".cpp", ".inc"}:
                 continue
-
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
+            source_paths.append(path)
+    except (OSError, subprocess.CalledProcessError):
+        for root in WIN7_DIRS:
+            if not root.is_dir():
                 continue
-
-            for i, line in enumerate(text.splitlines(), start=1):
-                m = INCLUDE_RE.match(line)
-                if not m:
+            for path in root.rglob("*"):
+                if not path.is_file():
                     continue
-                inc = m.group(1)
-                inc_lower = inc.lower()
+                if path.suffix.lower() not in {".c", ".h", ".cpp", ".inc"}:
+                    continue
+                source_paths.append(path)
 
-                # Any path component in an include for virtqueue_split.h is a sign
-                # we are compensating for include-path ambiguity.
-                if inc_lower.endswith("virtqueue_split.h") and ("/" in inc or "\\" in inc):
-                    offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{i}: {inc}")
+    for path in sorted(set(source_paths)):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        for i, line in enumerate(text.splitlines(), start=1):
+            m = INCLUDE_RE.match(line)
+            if not m:
+                continue
+            inc = m.group(1)
+            inc_lower = inc.lower()
+
+            # Any path component in an include for virtqueue_split.h is a sign
+            # we are compensating for include-path ambiguity.
+            if inc_lower.endswith("virtqueue_split.h") and ("/" in inc or "\\" in inc):
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{i}: {inc}")
 
     if offenders:
         fail(
