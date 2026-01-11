@@ -7,6 +7,7 @@
 
 #include "aero_virtio_pci_modern.h"
 #include "virtqueue_split.h"
+#include "../../common/include/virtio_pci_contract.h"
 
 #if DBG
 #define AEROVBLK_LOG(fmt, ...) DbgPrint("aerovblk: " fmt "\n", __VA_ARGS__)

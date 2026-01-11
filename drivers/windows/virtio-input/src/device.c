@@ -694,6 +694,15 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
         return status;
     }
 
+    {
+        static const USHORT allowedIds[] = { 0x1052 };
+        status = VirtioPciModernEnforceDeviceIds(&deviceContext->PciDevice, allowedIds, RTL_NUMBER_OF(allowedIds));
+        if (!NT_SUCCESS(status)) {
+            VirtioPciModernUninit(&deviceContext->PciDevice);
+            return status;
+        }
+    }
+
     status = VirtioPciModernMapBars(&deviceContext->PciDevice, ResourcesRaw, ResourcesTranslated);
     if (!NT_SUCCESS(status)) {
         VirtioPciModernUninit(&deviceContext->PciDevice);

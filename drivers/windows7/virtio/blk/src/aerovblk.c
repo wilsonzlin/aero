@@ -837,7 +837,7 @@ ULONG DriverEntry(_In_ PDRIVER_OBJECT driverObject, _In_ PUNICODE_STRING registr
 }
 
 ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _In_ PVOID busInformation, _In_ PCHAR argumentString,
-                           _Inout_ PPORT_CONFIGURATION_INFORMATION configInfo, _Out_ PBOOLEAN again) {
+                            _Inout_ PPORT_CONFIGURATION_INFORMATION configInfo, _Out_ PBOOLEAN again) {
   PAEROVBLK_DEVICE_EXTENSION devExt;
   PACCESS_RANGE range;
   PVOID base;
@@ -860,6 +860,16 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   UNREFERENCED_PARAMETER(argumentString);
 
   *again = FALSE;
+
+  {
+    static const USHORT allowedIds[] = {0x1042};
+    st = AeroVirtioPciValidateContractV1BusSlot(
+        configInfo->SystemIoBusNumber, configInfo->SlotNumber, allowedIds, RTL_NUMBER_OF(allowedIds));
+    if (!NT_SUCCESS(st)) {
+      AEROVBLK_LOG("AERO-W7-VIRTIO identity check failed: 0x%08lx", st);
+      return SP_RETURN_NOT_FOUND;
+    }
+  }
 
   if (configInfo->NumberOfAccessRanges < 1) {
     return SP_RETURN_NOT_FOUND;

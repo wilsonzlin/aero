@@ -1,4 +1,5 @@
 #include "../include/virtio_pci_modern.h"
+#include "../portable/virtio_pci_identity.h"
 
 #if VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
 #include "../portable/virtio_pci_aero_layout.h"
@@ -58,6 +59,55 @@ VirtioPciModernUnmapBars(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
         Dev->Bars[i].TranslatedStart.QuadPart = 0;
         Dev->Bars[i].Length = 0;
     }
+}
+
+static NTSTATUS
+VirtioPciModernReadAndValidatePciIdentity(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
+{
+    UCHAR cfg[0x30];
+    ULONG bytesRead;
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    if (Dev == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlZeroMemory(cfg, sizeof(cfg));
+
+    bytesRead = VirtioPciReadConfig(&Dev->PciInterface, cfg, 0, sizeof(cfg));
+    if (bytesRead != sizeof(cfg)) {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_ERROR_LEVEL,
+            "[virtio-core] PCI config read failed while checking contract identity (%lu/%lu)\n",
+            bytesRead,
+            (ULONG)sizeof(cfg));
+        return STATUS_DEVICE_DATA_ERROR;
+    }
+
+    RtlZeroMemory(&id, sizeof(id));
+    res = virtio_pci_identity_validate_aero_contract_v1(cfg, sizeof(cfg), NULL, 0, &id);
+
+    Dev->PciVendorId = (USHORT)id.vendor_id;
+    Dev->PciDeviceId = (USHORT)id.device_id;
+    Dev->PciRevisionId = (UCHAR)id.revision_id;
+    Dev->PciSubsystemVendorId = (USHORT)id.subsystem_vendor_id;
+    Dev->PciSubsystemId = (USHORT)id.subsystem_id;
+
+    if (res != VIRTIO_PCI_IDENTITY_OK) {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_ERROR_LEVEL,
+            "[virtio-core] AERO-W7-VIRTIO contract identity mismatch: vendor=%04x device=%04x rev=%02x (%s)\n",
+            (UINT)id.vendor_id,
+            (UINT)id.device_id,
+            (UINT)id.revision_id,
+            virtio_pci_identity_result_str(res));
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS
@@ -464,6 +514,12 @@ VirtioPciModernInit(_In_ WDFDEVICE WdfDevice, _Out_ PVIRTIO_PCI_MODERN_DEVICE De
         Dev->PciInterfaceAcquired = TRUE;
     }
 
+    status = VirtioPciModernReadAndValidatePciIdentity(Dev);
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUninit(Dev);
+        return status;
+    }
+
     status = VirtioPciModernReadBarsFromConfig(Dev);
     if (!NT_SUCCESS(status)) {
         VirtioPciModernUninit(Dev);
@@ -487,6 +543,52 @@ VirtioPciModernInit(_In_ WDFDEVICE WdfDevice, _Out_ PVIRTIO_PCI_MODERN_DEVICE De
     }
 
     return STATUS_SUCCESS;
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciModernEnforceDeviceIds(_In_ const VIRTIO_PCI_MODERN_DEVICE *Dev,
+                                _In_reads_(AllowedDeviceIdCount) const USHORT *AllowedDeviceIds,
+                                _In_ ULONG AllowedDeviceIdCount)
+{
+    ULONG i;
+
+    if (Dev == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Dev->PciVendorId != (USHORT)VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO ||
+        Dev->PciRevisionId != (UCHAR)VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID ||
+        Dev->PciDeviceId < (USHORT)VIRTIO_PCI_IDENTITY_DEVICE_ID_MODERN_BASE) {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_ERROR_LEVEL,
+            "[virtio-core] AERO-W7-VIRTIO identity mismatch (cached): vendor=%04x device=%04x rev=%02x\n",
+            (UINT)Dev->PciVendorId,
+            (UINT)Dev->PciDeviceId,
+            (UINT)Dev->PciRevisionId);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    if (AllowedDeviceIds == NULL || AllowedDeviceIdCount == 0) {
+        return STATUS_SUCCESS;
+    }
+
+    for (i = 0; i < AllowedDeviceIdCount; ++i) {
+        if (Dev->PciDeviceId == AllowedDeviceIds[i]) {
+            return STATUS_SUCCESS;
+        }
+    }
+
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        DPFLTR_ERROR_LEVEL,
+        "[virtio-core] AERO-W7-VIRTIO unsupported device ID: vendor=%04x device=%04x rev=%02x\n",
+        (UINT)Dev->PciVendorId,
+        (UINT)Dev->PciDeviceId,
+        (UINT)Dev->PciRevisionId);
+
+    return STATUS_NOT_SUPPORTED;
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)

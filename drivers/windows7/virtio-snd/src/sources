@@ -12,7 +12,7 @@ TARGETNAME=virtiosnd
 TARGETTYPE=DRIVER
 TARGETPATH=obj
 
-INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\common;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
+INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include;..\..\..\windows\virtio\common;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 SOURCES= \
     driver.c \
@@ -29,4 +29,6 @@ SOURCES= \
     virtiosnd_sg.c \
     virtiosnd_sg_core.c \
     ..\..\..\windows\virtio\common\virtqueue_split.c \
-    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c
+    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
+    ..\..\virtio\common\src\virtio_pci_contract.c \
+    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c

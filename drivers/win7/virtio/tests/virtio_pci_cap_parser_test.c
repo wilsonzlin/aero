@@ -4,6 +4,7 @@
 
 #include "virtio_pci_cap_parser.h"
 #include "virtio_pci_aero_layout.h"
+#include "virtio_pci_identity.h"
 
 static void write_le16(uint8_t *dst, uint16_t v) {
     dst[0] = (uint8_t)(v & 0xffu);
@@ -75,6 +76,23 @@ static void expect_result(
         virtio_pci_cap_parse_result_str(got),
         (int)got,
         virtio_pci_cap_parse_result_str(want),
+        (int)want);
+}
+
+static void expect_identity_result(
+    const char *name,
+    virtio_pci_identity_result_t got,
+    virtio_pci_identity_result_t want) {
+    ++tests_run;
+    if (got == want) {
+        return;
+    }
+    ++tests_failed;
+    fprintf(stderr, "FAIL %s: got=%s (%d) want=%s (%d)\n",
+        name,
+        virtio_pci_identity_result_str(got),
+        (int)got,
+        virtio_pci_identity_result_str(want),
         (int)want);
 }
 
@@ -789,6 +807,47 @@ static void test_missing_device_cfg(void) {
     expect_result("missing_device_cfg.res", res, VIRTIO_PCI_CAP_PARSE_ERR_MISSING_DEVICE_CFG);
 }
 
+static void test_identity_contract_v1_ok(void) {
+    uint8_t cfg[256];
+    const uint16_t allowed_ids[] = { 0x1052 };
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    write_le16(&cfg[0x00], VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    write_le16(&cfg[0x02], 0x1052);
+    cfg[0x08] = VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID;
+
+    res = virtio_pci_identity_validate_aero_contract_v1(
+        cfg, sizeof(cfg),
+        allowed_ids, sizeof(allowed_ids) / sizeof(allowed_ids[0]),
+        &id);
+
+    expect_identity_result("identity_contract_v1_ok.res", res, VIRTIO_PCI_IDENTITY_OK);
+    expect_u32("identity_contract_v1_ok.vendor", id.vendor_id, VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    expect_u32("identity_contract_v1_ok.device", id.device_id, 0x1052);
+    expect_u32("identity_contract_v1_ok.revision", id.revision_id, VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID);
+}
+
+static void test_identity_contract_v1_bad_revision(void) {
+    uint8_t cfg[256];
+    const uint16_t allowed_ids[] = { 0x1052 };
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    write_le16(&cfg[0x00], VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    write_le16(&cfg[0x02], 0x1052);
+    cfg[0x08] = 0x02; /* Unknown major version. */
+
+    res = virtio_pci_identity_validate_aero_contract_v1(
+        cfg, sizeof(cfg),
+        allowed_ids, sizeof(allowed_ids) / sizeof(allowed_ids[0]),
+        &id);
+
+    expect_identity_result("identity_contract_v1_bad_revision.res", res, VIRTIO_PCI_IDENTITY_ERR_REVISION_MISMATCH);
+}
+
 int main(void) {
     test_valid_all_caps();
     test_aero_layout_validation_ok();
@@ -818,6 +877,8 @@ int main(void) {
     test_missing_common_cfg();
     test_missing_isr_cfg();
     test_missing_device_cfg();
+    test_identity_contract_v1_ok();
+    test_identity_contract_v1_bad_revision();
 
     if (tests_failed == 0) {
         printf("virtio_pci_cap_parser_test: %d checks passed\n", tests_run);

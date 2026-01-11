@@ -14,6 +14,7 @@ SOURCES= \
     ..\virtio\kmdf\virtio_pci_interrupts.c \
     ..\..\win7\virtio\virtio-core\src\virtio_pci_caps.c \
     ..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
+    ..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c \
     ..\..\win7\virtio\virtio-core\src\virtio_pci_modern.c \
     ..\virtio\common\virtqueue_split.c \
     src\log.c \

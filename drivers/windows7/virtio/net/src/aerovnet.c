@@ -2098,6 +2098,24 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
     return Status;
   }
 
+  {
+    PDEVICE_OBJECT pdo = NULL;
+    static const USHORT allowedIds[] = {0x1041};
+    NTSTATUS ntStatus;
+
+    NdisMGetDeviceProperty(MiniportAdapterHandle, &pdo, NULL, NULL, NULL, NULL);
+    if (pdo == NULL) {
+      AerovNetCleanupAdapter(Adapter);
+      return NDIS_STATUS_FAILURE;
+    }
+
+    ntStatus = AeroVirtioPciValidateContractV1Pdo(pdo, allowedIds, RTL_NUMBER_OF(allowedIds));
+    if (!NT_SUCCESS(ntStatus)) {
+      AerovNetCleanupAdapter(Adapter);
+      return NDIS_STATUS_NOT_SUPPORTED;
+    }
+  }
+
   Status = AerovNetParseResources(Adapter, MiniportInitParameters->AllocatedResources);
   if (Status != NDIS_STATUS_SUCCESS) {
     AerovNetCleanupAdapter(Adapter);

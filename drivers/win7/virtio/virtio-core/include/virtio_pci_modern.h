@@ -64,6 +64,18 @@ typedef struct _VIRTIO_PCI_MODERN_DEVICE {
     PCI_BUS_INTERFACE_STANDARD PciInterface;
     BOOLEAN PciInterfaceAcquired;
 
+    /*
+     * PCI identity fields (cached from config space during VirtioPciModernInit).
+     *
+     * These are used to enforce the AERO-W7-VIRTIO contract major version
+     * (Revision ID) and to allow per-driver device ID checks before BAR mapping.
+     */
+    USHORT PciVendorId;
+    USHORT PciDeviceId;
+    UCHAR PciRevisionId;
+    USHORT PciSubsystemVendorId;
+    USHORT PciSubsystemId;
+
     VIRTIO_PCI_CAPS Caps;
 
     VIRTIO_PCI_BAR Bars[VIRTIO_PCI_MAX_BARS];
@@ -161,6 +173,19 @@ VirtioPciModernValidateAeroContractV1FixedLayout(_In_ const VIRTIO_PCI_MODERN_DE
 _IRQL_requires_max_(PASSIVE_LEVEL)
 PCSTR
 VirtioPciAeroContractV1LayoutFailureToString(_In_ VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE Failure);
+
+/*
+ * Enforces that the device matches the expected modern virtio-pci device IDs for
+ * the caller (e.g. 0x1042 for virtio-blk).
+ *
+ * This MUST be called (by drivers) before mapping BARs / touching MMIO, so
+ * unsupported devices are rejected early.
+ */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciModernEnforceDeviceIds(_In_ const VIRTIO_PCI_MODERN_DEVICE *Dev,
+                                _In_reads_(AllowedDeviceIdCount) const USHORT *AllowedDeviceIds,
+                                _In_ ULONG AllowedDeviceIdCount);
 
 /*
  * Transport smoke-test helpers.

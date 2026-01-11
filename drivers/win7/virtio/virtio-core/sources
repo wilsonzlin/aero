@@ -15,4 +15,5 @@ SOURCES= \
     src\virtio_pci_caps.c \
     src\virtio_pci_modern.c \
     portable\virtio_pci_cap_parser.c \
-    portable\virtio_pci_aero_layout.c
+    portable\virtio_pci_aero_layout.c \
+    portable\virtio_pci_identity.c

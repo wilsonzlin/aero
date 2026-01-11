@@ -3,6 +3,7 @@
 #include <ntddk.h>
 
 #include "trace.h"
+#include "virtio_pci_contract.h"
 #include "virtiosnd.h"
 #include "virtiosnd_intx.h"
 
@@ -28,6 +29,124 @@ VirtIoSndCompleteIrp(
     Irp->IoStatus.Information = Information;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
     return Status;
+}
+
+static VOID
+VirtIoSndReleaseHardwareResources(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    ULONG i;
+    for (i = 0; i < Dx->MmioRangeCount; ++i) {
+        if (Dx->MmioRanges[i].BaseAddress != NULL && Dx->MmioRanges[i].Length != 0) {
+            MmUnmapIoSpace(Dx->MmioRanges[i].BaseAddress, Dx->MmioRanges[i].Length);
+        }
+
+        Dx->MmioRanges[i].BaseAddress = NULL;
+        Dx->MmioRanges[i].Length = 0;
+        Dx->MmioRanges[i].PhysicalAddress.QuadPart = 0;
+    }
+
+    Dx->MmioRangeCount = 0;
+
+    Dx->HasIoPort = FALSE;
+    Dx->IoPortBase = 0;
+    Dx->IoPortLength = 0;
+}
+
+static NTSTATUS
+VirtIoSndStartDevice(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_opt_ PCM_RESOURCE_LIST RawResources,
+    _In_opt_ PCM_RESOURCE_LIST TranslatedResources
+    )
+{
+    UNREFERENCED_PARAMETER(RawResources);
+
+    {
+        static const USHORT allowedIds[] = {0x1059};
+        NTSTATUS status = AeroVirtioPciValidateContractV1Pdo(Dx->LowerDeviceObject, allowedIds, RTL_NUMBER_OF(allowedIds));
+        if (!NT_SUCCESS(status)) {
+            VIRTIOSND_TRACE_ERROR("AERO-W7-VIRTIO identity check failed: 0x%08X\n", status);
+            return status;
+        }
+    }
+
+    VirtIoSndReleaseHardwareResources(Dx);
+
+    if (TranslatedResources == NULL || TranslatedResources->Count < 1) {
+        VIRTIOSND_TRACE("StartDevice: no translated resources\n");
+        Dx->Started = TRUE;
+        return STATUS_SUCCESS;
+    }
+
+    if (TranslatedResources->List[0].PartialResourceList.Count == 0) {
+        VIRTIOSND_TRACE("StartDevice: empty translated resources list\n");
+        Dx->Started = TRUE;
+        return STATUS_SUCCESS;
+    }
+
+    {
+        PCM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+        ULONG i;
+        ULONG count = TranslatedResources->List[0].PartialResourceList.Count;
+
+        desc = TranslatedResources->List[0].PartialResourceList.PartialDescriptors;
+        for (i = 0; i < count; ++i) {
+            switch (desc[i].Type) {
+            case CmResourceTypeMemory:
+                if (Dx->MmioRangeCount < VIRTIOSND_MAX_MMIO_RANGES) {
+                    PVIRTIOSND_MMIO_RANGE range = &Dx->MmioRanges[Dx->MmioRangeCount];
+
+                    range->PhysicalAddress = desc[i].u.Memory.Start;
+                    range->Length = desc[i].u.Memory.Length;
+                    range->BaseAddress = NULL;
+
+                    if (range->Length != 0) {
+                        range->BaseAddress = MmMapIoSpace(range->PhysicalAddress, range->Length, MmNonCached);
+                    }
+
+                    VIRTIOSND_TRACE(
+                        "StartDevice: MMIO[%lu] PA=%I64x len=%lu VA=%p\n",
+                        Dx->MmioRangeCount,
+                        range->PhysicalAddress.QuadPart,
+                        range->Length,
+                        range->BaseAddress);
+
+                    ++Dx->MmioRangeCount;
+                } else {
+                    VIRTIOSND_TRACE_ERROR("StartDevice: too many MMIO ranges; ignoring\n");
+                }
+                break;
+
+            case CmResourceTypePort:
+                if (!Dx->HasIoPort) {
+                    Dx->HasIoPort = TRUE;
+                    Dx->IoPortBase = (ULONG_PTR)desc[i].u.Port.Start.QuadPart;
+                    Dx->IoPortLength = desc[i].u.Port.Length;
+                }
+
+                VIRTIOSND_TRACE(
+                    "StartDevice: IO port start=%I64x len=%lu\n",
+                    desc[i].u.Port.Start.QuadPart,
+                    desc[i].u.Port.Length);
+                break;
+
+            case CmResourceTypeInterrupt:
+                VIRTIOSND_TRACE(
+                    "StartDevice: interrupt vector=%lu level=%lu affinity=%I64x\n",
+                    desc[i].u.Interrupt.Vector,
+                    desc[i].u.Interrupt.Level,
+                    (ULONGLONG)desc[i].u.Interrupt.Affinity);
+                break;
+
+            default:
+                VIRTIOSND_TRACE("StartDevice: resource type=%u\n", (UINT)desc[i].Type);
+                break;
+            }
+        }
+    }
+
+    Dx->Started = TRUE;
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS
