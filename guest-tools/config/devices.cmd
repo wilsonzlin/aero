@@ -4,6 +4,7 @@ rem Keep these values in sync with:
 rem - emulator-presented PCI IDs
 rem - the driver INFs (Hardware IDs / Compatible IDs)
 rem - the storage driver's service name (INF AddService name)
+rem - docs/windows-device-contract.json (intended source of truth)
 
 rem ---------------------------
 rem Boot-critical storage (virtio-blk)
@@ -11,17 +12,16 @@ rem ---------------------------
 
 rem Service name for the virtio-blk storage miniport.
 rem This MUST match the INF AddService name for the storage driver.
-rem Default aligns with the upstream virtio-win `viostor` package.
-set "AERO_VIRTIO_BLK_SERVICE=viostor"
+set "AERO_VIRTIO_BLK_SERVICE=aerovblk"
 
 rem Optional explicit .sys name for the storage driver.
 rem If empty, setup.cmd assumes "<service>.sys".
 set "AERO_VIRTIO_BLK_SYS="
 
-rem Space-separated list of PCI hardware IDs (VEN/DEV pairs) for virtio-blk.
-rem Include both "legacy/transitional" and "modern" virtio-pci IDs if applicable.
+rem Space-separated list of PCI hardware IDs for virtio-blk.
+rem Aero virtio contract v1 is virtio-pci modern-only (DEV_1042) with PCI Revision ID 0x01.
 rem Note: IDs are individually quoted so the value can safely contain `&` characters.
-set AERO_VIRTIO_BLK_HWIDS="PCI\VEN_1AF4&DEV_1001" "PCI\VEN_1AF4&DEV_1042"
+set AERO_VIRTIO_BLK_HWIDS="PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01" "PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4" "PCI\VEN_1AF4&DEV_1042&REV_01" "PCI\VEN_1AF4&DEV_1042"
 
 rem ---------------------------
 rem Non-boot-critical devices (used for documentation / potential future checks)
@@ -37,7 +37,7 @@ rem Optional explicit .sys name for the virtio-snd driver.
 rem If empty, tools assume "<service>.sys".
 set "AERO_VIRTIO_SND_SYS="
 
-set AERO_VIRTIO_NET_HWIDS="PCI\VEN_1AF4&DEV_1000" "PCI\VEN_1AF4&DEV_1041"
+set AERO_VIRTIO_NET_HWIDS="PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01" "PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4" "PCI\VEN_1AF4&DEV_1041&REV_01" "PCI\VEN_1AF4&DEV_1041"
 set AERO_VIRTIO_INPUT_HWIDS="PCI\VEN_1AF4&DEV_1011" "PCI\VEN_1AF4&DEV_1052"
 set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1059"
 
