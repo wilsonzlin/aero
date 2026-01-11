@@ -185,14 +185,14 @@ cp deploy/.env.example deploy/.env
   - Example: `,https://localhost:5173`
 - `AERO_L2_AUTH_MODE` (default: `cookie`)
   - Authentication mode for `/l2` (handled by `crates/aero-l2-proxy`).
-  - Supported values: `cookie`, `none`, `api_key`, `jwt`, `cookie_or_jwt`.
+  - Supported values: `cookie`, `none`, `api_key`, `jwt`, `cookie_or_jwt`, `cookie_or_api_key`.
 - `AERO_L2_SESSION_SECRET` (optional override)
   - Secret for validating the `aero_session` cookie when `AERO_L2_AUTH_MODE=cookie|cookie_or_jwt`.
   - `crates/aero-l2-proxy` reads this from `AERO_L2_SESSION_SECRET` and falls back to
     `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET` (so the deploy stack can share one secret
     across both services).
 - `AERO_L2_API_KEY` / `AERO_L2_JWT_SECRET` (optional)
-  - Credentials for `AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt`.
+  - Credentials for `AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt|cookie_or_api_key`.
   - Credentials can be delivered via query params:
     - API key auth: `?apiKey=...` (or `?token=...` for compatibility)
     - JWT auth: `?token=...`

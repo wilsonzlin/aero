@@ -81,6 +81,7 @@ Supported values:
 - `api_key`
 - `jwt`
 - `cookie_or_jwt`
+- `cookie_or_api_key`
 
 Example:
 

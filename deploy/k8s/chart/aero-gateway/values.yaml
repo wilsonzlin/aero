@@ -121,6 +121,7 @@ l2Proxy:
     #   - "api_key"
     #   - "jwt"
     #   - "cookie_or_jwt"
+    #   - "cookie_or_api_key"
     #
     # Default: "cookie" (matches the gateway's session-cookie auth used by `/tcp`).
     #
