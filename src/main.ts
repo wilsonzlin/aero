@@ -1087,12 +1087,19 @@ function renderAudioPanel(): HTMLElement {
       }
 
       try {
-        // Prefill the entire ring with silence so the CPU worker has time to attach
-        // and begin writing without incurring startup underruns.
-        output.writeInterleaved(
-          new Float32Array(output.ringBuffer.capacityFrames * output.ringBuffer.channelCount),
-          output.context.sampleRate,
-        );
+        // Prefill the ring with silence so the CPU worker has time to attach and begin writing
+        // without incurring startup underruns.
+        //
+        // `createAudioOutput()` already writes a small startup padding; top up to capacity without
+        // dropping frames so `overrunCount` stays at 0 (useful for CI smoke tests).
+        const level = output.getBufferLevelFrames();
+        const prefillFrames = Math.max(0, output.ringBuffer.capacityFrames - level);
+        if (prefillFrames > 0) {
+          output.writeInterleaved(
+            new Float32Array(prefillFrames * output.ringBuffer.channelCount),
+            output.context.sampleRate,
+          );
+        }
 
         workerCoordinator.setAudioOutputRingBuffer(
           output.ringBuffer.buffer,

@@ -8,7 +8,7 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
   await page.click("#init-audio-output-worker");
 
   await page.waitForFunction(() => {
-    // Exposed by `web/src/main.ts`.
+    // Exposed by the audio UI entrypoint (`src/main.ts` in the root app).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputWorker;
     return out?.enabled === true && out?.context?.state === "running";
@@ -34,7 +34,8 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
   expect(result.enabled).toBe(true);
   expect(result.state).toBe("running");
   expect(result.backend).toBe("cpu-worker-wasm");
-  // Underruns are counted as missing frames (a single render quantum is 128 frames).
+  // Underruns are tracked in *frames* (not “events”). One AudioWorklet render quantum is 128 frames,
+  // so allowing 128 frames keeps the test stable while still catching sustained underruns.
   expect(result.underruns).toBeLessThanOrEqual(128);
   expect(result.overruns).toBe(0);
 });
