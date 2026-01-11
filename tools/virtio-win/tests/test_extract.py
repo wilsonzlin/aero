@@ -98,6 +98,7 @@ class VirtioWinExtractTest(unittest.TestCase):
             # Root-level license/notice files should be extracted too.
             write("LICENSE.txt", "license text")
             write("README.md", "readme text")
+            write("VERSION", "1.2.3-test")
 
             # Noise that should not be extracted.
             write("Balloon/w7/amd64/balloon.inf", "balloon")
@@ -154,6 +155,7 @@ class VirtioWinExtractTest(unittest.TestCase):
             # Root-level notice files should be present.
             self.assertTrue(self._resolve_case_insensitive(out_root, "LICENSE.txt").is_file())
             self.assertTrue(self._resolve_case_insensitive(out_root, "README.md").is_file())
+            self.assertTrue(self._resolve_case_insensitive(out_root, "VERSION").is_file())
 
             prov_path = out_root / "virtio-win-provenance.json"
             self.assertTrue(prov_path.is_file())
@@ -174,6 +176,9 @@ class VirtioWinExtractTest(unittest.TestCase):
             extracted_notice = [p.casefold() for p in prov.get("extracted_notice_files", [])]
             self.assertIn("license.txt", extracted_notice)
             self.assertIn("readme.md", extracted_notice)
+
+            extracted_metadata = [p.casefold() for p in prov.get("extracted_metadata_files", [])]
+            self.assertIn("version", extracted_metadata)
 
 
 if __name__ == "__main__":

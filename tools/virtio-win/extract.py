@@ -9,7 +9,8 @@ cannot run on Linux/macOS. The extracted directory can be passed to:
   pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot <out-root>
 
 The output directory preserves the original virtio-win on-disk structure, but only
-for the Win7-relevant subtrees Aero uses, plus common root-level license/notice files.
+for the Win7-relevant subtrees Aero uses, plus common root-level license/notice files
+and small provenance metadata files (e.g. VERSION markers).
 """
 
 import argparse
@@ -39,6 +40,14 @@ NOTICE_FILE_PATTERNS = [
     "AUTHORS*",
     "CREDITS*",
     "README*",
+]
+
+METADATA_FILE_PATTERNS = [
+    # Common virtio-win root-level version markers.
+    "VERSION",
+    "VERSION.txt",
+    "version.txt",
+    "virtio-win-version.txt",
 ]
 
 
@@ -104,6 +113,14 @@ def _utc_now_iso() -> str:
 def _is_notice_file(name: str) -> bool:
     lowered = name.casefold()
     for pat in NOTICE_FILE_PATTERNS:
+        if fnmatch.fnmatch(lowered, pat.casefold()):
+            return True
+    return False
+
+
+def _is_metadata_file(name: str) -> bool:
+    lowered = name.casefold()
+    for pat in METADATA_FILE_PATTERNS:
         if fnmatch.fnmatch(lowered, pat.casefold()):
             return True
     return False
@@ -326,7 +343,7 @@ def _extract_with_pycdlib(
     iso_path: Path,
     out_root: Path,
     targets: list[_ExtractTarget],
-    notice_joliet_paths: list[str],
+    extra_joliet_paths: list[str],
 ) -> None:
     try:
         import pycdlib  # type: ignore
@@ -360,8 +377,8 @@ def _extract_with_pycdlib(
         if not files:
             raise SystemExit("no matching files found to extract (pycdlib)")
 
-        # Root-level license/notice files.
-        for jp in notice_joliet_paths:
+        # Root-level aux files (license/notice/version markers).
+        for jp in extra_joliet_paths:
             dest_rel = jp.lstrip("/")
             files.append((jp, dest_rel))
 
@@ -424,6 +441,7 @@ def main() -> int:
     targets: list[_ExtractTarget]
     missing_optional: list[dict[str, Any]]
     extracted_notice_files: list[str] = []
+    extracted_metadata_files: list[str] = []
     backend_used = backend
 
     sep_for_7z = "/"
@@ -442,10 +460,11 @@ def main() -> int:
                     continue
                 if _is_notice_file(p):
                     extracted_notice_files.append(p)
+                elif _is_metadata_file(p):
+                    extracted_metadata_files.append(p)
 
-            _extract_with_7z(sevenz, iso_path, out_root, targets, extracted_notice_files, sep_for_7z)
-            tree = _build_tree_from_paths(paths_norm)
-            targets, missing_optional = _select_extract_targets(tree)
+            extra_root_files = extracted_notice_files + extracted_metadata_files
+            _extract_with_7z(sevenz, iso_path, out_root, targets, extra_root_files, sep_for_7z)
         except subprocess.CalledProcessError as e:
             # In auto mode, fall back to a pure-Python extractor if 7z is present but
             # can't read the ISO on this platform.
@@ -453,6 +472,7 @@ def main() -> int:
                 raise SystemExit(f"7z failed to read/extract ISO: {e}") from e
             backend_used = "pycdlib"
             extracted_notice_files = []
+            extracted_metadata_files = []
             print(
                 "warning: 7z extraction failed; falling back to pycdlib.\n"
                 f"7z stderr:\n{e.stderr or ''}",
@@ -489,13 +509,16 @@ def main() -> int:
                     for f in files:
                         if _is_notice_file(f):
                             extracted_notice_files.append(f)
+                        elif _is_metadata_file(f):
+                            extracted_metadata_files.append(f)
         finally:
             iso.close()
 
         tree = _build_tree_from_paths(all_paths)
         targets, missing_optional = _select_extract_targets(tree)
-        notice_joliet_paths = ["/" + f for f in extracted_notice_files]
-        _extract_with_pycdlib(iso_path, out_root, targets, notice_joliet_paths)
+        extra_root_files = extracted_notice_files + extracted_metadata_files
+        extra_joliet_paths = ["/" + f for f in extra_root_files]
+        _extract_with_pycdlib(iso_path, out_root, targets, extra_joliet_paths)
 
     # Quick sanity check: ensure each extracted target directory exists.
     # (This protects against 7z selection quirks.)
@@ -533,7 +556,8 @@ def main() -> int:
         },
         "backend": backend_used,
         "extracted": extracted,
-        "extracted_notice_files": extracted_notice_files,
+        "extracted_notice_files": sorted(set(extracted_notice_files), key=str.casefold),
+        "extracted_metadata_files": sorted(set(extracted_metadata_files), key=str.casefold),
         "missing_optional": missing_optional,
     }
 
