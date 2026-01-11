@@ -60,11 +60,12 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
         logLevel: "info",
       };
 
-      try {
-        coordinator.start(config);
-      } catch (err) {
-        log.textContent = err instanceof Error ? err.message : String(err);
-      }
+       try {
+         coordinator.start(config);
+         coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+       } catch (err) {
+         log.textContent = err instanceof Error ? err.message : String(err);
+       }
 
       document.getElementById("start").addEventListener("click", async () => {
         log.textContent = "";

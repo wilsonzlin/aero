@@ -86,6 +86,7 @@ async function main() {
       activeDiskImage: null,
       logLevel: "info",
     });
+    coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
 
     const guestMemory = coordinator.getGuestMemory();
     if (!guestMemory) {

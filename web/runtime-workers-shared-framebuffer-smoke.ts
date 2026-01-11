@@ -75,6 +75,7 @@ async function main() {
   }
 
   coordinator.start(config as any);
+  coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
 
   const gpuWorker = coordinator.getWorker("gpu");
   const frameStateSab = coordinator.getFrameStateSab();
