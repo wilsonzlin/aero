@@ -3,16 +3,19 @@
 This directory is a historical pointer to an early AeroGPU Windows 7 (WDDM 1.1) prototype driver stack.
 It is **not** the supported/canonical AeroGPU implementation.
 
+The original prototype sources/INF were removed to avoid accidental use; this directory remains only as
+this pointer.
+
 Notable differences from the supported stack:
 
-- Bound to the legacy AeroGPU PCI ID family `PCI\\VEN_1AE0&DEV_0001`
+- Bound to the legacy AeroGPU PCI ID family `PCI\VEN_1AE0&DEV_0001`
 - Used a different guest↔host protocol/ABI than the current AeroGPU device model
 - Was **not WOW64-complete** on Win7 x64 (no x86 UMD), so **32-bit D3D9 apps would fail**
 
 ## Canonical AeroGPU driver stack (supported)
 
 The supported AeroGPU stack lives under `drivers/aerogpu/` and uses the current PCI IDs
-(`PCI\\VEN_A3A0&DEV_0001` and `PCI\\VEN_1AED&DEV_0001`) plus the protocol headers under
+(`PCI\VEN_A3A0&DEV_0001` and `PCI\VEN_1AED&DEV_0001`) plus the protocol headers under
 `drivers/aerogpu/protocol/`.
 
 Start with:

@@ -39,8 +39,9 @@ The supported Windows 7 driver package lives under:
 
 * `drivers/aerogpu/packaging/win7/` (see its `README.md`)
 
-An older `guest/windows/*` AeroGPU driver stack existed during early bring-up;
-it is **not** the supported driver package.
+An older `guest/windows/` AeroGPU driver stack existed during early bring-up; it is **not** the supported
+driver package and was not WOW64-complete on Win7 x64. It was removed to avoid accidental installs;
+`guest/windows/README.md` remains as a pointer.
 
 ## Related docs
 
