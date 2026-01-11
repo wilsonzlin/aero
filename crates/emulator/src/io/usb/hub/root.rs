@@ -152,6 +152,8 @@ impl RootHub {
 
     pub fn bus_reset(&mut self) {
         for p in &mut self.ports {
+            p.suspended = false;
+            p.resuming = false;
             if let Some(dev) = p.device.as_mut() {
                 dev.reset();
             }

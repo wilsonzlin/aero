@@ -573,3 +573,38 @@ fn uhci_portsc_suspend_resume_bits_clear_on_detach() {
         0
     );
 }
+
+#[test]
+fn uhci_greset_clears_portsc_suspend_resume_bits() {
+    #[derive(Clone)]
+    struct DummyDevice;
+
+    impl UsbDeviceModel for DummyDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    const PORTSC_SUSP: u16 = 1 << 12;
+    const PORTSC_RESUME: u16 = 1 << 13;
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
+
+    uhci.port_write(REG_PORTSC1, 2, (PORTSC_SUSP | PORTSC_RESUME) as u32);
+    assert_ne!(
+        uhci.port_read(REG_PORTSC1, 2) as u16 & (PORTSC_SUSP | PORTSC_RESUME),
+        0
+    );
+
+    // Global reset should clear transient port suspend/resume state.
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_GRESET | USBCMD_MAXP) as u32);
+    assert_eq!(
+        uhci.port_read(REG_PORTSC1, 2) as u16 & (PORTSC_SUSP | PORTSC_RESUME),
+        0
+    );
+}
