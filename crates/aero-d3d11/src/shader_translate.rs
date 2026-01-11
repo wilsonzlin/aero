@@ -259,20 +259,52 @@ fn build_io_maps(
             break;
         }
     }
+    // Some compilers still emit legacy `POSITION` semantics for the vertex shader's position
+    // output even when the signature's `system_value_type` is unset.
+    if vs_position_reg.is_none() && module.stage == ShaderStage::Vertex {
+        for p in &osgn.parameters {
+            if p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("POSITION") {
+                vs_position_reg = Some(p.register);
+                break;
+            }
+        }
+    }
 
     let mut ps_position_reg = None;
-    for p in &isgn.parameters {
-        if is_sv_position_param(p) {
-            ps_position_reg = Some(p.register);
-            break;
+    if module.stage == ShaderStage::Pixel {
+        for p in &isgn.parameters {
+            if is_sv_position_param(p) {
+                ps_position_reg = Some(p.register);
+                break;
+            }
+        }
+        // Legacy `POSITION` can also be used for pixel shader `SV_Position` inputs.
+        if ps_position_reg.is_none() {
+            for p in &isgn.parameters {
+                if p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("POSITION") {
+                    ps_position_reg = Some(p.register);
+                    break;
+                }
+            }
         }
     }
 
     let mut ps_sv_target0_reg = None;
-    for p in &osgn.parameters {
-        if is_sv_target_param(p) && p.semantic_index == 0 {
-            ps_sv_target0_reg = Some(p.register);
-            break;
+    if module.stage == ShaderStage::Pixel {
+        for p in &osgn.parameters {
+            if is_sv_target_param(p) && p.semantic_index == 0 {
+                ps_sv_target0_reg = Some(p.register);
+                break;
+            }
+        }
+        // Legacy `COLOR` can stand in for `SV_Target` in some SM4-era shaders.
+        if ps_sv_target0_reg.is_none() {
+            for p in &osgn.parameters {
+                if p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("COLOR") {
+                    ps_sv_target0_reg = Some(p.register);
+                    break;
+                }
+            }
         }
     }
 
@@ -437,7 +469,8 @@ impl IoMaps {
             .values()
             .map(|p| {
                 let is_target = is_sv_target(&p.param.semantic_name)
-                    || p.param.system_value_type == D3D_NAME_TARGET;
+                    || p.param.system_value_type == D3D_NAME_TARGET
+                    || p.param.semantic_name.eq_ignore_ascii_case("COLOR");
                 IoParam {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
