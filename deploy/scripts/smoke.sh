@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/deploy/docker-compose.yml"
 
 PROJECT_NAME="aero-smoke-$RANDOM$RANDOM"
+SMOKE_WASM_NAME="__aero_smoke_${PROJECT_NAME}.wasm"
+SMOKE_WASM_PATH="$ROOT_DIR/deploy/static/assets/$SMOKE_WASM_NAME"
+SMOKE_WASM_DIR="$(dirname "$SMOKE_WASM_PATH")"
 
 compose() {
   docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
@@ -21,6 +24,9 @@ on_exit() {
   fi
 
   compose down -v --remove-orphans >/dev/null 2>&1 || true
+
+  rm -f "$SMOKE_WASM_PATH" >/dev/null 2>&1 || true
+  rmdir "$SMOKE_WASM_DIR" >/dev/null 2>&1 || true
 }
 trap on_exit EXIT
 
@@ -28,6 +34,10 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "deploy smoke: docker not found" >&2
   exit 1
 fi
+
+mkdir -p "$SMOKE_WASM_DIR"
+# Minimal valid WebAssembly module header: \0asm + version 1.
+printf '\x00asm\x01\x00\x00\x00' >"$SMOKE_WASM_PATH"
 
 echo "deploy smoke: starting stack ($PROJECT_NAME)" >&2
 compose up -d --build
@@ -76,8 +86,9 @@ assert_header_exact() {
 
 root_headers="$(fetch_headers https://localhost/)"
 health_headers="$(fetch_headers https://localhost/healthz)"
+wasm_headers="$(fetch_headers "https://localhost/assets/$SMOKE_WASM_NAME")"
 
-for headers in "$root_headers" "$health_headers"; do
+for headers in "$root_headers" "$health_headers" "$wasm_headers"; do
   assert_header_exact "Cross-Origin-Opener-Policy" "same-origin" "$headers"
   assert_header_exact "Cross-Origin-Embedder-Policy" "require-corp" "$headers"
   assert_header_exact "Cross-Origin-Resource-Policy" "same-origin" "$headers"
@@ -90,5 +101,8 @@ for headers in "$root_headers" "$health_headers"; do
     exit 1
   fi
 done
+
+assert_header_exact "Cache-Control" "public, max-age=31536000, immutable" "$wasm_headers"
+assert_header_exact "Content-Type" "application/wasm" "$wasm_headers"
 
 echo "deploy smoke: OK" >&2

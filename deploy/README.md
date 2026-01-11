@@ -44,6 +44,10 @@ Examples / reference-only:
 - `deploy/static/` – smoke-test frontend (not the real UI)
 - `deploy/nginx/` – nginx examples (useful if you don't want Caddy)
 - `deploy/k8s/aero-storage-server/` – optional disk/image service templates (not required for the gateway)
+- Static-host header templates (copy/paste starting points):
+  - `deploy/cloudflare-pages/_headers`
+  - `deploy/netlify.toml`
+  - `deploy/vercel.json`
 
 ## Production DNS requirements
 
@@ -309,7 +313,7 @@ Then configure the gateway to allow the frontend origin:
 
 ## Compose smoke check
 
-To validate the compose stack end-to-end (build + headers + `/healthz`), run:
+To validate the compose stack end-to-end (build + headers + `/healthz` + wasm MIME/caching), run:
 
 ```bash
 bash deploy/scripts/smoke.sh
