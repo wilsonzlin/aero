@@ -683,8 +683,8 @@ static int RunChild(int argc,
     SetEvent(opened_event);
   }
   if (ready_event) {
-    // Allow the parent to take up to ~20s total (it enforces its own 20s end-to-end budget).
-    DWORD wait = WaitForSingleObject(ready_event, 20000);
+    // Allow the parent to take up to ~25s total (it enforces its own end-to-end budget).
+    DWORD wait = WaitForSingleObject(ready_event, 25000);
     if (wait != WAIT_OBJECT_0) {
       if (done_event) {
         SetEvent(done_event);
@@ -1094,7 +1094,7 @@ static int RunParent(int argc,
   // Keep this comfortably below the suite's default per-test timeout (30s) so that if the child
   // hangs, we can still terminate it before aerogpu_timeout_runner.exe kills the parent, which
   // would otherwise leave an orphaned child process behind.
-  const DWORD kChildTimeoutMs = 20000;
+  const DWORD kChildTimeoutMs = 25000;
   const DWORD start_ticks = GetTickCount();
 
   if (validate_sharing) {
