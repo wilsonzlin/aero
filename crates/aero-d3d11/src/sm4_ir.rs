@@ -125,15 +125,15 @@ pub enum Sm4Inst {
     ///
     /// Note: `coord` and `lod` are integer-typed in SM4/SM5.
     ///
-    /// The current FL10_0 translator keeps temporaries as `vec4<f32>` and uses
-    /// lightweight conversions at the call site:
+    /// The current translator still models temporaries as `vec4<f32>`. Integer values can
+    /// therefore be represented in two ways:
     ///
-    /// - Texel coordinates (`coord.xy`) are assumed to be carried as exact integer
-    ///   values in float lanes and are converted via `i32(...)` when emitting
-    ///   `textureLoad`.
-    /// - The mip level (`lod`) is commonly encoded/propagated as raw integer bits
-    ///   (even when decoded as `ImmediateF32`), so WGSL emission preserves those
-    ///   bits via `bitcast<vec4<i32>>` when passing the level to `textureLoad`.
+    /// - Numeric float values (e.g. some builtins are expanded via `f32(...)`).
+    /// - Raw integer bit patterns (common for real DXBC, which writes integer values into the
+    ///   untyped register file).
+    ///
+    /// When emitting WGSL `textureLoad`, the backend picks between `i32(f32)` and
+    /// `bitcast<i32>(f32)` per lane to recover an `i32` coordinate/LOD.
     Ld {
         dst: DstOperand,
         /// Texel coordinate (x/y in `.xy`).

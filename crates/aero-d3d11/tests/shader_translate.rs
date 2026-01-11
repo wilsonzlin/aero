@@ -451,13 +451,10 @@ fn translates_texture_load_ld() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
+    // `ld` consumes integer coords/LOD. The DXBC operand stream stores 32-bit values without a
+    // float/int tag, so use raw integer bits here (1, 2, 0, 0).
     let coord = SrcOperand {
-        kind: SrcKind::ImmediateF32([
-            1.0f32.to_bits(),
-            2.0f32.to_bits(),
-            0.0f32.to_bits(),
-            0.0f32.to_bits(),
-        ]),
+        kind: SrcKind::ImmediateF32([1, 2, 0, 0]),
         swizzle: Swizzle::XYZW,
         modifier: OperandModifier::None,
     };
@@ -484,7 +481,8 @@ fn translates_texture_load_ld() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
-    assert!(translated.wgsl.contains("vec2<i32>(i32(("));
+    assert!(translated.wgsl.contains("vec2<i32>(select("));
+    assert!(translated.wgsl.contains("bitcast<i32>(0x00000001u)"));
 
     // Reflection should surface the referenced texture slot (no sampler needed for ld).
     assert!(translated
@@ -514,10 +512,13 @@ fn translates_texture_load_with_nonzero_lod() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
-    // `ld` expects integer coords/LOD. Coordinates are currently represented as float lanes
-    // containing exact integer values (see `Sm4Inst::Ld` docs), while the mip level is carried as
-    // raw integer bits (decoded as `ImmediateF32` tokens).
-    let coord = src_imm([1.0, 2.0, 0.0, 0.0]);
+    // `ld` expects integer coords/LOD. Use raw integer bits for coordinates here; the translator
+    // preserves those bits when forming `textureLoad` arguments.
+    let coord = SrcOperand {
+        kind: SrcKind::ImmediateF32([1, 2, 0, 0]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
     let lod = SrcOperand {
         kind: SrcKind::ImmediateF32([3, 3, 3, 3]),
         swizzle: Swizzle::XXXX,
