@@ -62,9 +62,11 @@ impl MsiTrigger for PlatformInterrupts {
         let dest = message.destination_id();
 
         // xAPIC "physical destination" decoding (single-CPU for now).
-        // If the destination matches the bootstrap processor's APIC ID, inject.
+        // - If the destination matches the bootstrap processor's APIC ID, inject.
+        // - Treat destination ID 0xFF as a broadcast (single-CPU => BSP).
+        //
         // Multi-CPU destination decoding can be layered on later.
-        if dest == self.lapic_apic_id() {
+        if dest == self.lapic_apic_id() || dest == 0xFF {
             self.lapic_inject_fixed(vector);
         }
     }

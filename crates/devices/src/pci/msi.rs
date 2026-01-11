@@ -236,4 +236,24 @@ mod tests {
         assert!(msi.trigger(&mut interrupts));
         assert_eq!(interrupts.get_pending(), Some(0x45));
     }
+
+    #[test]
+    fn trigger_msi_broadcast_destination_delivers_to_single_cpu() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new()));
+
+        let cap_offset = config.find_capability(super::PCI_CAP_ID_MSI).unwrap() as u16;
+        // MSI address with destination ID 0xFF (broadcast in xAPIC physical mode).
+        config.write(cap_offset + 0x04, 4, 0xfeef_f000);
+        config.write(cap_offset + 0x08, 4, 0);
+        config.write(cap_offset + 0x0c, 2, 0x0045);
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        config.write(cap_offset + 0x02, 2, (ctrl | 0x0001) as u32);
+
+        let mut interrupts = PlatformInterrupts::new();
+        interrupts.set_mode(PlatformInterruptMode::Apic);
+        let msi = config.capability_mut::<MsiCapability>().unwrap();
+        assert!(msi.trigger(&mut interrupts));
+        assert_eq!(interrupts.get_pending(), Some(0x45));
+    }
 }
