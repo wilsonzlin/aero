@@ -24,13 +24,57 @@ CatalogFile = virtio-snd.cat
 
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
-
+ 
 [VirtioSnd_Install]
+; PortCls / KS / WDMAudio integration (in-box on Windows 7).
+;
+; Using Include/Needs is the canonical Win7 mechanism for registering a
+; kernel-streaming audio adapter so that WDMAudio / MMDevice can enumerate
+; endpoints exposed by the PortCls miniports.
+Include  = ks.inf, wdmaudio.inf
+Needs    = KS.Registration, WDMAUDIO.Registration
 CopyFiles = VirtioSnd.CopyFiles
+AddReg    = VirtioSnd.AddReg
 
+; Register the KS device interfaces that the Windows audio stack enumerates.
+; Reference strings match the PortCls subdevice names ("Wave" / "Topology").
+[VirtioSnd_Install.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%, VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%, VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%, VirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topology%, VirtioSnd.Topology.Interface
+
+[VirtioSnd.Wave.Interface]
+AddReg = VirtioSnd.Wave.Interface.AddReg
+
+[VirtioSnd.Wave.Interface.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSnd.EndpointDesc%
+
+[VirtioSnd.Topology.Interface]
+AddReg = VirtioSnd.Topology.Interface.AddReg
+
+[VirtioSnd.Topology.Interface.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSnd.TopologyDesc%
+
+; PortCls subdevice registration. PortCls creates KS filters named "Wave" and
+; "Topology"; WDMAudio / KSProxy use these keys for per-filter metadata.
+[VirtioSnd.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSnd.DeviceDesc%
+
+HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
+HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSnd.EndpointDesc%
+HKR,%KSNAME_Wave%,Driver,,virtiosnd.sys
+
+HKR,%KSNAME_Topology%,CLSID,,%KSProxy.CLSID%
+HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSnd.TopologyDesc%
+HKR,%KSNAME_Topology%,Driver,,virtiosnd.sys
+ 
 [VirtioSnd.CopyFiles]
 virtiosnd.sys
-
+ 
 [VirtioSnd_Install.Services]
 AddService = virtiosnd, 0x00000002, VirtioSnd_Service_Inst
 
@@ -52,3 +96,17 @@ ProviderName           = "Aero Project"
 DiskName               = "Aero virtio-snd Driver Disk"
 VirtioSnd.DeviceDesc   = "Aero VirtIO Sound Device"
 VirtioSnd.ServiceDesc  = "Aero VirtIO Sound Driver"
+
+; KS / audio stack identifiers (Windows 7).
+KSProxy.CLSID        = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO     = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER    = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME  = "{EB115FF2-0D1B-11D0-A8E0-00A0C9223196}"
+
+; PortCls subdevice names (must match the driver's PcRegisterSubdevice names).
+KSNAME_Wave          = "Wave"
+KSNAME_Topology      = "Topology"
+
+; Names shown to users (MMDevice / Sound control panel).
+VirtioSnd.EndpointDesc  = "Aero VirtIO Sound Output"
+VirtioSnd.TopologyDesc  = "Aero VirtIO Sound Topology"
