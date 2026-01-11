@@ -69,15 +69,20 @@ impl GuestMemory for MemoryBusGuestMemory<'_> {
 fn decode_alloc_table_bytes(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
     match decode_alloc_table_le(bytes) {
         Ok(view) => Ok(view.entries.to_vec()),
-        Err(AerogpuAllocTableDecodeError::Misaligned) => decode_alloc_table_bytes_unaligned(bytes),
+        Err(AerogpuAllocTableDecodeError::Misaligned)
+        | Err(AerogpuAllocTableDecodeError::BadStride { .. }) => {
+            decode_alloc_table_bytes_unaligned(bytes)
+        }
         Err(err) => Err(anyhow!("alloc table decode failed: {err:?}")),
     }
 }
 
 fn decode_alloc_table_bytes_unaligned(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
     // `decode_alloc_table_le` requires the entry array to be aligned so it can cast the entry
-    // array directly. When the allocation table bytes originate from an unaligned `Vec<u8>` copy,
-    // fall back to decoding entries individually.
+    // array directly and currently only supports the exact `aerogpu_alloc_entry` stride. When the
+    // allocation table bytes originate from an unaligned `Vec<u8>` copy or a newer guest uses an
+    // extended `entry_stride_bytes`, fall back to decoding entries individually (reading only the
+    // entry prefix we understand and skipping any extension fields).
     let header = AerogpuAllocTableHeader::decode_from_le_bytes(bytes)
         .map_err(|e| anyhow!("alloc table header decode failed: {e:?}"))?;
     header
@@ -95,17 +100,20 @@ fn decode_alloc_table_bytes_unaligned(bytes: &[u8]) -> Result<Vec<AerogpuAllocEn
     }
 
     let expected_stride = AerogpuAllocEntry::SIZE_BYTES as u32;
-    if header.entry_stride_bytes != expected_stride {
+    if header.entry_stride_bytes < expected_stride {
         return Err(anyhow!(
-            "alloc table entry_stride_bytes={} does not match expected_stride={expected_stride}",
+            "alloc table entry_stride_bytes={} is smaller than expected_stride={expected_stride}",
             header.entry_stride_bytes,
         ));
     }
 
     let entry_count = usize::try_from(header.entry_count)
         .map_err(|_| anyhow!("alloc table header entry_count does not fit in usize"))?;
+
+    let entry_stride = usize::try_from(header.entry_stride_bytes)
+        .map_err(|_| anyhow!("alloc table entry_stride_bytes does not fit in usize"))?;
     let entries_size_bytes = entry_count
-        .checked_mul(AerogpuAllocEntry::SIZE_BYTES)
+        .checked_mul(entry_stride)
         .ok_or_else(|| anyhow!("alloc table entry_count overflows"))?;
 
     let header_size_bytes = AerogpuAllocTableHeader::SIZE_BYTES;
@@ -122,15 +130,18 @@ fn decode_alloc_table_bytes_unaligned(bytes: &[u8]) -> Result<Vec<AerogpuAllocEn
     for idx in 0..entry_count {
         let off = header_size_bytes
             .checked_add(
-                idx.checked_mul(AerogpuAllocEntry::SIZE_BYTES)
+                idx.checked_mul(entry_stride)
                     .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?,
             )
             .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?;
         let end = off
             .checked_add(AerogpuAllocEntry::SIZE_BYTES)
             .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?;
+        let Some(entry_bytes) = bytes.get(off..end) else {
+            return Err(anyhow!("alloc table entry {idx} out of bounds"));
+        };
         entries.push(
-            AerogpuAllocEntry::decode_from_le_bytes(&bytes[off..end])
+            AerogpuAllocEntry::decode_from_le_bytes(entry_bytes)
                 .map_err(|e| anyhow!("alloc table entry {idx} decode failed: {e:?}"))?,
         );
     }

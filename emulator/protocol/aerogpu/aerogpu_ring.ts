@@ -115,9 +115,6 @@ export function decodeAllocTable(
       `Buffer too small for aerogpu_alloc_table: need ${header.sizeBytes} bytes, have ${view.byteLength - byteOffset}`,
     );
   }
-  if (header.entryStrideBytes !== AEROGPU_ALLOC_ENTRY_SIZE) {
-    throw new AerogpuRingError(`alloc_table.entry_stride_bytes mismatch: ${header.entryStrideBytes}`);
-  }
 
   const entries: AerogpuAllocEntry[] = [];
   const entriesStart = byteOffset + AEROGPU_ALLOC_TABLE_HEADER_SIZE;

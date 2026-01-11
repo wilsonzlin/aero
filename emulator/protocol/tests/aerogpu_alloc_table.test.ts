@@ -57,6 +57,46 @@ test("decodeAllocTable decodes a valid allocation table", () => {
   assert.equal(decoded.entries[1].sizeBytes, 0x2000n);
 });
 
+test("decodeAllocTable accepts extended entry_stride_bytes", () => {
+  const entryCount = 2;
+  const entryStrideBytes = AEROGPU_ALLOC_ENTRY_SIZE + 16;
+  const totalSize = AEROGPU_ALLOC_TABLE_HEADER_SIZE + entryCount * entryStrideBytes;
+  const buf = new ArrayBuffer(totalSize);
+  const view = new DataView(buf);
+
+  // Header.
+  view.setUint32(0, AEROGPU_ALLOC_TABLE_MAGIC, true);
+  view.setUint32(4, AEROGPU_ABI_VERSION_U32, true);
+  view.setUint32(8, totalSize, true);
+  view.setUint32(12, entryCount, true);
+  view.setUint32(16, entryStrideBytes, true);
+
+  // Entry 0 (with extra trailing padding).
+  const e0 = AEROGPU_ALLOC_TABLE_HEADER_SIZE;
+  view.setUint32(e0 + 0, 10, true);
+  view.setUint32(e0 + 4, AEROGPU_ALLOC_FLAG_READONLY, true);
+  view.setBigUint64(e0 + 8, 0x1122334455667788n, true);
+  view.setBigUint64(e0 + 16, 0x1000n, true);
+  view.setBigUint64(e0 + 24, 0n, true);
+  view.setUint32(e0 + AEROGPU_ALLOC_ENTRY_SIZE, 0xdeadbeef, true);
+
+  // Entry 1.
+  const e1 = AEROGPU_ALLOC_TABLE_HEADER_SIZE + entryStrideBytes;
+  view.setUint32(e1 + 0, 20, true);
+  view.setUint32(e1 + 4, 0, true);
+  view.setBigUint64(e1 + 8, 0x8877665544332211n, true);
+  view.setBigUint64(e1 + 16, 0x2000n, true);
+  view.setBigUint64(e1 + 24, 0n, true);
+
+  const decoded = decodeAllocTable(view);
+  assert.equal(decoded.header.entryStrideBytes, entryStrideBytes);
+  assert.equal(decoded.entries.length, 2);
+  assert.equal(decoded.entries[0].allocId, 10);
+  assert.equal(decoded.entries[0].flags, AEROGPU_ALLOC_FLAG_READONLY);
+  assert.equal(decoded.entries[1].allocId, 20);
+  assert.equal(decoded.entries[1].gpa, 0x8877665544332211n);
+});
+
 test("decodeAllocTable rejects a too-small buffer", () => {
   const buf = new ArrayBuffer(AEROGPU_ALLOC_TABLE_HEADER_SIZE - 1);
   const view = new DataView(buf);
