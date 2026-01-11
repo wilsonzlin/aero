@@ -380,7 +380,7 @@ function renderGraphicsPanel(report: PlatformFeatureReport): HTMLElement {
       "div",
       {},
       "Open the standalone fallback demo: ",
-      el("a", { href: "/webgl2_fallback_demo.html" }, "/webgl2_fallback_demo.html"),
+      el("a", { href: "./webgl2_fallback_demo.html" }, "./webgl2_fallback_demo.html"),
       ".",
     ),
   );
@@ -3095,7 +3095,7 @@ function renderIpcDemoPanel(): HTMLElement {
       "p",
       {},
       "Open the high-rate command/event ring-buffer demo: ",
-      el("a", { href: "/demo/ipc_demo.html" }, "/demo/ipc_demo.html"),
+      el("a", { href: "./demo/ipc_demo.html" }, "./demo/ipc_demo.html"),
       ".",
     ),
   );
