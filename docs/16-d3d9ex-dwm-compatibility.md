@@ -267,10 +267,11 @@ This model is intentionally simple: it is enough for DWM frame pacing without re
 The concrete file paths will depend on the current codebase layout, but a typical split looks like:
 
 - Guest Windows UMD:
-  - `guest/windows/d3d9_umd/` (base D3D9)
-  - `guest/windows/d3d9_umd_ex/` (D3D9Ex extensions; or fold into the base UMD)
+  - `drivers/aerogpu/umd/d3d9/` (D3D9 + D3D9Ex; or split Ex-specific code into a submodule)
+- Guest Windows KMD:
+  - `drivers/aerogpu/kmd/` (WDDM kernel-mode display driver)
 - Guest tests:
-  - `guest/windows/tests/d3d9ex_test/` (D3D9Ex smoke test described above)
+  - `drivers/aerogpu/tests/win7/d3d9ex_dwm_probe/` (D3D9Ex + DWM compatibility smoke test)
 - Host protocol + command processor:
   - `crates/aero-gpu/src/protocol.rs` (opcode + payload definitions; event types)
   - `crates/aero-gpu/src/command_processor.rs` (implement `PRESENT_EX`, shared surface import/export, fence signaling)

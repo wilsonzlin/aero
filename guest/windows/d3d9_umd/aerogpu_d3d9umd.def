@@ -1,4 +1,0 @@
-LIBRARY aerogpu_d3d9umd
-EXPORTS
-    OpenAdapter
-
