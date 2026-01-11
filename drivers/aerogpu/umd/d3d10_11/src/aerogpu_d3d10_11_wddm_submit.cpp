@@ -749,12 +749,18 @@ void update_buffers_from_submit_args(SubmissionBuffers* buf, const SubmitArgsT& 
   // DxgkDdiPresent validate it). The runtime may rotate it alongside the command
   // buffer, so treat it as an in/out field.
   bool updated_dma_priv = false;
-  if constexpr (has_member_pNewDmaBufferPrivateData<SubmitArgsT>::value &&
-                has_member_NewDmaBufferPrivateDataSize<SubmitArgsT>::value) {
-    if (args.pNewDmaBufferPrivateData && args.NewDmaBufferPrivateDataSize) {
+  if constexpr (has_member_pNewDmaBufferPrivateData<SubmitArgsT>::value) {
+    if (args.pNewDmaBufferPrivateData) {
       buf->dma_private_data = args.pNewDmaBufferPrivateData;
-      buf->dma_private_data_bytes = args.NewDmaBufferPrivateDataSize;
       updated_dma_priv = true;
+      if constexpr (has_member_NewDmaBufferPrivateDataSize<SubmitArgsT>::value) {
+        if (args.NewDmaBufferPrivateDataSize) {
+          buf->dma_private_data_bytes = args.NewDmaBufferPrivateDataSize;
+        }
+      }
+      if (buf->dma_private_data_bytes == 0) {
+        buf->dma_private_data_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+      }
     }
   }
   if (!updated_dma_priv) {
@@ -768,6 +774,10 @@ void update_buffers_from_submit_args(SubmissionBuffers* buf, const SubmitArgsT& 
         buf->dma_private_data_bytes = args.DmaBufferPrivateDataSize;
       }
     }
+  }
+
+  if (buf->dma_private_data && buf->dma_private_data_bytes == 0) {
+    buf->dma_private_data_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
   }
 }
 
