@@ -352,6 +352,12 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -DisableSnd
 ```
 
+To run the virtio-snd **capture** smoke test when a capture endpoint exists, provision the scheduled task with
+`--test-snd-capture` (for example via `New-AeroWin7TestImage.ps1 -TestSndCapture`).
+
+- Add `-RequireSndCapture` to fail if no virtio-snd capture endpoint is present.
+- Add `-RequireNonSilence` to fail the smoke test if only silence is captured.
+
 If your `-DriversDir` contains duplicate INF basenames, disambiguate by passing a relative path (e.g.
 `"win7\\virtio-net\\x64\\aerovnet.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
 
