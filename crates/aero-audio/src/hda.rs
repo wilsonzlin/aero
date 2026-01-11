@@ -1003,7 +1003,9 @@ impl HdaController {
     /// Returns the current asserted *level* of the controller's IRQ line.
     ///
     /// This is derived from the guest-visible interrupt control/status registers and therefore
-    /// does **not** clear or otherwise mutate interrupt state.
+    /// does **not** clear or otherwise mutate interrupt state. This is intended for level-triggered
+    /// interrupt routing (PCI INTx): the line remains asserted while an enabled interrupt source is
+    /// pending.
     pub fn irq_level(&self) -> bool {
         // Simplified: assert if global interrupt enable is set and any enabled interrupt source
         // is pending.
@@ -1022,14 +1024,6 @@ impl HdaController {
         let pending = self.irq_pending;
         self.irq_pending = false;
         pending
-    }
-
-    /// Returns the current level of the controller's IRQ line.
-    ///
-    /// This is intended for level-triggered interrupt routing (PCI INTx). The line remains
-    /// asserted while an enabled interrupt source is pending.
-    pub fn irq_level(&self) -> bool {
-        self.irq_pending
     }
 
     /// Advance the HDA device by `output_frames` worth of host time.
