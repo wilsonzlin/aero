@@ -1,4 +1,5 @@
 # Release packaging outputs (do not commit)
+x86/
+amd64/
 out/
 *.zip
-

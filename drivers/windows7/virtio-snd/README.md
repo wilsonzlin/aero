@@ -106,7 +106,7 @@ This runs `Inf2Cat` for both architectures:
 Expected output (once `virtiosnd.sys` exists in `inf/`):
 
 ```text
-inf\virtio-snd.cat
+inf\aero-virtio-snd.cat
 ```
 
 ## Signing (SYS + CAT)
@@ -122,7 +122,7 @@ From `drivers/windows7/virtio-snd/`:
 This signs:
 
 - `inf\virtiosnd.sys`
-- `inf\virtio-snd.cat`
+- `inf\aero-virtio-snd.cat`
 
 ## Installation (Device Manager → “Have Disk…”)
 
@@ -130,7 +130,7 @@ This signs:
 2. **Browse my computer**
 3. **Let me pick** → **Have Disk…**
 4. Browse to `drivers/windows7/virtio-snd/inf/`
-5. Select `virtio-snd.inf`
+5. Select `aero-virtio-snd.inf`
 
 ## Offline / slipstream installation (optional)
 
@@ -140,6 +140,8 @@ If you want virtio-snd to bind automatically on first boot (for example when bui
 
 ## Release packaging (optional)
 
-Once the package has been built/signed, you can produce a deterministic ZIP bundle from `inf/` using:
+Once the package has been built/signed, you can stage a Guest Tools–ready folder under `release\<arch>\virtio-snd\` using:
 
 - `scripts/package-release.ps1` (see `release/README.md`)
+
+The same script can also produce a deterministic ZIP bundle from `inf/` by passing `-Zip`.

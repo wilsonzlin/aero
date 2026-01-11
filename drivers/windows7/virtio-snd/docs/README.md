@@ -2,7 +2,7 @@
 
 This directory contains an initial, clean-room **WDM kernel-mode function driver** for a PCI virtio-snd device.
 
-For packaging/signing/test-install instructions, see `../README.md`.
+For a shorter end-to-end build + signing walkthrough, see `../README.md`.
 
 The driver currently:
 
@@ -240,10 +240,127 @@ build -cZ
 
 The output will be under `objfre_win7_*` (or `objchk_win7_*` for checked builds).
 
+3. Copy the built `virtiosnd.sys` into the driver package staging directory:
+
+```text
+drivers/windows7/virtio-snd/inf/virtiosnd.sys
+```
+
+> `Inf2Cat` hashes every file referenced by the INF, so `virtiosnd.sys` must exist in `inf/` before generating the catalog.
+
+## Prerequisites (host build/sign machine)
+
+Run the signing tooling from a WDK Developer Command Prompt (so the tools are in `PATH`):
+
+- `Inf2Cat.exe`
+- `signtool.exe`
+- `certutil.exe` (built into Windows)
+
+## Test-signing workflow (CAT + cert + signature)
+
+### 1) Generate a test certificate (on the signing machine)
+
+From `drivers/windows7/virtio-snd/`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\make-cert.ps1
+```
+
+Expected outputs:
+
+```text
+cert\aero-virtio-snd-test.cer
+cert\aero-virtio-snd-test.pfx
+```
+
+`make-cert.ps1` defaults to generating a **SHA-1-signed** certificate for maximum compatibility with stock Windows 7 SP1.
+If you cannot create SHA-1 certificates in your environment, you can opt into SHA-2 by rerunning with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\make-cert.ps1 -AllowSha2CertFallback
+```
+
+> A SHA-2-signed certificate may require Windows 7 SHA-2 updates (KB3033929 / KB4474419) on the test machine.
+
+### 2) Generate the catalog (CAT)
+
+From `drivers/windows7/virtio-snd/`:
+
+```cmd
+.\scripts\make-cat.cmd
+```
+
+Expected output:
+
+```text
+inf\aero-virtio-snd.cat
+```
+
+### 3) Sign the SYS + CAT
+
+From `drivers/windows7/virtio-snd/`:
+
+```cmd
+.\scripts\sign-driver.cmd
+```
+
+This signs:
+
+- `inf\virtiosnd.sys`
+- `inf\aero-virtio-snd.cat`
+
+## Windows 7 guest setup
+
+### Enable test-signing mode
+
+On the Windows 7 guest (elevated cmd):
+
+```cmd
+bcdedit /set testsigning on
+shutdown /r /t 0
+```
+
+### Install the test certificate (guest)
+
+Copy `cert\aero-virtio-snd-test.cer` to the guest, then run (elevated PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-test-cert.ps1 -CertPath .\cert\aero-virtio-snd-test.cer
+```
+
+This installs the cert into:
+
+- LocalMachine **Trusted Root Certification Authorities**
+- LocalMachine **Trusted Publishers**
+
+## Packaging for Guest Tools / ISO integration
+
+After building + signing, stage a per-arch driver folder under `release/`:
+
+```powershell
+# Auto-detect arch from inf\virtiosnd.sys and stage into release\<arch>\virtio-snd\
+powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
+```
+
+To force a specific architecture label (and validate the SYS matches it):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Arch amd64
+```
+
+The staged output can be copied into:
+
+```text
+guest-tools\drivers\<arch>\virtio-snd\
+```
+
 ## Installing (development/testing)
 
-1. Copy `virtiosnd.sys` next to `inf\aero-virtio-snd.inf`.
-2. Use Device Manager → Update Driver → "Have Disk..." and point to the `inf` directory.
+1. Ensure the package directory contains:
+   - `aero-virtio-snd.inf`
+   - `virtiosnd.sys`
+   - `aero-virtio-snd.cat` (signed)
+2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged).
 
 For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
 

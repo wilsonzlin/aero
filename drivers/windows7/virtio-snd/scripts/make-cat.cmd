@@ -6,13 +6,18 @@ rem Generates a driver catalog for Windows 7 (x86 + x64) using Inf2Cat.
 rem
 rem Prerequisites:
 rem   - Inf2Cat.exe available in PATH (run from a WDK command prompt)
-rem   - inf\virtio-snd.inf exists
+rem   - inf\aero-virtio-snd.inf exists (or the legacy name inf\virtio-snd.inf)
 rem   - All files referenced by the INF exist in inf\ (at minimum virtiosnd.sys)
 
 set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
 set INF_DIR=%ROOT_DIR%\inf
-set INF_FILE=%INF_DIR%\virtio-snd.inf
+set INF_FILE=%INF_DIR%\aero-virtio-snd.inf
+set CAT_FILE=%INF_DIR%\aero-virtio-snd.cat
+if not exist "%INF_FILE%" (
+  set INF_FILE=%INF_DIR%\virtio-snd.inf
+  set CAT_FILE=%INF_DIR%\virtio-snd.cat
+)
 set SYS_FILE=%INF_DIR%\virtiosnd.sys
 
 if not exist "%INF_FILE%" (
@@ -46,12 +51,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "%INF_DIR%\virtio-snd.cat" (
-  echo ERROR: Expected catalog not found: "%INF_DIR%\virtio-snd.cat"
+if not exist "%CAT_FILE%" (
+  echo ERROR: Expected catalog not found: "%CAT_FILE%"
   exit /b 1
 )
 
 echo.
-echo OK: Created "%INF_DIR%\virtio-snd.cat"
+echo OK: Created "%CAT_FILE%"
 exit /b 0
 

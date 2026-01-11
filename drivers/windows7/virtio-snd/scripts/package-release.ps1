@@ -1,19 +1,30 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 <#
 .SYNOPSIS
-  Packages the Aero virtio-snd Windows 7 driver into a deterministic zip.
+  Stages a ready-to-install Aero virtio-snd Windows 7 driver package under release/<arch>/.
 
 .DESCRIPTION
-  Collects the driver package payload files from `drivers/windows7/virtio-snd/inf/`
-  and writes a deterministic zip into `drivers/windows7/virtio-snd/release/`.
+  Copies the driver package payload files from `drivers/windows7/virtio-snd/inf/` into:
 
-  The script is intentionally simple: it packages whatever payload files exist in `inf/`
-  (excluding repo metadata files like `.gitignore`), which makes it suitable for both
-  signed and unsigned local builds.
+    release\<arch>\virtio-snd\
+
+  This output can be copied directly into Guest Tools (guest-tools\drivers\<arch>\virtio-snd\)
+  or used via Device Manager "Have Disk...".
+
+  Optionally, the script can also produce a deterministic ZIP bundle (useful for shipping artifacts)
+  when -Zip is specified.
 #>
 
 [CmdletBinding()]
 param(
+  [ValidateSet('auto', 'x86', 'amd64')]
+  [string]$Arch = 'auto',
+
+  [ValidateNotNullOrEmpty()]
+  [string]$ReleaseRoot = (Join-Path $PSScriptRoot "..\\release"),
+
+  [switch]$Zip,
+
   [ValidateNotNullOrEmpty()]
   [string]$OutDir = (Join-Path $PSScriptRoot "..\\release\\out")
 )
@@ -22,7 +33,6 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:DriverId = 'aero-virtio-snd'
-$script:InfFileName = 'virtio-snd.inf'
 $script:SysFileName = 'virtiosnd.sys'
 $script:TargetOs = 'win7'
 $script:FixedZipTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
@@ -43,7 +53,7 @@ function Get-DriverVerFromInf([string]$InfPath) {
   foreach ($line in $lines) {
     $m = [regex]::Match(
       $line,
-      '^\s*DriverVer\s*=\s*([^,]+)\s*,\s*([^;\s]+)',
+      '^\\s*DriverVer\\s*=\\s*([^,]+)\\s*,\\s*([^;\\s]+)',
       [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
     )
     if ($m.Success) {
@@ -57,32 +67,40 @@ function Get-DriverVerFromInf([string]$InfPath) {
 }
 
 function Get-PeMachine([string]$Path) {
-  $fs = [System.IO.File]::OpenRead($Path)
   try {
-    $br = New-Object System.IO.BinaryReader($fs)
+    $fs = [System.IO.File]::OpenRead($Path)
     try {
-      if ($br.ReadUInt16() -ne 0x5A4D) { return $null } # MZ
-      $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
-      $peOffset = $br.ReadUInt32()
-      $fs.Seek([int64]$peOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
-      if ($br.ReadUInt32() -ne 0x00004550) { return $null } # PE\0\0
-      return $br.ReadUInt16()
+      $br = New-Object System.IO.BinaryReader($fs)
+      try {
+        if ($br.ReadUInt16() -ne 0x5A4D) { return $null } # MZ
+        $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
+        $peOffset = $br.ReadUInt32()
+        $fs.Seek([int64]$peOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+        if ($br.ReadUInt32() -ne 0x00004550) { return $null } # PE\0\0
+        return $br.ReadUInt16()
+      }
+      finally {
+        $br.Dispose()
+      }
     }
     finally {
-      $br.Dispose()
+      $fs.Dispose()
     }
   }
-  finally {
-    $fs.Dispose()
+  catch {
+    return $null
   }
 }
 
 function Get-ArchFromSys([string]$SysPath) {
   $machine = Get-PeMachine -Path $SysPath
+  if ($null -eq $machine) {
+    throw "Could not read PE header from SYS: $SysPath"
+  }
   switch ($machine) {
     0x014c { return 'x86' }   # IMAGE_FILE_MACHINE_I386
     0x8664 { return 'amd64' } # IMAGE_FILE_MACHINE_AMD64
-    default { throw ("Could not determine SYS architecture (PE machine: {0})." -f $machine) }
+    default { throw ("Could not determine SYS architecture (PE machine: 0x{0})." -f ("{0:x4}" -f $machine)) }
   }
 }
 
@@ -140,9 +158,32 @@ if (-not (Test-Path -LiteralPath $infDir -PathType Container)) {
   throw "INF directory not found: $infDir"
 }
 
-$infPath = Join-Path $infDir $script:InfFileName
-if (-not (Test-Path -LiteralPath $infPath -PathType Leaf)) {
-  throw "INF not found: $infPath"
+$infFiles = @(
+  Get-ChildItem -LiteralPath $infDir -File -Filter '*.inf' | Sort-Object -Property Name
+)
+if ($infFiles.Count -eq 0) {
+  throw "INF not found under: $infDir"
+}
+
+$preferred = @(
+  (Join-Path $infDir 'aero-virtio-snd.inf'),
+  (Join-Path $infDir 'virtio-snd.inf')
+)
+$infPath = $null
+foreach ($p in $preferred) {
+  if (Test-Path -LiteralPath $p -PathType Leaf) {
+    $infPath = $p
+    break
+  }
+}
+if ($null -eq $infPath) {
+  if ($infFiles.Count -eq 1) {
+    $infPath = $infFiles[0].FullName
+  }
+  else {
+    $list = $infFiles | ForEach-Object { "  - $($_.Name)" } | Out-String
+    throw ("Multiple INF files found under {0}. Expected aero-virtio-snd.inf (preferred) or virtio-snd.inf.`r`nFound:`r`n{1}" -f $infDir, $list.TrimEnd())
+  }
 }
 
 $sysPath = Join-Path $infDir $script:SysFileName
@@ -150,13 +191,14 @@ if (-not (Test-Path -LiteralPath $sysPath -PathType Leaf)) {
   throw "SYS not found: $sysPath`r`nBuild the driver and copy virtiosnd.sys into the inf\\ directory before packaging."
 }
 
-$driverVer = Get-DriverVerFromInf -InfPath $infPath
-$arch = Get-ArchFromSys -SysPath $sysPath
-
-$outDirResolved = Resolve-OrCreateDirectory -Path $OutDir -ArgName '-OutDir'
-
-$zipName = ("{0}-{1}-{2}-{3}.zip" -f $script:DriverId, $script:TargetOs, $arch, $driverVer.version)
-$zipPath = Join-Path $outDirResolved $zipName
+$detectedArch = Get-ArchFromSys -SysPath $sysPath
+$resolvedArch = $Arch.ToLowerInvariant()
+if ($resolvedArch -eq 'auto') {
+  $resolvedArch = $detectedArch
+}
+elseif ($resolvedArch -ne $detectedArch) {
+  throw ("-Arch {0} does not match SYS architecture ({1}). SYS: {2}" -f $resolvedArch, $detectedArch, $sysPath)
+}
 
 $excludeNames = @(
   '.gitignore',
@@ -171,24 +213,45 @@ $payload = @(
 )
 
 if ($payload.Count -eq 0) {
-  throw "No payload files found to package under: $infDir"
+  throw "No payload files found to stage under: $infDir"
 }
 
-$stageDir = Join-Path ([System.IO.Path]::GetTempPath()) ("{0}-{1}-{2}" -f $script:DriverId, $script:TargetOs, [Guid]::NewGuid().ToString('N'))
+$releaseRootResolved = Resolve-OrCreateDirectory -Path $ReleaseRoot -ArgName '-ReleaseRoot'
+$stageDir = Join-Path $releaseRootResolved (Join-Path $resolvedArch 'virtio-snd')
+
+if (Test-Path -LiteralPath $stageDir) {
+  Remove-Item -LiteralPath $stageDir -Recurse -Force
+}
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 
-try {
-  foreach ($f in $payload) {
-    Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $stageDir $f.Name) -Force
-  }
-
-  New-DeterministicZip -SourceDir $stageDir -ZipPath $zipPath
-}
-finally {
-  if (Test-Path -LiteralPath $stageDir) {
-    Remove-Item -LiteralPath $stageDir -Recurse -Force
-  }
+foreach ($f in $payload) {
+  Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $stageDir $f.Name) -Force
 }
 
-Write-Host ("Created {0}" -f $zipPath)
+Write-Host ("Staged driver package to: {0}" -f $stageDir)
+
+if ($Zip) {
+  $driverVer = Get-DriverVerFromInf -InfPath $infPath
+  $outDirResolved = Resolve-OrCreateDirectory -Path $OutDir -ArgName '-OutDir'
+
+  $zipName = ("{0}-{1}-{2}-{3}.zip" -f $script:DriverId, $script:TargetOs, $resolvedArch, $driverVer.version)
+  $zipPath = Join-Path $outDirResolved $zipName
+
+  $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("{0}-{1}-{2}" -f $script:DriverId, $script:TargetOs, [Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+  try {
+    foreach ($f in $payload) {
+      Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $tmpDir $f.Name) -Force
+    }
+    New-DeterministicZip -SourceDir $tmpDir -ZipPath $zipPath
+  }
+  finally {
+    if (Test-Path -LiteralPath $tmpDir) {
+      Remove-Item -LiteralPath $tmpDir -Recurse -Force
+    }
+  }
+
+  Write-Host ("Created {0}" -f $zipPath)
+}
 

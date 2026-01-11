@@ -7,7 +7,7 @@ rem
 rem Expects:
 rem   cert\aero-virtio-snd-test.pfx
 rem   inf\virtiosnd.sys
-rem   inf\virtio-snd.cat
+rem   inf\aero-virtio-snd.cat
 rem
 rem Usage:
 rem   sign-driver.cmd [PFX_PASSWORD]
@@ -20,7 +20,12 @@ set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
 set INF_DIR=%ROOT_DIR%\inf
 set SYS_FILE=%INF_DIR%\virtiosnd.sys
-set CAT_FILE=%INF_DIR%\virtio-snd.cat
+set INF_FILE=%INF_DIR%\aero-virtio-snd.inf
+set CAT_FILE=%INF_DIR%\aero-virtio-snd.cat
+if not exist "%INF_FILE%" (
+  set INF_FILE=%INF_DIR%\virtio-snd.inf
+  set CAT_FILE=%INF_DIR%\virtio-snd.cat
+)
 set PFX_FILE=%ROOT_DIR%\cert\aero-virtio-snd-test.pfx
 
 if not exist "%PFX_FILE%" (
