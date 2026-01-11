@@ -192,7 +192,7 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
         "SCI ISO must route IRQ9 to GSI9 (identity mapping)"
     );
     assert_eq!(
-        sci_iso.flags, 0x000D,
+        sci_iso.flags, 0x000F,
         "SCI ISO flags must remain active-low + level-triggered"
     );
 
