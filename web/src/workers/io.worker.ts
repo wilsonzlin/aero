@@ -287,7 +287,7 @@ class UhciRuntimeWebUsbBridge {
   private allocBrokerId(): number {
     const id = this.#nextBrokerId;
     this.#nextBrokerId += 1;
-    if (this.#nextBrokerId > 0xffff_ffff) {
+    if (!Number.isSafeInteger(id) || id < 0 || id > 0xffff_ffff) {
       throw new Error(`UhciRuntimeWebUsbBridge ran out of valid broker action IDs (next=${this.#nextBrokerId})`);
     }
     return id;
@@ -1113,6 +1113,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             usbDemo = new UsbPassthroughDemoRuntime({
               demo: usbDemoApi,
               postMessage: (msg: UsbActionMessage | UsbPassthroughDemoResultMessage) => {
+                if (msg.type === "usb.demoResult" && msg.result.status !== "error") {
+                  resetUsbDemoErrorDedup();
+                }
                 if (import.meta.env.DEV && msg.type === "usb.demoResult") {
                   if (msg.result.status === "success") {
                     const bytes = msg.result.data;
