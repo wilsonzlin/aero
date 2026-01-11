@@ -151,7 +151,8 @@ talks to a single HTTPS origin:
 
 Auth note (Option C): `/l2` should be treated like `/tcp` — **Origin allowlist + authentication**
 are required. In the default single-origin deployment model, browsers call `POST /session` first to
-receive the `aero_session` cookie, then connect to `wss://<origin>/l2` (cookie auth). For
+receive the `aero_session` cookie and endpoint discovery metadata, then connect to
+`wss://<origin><endpoints.l2>` (cookie auth; avoid hardcoding the path). For
 cross-origin deployments (or WebRTC relay bridging), configure token-based auth (JWT / API key) and
 forward the credential during the WebSocket upgrade (typically via query params).
 

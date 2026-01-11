@@ -240,7 +240,7 @@ The canonical deployment model is to require authentication during the WebSocket
 - **Cookie session** (recommended single-origin deployment):
   - `AERO_L2_AUTH_MODE=cookie`
   - Clients first call `POST /session` on `backend/aero-gateway` to obtain the `aero_session` cookie,
-    then open `wss://<origin>/l2` (the cookie is sent automatically).
+    then open `wss://<origin><endpoints.l2>` (the cookie is sent automatically; do not hardcode `/l2`).
   - The L2 proxy must be configured with the same secret as the gateway:
     `AERO_L2_SESSION_SECRET` must match the gateway’s `SESSION_SECRET`.
 - **JWT** (recommended for cross-origin / relay bridging):
