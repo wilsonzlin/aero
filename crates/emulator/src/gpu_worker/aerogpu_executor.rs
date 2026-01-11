@@ -15,6 +15,7 @@ use crate::gpu_worker::aerogpu_backend::{
     AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
     NullAeroGpuBackend,
 };
+use crate::gpu_worker::aerogpu_software::AeroGpuSoftwareExecutor;
 
 #[cfg(feature = "aerogpu-trace")]
 use aero_gpu_trace::{AerogpuMemoryRangeCapture, TraceMeta, TraceWriteError, TraceWriter};
@@ -131,6 +132,7 @@ pub struct AeroGpuExecutor {
     in_flight: BTreeMap<u64, InFlightSubmission>,
     completed_before_submit: HashSet<u64>,
     backend: Box<dyn AeroGpuCommandBackend>,
+    software: AeroGpuSoftwareExecutor,
     #[cfg(feature = "aerogpu-trace")]
     trace: Option<AerogpuSubmissionTrace>,
 }
@@ -144,6 +146,7 @@ impl Clone for AeroGpuExecutor {
             in_flight: self.in_flight.clone(),
             completed_before_submit: self.completed_before_submit.clone(),
             backend: Box::new(NullAeroGpuBackend::new()),
+            software: self.software.clone(),
             #[cfg(feature = "aerogpu-trace")]
             trace: None,
         }
@@ -159,6 +162,7 @@ impl AeroGpuExecutor {
             in_flight: BTreeMap::new(),
             completed_before_submit: HashSet::new(),
             backend: Box::new(NullAeroGpuBackend::new()),
+            software: AeroGpuSoftwareExecutor::new(),
             #[cfg(feature = "aerogpu-trace")]
             trace: None,
         }
@@ -173,6 +177,7 @@ impl AeroGpuExecutor {
         self.in_flight.clear();
         self.completed_before_submit.clear();
         self.backend.reset();
+        self.software.reset();
     }
 
     pub fn flush_pending_fences(&mut self, regs: &mut AeroGpuRegs, mem: &mut dyn MemoryBus) {
@@ -426,6 +431,9 @@ impl AeroGpuExecutor {
                         && !decode_errors
                             .iter()
                             .any(|e| matches!(e, AeroGpuSubmissionDecodeError::CmdStream(_)));
+                    if decode_errors.is_empty() && cmd_stream_ok {
+                        self.software.execute_submission(regs, mem, &desc);
+                    }
                     if wants_present && cmd_stream_ok {
                         let scan_result = if cmd_stream.is_empty() {
                             cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes)
