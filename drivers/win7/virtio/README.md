@@ -7,6 +7,8 @@ drivers:
   discovery + feature negotiation (`VERSION_1`).
 * `virtio-transport-test` – a KMDF “smoke test” driver that binds to a virtio modern
   PCI device and exercises the transport init/feature negotiation path (no virtqueues).
+  It is intentionally **not** CI-packaged (no `ci-package.json`) so it does not ship in
+  Guest Tools / driver bundle artifacts.
 
 The intent is to provide a repeatable starting point for future virtio drivers
 (`virtio-input`, `virtio-blk`, `virtio-net`, …) that must still run on Windows 7.
