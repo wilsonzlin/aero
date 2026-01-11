@@ -870,16 +870,6 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
 
   *again = FALSE;
 
-  {
-    static const USHORT allowedIds[] = {0x1042};
-    st = AeroVirtioPciValidateContractV1BusSlot(
-        configInfo->SystemIoBusNumber, configInfo->SlotNumber, allowedIds, RTL_NUMBER_OF(allowedIds));
-    if (!NT_SUCCESS(st)) {
-      AEROVBLK_LOG("AERO-W7-VIRTIO identity check failed: 0x%08lx", st);
-      return SP_RETURN_NOT_FOUND;
-    }
-  }
-
   if (configInfo->NumberOfAccessRanges < 1) {
     return SP_RETURN_NOT_FOUND;
   }
