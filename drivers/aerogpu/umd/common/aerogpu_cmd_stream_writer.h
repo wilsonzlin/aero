@@ -355,6 +355,10 @@ class VectorCmdStreamWriter {
       return nullptr;
     }
 
+    if (cmd_size > std::numeric_limits<size_t>::max() - 3) {
+      error_ = CmdStreamError::kSizeTooLarge;
+      return nullptr;
+    }
     const size_t aligned_size = align_up(cmd_size, 4);
     if (aligned_size > std::numeric_limits<uint32_t>::max()) {
       error_ = CmdStreamError::kSizeTooLarge;
@@ -362,6 +366,14 @@ class VectorCmdStreamWriter {
     }
 
     const size_t offset = buf_.size();
+    // The protocol encodes stream and packet sizes as u32. Prevent accidentally
+    // building command streams larger than that (which could otherwise allocate
+    // large host buffers before failing at finalize()).
+    if (offset > std::numeric_limits<size_t>::max() - aligned_size ||
+        offset > static_cast<size_t>(std::numeric_limits<uint32_t>::max() - aligned_size)) {
+      error_ = CmdStreamError::kSizeTooLarge;
+      return nullptr;
+    }
     buf_.resize(offset + aligned_size, 0);
 
     auto* hdr = reinterpret_cast<aerogpu_cmd_hdr*>(buf_.data() + offset);
