@@ -755,6 +755,17 @@ impl UsbHidKeyboard {
 
 ---
 
+## WebHID/WebUSB passthrough (optional “real devices”)
+
+In addition to synthesizing PS/2 or USB HID events from browser input events,
+the host can optionally pass through a **real, host-connected HID device** into
+the guest using browser device APIs (WebHID for MVP; WebUSB later).
+
+See [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md) for the
+intended architecture, security model, and current limitations.
+
+---
+
 ## Virtio-input (Paravirtualized Keyboard/Mouse)
 
 Virtio-input is the virtio device for input peripherals. Conceptually it is a stream of small typed events (similar to Linux `evdev`) delivered over virtqueues, rather than a full USB bus + endpoints + HID polling model.

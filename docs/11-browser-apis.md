@@ -70,6 +70,8 @@ export default {
 | Pointer Lock | ✓ | ✓ | 10.1+ | ✓ | **Yes** |
 | Fullscreen | ✓ | ✓ | ✓ | ✓ | Recommended |
 | Gamepad | ✓ | ✓ | 10.1+ | ✓ | Optional |
+| WebHID | 89+ | 🚧 | 🚧 | 89+ | Optional |
+| WebUSB | 61+ | 🚧 | 🚧 | 79+ | Optional |
 | WebCodecs | 94+ | 🚧 | 🚧 | 94+ | Optional |
 | WebUSB (`navigator.usb`) | 61+ | ✗ | ✗ | 79+ | Optional |
 | WebHID (`navigator.hid`) | Chromium-only | ✗ | ✗ | Chromium-only | Optional |
