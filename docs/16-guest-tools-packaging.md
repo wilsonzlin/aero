@@ -472,5 +472,9 @@ python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-ae
 # generated from that contract (or extracted from a virtio-win Guest Tools ZIP). The in-repo
 # guest-tools/config/devices.cmd is generated from the canonical Aero contract.
 python scripts/generate-guest-tools-devices-cmd.py --contract docs/windows-device-contract-virtio-win.json --output /tmp/devices-virtio-win.cmd
-python tools/guest-tools/validate_config.py --devices-cmd /tmp/devices-virtio-win.cmd --windows-device-contract docs/windows-device-contract-virtio-win.json --spec tools/packaging/specs/win7-virtio-win.json
+python tools/guest-tools/validate_config.py --devices-cmd /tmp/devices-virtio-win.cmd --spec tools/packaging/specs/win7-virtio-win.json
+
+# (Optional) If you are validating a devices.cmd copy that does not include a contract header,
+# force the contract file explicitly:
+# python tools/guest-tools/validate_config.py --devices-cmd /tmp/devices-virtio-win.cmd --windows-device-contract docs/windows-device-contract-virtio-win.json --spec tools/packaging/specs/win7-virtio-win.json
 ```
