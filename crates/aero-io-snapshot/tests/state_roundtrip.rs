@@ -209,6 +209,7 @@ fn hda_state_roundtrip() {
         statests: 0x0001,
         intctl: 2,
         intsts: 3,
+        output_rate_hz: 44_100,
         dplbase: 0x1000,
         dpubase: 0,
         corblbase: 0x2000,

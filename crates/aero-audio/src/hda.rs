@@ -1920,6 +1920,7 @@ impl HdaController {
             statests: self.statests,
             intctl: self.intctl,
             intsts: self.intsts,
+            output_rate_hz: self.output_rate_hz,
             dplbase: self.dplbase,
             dpubase: self.dpubase,
 
@@ -1996,6 +1997,10 @@ impl HdaController {
     }
 
     pub fn restore_state(&mut self, state: &HdaControllerState) {
+        if state.output_rate_hz != 0 {
+            self.set_output_rate_hz(state.output_rate_hz);
+        }
+
         self.gctl = state.gctl;
         self.wakeen = state.wakeen;
         self.statests = state.statests;

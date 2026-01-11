@@ -66,6 +66,12 @@ pub struct HdaControllerState {
     pub statests: u16,
     pub intctl: u32,
     pub intsts: u32,
+    /// Host/output sample rate used by the HDA controller for time base + resampling.
+    ///
+    /// This is not guest-visible directly, but it affects guest-visible DMA/LPIB progression.
+    /// Stored so restores can recreate deterministic stream resampler state without requiring the
+    /// coordinator to set the rate before applying the snapshot.
+    pub output_rate_hz: u32,
 
     pub dplbase: u32,
     pub dpubase: u32,
@@ -102,6 +108,7 @@ impl Default for HdaControllerState {
             statests: 0,
             intctl: 0,
             intsts: 0,
+            output_rate_hz: 0,
             dplbase: 0,
             dpubase: 0,
             corblbase: 0,
@@ -153,7 +160,7 @@ impl Default for HdaControllerState {
 
 impl IoSnapshot for HdaControllerState {
     const DEVICE_ID: [u8; 4] = *b"HDA0";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 2);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 3);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_GCTL: u16 = 1;
@@ -163,6 +170,7 @@ impl IoSnapshot for HdaControllerState {
         const TAG_DPLBASE: u16 = 5;
         const TAG_DPUBASE: u16 = 6;
         const TAG_WAKEEN: u16 = 7;
+        const TAG_OUTPUT_RATE_HZ: u16 = 8;
 
         const TAG_CORBLBASE: u16 = 10;
         const TAG_CORBUBASE: u16 = 11;
@@ -198,6 +206,7 @@ impl IoSnapshot for HdaControllerState {
         w.field_u32(TAG_DPLBASE, self.dplbase);
         w.field_u32(TAG_DPUBASE, self.dpubase);
         w.field_u16(TAG_WAKEEN, self.wakeen);
+        w.field_u32(TAG_OUTPUT_RATE_HZ, self.output_rate_hz);
 
         w.field_u32(TAG_CORBLBASE, self.corblbase);
         w.field_u32(TAG_CORBUBASE, self.corbubase);
@@ -299,6 +308,7 @@ impl IoSnapshot for HdaControllerState {
         const TAG_DPLBASE: u16 = 5;
         const TAG_DPUBASE: u16 = 6;
         const TAG_WAKEEN: u16 = 7;
+        const TAG_OUTPUT_RATE_HZ: u16 = 8;
 
         const TAG_CORBLBASE: u16 = 10;
         const TAG_CORBUBASE: u16 = 11;
@@ -349,6 +359,9 @@ impl IoSnapshot for HdaControllerState {
         }
         if let Some(v) = r.u16(TAG_WAKEEN)? {
             self.wakeen = v;
+        }
+        if let Some(v) = r.u32(TAG_OUTPUT_RATE_HZ)? {
+            self.output_rate_hz = v;
         }
 
         if let Some(v) = r.u32(TAG_CORBLBASE)? {

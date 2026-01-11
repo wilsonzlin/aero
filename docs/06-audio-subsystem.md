@@ -107,9 +107,12 @@ Audio snapshots must capture guest-visible progress (DMA positions, buffer state
     amp gain/mute, pin widget control, pin/AFG power state, etc.).
   - Stream DMA runtime progress needed to continue deterministically after restore (BDL index + byte offset and
     resampler fractional position; capture also restores the capture-frame accumulator used for rate conversion).
+  - Host output sample rate used by the controller (`output_rate_hz`). This is required to restore stream resampler
+    state deterministically (even though it isn't guest-visible directly).
 - **Host-side audio plumbing (recreated)**
   - AudioWorklet ring *indices* (`read_pos` / `write_pos` monotonic frame counters + capacity). The ring buffer
     contents are not serialized.
+    - Helpers: `aero_platform::audio::worklet_bridge::{WorkletBridge, InterleavedRingBuffer}::snapshot_state()`.
 
 ### Restore semantics / limitations
 

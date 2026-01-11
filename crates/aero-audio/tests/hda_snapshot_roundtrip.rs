@@ -386,3 +386,72 @@ fn hda_snapshot_restore_clamps_corb_pointers_to_selected_ring_size() {
     let any_resp = mem.read_u32(rirb_base + 1 * 8);
     assert_ne!(any_resp, 0);
 }
+
+#[test]
+fn hda_snapshot_restore_restores_output_rate_hz_for_resampler_determinism() {
+    let mut hda = HdaController::new();
+    let mut mem = GuestMemory::new(0x40_000);
+
+    // Use a non-default host sample rate. Safari/iOS commonly runs AudioContext at 44.1kHz, so
+    // snapshot/restore must keep this rate stable to preserve guest-visible DMA progress.
+    hda.set_output_rate_hz(44_100);
+
+    hda.mmio_write(REG_GCTL, 4, 0x1);
+
+    // Configure codec output converter to listen on stream 1, channel 0.
+    hda.codec_mut().execute_verb(2, verb_12(0x706, 0x10));
+
+    // Guest stream format: 48kHz, 16-bit, stereo. This forces the device to resample 48k -> 44.1k.
+    let fmt_raw: u16 = (1 << 4) | 0x1;
+    hda.codec_mut().execute_verb(2, verb_4(0x2, fmt_raw));
+
+    let bdl_base = 0x1000u64;
+    let buf = 0x2000u64;
+    let buf_len = 4096u32;
+
+    mem.write_u64(bdl_base, buf);
+    mem.write_u32(bdl_base + 8, buf_len);
+    mem.write_u32(bdl_base + 12, 0);
+
+    for i in 0..buf_len {
+        mem.write_u8(buf + i as u64, (i & 0xff) as u8);
+    }
+
+    {
+        let sd = hda.stream_mut(0);
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+        sd.cbl = buf_len;
+        sd.lvi = 0;
+        sd.fmt = fmt_raw;
+        // SRST | RUN | stream number 1.
+        sd.ctl = (1 << 0) | (1 << 1) | (1 << 20);
+    }
+
+    // Advance DMA a bit so the resampler has non-trivial state at snapshot time.
+    let frames_0 = 256usize;
+    hda.process(&mut mem, frames_0);
+
+    let worklet_ring = AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    };
+    let snap = hda.snapshot_state(worklet_ring);
+    assert_eq!(snap.output_rate_hz, 44_100);
+
+    // Baseline: continue running from the live controller at snapshot time.
+    let mut expected = hda.clone();
+    let frames_1 = 256usize;
+    expected.process(&mut mem, frames_1);
+    let expected_lpib = expected.mmio_read(REG_SD0LPIB, 4);
+
+    // Restore into a fresh controller. We intentionally do not call `set_output_rate_hz` here;
+    // the snapshot must carry the output rate so restore is deterministic.
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+    assert_eq!(restored.output_rate_hz(), 44_100);
+
+    restored.process(&mut mem, frames_1);
+    assert_eq!(restored.mmio_read(REG_SD0LPIB, 4), expected_lpib);
+}
