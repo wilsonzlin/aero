@@ -27,19 +27,24 @@ const HUB_FEATURE_C_HUB_LOCAL_POWER: u16 = 0;
 const HUB_FEATURE_C_HUB_OVER_CURRENT: u16 = 1;
 
 const HUB_PORT_FEATURE_ENABLE: u16 = 1;
+const HUB_PORT_FEATURE_SUSPEND: u16 = 2;
 const HUB_PORT_FEATURE_RESET: u16 = 4;
 const HUB_PORT_FEATURE_POWER: u16 = 8;
 const HUB_PORT_FEATURE_C_PORT_CONNECTION: u16 = 16;
 const HUB_PORT_FEATURE_C_PORT_ENABLE: u16 = 17;
+const HUB_PORT_FEATURE_C_PORT_SUSPEND: u16 = 18;
+const HUB_PORT_FEATURE_C_PORT_OVER_CURRENT: u16 = 19;
 const HUB_PORT_FEATURE_C_PORT_RESET: u16 = 20;
 
 const HUB_PORT_STATUS_CONNECTION: u16 = 1 << 0;
 const HUB_PORT_STATUS_ENABLE: u16 = 1 << 1;
+const HUB_PORT_STATUS_SUSPEND: u16 = 1 << 2;
 const HUB_PORT_STATUS_RESET: u16 = 1 << 4;
 const HUB_PORT_STATUS_POWER: u16 = 1 << 8;
 
 const HUB_PORT_CHANGE_CONNECTION: u16 = 1 << 0;
 const HUB_PORT_CHANGE_ENABLE: u16 = 1 << 1;
+const HUB_PORT_CHANGE_SUSPEND: u16 = 1 << 2;
 const HUB_PORT_CHANGE_RESET: u16 = 1 << 4;
 
 const HUB_INTERRUPT_IN_EP: u8 = 0x81;
@@ -52,6 +57,8 @@ struct HubPort {
     connect_change: bool,
     enabled: bool,
     enable_change: bool,
+    suspended: bool,
+    suspend_change: bool,
     powered: bool,
     reset: bool,
     reset_countdown_ms: u8,
@@ -66,6 +73,8 @@ impl HubPort {
             connect_change: false,
             enabled: false,
             enable_change: false,
+            suspended: false,
+            suspend_change: false,
             powered: false,
             reset: false,
             reset_countdown_ms: 0,
@@ -77,6 +86,8 @@ impl HubPort {
         self.device = Some(AttachedUsbDevice::new(model));
         self.connected = true;
         self.connect_change = true;
+        self.suspended = false;
+        self.suspend_change = false;
         self.set_enabled(false);
     }
 
@@ -86,6 +97,8 @@ impl HubPort {
             self.connected = false;
             self.connect_change = true;
         }
+        self.suspended = false;
+        self.suspend_change = false;
         self.set_enabled(false);
     }
 
@@ -99,6 +112,8 @@ impl HubPort {
             if let Some(dev) = self.device.as_mut() {
                 dev.reset();
             }
+            self.suspended = false;
+            self.suspend_change = false;
             self.set_enabled(false);
         }
     }
@@ -117,6 +132,27 @@ impl HubPort {
             self.enabled = enabled;
             self.enable_change = true;
         }
+
+        if !self.enabled {
+            self.suspended = false;
+            self.suspend_change = false;
+        }
+    }
+
+    fn set_suspended(&mut self, suspended: bool) {
+        if suspended {
+            if !(self.enabled && self.powered && self.connected) {
+                return;
+            }
+            if self.reset {
+                return;
+            }
+        }
+
+        if suspended != self.suspended {
+            self.suspended = suspended;
+            self.suspend_change = true;
+        }
     }
 
     fn start_reset(&mut self) {
@@ -130,6 +166,9 @@ impl HubPort {
         if let Some(dev) = self.device.as_mut() {
             dev.reset();
         }
+
+        self.suspended = false;
+        self.suspend_change = false;
 
         if self.enabled {
             self.set_enabled(false);
@@ -159,6 +198,9 @@ impl HubPort {
         if self.enabled {
             st |= HUB_PORT_STATUS_ENABLE;
         }
+        if self.suspended {
+            st |= HUB_PORT_STATUS_SUSPEND;
+        }
         if self.reset {
             st |= HUB_PORT_STATUS_RESET;
         }
@@ -176,6 +218,9 @@ impl HubPort {
         if self.enable_change {
             ch |= HUB_PORT_CHANGE_ENABLE;
         }
+        if self.suspend_change {
+            ch |= HUB_PORT_CHANGE_SUSPEND;
+        }
         if self.reset_change {
             ch |= HUB_PORT_CHANGE_RESET;
         }
@@ -183,7 +228,7 @@ impl HubPort {
     }
 
     fn has_change(&self) -> bool {
-        self.connect_change || self.enable_change || self.reset_change
+        self.connect_change || self.enable_change || self.suspend_change || self.reset_change
     }
 }
 
@@ -382,6 +427,8 @@ impl UsbDeviceModel for UsbHubDevice {
             // An upstream bus reset disables downstream ports; flag a change if the port was
             // previously enabled so the host can notice once the hub is reconfigured.
             port.enable_change = was_enabled;
+            port.suspended = false;
+            port.suspend_change = false;
             port.reset = false;
             port.reset_countdown_ms = 0;
             port.reset_change = false;
@@ -625,6 +672,10 @@ impl UsbDeviceModel for UsbHubDevice {
                             port.set_enabled(true);
                             ControlResponse::Ack
                         }
+                        HUB_PORT_FEATURE_SUSPEND => {
+                            port.set_suspended(true);
+                            ControlResponse::Ack
+                        }
                         HUB_PORT_FEATURE_POWER => {
                             port.set_powered(true);
                             ControlResponse::Ack
@@ -650,6 +701,10 @@ impl UsbDeviceModel for UsbHubDevice {
                             port.set_enabled(false);
                             ControlResponse::Ack
                         }
+                        HUB_PORT_FEATURE_SUSPEND => {
+                            port.set_suspended(false);
+                            ControlResponse::Ack
+                        }
                         HUB_PORT_FEATURE_POWER => {
                             port.set_powered(false);
                             ControlResponse::Ack
@@ -662,6 +717,11 @@ impl UsbDeviceModel for UsbHubDevice {
                             port.enable_change = false;
                             ControlResponse::Ack
                         }
+                        HUB_PORT_FEATURE_C_PORT_SUSPEND => {
+                            port.suspend_change = false;
+                            ControlResponse::Ack
+                        }
+                        HUB_PORT_FEATURE_C_PORT_OVER_CURRENT => ControlResponse::Ack,
                         HUB_PORT_FEATURE_C_PORT_RESET => {
                             port.reset_change = false;
                             ControlResponse::Ack
@@ -818,6 +878,9 @@ fn build_hub_config_descriptor(interrupt_bitmap_len: usize) -> Vec<u8> {
 }
 
 fn build_hub_descriptor(num_ports: usize) -> Vec<u8> {
+    // USB 2.0 hub class spec 11.23.2.1:
+    // - bits 0..=1: power switching mode (01b = per-port).
+    // - bits 3..=4: over-current protection mode (10b = no over-current reporting).
     const HUB_W_HUB_CHARACTERISTICS: u16 = 0x0011;
 
     let bitmap_len = hub_bitmap_len(num_ports);

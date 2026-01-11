@@ -17,16 +17,21 @@ const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
 const USB_FEATURE_DEVICE_REMOTE_WAKEUP: u16 = 1;
 
 const HUB_PORT_FEATURE_ENABLE: u16 = 1;
+const HUB_PORT_FEATURE_SUSPEND: u16 = 2;
 const HUB_PORT_FEATURE_RESET: u16 = 4;
 const HUB_PORT_FEATURE_POWER: u16 = 8;
 const HUB_PORT_FEATURE_C_PORT_CONNECTION: u16 = 16;
 const HUB_PORT_FEATURE_C_PORT_ENABLE: u16 = 17;
+const HUB_PORT_FEATURE_C_PORT_SUSPEND: u16 = 18;
+const HUB_PORT_FEATURE_C_PORT_OVER_CURRENT: u16 = 19;
 const HUB_PORT_FEATURE_C_PORT_RESET: u16 = 20;
 
 const HUB_PORT_STATUS_ENABLE: u16 = 1 << 1;
+const HUB_PORT_STATUS_SUSPEND: u16 = 1 << 2;
 const HUB_PORT_STATUS_POWER: u16 = 1 << 8;
 
 const HUB_PORT_CHANGE_ENABLE: u16 = 1 << 1;
+const HUB_PORT_CHANGE_SUSPEND: u16 = 1 << 2;
 
 const HUB_INTERRUPT_IN_EP: u8 = 0x81;
 
@@ -497,6 +502,72 @@ fn usb_hub_port_enable_set_and_clear_feature() {
     let (status, change) = get_port_status_and_change(&mut hub, 1);
     assert_ne!(status & HUB_PORT_STATUS_ENABLE, 0);
     assert_ne!(change & HUB_PORT_CHANGE_ENABLE, 0);
+}
+
+#[test]
+fn usb_hub_port_suspend_set_and_clear_feature() {
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    assert_eq!(
+        hub.handle_control_request(set_configuration(1), None),
+        ControlResponse::Ack
+    );
+
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_ENABLE), None),
+        ControlResponse::Ack
+    );
+
+    // Clear any change bits so suspend-change edges are observable.
+    for feature in [HUB_PORT_FEATURE_C_PORT_CONNECTION, HUB_PORT_FEATURE_C_PORT_ENABLE] {
+        assert_eq!(
+            hub.handle_control_request(hub_clear_feature_port(1, feature), None),
+            ControlResponse::Ack
+        );
+    }
+
+    // Suspend the port.
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_SUSPEND), None),
+        ControlResponse::Ack
+    );
+    let (status, change) = get_port_status_and_change(&mut hub, 1);
+    assert_ne!(status & HUB_PORT_STATUS_SUSPEND, 0);
+    assert_ne!(change & HUB_PORT_CHANGE_SUSPEND, 0);
+
+    // Clear suspend-change.
+    assert_eq!(
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_SUSPEND),
+            None
+        ),
+        ControlResponse::Ack
+    );
+    let (status, change) = get_port_status_and_change(&mut hub, 1);
+    assert_ne!(status & HUB_PORT_STATUS_SUSPEND, 0);
+    assert_eq!(change & HUB_PORT_CHANGE_SUSPEND, 0);
+
+    // Resume (clear suspend).
+    assert_eq!(
+        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_SUSPEND), None),
+        ControlResponse::Ack
+    );
+    let (status, change) = get_port_status_and_change(&mut hub, 1);
+    assert_eq!(status & HUB_PORT_STATUS_SUSPEND, 0);
+    assert_ne!(change & HUB_PORT_CHANGE_SUSPEND, 0);
+
+    // Clearing unimplemented change selectors should not stall.
+    assert_eq!(
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_OVER_CURRENT),
+            None
+        ),
+        ControlResponse::Ack
+    );
 }
 
 #[test]
