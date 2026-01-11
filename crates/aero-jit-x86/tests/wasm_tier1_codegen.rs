@@ -296,7 +296,10 @@ fn wasm_tier1_call_helper_bails_out_to_interpreter_without_trapping() {
     // Helper calls are not expected in the current Tier-1 translation, but the WASM codegen should
     // treat them defensively as a runtime bailout instead of panicking.
     b.call_helper("test_helper", Vec::new(), None);
-    let ir = b.finish(IrTerminator::ExitToInterpreter { next_rip: entry });
+    // Ensure the bailout skips the terminator's next_rip.
+    let ir = b.finish(IrTerminator::ExitToInterpreter {
+        next_rip: entry + 4,
+    });
 
     let mut cpu = CpuState::default();
     cpu.rip = entry;
