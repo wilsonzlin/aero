@@ -164,6 +164,15 @@ pub const VIRTIO_SND_QUEUE_EVENT: u16 = 1;
 pub const VIRTIO_SND_QUEUE_TX: u16 = 2;
 pub const VIRTIO_SND_QUEUE_RX: u16 = 3;
 
+/// virtio-snd device configuration (`struct virtio_snd_config`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioSndConfig {
+  pub jacks: u32,
+  pub streams: u32,
+  pub chmaps: u32,
+}
+
 /// virtio-snd PCM_INFO request (`struct virtio_snd_pcm_info_req`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -352,6 +361,14 @@ mod tests {
     assert_eq!(size_of::<VirtioSndTxHdr>(), 8);
     assert_eq!(offset_of!(VirtioSndTxHdr, stream_id), 0);
     assert_eq!(offset_of!(VirtioSndTxHdr, reserved), 4);
+  }
+
+  #[test]
+  fn virtio_snd_config_layout() {
+    assert_eq!(size_of::<VirtioSndConfig>(), 12);
+    assert_eq!(offset_of!(VirtioSndConfig, jacks), 0);
+    assert_eq!(offset_of!(VirtioSndConfig, streams), 4);
+    assert_eq!(offset_of!(VirtioSndConfig, chmaps), 8);
   }
 
   #[test]
