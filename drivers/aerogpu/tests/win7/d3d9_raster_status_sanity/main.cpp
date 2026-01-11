@@ -11,7 +11,7 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--samples=N] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]",
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]",
         kTestName);
     return 0;
   }
@@ -19,6 +19,7 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
 
   uint32_t require_vid = 0;
@@ -150,6 +151,13 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
         kTestName, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
   }
 
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
+  }
+
   LARGE_INTEGER qpc_freq;
   QueryPerformanceFrequency(&qpc_freq);
   LARGE_INTEGER qpc_start;
@@ -247,4 +255,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D9RasterStatusSanity(argc, argv);
 }
-

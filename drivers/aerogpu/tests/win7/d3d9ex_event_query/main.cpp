@@ -15,7 +15,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   const char* kTestName = "d3d9ex_event_query";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--hidden] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu]",
+        "Usage: %s.exe [--hidden] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Creates a D3DQUERYTYPE_EVENT query and polls GetData() until it signals.");
     return 0;
@@ -23,6 +23,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
 
   uint32_t require_vid = 0;
@@ -133,6 +134,13 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     }
   } else if (has_require_vid || has_require_did) {
     return aerogpu_test::FailHresult(kTestName, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
+  }
+
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
   }
 
   // Ensure there is at least some queued work before we issue the EVENT query.

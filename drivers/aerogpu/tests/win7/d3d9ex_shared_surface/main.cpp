@@ -15,6 +15,7 @@ struct Vertex {
 struct AdapterRequirements {
   bool allow_microsoft;
   bool allow_non_aerogpu;
+  bool require_umd;
   bool has_require_vid;
   bool has_require_did;
   uint32_t require_vid;
@@ -238,6 +239,13 @@ static int CreateD3D9ExDevice(const char* test_name,
   int rc = CheckD3D9Adapter(test_name, d3d.get(), req);
   if (rc != 0) {
     return rc;
+  }
+
+  if (req.require_umd || (!req.allow_microsoft && !req.allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(test_name);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
   }
 
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
@@ -943,6 +951,9 @@ static int RunParent(int argc,
   if (req.allow_non_aerogpu) {
     cmdline += L" --allow-non-aerogpu";
   }
+  if (req.require_umd) {
+    cmdline += L" --require-umd";
+  }
   if (req.has_require_vid) {
     std::string v = FormatPciIdHex(req.require_vid);
     cmdline += L" --require-vid=";
@@ -1288,12 +1299,12 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--dump] [--hidden] [--show] [--validate-sharing] [--require-vid=0x####] "
-        "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu]",
+        "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Note: --dump implies --validate-sharing.");
     aerogpu_test::PrintfStdout(
         "Internal: %s.exe --child --resource=texture|rendertarget --shared-handle=0x... "
-        "[--ready-event=NAME --opened-event=NAME --done-event=NAME] (used by parent)",
+        "[--ready-event=NAME --opened-event=NAME --done-event=NAME] [--require-umd] (used by parent)",
         kTestName);
     return 0;
   }
@@ -1304,6 +1315,7 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
       aerogpu_test::HasArg(argc, argv, "--validate-sharing") || dump;
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
   if (aerogpu_test::HasArg(argc, argv, "--show")) {
     hidden = false;
@@ -1313,6 +1325,7 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   ZeroMemory(&req, sizeof(req));
   req.allow_microsoft = allow_microsoft;
   req.allow_non_aerogpu = allow_non_aerogpu;
+  req.require_umd = require_umd;
 
   std::string require_vid_str;
   std::string require_did_str;
