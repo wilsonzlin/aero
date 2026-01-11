@@ -22,6 +22,11 @@ python3 tools/driver-iso/build.py \
   --output dist/aero-virtio-win7-drivers.iso
 ```
 
+Redistribution note:
+
+- Ensure you ship `THIRD_PARTY_NOTICES.md` (see `drivers/virtio/THIRD_PARTY_NOTICES.md`) alongside any virtio-win-derived binaries.
+- If you are redistributing drivers extracted from a virtio-win ISO, also include upstream license/notice texts under `licenses/virtio-win/` when available.
+
 Tip: the script `drivers/scripts/make-driver-pack.ps1` already produces a compatible staging directory
 at `drivers/out/aero-win7-driver-pack/`. You can point the ISO builder at that directory directly
 instead of copying into `drivers/virtio/prebuilt/`.
