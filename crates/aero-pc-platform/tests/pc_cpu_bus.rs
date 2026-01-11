@@ -281,6 +281,32 @@ fn pc_cpu_bus_bulk_set_repeats_pattern() {
 }
 
 #[test]
+fn pc_cpu_bus_bulk_set_preserves_pattern_alignment_across_chunks() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let mut state = CpuState::new(CpuMode::Protected);
+    state.control.cr0 = CR0_PE;
+    state.update_mode();
+    bus.sync(&state);
+
+    // Use a non-power-of-two pattern length so `BUF_SIZE` is not a multiple of
+    // `pattern.len()`. Ensure we span multiple chunks.
+    let pattern = [0x10u8, 0x20, 0x30];
+    let repeat = 2000usize; // 6000 bytes
+    let total = pattern.len() * repeat;
+
+    assert!(bus.supports_bulk_set());
+    assert!(bus.bulk_set(0x8000, &pattern, repeat).unwrap());
+
+    let mut out = vec![0u8; total];
+    bus.read_bytes(0x8000, &mut out).unwrap();
+
+    let expected: Vec<u8> = pattern.iter().copied().cycle().take(total).collect();
+    assert_eq!(out, expected);
+}
+
+#[test]
 fn pc_cpu_bus_bulk_copy_is_atomic_wrt_page_faults() {
     let platform = PcPlatform::new(2 * 1024 * 1024);
     let mut bus = PcCpuBus::new(platform);

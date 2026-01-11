@@ -462,15 +462,25 @@ impl CpuBus for PcCpuBus {
         const BUF_SIZE: usize = 4096;
         let mut buf = [0u8; BUF_SIZE];
 
-        // Fill buffer with repeated pattern.
-        for (i, slot) in buf.iter_mut().enumerate() {
-            *slot = pattern[i % pattern.len()];
-        }
-
         let mut offset = 0usize;
         while offset < total {
             let chunk_len = (total - offset).min(BUF_SIZE);
             let dst_addr = dst + offset as u64;
+            // Fill `buf[..chunk_len]` with the correct pattern sequence for this chunk.
+            //
+            // Note: `bulk_set` is defined as repeating the entire `pattern` byte
+            // sequence `repeat` times. The chunk size (BUF_SIZE) is not
+            // necessarily a multiple of `pattern.len()`, so we must preserve the
+            // pattern offset across chunks.
+            let mut pos = 0usize;
+            let mut pat_idx = offset % pattern.len();
+            while pos < chunk_len {
+                let take = (chunk_len - pos).min(pattern.len() - pat_idx);
+                buf[pos..pos + take].copy_from_slice(&pattern[pat_idx..pat_idx + take]);
+                pos += take;
+                pat_idx = 0;
+            }
+
             self.write_bytes_access(dst_addr, &buf[..chunk_len], AccessType::Write)?;
             offset += chunk_len;
         }
