@@ -48,3 +48,19 @@ set_target_properties(aerogpu_alloc_list_tracker_tests PROPERTIES
 )
 
 add_test(NAME aerogpu_alloc_list_tracker_tests COMMAND aerogpu_alloc_list_tracker_tests)
+
+add_executable(aerogpu_dma_priv_tests
+    dma_priv_tests.cpp
+)
+
+target_include_directories(aerogpu_dma_priv_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../../../protocol
+)
+
+set_target_properties(aerogpu_dma_priv_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_dma_priv_tests COMMAND aerogpu_dma_priv_tests)

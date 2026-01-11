@@ -35,6 +35,7 @@
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_d3d9_submit.h"
+#include "aerogpu_d3d9_dma_priv.h"
 #include "aerogpu_win7_abi.h"
 #include "aerogpu_log.h"
 #include "aerogpu_alloc.h"
@@ -3084,7 +3085,7 @@ HRESULT invoke_submit_callback(Device* dev,
     dma_priv_bytes = args.DmaBufferPrivateDataSize;
   }
 
-  if (!dma_priv_ptr || dma_priv_bytes < expected_dma_priv_bytes) {
+  if (!InitWin7DmaBufferPrivateData(dma_priv_ptr, dma_priv_bytes, is_present)) {
     std::call_once(g_dma_priv_invalid_once, [dma_priv_ptr, dma_priv_bytes, expected_dma_priv_bytes] {
       aerogpu::logf("aerogpu-d3d9: submit missing/invalid dma private data ptr=%p bytes=%u (need >=%u)\n",
                     dma_priv_ptr,
@@ -3093,14 +3094,6 @@ HRESULT invoke_submit_callback(Device* dev,
     });
     return E_INVALIDARG;
   }
-
-  // Initialize the expected ABI prefix. If the runtime reports a larger private
-  // data size, we will clamp it below so dxgkrnl only copies this prefix.
-  AEROGPU_DMA_PRIV priv{};
-  priv.Type = is_present ? AEROGPU_SUBMIT_PRESENT : AEROGPU_SUBMIT_RENDER;
-  priv.Reserved0 = 0;
-  priv.MetaHandle = 0;
-  std::memcpy(dma_priv_ptr, &priv, sizeof(priv));
 
   // Safety: if the runtime reports a larger private-data size than the KMD/UMD
   // contract, clamp to the expected size so dxgkrnl does not copy extra bytes of
@@ -3295,11 +3288,9 @@ uint64_t submit(Device* dev, bool is_present) {
       // previous submission).
       if (dev->wddm_context.pDmaBufferPrivateData &&
           dev->wddm_context.DmaBufferPrivateDataSize >= AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
-        AEROGPU_DMA_PRIV priv{};
-        priv.Type = is_present ? AEROGPU_SUBMIT_PRESENT : AEROGPU_SUBMIT_RENDER;
-        priv.Reserved0 = 0;
-        priv.MetaHandle = 0;
-        std::memcpy(dev->wddm_context.pDmaBufferPrivateData, &priv, sizeof(priv));
+        (void)InitWin7DmaBufferPrivateData(dev->wddm_context.pDmaBufferPrivateData,
+                                           dev->wddm_context.DmaBufferPrivateDataSize,
+                                           is_present);
       } else if (dev->wddm_context.pDmaBufferPrivateData && dev->wddm_context.DmaBufferPrivateDataSize) {
         std::memset(dev->wddm_context.pDmaBufferPrivateData, 0, dev->wddm_context.DmaBufferPrivateDataSize);
       }
