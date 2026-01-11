@@ -10,6 +10,10 @@ The driver currently:
 
 It **does not** yet implement virtio-pci transport, virtqueues, or any PortCls miniports, so it will not expose audio endpoints yet.
 
+## Design notes
+
+- PortCls/WaveRT plan: [`portcls-wavert-design.md`](portcls-wavert-design.md)
+
 ## Building (WDK 7600 / WDK 7.1)
 
 1. Open a WDK build environment:
