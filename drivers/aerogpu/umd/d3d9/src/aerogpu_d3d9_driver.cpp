@@ -4329,9 +4329,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
   }
 
-  // Bind the allocation-list tracker to the runtime-provided list so we can
-  // populate it immediately (e.g. shared-surface CreateResource can reference
-  // its backing allocation before the first submit()).
+  // Bind the per-submit allocation list tracker to the runtime-provided buffers
+  // so allocation tracking works immediately (e.g. shared surface CreateResource
+  // can reference its backing allocation before the first submit()).
   dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
                                  dev->wddm_context.AllocationListSize,
                                  adapter->max_allocation_list_slot_id);
