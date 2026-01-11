@@ -23,7 +23,7 @@ Build the UMD with:
 
 If you are building the real Win7 driver against WDK headers, also build with:
 
-* `AEROGPU_UMD_USE_WDK_HEADERS=1`
+* `/p:AeroGpuUseWdkHeaders=1` (defines `AEROGPU_UMD_USE_WDK_HEADERS=1` in the D3D10/11 UMD project)
 
 ### 1.2 Runtime gate (environment variable)
 
