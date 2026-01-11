@@ -1,9 +1,16 @@
+#[cfg(not(target_arch = "wasm32"))]
 use aero_jit_x86::simd::{
     compile_wasm_simd, interpret, Inst, Operand, Program, SseState, XmmReg, DEFAULT_WASM_LAYOUT,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
 use wasmtime::{Config, Engine, Instance, Module, Store};
 
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     // A tiny demo that shows how to execute the SIMD-lowered wasm repeatedly.
     //
@@ -86,6 +93,7 @@ fn main() {
     println!("wasm simd:   {jit_elapsed:?}");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn pack_f32x4(lanes: [f32; 4]) -> u128 {
     let mut bytes = [0u8; 16];
     for i in 0..4 {
