@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 add_executable(virtiosnd_sg_tests
     test_sg.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtiosnd_sg_core.c
@@ -14,4 +16,3 @@ set_target_properties(virtiosnd_sg_tests PROPERTIES
 )
 
 add_test(NAME virtiosnd_sg_tests COMMAND virtiosnd_sg_tests)
-
