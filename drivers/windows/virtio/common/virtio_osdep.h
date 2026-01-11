@@ -49,6 +49,7 @@ typedef uint8_t UINT8;
 typedef uint16_t UINT16;
 typedef uint32_t UINT32;
 typedef uint64_t UINT64;
+typedef uintptr_t UINT_PTR;
 
 typedef int32_t NTSTATUS;
 typedef UINT8 BOOLEAN;
@@ -68,8 +69,17 @@ typedef void VOID;
 #ifndef STATUS_SUCCESS
 #define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
 #endif
+#ifndef STATUS_UNSUCCESSFUL
+#define STATUS_UNSUCCESSFUL ((NTSTATUS)0xC0000001L)
+#endif
 #ifndef STATUS_INVALID_PARAMETER
 #define STATUS_INVALID_PARAMETER ((NTSTATUS)0xC000000DL)
+#endif
+#ifndef STATUS_NOT_SUPPORTED
+#define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBL)
+#endif
+#ifndef STATUS_BUFFER_TOO_SMALL
+#define STATUS_BUFFER_TOO_SMALL ((NTSTATUS)0xC0000023L)
 #endif
 #ifndef STATUS_INSUFFICIENT_RESOURCES
 #define STATUS_INSUFFICIENT_RESOURCES ((NTSTATUS)0xC000009AL)
@@ -77,7 +87,10 @@ typedef void VOID;
 #ifndef STATUS_NOT_FOUND
 #define STATUS_NOT_FOUND ((NTSTATUS)0xC0000225L)
 #endif
-
+#ifndef STATUS_IO_DEVICE_ERROR
+#define STATUS_IO_DEVICE_ERROR ((NTSTATUS)0xC0000185L)
+#endif
+ 
 #endif /* !VIRTIO_OSDEP_KERNEL_MODE && !_NTDEF_ */
 
 /* -------------------------------------------------------------------------- */

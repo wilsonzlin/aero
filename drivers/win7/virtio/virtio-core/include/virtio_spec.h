@@ -9,7 +9,41 @@
  * so it can be shared across virtio-* drivers.
  */
 
+/*
+ * This header is shared between kernel-mode drivers and host-buildable unit
+ * tests. Avoid unconditional WDK dependencies so the definitions (notably
+ * `virtio_pci_common_cfg`) can be compiled on CI without requiring the Windows
+ * driver kit.
+ */
+
+#include <stddef.h>
+
+#if defined(_WIN32) && (defined(_KERNEL_MODE) || defined(_NTDDK_) || defined(_NTIFS_) || defined(_WDMDDK_))
+/* Kernel-mode build (WDK headers available). */
 #include <ntddk.h>
+#else
+/* User-mode / non-WDK build: provide WDK-compatible typedefs. */
+#include <stdint.h>
+
+typedef uint8_t UINT8;
+typedef uint16_t UINT16;
+typedef uint32_t UINT32;
+typedef uint64_t UINT64;
+
+#ifndef FIELD_OFFSET
+#define FIELD_OFFSET(type, field) (offsetof(type, field))
+#endif
+
+#ifndef C_ASSERT
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#define C_ASSERT(expr) _Static_assert(expr, #expr)
+#else
+#define VIRTIO_SPEC_CONCAT_INNER(a, b) a##b
+#define VIRTIO_SPEC_CONCAT(a, b) VIRTIO_SPEC_CONCAT_INNER(a, b)
+#define C_ASSERT(expr) typedef char VIRTIO_SPEC_CONCAT(C_ASSERT_, __LINE__)[(expr) ? 1 : -1]
+#endif
+#endif
+#endif
 
 #ifndef VIRTIO_PCI_MAX_BARS
 #define VIRTIO_PCI_MAX_BARS 6
@@ -17,7 +51,7 @@
 
 /* Virtio 1.0 feature bit indicating a modern (1.0+) device. */
 #ifndef VIRTIO_F_VERSION_1
-#define VIRTIO_F_VERSION_1 (1ui64 << 32)
+#define VIRTIO_F_VERSION_1 ((UINT64)1u << 32)
 #endif
 
 /* Common device status bits (virtio spec "Device Status Field"). */

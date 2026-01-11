@@ -17,4 +17,8 @@ if (AERO_VIRTIO_BUILD_TESTS)
     if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/drivers/windows/virtio/common/tests/CMakeLists.txt")
         add_subdirectory(drivers/windows/virtio/common/tests)
     endif ()
+
+    if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/drivers/windows/virtio/pci-modern/tests/CMakeLists.txt")
+        add_subdirectory(drivers/windows/virtio/pci-modern/tests)
+    endif ()
 endif ()
