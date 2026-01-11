@@ -578,7 +578,12 @@ HRESULT acquire_submit_buffers_allocate(const D3DDDI_DEVICECALLBACKS* callbacks,
                                          &out->alloc);
     extract_alloc_outputs(out, out->alloc);
     if (FAILED(hr) || !out->command_buffer || out->command_buffer_bytes == 0) {
-      deallocate_buffers(callbacks, runtime_device_private, out->alloc);
+      // Only deallocate if the runtime actually handed us buffers. Some WDKs
+      // return a failure HRESULT without populating out pointers, and calling
+      // DeallocateCb in that case is undefined.
+      if (out->command_buffer || out->dma_buffer || out->allocation_list || out->patch_location_list || out->dma_private_data) {
+        deallocate_buffers(callbacks, runtime_device_private, out->alloc);
+      }
       *out = SubmissionBuffers{};
       return FAILED(hr) ? hr : E_OUTOFMEMORY;
     }
