@@ -198,6 +198,9 @@ Notes:
 
 - Verification requires the **guest virtio-snd driver** to be installed, and the guest selftest must not skip virtio-snd
   via `--disable-snd`. (When a virtio-snd PCI device is present, the selftest runs playback automatically.)
+- The harness attempts to shut QEMU down **gracefully** (via QMP) so the `wav` audio backend can flush/finalize the RIFF
+  header before verification. If QEMU is killed hard, the `data` chunk size may be left as a placeholder (often `0`), and
+  verification may fail or need to fall back to best-effort recovery.
 - The harness prints a single-line marker suitable for log scraping:
   `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV|PASS|...` or `...|FAIL|reason=<...>`.
 
