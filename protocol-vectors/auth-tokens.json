@@ -47,6 +47,13 @@
         "expectError": true
       },
       {
+        "name": "malformed.emptyPayload",
+        "secret": "test-session-secret",
+        "token": ".0a3KlemgmnRNTRlaKctfvMwqiysP282OPVrf0dlHUOo",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
         "name": "invalidBase64url.payload",
         "secret": "test-session-secret",
         "token": "invalid!payload._oBcRLie1_KGm7HifmJyDVAsAUvnwmsOroHf3fwc5KQ",
@@ -57,6 +64,13 @@
         "name": "invalidBase64urlLength.payload",
         "secret": "test-session-secret",
         "token": "a.Ks5cqAbKnlzgJq8ds6-jcNtzaFjKaWfseVxY-3BgmMs",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidJson.payload",
+        "secret": "test-session-secret",
+        "token": "bm90LWpzb24.DCnNMKoO1BVOPEkcwt309PiH29e9hdT43WhtMJcdXk0",
         "nowMs": 1700000000000,
         "expectError": true
       },
@@ -174,6 +188,34 @@
         "name": "invalidBase64urlLength.signature",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.a",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64url.payload",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid!payload.R9wAFPJ2KGFYoj3SWNdz1zM_ySBjgQY51n2gMBJpic4",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlLength.payload",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.a.radJ_KXsp3mzF8tj98Eo5QH_HozXqmNkb1E1OwUXp84",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidJson.payload",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.bm90LWpzb24.4lwir0domBysxNCAb5efDuQnNFY3f4gk3YQM7Y9w4bM",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidJson.payloadNotObject",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.W10.-3FuqGEp1plhTcn_8cBdu2knFs9R0t9Dh8g03A-cfy0",
         "nowSec": 1700000000,
         "expectError": true
       },
