@@ -385,3 +385,124 @@ fn no_aerogpu_1ae0_tokens_outside_archived_prototype_tree() {
         "found deprecated AeroGPU 1AE0 tokens outside archive tree: {hits:#?}"
     );
 }
+
+#[test]
+fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
+    // Guard against accidentally reintroducing the deprecated AeroGPU legacy bring-up PCI identity
+    // into canonical docs/config. The legacy identity (1AED) is still supported for optional
+    // compatibility testing, but it should remain confined to:
+    //   - docs/abi/aerogpu-pci-identity.md (mapping doc / source-of-truth context)
+    //   - drivers/aerogpu/protocol/legacy/
+    //   - drivers/aerogpu/packaging/win7/legacy/
+    //   - prototype/legacy-win7-aerogpu-1ae0/ (archived prototype tree)
+    let root = repo_root();
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "-z"])
+        .output()
+        .expect("failed to run git ls-files");
+    assert!(
+        output.status.success(),
+        "git ls-files failed with status {}",
+        output.status
+    );
+
+    let files = output.stdout;
+
+    let allowed_prefixes: [&[u8]; 4] = [
+        b"docs/abi/aerogpu-pci-identity.md",
+        b"drivers/aerogpu/protocol/legacy/",
+        b"drivers/aerogpu/packaging/win7/legacy/",
+        b"prototype/legacy-win7-aerogpu-1ae0/",
+    ];
+
+    // Build forbidden needles without embedding the full tokens in this source file so repo-wide
+    // greps for deprecated AeroGPU IDs can stay focused on legacy/archived locations.
+    let forbidden_vendor = format!("VEN_{}", "1AED");
+    let forbidden_hex = format!("0x{}", "1AED");
+    let forbidden_vendor = forbidden_vendor.as_bytes();
+    let forbidden_hex = forbidden_hex.as_bytes();
+
+    let mut hits: Vec<String> = Vec::new();
+    for rel in files.split(|b| *b == 0) {
+        if rel.is_empty() {
+            continue;
+        }
+        if allowed_prefixes.iter().any(|prefix| rel.starts_with(prefix)) {
+            continue;
+        }
+        let rel_str = String::from_utf8_lossy(rel);
+        let path = root.join(rel_str.as_ref());
+        let Ok(buf) = std::fs::read(&path) else {
+            continue;
+        };
+
+        if buf
+            .windows(forbidden_vendor.len())
+            .any(|w| w == forbidden_vendor)
+            || buf.windows(forbidden_hex.len()).any(|w| w == forbidden_hex)
+        {
+            hits.push(rel_str.into_owned());
+        }
+    }
+
+    assert!(
+        hits.is_empty(),
+        "found deprecated AeroGPU 1AED tokens outside quarantined legacy locations: {hits:#?}"
+    );
+}
+
+#[test]
+fn no_legacy_aerogpu_protocol_header_references_outside_archived_prototype_tree() {
+    // The legacy prototype protocol header (aerogpu_protocol + .h) was part of an archived driver
+    // stack and should not be referenced by the supported in-tree driver/protocol headers. Keep
+    // references confined to the archived prototype tree only.
+    let root = repo_root();
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "-z"])
+        .output()
+        .expect("failed to run git ls-files");
+    assert!(
+        output.status.success(),
+        "git ls-files failed with status {}",
+        output.status
+    );
+
+    let files = output.stdout;
+    let archive_prefix = b"prototype/legacy-win7-aerogpu-1ae0/";
+
+    // Avoid embedding the full legacy header name token in this source file.
+    let legacy_header_stem = format!("{}{}", "aerogpu_", "protocol");
+    let legacy_header_name = format!("{legacy_header_stem}.{}", "h");
+    let needle = legacy_header_name.as_bytes();
+
+    let mut hits: Vec<String> = Vec::new();
+    for rel in files.split(|b| *b == 0) {
+        if rel.is_empty() {
+            continue;
+        }
+        if rel.starts_with(archive_prefix) {
+            continue;
+        }
+
+        let rel_str = String::from_utf8_lossy(rel);
+        let path = root.join(rel_str.as_ref());
+        let Ok(buf) = std::fs::read(&path) else {
+            continue;
+        };
+
+        if buf.windows(needle.len()).any(|w| w == needle) {
+            hits.push(rel_str.into_owned());
+        }
+    }
+
+    assert!(
+        hits.is_empty(),
+        "found deprecated AeroGPU prototype header references outside archive tree: {hits:#?}"
+    );
+}
