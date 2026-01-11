@@ -95,9 +95,10 @@ For synchronization/fence-based implementations, the shared callback table (or a
 
 ---
 
-## 2) `pfnMap` / `pfnUnmap` argument breakdown (Win7 WDK 7.1)
+## 2) `D3D11DDIARG_MAP` / `D3D11DDIARG_UNMAP` field breakdown (Win7 WDK 7.1)
 
-Windows 7’s D3D11 UMD DDI passes Map/Unmap as **flat arguments** (rather than a single `*ARG_MAP` struct). This section breaks down the logical fields that make up a Map/Unmap request.
+Some Win7 D3D11 documentation refers to the Map/Unmap argument bundle as `D3D11DDIARG_MAP` / `D3D11DDIARG_UNMAP`.
+In practice, the Win7-era D3D11 UMD DDI passes Map/Unmap as **flat arguments** (rather than a single `*ARG_*` struct), but the logical field breakdown is the same.
 
 ### 2.1 `pfnMap` arguments
 
