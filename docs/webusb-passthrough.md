@@ -198,9 +198,16 @@ In this repo:
 - If WebUSB must run on the main thread, `UsbBroker` (`web/src/usb/usb_broker.ts`) owns the
   `USBDevice` handle and services worker requests via the `usb_proxy_protocol.ts` message schema.
 
-If the guest requires alternate interface settings or endpoint-halt recovery, extend
-`WebUsbBackend` and the broker/protocol to cover `selectAlternateInterface` / `clearHalt` as
-needed.
+The TypeScript executor (`WebUsbBackend.execute()`) also recognizes a few **standard USB control
+requests** that represent high-level device state transitions and routes them through the
+dedicated WebUSB APIs instead of emitting a raw `controlTransferOut`:
+
+- `SET_CONFIGURATION` → `USBDevice.selectConfiguration(...)`
+- `SET_INTERFACE` → `USBDevice.selectAlternateInterface(...)` (claiming the interface if needed)
+- `CLEAR_FEATURE(ENDPOINT_HALT)` → `USBDevice.clearHalt(...)`
+
+This keeps the canonical `UsbHostAction` / `UsbHostCompletion` wire contract unchanged, but tends
+to be more reliable on real devices because browsers/OS stacks may treat these requests specially.
 
 Important constraints for passthrough:
 
@@ -217,9 +224,10 @@ Important constraints for passthrough:
     already-open physical device).
 
 The current Rust `UsbHostAction` surface does not yet include “select configuration / claim
-interface” actions; today, open/config/claim is handled by `WebUsbBackend.ensureOpenAndClaimed()`,
-and guest `SET_CONFIGURATION` / `SET_INTERFACE` requests are forwarded as plain control transfers
-unless explicitly virtualized.
+interface” actions; open/config/claim is still handled by `WebUsbBackend.ensureOpenAndClaimed()`,
+but the executor will mirror the most common standard configuration/interface transitions to the
+host device as described above (and update its internal “claimed interface” cache when the active
+configuration changes).
 
 ### Encoding `SetupPacket` for WebUSB
 
