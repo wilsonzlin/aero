@@ -51,10 +51,17 @@ This is intended for GitHub Actions / perf regression smoke tests.
 - **RTT**: median/p90/p99 round-trip latency for a small payload sent through the WebSocket TCP proxy to a local echo server.
 - **Throughput**: time to upload a fixed-size payload (5–10 MiB depending on mode) through the proxy to a local sink server.
 
+The JSON report also includes lightweight variance summaries:
+
+- RTT reports include `stdev` and `cv` (coefficient of variation) computed over the RTT sample set.
+- Throughput is run multiple times and reports `throughput.stats` (`n/min/max/mean/stdev/cv`) over MiB/s, plus per-run samples in `throughput.runs`.
+
 ### DoH
 
 - **QPS**: HTTP requests per second against `/dns-query` for a fixed `A` query (loopback-resolved).
 - **Cache hit ratio**: computed from gateway metrics (cache hits / (hits + misses)).
+
+For DoH, the JSON report includes `qpsStats` (derived from autocannon's summary stats) and additional latency variance fields when available.
 
 To keep the benchmark **offline**, the runner starts a local UDP DNS server and configures the gateway's `DNS_UPSTREAMS` to point to it. The upstream returns a deterministic `A` record so the DoH cache hit path is exercised without contacting real DNS resolvers.
 
