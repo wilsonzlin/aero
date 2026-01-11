@@ -397,6 +397,25 @@ This ensures the WOW64 layer performs the correct pointer-size translation for t
 
 ---
 
+## 6) Optional: WDK 7.1 layout probe tool (sizeof/offsetof)
+
+To catch header/version mismatches early (especially when switching between SDKs/WDKs or x86/x64),
+the repo includes a small Windows-only probe you can build with **WDK 7.1**:
+
+- `drivers/aerogpu/tools/win7_wdk_probe/`
+
+It includes the WDK headers and prints `sizeof`/`offsetof` for:
+
+- `D3DDDICB_GETCOMMANDINFO`
+- `D3DDDICB_RENDER`
+- `D3DDDICB_PRESENT`
+- `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT`
+- `D3DKMT_WAITFORSYNCHRONIZATIONOBJECT`
+
+This is not part of runtime/CI; it is a developer-side sanity check.
+
+---
+
 ## Appendix A) “What you actually need to implement” checklist (submission/fences only)
 
 To implement correct Win7 submission + `Map(READ)` synchronization in a D3D10/11 UMD, you will need:
@@ -412,4 +431,3 @@ To implement correct Win7 submission + `Map(READ)` synchronization in a D3D10/11
    - `pfnPresentCb` + `D3DDDICB_PRESENT`
 5. Track per-resource “last GPU write fence” and implement `Map(READ)` wait:
    - `pfnWaitForSynchronizationObjectCb` + `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT`
-
