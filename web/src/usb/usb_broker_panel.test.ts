@@ -110,6 +110,25 @@ describe("usb broker panel UI", () => {
     expect(links[0].attributes.href).toContain("chrome://settings/content/siteDetails");
   });
 
+  it("attaches a UI message port without allocating USB proxy rings", () => {
+    const broker = {
+      attachKnownDevice: vi.fn(async () => ({ vendorId: 0, productId: 0 })),
+      detachSelectedDevice: vi.fn(async () => {}),
+      getKnownDevices: vi.fn(async () => []),
+      requestDevice: vi.fn(async () => ({ vendorId: 0, productId: 0 })),
+      attachWorkerPort: vi.fn(() => {}),
+      subscribeToDeviceChanges: vi.fn(() => () => {}),
+    } as any;
+
+    stubNavigator({ usb: {} } as any);
+    stubDocument(new FakeDocument());
+
+    renderWebUsbBrokerPanel(broker);
+
+    if (typeof MessageChannel === "undefined") return;
+    expect(broker.attachWorkerPort).toHaveBeenCalledWith(expect.anything(), { attachRings: false });
+  });
+
   it("calls attachKnownDevice when clicking Attach for a known device", async () => {
     const device = { vendorId: 0x1234, productId: 0x5678, productName: "Demo" } as unknown as USBDevice;
 
