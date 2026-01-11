@@ -8,8 +8,8 @@ The Windows INF must match the correct PCI vendor/device IDs so that Windows 7 w
 
 * **Virtio Specification** → *PCI bus binding* → “PCI Device IDs” table for vendor **`0x1AF4`**
   (virtio) and virtio device type **`VIRTIO_ID_SOUND`**.
-* **Aero virtio contract** → `docs/windows7-virtio-driver-contract.md` (contract v1 is
-  modern-only).
+* **Aero Windows device contract** → `docs/windows-device-contract.md` and
+  `docs/windows-device-contract.json` (stable PCI IDs + INF naming for Aero’s Windows drivers).
 * **QEMU** (runtime verification) → QEMU monitor command `info pci` shows the currently-emitted
   `vendor:device` ID for each `-device ...` option.
 
@@ -24,12 +24,12 @@ Vendor ID: **`VEN_1AF4`**
 
 ## Aero contract v1 expectations (subsystem + revision)
 
-The Aero Windows 7 virtio contract v1 encodes the contract major version in the PCI **Revision ID**
-and assigns subsystem IDs per device instance:
+The Aero Windows device/driver contract uses stable subsystem IDs derived from the virtio device
+type, and encodes the contract major version in the PCI **Revision ID**:
 
-* Revision ID: `REV_01` (contract v1)
+* Revision ID: `REV_01` (Aero virtio contract v1)
 * Subsystem Vendor ID: `0x1AF4`
-* Subsystem Device ID: `0x0019` (`VIRTIO_ID_SOUND`)
+* Subsystem Device ID: `0x0019` (`VIRTIO_ID_SOUND` / 25)
 
 So, a fully-qualified expected HWID looks like:
 
