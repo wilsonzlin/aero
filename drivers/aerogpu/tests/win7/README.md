@@ -20,7 +20,7 @@ Common flags:
 
 * `--dump` – write test-specific dump artifacts next to the executable (usually `*.bmp`; some tests also write raw `*.bin`).
 * `--hidden` – hide windows for tests that create windows (useful for automation).
-* `--show` – show the window for tests that support it (e.g. `d3d9ex_event_query`, `d3d9ex_submit_fence_stress`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, `d3d9ex_shared_surface_wow64`, `d3d9ex_shared_surface_many_producers`; overrides `--hidden`).
+* `--show` – show the window for tests that support it (e.g. `d3d9ex_event_query`, `d3d9ex_submit_fence_stress`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, `d3d9ex_shared_surface_wow64`, `d3d9ex_shared_surface_many_producers`, `d3d9ex_shared_surface_stress`; overrides `--hidden`).
 * `--json[=PATH]` – emit a machine-readable JSON report (includes a stable `schema_version`).
 * `--validate-sharing` – for `d3d9ex_shared_surface`: kept for backwards compatibility (pixel sharing is validated by default; `--dump` always validates).
 * `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
@@ -286,7 +286,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_shared_allocations` exercises allocation behavior for shared resources:
   * creates a non-shared mip chain texture (Levels=4) as a baseline for `NumAllocations` logging
   * creates a shared render-target surface and attempts shared textures that would imply multiple mips (Levels=4 and Levels=0/full chain), which may be rejected by the MVP single-allocation policy
-* `d3d9ex_shared_surface_stress` repeatedly creates a shared D3D9Ex render-target surface, spawns a child process, duplicates/passes the shared handle, and validates the child can open/touch the surface without hangs or failures (`--iterations=N` controls loop count; default 20)
+* `d3d9ex_shared_surface_stress` repeatedly creates a shared D3D9Ex render target surface in a parent process, duplicates the shared handle into a child process, and validates the child can open the surface (including opening it twice) and issue basic rendering commands without hanging or crashing (`--iterations=N` controls loop count; default 20)
 * `d3d10_triangle` uses `D3D10CreateDeviceAndSwapChain` (hardware), verifies the D3D10 runtime path (`d3d10.dll`) and the AeroGPU `OpenAdapter10` export, and confirms **corner red + center green** via readback
 * `d3d10_map_do_not_wait` validates that `Map(READ, DO_NOT_WAIT)` is a non-blocking poll (returns `DXGI_ERROR_WAS_STILL_DRAWING` while work is in flight, never hangs)
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
