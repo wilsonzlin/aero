@@ -45,8 +45,11 @@ export type RemoteChunkedDiskOptions = {
    */
   credentials?: RequestCredentials;
   /**
-   * Maximum bytes to keep in the persistent cache (LRU-evicted).
-   * `null` disables eviction.
+   * Persistent cache size limit (LRU-evicted).
+   *
+   * - `undefined` (default): 512 MiB
+   * - `null`: no eviction (unbounded cache; subject to browser storage quota)
+   * - `0`: disable caching entirely (chunks are not persisted)
    */
   cacheLimitBytes?: number | null;
   /**

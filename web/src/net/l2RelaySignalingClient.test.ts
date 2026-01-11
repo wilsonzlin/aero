@@ -7,6 +7,7 @@ type Listener = (evt: Event) => void;
 class FakeRtcDataChannel {
   label = "";
   readyState: RTCDataChannelState;
+  ordered = true;
   maxRetransmits: number | null = null;
   maxPacketLifeTime: number | null = null;
 

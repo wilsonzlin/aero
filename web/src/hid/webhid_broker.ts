@@ -291,10 +291,11 @@ export class WebHidBroker {
     }
 
     try {
+      const data = ensureArrayBufferBacked(msg.data);
       if (msg.reportType === "output") {
-        await device.sendReport(msg.reportId, ensureArrayBufferBacked(msg.data));
+        await device.sendReport(msg.reportId, data);
       } else {
-        await device.sendFeatureReport(msg.reportId, ensureArrayBufferBacked(msg.data));
+        await device.sendFeatureReport(msg.reportId, data);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
