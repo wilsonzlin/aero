@@ -229,10 +229,9 @@ fn max_report_bytes_from_state(
             .map(String::as_str)
             .unwrap_or("reportDescriptor");
 
-        let bytes = bits
-            .checked_add(7)
-            .ok_or_else(|| HidDescriptorError::at(path, "report bit length too large to round to bytes"))?
-            / 8;
+        let bytes = bits.checked_add(7).ok_or_else(|| {
+            HidDescriptorError::at(path, "report bit length too large to round to bytes")
+        })? / 8;
 
         max = max.max(bytes);
     }
@@ -327,7 +326,10 @@ fn validate_report_list(
             path.push_indexed("items", item_idx);
             let item_path = path.as_string();
             let bits = validate_report_item(item, &item_path)?;
-            let entry = state.report_bits.entry((kind, report.report_id)).or_insert(0);
+            let entry = state
+                .report_bits
+                .entry((kind, report.report_id))
+                .or_insert(0);
             *entry = entry.checked_add(bits).ok_or_else(|| {
                 HidDescriptorError::at(&item_path, "total report bit length overflows u32")
             })?;

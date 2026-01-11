@@ -231,10 +231,9 @@ fn max_report_bytes_from_state(
             .map(String::as_str)
             .unwrap_or("reportDescriptor");
 
-        let data_bytes = bits
-            .checked_add(7)
-            .ok_or_else(|| HidDescriptorError::at(path, "report bit length too large to round to bytes"))?
-            / 8;
+        let data_bytes = bits.checked_add(7).ok_or_else(|| {
+            HidDescriptorError::at(path, "report bit length too large to round to bytes")
+        })? / 8;
         let bytes = data_bytes
             .checked_add(has_ids)
             .ok_or_else(|| HidDescriptorError::at(path, "report byte length overflows u32"))?;
@@ -332,7 +331,10 @@ fn validate_report_list(
             path.push_indexed("items", item_idx);
             let item_path = path.as_string();
             let bits = validate_report_item(item, &item_path)?;
-            let entry = state.report_bits.entry((kind, report.report_id)).or_insert(0);
+            let entry = state
+                .report_bits
+                .entry((kind, report.report_id))
+                .or_insert(0);
             *entry = entry.checked_add(bits).ok_or_else(|| {
                 HidDescriptorError::at(&item_path, "total report bit length overflows u32")
             })?;
@@ -1984,7 +1986,10 @@ mod tests {
             usage_page: 0,
             usage: 0,
             collection_type: 0,
-            input_reports: vec![HidReportInfo { report_id: 0, items }],
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items,
+            }],
             output_reports: vec![],
             feature_reports: vec![],
             children: vec![],
