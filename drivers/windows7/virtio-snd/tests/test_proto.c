@@ -378,6 +378,162 @@ static void test_control_timeout_then_late_completion_runs_at_dpc_level(void)
     virtio_test_queue_destroy(&q);
 }
 
+static void test_control_playback_state_machine(void)
+{
+    VIRTIO_TEST_QUEUE q;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_CONTROL ctrl;
+    NTSTATUS status;
+    const VIRTIO_TEST_QUEUE_CAPTURE *cap;
+
+    virtio_test_queue_init(&q, TRUE);
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndCtrlInit(&ctrl, &dma, &q.queue);
+
+    /* Invalid transitions from Idle. */
+    status = VirtioSndCtrlPrepare(&ctrl);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+    status = VirtioSndCtrlStart(&ctrl);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+    status = VirtioSndCtrlStop(&ctrl);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+
+    status = VirtioSndCtrlSetParams(&ctrl, 1920u, 192u);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] == VirtioSndStreamStateParamsSet);
+
+    status = VirtioSndCtrlPrepare(&ctrl);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] == VirtioSndStreamStatePrepared);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SIMPLE_REQ));
+    {
+        const VIRTIO_SND_PCM_SIMPLE_REQ *req = (const VIRTIO_SND_PCM_SIMPLE_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_PREPARE);
+        assert(req->stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+    }
+
+    status = VirtioSndCtrlStart(&ctrl);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] == VirtioSndStreamStateRunning);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SIMPLE_REQ));
+    {
+        const VIRTIO_SND_PCM_SIMPLE_REQ *req = (const VIRTIO_SND_PCM_SIMPLE_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_START);
+        assert(req->stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+    }
+
+    /* Can't change params while running. */
+    status = VirtioSndCtrlSetParams(&ctrl, 1920u, 192u);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+
+    status = VirtioSndCtrlStop(&ctrl);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] == VirtioSndStreamStatePrepared);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SIMPLE_REQ));
+    {
+        const VIRTIO_SND_PCM_SIMPLE_REQ *req = (const VIRTIO_SND_PCM_SIMPLE_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_STOP);
+        assert(req->stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+    }
+
+    /* Still can't change params in the Prepared state. */
+    status = VirtioSndCtrlSetParams(&ctrl, 1920u, 192u);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+
+    status = VirtioSndCtrlRelease(&ctrl);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] == VirtioSndStreamStateIdle);
+    assert(ctrl.Params[VIRTIO_SND_PLAYBACK_STREAM_ID].BufferBytes == 0);
+    assert(ctrl.Params[VIRTIO_SND_PLAYBACK_STREAM_ID].PeriodBytes == 0);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SIMPLE_REQ));
+    {
+        const VIRTIO_SND_PCM_SIMPLE_REQ *req = (const VIRTIO_SND_PCM_SIMPLE_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_RELEASE);
+        assert(req->stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+    }
+
+    VirtioSndCtrlUninit(&ctrl);
+    virtio_test_queue_destroy(&q);
+}
+
+static void test_control_capture_state_machine(void)
+{
+    VIRTIO_TEST_QUEUE q;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_CONTROL ctrl;
+    NTSTATUS status;
+    const VIRTIO_TEST_QUEUE_CAPTURE *cap;
+
+    virtio_test_queue_init(&q, TRUE);
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndCtrlInit(&ctrl, &dma, &q.queue);
+
+    status = VirtioSndCtrlSetParams1(&ctrl, 960u, 96u);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] == VirtioSndStreamStateParamsSet);
+
+    status = VirtioSndCtrlPrepare1(&ctrl);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] == VirtioSndStreamStatePrepared);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SIMPLE_REQ));
+    {
+        const VIRTIO_SND_PCM_SIMPLE_REQ *req = (const VIRTIO_SND_PCM_SIMPLE_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_PREPARE);
+        assert(req->stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+    }
+
+    status = VirtioSndCtrlStart1(&ctrl);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] == VirtioSndStreamStateRunning);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SIMPLE_REQ));
+    {
+        const VIRTIO_SND_PCM_SIMPLE_REQ *req = (const VIRTIO_SND_PCM_SIMPLE_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_START);
+        assert(req->stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+    }
+
+    status = VirtioSndCtrlStop1(&ctrl);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] == VirtioSndStreamStatePrepared);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SIMPLE_REQ));
+    {
+        const VIRTIO_SND_PCM_SIMPLE_REQ *req = (const VIRTIO_SND_PCM_SIMPLE_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_STOP);
+        assert(req->stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+    }
+
+    status = VirtioSndCtrlRelease1(&ctrl);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] == VirtioSndStreamStateIdle);
+    assert(ctrl.Params[VIRTIO_SND_CAPTURE_STREAM_ID].BufferBytes == 0);
+    assert(ctrl.Params[VIRTIO_SND_CAPTURE_STREAM_ID].PeriodBytes == 0);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SIMPLE_REQ));
+    {
+        const VIRTIO_SND_PCM_SIMPLE_REQ *req = (const VIRTIO_SND_PCM_SIMPLE_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_RELEASE);
+        assert(req->stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+    }
+
+    VirtioSndCtrlUninit(&ctrl);
+    virtio_test_queue_destroy(&q);
+}
+
 int main(void)
 {
     test_tx_rejects_misaligned_pcm_bytes();
@@ -387,6 +543,8 @@ int main(void)
     test_rx_builds_hdr_payload_status_chain();
     test_control_set_params_formats_channels();
     test_control_timeout_then_late_completion_runs_at_dpc_level();
+    test_control_playback_state_machine();
+    test_control_capture_state_machine();
     printf("virtiosnd_proto_tests: PASS\n");
     return 0;
 }
