@@ -25,6 +25,7 @@ pwsh -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/package-drivers.ps1 -MakeFatImage
+pwsh -File ci/package-guest-tools.ps1
 ```
 
 ## `ci/stamp-infs.ps1`
@@ -98,6 +99,21 @@ If `-Version` is not provided, the script derives a deterministic version string
 Resulting artifact names look like:
 
 `AeroVirtIO-Win7-20260110-0.1.0+12.gabcdef123456-x64.zip`
+
+## `ci/package-guest-tools.ps1`
+
+Builds the distributable **Aero Guest Tools** media (ISO + zip) from the signed driver
+packages staged under `out/packages/` (the output of `ci/make-catalogs.ps1` + `ci/sign-drivers.ps1`).
+
+This script is intended to be run after `ci/package-drivers.ps1` in CI so that the release
+contains both:
+
+- standalone driver bundles (`AeroVirtIO-Win7-*.zip` / `.iso` / optional `.vhd`)
+- Guest Tools media (`aero-guest-tools.iso` / `aero-guest-tools.zip`)
+
+It also injects the public signing certificate (`out/certs/aero-test.cer`) into the staged
+Guest Tools tree so the packaged installer media trusts the exact certificate used to sign
+the driver catalogs.
 
 ## `ci/make-fat-image.ps1`
 
