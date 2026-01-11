@@ -72,6 +72,8 @@ l2Proxy:
 
 `aero-l2-proxy` can authenticate `/l2` WebSocket upgrades via `AERO_L2_AUTH_MODE`.
 
+This chart defaults to `cookie` auth for `/l2` (matching the gateway’s cookie-backed session used by `/tcp`).
+
 Supported values:
 
 - `none`

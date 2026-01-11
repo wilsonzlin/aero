@@ -113,7 +113,7 @@ l2Proxy:
   open: false
 
   auth:
-    # Optional: set `AERO_L2_AUTH_MODE` for the proxy.
+    # Auth mode for `/l2` WebSocket upgrades (`AERO_L2_AUTH_MODE` on `aero-l2-proxy`).
     #
     # Supported values:
     #   - "none"
@@ -122,8 +122,11 @@ l2Proxy:
     #   - "jwt"
     #   - "cookie_or_jwt"
     #
-    # Leave empty to let the proxy default (currently "none").
-    mode: ""
+    # Default: "cookie" (matches the gateway's session-cookie auth used by `/tcp`).
+    #
+    # Note: when using `"cookie"` / `"cookie_or_jwt"`, `aero-l2-proxy` must share the gateway
+    # `SESSION_SECRET` so it can validate `aero_session` cookies (see `l2Proxy.sessionSecret`).
+    mode: "cookie"
 
   # Session cookie auth wiring.
   #
