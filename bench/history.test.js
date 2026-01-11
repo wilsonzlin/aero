@@ -228,7 +228,7 @@ test("normaliseBenchResult supports aero-gateway bench results.json format", () 
     doh: {
       qps: 1000,
       qpsStats: { n: 3, min: 900, max: 1100, mean: 1000, stdev: 100, cv: 0.1 },
-      latencyMs: { p50: 1, p90: 2, p99: 3 },
+      latencyMs: { p50: 1, p90: 2, p99: 3, n: 3, min: 1, max: 5, stdev: 1, cv: 0.1 },
       cache: { hits: 96, misses: 4, hitRatio: 0.96 },
       raw: {},
     },
@@ -261,6 +261,14 @@ test("normaliseBenchResult supports aero-gateway bench results.json format", () 
   assert.equal(scenarios.gateway.metrics.doh_qps.samples.n, 3);
   assert.equal(scenarios.gateway.metrics.doh_qps.samples.stdev, 100);
   assert.equal(scenarios.gateway.metrics.doh_qps.samples.cv, 0.1);
+
+  assert.equal(scenarios.gateway.metrics.doh_latency_p50_ms.value, 1);
+  assert.equal(scenarios.gateway.metrics.doh_latency_p50_ms.unit, "ms");
+  assert.equal(scenarios.gateway.metrics.doh_latency_p50_ms.better, "lower");
+  assert.equal(scenarios.gateway.metrics.doh_latency_p50_ms.samples.n, 3);
+
+  assert.equal(scenarios.gateway.metrics.doh_latency_p90_ms.value, 2);
+  assert.equal(scenarios.gateway.metrics.doh_latency_p99_ms.value, 3);
 
   assert.equal(scenarios.gateway.metrics.doh_cache_hit_ratio_pct.value, 96);
   assert.equal(scenarios.gateway.metrics.doh_cache_hit_ratio_pct.unit, "%");

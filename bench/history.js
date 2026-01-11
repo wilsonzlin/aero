@@ -350,6 +350,10 @@ function normaliseAeroGatewayBenchResult(result) {
     (result.meta?.doh && typeof result.meta.doh === "object" ? { n: result.meta.doh.durationSeconds } : undefined);
   addMetric("doh_qps", doh.qps, { unit: "qps", better: "higher", samples: dohQpsSamples });
 
+  addMetric("doh_latency_p50_ms", doh.latencyMs?.p50, { unit: "ms", better: "lower", samples: doh.latencyMs });
+  addMetric("doh_latency_p90_ms", doh.latencyMs?.p90, { unit: "ms", better: "lower", samples: doh.latencyMs });
+  addMetric("doh_latency_p99_ms", doh.latencyMs?.p99, { unit: "ms", better: "lower", samples: doh.latencyMs });
+
   const hitRatio = doh.cache?.hitRatio;
   if (typeof hitRatio === "number" && Number.isFinite(hitRatio)) {
     const hits = typeof doh.cache?.hits === "number" && Number.isFinite(doh.cache.hits) ? doh.cache.hits : 0;

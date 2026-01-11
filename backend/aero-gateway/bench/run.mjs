@@ -527,6 +527,7 @@ async function benchDoh({ gatewayPort, durationSeconds, connections }) {
       p99: result.latency.p99,
       ...(latencyStats
         ? {
+            n: latencyStats.n,
             min: latencyStats.min,
             max: latencyStats.max,
             mean: latencyStats.mean,
