@@ -7,7 +7,9 @@ use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use emulator::io::usb::core::UsbOutResult;
-use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+use emulator::io::usb::{
+    ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+};
 use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::usb::uhci::regs::{USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
@@ -39,6 +41,10 @@ const TD_STATUS_ACTIVE: u32 = 1 << 23;
 const TD_STATUS_STALLED: u32 = 1 << 22;
 const TD_CTRL_IOC: u32 = 1 << 24;
 const TD_CTRL_SPD: u32 = 1 << 29;
+
+const USB_REQUEST_GET_DESCRIPTOR: u8 = 0x06;
+const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
+const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;
 
 // UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
 const PORTSC_CCS: u16 = 0x0001;
@@ -234,6 +240,64 @@ impl UsbDeviceModel for TestInterruptInDevice {
     }
 }
 
+#[derive(Clone, Debug)]
+struct DynamicDescriptorDevice {
+    device_descriptor: Vec<u8>,
+    config_descriptor: Vec<u8>,
+}
+
+impl DynamicDescriptorDevice {
+    fn new(device_descriptor: Vec<u8>, config_descriptor: Vec<u8>) -> Self {
+        Self {
+            device_descriptor,
+            config_descriptor,
+        }
+    }
+}
+
+impl UsbDeviceModel for DynamicDescriptorDevice {
+    fn get_device_descriptor(&self) -> &[u8] {
+        &self.device_descriptor
+    }
+
+    fn get_config_descriptor(&self) -> &[u8] {
+        &self.config_descriptor
+    }
+
+    fn get_hid_report_descriptor(&self) -> &[u8] {
+        &[]
+    }
+
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        match (setup.request_type(), setup.recipient()) {
+            (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
+                USB_REQUEST_GET_DESCRIPTOR => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost {
+                        return ControlResponse::Stall;
+                    }
+                    let data = match setup.descriptor_type() {
+                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(self.get_config_descriptor().to_vec()),
+                        _ => None,
+                    };
+                    data.map(ControlResponse::Data)
+                        .unwrap_or(ControlResponse::Stall)
+                }
+                _ => ControlResponse::Stall,
+            },
+            _ => ControlResponse::Stall,
+        }
+    }
+
+    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
+        None
+    }
+}
+
 #[test]
 fn uhci_root_hub_portsc_reset_enables_port() {
     let mut mem = TestMemBus::new(0x1000);
@@ -418,6 +482,65 @@ fn uhci_control_short_packet_detect_stops_qh_for_frame() {
     // QH element pointer should point to the first unprocessed TD (4th IN TD).
     let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
     assert_eq!(qh_elem, TD4);
+}
+
+#[test]
+fn uhci_control_get_descriptor_device_runtime_descriptor() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let device_desc = vec![
+        0x12, 0x01, 0x00, 0x02, 0xff, 0x00, 0x00, 0x40, 0x34, 0x12, 0x02, 0x00, 0x00, 0x01,
+        0x01, 0x02, 0x00, 0x01,
+    ];
+    // Minimal config descriptor (total length 9).
+    let config_desc = vec![0x09, 0x02, 0x09, 0x00, 0x00, 0x01, 0x00, 0x80, 50];
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(DynamicDescriptorDevice::new(device_desc.clone(), config_desc)),
+    );
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 18, 0x00],
+    );
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        TD2,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 18),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD2,
+        1,
+        td_status(true, true),
+        td_token(PID_OUT, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + 18),
+        device_desc
+    );
 }
 
 #[test]
@@ -960,6 +1083,29 @@ fn uhci_interrupt_out_reaches_device_model() {
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);
     uhci.port_write(0x00, 2, 0x0001);
 
+    // Give the device a non-zero address so the OUT TD exercises address routing.
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
     let payload = [0xde, 0xad, 0xbe, 0xef];
     mem.write_physical(BUF_DATA as u64, &payload);
 
@@ -968,7 +1114,7 @@ fn uhci_interrupt_out_reaches_device_model() {
         TD0,
         1,
         td_status(true, false),
-        td_token(PID_OUT, 0, 1, 0, payload.len()),
+        td_token(PID_OUT, 5, 1, 0, payload.len()),
         BUF_DATA,
     );
 
@@ -995,6 +1141,29 @@ fn uhci_interrupt_out_unimplemented_endpoint_stalls() {
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);
     uhci.port_write(0x00, 2, 0x0001);
 
+    // Give the device a non-zero address so the OUT TD exercises address routing.
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
     let payload = [0x01u8, 0x02, 0x03];
     mem.write_physical(BUF_DATA as u64, &payload);
 
@@ -1003,7 +1172,7 @@ fn uhci_interrupt_out_unimplemented_endpoint_stalls() {
         TD0,
         1,
         td_status(true, false),
-        td_token(PID_OUT, 0, 1, 0, payload.len()),
+        td_token(PID_OUT, 5, 1, 0, payload.len()),
         BUF_DATA,
     );
 
