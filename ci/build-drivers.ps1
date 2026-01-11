@@ -684,10 +684,14 @@ function Get-MakefileSkipInfoForDriverTarget {
       })
     }
 
-    if ($makefileProjects.Count -eq 0) { return $null }
+    # A solution is considered CI-buildable if it references at least one *non-makefile* vcxproj.
+    # If every referenced vcxproj is a WDK 7.1 NMake wrapper (Keyword=MakeFileProj /
+    # ConfigurationType=Makefile), skip the entire solution to avoid invoking legacy build.exe.
+    if ($makefileProjects.Count -eq 0) { return $null } # no makefile wrapper projects
+    if ($makefileProjects.Count -lt $vcxprojs.Count) { return $null } # at least one non-makefile project exists
 
     return [pscustomobject]@{
-      Reason = "Solution references Makefile-based project(s)"
+      Reason = "it only contains MakeFileProj projects (legacy WDK build.exe)."
       MakefileProjects = $makefileProjects.ToArray()
     }
   }
@@ -749,6 +753,7 @@ foreach ($target in $targets) {
   $skipInfo = Get-MakefileSkipInfoForDriverTarget -Target $target -IncludeMakefileProjects:$IncludeMakefileProjects
   if ($null -ne $skipInfo) {
     Write-Host ""
+    Write-Host ("Skipping driver '{0}' because {1}" -f $target.Name, $skipInfo.Reason)
     Write-Host ("==> Skipping driver '{0}' ({1})" -f $target.Name, $target.Kind)
     Write-Host ("    Project: {0}" -f $target.BuildPath)
     Write-Host ("    Reason:  {0}" -f $skipInfo.Reason)
