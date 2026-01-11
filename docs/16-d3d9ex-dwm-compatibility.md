@@ -230,7 +230,7 @@ Many WDDM resources *can* be represented as multiple allocations (for example: p
 To avoid creating share tokens that cannot be imported safely, the driver stack enforces an MVP restriction:
 
 - **Only shared resources that map to exactly one WDDM allocation are supported.**
-- The KMD validates `NumAllocations == 1` for shared allocation creates and fails deterministically otherwise.
+- The KMD validates `NumAllocations == 1` for shared allocation create/open and fails deterministically otherwise.
 - The UMD should reject shared creations that would require multiple allocations (practically: keep shared surfaces to `mip_levels=1` and `array_layers=1`, which matches typical DWM redirected surfaces).
 
 #### `D3DPOOL_DEFAULT` semantics for Ex
