@@ -238,7 +238,13 @@ The relay supports authentication via `AUTH_MODE` (and `API_KEY`/`JWT_SECRET`). 
 are also used by `backend/aero-gateway` to mint `udpRelay.token` in `POST /session` so the
 frontend can discover how to authenticate to the relay.
 
-The relay also supports a strict UDP destination policy; see:
+The relay also enforces a **UDP destination policy** (to prevent accidental open-proxy deployments).
+By default, `proxy/webrtc-udp-relay` uses `DESTINATION_POLICY_PRESET=production` (**deny by default**),
+so you must configure an allowlist (CIDRs/ports) before UDP relay traffic will flow.
+
+For local development/testing, you can set `DESTINATION_POLICY_PRESET=dev` to allow by default.
+
+See:
 
 - `proxy/webrtc-udp-relay/README.md` (authoritative)
 
