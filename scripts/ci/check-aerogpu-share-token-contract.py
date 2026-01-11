@@ -44,7 +44,7 @@ SCAN_PATHS: list[pathlib.Path] = [
 # If this identifier shows up in docs/protocol commentary, it almost always means
 # we're (incorrectly) referencing an obsolete share-token carrier model.
 BANNED_SUBSTRINGS = [
-    "aerogpu_alloc_privdata.h",
+    "aerogpu_alloc_privdata",
 ]
 
 # These files must continue to reference the canonical share_token carrier field.

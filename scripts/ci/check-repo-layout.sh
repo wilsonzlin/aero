@@ -129,8 +129,8 @@ deprecated_alloc_privdata_header="drivers/aerogpu/protocol/aerogpu_alloc_privdat
 if [[ -f "$deprecated_alloc_privdata_header" ]]; then
   die "$deprecated_alloc_privdata_header is deprecated; use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead"
 fi
-if git grep -n "aerogpu_alloc_privdata.h" -- docs drivers >/dev/null; then
-  die "stale references to aerogpu_alloc_privdata.h found (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
+if git grep -n "aerogpu_alloc_privdata" -- docs drivers >/dev/null; then
+  die "stale references to aerogpu_alloc_privdata found (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
 fi
 
 # npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
