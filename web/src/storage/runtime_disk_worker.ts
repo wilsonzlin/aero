@@ -23,6 +23,11 @@ import {
 
 type OpenMode = "direct" | "cow";
 
+type StreamLeaseResponse = {
+  url: string;
+  chunked?: { delivery?: string; manifestUrl?: string };
+};
+
 type DiskIoTelemetry = {
   reads: number;
   bytesRead: number;
@@ -100,6 +105,55 @@ function cacheBindingFileName(cacheFileName: string): string {
   return `${cacheFileName}.binding.json`;
 }
 
+async function resolveStreamLease(endpoint: string): Promise<StreamLeaseResponse> {
+  const resp = await fetch(endpoint, { method: "GET", credentials: "same-origin" });
+  if (!resp.ok) {
+    throw new Error(`failed to fetch stream lease: ${resp.status}`);
+  }
+  const raw = (await resp.json()) as unknown;
+  if (!raw || typeof raw !== "object") {
+    throw new Error("stream lease response must be a JSON object");
+  }
+  const obj = raw as Partial<StreamLeaseResponse>;
+  if (typeof obj.url !== "string" || !obj.url.trim()) {
+    throw new Error("stream lease response missing url");
+  }
+  return obj as StreamLeaseResponse;
+}
+
+async function resolveRemoteRangeUrl(meta: Extract<DiskImageMetadata, { source: "remote" }>): Promise<string> {
+  const stable = meta.remote.urls.url;
+  if (typeof stable === "string" && stable.trim()) return stable;
+
+  const endpoint = meta.remote.urls.leaseEndpoint;
+  if (typeof endpoint !== "string" || !endpoint.trim()) {
+    throw new Error("remote disk metadata missing urls.url and urls.leaseEndpoint");
+  }
+
+  const lease = await resolveStreamLease(endpoint);
+  return lease.url;
+}
+
+async function resolveRemoteChunkedManifestUrl(meta: Extract<DiskImageMetadata, { source: "remote" }>): Promise<string> {
+  const stable = meta.remote.urls.url;
+  if (typeof stable === "string" && stable.trim()) return stable;
+
+  const endpoint = meta.remote.urls.leaseEndpoint;
+  if (typeof endpoint !== "string" || !endpoint.trim()) {
+    throw new Error("remote chunked disk metadata missing urls.url and urls.leaseEndpoint");
+  }
+
+  const lease = await resolveStreamLease(endpoint);
+  const chunked = lease.chunked;
+  if (!chunked || typeof chunked.manifestUrl !== "string" || !chunked.manifestUrl.trim()) {
+    throw new Error("stream lease response missing chunked.manifestUrl");
+  }
+  if (chunked.delivery !== undefined && chunked.delivery !== "chunked") {
+    throw new Error(`unexpected stream lease chunked.delivery=${String(chunked.delivery)}`);
+  }
+  return chunked.manifestUrl;
+}
+
 async function readCacheBinding(fileName: string): Promise<RemoteCacheBinding | null> {
   try {
     const handle = await opfsGetDiskFileHandle(fileName, { create: false });
@@ -163,8 +217,9 @@ function emptyIoTelemetry(): DiskIoTelemetry {
 
 async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSizeBytes?: number): Promise<DiskEntry> {
   if (meta.source === "remote") {
-    if (meta.cache.backend !== "opfs" && meta.cache.backend !== "idb") {
-      throw new Error(`unsupported remote cache backend ${meta.cache.backend}`);
+    const remoteCacheBackend = meta.cache.backend;
+    if (remoteCacheBackend !== "opfs" && remoteCacheBackend !== "idb") {
+      throw new Error(`unsupported remote cache backend ${String(remoteCacheBackend)}`);
     }
     if (meta.remote.delivery !== "range" && meta.remote.delivery !== "chunked") {
       throw new Error(`unsupported remote delivery ${meta.remote.delivery}`);
@@ -176,18 +231,21 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
         ? { kind: "lastModified" as const, value: meta.remote.validator.lastModified }
         : undefined;
 
-    const backend: DiskBackendSnapshot = {
+    const base: RemoteCacheBinding["base"] = {
+      imageId: meta.remote.imageId,
+      version: meta.remote.version,
+      deliveryType: meta.remote.delivery,
+      ...(expectedValidator ? { expectedValidator } : {}),
+      chunkSize: meta.cache.chunkSizeBytes,
+    };
+
+    const readOnly = meta.kind === "cd" || meta.format === "iso";
+    const candidateSnapshot: DiskBackendSnapshot = {
       kind: "remote",
-      backend: meta.cache.backend,
+      backend: remoteCacheBackend,
       diskKind: meta.kind,
       sizeBytes: meta.sizeBytes,
-      base: {
-        imageId: meta.remote.imageId,
-        version: meta.remote.version,
-        deliveryType: meta.remote.delivery,
-        ...(expectedValidator ? { expectedValidator } : {}),
-        chunkSize: meta.cache.chunkSizeBytes,
-      },
+      base,
       overlay: {
         fileName: meta.cache.overlayFileName,
         diskSizeBytes: meta.sizeBytes,
@@ -196,14 +254,106 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
       cache: { fileName: meta.cache.fileName },
     };
 
-    const readOnly = meta.kind === "cd" || meta.format === "iso";
-    return await openDiskFromSnapshot({
-      handle: 0,
-      readOnly,
-      sectorSize: 512,
-      capacityBytes: meta.sizeBytes,
-      backend,
-    });
+    const loc = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+    const origin = loc ? new URL(loc).origin : null;
+
+    const shouldEnableSnapshotForUrl = (resolvedUrl: string, expectedPath: string): boolean => {
+      if (!loc || !origin) return false;
+      try {
+        const u = new URL(resolvedUrl, loc);
+        return u.origin === origin && u.pathname === expectedPath && !u.search && !u.hash;
+      } catch {
+        return false;
+      }
+    };
+
+    let backendSnapshot: DiskBackendSnapshot | null = null;
+    let baseDisk: AsyncSectorDisk;
+
+    if (remoteCacheBackend === "opfs") {
+      if (meta.remote.delivery === "range") {
+        const url = await resolveRemoteRangeUrl(meta);
+        await ensureRemoteCacheBinding(base, meta.cache.fileName);
+
+        const imageKey = `${meta.remote.imageId}:${meta.remote.version}:${meta.remote.delivery}`;
+        const sparseCacheFactory = {
+          open: async (_cacheId: string) => await OpfsAeroSparseDisk.open(meta.cache.fileName),
+          create: async (_cacheId: string, opts: { diskSizeBytes: number; blockSizeBytes: number }) =>
+            await OpfsAeroSparseDisk.create(meta.cache.fileName, opts),
+          delete: async (_cacheId: string) => {
+            await opfsDeleteDisk(meta.cache.fileName);
+          },
+        };
+
+        baseDisk = await RemoteRangeDisk.open(url, { imageKey, chunkSize: meta.cache.chunkSizeBytes, sparseCacheFactory });
+        if (baseDisk.capacityBytes !== meta.sizeBytes) {
+          await baseDisk.close?.();
+          throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${baseDisk.capacityBytes}`);
+        }
+
+        if (shouldEnableSnapshotForUrl(url, defaultRemoteRangeUrl(base))) {
+          backendSnapshot = candidateSnapshot;
+        }
+      } else {
+        const manifestUrl = await resolveRemoteChunkedManifestUrl(meta);
+        baseDisk = await RemoteChunkedDisk.open(manifestUrl, { cacheBackend: remoteCacheBackend, credentials: "same-origin" });
+        if (baseDisk.capacityBytes !== meta.sizeBytes) {
+          await baseDisk.close?.();
+          throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${baseDisk.capacityBytes}`);
+        }
+        if (shouldEnableSnapshotForUrl(manifestUrl, defaultRemoteChunkedManifestUrl(base))) {
+          backendSnapshot = candidateSnapshot;
+        }
+      }
+    } else {
+      if (meta.remote.delivery === "range") {
+        const expectedEtag = expectedValidator?.kind === "etag" ? expectedValidator.value : undefined;
+        const url = await resolveRemoteRangeUrl(meta);
+        baseDisk = await RemoteStreamingDisk.open(url, {
+          blockSize: meta.cache.chunkSizeBytes,
+          cacheBackend: remoteCacheBackend,
+          credentials: "same-origin",
+          cacheImageId: meta.remote.imageId,
+          cacheVersion: meta.remote.version,
+          cacheEtag: expectedEtag,
+          expectedSizeBytes: meta.sizeBytes,
+        });
+        if (shouldEnableSnapshotForUrl(url, defaultRemoteRangeUrl(base))) {
+          backendSnapshot = candidateSnapshot;
+        }
+      } else if (meta.remote.delivery === "chunked") {
+        const manifestUrl = await resolveRemoteChunkedManifestUrl(meta);
+        baseDisk = await RemoteChunkedDisk.open(manifestUrl, { cacheBackend: remoteCacheBackend, credentials: "same-origin" });
+        if (baseDisk.capacityBytes !== meta.sizeBytes) {
+          await baseDisk.close?.();
+          throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${baseDisk.capacityBytes}`);
+        }
+        if (shouldEnableSnapshotForUrl(manifestUrl, defaultRemoteChunkedManifestUrl(base))) {
+          backendSnapshot = candidateSnapshot;
+        }
+      } else {
+        throw new Error(`unsupported remote delivery ${meta.remote.delivery}`);
+      }
+    }
+
+    if (readOnly) {
+      return { disk: baseDisk, readOnly, io: emptyIoTelemetry(), backendSnapshot };
+    }
+    try {
+      if (remoteCacheBackend === "idb") {
+        const disk = await IdbCowDisk.open(baseDisk, meta.cache.overlayFileName, meta.sizeBytes);
+        return { disk, readOnly, io: emptyIoTelemetry(), backendSnapshot };
+      }
+
+      const overlay = await openSparseOrCreate(meta.cache.overlayFileName, {
+        diskSizeBytes: meta.sizeBytes,
+        blockSizeBytes: meta.cache.overlayBlockSizeBytes,
+      });
+      return { disk: new OpfsCowDisk(baseDisk, overlay), readOnly, io: emptyIoTelemetry(), backendSnapshot };
+    } catch (err) {
+      await baseDisk.close?.();
+      throw err;
+    }
   }
   const readOnly = meta.kind === "cd" || meta.format === "iso";
 
