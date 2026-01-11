@@ -4,8 +4,10 @@
 ;
 ; IMPORTANT:
 ;   - The Hardware ID(s) below MUST match the AeroGPU PCI device model.
-;   - Default HWID is from drivers/aerogpu/protocol/aerogpu_pci.h:
+;   - Canonical/new ABI HWID is from drivers/aerogpu/protocol/aerogpu_pci.h:
 ;       PCI\VEN_A3A0&DEV_0001
+;   - Legacy bring-up ABI HWID is from drivers/aerogpu/protocol/aerogpu_protocol.h:
+;       PCI\VEN_1AED&DEV_0001
 ;     If your device model uses different IDs, update the INF accordingly.
 ;
 ; Expected package contents (same directory as this INF):
@@ -31,9 +33,11 @@ CatalogFile = aerogpu.cat
 
 [AeroGPU_Models.NTx86.6.1]
 %AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_A3A0&DEV_0001
+%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1AED&DEV_0001
 
 [AeroGPU_Models.NTamd64.6.1]
 %AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_A3A0&DEV_0001
+%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1AED&DEV_0001
 
 ; -------------------------------
 ; Install (x86)

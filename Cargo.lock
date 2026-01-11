@@ -385,6 +385,9 @@ dependencies = [
 [[package]]
 name = "aero-protocol"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "aero-shared"
@@ -1612,8 +1615,8 @@ dependencies = [
  "aero-io-snapshot",
  "aero-net-e1000",
  "aero-platform",
- "aero-snapshot",
  "aero-protocol",
+ "aero-snapshot",
  "aero-storage",
  "anyhow",
  "criterion",
