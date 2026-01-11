@@ -4,7 +4,21 @@ use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::{GuestMemory as UsbGuestMemory, UsbWebUsbPassthroughDevice};
 
+// UHCI register layout (0x20 bytes).
 const REG_USBCMD: u16 = 0x00;
+const REG_USBSTS: u16 = 0x02;
+const REG_USBINTR: u16 = 0x04;
+const REG_FRNUM: u16 = 0x06;
+const REG_FRBASEADD: u16 = 0x08;
+const REG_SOFMOD: u16 = 0x0C;
+const REG_PORTSC1: u16 = 0x10;
+const REG_PORTSC2: u16 = 0x12;
+
+// PORTSC bits we need for masked byte writes.
+const PORTSC_CSC: u16 = 1 << 1;
+const PORTSC_PEDC: u16 = 1 << 3;
+const PORTSC_PR: u16 = 1 << 9;
+
 const USBCMD_HCRESET: u32 = 1 << 1;
 
 #[derive(Debug, Default)]
@@ -115,22 +129,93 @@ impl WebUsbUhciBridge {
         let Ok(offset) = u16::try_from(offset) else {
             return 0xffff_ffff;
         };
-        let Ok(size) = usize::try_from(size) else {
+        let Ok(size) = u8::try_from(size) else {
             return 0xffff_ffff;
         };
-        let port = self.controller.io_base().wrapping_add(offset);
-        self.controller.port_read(port, size)
+
+        match size {
+            1 => u32::from(self.read_u8(offset)),
+            2 => {
+                let lo = self.read_u8(offset);
+                let hi = self.read_u8(offset.wrapping_add(1));
+                u32::from(lo) | (u32::from(hi) << 8)
+            }
+            4 => {
+                let b0 = self.read_u8(offset);
+                let b1 = self.read_u8(offset.wrapping_add(1));
+                let b2 = self.read_u8(offset.wrapping_add(2));
+                let b3 = self.read_u8(offset.wrapping_add(3));
+                u32::from(b0)
+                    | (u32::from(b1) << 8)
+                    | (u32::from(b2) << 16)
+                    | (u32::from(b3) << 24)
+            }
+            _ => 0xffff_ffff,
+        }
     }
 
     pub fn io_write(&mut self, offset: u32, size: u32, value: u32) {
         let Ok(offset) = u16::try_from(offset) else {
             return;
         };
-        let Ok(size) = usize::try_from(size) else {
+        let Ok(size) = u8::try_from(size) else {
             return;
         };
-        let port = self.controller.io_base().wrapping_add(offset);
-        self.controller.port_write(port, size, value, &mut self.irq);
+
+        match (offset, size) {
+            // Use native 16-bit writes for the 16-bit registers.
+            (
+                REG_USBCMD | REG_USBSTS | REG_USBINTR | REG_FRNUM | REG_PORTSC1 | REG_PORTSC2,
+                2,
+            ) => {
+                self.controller
+                    .port_write(offset, 2, value, &mut self.irq);
+            }
+            // FRBASEADD is natively 32-bit.
+            (REG_FRBASEADD, 4) => {
+                self.controller
+                    .port_write(REG_FRBASEADD, 4, value, &mut self.irq);
+            }
+            // Some drivers use 32-bit I/O at offset 0/4 to access paired 16-bit registers.
+            (REG_USBCMD, 4) => {
+                let cmd = value & 0xffff;
+                let sts = (value >> 16) & 0xffff;
+                self.controller
+                    .port_write(REG_USBCMD, 2, cmd, &mut self.irq);
+                self.controller
+                    .port_write(REG_USBSTS, 2, sts, &mut self.irq);
+            }
+            (REG_USBINTR, 4) => {
+                let intr = value & 0xffff;
+                let frnum = (value >> 16) & 0xffff;
+                self.controller
+                    .port_write(REG_USBINTR, 2, intr, &mut self.irq);
+                self.controller
+                    .port_write(REG_FRNUM, 2, frnum, &mut self.irq);
+            }
+            (REG_PORTSC1, 4) => {
+                let p0 = value & 0xffff;
+                let p1 = (value >> 16) & 0xffff;
+                self.controller
+                    .port_write(REG_PORTSC1, 2, p0, &mut self.irq);
+                self.controller
+                    .port_write(REG_PORTSC2, 2, p1, &mut self.irq);
+            }
+            _ => match size {
+                1 => self.write_u8(offset, value as u8),
+                2 => {
+                    self.write_u8(offset, value as u8);
+                    self.write_u8(offset.wrapping_add(1), (value >> 8) as u8);
+                }
+                4 => {
+                    self.write_u8(offset, value as u8);
+                    self.write_u8(offset.wrapping_add(1), (value >> 8) as u8);
+                    self.write_u8(offset.wrapping_add(2), (value >> 16) as u8);
+                    self.write_u8(offset.wrapping_add(3), (value >> 24) as u8);
+                }
+                _ => {}
+            },
+        }
     }
 
     pub fn step_frames(&mut self, frames: u32) {
@@ -207,6 +292,156 @@ impl WebUsbUhciBridge {
 }
 
 impl WebUsbUhciBridge {
+    fn read_u8(&mut self, offset: u16) -> u8 {
+        match offset {
+            0x00 | 0x01 => {
+                let w = self.controller.port_read(REG_USBCMD, 2) as u16;
+                if offset & 1 == 0 {
+                    (w & 0xff) as u8
+                } else {
+                    (w >> 8) as u8
+                }
+            }
+            0x02 | 0x03 => {
+                let w = self.controller.port_read(REG_USBSTS, 2) as u16;
+                if offset & 1 == 0 {
+                    (w & 0xff) as u8
+                } else {
+                    (w >> 8) as u8
+                }
+            }
+            0x04 | 0x05 => {
+                let w = self.controller.port_read(REG_USBINTR, 2) as u16;
+                if offset & 1 == 0 {
+                    (w & 0xff) as u8
+                } else {
+                    (w >> 8) as u8
+                }
+            }
+            0x06 | 0x07 => {
+                let w = self.controller.port_read(REG_FRNUM, 2) as u16;
+                if offset & 1 == 0 {
+                    (w & 0xff) as u8
+                } else {
+                    (w >> 8) as u8
+                }
+            }
+            0x08..=0x0b => {
+                let d = self.controller.port_read(REG_FRBASEADD, 4);
+                let shift = (offset - REG_FRBASEADD) * 8;
+                ((d >> shift) & 0xff) as u8
+            }
+            0x0c => self.controller.port_read(REG_SOFMOD, 1) as u8,
+            0x10 | 0x11 => {
+                let w = self.controller.port_read(REG_PORTSC1, 2) as u16;
+                if offset & 1 == 0 {
+                    (w & 0xff) as u8
+                } else {
+                    (w >> 8) as u8
+                }
+            }
+            0x12 | 0x13 => {
+                let w = self.controller.port_read(REG_PORTSC2, 2) as u16;
+                if offset & 1 == 0 {
+                    (w & 0xff) as u8
+                } else {
+                    (w >> 8) as u8
+                }
+            }
+            // Reserved bytes in the decoded 0x20-byte UHCI window should read as 0 so that
+            // wide I/O operations don't see spurious 0xFF in the upper bytes.
+            _ => 0,
+        }
+    }
+
+    fn write_portsc_masked(&mut self, reg: u16, shift: u16, value: u8) {
+        let cur = self.controller.port_read(reg, 2) as u16;
+        let mask: u16 = 0xff << shift;
+        let written = (value as u16) << shift;
+
+        let mut next = (cur & !mask) | (written & mask);
+
+        // W1C bits: only clear when explicitly written.
+        let w1c = PORTSC_CSC | PORTSC_PEDC;
+        next &= !w1c;
+        next |= written & w1c;
+
+        // Reset bit: treat as a "write-1-to-start" action bit; do not re-assert just because
+        // it is currently set in the readable value.
+        next &= !PORTSC_PR;
+        next |= written & PORTSC_PR;
+
+        self.controller
+            .port_write(reg, 2, next as u32, &mut self.irq);
+    }
+
+    fn write_u8(&mut self, offset: u16, value: u8) {
+        match offset {
+            // USBCMD: read/modify/write 16-bit register.
+            0x00 | 0x01 => {
+                let cur = self.controller.port_read(REG_USBCMD, 2) as u16;
+                let shift = (offset & 1) * 8;
+                let mask = 0xffu16 << shift;
+                let next = (cur & !mask) | ((value as u16) << shift);
+                self.controller
+                    .port_write(REG_USBCMD, 2, next as u32, &mut self.irq);
+            }
+
+            // USBSTS: W1C (write-one-to-clear). Byte writes should only clear bits in that byte.
+            0x02 | 0x03 => {
+                let shift = (offset & 1) * 8;
+                let v = (value as u16) << shift;
+                self.controller
+                    .port_write(REG_USBSTS, 2, v as u32, &mut self.irq);
+            }
+
+            // USBINTR: read/modify/write so high-byte writes don't clear the low-byte enables.
+            0x04 | 0x05 => {
+                let cur = self.controller.port_read(REG_USBINTR, 2) as u16;
+                let shift = (offset & 1) * 8;
+                let mask = 0xffu16 << shift;
+                let next = (cur & !mask) | ((value as u16) << shift);
+                self.controller
+                    .port_write(REG_USBINTR, 2, next as u32, &mut self.irq);
+            }
+
+            // FRNUM: 11-bit register; read/modify/write for byte accesses.
+            0x06 | 0x07 => {
+                let cur = self.controller.port_read(REG_FRNUM, 2) as u16;
+                let shift = (offset & 1) * 8;
+                let mask = 0xffu16 << shift;
+                let next = (cur & !mask) | ((value as u16) << shift);
+                self.controller
+                    .port_write(REG_FRNUM, 2, next as u32, &mut self.irq);
+            }
+
+            // FRBASEADD: 32-bit.
+            0x08..=0x0b => {
+                let cur = self.controller.port_read(REG_FRBASEADD, 4);
+                let shift = (offset - REG_FRBASEADD) * 8;
+                let mask = 0xffu32 << shift;
+                let next = (cur & !mask) | ((value as u32) << shift);
+                self.controller
+                    .port_write(REG_FRBASEADD, 4, next, &mut self.irq);
+            }
+
+            // SOFMOD: 8-bit register.
+            0x0c => {
+                self.controller
+                    .port_write(REG_SOFMOD, 1, value as u32, &mut self.irq);
+            }
+
+            // PORTSC1/2: masked writes so high-byte accesses don't clear low-byte W1C bits.
+            0x10 => self.write_portsc_masked(REG_PORTSC1, 0, value),
+            0x11 => self.write_portsc_masked(REG_PORTSC1, 8, value),
+            0x12 => self.write_portsc_masked(REG_PORTSC2, 0, value),
+            0x13 => self.write_portsc_masked(REG_PORTSC2, 8, value),
+
+            // Reserved/unimplemented bytes are ignored.
+            _ => {}
+        }
+    }
+
     fn passthrough_device(&self) -> Option<&UsbWebUsbPassthroughDevice> {
         let port = self.controller.bus().port(0)?;
         let dev = port.device.as_ref()?;
