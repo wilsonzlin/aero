@@ -2978,8 +2978,13 @@ void APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  // Unbind path (e.g. IASetVertexBuffers(0,0,NULL,NULL,NULL)).
-  if (startSlot == 0 && numBuffers == 0) {
+  if (numBuffers == 0) {
+    // We only model vertex buffer slot 0 in the minimal bring-up path. If the
+    // runtime unbinds a different slot, ignore it rather than accidentally
+    // clearing slot 0 state.
+    if (startSlot != 0) {
+      return;
+    }
     dev->current_vb_res = nullptr;
     dev->current_vb_stride = 0;
     dev->current_vb_offset = 0;
