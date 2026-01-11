@@ -384,7 +384,7 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 | `status` | device present, mode, engine state, last reset reason | first command in any bug report |
 | `--dump-ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
 | `--query-fence` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
-| `--dump-vblank` | last vblank timestamp, interval stats, missed count | DWM stutter / Basic fallback |
+| `--dump-vblank` | IRQ enable/status + vblank seq/time/period (optionally sampled with deltas/observed Hz) | DWM stutter / Basic fallback |
 | `log level <err|warn|info|trace>` | sets runtime verbosity | enable before repro |
 | `perf start <file>` / `perf stop` | lightweight counters (present rate, bytes/sec, latency histograms) | baseline collection |
 | `inject hang <ms>` *(dev)* | intentionally stall completions to validate TDR handling | validates reset path |
@@ -396,11 +396,11 @@ The exact surface area is up to implementation, but the key is: **one command to
 
 | Symptom | Error / signal | Likely causes | First checks |
 |---|---|---|---|
-| Toast: “Display driver stopped responding and has recovered” | Event Viewer: **Display** Event ID **4101** | fence/interrupt not progressing, submission too long, deadlock in KMD | `dump fences`, look for stuck completed fence; verify vblank still ticking |
+| Toast: “Display driver stopped responding and has recovered” | Event Viewer: **Display** Event ID **4101** | fence/interrupt not progressing, submission too long, deadlock in KMD | `--query-fence`, look for stuck completed fence; verify vblank still ticking |
 | Apps start failing after a stutter | `DXGI_ERROR_DEVICE_REMOVED` (`0x887A0005`) | TDR recovery occurred; device reset | check System log for 4101 near the time; ensure reset path restores state |
 | A 3D app crashes during heavy draw | `DXGI_ERROR_DEVICE_HUNG` (`0x887A0006`) / `D3DERR_DEVICELOST` | invalid command stream, out-of-bounds memory, shader/translation bug, long-running batch | enable validation in UMD, log last submission bytes/opcodes, bisect by disabling features |
 | BSOD during/after TDR | **0x116 VIDEO_TDR_FAILURE** | `ResetFromTimeout` failed or returned inconsistent state | instrument reset path; ensure worker threads stop; avoid touching freed allocations |
-| Aero turns off (Basic theme) without a BSOD | “The color scheme has been changed…” notification | DWM device removed/reset, vblank pacing broken, present failures | verify `dwm.exe` still running; check 4101; check `dump vblank` jitter/gaps |
+| Aero turns off (Basic theme) without a BSOD | “The color scheme has been changed…” notification | DWM device removed/reset, vblank pacing broken, present failures | verify `dwm.exe` still running; check 4101; check `--dump-vblank` cadence (seq/time monotonic) |
 | Desktop freezes with no recovery | no logs after a point; hard hang | TdrLevel disabled, deadlock at DISPATCH_LEVEL, interrupt storm, spinlock inversion | re-enable TDR; add watchdog logs; check vblank generator independence from render thread |
 
 ---
@@ -413,6 +413,6 @@ If you’re unsure what to implement first, aim for this minimal set:
 2. **Synthetic vblank** at 60 Hz with logging and missed-count tracking.
 3. **Small, bounded submissions** (split work; fence per submission; completion <100 ms).
 4. A `ResetFromTimeout` implementation that can recover without BSOD.
-5. `aerogpu_dbgctl dump fences/ring/vblank` works even after a failure.
+5. `aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank` works even after a failure.
 
 Once this recipe is stable, expand: more modes, more features, better pacing accuracy, and higher throughput.
