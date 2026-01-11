@@ -1201,7 +1201,6 @@ function renderRemoteDiskPanel(): HTMLElement {
   function updateModeUi(): void {
     const chunked = modeSelect.value === "chunked";
     blockSizeInput.disabled = chunked;
-    cacheBackendSelect.disabled = chunked;
     maxConcurrentFetchesInput.disabled = !chunked;
     urlInput.placeholder = chunked
       ? "http://localhost:9000/disk-images/manifest.json"
@@ -1249,6 +1248,7 @@ function renderRemoteDiskPanel(): HTMLElement {
             cacheLimitBytes,
             prefetchSequentialChunks: prefetchSequential,
             maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
+            cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
           })
         : await client.openRemote(url, {
             blockSize: Number(blockSizeInput.value) * 1024,

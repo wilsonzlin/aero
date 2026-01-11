@@ -695,7 +695,6 @@ function renderRemoteDiskPanel(): HTMLElement {
   function updateModeUi(): void {
     const chunked = modeSelect.value === 'chunked';
     blockSizeInput.disabled = chunked;
-    cacheBackendSelect.disabled = chunked;
     maxConcurrentFetchesInput.disabled = !chunked;
     urlInput.placeholder = chunked ? 'https://example.com/manifest.json' : 'https://example.com/disk.raw';
     probeButton.textContent = chunked ? 'Fetch manifest' : 'Probe Range support';
@@ -743,6 +742,7 @@ function renderRemoteDiskPanel(): HTMLElement {
             cacheLimitBytes,
             prefetchSequentialChunks: prefetchSequential,
             maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
+            cacheBackend: cacheBackendSelect.value === 'auto' ? undefined : (cacheBackendSelect.value as 'opfs' | 'idb'),
           })
         : await client.openRemote(url, {
             blockSize: Number(blockSizeInput.value) * 1024,

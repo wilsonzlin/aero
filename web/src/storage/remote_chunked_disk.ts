@@ -146,13 +146,30 @@ type ChunkCache = {
   flush(): Promise<void>;
   clear(): Promise<void>;
   close?: () => void;
+  getCachedBytes(): number;
+  getCacheLimitBytes(): number | null;
 };
 
 class IdbChunkCache implements ChunkCache {
+  private cachedBytes: number;
+  private readonly cacheLimitBytes: number | null;
+
   constructor(
     private readonly cache: IdbRemoteChunkCache,
     private readonly manifest: ParsedChunkedDiskManifest,
-  ) {}
+    initialStatus: { bytesUsed: number; cacheLimitBytes: number | null },
+  ) {
+    this.cachedBytes = initialStatus.bytesUsed;
+    this.cacheLimitBytes = initialStatus.cacheLimitBytes;
+  }
+
+  getCachedBytes(): number {
+    return this.cachedBytes;
+  }
+
+  getCacheLimitBytes(): number | null {
+    return this.cacheLimitBytes;
+  }
 
   private expectedLen(chunkIndex: number): number {
     return this.manifest.chunkSizes[chunkIndex] ?? 0;
@@ -165,6 +182,9 @@ class IdbChunkCache implements ChunkCache {
     if (bytes.byteLength !== expectedLen) {
       // Heal: cached but mismatched size (stale/corrupt record).
       await this.cache.delete(chunkIndex);
+      // Best-effort: refresh cachedBytes after a heal.
+      const status = await this.cache.getStatus();
+      this.cachedBytes = status.bytesUsed;
       return null;
     }
     return bytes;
@@ -176,6 +196,8 @@ class IdbChunkCache implements ChunkCache {
       throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.byteLength}`);
     }
     await this.cache.put(chunkIndex, bytes);
+    const status = await this.cache.getStatus();
+    this.cachedBytes = status.bytesUsed;
   }
 
   async flush(): Promise<void> {
@@ -184,6 +206,7 @@ class IdbChunkCache implements ChunkCache {
 
   async clear(): Promise<void> {
     await this.cache.clear();
+    this.cachedBytes = 0;
   }
 
   close(): void {
@@ -457,14 +480,14 @@ class RemoteChunkCache implements ChunkCache {
         parsed.chunkIndexWidth === this.manifest.chunkIndexWidth;
       if (!compatible) return;
       this.meta = parsed;
-       for (const r of parsed.downloaded) {
-         this.rangeSet.insert(r.start, r.end);
-       }
-       this.cachedBytes = this.rangeSet.totalLen();
-     } catch {
-       // ignore corrupt meta
-     }
-   }
+      for (const r of parsed.downloaded) {
+        this.rangeSet.insert(r.start, r.end);
+      }
+      this.cachedBytes = this.rangeSet.totalLen();
+    } catch {
+      // ignore corrupt meta
+    }
+  }
 
   async getChunk(chunkIndex: number): Promise<Uint8Array | null> {
     await this.loadMeta();
@@ -680,7 +703,8 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
         },
         cacheLimitBytes: resolved.cacheLimitBytes,
       });
-      cache = new IdbChunkCache(idbCache, manifest);
+      const status = await idbCache.getStatus();
+      cache = new IdbChunkCache(idbCache, manifest, status);
     } else {
       const store = hasOpfsRoot() ? new OpfsStore() : new MemoryStore();
       const opfsCache = new RemoteChunkCache(store, cacheKey, manifestUrl, manifest, resolved.cacheLimitBytes);
