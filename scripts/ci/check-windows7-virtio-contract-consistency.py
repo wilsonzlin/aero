@@ -77,7 +77,7 @@ def extract_virtio_snd_from_w7_contract(md: str) -> dict[str, int]:
 
 def extract_virtio_snd_from_windows_device_contract(md: str) -> dict[str, int]:
     # Parse the single-row table entry:
-    # | virtio-snd | `1AF4:1059` | `1AF4:0003` | ...
+    # | virtio-snd | `1AF4:1059` | `1AF4:0019` | ...
     row = re.search(
         r"^\|\s*virtio-snd\s*\|\s*`(?P<pci>[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})`\s*\|\s*`(?P<subsys>[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})`\s*\|",
         md,
@@ -86,7 +86,7 @@ def extract_virtio_snd_from_windows_device_contract(md: str) -> dict[str, int]:
     if not row:
         fail(
             f"could not parse virtio-snd row from {WINDOWS_DEVICE_CONTRACT_MD.as_posix()} "
-            "(expected a table row like '| virtio-snd | `1AF4:1059` | `1AF4:0003` |')"
+            "(expected a table row like '| virtio-snd | `1AF4:1059` | `1AF4:0019` |')"
         )
 
     pci_vendor, pci_device = row.group("pci").split(":")
