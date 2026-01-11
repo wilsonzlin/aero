@@ -121,6 +121,17 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 function renderBuildInfoPanel(): HTMLElement {
+  // `__AERO_BUILD_INFO__` is normally injected by `web/vite.config.ts`. When this
+  // UI is served under the repo-root Vite harness (`npm run dev:harness`) that
+  // define is not present, so fall back to a small placeholder instead of
+  // crashing the entire page.
+  const buildInfo =
+    // eslint-disable-next-line no-undef
+    typeof __AERO_BUILD_INFO__ !== "undefined"
+      ? // eslint-disable-next-line no-undef
+        __AERO_BUILD_INFO__
+      : { version: "dev", gitSha: "unknown", builtAt: "unknown" };
+
   const versionLink = el("a", {
     href: "/aero.version.json",
     target: "_blank",
@@ -132,13 +143,13 @@ function renderBuildInfoPanel(): HTMLElement {
     "div",
     { class: "panel" },
     el("h2", { text: "Build info" }),
-    el("div", { class: "row" }, el("strong", { text: "Version:" }), el("span", { class: "mono", text: __AERO_BUILD_INFO__.version })),
-    el("div", { class: "row" }, el("strong", { text: "Commit:" }), el("span", { class: "mono", text: __AERO_BUILD_INFO__.gitSha })),
+    el("div", { class: "row" }, el("strong", { text: "Version:" }), el("span", { class: "mono", text: buildInfo.version })),
+    el("div", { class: "row" }, el("strong", { text: "Commit:" }), el("span", { class: "mono", text: buildInfo.gitSha })),
     el(
       "div",
       { class: "row" },
       el("strong", { text: "Built:" }),
-      el("span", { class: "mono", text: __AERO_BUILD_INFO__.builtAt }),
+      el("span", { class: "mono", text: buildInfo.builtAt }),
     ),
     el("div", { class: "hint muted" }, "Also available at ", versionLink, "."),
   );
