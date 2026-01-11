@@ -181,6 +181,11 @@ function Wait-AeroSelftestResult {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   $pos = 0L
   $tail = ""
+  $sawVirtioInputPass = $false
+  $sawVirtioInputFail = $false
+  $sawVirtioSndPass = $false
+  $sawVirtioSndSkip = $false
+  $sawVirtioSndFail = $false
 
   while ((Get-Date) -lt $deadline) {
     $null = Try-HandleAeroHttpRequest -Listener $HttpListener -Path $HttpPath
@@ -194,21 +199,37 @@ function Wait-AeroSelftestResult {
       $tail += $chunk
       if ($tail.Length -gt 131072) { $tail = $tail.Substring($tail.Length - 131072) }
 
+      if (-not $sawVirtioInputPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|PASS") {
+        $sawVirtioInputPass = $true
+      }
+      if (-not $sawVirtioInputFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|FAIL") {
+        $sawVirtioInputFail = $true
+      }
+      if (-not $sawVirtioSndPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|PASS") {
+        $sawVirtioSndPass = $true
+      }
+      if (-not $sawVirtioSndSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|SKIP") {
+        $sawVirtioSndSkip = $true
+      }
+      if (-not $sawVirtioSndFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|FAIL") {
+        $sawVirtioSndFail = $true
+      }
+
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|PASS") {
         # Ensure we saw the virtio-input test marker so older selftest binaries (blk/net-only)
         # cannot accidentally pass the host harness.
-        if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|PASS") {
+        if ($sawVirtioInputPass) {
           # Also ensure the virtio-snd marker is present, so older selftest binaries that predate
           # virtio-snd testing cannot accidentally pass.
-          if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|PASS" -or $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|SKIP") {
+          if ($sawVirtioSndPass -or $sawVirtioSndSkip) {
             return @{ Result = "PASS"; Tail = $tail }
           }
-          if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|FAIL") {
+          if ($sawVirtioSndFail) {
             return @{ Result = "FAIL"; Tail = $tail }
           }
           return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
         }
-        if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|FAIL") {
+        if ($sawVirtioInputFail) {
           return @{ Result = "FAIL"; Tail = $tail }
         }
         return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }

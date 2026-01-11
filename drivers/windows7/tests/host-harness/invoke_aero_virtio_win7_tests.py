@@ -248,6 +248,11 @@ def main() -> int:
         try:
             pos = 0
             tail = b""
+            saw_virtio_input_pass = False
+            saw_virtio_input_fail = False
+            saw_virtio_snd_pass = False
+            saw_virtio_snd_skip = False
+            saw_virtio_snd_fail = False
             deadline = time.monotonic() + args.timeout_seconds
 
             while time.monotonic() < deadline:
@@ -261,20 +266,35 @@ def main() -> int:
                     if len(tail) > 131072:
                         tail = tail[-131072:]
 
+                    if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
+                        saw_virtio_input_pass = True
+                    if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
+                        saw_virtio_input_fail = True
+                    if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
+                        saw_virtio_snd_pass = True
+                    if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
+                        saw_virtio_snd_skip = True
+                    if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
+                        saw_virtio_snd_fail = True
+
                     if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
                         # Require the virtio-input test marker so older selftest binaries cannot
                         # accidentally pass the host harness.
-                        if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" not in tail:
+                        if not saw_virtio_input_pass:
                             print(
                                 "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
                             return 1
-                        if (
-                            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" not in tail
-                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" not in tail
-                        ):
+                        if saw_virtio_snd_fail:
+                            print(
+                                "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            return 1
+                        if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
                             print(
                                 "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
                                 file=sys.stderr,
@@ -293,18 +313,32 @@ def main() -> int:
                     chunk2, pos = _read_new_bytes(serial_log, pos)
                     if chunk2:
                         tail += chunk2
+                        if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
+                            saw_virtio_input_pass = True
+                        if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
+                            saw_virtio_input_fail = True
+                        if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
+                            saw_virtio_snd_pass = True
+                        if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
+                            saw_virtio_snd_skip = True
+                        if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
+                            saw_virtio_snd_fail = True
                         if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
-                            if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" not in tail:
+                            if not saw_virtio_input_pass:
                                 print(
                                     "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
                                 return 1
-                            if (
-                                b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" not in tail
-                                and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" not in tail
-                            ):
+                            if saw_virtio_snd_fail:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                return 1
+                            if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
                                 print(
                                     "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
                                     file=sys.stderr,
