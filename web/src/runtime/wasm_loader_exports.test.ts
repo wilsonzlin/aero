@@ -125,6 +125,42 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.WebUsbUhciBridge).toBe(FakeWebUsbUhciBridge);
   });
 
+  it("surfaces UsbPassthroughDemo when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    class FakeUsbPassthroughDemo {
+      reset(): void {}
+      queue_get_device_descriptor(_len: number): void {}
+      queue_get_config_descriptor(_len: number): void {}
+      drain_actions(): unknown {
+        return null;
+      }
+      push_completion(_completion: unknown): void {}
+      poll_last_result(): unknown {
+        return null;
+      }
+      free(): void {}
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        UsbPassthroughDemo: FakeUsbPassthroughDemo,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.UsbPassthroughDemo).toBe(FakeUsbPassthroughDemo);
+  });
+
   it("surfaces SharedRingBuffer/open_ring_by_kind for threaded init when present", async () => {
     if (!sharedMemorySupported()) return;
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
