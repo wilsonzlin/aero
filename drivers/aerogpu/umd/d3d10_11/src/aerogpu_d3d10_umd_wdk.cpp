@@ -738,6 +738,7 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnDestroyCounter)
 AEROGPU_DEFINE_HAS_MEMBER(pfnCalcPrivateGeometryShaderWithStreamOutputSize)
 AEROGPU_DEFINE_HAS_MEMBER(pfnCreateGeometryShaderWithStreamOutput)
 AEROGPU_DEFINE_HAS_MEMBER(CPUAccessFlags)
+AEROGPU_DEFINE_HAS_MEMBER(CpuAccessFlags)
 AEROGPU_DEFINE_HAS_MEMBER(Usage)
 
 #undef AEROGPU_DEFINE_HAS_MEMBER
@@ -1239,6 +1240,9 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if constexpr (has_CPUAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
       cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->CPUAccessFlags) != 0);
     }
+    if constexpr (has_CpuAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
+      cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->CpuAccessFlags) != 0);
+    }
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
       cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING));
     }
@@ -1349,6 +1353,9 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     bool cpu_visible = false;
     if constexpr (has_CPUAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
       cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->CPUAccessFlags) != 0);
+    }
+    if constexpr (has_CpuAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
+      cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->CpuAccessFlags) != 0);
     }
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
       cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING));
