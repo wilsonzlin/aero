@@ -1,7 +1,7 @@
 use crate::devices::net_offload::{self, VirtioNetHdr};
 use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
-use crate::pci::{VIRTIO_F_RING_EVENT_IDX, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
+use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
 use std::collections::VecDeque;
 
@@ -84,7 +84,6 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
     fn device_features(&self) -> u64 {
         let mut features = VIRTIO_F_VERSION_1
             | VIRTIO_F_RING_INDIRECT_DESC
-            | VIRTIO_F_RING_EVENT_IDX
             | VIRTIO_NET_F_MAC
             | VIRTIO_NET_F_MRG_RXBUF;
 

@@ -2,7 +2,7 @@ use aero_audio::sink::AudioSink;
 
 use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
-use crate::pci::{VIRTIO_F_RING_EVENT_IDX, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
+use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
 
 pub const VIRTIO_DEVICE_TYPE_SND: u16 = 25;
@@ -682,7 +682,7 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
     }
 
     fn device_features(&self) -> u64 {
-        VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_F_RING_EVENT_IDX
+        VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC
     }
 
     fn set_features(&mut self, features: u64) {

@@ -843,6 +843,7 @@ Drivers MUST refuse to bind to devices with an unknown major version (Revision I
 - [ ] Implement INTx assertion/deassertion and ISR read-to-ack semantics (§1.7–§1.8).
 - [ ] (Optional) If MSI-X is implemented, ensure it cleanly falls back to INTx + ISR when disabled/unavailable (§1.8.4).
 - [ ] Implement split rings and indirect descriptors (§2.1–§2.4).
+- [ ] Offer ring-related feature bits exactly as specified: MUST offer `VIRTIO_F_RING_INDIRECT_DESC` and MUST NOT offer `VIRTIO_F_RING_EVENT_IDX` / `VIRTIO_F_RING_PACKED` (§2.3).
 - [ ] Bounds-check all guest physical memory accesses (§2.6).
 
 ### 5.2 Windows 7 driver checklist
@@ -850,5 +851,6 @@ Drivers MUST refuse to bind to devices with an unknown major version (Revision I
 - [ ] Bind by Vendor/Device IDs; verify PCI Revision ID (`0x01`) (§4.1).
 - [ ] Parse virtio-pci modern capabilities (COMMON/NOTIFY/ISR/DEVICE) (§1.3).
 - [ ] Negotiate `VIRTIO_F_VERSION_1` and required per-device features (§1.5.2, §3).
+- [ ] Allocate rings using the split-ring layout and size formulas in §2.1.1; MUST NOT assume `used_event/avail_event` fields exist (EVENT_IDX not supported in v1).
 - [ ] Program queues via common_cfg, then notify via notify region (§1.5.4, §1.6).
 - [ ] Work correctly with INTx + ISR only; use MSI-X only when available and known-good (§1.8).

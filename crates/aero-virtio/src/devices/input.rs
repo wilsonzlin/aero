@@ -1,5 +1,5 @@
 use crate::devices::{VirtioDevice, VirtioDeviceError};
-use crate::pci::{VIRTIO_F_RING_EVENT_IDX, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
+use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
 use crate::memory::GuestMemory;
 
@@ -52,7 +52,7 @@ impl VirtioDevice for VirtioInput {
     }
 
     fn device_features(&self) -> u64 {
-        VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_F_RING_EVENT_IDX
+        VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC
     }
 
     fn set_features(&mut self, _features: u64) {}

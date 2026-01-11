@@ -1,6 +1,6 @@
 use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::write_u8;
-use crate::pci::{VIRTIO_F_RING_EVENT_IDX, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
+use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
 use crate::memory::GuestMemory;
 
@@ -157,7 +157,6 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
     fn device_features(&self) -> u64 {
         VIRTIO_F_VERSION_1
             | VIRTIO_F_RING_INDIRECT_DESC
-            | VIRTIO_F_RING_EVENT_IDX
             | VIRTIO_BLK_F_SIZE_MAX
             | VIRTIO_BLK_F_SEG_MAX
             | VIRTIO_BLK_F_BLK_SIZE
