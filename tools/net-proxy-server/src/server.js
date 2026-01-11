@@ -391,7 +391,7 @@ export async function createProxyServer(userConfig) {
       burst: config.maxClientBytesPerSecond * 2,
     });
 
-    /** @type {Map<number, { socket: net.Socket, connected: boolean, clientFin: boolean, serverFin: boolean, pendingWrites: Buffer[], pendingWriteBytes: number, writePaused: boolean, pausedForWsBackpressure: boolean }>} */
+    /** @type {Map<number, { socket: net.Socket, connected: boolean, clientFin: boolean, endSent: boolean, serverFin: boolean, pendingWrites: Buffer[], pendingWriteBytes: number, writePaused: boolean, pausedForWsBackpressure: boolean }>} */
     const streams = new Map();
 
     const muxParser = new TcpMuxFrameParser();
@@ -546,6 +546,14 @@ export async function createProxyServer(userConfig) {
         }
       }
 
+      // If the client already sent FIN, send it to the TCP socket only after all
+      // buffered writes have been flushed. This allows clients to send
+      // OPEN+DATA+FIN in a single WebSocket message without losing the DATA.
+      if (stream.clientFin && !stream.endSent) {
+        stream.endSent = true;
+        stream.socket.end();
+      }
+
       if (stream.clientFin && stream.serverFin) {
         // Both halves have finished; release resources early.
         destroyStream(streamId);
@@ -641,6 +649,7 @@ export async function createProxyServer(userConfig) {
         socket,
         connected: false,
         clientFin: false,
+        endSent: false,
         serverFin: false,
         pendingWrites: [],
         pendingWriteBytes: 0,
@@ -751,7 +760,6 @@ export async function createProxyServer(userConfig) {
 
       if ((flags & TcpMuxCloseFlags.FIN) !== 0) {
         stream.clientFin = true;
-        stream.socket.end();
         flushStreamWrites(frame.streamId, stream);
       }
     }

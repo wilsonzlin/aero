@@ -134,6 +134,47 @@ test("integration: OPEN+DATA roundtrip to echo server (split + concatenated WS m
   }
 });
 
+test("integration: OPEN+DATA+FIN in one WS message", async () => {
+  let echoServer;
+  let proxy;
+  let ws;
+
+  try {
+    echoServer = net.createServer((socket) => {
+      socket.on("data", (d) => socket.write(d));
+    });
+    const echoPort = await listen(echoServer);
+
+    proxy = await createProxyServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "test-token",
+      allowPrivateIps: true,
+      metricsIntervalMs: 0,
+    });
+
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+    await waitForWsOpen(ws);
+
+    const open = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort }));
+    const data = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("hello", "utf8"));
+    const fin = encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN));
+
+    ws.send(Buffer.concat([open, data, fin]));
+
+    const d1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 1);
+    assert.equal(d1.payload.toString("utf8"), "hello");
+
+    const close1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1, 5000);
+    assert.equal(decodeTcpMuxClosePayload(close1.payload).flags, TcpMuxCloseFlags.FIN);
+  } finally {
+    if (ws) ws.terminate();
+    if (proxy) await proxy.close();
+    if (echoServer) await new Promise((resolve) => echoServer.close(resolve));
+  }
+});
+
 test("integration: requires aero-tcp-mux-v1 subprotocol", async () => {
   let proxy;
   let ws;
