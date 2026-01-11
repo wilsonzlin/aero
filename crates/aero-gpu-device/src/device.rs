@@ -176,14 +176,19 @@ impl<B: GpuBackend> GpuCommandProcessor<B> {
     }
 }
 
-/// Emulator-side PCI/MMIO GPU device.
+/// Emulator-side PCI/MMIO GPU device for the experimental `aero-gpu-device` ABI (AGRN/AGPC).
 #[derive(Debug)]
-pub struct GpuDevice<B: GpuBackend> {
+pub struct AgpcGpuDevice<B: GpuBackend> {
     mmio: MmioState,
     processor: GpuCommandProcessor<B>,
 }
 
-impl<B: GpuBackend> GpuDevice<B> {
+#[deprecated(
+    note = "Renamed to AgpcGpuDevice to disambiguate from the Win7/WDDM AeroGPU device model (see docs/graphics/aerogpu-protocols.md)."
+)]
+pub type GpuDevice<B> = AgpcGpuDevice<B>;
+
+impl<B: GpuBackend> AgpcGpuDevice<B> {
     pub fn new(backend: B) -> Self {
         Self {
             mmio: MmioState::default(),

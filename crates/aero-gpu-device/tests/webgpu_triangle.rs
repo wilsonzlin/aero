@@ -1,6 +1,6 @@
 use aero_gpu_device::abi;
 use aero_gpu_device::backend::WebGpuBackend;
-use aero_gpu_device::device::{GpuDevice, InterruptSink};
+use aero_gpu_device::device::{AgpcGpuDevice, InterruptSink};
 use aero_gpu_device::guest::{Completion, SyntheticGuest};
 use aero_gpu_device::guest_memory::{GuestMemory, VecGuestMemory};
 use aero_gpu_device::ring::RingLocation;
@@ -73,7 +73,7 @@ fn headless_webgpu_triangle_renders() {
         )
         .unwrap();
 
-        let mut dev = GpuDevice::new(backend);
+        let mut dev = AgpcGpuDevice::new(backend);
         let mut irq = TestIrq::default();
 
         dev.mmio_write32(

@@ -1,6 +1,6 @@
 use aero_gpu_device::abi;
 use aero_gpu_device::backend::SoftGpuBackend;
-use aero_gpu_device::device::{GpuDevice, InterruptSink};
+use aero_gpu_device::device::{AgpcGpuDevice, InterruptSink};
 use aero_gpu_device::guest::SyntheticGuest;
 use aero_gpu_device::guest_memory::{GuestMemory, VecGuestMemory};
 use aero_gpu_device::ring::RingLocation;
@@ -66,7 +66,7 @@ fn generate_trace() -> Vec<u8> {
     .unwrap();
 
     // Device + trace recorder.
-    let mut dev = GpuDevice::new(SoftGpuBackend::new());
+    let mut dev = AgpcGpuDevice::new(SoftGpuBackend::new());
     dev.start_trace_in_memory("0.0.0-dev").unwrap();
     let mut irq = TestIrq::default();
 

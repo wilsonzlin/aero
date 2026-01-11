@@ -1,6 +1,6 @@
 use aero_gpu_device::abi;
 use aero_gpu_device::backend::SoftGpuBackend;
-use aero_gpu_device::device::{GpuDevice, InterruptSink};
+use aero_gpu_device::device::{AgpcGpuDevice, InterruptSink};
 use aero_gpu_device::guest::{Completion, SyntheticGuest};
 use aero_gpu_device::guest_memory::{GuestMemory, VecGuestMemory};
 use aero_gpu_device::ring::RingLocation;
@@ -76,7 +76,7 @@ fn golden_triangle_list_present() {
     .unwrap();
 
     // Device.
-    let mut dev = GpuDevice::new(SoftGpuBackend::new());
+    let mut dev = AgpcGpuDevice::new(SoftGpuBackend::new());
     let mut irq = TestIrq::default();
 
     // Configure MMIO registers (as a guest driver would).
