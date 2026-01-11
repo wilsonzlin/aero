@@ -29,6 +29,18 @@
 namespace aerogpu {
 namespace {
 
+#define AEROGPU_D3D9_STUB_LOG_ONCE()                 \
+  do {                                               \
+    static std::once_flag aerogpu_once;              \
+    const char* fn = __func__;                       \
+    std::call_once(aerogpu_once, [fn] {              \
+      aerogpu::logf("aerogpu-d3d9: stub %s\n", fn);  \
+    });                                              \
+  } while (0)
+
+constexpr int32_t kMinGpuThreadPriority = -7;
+constexpr int32_t kMaxGpuThreadPriority = 7;
+
 // D3DERR_INVALIDCALL from d3d9.h (returned by UMD for invalid arguments).
 constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 
@@ -1651,6 +1663,9 @@ HRESULT AEROGPU_D3D9_CALL device_reset(
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  // Reset implies a new frame queue; drop any in-flight present fences so
+  // max-frame-latency throttling doesn't block the first presents after a reset.
+  dev->inflight_present_fences.clear();
   SwapChain* sc = dev->current_swapchain;
   if (!sc && !dev->swapchains.empty()) {
     sc = dev->swapchains[0];
@@ -2608,6 +2623,91 @@ HRESULT AEROGPU_D3D9_CALL device_get_last_present_count(
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_set_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE hDevice, int32_t priority) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->gpu_thread_priority = std::clamp(priority, kMinGpuThreadPriority, kMaxGpuThreadPriority);
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE hDevice, int32_t* pPriority) {
+  if (!hDevice.pDrvPrivate || !pPriority) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  *pPriority = dev->gpu_thread_priority;
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_query_resource_residency(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    const AEROGPU_D3D9DDIARG_QUERYRESOURCERESIDENCY* pArgs) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // System-memory-only model: resources are always considered resident.
+  AEROGPU_D3D9_STUB_LOG_ONCE();
+
+  if (pArgs && pArgs->pResidencyStatus) {
+    for (uint32_t i = 0; i < pArgs->resource_count; i++) {
+      pArgs->pResidencyStatus[i] = 1;
+    }
+  }
+
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_display_mode_ex(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDIARG_GETDISPLAYMODEEX* pGetModeEx) {
+  if (!hDevice.pDrvPrivate || !pGetModeEx) {
+    return E_INVALIDARG;
+  }
+
+  AEROGPU_D3D9_STUB_LOG_ONCE();
+
+  auto* dev = as_device(hDevice);
+  Adapter* adapter = dev->adapter;
+  if (!adapter) {
+    return E_FAIL;
+  }
+
+  if (pGetModeEx->pMode) {
+    AEROGPU_D3D9DDI_DISPLAYMODEEX mode{};
+    mode.size = sizeof(AEROGPU_D3D9DDI_DISPLAYMODEEX);
+    mode.width = adapter->primary_width;
+    mode.height = adapter->primary_height;
+    mode.refresh_rate_hz = adapter->primary_refresh_hz;
+    mode.format = adapter->primary_format;
+    mode.scanline_ordering = AEROGPU_D3D9DDI_SCANLINEORDERING_PROGRESSIVE;
+    *pGetModeEx->pMode = mode;
+  }
+
+  if (pGetModeEx->pRotation) {
+    *pGetModeEx->pRotation = static_cast<AEROGPU_D3D9DDI_DISPLAYROTATION>(adapter->primary_rotation);
+  }
+
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_compose_rects(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    const AEROGPU_D3D9DDIARG_COMPOSERECTS*) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // ComposeRects is used by some D3D9Ex clients (including DWM in some modes).
+  // Initial bring-up: accept and no-op to keep composition alive.
+  AEROGPU_D3D9_STUB_LOG_ONCE();
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_flush(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
@@ -2646,29 +2746,6 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice
   return S_OK;
 }
 
-HRESULT AEROGPU_D3D9_CALL device_set_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE hDevice, int32_t priority) {
-  if (!hDevice.pDrvPrivate) {
-    return E_INVALIDARG;
-  }
-  auto* dev = as_device(hDevice);
-  const int32_t clamped = std::max<int32_t>(-7, std::min<int32_t>(7, priority));
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->gpu_thread_priority = clamped;
-  }
-  return S_OK;
-}
-
-HRESULT AEROGPU_D3D9_CALL device_get_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE hDevice, int32_t* pPriority) {
-  if (!hDevice.pDrvPrivate || !pPriority) {
-    return E_INVALIDARG;
-  }
-  auto* dev = as_device(hDevice);
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  *pPriority = dev->gpu_thread_priority;
-  return S_OK;
-}
-
 HRESULT AEROGPU_D3D9_CALL device_check_resource_residency(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDI_HRESOURCE* /*pResources*/,
@@ -2676,6 +2753,8 @@ HRESULT AEROGPU_D3D9_CALL device_check_resource_residency(
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
+  // System-memory-only model: resources are always considered resident.
+  AEROGPU_D3D9_STUB_LOG_ONCE();
   return S_OK;
 }
 
@@ -3045,6 +3124,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnSetGPUThreadPriority = device_set_gpu_thread_priority;
   pDeviceFuncs->pfnGetGPUThreadPriority = device_get_gpu_thread_priority;
   pDeviceFuncs->pfnCheckResourceResidency = device_check_resource_residency;
+  pDeviceFuncs->pfnQueryResourceResidency = device_query_resource_residency;
+  pDeviceFuncs->pfnGetDisplayModeEx = device_get_display_mode_ex;
+  pDeviceFuncs->pfnComposeRects = device_compose_rects;
   pDeviceFuncs->pfnRotateResourceIdentities = device_rotate_resource_identities;
   pDeviceFuncs->pfnPresent = device_present;
   pDeviceFuncs->pfnPresentEx = device_present_ex;
@@ -3220,6 +3302,20 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
 #if defined(_WIN32)
   if (SUCCEEDED(hr) && pOpenAdapter->hDc) {
     auto* adapter = aerogpu::as_adapter(pOpenAdapter->hAdapter);
+    if (adapter) {
+      const int w = GetDeviceCaps(pOpenAdapter->hDc, HORZRES);
+      const int h = GetDeviceCaps(pOpenAdapter->hDc, VERTRES);
+      const int refresh = GetDeviceCaps(pOpenAdapter->hDc, VREFRESH);
+      if (w > 0) {
+        adapter->primary_width = static_cast<uint32_t>(w);
+      }
+      if (h > 0) {
+        adapter->primary_height = static_cast<uint32_t>(h);
+      }
+      if (refresh > 0) {
+        adapter->primary_refresh_hz = static_cast<uint32_t>(refresh);
+      }
+    }
     const bool kmd_ok = adapter && adapter->kmd_query.InitFromHdc(pOpenAdapter->hDc);
     if (adapter) {
       adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);

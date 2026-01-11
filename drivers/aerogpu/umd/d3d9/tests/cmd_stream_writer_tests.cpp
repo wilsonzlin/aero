@@ -409,15 +409,16 @@ bool TestEventQueryGetDataSemantics() {
     }
   } cleanup;
 
-  D3D9DDIARG_OPENADAPTER2 open{};
+  D3DDDIARG_OPENADAPTER2 open{};
   open.Interface = 1;
   open.Version = 1;
   D3DDDI_ADAPTERCALLBACKS callbacks{};
   D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
   open.pAdapterCallbacks = &callbacks;
   open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
 
-  HRESULT hr = ::OpenAdapter2(&open, &cleanup.adapter_funcs);
+  HRESULT hr = ::OpenAdapter2(&open);
   if (!Check(hr == S_OK, "OpenAdapter2")) {
     return false;
   }

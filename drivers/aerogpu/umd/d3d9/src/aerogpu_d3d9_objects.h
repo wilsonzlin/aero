@@ -173,6 +173,13 @@ struct Adapter {
   // AeroGPU MMIO ABI (legacy "ARGP" vs new "AGPU") and the reported feature bits.
   aerogpu_umd_private_v1 umd_private = {};
   bool umd_private_valid = false;
+  // Primary display mode as reported via GetDisplayModeEx. Initialized when the
+  // runtime opens the adapter from an HDC (best-effort).
+  uint32_t primary_width = 1024;
+  uint32_t primary_height = 768;
+  uint32_t primary_refresh_hz = 60;
+  uint32_t primary_format = 22u; // D3DFMT_X8R8G8B8
+  uint32_t primary_rotation = AEROGPU_D3D9DDI_ROTATION_IDENTITY;
 };
 
 struct DeviceStateStream {
@@ -232,14 +239,13 @@ struct Device {
   // These fields model the D3D9Ex "maximum frame latency" behavior used by DWM:
   // we allow up to max_frame_latency in-flight presents, each tracked by a KMD
   // fence ID (or a bring-up stub fence in non-WDDM builds).
+  int32_t gpu_thread_priority = 0; // clamped to [-7, 7]
   uint32_t max_frame_latency = 3;
   std::deque<uint64_t> inflight_present_fences;
   uint32_t present_count = 0;
   uint64_t last_present_qpc = 0;
   std::vector<SwapChain*> swapchains;
   SwapChain* current_swapchain = nullptr;
-
-  int32_t gpu_thread_priority = 0;
 
   // Cached pipeline state.
   Resource* render_targets[4] = {nullptr, nullptr, nullptr, nullptr};
