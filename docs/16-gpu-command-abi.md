@@ -74,6 +74,7 @@ Feature bits (`FEATURES_LO/HI` combined as a 64-bit value):
 - `AEROGPU_FEATURE_CURSOR` (bit 1): cursor registers are implemented
 - `AEROGPU_FEATURE_SCANOUT` (bit 2): scanout registers are implemented
 - `AEROGPU_FEATURE_VBLANK` (bit 3): vblank IRQ + vblank timing registers are implemented (see [`vblank.md`](../drivers/aerogpu/protocol/vblank.md))
+- `AEROGPU_FEATURE_TRANSFER` (bit 4): transfer/copy commands are supported (e.g. `COPY_BUFFER`, `COPY_TEXTURE2D`) and may optionally require host→guest writeback for destination resources
 
 ### 2.2 Ring programming + doorbell
 
