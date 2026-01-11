@@ -92,6 +92,26 @@ test("explainWebUsbError: Windows driver hints omit Linux udev guidance", () => 
   assert.ok(!res.hints.some((hint) => hint.toLowerCase().includes("udev")));
 });
 
+test("explainWebUsbError: uses userAgentData.platform for OS-specific hints", () => {
+  if (typeof navigator === "undefined") return;
+
+  const hadOwn = Object.prototype.hasOwnProperty.call(navigator, "userAgentData");
+  const prev = (navigator as unknown as { userAgentData?: unknown }).userAgentData;
+
+  Object.defineProperty(navigator, "userAgentData", { value: { platform: "Windows" }, configurable: true });
+  try {
+    const res = withUserAgent("Mozilla/5.0", () => explainWebUsbError("NetworkError: Unable to claim interface."));
+    assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
+    assert.ok(!res.hints.some((hint) => hint.toLowerCase().includes("udev")));
+  } finally {
+    if (hadOwn) {
+      Object.defineProperty(navigator, "userAgentData", { value: prev, configurable: true });
+    } else {
+      delete (navigator as unknown as { userAgentData?: unknown }).userAgentData;
+    }
+  }
+});
+
 test("explainWebUsbError: Linux permission hints omit Windows WinUSB guidance", () => {
   const res = withUserAgent("Mozilla/5.0 (X11; Linux x86_64)", () => explainWebUsbError("NetworkError: Unable to claim interface."));
 

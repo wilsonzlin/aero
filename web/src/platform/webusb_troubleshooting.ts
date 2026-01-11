@@ -114,7 +114,21 @@ function includesAny(haystack: string, needles: string[]): boolean {
 }
 
 function detectHostOs(): HostOs {
-  if (typeof navigator === "undefined" || typeof navigator.userAgent !== "string") {
+  if (typeof navigator === "undefined") {
+    return "unknown";
+  }
+
+  const navMaybeUaData = navigator as Navigator & { userAgentData?: { platform?: unknown } };
+  const uaDataPlatform = navMaybeUaData.userAgentData?.platform;
+  if (typeof uaDataPlatform === "string") {
+    const platform = uaDataPlatform.toLowerCase();
+    if (platform.includes("windows")) return "windows";
+    if (platform.includes("mac") || platform.includes("ios")) return "mac";
+    if (platform.includes("android")) return "android";
+    if (platform.includes("linux")) return "linux";
+  }
+
+  if (typeof navigator.userAgent !== "string") {
     return "unknown";
   }
 
