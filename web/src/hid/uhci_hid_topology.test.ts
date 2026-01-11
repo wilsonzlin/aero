@@ -48,6 +48,22 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, 1]);
   });
 
+  it("remaps legacy root-port-only path [1] onto hub port 0.2 to avoid clobbering WebUSB", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.setUhciBridge(uhci);
+    mgr.attachDevice(1, [1], "webhid", dev);
+
+    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 2]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 2], dev);
+
+    mgr.detachDevice(1);
+    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, 2]);
+  });
+
   it("detaches the previous guest path when a deviceId is re-attached at a new path", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();
