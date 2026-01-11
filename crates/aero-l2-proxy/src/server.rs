@@ -1061,11 +1061,17 @@ mod tests {
             .expect("expected valid session token");
         assert_eq!(sid, vectors.aero_session.tokens.valid.claims.sid);
         assert!(
-            verify_session_token(&vectors.aero_session.tokens.expired.token, secret, now_ms).is_none(),
+            verify_session_token(&vectors.aero_session.tokens.expired.token, secret, now_ms)
+                .is_none(),
             "expected expired session token to be rejected"
         );
         assert!(
-            verify_session_token(&vectors.aero_session.tokens.bad_signature.token, secret, now_ms).is_none(),
+            verify_session_token(
+                &vectors.aero_session.tokens.bad_signature.token,
+                secret,
+                now_ms
+            )
+            .is_none(),
             "expected bad-signature session token to be rejected"
         );
 
@@ -1076,11 +1082,19 @@ mod tests {
             "expected valid jwt token"
         );
         assert!(
-            !verify_jwt(&vectors.relay_jwt.tokens.expired.token, jwt_secret, now_unix),
+            !verify_jwt(
+                &vectors.relay_jwt.tokens.expired.token,
+                jwt_secret,
+                now_unix
+            ),
             "expected expired jwt token to be rejected"
         );
         assert!(
-            !verify_jwt(&vectors.relay_jwt.tokens.bad_signature.token, jwt_secret, now_unix),
+            !verify_jwt(
+                &vectors.relay_jwt.tokens.bad_signature.token,
+                jwt_secret,
+                now_unix
+            ),
             "expected bad-signature jwt token to be rejected"
         );
     }

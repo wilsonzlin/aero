@@ -154,7 +154,7 @@ fn d3d9_create_shader_dxbc_rejects_unsupported_stage() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -176,7 +176,7 @@ fn d3d9_create_shader_dxbc_rejects_stage_mismatch() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -231,7 +231,7 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_zero() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -240,21 +240,23 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_zero() {
     // backing_alloc_id != 0 requires a non-zero row pitch.
     let mut writer = AerogpuCmdWriter::new();
     writer.create_texture2d(
-        1,                                  // texture_handle
-        0,                                  // usage_flags
+        1,                                   // texture_handle
+        0,                                   // usage_flags
         AerogpuFormat::R8G8B8A8Unorm as u32, // format
-        1,                                  // width
-        1,                                  // height
-        1,                                  // mip_levels
-        1,                                  // array_layers
-        0,                                  // row_pitch_bytes (invalid for guest-backed)
-        1,                                  // backing_alloc_id
-        0,                                  // backing_offset_bytes
+        1,                                   // width
+        1,                                   // height
+        1,                                   // mip_levels
+        1,                                   // array_layers
+        0,                                   // row_pitch_bytes (invalid for guest-backed)
+        1,                                   // backing_alloc_id
+        0,                                   // backing_offset_bytes
     );
     let stream = writer.finish();
 
     match exec.execute_cmd_stream(&stream) {
-        Ok(_) => panic!("expected CREATE_TEXTURE2D with guest backing and row_pitch_bytes=0 to be rejected"),
+        Ok(_) => panic!(
+            "expected CREATE_TEXTURE2D with guest backing and row_pitch_bytes=0 to be rejected"
+        ),
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("row_pitch_bytes")),
         Err(other) => panic!("unexpected error: {other:?}"),
     }
@@ -383,7 +385,7 @@ fn d3d9_import_shared_surface_rejects_alias_handle_already_used_by_shader() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -395,8 +397,8 @@ fn d3d9_import_shared_surface_rejects_alias_handle_already_used_by_shader() {
 
     let mut writer = AerogpuCmdWriter::new();
     writer.create_texture2d(
-        1,                                  // texture_handle
-        0,                                  // usage_flags
+        1,                                   // texture_handle
+        0,                                   // usage_flags
         AerogpuFormat::R8G8B8A8Unorm as u32, // format
         1,
         1,

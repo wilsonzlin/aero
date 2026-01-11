@@ -629,12 +629,11 @@ impl Emitter<'_> {
                     self.f
                         .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
                     self.f.instruction(&Instruction::I64Const(page as i64));
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .code_page_version
-                                .expect("code_page_version import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .code_page_version
+                            .expect("code_page_version import missing"),
+                    ));
                 } else {
                     // Inline load from the code-version table (configured by the runtime via
                     // `jit_ctx::CODE_VERSION_TABLE_{PTR,LEN}_OFFSET`).
