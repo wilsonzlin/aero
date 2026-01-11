@@ -259,6 +259,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     BOOLEAN adapterContextRegistered;
     BOOLEAN topologyRegistered;
     BOOLEAN waveRegistered;
+    BOOLEAN forceNullBackend;
     PUNKNOWN unknownAdapter;
     PUNKNOWN unknownWave;
     PUNKNOWN unknownWavePort;
@@ -277,6 +278,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     adapterContextRegistered = FALSE;
     topologyRegistered = FALSE;
     waveRegistered = FALSE;
+    forceNullBackend = FALSE;
     unknownAdapter = NULL;
     unknownWave = NULL;
     unknownWavePort = NULL;
@@ -365,16 +367,27 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
      * Policy: fail StartDevice if the virtio-snd transport cannot be brought up.
      * This surfaces as a Code 10 in Device Manager rather than enumerating a
      * "null backend" audio endpoint.
+     *
+     * If the per-device ForceNullBackend registry flag is set, allow bring-up to
+     * continue even if transport initialization fails, so the WaveRT endpoint can
+     * still be exercised using the null backend.
      */
+    forceNullBackend = VirtIoSndReadForceNullBackend(DeviceObject);
     status = VirtIoSndStartHardware(dx, raw, translated);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("VirtIoSndStartHardware failed: 0x%08X\n", (UINT)status);
         VirtIoSndStopHardware(dx); // best-effort cleanup of partial allocations
-        goto Exit;
-    }
-    hwStarted = TRUE;
+        if (!forceNullBackend) {
+            goto Exit;
+        }
 
-    status = VirtIoSndAdapterContext_Register(unknownAdapter, dx, VirtIoSndReadForceNullBackend(DeviceObject));
+        VIRTIOSND_TRACE("ForceNullBackend=1: continuing without virtio transport\n");
+        status = STATUS_SUCCESS;
+    } else {
+        hwStarted = TRUE;
+    }
+
+    status = VirtIoSndAdapterContext_Register(unknownAdapter, dx, forceNullBackend);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("VirtIoSndAdapterContext_Register failed: 0x%08X\n", (UINT)status);
         goto Exit;
