@@ -89,6 +89,10 @@ typedef struct aerogpu_wddm_alloc_priv {
   /*
    * Allocation ID used by the guest↔host allocation table.
    * 0 is reserved/invalid.
+   *
+   * For shared allocations, alloc_id should be unique across guest processes
+   * because DWM may reference many redirected surfaces from different processes
+   * in a single submission.
    */
   aerogpu_wddm_u32 alloc_id;
 

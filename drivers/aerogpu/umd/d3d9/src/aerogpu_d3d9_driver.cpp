@@ -941,11 +941,35 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
     // Generate a stable UMD-owned alloc_id + share_token and persist them in
     // allocation private data so they survive OpenResource in another process.
-    uint32_t alloc_id = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed);
+    //
+    // NOTE: DWM may compose many shared surfaces from *different* processes in a
+    // single submission. alloc_id values must therefore avoid collisions across
+    // guest processes (not just within one process).
+    uint32_t alloc_id = 0;
+#if defined(_WIN32)
+    const uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
+    /*
+     * PIDs on Windows are multiples of 4, so drop the bottom two bits and fold
+     * 20 PID bits + 11 sequence bits into a 31-bit alloc_id:
+     *
+     *   alloc_id = ((pid >> 2) & 0xFFFFF) << 11 | seq
+     *
+     * This is not a formal Windows contract, but in practice keeps alloc_id
+     * collision risk negligible for Win7 DWM redirected surfaces.
+     */
+    const uint32_t pid_bits = (pid >> 2) & 0xFFFFFu;
+    uint32_t seq = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed) & 0x7FFu;
+    if (seq == 0) {
+      seq = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed) & 0x7FFu;
+    }
+    alloc_id = (pid_bits << 11) | seq;
+#else
+    alloc_id = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed);
     alloc_id &= AEROGPU_WDDM_ALLOC_ID_UMD_MAX;
     if (alloc_id == 0) {
       alloc_id = 1;
     }
+#endif
 
 #if defined(_WIN32)
     const uint64_t share_token =

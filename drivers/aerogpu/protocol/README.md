@@ -138,6 +138,10 @@ This enables compact command streams that use small IDs instead of repeating GPA
   the chosen `alloc_id` + `share_token` into the preserved WDDM allocation
   private data blob so it can be recovered in another process. See
   `aerogpu_wddm_alloc.h`.
+- `alloc_id` values for shared allocations should avoid collisions across guest
+  processes: DWM may compose many redirected surfaces from different processes
+  in a single submission, and the per-submit allocation table is keyed by
+  `alloc_id`.
 - For D3D9Ex shared surfaces, a simple recommended scheme is
   `share_token = (uint64_t)alloc_id` (as long as alloc_id is global and stable);
   otherwise include a process-unique component, e.g. `((u64)pid << 32) | alloc_id`.

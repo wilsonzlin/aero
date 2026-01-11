@@ -214,6 +214,11 @@ The recommended scheme is:
 - Otherwise include a process-unique component, for example:
   - `share_token = ((uint64_t)pid << 32) | (uint64_t)alloc_id`
 
+**Also:** `alloc_id` itself should avoid collisions across guest processes for
+shared allocations. DWM may open and compose many redirected surfaces from
+different processes in a single submission, and the KMD’s per-submit allocation
+table is keyed by `alloc_id`.
+
 See `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` for the concrete private-data structure used to persist `alloc_id`/`share_token` across `CreateAllocation`/`OpenAllocation`.
 
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
