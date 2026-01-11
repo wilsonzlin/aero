@@ -2,6 +2,8 @@
   "$schema": "../../ci/driver-package.schema.json",
   "additionalFiles": [
     "packaging/win7/README.md",
+    "packaging/win7/legacy/README.md",
+    "packaging/win7/legacy/aerogpu.inf",
     "packaging/win7/install.cmd",
     "packaging/win7/uninstall.cmd",
     "packaging/win7/sign_test.cmd",

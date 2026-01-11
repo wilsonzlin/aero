@@ -190,8 +190,12 @@ This produces:
 - The signing certificate at:
   - `out/certs/aero-test.cer`
 
-By default, these CI-staged packages contain only `aerogpu.inf` (**D3D9-only**). The optional
-DX11 INF (`aerogpu_dx11.inf`) is not included unless you customize
+By default, these CI-staged packages are **D3D9-only** and include:
+
+- `aerogpu.inf` at the package root (canonical `PCI\VEN_A3A0&DEV_0001`)
+- `packaging/win7/legacy/aerogpu.inf` for the deprecated legacy bring-up device model (`PCI\VEN_1AED&DEV_0001`)
+
+The optional DX11 INF (`aerogpu_dx11.inf`) is not included unless you customize
 `drivers/aerogpu/ci-package.json` (see section 0).
 
 See **4.1 Host-signed package** for the Win7 VM install steps.
