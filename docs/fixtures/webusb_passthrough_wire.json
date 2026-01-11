@@ -1,0 +1,31 @@
+{
+  "actions": [
+    {
+      "kind": "controlIn",
+      "id": 1,
+      "setup": { "bmRequestType": 128, "bRequest": 6, "wValue": 256, "wIndex": 0, "wLength": 18 }
+    },
+    {
+      "kind": "controlOut",
+      "id": 2,
+      "setup": { "bmRequestType": 0, "bRequest": 9, "wValue": 1, "wIndex": 0, "wLength": 1 },
+      "data": [170]
+    },
+    { "kind": "bulkIn", "id": 3, "endpoint": 129, "length": 8 },
+    { "kind": "bulkOut", "id": 4, "endpoint": 2, "data": [1, 2, 3, 4] }
+  ],
+  "completions": [
+    { "kind": "controlIn", "id": 1, "status": "success", "data": [1, 2, 3] },
+    { "kind": "controlIn", "id": 1, "status": "stall" },
+    { "kind": "controlIn", "id": 1, "status": "error", "message": "example error" },
+    { "kind": "controlOut", "id": 2, "status": "success", "bytesWritten": 1 },
+    { "kind": "controlOut", "id": 2, "status": "stall" },
+    { "kind": "controlOut", "id": 2, "status": "error", "message": "example error" },
+    { "kind": "bulkIn", "id": 3, "status": "success", "data": [17, 34] },
+    { "kind": "bulkIn", "id": 3, "status": "stall" },
+    { "kind": "bulkIn", "id": 3, "status": "error", "message": "example error" },
+    { "kind": "bulkOut", "id": 4, "status": "success", "bytesWritten": 4 },
+    { "kind": "bulkOut", "id": 4, "status": "stall" },
+    { "kind": "bulkOut", "id": 4, "status": "error", "message": "example error" }
+  ]
+}

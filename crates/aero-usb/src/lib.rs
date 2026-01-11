@@ -4,6 +4,7 @@
 //! designed to be wired into the emulator's PCI + I/O port framework later.
 
 mod memory;
+pub mod passthrough;
 pub mod usb;
 
 pub mod hid;

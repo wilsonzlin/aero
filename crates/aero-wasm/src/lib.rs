@@ -44,6 +44,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
+    passthrough::{PendingSummary as UsbPassthroughPendingSummary, UsbHostCompletion, UsbPassthroughDevice},
     usb::{UsbDevice, UsbHandshake},
 };
 
@@ -386,6 +387,50 @@ pub fn attach_worklet_bridge(
 #[wasm_bindgen]
 pub fn attach_mic_bridge(sab: SharedArrayBuffer) -> Result<MicBridge, JsValue> {
     MicBridge::from_shared_buffer(sab)
+}
+
+/// WASM export for the WebUSB passthrough device model.
+///
+/// This object owns a [`UsbPassthroughDevice`] instance, drains queued host actions for the
+/// TypeScript WebUSB executor, and accepts completions back from the host.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct UsbPassthroughBridge {
+    inner: UsbPassthroughDevice,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl UsbPassthroughBridge {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: UsbPassthroughDevice::new(),
+        }
+    }
+
+    /// Drain all queued host actions as plain JS objects.
+    pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
+        let actions = self.inner.drain_actions();
+        serde_wasm_bindgen::to_value(&actions).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Push a single host completion into the passthrough device.
+    pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
+        let completion: UsbHostCompletion =
+            serde_wasm_bindgen::from_value(completion).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.inner.push_completion(completion);
+        Ok(())
+    }
+
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    pub fn pending_summary(&self) -> Result<JsValue, JsValue> {
+        let summary: UsbPassthroughPendingSummary = self.inner.pending_summary();
+        serde_wasm_bindgen::to_value(&summary).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

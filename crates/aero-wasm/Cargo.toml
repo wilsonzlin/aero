@@ -29,3 +29,4 @@ aero-audio = { path = "../aero-audio" }
 aero-opfs = { path = "../aero-opfs" }
 wasm-bindgen-futures = "0.4"
 linked_list_allocator = "0.10"
+serde-wasm-bindgen = "0.6"
