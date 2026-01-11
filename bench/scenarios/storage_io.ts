@@ -107,7 +107,7 @@ export const storageIoScenario: Scenario = {
       try {
         await browser?.close();
       } finally {
-      await server.close();
+        await server.close();
       }
     }
   },
