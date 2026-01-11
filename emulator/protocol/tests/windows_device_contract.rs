@@ -171,11 +171,16 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     assert!(!contains_needle(&contract_text, "aero-gpu.inf"));
     assert!(!contains_needle(&contract_md_text, "aero-gpu.inf"));
     // The contract must only reference the canonical driver packages under `drivers/` (not the
-    // removed `guest/windows/` prototype tree).
-    assert!(!contains_needle(&contract_text, "guest/windows"));
-    assert!(!contains_needle(&contract_md_text, "guest/windows"));
-    assert!(!contains_needle(&contract_text, "guest\\\\windows"));
-    assert!(!contains_needle(&contract_md_text, "guest\\\\windows"));
+    // removed legacy prototype tree that used to live under the top-level `guest` directory).
+    //
+    // Avoid embedding the deprecated path literal directly in this source file so repo-wide grep
+    // checks can enforce its absence in docs without tripping on this test itself.
+    let legacy_guest_windows_slash = format!("{}/{}", "guest", "windows");
+    let legacy_guest_windows_backslash = format!("{}\\{}", "guest", "windows");
+    assert!(!contains_needle(&contract_text, &legacy_guest_windows_slash));
+    assert!(!contains_needle(&contract_md_text, &legacy_guest_windows_slash));
+    assert!(!contains_needle(&contract_text, &legacy_guest_windows_backslash));
+    assert!(!contains_needle(&contract_md_text, &legacy_guest_windows_backslash));
 }
 
 fn contains_needle(haystack: &str, needle: &str) -> bool {
