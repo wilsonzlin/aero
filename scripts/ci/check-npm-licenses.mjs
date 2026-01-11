@@ -310,14 +310,21 @@ let totalViolations = 0;
 for (const project of projects) {
     const projectAbs = path.isAbsolute(project) ? path.normalize(project) : path.normalize(path.join(repoRoot, project));
     const projectRel = toRepoRelativePath(repoRoot, projectAbs);
-    const slug = slugForProject(projectRel);
+  const slug = slugForProject(projectRel);
 
-    if (!existsSync(path.join(projectAbs, "package.json"))) {
-        die(`project '${projectRel}' does not contain package.json`);
-    }
-    if (!existsSync(path.join(projectAbs, "node_modules"))) {
-        die(`project '${projectRel}' is missing node_modules; run 'npm ci --ignore-scripts' in that directory first`);
-    }
+  if (!existsSync(path.join(projectAbs, "package.json"))) {
+    die(`project '${projectRel}' does not contain package.json`);
+  }
+  // npm workspaces: dependencies are typically installed at the repo root even when
+  // the project being scanned is a workspace subdirectory.
+  const projectNodeModules = path.join(projectAbs, "node_modules");
+  const repoNodeModules = path.join(repoRoot, "node_modules");
+  if (!existsSync(projectNodeModules) && !existsSync(repoNodeModules)) {
+    die(
+      `project '${projectRel}' is missing node_modules; ` +
+        `run 'npm ci --ignore-scripts' in the repo root before running this script`,
+    );
+  }
 
     const proc = spawnSync(
         process.execPath,
