@@ -44,10 +44,10 @@ Examples / reference-only:
 - `deploy/static/` – smoke-test frontend (not the real UI)
 - `deploy/nginx/` – nginx examples (useful if you don't want Caddy)
 - `deploy/k8s/aero-storage-server/` – optional disk/image service templates (not required for the gateway)
-- Static-host header templates (copy/paste starting points):
-  - `deploy/cloudflare-pages/_headers`
-  - `deploy/netlify.toml`
-  - `deploy/vercel.json`
+- Static-host templates (production app living under `web/`):
+  - Netlify / Cloudflare Pages headers: `web/public/_headers` (copied to `web/dist/_headers` on build)
+  - Netlify build config: `netlify.toml` (repo root)
+  - Vercel config: `vercel.json` (repo root)
 
 ## CI validation (Terraform + Helm)
 

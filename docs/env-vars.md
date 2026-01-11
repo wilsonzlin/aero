@@ -31,7 +31,7 @@ eval "$(node scripts/env/resolve.mjs --format bash --require-node-dir --require-
 | `AERO_NODE_DIR` | Path (relative to repo root or absolute) to the **Node workspace** directory containing `package.json`. | Auto-detected: prefer `.` then `frontend/` then `web/` | `scripts/test-all.sh`, GitHub Actions CI, `justfile` | `AERO_NODE_DIR=.`<br>`AERO_NODE_DIR=web` |
 | `AERO_WASM_CRATE_DIR` | Path (relative to repo root or absolute) to the **wasm-pack Rust crate** (must contain `Cargo.toml`). | Auto-detected: prefer `crates/aero-wasm`, `crates/wasm`, `crates/aero-ipc`, `wasm/`, `rust/wasm/` (then `cargo metadata` fallback) | `scripts/test-all.sh`, GitHub Actions CI | `AERO_WASM_CRATE_DIR=crates/aero-wasm` |
 | `AERO_REQUIRE_WEBGPU` | When true, WebGPU-tagged browser tests **must fail** if WebGPU is unavailable (instead of skipping). Accepts `1/0/true/false`. | `0` | `scripts/test-all.sh`, Playwright specs (`tests/**`) | `AERO_REQUIRE_WEBGPU=1 npm run test:e2e` |
-| `VITE_DISABLE_COOP_COEP` | Disable COOP/COEP response headers on dev/preview servers (useful for validating the non-`SharedArrayBuffer` fallback). Accepts `1/0/true/false`. | `0` | `vite.config.ts`, `web/vite.config.ts`, `web/scripts/serve.cjs`, `server/poc-server.mjs` | `VITE_DISABLE_COOP_COEP=1 npm run dev` |
+| `VITE_DISABLE_COOP_COEP` | Disable COOP/COEP response headers on dev/preview servers (useful for validating the non-`SharedArrayBuffer` fallback). Accepts `1/0/true/false`. | `0` | `vite.harness.config.ts`, `web/vite.config.ts`, `web/scripts/serve.cjs`, `server/poc-server.mjs` | `VITE_DISABLE_COOP_COEP=1 npm run dev` |
 
 ## Backend / proxy URL variables (used by networking tooling)
 
@@ -53,4 +53,3 @@ These names are still accepted but emit warnings. Prefer the canonical variables
 | `WEB_DIR` | `AERO_NODE_DIR` |
 | `AERO_WASM_DIR` | `AERO_WASM_CRATE_DIR` |
 | `WASM_CRATE_DIR` | `AERO_WASM_CRATE_DIR` |
-
