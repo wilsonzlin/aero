@@ -411,7 +411,10 @@ At a “flush boundary” (e.g. `D3D10DDI_DEVICEFUNCS::pfnFlush` or `D3D11DDI_DE
 
 ### 3.4 Minimal call sequence (present submission)
 
-In `D3D10DDI_DEVICEFUNCS::pfnPresent` (called by DXGI on Win7 for both D3D10 and D3D11 devices):
+In the runtime’s **Present DDI**:
+
+- D3D10 / D3D10.1: `D3D10DDI_DEVICEFUNCS::pfnPresent`
+- D3D11: `D3D11DDI_DEVICECONTEXTFUNCS::pfnPresent`
 
 1. Flush/submit any outstanding render work that must precede present.
 2. Acquire a DMA buffer (either via `pfnAllocateCb`, `pfnGetCommandBufferCb`, or by using the current runtime-provided buffer pointers).
