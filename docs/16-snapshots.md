@@ -206,6 +206,22 @@ The intended browser persistence flow is:
 
 OPFS access is via `navigator.storage.getDirectory()` and `FileSystemFileHandle` APIs (see `docs/05-storage-subsystem.md` for OPFS notes).
 
+### Streaming snapshots (multi-GB)
+
+For Windows 7–scale guests, snapshot files can be multiple gigabytes. Avoid building a giant `Vec<u8>` in either Rust or JS:
+
+- `aero_snapshot::save_snapshot` is streaming-friendly but requires a `std::io::Write + Seek` target (it seeks back to patch section lengths).
+- In Dedicated Workers, Chrome exposes OPFS `FileSystemSyncAccessHandle`, which supports positioned `read/write({ at })` operations.
+- `crates/aero-opfs` provides `aero_opfs::OpfsSyncFile`, a `std::io::{Read, Write, Seek}` wrapper over `FileSystemSyncAccessHandle` with a cursor and JS-safe offset validation.
+
+The WASM demo (`crates/aero-wasm::DemoVm`) exposes convenience helpers (wasm32-only):
+
+- `snapshot_full_to_opfs(path: string) -> Promise<void>`
+- `snapshot_dirty_to_opfs(path: string) -> Promise<void>`
+- `restore_snapshot_from_opfs(path: string) -> Promise<void>`
+
+If sync access handles are unavailable (e.g. the code runs on the main thread instead of a DedicatedWorkerGlobalScope), these helpers return a clear error.
+
 ---
 
 ## UI expectations
