@@ -2804,8 +2804,13 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     res->wddm.km_resource_handle = 0;
   };
 
-  const auto allocate_one =
-      [&](uint64_t size_bytes, bool cpu_visible, bool is_rt, bool is_ds, bool is_shared, bool want_primary) -> HRESULT {
+  const auto allocate_one = [&](uint64_t size_bytes,
+                                bool cpu_visible,
+                                bool is_rt,
+                                bool is_ds,
+                                bool is_shared,
+                                bool want_primary,
+                                uint32_t pitch_bytes) -> HRESULT {
     if (!pDesc->pAllocationInfo) {
       return E_INVALIDARG;
     }
@@ -2847,7 +2852,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED;
       priv.share_token = share_token;
       priv.size_bytes = static_cast<aerogpu_wddm_u64>(size_bytes);
-      priv.reserved0 = 0;
+      priv.reserved0 = static_cast<aerogpu_wddm_u64>(pitch_bytes);
 
       alloc_info[0].pPrivateDriverData = &priv;
       alloc_info[0].PrivateDriverDataSize = sizeof(priv);
@@ -3004,7 +3009,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       is_shared = true;
     }
 #endif
-    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary);
+    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0);
     if (FAILED(hr)) {
       SetError(dev, hr);
       res->~Resource();
@@ -3082,7 +3087,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       is_shared = true;
     }
 #endif
-    HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary);
+    HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes);
     if (FAILED(hr)) {
       SetError(dev, hr);
       res->~Resource();

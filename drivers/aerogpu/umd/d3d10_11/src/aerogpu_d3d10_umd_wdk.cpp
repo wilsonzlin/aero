@@ -1290,10 +1290,23 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->wddm.km_resource_handle = 0;
   };
 
-  const auto allocate_one =
-      [&](uint64_t size_bytes, bool cpu_visible, bool is_rt, bool is_ds, bool is_shared, bool want_primary) -> HRESULT {
+  const auto allocate_one = [&](uint64_t size_bytes,
+                                bool cpu_visible,
+                                bool is_rt,
+                                bool is_ds,
+                                bool is_shared,
+                                bool want_primary,
+                                uint32_t pitch_bytes) -> HRESULT {
     if (!pDesc->pAllocationInfo) {
       return E_INVALIDARG;
+    }
+    __if_exists(D3D10DDIARG_CREATERESOURCE::NumAllocations) {
+      if (pDesc->NumAllocations < 1) {
+        return E_INVALIDARG;
+      }
+      if (pDesc->NumAllocations != 1) {
+        return E_NOTIMPL;
+      }
     }
     if (size_bytes == 0 || size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
       return E_OUTOFMEMORY;
@@ -1326,7 +1339,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED;
       priv.share_token = share_token;
       priv.size_bytes = static_cast<aerogpu_wddm_u64>(size_bytes);
-      priv.reserved0 = 0;
+      priv.reserved0 = static_cast<aerogpu_wddm_u64>(pitch_bytes);
 
       alloc_info[0].pPrivateDriverData = &priv;
       alloc_info[0].PrivateDriverDataSize = sizeof(priv);
@@ -1419,7 +1432,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
 #endif
 
-    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary);
+    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0);
     if (FAILED(hr)) {
       SetError(hDevice, hr);
       res->~AeroGpuResource();
@@ -1532,7 +1545,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
 #endif
-    HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary);
+    HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes);
     if (FAILED(hr)) {
       SetError(hDevice, hr);
       res->~AeroGpuResource();
