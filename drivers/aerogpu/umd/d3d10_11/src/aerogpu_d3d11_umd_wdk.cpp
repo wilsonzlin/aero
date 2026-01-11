@@ -2559,7 +2559,20 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       auto* out = reinterpret_cast<D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(data);
       out->Format = in.Format;
       out->SampleCount = in.SampleCount;
-      out->NumQualityLevels = (in.SampleCount == 1) ? 1u : 0u;
+      bool supported_format = false;
+      switch (static_cast<uint32_t>(in.Format)) {
+        case kDxgiFormatB8G8R8A8Unorm:
+        case kDxgiFormatB8G8R8X8Unorm:
+        case kDxgiFormatR8G8B8A8Unorm:
+        case kDxgiFormatD24UnormS8Uint:
+        case kDxgiFormatD32Float:
+          supported_format = true;
+          break;
+        default:
+          supported_format = false;
+          break;
+      }
+      out->NumQualityLevels = (in.SampleCount == 1 && supported_format) ? 1u : 0u;
       return S_OK;
     }
 

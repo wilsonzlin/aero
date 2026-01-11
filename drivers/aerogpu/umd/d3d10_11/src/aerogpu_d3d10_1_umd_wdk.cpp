@@ -4900,11 +4900,24 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
 
     case D3D10DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS:
       if (pCaps->DataSize >= sizeof(DXGI_FORMAT) + sizeof(UINT) * 2) {
+        bool supported_format = false;
+        switch (static_cast<uint32_t>(msaa_format)) {
+          case kDxgiFormatB8G8R8A8Unorm:
+          case kDxgiFormatB8G8R8X8Unorm:
+          case kDxgiFormatR8G8B8A8Unorm:
+          case kDxgiFormatD24UnormS8Uint:
+          case kDxgiFormatD32Float:
+            supported_format = true;
+            break;
+          default:
+            supported_format = false;
+            break;
+        }
         uint8_t* out_bytes = reinterpret_cast<uint8_t*>(pCaps->pData);
         *reinterpret_cast<DXGI_FORMAT*>(out_bytes) = msaa_format;
         *reinterpret_cast<UINT*>(out_bytes + sizeof(DXGI_FORMAT)) = msaa_sample_count;
         *reinterpret_cast<UINT*>(out_bytes + sizeof(DXGI_FORMAT) + sizeof(UINT)) =
-            (msaa_sample_count == 1) ? 1u : 0u;
+            (msaa_sample_count == 1 && supported_format) ? 1u : 0u;
       }
       break;
 
@@ -5001,11 +5014,24 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS*
 
     case D3D10_1DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS:
       if (pCaps->DataSize >= sizeof(DXGI_FORMAT) + sizeof(UINT) * 2) {
+        bool supported_format = false;
+        switch (static_cast<uint32_t>(msaa_format)) {
+          case kDxgiFormatB8G8R8A8Unorm:
+          case kDxgiFormatB8G8R8X8Unorm:
+          case kDxgiFormatR8G8B8A8Unorm:
+          case kDxgiFormatD24UnormS8Uint:
+          case kDxgiFormatD32Float:
+            supported_format = true;
+            break;
+          default:
+            supported_format = false;
+            break;
+        }
         uint8_t* out_bytes = reinterpret_cast<uint8_t*>(pCaps->pData);
         *reinterpret_cast<DXGI_FORMAT*>(out_bytes) = msaa_format;
         *reinterpret_cast<UINT*>(out_bytes + sizeof(DXGI_FORMAT)) = msaa_sample_count;
         *reinterpret_cast<UINT*>(out_bytes + sizeof(DXGI_FORMAT) + sizeof(UINT)) =
-            (msaa_sample_count == 1) ? 1u : 0u;
+            (msaa_sample_count == 1 && supported_format) ? 1u : 0u;
       }
       break;
 
