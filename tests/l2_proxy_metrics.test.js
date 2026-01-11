@@ -152,18 +152,32 @@ test("l2 proxy exposes /metrics and counts rx frames", { timeout: 660_000 }, asy
   const port = proxy.port;
 
   try {
+    const origin = `http://127.0.0.1:${port}`;
+
     {
-      const { res } = await fetchText(`http://127.0.0.1:${port}/readyz`, { timeoutMs: 2_000 });
+      const { res } = await fetchText(`${origin}/readyz`, { timeoutMs: 2_000 });
       assert.equal(res.status, 200);
     }
 
     {
-      const { res, json: body } = await fetchJson(`http://127.0.0.1:${port}/version`, { timeoutMs: 2_000 });
+      const { res, json: body } = await fetchJson(`${origin}/version`, { timeoutMs: 2_000 });
       assert.equal(res.status, 200);
       assert.equal(typeof body.version, "string");
       assert.equal(typeof body.gitSha, "string");
       assert.equal(typeof body.builtAt, "string");
     }
+
+    // Metrics should be available even before any sessions.
+    const { res: metrics0Res, text: metrics0Body } = await fetchText(`${origin}/metrics`, { timeoutMs: 2_000 });
+    assert.equal(metrics0Res.status, 200);
+    const rx0 = parseMetric(metrics0Body, "l2_frames_rx_total");
+    const bytesRx0 = parseMetric(metrics0Body, "l2_bytes_rx_total");
+    const sessionsTotal0 = parseMetric(metrics0Body, "l2_sessions_total");
+    const sessionsActive0 = parseMetric(metrics0Body, "l2_sessions_active");
+    assert.notEqual(rx0, null, "missing l2_frames_rx_total");
+    assert.notEqual(bytesRx0, null, "missing l2_bytes_rx_total");
+    assert.notEqual(sessionsTotal0, null, "missing l2_sessions_total");
+    assert.notEqual(sessionsActive0, null, "missing l2_sessions_active");
 
     const ws = new WebSocket(`ws://127.0.0.1:${port}/l2`, ["aero-l2-tunnel-v1"]);
     await waitForOpen(ws);
@@ -182,7 +196,7 @@ test("l2 proxy exposes /metrics and counts rx frames", { timeout: 660_000 }, asy
     let sessionsTotal = null;
     let sessionsActive = null;
     while (Date.now() < deadline) {
-      const { res, text: body } = await fetchText(`http://127.0.0.1:${port}/metrics`, { timeoutMs: 2_000 });
+      const { res, text: body } = await fetchText(`${origin}/metrics`, { timeoutMs: 2_000 });
       assert.equal(res.status, 200);
       rx = parseMetric(body, "l2_frames_rx_total");
       bytesRx = parseMetric(body, "l2_bytes_rx_total");
@@ -190,20 +204,26 @@ test("l2 proxy exposes /metrics and counts rx frames", { timeout: 660_000 }, asy
       sessionsActive = parseMetric(body, "l2_sessions_active");
       if (
         rx !== null &&
-        rx >= 1 &&
+        rx >= rx0 + 1 &&
         bytesRx !== null &&
-        bytesRx >= payload.length &&
+        bytesRx >= bytesRx0 + payload.length &&
         sessionsTotal !== null &&
-        sessionsTotal >= 1 &&
+        sessionsTotal >= sessionsTotal0 + 1 &&
         sessionsActive === 0
       ) {
         break;
       }
       await sleep(25);
     }
-    assert.ok(rx !== null && rx >= 1, `expected rx >= 1, got ${rx}`);
-    assert.ok(bytesRx !== null && bytesRx >= payload.length, `expected bytes_rx >= ${payload.length}, got ${bytesRx}`);
-    assert.ok(sessionsTotal !== null && sessionsTotal >= 1, `expected sessions_total >= 1, got ${sessionsTotal}`);
+    assert.ok(rx !== null && rx >= rx0 + 1, `expected rx >= ${rx0 + 1}, got ${rx}`);
+    assert.ok(
+      bytesRx !== null && bytesRx >= bytesRx0 + payload.length,
+      `expected bytes_rx >= ${bytesRx0 + payload.length}, got ${bytesRx}`,
+    );
+    assert.ok(
+      sessionsTotal !== null && sessionsTotal >= sessionsTotal0 + 1,
+      `expected sessions_total >= ${sessionsTotal0 + 1}, got ${sessionsTotal}`,
+    );
     assert.equal(sessionsActive, 0, `expected sessions_active == 0, got ${sessionsActive}`);
   } finally {
     await proxy.close();
