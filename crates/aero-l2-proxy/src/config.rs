@@ -14,8 +14,9 @@ impl AuthMode {
             "api_key" => Ok(AuthMode::ApiKey),
             "jwt" => Ok(AuthMode::Jwt),
             "cookie_or_jwt" => Ok(AuthMode::CookieOrJwt),
+            "cookie_or_api_key" => Ok(AuthMode::CookieOrApiKey),
             other => anyhow::bail!(
-                "unsupported AERO_L2_AUTH_MODE={other:?} (expected one of: none, cookie, api_key, jwt, cookie_or_jwt)"
+                "unsupported AERO_L2_AUTH_MODE={other:?} (expected one of: none, cookie, api_key, jwt, cookie_or_jwt, cookie_or_api_key)"
             ),
         }
     }
@@ -50,12 +51,12 @@ pub struct SecurityConfig {
     pub api_key: Option<String>,
     /// HMAC secret for verifying JWTs (only used for `auth_mode=jwt` / `cookie_or_jwt`).
     pub jwt_secret: Option<Vec<u8>>,
-    /// Optional defense-in-depth: require `aud` to match for JWT auth.
+    /// Optional expected JWT `aud` claim for `auth_mode=jwt` / `cookie_or_jwt`.
     pub jwt_audience: Option<String>,
-    /// Optional defense-in-depth: require `iss` to match for JWT auth.
+    /// Optional expected JWT `iss` claim for `auth_mode=jwt` / `cookie_or_jwt`.
     pub jwt_issuer: Option<String>,
     /// HMAC secret shared with `backend/aero-gateway` for verifying the `aero_session` cookie.
-    /// (Only used for `auth_mode=cookie` / `cookie_or_jwt`.)
+    /// (Only used for `auth_mode=cookie` / `cookie_or_jwt` / `cookie_or_api_key`.)
     pub session_secret: Option<Vec<u8>>,
     /// Process-wide concurrent tunnel cap (`0` disables).
     pub max_connections: usize,
@@ -143,10 +144,17 @@ impl SecurityConfig {
             parse_allowed_origins(sources)?
         };
 
+        let api_key_var = std::env::var("AERO_L2_API_KEY").ok().and_then(|v| {
+            let trimmed = v.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
+
         let legacy_token = std::env::var("AERO_L2_TOKEN").ok().and_then(|v| {
             let trimmed = v.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         });
+
+        let api_key_candidate = api_key_var.clone().or_else(|| legacy_token.clone());
 
         let auth_mode_raw = std::env::var("AERO_L2_AUTH_MODE")
             .ok()
@@ -154,7 +162,7 @@ impl SecurityConfig {
             .filter(|v| !v.is_empty());
 
         let auth_mode = match auth_mode_raw.as_deref() {
-            None => legacy_token
+            None => api_key_candidate
                 .as_ref()
                 .map(|_| {
                     tracing::warn!(
@@ -167,24 +175,18 @@ impl SecurityConfig {
             Some(raw) => AuthMode::parse(raw)?,
         };
 
-        let api_key = if auth_mode == AuthMode::ApiKey {
-            let key = std::env::var("AERO_L2_API_KEY")
-                .ok()
-                .and_then(|v| {
-                    let trimmed = v.trim();
-                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+        let api_key = if matches!(auth_mode, AuthMode::ApiKey | AuthMode::CookieOrApiKey) {
+            let key = api_key_var.clone().or_else(|| {
+                legacy_token.clone().inspect(|_| {
+                    tracing::warn!(
+                        env = "AERO_L2_TOKEN",
+                        "AERO_L2_TOKEN is deprecated; use AERO_L2_API_KEY instead"
+                    );
                 })
-                .or_else(|| {
-                    legacy_token.inspect(|_| {
-                        tracing::warn!(
-                            env = "AERO_L2_TOKEN",
-                            "AERO_L2_TOKEN is deprecated; use AERO_L2_API_KEY instead"
-                        );
-                    })
-                });
+            });
             if key.is_none() {
                 return Err(anyhow!(
-                    "AERO_L2_API_KEY (or legacy AERO_L2_TOKEN) is required for AERO_L2_AUTH_MODE=api_key"
+                    "AERO_L2_API_KEY (or legacy AERO_L2_TOKEN) is required for AERO_L2_AUTH_MODE=api_key/cookie_or_api_key"
                 ));
             }
             key
@@ -209,14 +211,20 @@ impl SecurityConfig {
 
         let jwt_audience = std::env::var("AERO_L2_JWT_AUDIENCE")
             .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        let jwt_issuer = std::env::var("AERO_L2_JWT_ISSUER")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
+            .and_then(|v| {
+                let trimmed = v.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            });
 
-        let session_secret = if matches!(auth_mode, AuthMode::Cookie | AuthMode::CookieOrJwt) {
+        let jwt_issuer = std::env::var("AERO_L2_JWT_ISSUER").ok().and_then(|v| {
+            let trimmed = v.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
+
+        let session_secret = if matches!(
+            auth_mode,
+            AuthMode::Cookie | AuthMode::CookieOrJwt | AuthMode::CookieOrApiKey
+        ) {
             let secret = std::env::var("AERO_L2_SESSION_SECRET")
                 .ok()
                 .and_then(|v| {
@@ -239,7 +247,7 @@ impl SecurityConfig {
                 });
             if secret.is_none() {
                 return Err(anyhow!(
-                    "AERO_L2_SESSION_SECRET (or SESSION_SECRET / AERO_GATEWAY_SESSION_SECRET) is required for AERO_L2_AUTH_MODE=cookie/cookie_or_jwt"
+                    "AERO_L2_SESSION_SECRET (or SESSION_SECRET / AERO_GATEWAY_SESSION_SECRET) is required for AERO_L2_AUTH_MODE=cookie/cookie_or_jwt/cookie_or_api_key"
                 ));
             }
             secret
@@ -365,6 +373,7 @@ pub enum AuthMode {
     ApiKey,
     Jwt,
     CookieOrJwt,
+    CookieOrApiKey,
 }
 
 #[derive(Debug, Clone)]

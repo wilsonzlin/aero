@@ -244,7 +244,7 @@ async fn capture_creates_non_empty_file() {
 }
 
 #[tokio::test]
-async fn invalid_messages_are_dropped_without_closing_session() {
+async fn invalid_messages_close_session_with_protocol_error() {
     let server = TestServer::start(None, None).await;
 
     let mut req = server.ws_url().into_client_request().unwrap();
@@ -263,16 +263,49 @@ async fn invalid_messages_are_dropped_without_closing_session() {
         .await
         .unwrap();
 
-    // The proxy may send an ERROR control message; drain one message if present.
-    let _ = tokio::time::timeout(Duration::from_millis(200), ws_receiver.next()).await;
-
-    // Follow up with a valid L2 protocol FRAME; if the session was closed, this send would fail.
-    let frame = vec![0u8; 60];
-    let wire = aero_l2_protocol::encode_frame(&frame).unwrap();
-    ws_sender
-        .send(tokio_tungstenite::tungstenite::Message::Binary(wire.into()))
-        .await
-        .unwrap();
+    let mut saw_error = false;
+    let mut saw_close = false;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while let Some(msg) = ws_receiver.next().await {
+            let msg = msg.unwrap();
+            match msg {
+                tokio_tungstenite::tungstenite::Message::Binary(buf) => {
+                    let decoded = aero_l2_protocol::decode_message(buf.as_ref()).unwrap();
+                    if decoded.msg_type != aero_l2_protocol::L2_TUNNEL_TYPE_ERROR {
+                        continue;
+                    }
+                    let (code, message) =
+                        aero_l2_proxy::protocol::decode_error_payload(decoded.payload)
+                            .expect("expected structured ERROR payload");
+                    assert_eq!(
+                        code,
+                        aero_l2_proxy::protocol::ERROR_CODE_PROTOCOL_ERROR,
+                        "unexpected ERROR code"
+                    );
+                    assert!(
+                        !message.is_empty(),
+                        "expected protocol error message to be non-empty"
+                    );
+                    saw_error = true;
+                }
+                tokio_tungstenite::tungstenite::Message::Close(frame) => {
+                    let frame = frame.expect("expected close frame");
+                    assert_eq!(
+                        frame.code,
+                        tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy,
+                        "expected close code 1008"
+                    );
+                    saw_close = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(saw_error, "expected ERROR control message");
+    assert!(saw_close, "expected websocket close frame");
 
     let _ = ws_sender
         .send(tokio_tungstenite::tungstenite::Message::Close(None))
@@ -289,7 +322,7 @@ async fn invalid_messages_are_dropped_without_closing_session() {
     assert!(dropped >= 1, "expected dropped counter >= 1, got {dropped}");
 
     let rx = parse_metric(&body, "l2_frames_rx_total").unwrap();
-    assert!(rx >= 1, "expected rx counter >= 1, got {rx}");
+    assert_eq!(rx, 0, "expected rx counter to remain 0, got {rx}");
 
     server.shutdown().await;
 }

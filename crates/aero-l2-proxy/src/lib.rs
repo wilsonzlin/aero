@@ -5,6 +5,7 @@ mod metrics;
 mod pcapng;
 
 pub mod auth;
+pub mod protocol;
 
 mod config;
 mod dns;

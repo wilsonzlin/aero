@@ -74,6 +74,10 @@ struct MetricsInner {
     upgrade_reject_max_tunnels_per_session_total: AtomicU64,
     upgrade_ip_limit_exceeded_total: AtomicU64,
 
+    // Auth / admission control
+    auth_failures_total: AtomicU64,
+    session_connection_denied_total: AtomicU64,
+
     // Frames/bytes
     frames_rx_total: AtomicU64,
     frames_tx_total: AtomicU64,
@@ -126,6 +130,8 @@ impl Metrics {
                 upgrade_reject_max_connections_total: AtomicU64::new(0),
                 upgrade_reject_max_tunnels_per_session_total: AtomicU64::new(0),
                 upgrade_ip_limit_exceeded_total: AtomicU64::new(0),
+                auth_failures_total: AtomicU64::new(0),
+                session_connection_denied_total: AtomicU64::new(0),
                 frames_rx_total: AtomicU64::new(0),
                 frames_tx_total: AtomicU64::new(0),
                 bytes_rx_total: AtomicU64::new(0),
@@ -255,6 +261,18 @@ impl Metrics {
     pub fn idle_timeout_closed(&self) {
         self.inner
             .idle_timeouts_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn auth_failed(&self) {
+        self.inner
+            .auth_failures_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn session_connection_denied(&self) {
+        self.inner
+            .session_connection_denied_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
@@ -398,6 +416,11 @@ impl Metrics {
             .inner
             .upgrade_ip_limit_exceeded_total
             .load(Ordering::Relaxed);
+        let auth_failures_total = self.inner.auth_failures_total.load(Ordering::Relaxed);
+        let session_connection_denied_total = self
+            .inner
+            .session_connection_denied_total
+            .load(Ordering::Relaxed);
         let frames_rx_total = self.inner.frames_rx_total.load(Ordering::Relaxed);
         let frames_tx_total = self.inner.frames_tx_total.load(Ordering::Relaxed);
         let bytes_rx_total = self.inner.bytes_rx_total.load(Ordering::Relaxed);
@@ -482,6 +505,13 @@ impl Metrics {
             &mut out,
             "l2_upgrade_ip_limit_exceeded_total",
             upgrade_ip_limit_exceeded_total,
+        );
+
+        push_counter(&mut out, "l2_auth_failures_total", auth_failures_total);
+        push_counter(
+            &mut out,
+            "l2_session_connection_denied_total",
+            session_connection_denied_total,
         );
 
         push_counter(&mut out, "l2_frames_rx_total", frames_rx_total);

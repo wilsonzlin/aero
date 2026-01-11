@@ -123,8 +123,10 @@ Response to a `PING`.
 
 Reports a protocol- or policy-level error.
 
-The ERROR message is **advisory**; implementations may choose to keep the tunnel open or close it
-after sending/receiving ERROR (see [Error handling](#error-handling)).
+The ERROR message is intended to be actionable for clients. Implementations SHOULD close the tunnel
+after sending an ERROR for protocol/policy violations (see [Error handling](#error-handling)).
+The production Rust proxy (`crates/aero-l2-proxy`) sends a structured ERROR payload and then closes
+the WebSocket with close code **1008** (policy violation).
 
 Payload formats:
 
@@ -139,6 +141,21 @@ code (u16 BE) | msg_len (u16 BE) | msg (msg_len bytes, UTF-8)
 
 Receivers MAY attempt to parse the structured form first (only if the length matches) and fall back
 to treating the entire payload as a UTF-8 string.
+
+#### Error codes (structured payload)
+
+When using the structured binary form, `code` is a stable `u16` error code.
+
+| Code | Name | Notes |
+|---:|---|---|
+| 1 | `protocol_error` | Malformed/invalid tunnel framing. |
+| 2 | `auth_required` | Authentication required (mostly relevant for upgrade-time errors). |
+| 3 | `auth_invalid` | Invalid credentials. |
+| 4 | `origin_missing` | Missing Origin header (upgrade-time). |
+| 5 | `origin_denied` | Origin not allowed (upgrade-time). |
+| 6 | `quota_bytes` | Total byte quota exceeded. |
+| 7 | `quota_fps` | Frame rate quota exceeded. |
+| 8 | `quota_connections` | Connection/session concurrency quota exceeded. |
 
 ---
 
@@ -265,15 +282,21 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
   by the gateway `POST /session`.
   - Configure the cookie signing secret via `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET`).
 - `api_key`: requires `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`).
-  - Clients can provide credentials via `?apiKey=<value>` / `?token=<value>` query params, or
-    `Sec-WebSocket-Protocol: aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`).
-- `jwt`: requires `AERO_L2_JWT_SECRET` and a JWT provided via `?token=<value>` / `?apiKey=<value>`
-  or `Sec-WebSocket-Protocol: aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`; requires the
-  token be valid for the WebSocket subprotocol token grammar).
-  - Optional defense-in-depth claim enforcement: `AERO_L2_JWT_AUDIENCE` / `AERO_L2_JWT_ISSUER`.
+  - Clients can provide credentials via `?apiKey=<value>` (or `?token=<value>` for compatibility), or
+    an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
+    `aero-l2-tunnel-v1`).
+- `jwt`: requires `AERO_L2_JWT_SECRET` and a JWT provided via:
+  - `Authorization: Bearer <token>`, and/or
+  - `?token=<value>` query param (or `?apiKey=<value>`), and/or
+  - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
+    `aero-l2-tunnel-v1`).
+  - Optional validation: `AERO_L2_JWT_AUDIENCE` and/or `AERO_L2_JWT_ISSUER` (when set, claims must match).
 - `cookie_or_jwt`: accepts either a valid gateway session cookie or a valid JWT.
   - Requires both the cookie signing secret (`AERO_L2_SESSION_SECRET` or `SESSION_SECRET` /
     `AERO_GATEWAY_SESSION_SECRET`) and `AERO_L2_JWT_SECRET`.
+- `cookie_or_api_key`: accepts either a valid gateway session cookie or a valid API key.
+  - Requires the cookie signing secret (`AERO_L2_SESSION_SECRET` or `SESSION_SECRET` /
+    `AERO_GATEWAY_SESSION_SECRET`) and `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`).
 
 Notes:
 
@@ -307,8 +330,9 @@ To bound abuse and accidental infinite loops, the proxy applies coarse, best-eff
 - `AERO_L2_MAX_CONNECTIONS` (default: `64`): process-wide concurrent tunnel cap (`0` disables).
   - When exceeded, upgrades are rejected with **HTTP 429**.
 - `AERO_L2_MAX_CONNECTIONS_PER_SESSION` (default: `0` = disabled): concurrent tunnel cap per
-  authenticated session principal (cookie `sid`, JWT `sid`, or API-key identity).
+  authenticated session (`aero_session` cookie `sid` or JWT `sid`).
   - Legacy alias: `AERO_L2_MAX_TUNNELS_PER_SESSION`.
+  - Token-only (API key) connections rely on `AERO_L2_MAX_CONNECTIONS`.
   - When exceeded, upgrades are rejected with **HTTP 429**.
 - `AERO_L2_MAX_BYTES_PER_CONNECTION` (default: `0` = unlimited): total bytes per connection (rx + tx).
 - `AERO_L2_MAX_FRAMES_PER_SECOND` (default: `0` = unlimited): inbound messages per second per connection.

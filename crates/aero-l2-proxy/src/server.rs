@@ -23,8 +23,6 @@ use tokio::{
     task::JoinHandle,
 };
 
-use ring::digest;
-
 use crate::{
     capture::CaptureManager,
     dns::DnsService,
@@ -266,8 +264,8 @@ async fn l2_ws_handler(
     let (client_ip, client_ip_source) =
         derive_client_ip(state.cfg.security.trust_proxy, &headers, connect_info);
 
-    let auth_sid = match enforce_security(&state, &headers, &uri, client_ip) {
-        Ok(auth_sid) => auth_sid,
+    let session_identity = match enforce_security(&state, &headers, &uri, client_ip) {
+        Ok(session_identity) => session_identity,
         Err(resp) => return *resp,
     };
 
@@ -303,7 +301,7 @@ async fn l2_ws_handler(
                     reason = "max_connections_exceeded",
                     origin = %origin_from_headers(&headers).unwrap_or("<missing>"),
                     auth_mode = %auth_mode(&state),
-                    auth_sid = auth_sid.as_deref().unwrap_or("none"),
+                    auth_sid = session_identity.as_deref().unwrap_or("none"),
                     token_present = token_present(state.cfg.security.auth_mode, &headers, &uri),
                     cookie_present = session_cookie_present(&headers),
                     client_ip = %client_ip,
@@ -319,18 +317,19 @@ async fn l2_ws_handler(
     };
 
     let session_tunnel_permit: Option<SessionTunnelPermit> =
-        match (auth_sid.as_deref(), state.session_tunnels.as_ref()) {
-            (Some(auth_sid), Some(tracker)) => tracker.try_acquire(auth_sid),
+        match (session_identity.as_deref(), state.session_tunnels.as_ref()) {
+            (Some(session_id), Some(tracker)) => tracker.try_acquire(session_id),
             _ => None,
         };
 
-    if auth_sid.is_some() && state.session_tunnels.is_some() && session_tunnel_permit.is_none() {
+    if session_identity.is_some() && state.session_tunnels.is_some() && session_tunnel_permit.is_none() {
         state.metrics.upgrade_reject_max_connections_per_session();
+        state.metrics.session_connection_denied();
         tracing::warn!(
             reason = "max_connections_per_session_exceeded",
             origin = %origin_from_headers(&headers).unwrap_or("<missing>"),
             auth_mode = %auth_mode(&state),
-            auth_sid = auth_sid.as_deref().unwrap_or("none"),
+            auth_sid = session_identity.as_deref().unwrap_or("none"),
             token_present = token_present(state.cfg.security.auth_mode, &headers, &uri),
             cookie_present = session_cookie_present(&headers),
             client_ip = %client_ip,
@@ -338,7 +337,7 @@ async fn l2_ws_handler(
         );
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            "max connections per session exceeded".to_string(),
+            "quota_connections: max connections per session exceeded".to_string(),
         )
             .into_response();
     }
@@ -356,26 +355,15 @@ async fn l2_ws_handler(
             let _permit = permit;
             let _ip_permit = ip_permit;
             let _session_tunnel_permit = session_tunnel_permit;
-            handle_l2_ws(socket, state, auth_sid).await;
+            handle_l2_ws(socket, state, session_identity).await;
         })
 }
 
-async fn handle_l2_ws(socket: WebSocket, state: AppState, auth_sid: Option<String>) {
-    let session_id = state.metrics.next_session_id();
-    let auth_sid_log = auth_sid.as_deref().unwrap_or("none");
-    tracing::info!(session_id, auth_sid = auth_sid_log, "l2 session connected");
-    if let Err(err) = session::run_session(socket, state, session_id, auth_sid.clone()).await {
-        tracing::debug!(
-            session_id,
-            auth_sid = auth_sid_log,
-            "l2 session ended: {err:#}"
-        );
+async fn handle_l2_ws(socket: WebSocket, state: AppState, session_identity: Option<String>) {
+    let tunnel_id = state.metrics.next_session_id();
+    if let Err(err) = session::run_session(socket, state, tunnel_id, session_identity).await {
+        tracing::debug!(tunnel_id, "l2 session ended: {err:#}");
     }
-    tracing::info!(
-        session_id,
-        auth_sid = auth_sid_log,
-        "l2 session disconnected"
-    );
 }
 
 fn enforce_security(
@@ -398,6 +386,7 @@ fn enforce_security(
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
             let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
             if provided.as_deref() != Some(expected) {
+                state.metrics.auth_failed();
                 let reject_reason = if token_present {
                     AuthRejectReason::InvalidApiKey
                 } else {
@@ -427,7 +416,6 @@ fn enforce_security(
                     (StatusCode::UNAUTHORIZED, "invalid api key".to_string()).into_response(),
                 ));
             }
-            auth_sid = Some(hash_api_key_principal(expected));
         }
         crate::config::AuthMode::Cookie => {
             let secret = state
@@ -449,6 +437,7 @@ fn enforce_security(
                     .map(|claims| claims.sid)
             });
             if sid.is_none() {
+                state.metrics.auth_failed();
                 let reject_reason = if cookie_present {
                     AuthRejectReason::InvalidCookie
                 } else {
@@ -536,6 +525,7 @@ fn enforce_security(
                 auth_sid = Some(sid);
             } else {
                 if !token_present {
+                    state.metrics.auth_failed();
                     let reject_reason = if cookie_present {
                         AuthRejectReason::InvalidCookie
                     } else {
@@ -593,6 +583,75 @@ fn enforce_security(
                             client_ip,
                         )?;
                     }
+                }
+            }
+        }
+        crate::config::AuthMode::CookieOrApiKey => {
+            let cookie_secret = state
+                .cfg
+                .security
+                .session_secret
+                .as_deref()
+                .unwrap_or_default();
+            let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
+
+            let cookie = headers
+                .get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
+            let cookie_present = session_token.is_some();
+            let now_ms = now_ms();
+            let sid = session_token.as_deref().and_then(|token| {
+                crate::auth::verify_session_token(token, cookie_secret, now_ms)
+                    .ok()
+                    .map(|claims| claims.sid)
+            });
+
+            if let Some(sid) = sid {
+                auth_sid = Some(sid);
+            } else {
+                let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
+                let api_key_present = provided.is_some();
+
+                if provided.as_deref() != Some(expected) {
+                    state.metrics.auth_failed();
+
+                    let reject_reason = if api_key_present {
+                        AuthRejectReason::InvalidApiKey
+                    } else if cookie_present {
+                        AuthRejectReason::InvalidCookie
+                    } else {
+                        AuthRejectReason::MissingCredentials
+                    };
+
+                    if cookie_present || api_key_present {
+                        state.metrics.upgrade_reject_auth_invalid();
+                    } else {
+                        state.metrics.upgrade_reject_auth_missing();
+                    }
+                    state.metrics.auth_rejected(reject_reason);
+                    tracing::warn!(
+                        reason = if cookie_present || api_key_present {
+                            "auth_invalid"
+                        } else {
+                            "auth_missing"
+                        },
+                        auth_reject_reason = reject_reason.label(),
+                        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                        auth_mode = %auth_mode(state),
+                        token_present,
+                        cookie_present,
+                        client_ip = %client_ip,
+                        "rejected l2 websocket upgrade",
+                    );
+                    return Err(Box::new(
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            "missing or invalid auth".to_string(),
+                        )
+                            .into_response(),
+                    ));
                 }
             }
         }
@@ -788,16 +847,30 @@ fn verify_jwt_sid(
     client_ip: IpAddr,
 ) -> Result<(String, Option<String>), Box<axum::response::Response>> {
     let secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
-    let token = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
+    let mut tokens = Vec::new();
+    if let Some(token) = bearer_token(headers) {
+        tokens.push(token);
+    }
+    if let Some(token) = token_from_query(uri) {
+        tokens.push(token);
+    }
+    if let Some(token) = token_from_subprotocol(headers) {
+        tokens.push(token);
+    }
 
     let now_unix = now_unix_seconds();
-    let claims = token
-        .as_deref()
-        .map(|token| crate::auth::verify_relay_jwt_hs256(token, secret, now_unix));
+    let mut claims = None;
+    for token in tokens {
+        if let Ok(parsed) = crate::auth::verify_relay_jwt_hs256(&token, secret, now_unix) {
+            claims = Some(parsed);
+            break;
+        }
+    }
 
     let claims = match claims {
-        Some(Ok(claims)) => claims,
-        Some(Err(_)) | None => {
+        Some(claims) => claims,
+        None => {
+            state.metrics.auth_failed();
             let reject_reason = if token_present {
                 AuthRejectReason::InvalidJwt
             } else {
@@ -831,6 +904,7 @@ fn verify_jwt_sid(
 
     if let Some(expected) = state.cfg.security.jwt_audience.as_deref() {
         if claims.aud.as_deref() != Some(expected) {
+            state.metrics.auth_failed();
             state.metrics.upgrade_reject_auth_invalid();
             state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
             tracing::warn!(
@@ -851,6 +925,7 @@ fn verify_jwt_sid(
 
     if let Some(expected) = state.cfg.security.jwt_issuer.as_deref() {
         if claims.iss.as_deref() != Some(expected) {
+            state.metrics.auth_failed();
             state.metrics.upgrade_reject_auth_invalid();
             state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
             tracing::warn!(
@@ -874,6 +949,7 @@ fn verify_jwt_sid(
         Some(raw) => match crate::origin::normalize_origin(raw) {
             Some(origin) => Some(origin),
             None => {
+                state.metrics.auth_failed();
                 state.metrics.upgrade_reject_auth_invalid();
                 state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
                 tracing::warn!(
@@ -910,6 +986,7 @@ fn reject_jwt_origin_mismatch(
     cookie_present: bool,
     client_ip: IpAddr,
 ) -> Result<(), Box<axum::response::Response>> {
+    state.metrics.auth_failed();
     state.metrics.upgrade_reject_auth_invalid();
     state
         .metrics
@@ -936,6 +1013,7 @@ fn auth_mode(state: &AppState) -> &'static str {
         crate::config::AuthMode::ApiKey => "api_key",
         crate::config::AuthMode::Jwt => "jwt",
         crate::config::AuthMode::CookieOrJwt => "cookie_or_jwt",
+        crate::config::AuthMode::CookieOrApiKey => "cookie_or_api_key",
     }
 }
 
@@ -1100,9 +1178,13 @@ fn token_present(
     uri: &axum::http::Uri,
 ) -> bool {
     match auth_mode {
-        crate::config::AuthMode::ApiKey
-        | crate::config::AuthMode::Jwt
-        | crate::config::AuthMode::CookieOrJwt => {
+        crate::config::AuthMode::Jwt | crate::config::AuthMode::CookieOrJwt => {
+            bearer_token(headers).is_some()
+                || token_present_in_query(uri, "apiKey")
+                || token_present_in_query(uri, "token")
+                || token_present_in_subprotocol(headers)
+        }
+        crate::config::AuthMode::ApiKey | crate::config::AuthMode::CookieOrApiKey => {
             token_present_in_query(uri, "apiKey")
                 || token_present_in_query(uri, "token")
                 || token_present_in_subprotocol(headers)
@@ -1167,6 +1249,20 @@ fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
     None
 }
 
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let mut parts = value.trim().split_whitespace();
+    let scheme = parts.next()?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return None;
+    }
+    let token = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    (!token.is_empty()).then(|| token.to_string())
+}
+
 fn token_from_query(uri: &axum::http::Uri) -> Option<String> {
     query_param(uri, "token").or_else(|| query_param(uri, "apiKey"))
 }
@@ -1201,16 +1297,6 @@ fn now_unix_seconds() -> u64 {
         .ok()
         .map(|dur| dur.as_secs())
         .unwrap_or(0)
-}
-
-fn hash_api_key_principal(api_key: &str) -> String {
-    let digest = digest::digest(&digest::SHA256, api_key.as_bytes());
-    let mut prefix = String::with_capacity(8);
-    for b in digest.as_ref().iter().take(4) {
-        use std::fmt::Write;
-        let _ = write!(&mut prefix, "{:02x}", b);
-    }
-    format!("api_key:{prefix}")
 }
 
 fn percent_decode(input: &str) -> String {

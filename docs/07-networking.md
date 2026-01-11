@@ -182,12 +182,14 @@ supports multiple auth modes via `AERO_L2_AUTH_MODE`:
 - `cookie` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
   by `POST /session`. The proxy must share the gateway session signing secret (`SESSION_SECRET`) via
   `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET`) so it can verify the cookie.
-- `api_key` / `jwt` / `cookie_or_jwt`: useful for cross-origin deployments and non-browser/internal
+- `api_key` / `jwt` / `cookie_or_jwt` / `cookie_or_api_key`: useful for cross-origin deployments and non-browser/internal
   clients. Credentials can be delivered via:
-  - query param: `?token=...` (or `?apiKey=...` for API-key auth), or
+  - query param: `?token=...` (or `?apiKey=...` for API-key auth),
+  - `Authorization: Bearer <token>` (JWT), or
   - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<credential>` (offered alongside
     `aero-l2-tunnel-v1`; requires the credential be valid for the WebSocket subprotocol token grammar;
     prefer this form when possible to avoid putting secrets in URLs/logs).
+  - Optional JWT validation: set `AERO_L2_JWT_AUDIENCE` and/or `AERO_L2_JWT_ISSUER` (when set, claims must match).
 - `AERO_L2_TOKEN` is a legacy alias for API-key auth (used when `AERO_L2_AUTH_MODE` is unset and also
   accepted as a fallback value for `AERO_L2_API_KEY` in `api_key` mode).
 

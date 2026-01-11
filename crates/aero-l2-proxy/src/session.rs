@@ -19,7 +19,7 @@ use tokio::{
 };
 use tracing::Instrument;
 
-use crate::{overrides::ForwardKey, server::AppState};
+use crate::{overrides::ForwardKey, protocol, server::AppState};
 
 // Default-deny private/reserved ranges in the stack itself so we can drop obviously-invalid
 // connections early (before creating any tokio socket state).
@@ -81,6 +81,13 @@ enum QuotaExceeded {
 }
 
 impl QuotaExceeded {
+    fn code(self) -> u16 {
+        match self {
+            QuotaExceeded::Bytes => protocol::ERROR_CODE_QUOTA_BYTES,
+            QuotaExceeded::FramesPerSecond => protocol::ERROR_CODE_QUOTA_FPS,
+        }
+    }
+
     fn reason(self) -> &'static str {
         match self {
             QuotaExceeded::Bytes => "byte quota exceeded",
@@ -168,6 +175,42 @@ fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static st
     })));
 }
 
+fn error_wire(state: &AppState, code: u16, message: &str) -> Option<Vec<u8>> {
+    let payload = protocol::encode_error_payload(code, message, state.l2_limits.max_control_payload);
+    aero_l2_protocol::encode_with_limits(
+        aero_l2_protocol::L2_TUNNEL_TYPE_ERROR,
+        0,
+        &payload,
+        &state.l2_limits,
+    )
+    .ok()
+}
+
+async fn close_with_error(
+    ws_out_tx: &mpsc::Sender<Message>,
+    state: &AppState,
+    code: u16,
+    message: &str,
+) {
+    if let Some(wire) = error_wire(state, code, message) {
+        let _ = ws_out_tx.send(Message::Binary(wire)).await;
+    }
+
+    const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
+    const MAX_REASON_BYTES: usize = 123;
+    let reason = if message.len() <= MAX_REASON_BYTES {
+        message.to_string()
+    } else {
+        truncate_utf8(message, MAX_REASON_BYTES)
+    };
+    let _ = ws_out_tx
+        .send(Message::Close(Some(CloseFrame {
+            code: CLOSE_CODE_POLICY_VIOLATION,
+            reason: Cow::Owned(reason),
+        })))
+        .await;
+}
+
 async fn close_shutting_down(ws_out_tx: &mpsc::Sender<Message>) {
     const CLOSE_CODE_GOING_AWAY: u16 = 1001;
     const MAX_REASON_BYTES: usize = 123;
@@ -216,29 +259,31 @@ async fn send_ws_message(
 pub(crate) async fn run_session(
     socket: WebSocket,
     state: AppState,
-    session_id: u64,
-    auth_sid: Option<String>,
+    tunnel_id: u64,
+    session_id: Option<String>,
 ) -> anyhow::Result<()> {
-    let auth_sid_span = auth_sid.unwrap_or_else(|| "none".to_string());
-    run_session_inner(socket, state, session_id)
-        .instrument(tracing::info_span!("l2_session", session_id, auth_sid = %auth_sid_span))
-        .await
+    let span = tracing::info_span!("l2_session", tunnel_id, session_id = tracing::field::Empty);
+    if let Some(session_id) = session_id.as_deref() {
+        span.record("session_id", &tracing::field::display(session_id));
+    }
+
+    run_session_inner(socket, state, tunnel_id).instrument(span).await
 }
 
 async fn run_session_inner(
     socket: WebSocket,
     state: AppState,
-    session_id: u64,
+    tunnel_id: u64,
 ) -> anyhow::Result<()> {
     state.metrics.session_opened();
     let _session_guard = SessionGuard::new(state.metrics.clone());
 
-    tracing::info!(session_id, "session opened");
+    tracing::info!("session opened");
 
-    let mut capture = match state.capture.open_session(session_id).await {
+    let mut capture = match state.capture.open_session(tunnel_id).await {
         Ok(capture) => capture,
         Err(err) => {
-            tracing::warn!(session_id, "failed to initialise capture: {err}");
+            tracing::warn!("failed to initialise capture: {err}");
             None
         }
     };
@@ -286,8 +331,6 @@ async fn run_session_inner(
     let start = tokio::time::Instant::now();
     let mut fatal_err: Option<anyhow::Error> = None;
     let mut close_handshake = false;
-    let mut consecutive_protocol_errors: u32 = 0;
-    const MAX_CONSECUTIVE_PROTOCOL_ERRORS: u32 = 3;
 
     // Optional server-driven keepalive/RTT measurement.
     let ping_enabled = state.cfg.ping_interval.is_some();
@@ -352,7 +395,8 @@ async fn run_session_inner(
                             send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
                         {
                             close_handshake = true;
-                            close_policy_violation(&ws_out_tx, exceeded.reason());
+                            close_with_error(&ws_out_tx, &state, exceeded.code(), exceeded.reason())
+                                .await;
                             break;
                         }
                         ping_outstanding = Some((ping_id, tokio::time::Instant::now()));
@@ -369,7 +413,7 @@ async fn run_session_inner(
 
                 if let Some(exceeded) = quotas.on_inbound_message(&msg) {
                     close_handshake = true;
-                    close_policy_violation(&ws_out_tx, exceeded.reason());
+                    close_with_error(&ws_out_tx, &state, exceeded.code(), exceeded.reason()).await;
                     break;
                 }
 
@@ -380,7 +424,6 @@ async fn run_session_inner(
                         let now_ms = elapsed_ms(start);
                         match aero_l2_protocol::decode_with_limits(&data, &state.l2_limits) {
                             Ok(decoded) => {
-                                consecutive_protocol_errors = 0;
                                 match decoded.msg_type {
                                     aero_l2_protocol::L2_TUNNEL_TYPE_FRAME => {
                                         let frame = decoded.payload;
@@ -428,7 +471,13 @@ async fn run_session_inner(
                                                 send_ws_message(&ws_out_tx, Message::Binary(pong), &mut quotas).await
                                             {
                                                 close_handshake = true;
-                                                close_policy_violation(&ws_out_tx, exceeded.reason());
+                                                close_with_error(
+                                                    &ws_out_tx,
+                                                    &state,
+                                                    exceeded.code(),
+                                                    exceeded.reason(),
+                                                )
+                                                .await;
                                                 break;
                                             }
                                         }
@@ -460,33 +509,17 @@ async fn run_session_inner(
                             }
                             Err(err) => {
                                 state.metrics.frame_dropped();
-                                tracing::debug!(session_id, "dropping invalid l2 message: {err}");
+                                tracing::debug!("dropping invalid l2 message: {err}");
                                 let msg = err.to_string();
-                                let payload = msg.as_bytes();
-                                let payload = if payload.len() > state.l2_limits.max_control_payload {
-                                    &payload[..state.l2_limits.max_control_payload]
-                                } else {
-                                    payload
-                                };
-
-                                if let Ok(wire) = aero_l2_protocol::encode_with_limits(
-                                    aero_l2_protocol::L2_TUNNEL_TYPE_ERROR,
-                                    0,
-                                    payload,
-                                    &state.l2_limits,
-                                ) {
-                                     if let Err(exceeded) =
-                                         send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
-                                     {
-                                         close_policy_violation(&ws_out_tx, exceeded.reason());
-                                     }
-                                 }
-
-                                consecutive_protocol_errors = consecutive_protocol_errors.saturating_add(1);
-                                if consecutive_protocol_errors >= MAX_CONSECUTIVE_PROTOCOL_ERRORS {
-                                    break;
-                                }
-                                continue;
+                                close_handshake = true;
+                                close_with_error(
+                                    &ws_out_tx,
+                                    &state,
+                                    protocol::ERROR_CODE_PROTOCOL_ERROR,
+                                    &msg,
+                                )
+                                .await;
+                                break;
                             }
                         }
                     }
@@ -495,7 +528,8 @@ async fn run_session_inner(
                             send_ws_message(&ws_out_tx, Message::Pong(payload), &mut quotas).await
                         {
                             close_handshake = true;
-                            close_policy_violation(&ws_out_tx, exceeded.reason());
+                            close_with_error(&ws_out_tx, &state, exceeded.code(), exceeded.reason())
+                                .await;
                             break;
                         }
                     }
@@ -595,13 +629,13 @@ async fn run_session_inner(
     if let Some(capture) = capture {
         let path = capture.path().to_path_buf();
         if let Err(err) = capture.close().await {
-            tracing::warn!(session_id, "failed to flush capture file: {err}");
+            tracing::warn!("failed to flush capture file: {err}");
         } else {
-            tracing::info!(session_id, path = ?path, "wrote capture file");
+            tracing::info!(path = ?path, "wrote capture file");
         }
     }
 
-    tracing::info!(session_id, "session closed");
+    tracing::info!("session closed");
 
     match fatal_err {
         Some(err) => Err(err),
@@ -676,7 +710,7 @@ async fn process_actions(
                 if let Err(exceeded) =
                     send_ws_message(ws_out_tx, Message::Binary(wire), quotas).await
                 {
-                    close_policy_violation(ws_out_tx, exceeded.reason());
+                    close_with_error(ws_out_tx, state, exceeded.code(), exceeded.reason()).await;
                     return Ok(SessionControl::Close);
                 }
                 state.metrics.frame_tx(frame.len());

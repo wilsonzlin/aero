@@ -3,13 +3,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use aero_l2_proxy::{
-    auth::{mint_relay_jwt_hs256, RelayJwtClaims},
-    start_server, ProxyConfig, TUNNEL_SUBPROTOCOL,
-};
-use base64::Engine;
+use aero_l2_proxy::{auth, protocol, start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
 use futures_util::{SinkExt, StreamExt};
-use ring::hmac;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
@@ -55,7 +50,7 @@ struct CommonL2Env {
     _ping_interval: EnvVarGuard,
     _auth_mode: EnvVarGuard,
     _session_secret: EnvVarGuard,
-    _session_secret_fallback: EnvVarGuard,
+    _session_secret_alias: EnvVarGuard,
     _gateway_session_secret: EnvVarGuard,
     _api_key: EnvVarGuard,
     _jwt_secret: EnvVarGuard,
@@ -75,16 +70,16 @@ impl CommonL2Env {
             _max_bytes: EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0"),
             _max_fps: EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0"),
             _ping_interval: EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0"),
-            // Auth-related env vars are intentionally unset so tests don't accidentally depend on
-            // a developer's shell environment.
             _auth_mode: EnvVarGuard::unset("AERO_L2_AUTH_MODE"),
-            _session_secret: EnvVarGuard::unset("AERO_L2_SESSION_SECRET"),
-            _session_secret_fallback: EnvVarGuard::unset("SESSION_SECRET"),
-            _gateway_session_secret: EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET"),
             _api_key: EnvVarGuard::unset("AERO_L2_API_KEY"),
             _jwt_secret: EnvVarGuard::unset("AERO_L2_JWT_SECRET"),
+            // Ensure developer shells don't accidentally harden or otherwise change proxy behavior
+            // for these integration tests.
             _jwt_audience: EnvVarGuard::unset("AERO_L2_JWT_AUDIENCE"),
             _jwt_issuer: EnvVarGuard::unset("AERO_L2_JWT_ISSUER"),
+            _session_secret: EnvVarGuard::unset("AERO_L2_SESSION_SECRET"),
+            _session_secret_alias: EnvVarGuard::unset("SESSION_SECRET"),
+            _gateway_session_secret: EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET"),
             _legacy_token: EnvVarGuard::unset("AERO_L2_TOKEN"),
         }
     }
@@ -121,18 +116,37 @@ fn parse_metric(body: &str, name: &str) -> Option<u64> {
     None
 }
 
-fn make_session_token(secret: &str, sid: &str, exp_secs: u64) -> String {
-    let payload = serde_json::json!({
-        "v": 1,
-        "sid": sid,
-        "exp": exp_secs,
-    });
-    let payload_bytes = serde_json::to_vec(&payload).unwrap();
-    let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_bytes);
-    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
-    let sig = hmac::sign(&key, payload_b64.as_bytes());
-    let sig_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.as_ref());
-    format!("{payload_b64}.{sig_b64}")
+fn mint_session_token(secret: &str, sid: &str, exp_secs: u64) -> String {
+    auth::mint_session_token(
+        &auth::SessionClaims {
+            sid: sid.to_string(),
+            exp: exp_secs,
+        },
+        secret.as_bytes(),
+    )
+}
+
+fn tamper_session_token(token: &str) -> String {
+    let (payload, sig) = token.split_once('.').unwrap();
+    let mut sig_bytes = sig.as_bytes().to_vec();
+    sig_bytes[0] = if sig_bytes[0] == b'A' { b'B' } else { b'A' };
+    let sig = String::from_utf8(sig_bytes).unwrap();
+    format!("{payload}.{sig}")
+}
+
+fn mint_jwt_token(secret: &str, sid: &str, exp_secs: u64, aud: Option<&str>, iss: Option<&str>) -> String {
+    auth::mint_relay_jwt_hs256(
+        &auth::RelayJwtClaims {
+            iat: exp_secs.saturating_sub(60),
+            exp: exp_secs,
+            sid: sid.to_string(),
+            origin: None,
+            aud: aud.map(|v| v.to_string()),
+            iss: iss.map(|v| v.to_string()),
+            nbf: None,
+        },
+        secret.as_bytes(),
+    )
 }
 
 fn now_unix_seconds() -> u64 {
@@ -144,7 +158,7 @@ fn now_unix_seconds() -> u64 {
 
 fn make_relay_jwt(secret: &str, sid: &str, exp: u64, origin: Option<&str>) -> String {
     let now = now_unix_seconds();
-    let claims = RelayJwtClaims {
+    let claims = auth::RelayJwtClaims {
         iat: now.saturating_sub(1),
         exp,
         sid: sid.to_string(),
@@ -153,7 +167,7 @@ fn make_relay_jwt(secret: &str, sid: &str, exp: u64, origin: Option<&str>) -> St
         iss: None,
         nbf: None,
     };
-    mint_relay_jwt_hs256(&claims, secret.as_bytes())
+    auth::mint_relay_jwt_hs256(&claims, secret.as_bytes())
 }
 
 #[tokio::test]
@@ -816,7 +830,7 @@ async fn cookie_or_jwt_accepts_either_auth_mechanism() {
 
     // Cookie auth succeeds.
     let exp = now_unix_seconds().saturating_add(60);
-    let cookie_token = make_session_token("cookie-sekrit", "sid-cookie", exp);
+    let cookie_token = mint_session_token("cookie-sekrit", "sid-cookie", exp);
     let mut req = base_ws_request(addr);
     req.headers_mut().insert(
         "cookie",
@@ -838,7 +852,7 @@ async fn cookie_or_jwt_accepts_either_auth_mechanism() {
 
     // Invalid cookie but valid JWT still succeeds.
     let expired = exp.saturating_sub(120);
-    let bad_cookie = make_session_token("cookie-sekrit", "sid-cookie", expired);
+    let bad_cookie = mint_session_token("cookie-sekrit", "sid-cookie", expired);
     let ws_url = format!("ws://{addr}/l2?token={jwt_token}");
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
@@ -888,7 +902,7 @@ async fn cookie_or_jwt_accepts_either_credential() {
     let exp = now.saturating_add(60);
 
     // Cookie credential works.
-    let token = make_session_token("sekrit", "sid", exp);
+    let token = mint_session_token("sekrit", "sid", exp);
     let mut req = base_ws_request(addr);
     req.headers_mut().insert(
         "cookie",
@@ -898,8 +912,8 @@ async fn cookie_or_jwt_accepts_either_credential() {
     let _ = ws.send(Message::Close(None)).await;
 
     // JWT credential works.
-    let jwt = mint_relay_jwt_hs256(
-        &RelayJwtClaims {
+    let jwt = auth::mint_relay_jwt_hs256(
+        &auth::RelayJwtClaims {
             iat: now,
             exp,
             sid: "sid".to_string(),
@@ -994,7 +1008,7 @@ async fn cookie_auth_requires_valid_session_cookie() {
         .unwrap()
         .as_secs()
         .saturating_add(60);
-    let token = make_session_token("sekrit", "sid", exp);
+    let token = mint_session_token("sekrit", "sid", exp);
     let mut req = base_ws_request(addr);
     req.headers_mut().insert(
         "cookie",
@@ -1005,7 +1019,7 @@ async fn cookie_auth_requires_valid_session_cookie() {
 
     // Expired cookies should be rejected.
     let expired = exp.saturating_sub(120);
-    let token = make_session_token("sekrit", "sid", expired);
+    let token = mint_session_token("sekrit", "sid", expired);
     let mut req = base_ws_request(addr);
     req.headers_mut().insert(
         "cookie",
@@ -1015,6 +1029,166 @@ async fn cookie_auth_requires_valid_session_cookie() {
         .await
         .expect_err("expected expired session cookie to be rejected");
     assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    // Tampered cookies should be rejected.
+    let token = tamper_session_token(&mint_session_token("sekrit", "sid", exp));
+    let mut req = base_ws_request(addr);
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={token}")).unwrap(),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected tampered session cookie to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn jwt_auth_accepts_bearer_and_query_and_validates_audience_and_issuer() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "jwt");
+    let _secret = EnvVarGuard::set("AERO_L2_JWT_SECRET", "jwtsekrit");
+    let _aud = EnvVarGuard::set("AERO_L2_JWT_AUDIENCE", "l2");
+    let _iss = EnvVarGuard::set("AERO_L2_JWT_ISSUER", "gateway");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(60);
+    let token = mint_jwt_token("jwtsekrit", "sid-jwt", exp, Some("l2"), Some("gateway"));
+
+    // Missing token is rejected.
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected jwt auth to reject missing token");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    // Bearer token succeeds.
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Query token succeeds.
+    let ws_url = format!("ws://{addr}/l2?token={token}");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Wrong audience rejected.
+    let bad_aud = mint_jwt_token("jwtsekrit", "sid-jwt", exp, Some("wrong"), Some("gateway"));
+    let ws_url = format!("ws://{addr}/l2?token={bad_aud}");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected wrong-audience jwt to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    // Wrong issuer rejected.
+    let bad_iss = mint_jwt_token("jwtsekrit", "sid-jwt", exp, Some("l2"), Some("wrong"));
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("authorization", HeaderValue::from_str(&format!("Bearer {bad_iss}")).unwrap());
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected wrong-issuer jwt to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn max_connections_per_session_enforced_for_jwt() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "jwt");
+    let _secret = EnvVarGuard::set("AERO_L2_JWT_SECRET", "jwtsekrit");
+    let _max = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "1");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(60);
+    let token = mint_jwt_token("jwtsekrit", "sid-jwt", exp, None, None);
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+    let (mut ws1, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected per-session tunnel limit enforcement for jwt auth");
+    assert_http_status(err, StatusCode::TOO_MANY_REQUESTS);
+
+    let _ = ws1.send(Message::Close(None)).await;
+
+    // Wait for the server-side session to observe the close and release the permit.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+    let (mut ws2, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws2.send(Message::Close(None)).await;
 
     proxy.shutdown().await;
 }
@@ -1045,7 +1219,7 @@ async fn cookie_auth_falls_back_to_session_secret() {
         .unwrap()
         .as_secs()
         .saturating_add(60);
-    let token = make_session_token("sekrit", "sid", exp);
+    let token = mint_session_token("sekrit", "sid", exp);
 
     let mut req = base_ws_request(addr);
     req.headers_mut().insert(
@@ -1212,7 +1386,7 @@ async fn max_connections_per_session_enforced() {
         .unwrap()
         .as_secs()
         .saturating_add(60);
-    let token = make_session_token("sekrit", "sid-test", exp);
+    let token = mint_session_token("sekrit", "sid-test", exp);
     let cookie = format!("aero_session={token}");
 
     let mut req = base_ws_request(addr);
@@ -1356,13 +1530,24 @@ async fn byte_quota_closes_connection() {
         }
     }
 
-    let close = tokio::time::timeout(Duration::from_secs(2), async {
+    let (err_msg, close) = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut err_msg: Option<(u16, String)> = None;
         loop {
             match ws.next().await {
-                Some(Ok(Message::Close(frame))) => return frame,
+                Some(Ok(Message::Binary(buf))) => {
+                    let Ok(decoded) = aero_l2_protocol::decode_message(buf.as_ref()) else {
+                        continue;
+                    };
+                    if decoded.msg_type == aero_l2_protocol::L2_TUNNEL_TYPE_ERROR {
+                        if let Some(parsed) = protocol::decode_error_payload(decoded.payload) {
+                            err_msg = Some(parsed);
+                        }
+                    }
+                }
+                Some(Ok(Message::Close(frame))) => return (err_msg, frame),
                 Some(Ok(_)) => continue,
                 Some(Err(err)) => panic!("ws recv error: {err}"),
-                None => return None,
+                None => return (err_msg, None),
             }
         }
     })
@@ -1374,6 +1559,9 @@ async fn byte_quota_closes_connection() {
         frame.code,
         tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy
     );
+    let (code, msg) = err_msg.expect("expected ERROR control message before close");
+    assert_eq!(code, protocol::ERROR_CODE_QUOTA_BYTES);
+    assert_eq!(msg, "byte quota exceeded");
 
     proxy.shutdown().await;
 }
@@ -1407,13 +1595,24 @@ async fn byte_quota_counts_tx_bytes() {
     let ping = aero_l2_protocol::encode_ping(Some(&payload)).unwrap();
     ws.send(Message::Binary(ping.into())).await.unwrap();
 
-    let close = tokio::time::timeout(Duration::from_secs(2), async {
+    let (err_msg, close) = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut err_msg: Option<(u16, String)> = None;
         loop {
             match ws.next().await {
-                Some(Ok(Message::Close(frame))) => return frame,
+                Some(Ok(Message::Binary(buf))) => {
+                    let Ok(decoded) = aero_l2_protocol::decode_message(buf.as_ref()) else {
+                        continue;
+                    };
+                    if decoded.msg_type == aero_l2_protocol::L2_TUNNEL_TYPE_ERROR {
+                        if let Some(parsed) = protocol::decode_error_payload(decoded.payload) {
+                            err_msg = Some(parsed);
+                        }
+                    }
+                }
+                Some(Ok(Message::Close(frame))) => return (err_msg, frame),
                 Some(Ok(_)) => continue,
                 Some(Err(err)) => panic!("ws recv error: {err}"),
-                None => return None,
+                None => return (err_msg, None),
             }
         }
     })
@@ -1425,6 +1624,9 @@ async fn byte_quota_counts_tx_bytes() {
         frame.code,
         tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy
     );
+    let (code, msg) = err_msg.expect("expected ERROR control message before close");
+    assert_eq!(code, protocol::ERROR_CODE_QUOTA_BYTES);
+    assert_eq!(msg, "byte quota exceeded");
 
     proxy.shutdown().await;
 }
@@ -1453,13 +1655,24 @@ async fn keepalive_ping_counts_toward_byte_quota() {
     let req = base_ws_request(addr);
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
 
-    let close = tokio::time::timeout(Duration::from_secs(2), async {
+    let (err_msg, close) = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut err_msg: Option<(u16, String)> = None;
         loop {
             match ws.next().await {
-                Some(Ok(Message::Close(frame))) => return frame,
+                Some(Ok(Message::Binary(buf))) => {
+                    let Ok(decoded) = aero_l2_protocol::decode_message(buf.as_ref()) else {
+                        continue;
+                    };
+                    if decoded.msg_type == aero_l2_protocol::L2_TUNNEL_TYPE_ERROR {
+                        if let Some(parsed) = protocol::decode_error_payload(decoded.payload) {
+                            err_msg = Some(parsed);
+                        }
+                    }
+                }
+                Some(Ok(Message::Close(frame))) => return (err_msg, frame),
                 Some(Ok(_)) => continue,
                 Some(Err(err)) => panic!("ws recv error: {err}"),
-                None => return None,
+                None => return (err_msg, None),
             }
         }
     })
@@ -1471,6 +1684,9 @@ async fn keepalive_ping_counts_toward_byte_quota() {
         frame.code,
         tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy
     );
+    let (code, msg) = err_msg.expect("expected ERROR control message before close");
+    assert_eq!(code, protocol::ERROR_CODE_QUOTA_BYTES);
+    assert_eq!(msg, "byte quota exceeded");
 
     proxy.shutdown().await;
 }

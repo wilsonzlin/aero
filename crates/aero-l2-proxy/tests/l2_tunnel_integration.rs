@@ -30,6 +30,15 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         udp_allowed_port + 1
     };
 
+    // Ensure local developer env vars don't accidentally harden the proxy in tests.
+    std::env::remove_var("AERO_L2_AUTH_MODE");
+    std::env::remove_var("AERO_L2_API_KEY");
+    std::env::remove_var("AERO_L2_TOKEN");
+    std::env::remove_var("AERO_L2_SESSION_SECRET");
+    std::env::remove_var("SESSION_SECRET");
+    std::env::remove_var("AERO_L2_JWT_SECRET");
+    std::env::remove_var("AERO_L2_MAX_CONNECTIONS_PER_SESSION");
+
     std::env::set_var("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     // Ensure security/keepalive knobs are deterministic for this end-to-end probe test (do not
     // inherit developer environment overrides).
