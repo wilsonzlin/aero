@@ -183,8 +183,12 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   }
 
   if (name === "NotFoundError" || mentionsDisconnected) {
+    addHint("If you canceled the browser chooser, just run `requestDevice()` again.");
     addHint("Ensure the device is plugged in, then run `requestDevice()` again and re-select it in the chooser.");
     addHint("If the chooser is empty, check your `filters` (vendorId/productId) and that the device is not in use.");
+    addHint(
+      "If the chooser doesn't show your device at all, it may expose only \"protected\" interface classes (HID, mass storage, audio/video, etc.) and be hidden/blocked by Chromium's WebUSB restrictions.",
+    );
   }
 
   if (name === "SecurityError" || mentionsProtectedInterface) {
