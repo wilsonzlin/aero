@@ -18,6 +18,8 @@ Discovery conventions (encoded here for CI determinism):
         common build-output directories: `obj/`, `out/`, `build/`, `target/`).
       - Skip WDK 7.1 "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile)
         by default (pass `-IncludeMakefileProjects` to opt in).
+        - For mixed solutions (MSBuild projects + wrapper projects), the script builds only the
+          non-wrapper `*.vcxproj` projects to avoid invoking legacy `build.exe`.
   - Build outputs are staged under:
       - `out/drivers/<driver-relative-path>/<arch>/...`
 
