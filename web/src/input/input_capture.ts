@@ -515,13 +515,17 @@ export class InputCapture {
       return;
     }
 
+    if (!this.isCapturingKeyboard()) {
+      return;
+    }
+
     const nowMs = performance.now();
     if (nowMs - this.gamepadLastPollMs < this.gamepadPollIntervalMs) {
       return;
     }
     this.gamepadLastPollMs = nowMs;
 
-    this.gamepad.poll(this.queue, toTimestampUs(nowMs), { active: this.isCapturingKeyboard() });
+    this.gamepad.poll(this.queue, toTimestampUs(nowMs), { active: true });
   }
 }
 
