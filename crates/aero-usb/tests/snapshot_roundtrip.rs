@@ -1,5 +1,9 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError};
 use aero_usb::hid::passthrough::UsbHidPassthrough;
+use aero_usb::passthrough::{
+    SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
+    UsbPassthroughDevice, UsbWebUsbPassthroughDevice,
+};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::uhci::UhciController;
 use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
@@ -551,4 +555,150 @@ fn snapshot_major_version_mismatch_returns_error() {
             supported: 1
         }
     ));
+}
+
+#[test]
+fn usb_passthrough_device_snapshot_preserves_next_id_and_drops_pending_io() {
+    let mut dev = UsbPassthroughDevice::new();
+
+    // Queue a bulk IN action (id=1) and leave it in-flight.
+    dev.handle_in_transfer(0x81, 8);
+    assert_eq!(dev.pending_summary().queued_actions, 1);
+    let id1 = match dev.pop_action().expect("expected queued action") {
+        UsbHostAction::BulkIn { id, endpoint, length } => {
+            assert_eq!(endpoint, 0x81);
+            assert_eq!(length, 8);
+            id
+        }
+        other => panic!("unexpected action: {other:?}"),
+    };
+    assert_eq!(id1, 1);
+    assert_eq!(dev.pending_summary().inflight_endpoints, 1);
+
+    let snapshot = dev.save_state();
+
+    let mut restored = UsbPassthroughDevice::new();
+    restored
+        .load_state(&snapshot)
+        .expect("passthrough snapshot restore should succeed");
+
+    let summary = restored.pending_summary();
+    assert_eq!(summary.queued_actions, 0);
+    assert_eq!(summary.queued_completions, 0);
+    assert_eq!(summary.inflight_control, None);
+    assert_eq!(summary.inflight_endpoints, 0);
+
+    // Next action should continue from next_id=2.
+    restored.handle_in_transfer(0x81, 8);
+    let id2 = match restored.pop_action().expect("expected action after restore") {
+        UsbHostAction::BulkIn { id, .. } => id,
+        other => panic!("unexpected action: {other:?}"),
+    };
+    assert_eq!(id2, 2);
+}
+
+#[test]
+fn webusb_passthrough_device_snapshot_preserves_pending_set_address() {
+    let mut dev = UsbWebUsbPassthroughDevice::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05, // SET_ADDRESS
+        value: 12,
+        index: 0,
+        length: 0,
+    });
+    assert_eq!(dev.address(), 0);
+
+    let snapshot = dev.save_state();
+
+    let mut restored = UsbWebUsbPassthroughDevice::new();
+    restored
+        .load_state(&snapshot)
+        .expect("webusb snapshot restore should succeed");
+
+    assert_eq!(restored.address(), 0);
+
+    // Status stage for SET_ADDRESS is an IN ZLP.
+    let mut zlp: [u8; 0] = [];
+    assert_eq!(restored.handle_in(0, &mut zlp), UsbHandshake::Ack { bytes: 0 });
+    assert_eq!(restored.address(), 12);
+}
+
+#[test]
+fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
+    let mut dev = UsbWebUsbPassthroughDevice::new();
+
+    let setup = SetupPacket {
+        request_type: 0x80,
+        request: 0x06, // GET_DESCRIPTOR
+        value: 0x0100,
+        index: 0,
+        length: 4,
+    };
+    dev.handle_setup(setup);
+
+    let actions = dev.drain_actions();
+    assert_eq!(actions.len(), 1);
+    let id1 = match actions[0] {
+        UsbHostAction::ControlIn { id, setup: host_setup } => {
+            assert_eq!(
+                host_setup,
+                HostSetupPacket {
+                    bm_request_type: setup.request_type,
+                    b_request: setup.request,
+                    w_value: setup.value,
+                    w_index: setup.index,
+                    w_length: setup.length,
+                }
+            );
+            id
+        }
+        ref other => panic!("unexpected action: {other:?}"),
+    };
+    assert_eq!(id1, 1);
+
+    let snapshot = dev.save_state();
+
+    let mut restored = UsbWebUsbPassthroughDevice::new();
+    restored
+        .load_state(&snapshot)
+        .expect("webusb snapshot restore should succeed");
+
+    // First poll should NAK and re-queue a fresh host action.
+    let mut buf = [0u8; 4];
+    assert_eq!(restored.handle_in(0, &mut buf), UsbHandshake::Nak);
+
+    let actions = restored.drain_actions();
+    assert_eq!(actions.len(), 1);
+    let id2 = match actions[0] {
+        UsbHostAction::ControlIn { id, setup: host_setup } => {
+            assert_eq!(
+                host_setup,
+                HostSetupPacket {
+                    bm_request_type: setup.request_type,
+                    b_request: setup.request,
+                    w_value: setup.value,
+                    w_index: setup.index,
+                    w_length: setup.length,
+                }
+            );
+            id
+        }
+        ref other => panic!("unexpected action: {other:?}"),
+    };
+    assert_eq!(id2, 2);
+
+    restored.push_completion(UsbHostCompletion::ControlIn {
+        id: id2,
+        result: UsbHostCompletionIn::Success {
+            data: vec![9, 8, 7, 6],
+        },
+    });
+
+    assert_eq!(restored.handle_in(0, &mut buf), UsbHandshake::Ack { bytes: 4 });
+    assert_eq!(buf, [9, 8, 7, 6]);
+
+    // Status stage for control-IN is an OUT ZLP.
+    assert_eq!(restored.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
 }

@@ -13,6 +13,10 @@ use crate::passthrough::{
     UsbHostCompletion, UsbInResult, UsbOutResult, UsbPassthroughDevice,
 };
 use crate::usb::{SetupPacket as UsbSetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use std::mem;
 
 const USB_REQUEST_SET_ADDRESS: u8 = 0x05;
@@ -424,6 +428,140 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
             }
             _ => UsbHandshake::Nak,
         }
+    }
+}
+
+impl IoSnapshot for UsbWebUsbPassthroughDevice {
+    const DEVICE_ID: [u8; 4] = *b"WUSB";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONTROL: u16 = 3;
+        const TAG_PASSTHROUGH: u16 = 4;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+
+        w.field_bytes(TAG_PASSTHROUGH, self.passthrough.save_state());
+
+        if let Some(control) = &self.control {
+            let setup = control.setup;
+            let mut enc = Encoder::new()
+                .bool(control.stalled)
+                .u8(setup.request_type)
+                .u8(setup.request)
+                .u16(setup.value)
+                .u16(setup.index)
+                .u16(setup.length);
+
+            match &control.stage {
+                ControlStage::InData { data, offset } => {
+                    enc = enc.u8(0).vec_u8(data).u32(*offset as u32);
+                }
+                ControlStage::InDataPending => {
+                    enc = enc.u8(1);
+                }
+                ControlStage::OutData { expected, received } => {
+                    enc = enc.u8(2).u32(*expected as u32).vec_u8(received);
+                }
+                ControlStage::StatusIn => {
+                    enc = enc.u8(3);
+                }
+                ControlStage::StatusInPending { data } => {
+                    enc = enc.u8(4).bool(data.is_some());
+                    if let Some(buf) = data {
+                        enc = enc.vec_u8(buf);
+                    }
+                }
+                ControlStage::StatusOut => {
+                    enc = enc.u8(5);
+                }
+                ControlStage::StatusOutPending => {
+                    enc = enc.u8(6);
+                }
+            }
+
+            w.field_bytes(TAG_CONTROL, enc.finish());
+        }
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONTROL: u16 = 3;
+        const TAG_PASSTHROUGH: u16 = 4;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        *self = Self::default();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+
+        if let Some(buf) = r.bytes(TAG_PASSTHROUGH) {
+            self.passthrough.load_state(buf)?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_CONTROL) {
+            let mut d = Decoder::new(buf);
+
+            let stalled = d.bool()?;
+            let setup = UsbSetupPacket {
+                request_type: d.u8()?,
+                request: d.u8()?,
+                value: d.u16()?,
+                index: d.u16()?,
+                length: d.u16()?,
+            };
+
+            let stage = match d.u8()? {
+                0 => {
+                    let data = d.vec_u8()?;
+                    let offset = d.u32()? as usize;
+                    if offset > data.len() {
+                        return Err(SnapshotError::InvalidFieldEncoding("wusb indata offset"));
+                    }
+                    ControlStage::InData { data, offset }
+                }
+                1 => ControlStage::InDataPending,
+                2 => {
+                    let expected = d.u32()? as usize;
+                    let received = d.vec_u8()?;
+                    if received.len() > expected {
+                        return Err(SnapshotError::InvalidFieldEncoding("wusb outdata len"));
+                    }
+                    ControlStage::OutData { expected, received }
+                }
+                3 => ControlStage::StatusIn,
+                4 => {
+                    let has_data = d.bool()?;
+                    let data = if has_data { Some(d.vec_u8()?) } else { None };
+                    ControlStage::StatusInPending { data }
+                }
+                5 => ControlStage::StatusOut,
+                6 => ControlStage::StatusOutPending,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("wusb stage")),
+            };
+
+            d.finish()?;
+
+            self.control = Some(ControlState {
+                setup,
+                stage,
+                stalled,
+            });
+        }
+
+        Ok(())
     }
 }
 

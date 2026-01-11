@@ -12,6 +12,10 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -470,6 +474,35 @@ impl UsbPassthroughDevice {
 impl Default for UsbPassthroughDevice {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl IoSnapshot for UsbPassthroughDevice {
+    const DEVICE_ID: [u8; 4] = *b"USBP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_NEXT_ID: u16 = 1;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u32(TAG_NEXT_ID, self.next_id);
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_NEXT_ID: u16 = 1;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Host actions/completions represent asynchronous host I/O that may have side effects.
+        // To avoid replaying those side effects after restore, drop all in-flight/queued host I/O
+        // state. The guest will re-issue transfers, which will re-queue fresh host actions.
+        self.reset();
+
+        self.next_id = r.u32(TAG_NEXT_ID)?.unwrap_or(1).max(1);
+
+        Ok(())
     }
 }
 
