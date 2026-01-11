@@ -42,9 +42,11 @@ Artifacts produced by the workflow:
 
 Catalog generation (`ci/make-catalogs.ps1`) is driven by `drivers/aerogpu/ci-package.json`:
 
-- `infFiles` selects which INF(s) to stage. CI currently stages `packaging/win7/aerogpu.inf`
-  and `packaging/win7/aerogpu_dx11.inf`. Adjust `infFiles` if you want to stage only a subset
-  (for example, to avoid packaging multiple optional INFs together).
+- `infFiles` selects which INF(s) to stage. AeroGPU currently stages both:
+  - `packaging/win7/aerogpu.inf` (D3D9 UMD package)
+  - `packaging/win7/aerogpu_dx11.inf` (D3D9 + optional D3D10/11 UMD package)
+  Adjust `infFiles` if you want to stage only a subset (for example, to avoid packaging
+  multiple optional INFs together).
 - `wow64Files` lists x86 UMD DLLs that must be present in the x64 package during `Inf2Cat`.
   For AeroGPU this includes `aerogpu_d3d9.dll` and `aerogpu_d3d10.dll` so they can be hashed
   into the x64 catalog.

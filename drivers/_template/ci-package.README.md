@@ -65,8 +65,8 @@ Declare that the driver package requires a WDF coinstaller (`WdfCoInstaller*.dll
   1. declare `wdfCoInstaller` in the manifest, and
   2. run `ci/make-catalogs.ps1` with `-IncludeWdfCoInstaller`.
 
-Examples:
+Examples in this directory:
 
-- `ci-package.json` (minimal)
+- `ci-package.json` (minimal template)
 - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
 - `ci-package.wdf-example.json` (WDF coinstaller example)
