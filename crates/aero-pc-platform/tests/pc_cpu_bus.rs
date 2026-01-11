@@ -48,6 +48,59 @@ fn long_state(pml4_base: u64, cpl: u8) -> CpuState {
 }
 
 #[test]
+fn pc_cpu_bus_does_not_panic_on_wrapping_linear_addresses() {
+    // Map the final 4KiB page in the canonical address space (0xffff...f000),
+    // but leave the low page unmapped. Reading 2 bytes at `u64::MAX` should:
+    //  - read the first byte from the high page,
+    //  - wrap to address 0 for the second byte and fault there,
+    //  - never panic from debug overflow checks.
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let high_page = 0x5000u64;
+
+    // PML4E[511] -> PDPT[511] -> PD[511] -> PT[511] -> high_page
+    let idx = 0x1ffu64;
+    let flags = PTE_P | PTE_RW | PTE_US;
+    write_u64(&mut bus.platform.memory, pml4_base + idx * 8, pdpt_base | flags);
+    write_u64(&mut bus.platform.memory, pdpt_base + idx * 8, pd_base | flags);
+    write_u64(&mut bus.platform.memory, pd_base + idx * 8, pt_base | flags);
+    write_u64(&mut bus.platform.memory, pt_base + idx * 8, high_page | flags);
+
+    // Place a distinguishable byte at the final address.
+    bus.platform.memory.write_u8(high_page + 0xfff, 0x90);
+
+    let state = long_state(pml4_base, 0);
+    bus.sync(&state);
+
+    assert_eq!(
+        bus.fetch(u64::MAX, 2),
+        Err(Exception::PageFault {
+            addr: 0,
+            error_code: 1 << 4, // I/D=1, P=0, W=0, U=0
+        })
+    );
+    assert_eq!(
+        bus.read_u16(u64::MAX),
+        Err(Exception::PageFault {
+            addr: 0,
+            error_code: 0,
+        })
+    );
+    assert_eq!(
+        bus.atomic_rmw::<u16, _>(u64::MAX, |old| (old, old)),
+        Err(Exception::PageFault {
+            addr: 0,
+            error_code: 1 << 1, // W=1, P=0, U=0
+        })
+    );
+}
+
+#[test]
 fn cpu_core_bus_routes_port_io_to_toggle_a20() {
     let platform = PcPlatform::new(2 * 1024 * 1024);
     let mut bus = PcCpuBus::new(platform);

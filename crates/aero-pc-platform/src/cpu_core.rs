@@ -138,9 +138,7 @@ impl PcCpuBus {
 
         let mut offset = 0usize;
         while offset < dst.len() {
-            let addr = vaddr
-                .checked_add(offset as u64)
-                .ok_or(Exception::MemoryFault)?;
+            let addr = vaddr.wrapping_add(offset as u64);
             let paddr = self.translate(addr, access)?;
 
             let page_off = (addr & (PAGE_SIZE - 1)) as usize;
@@ -170,9 +168,7 @@ impl PcCpuBus {
         self.write_chunks.clear();
         let mut offset = 0usize;
         while offset < src.len() {
-            let addr = vaddr
-                .checked_add(offset as u64)
-                .ok_or(Exception::MemoryFault)?;
+            let addr = vaddr.wrapping_add(offset as u64);
             let paddr = self.translate(addr, access)?;
 
             let page_off = (addr & (PAGE_SIZE - 1)) as usize;
@@ -204,9 +200,7 @@ impl PcCpuBus {
 
         let mut offset = 0usize;
         while offset < len {
-            let addr = vaddr
-                .checked_add(offset as u64)
-                .ok_or(Exception::MemoryFault)?;
+            let addr = vaddr.wrapping_add(offset as u64);
             let _paddr = self.translate(addr, access)?;
 
             let page_off = (addr & (PAGE_SIZE - 1)) as usize;
