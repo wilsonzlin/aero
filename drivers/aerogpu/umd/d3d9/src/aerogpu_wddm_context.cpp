@@ -61,6 +61,139 @@ struct has_pfnCreateContextCb : std::false_type {};
 template <typename T>
 struct has_pfnCreateContextCb<T, std::void_t<decltype(std::declval<T>().pfnCreateContextCb)>> : std::true_type {};
 
+template <typename CallbacksT>
+void destroy_sync_object_if_present(const CallbacksT& callbacks, WddmHandle hSyncObject) {
+  if constexpr (has_pfnDestroySynchronizationObjectCb<CallbacksT>::value) {
+    if (!hSyncObject || !callbacks.pfnDestroySynchronizationObjectCb) {
+      return;
+    }
+
+    using Fn = decltype(callbacks.pfnDestroySynchronizationObjectCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+    Arg data{};
+    data.hSyncObject = hSyncObject;
+    (void)callbacks.pfnDestroySynchronizationObjectCb(static_cast<ArgPtr>(&data));
+  }
+}
+
+template <typename CallbacksT>
+void destroy_context_if_present(const CallbacksT& callbacks, WddmHandle hContext) {
+  if constexpr (has_pfnDestroyContextCb<CallbacksT>::value) {
+    if (!hContext || !callbacks.pfnDestroyContextCb) {
+      return;
+    }
+
+    using Fn = decltype(callbacks.pfnDestroyContextCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+    Arg data{};
+    data.hContext = hContext;
+    (void)callbacks.pfnDestroyContextCb(static_cast<ArgPtr>(&data));
+  }
+}
+
+template <typename CallbacksT>
+HRESULT create_device_from_callbacks(const CallbacksT& callbacks, void* hAdapter, WddmHandle* hDeviceOut) {
+  if constexpr (!has_pfnCreateDeviceCb<CallbacksT>::value) {
+    (void)callbacks;
+    (void)hAdapter;
+    (void)hDeviceOut;
+    return E_NOTIMPL;
+  } else {
+    if (!hDeviceOut) {
+      return E_INVALIDARG;
+    }
+    *hDeviceOut = 0;
+
+    if (!callbacks.pfnCreateDeviceCb) {
+      return E_FAIL;
+    }
+
+    using Fn = decltype(callbacks.pfnCreateDeviceCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+    Arg data{};
+    data.hAdapter = hAdapter;
+
+    HRESULT hr = callbacks.pfnCreateDeviceCb(static_cast<ArgPtr>(&data));
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    *hDeviceOut = data.hDevice;
+    return (*hDeviceOut != 0) ? S_OK : E_FAIL;
+  }
+}
+
+template <typename CallbacksT>
+void destroy_device_if_present(const CallbacksT& callbacks, WddmHandle hDevice) {
+  if constexpr (has_pfnDestroyDeviceCb<CallbacksT>::value) {
+    if (!hDevice || !callbacks.pfnDestroyDeviceCb) {
+      return;
+    }
+
+    using Fn = decltype(callbacks.pfnDestroyDeviceCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+    Arg data{};
+    data.hDevice = hDevice;
+    (void)callbacks.pfnDestroyDeviceCb(static_cast<ArgPtr>(&data));
+  } else {
+    (void)callbacks;
+    (void)hDevice;
+  }
+}
+
+template <typename CallbacksT, typename FnT>
+HRESULT create_context_common(const CallbacksT& callbacks, FnT fn, WddmHandle hDevice, WddmContext* ctxOut) {
+  using ArgPtr = typename fn_first_param<FnT>::type;
+  using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+  Arg data{};
+  data.hDevice = hDevice;
+  data.NodeOrdinal = 0;
+  data.EngineAffinity = 0;
+  std::memset(&data.Flags, 0, sizeof(data.Flags));
+  data.pPrivateDriverData = nullptr;
+  data.PrivateDriverDataSize = 0;
+
+  HRESULT hr = fn(static_cast<ArgPtr>(&data));
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  ctxOut->hContext = data.hContext;
+  ctxOut->hSyncObject = data.hSyncObject;
+  ctxOut->pCommandBuffer = static_cast<uint8_t*>(data.pCommandBuffer);
+  ctxOut->CommandBufferSize = data.CommandBufferSize;
+  ctxOut->pAllocationList = data.pAllocationList;
+  ctxOut->AllocationListSize = data.AllocationListSize;
+  ctxOut->pPatchLocationList = data.pPatchLocationList;
+  ctxOut->PatchLocationListSize = data.PatchLocationListSize;
+  ctxOut->reset_submission_buffers();
+  return S_OK;
+}
+
+template <typename CallbacksT>
+HRESULT create_context_from_callbacks(const CallbacksT& callbacks, WddmHandle hDevice, WddmContext* ctxOut) {
+  // Prefer the v2 CreateContext callback when present (WDDM 1.1+), but fall back
+  // to the original entrypoint for older interface versions.
+  if constexpr (has_pfnCreateContextCb2<CallbacksT>::value) {
+    if (callbacks.pfnCreateContextCb2) {
+      return create_context_common(callbacks, callbacks.pfnCreateContextCb2, hDevice, ctxOut);
+    }
+  }
+
+  if constexpr (has_pfnCreateContextCb<CallbacksT>::value) {
+    if (callbacks.pfnCreateContextCb) {
+      return create_context_common(callbacks, callbacks.pfnCreateContextCb, hDevice, ctxOut);
+    }
+    return E_FAIL;
+  }
+
+  return E_NOTIMPL;
+}
+
 #endif
 
 } // namespace
@@ -83,25 +216,8 @@ void WddmContext::reset_submission_buffers() {
 
 void WddmContext::destroy(const WddmDeviceCallbacks& callbacks) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  if constexpr (has_pfnDestroySynchronizationObjectCb<WddmDeviceCallbacks>::value) {
-    if (hSyncObject && callbacks.pfnDestroySynchronizationObjectCb) {
-      using Fn = decltype(callbacks.pfnDestroySynchronizationObjectCb);
-      using ArgPtr = typename fn_first_param<Fn>::type;
-      std::remove_pointer_t<ArgPtr> data{};
-      data.hSyncObject = hSyncObject;
-      (void)callbacks.pfnDestroySynchronizationObjectCb(&data);
-    }
-  }
-
-  if constexpr (has_pfnDestroyContextCb<WddmDeviceCallbacks>::value) {
-    if (hContext && callbacks.pfnDestroyContextCb) {
-      using Fn = decltype(callbacks.pfnDestroyContextCb);
-      using ArgPtr = typename fn_first_param<Fn>::type;
-      std::remove_pointer_t<ArgPtr> data{};
-      data.hContext = hContext;
-      (void)callbacks.pfnDestroyContextCb(&data);
-    }
-  }
+  destroy_sync_object_if_present(callbacks, hSyncObject);
+  destroy_context_if_present(callbacks, hContext);
 #else
   (void)callbacks;
 #endif
@@ -122,50 +238,11 @@ void WddmContext::destroy(const WddmDeviceCallbacks& callbacks) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
 
 HRESULT wddm_create_device(const WddmDeviceCallbacks& callbacks, void* hAdapter, WddmHandle* hDeviceOut) {
-  if (!hDeviceOut) {
-    return E_INVALIDARG;
-  }
-  *hDeviceOut = 0;
-
-  if constexpr (!has_pfnCreateDeviceCb<WddmDeviceCallbacks>::value) {
-    return E_NOTIMPL;
-  } else {
-    if (!callbacks.pfnCreateDeviceCb) {
-      return E_FAIL;
-    }
-
-    using Fn = decltype(callbacks.pfnCreateDeviceCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    std::remove_pointer_t<ArgPtr> data{};
-    data.hAdapter = hAdapter;
-
-    HRESULT hr = callbacks.pfnCreateDeviceCb(&data);
-    if (FAILED(hr)) {
-      return hr;
-    }
-
-    *hDeviceOut = data.hDevice;
-    return (*hDeviceOut != 0) ? S_OK : E_FAIL;
-  }
+  return create_device_from_callbacks(callbacks, hAdapter, hDeviceOut);
 }
 
 void wddm_destroy_device(const WddmDeviceCallbacks& callbacks, WddmHandle hDevice) {
-  if (!hDevice) {
-    return;
-  }
-
-  if constexpr (!has_pfnDestroyDeviceCb<WddmDeviceCallbacks>::value) {
-    return;
-  } else {
-    if (!callbacks.pfnDestroyDeviceCb) {
-      return;
-    }
-    using Fn = decltype(callbacks.pfnDestroyDeviceCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    std::remove_pointer_t<ArgPtr> data{};
-    data.hDevice = hDevice;
-    (void)callbacks.pfnDestroyDeviceCb(&data);
-  }
+  destroy_device_if_present(callbacks, hDevice);
 }
 
 HRESULT wddm_create_context(const WddmDeviceCallbacks& callbacks, WddmHandle hDevice, WddmContext* ctxOut) {
@@ -178,72 +255,7 @@ HRESULT wddm_create_context(const WddmDeviceCallbacks& callbacks, WddmHandle hDe
   if (!hDevice) {
     return E_INVALIDARG;
   }
-
-  // Prefer the v2 CreateContext callback when present (WDDM 1.1+), but fall back
-  // to the original entrypoint for older interface versions.
-  if constexpr (has_pfnCreateContextCb2<WddmDeviceCallbacks>::value) {
-    if (callbacks.pfnCreateContextCb2) {
-      using Fn = decltype(callbacks.pfnCreateContextCb2);
-      using ArgPtr = typename fn_first_param<Fn>::type;
-      std::remove_pointer_t<ArgPtr> data{};
-      data.hDevice = hDevice;
-      data.NodeOrdinal = 0;
-      data.EngineAffinity = 0;
-      std::memset(&data.Flags, 0, sizeof(data.Flags));
-      data.pPrivateDriverData = nullptr;
-      data.PrivateDriverDataSize = 0;
-
-      HRESULT hr = callbacks.pfnCreateContextCb2(&data);
-      if (FAILED(hr)) {
-        return hr;
-      }
-
-      ctxOut->hContext = data.hContext;
-      ctxOut->hSyncObject = data.hSyncObject;
-      ctxOut->pCommandBuffer = static_cast<uint8_t*>(data.pCommandBuffer);
-      ctxOut->CommandBufferSize = data.CommandBufferSize;
-      ctxOut->pAllocationList = data.pAllocationList;
-      ctxOut->AllocationListSize = data.AllocationListSize;
-      ctxOut->pPatchLocationList = data.pPatchLocationList;
-      ctxOut->PatchLocationListSize = data.PatchLocationListSize;
-      ctxOut->reset_submission_buffers();
-      return S_OK;
-    }
-  }
-
-  if constexpr (has_pfnCreateContextCb<WddmDeviceCallbacks>::value) {
-    if (!callbacks.pfnCreateContextCb) {
-      return E_FAIL;
-    }
-
-    using Fn = decltype(callbacks.pfnCreateContextCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    std::remove_pointer_t<ArgPtr> data{};
-    data.hDevice = hDevice;
-    data.NodeOrdinal = 0;
-    data.EngineAffinity = 0;
-    std::memset(&data.Flags, 0, sizeof(data.Flags));
-    data.pPrivateDriverData = nullptr;
-    data.PrivateDriverDataSize = 0;
-
-    HRESULT hr = callbacks.pfnCreateContextCb(&data);
-    if (FAILED(hr)) {
-      return hr;
-    }
-
-    ctxOut->hContext = data.hContext;
-    ctxOut->hSyncObject = data.hSyncObject;
-    ctxOut->pCommandBuffer = static_cast<uint8_t*>(data.pCommandBuffer);
-    ctxOut->CommandBufferSize = data.CommandBufferSize;
-    ctxOut->pAllocationList = data.pAllocationList;
-    ctxOut->AllocationListSize = data.AllocationListSize;
-    ctxOut->pPatchLocationList = data.pPatchLocationList;
-    ctxOut->PatchLocationListSize = data.PatchLocationListSize;
-    ctxOut->reset_submission_buffers();
-    return S_OK;
-  }
-
-  return E_NOTIMPL;
+  return create_context_from_callbacks(callbacks, hDevice, ctxOut);
 }
 
 #endif
