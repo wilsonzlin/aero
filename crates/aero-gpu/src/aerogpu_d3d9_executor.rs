@@ -577,10 +577,10 @@ impl AerogpuD3d9Executor {
         &self,
         scanout_id: u32,
     ) -> Result<Option<(u32, u32, Vec<u8>)>, AerogpuD3d9Error> {
-        let Some(&handle) = self.presented_scanouts.get(&scanout_id) else {
+        let Some(&underlying) = self.presented_scanouts.get(&scanout_id) else {
             return Ok(None);
         };
-        let (w, h, rgba8) = self.readback_texture_rgba8_underlying(handle).await?;
+        let (w, h, rgba8) = self.readback_texture_rgba8_underlying(underlying).await?;
         Ok(Some((w, h, rgba8)))
     }
 
@@ -1676,12 +1676,9 @@ impl AerogpuD3d9Executor {
             self.presented_scanouts.remove(&scanout_id);
             return;
         }
-        let underlying = match self.resolve_resource_handle(color0) {
-            Ok(handle) => handle,
-            Err(_) => {
-                self.presented_scanouts.remove(&scanout_id);
-                return;
-            }
+        let Ok(underlying) = self.resolve_resource_handle(color0) else {
+            self.presented_scanouts.remove(&scanout_id);
+            return;
         };
         self.presented_scanouts.insert(scanout_id, underlying);
     }
