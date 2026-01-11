@@ -116,6 +116,22 @@ Same conceptual responsibilities as D3D10, but the D3D11 runtime calls the devic
 
 `Map`/`Unmap` are not device funcs in D3D11; see §5.
 
+### 2.3 Where the allocation list comes from (the `*_ARG_CREATERESOURCE` “plumbing” fields)
+
+Both `D3D10DDIARG_CREATERESOURCE` and `D3D11DDIARG_CREATERESOURCE` carry an allocation-info array that is the bridge from “resource description” to “kernel allocations”:
+
+* `UINT NumAllocations`
+* `D3D10DDI_ALLOCATIONINFO* pAllocationInfo` **or** `D3D11DDI_ALLOCATIONINFO* pAllocationInfo`
+
+Bring-up rule of thumb:
+
+* Start with **`NumAllocations = 1`** for buffers and simple `Texture2D` resources (no mips/arrays).
+* Fill `pAllocationInfo[0]` with size/alignment/flags and a KMD-private data blob.
+* The OS allocates kernel backing store and fills `pAllocationInfo[0].hAllocation` (commonly via a KMT call such as `D3DKMTCreateAllocation`, routed through dxgkrnl to `DxgkDdiCreateAllocation`).
+* Preserve the resulting kernel allocation handle (`D3DDDI_ALLOCATIONINFO::hAllocation`) in your resource’s private object so later:
+  * submissions can add it to the allocation list, and
+  * `Map`/`Unmap` can call `pfnLockCb`/`pfnUnlockCb` on it.
+
 ---
 
 ## 3) Backing allocation descriptor structures (what you must fill in `CreateResource`)
@@ -126,6 +142,8 @@ On Win7, D3D10/11 `CreateResource` flows use the `d3dumddi.h` allocation-info la
 
 * `D3DDDI_ALLOCATIONINFO`
   * commonly aliased as `D3D10DDI_ALLOCATIONINFO` and `D3D11DDI_ALLOCATIONINFO` in the D3D10/11 DDI headers.
+
+> Naming note: there is no `D3DDDICB_ALLOCATIONINFO` type in the Win7-era headers; the per-allocation descriptor is `D3DDDI_ALLOCATIONINFO` (and the D3D10/11 aliases above).
 
 The bring-up‑critical fields in each entry are:
 
@@ -168,6 +186,18 @@ Bring-up simplifications:
 * Prefer **linear layouts** for anything you intend to `Map`.
 * Start with **MipLevels = 1** and **ArraySize = 1** for staging readback paths.
 
+### 3.3 How CPU access flags should influence allocation flags (minimal FL10_0)
+
+At a high level, if the API says the resource is CPU-mappable, then the backing allocation must be CPU-visible and lockable:
+
+* If `CPUAccessFlags != 0` (for example `D3D11_CPU_ACCESS_READ` / `D3D11_CPU_ACCESS_WRITE`), set:
+  * `D3DDDI_ALLOCATIONINFOFLAGS::CpuVisible = 1`
+* If you do **not** set `CpuVisible` for a staging/dynamic resource, expect `pfnLockCb` to fail or return unusable pointers.
+
+Conversely:
+
+* For `D3D11_USAGE_DEFAULT` GPU-only resources (`CPUAccessFlags = 0`), do **not** set `CpuVisible` and do **not** expect `Map` to be called.
+
 ---
 
 ## 4) Runtime callback tables involved (and what they’re used for here)
@@ -177,6 +207,25 @@ During device creation the runtime provides callback tables (names differ slight
 * D3D10: `D3D10DDI_DEVICECALLBACKS`
 * D3D11: `D3D11DDI_DEVICECALLBACKS`
 * Shared WDDM callbacks (submission/sync/mapping): `D3DDDI_DEVICECALLBACKS` (from `d3dumddi.h`)
+
+### 4.1 Where you receive the callback pointers (Win7 create-device structs)
+
+The exact field names vary a bit across Win7-capable header vintages; the probe tool in-tree (`drivers/aerogpu/tools/win7_wdk_probe/`) shows which members exist in your installed header set.
+
+In WDK 7.1-era headers the create-device argument structs commonly include:
+
+* D3D10: `D3D10DDIARG_CREATEDEVICE`
+  * `D3D10DDI_HRTDEVICE hRTDevice`
+  * `const D3D10DDI_DEVICECALLBACKS* pCallbacks`
+  * `const D3DDDI_DEVICECALLBACKS* pUMCallbacks` (if present)
+* D3D11: `D3D11DDIARG_CREATEDEVICE`
+  * `D3D11DDI_HRTDEVICE hRTDevice`
+  * `const D3D11DDI_DEVICECALLBACKS* pCallbacks` **or** `pDeviceCallbacks`
+  * `const D3DDDI_DEVICECALLBACKS* pUMCallbacks` (if present)
+
+For Map/Unmap, the important part is that you store whatever callback table(s) expose:
+
+* `pfnLockCb` / `pfnUnlockCb`
 
 For allocation + Map/Unmap, the callbacks you care about are:
 
