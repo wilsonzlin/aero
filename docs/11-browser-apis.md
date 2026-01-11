@@ -70,11 +70,12 @@ export default {
 | Pointer Lock | ✓ | ✓ | 10.1+ | ✓ | **Yes** |
 | Fullscreen | ✓ | ✓ | ✓ | ✓ | Recommended |
 | Gamepad | ✓ | ✓ | 10.1+ | ✓ | Optional |
-| WebHID | 89+ | 🚧 | 🚧 | 89+ | Optional |
-| WebUSB | 61+ | 🚧 | 🚧 | 79+ | Optional |
 | WebCodecs | 94+ | 🚧 | 🚧 | 94+ | Optional |
-| WebUSB (`navigator.usb`) | 61+ | ✗ | ✗ | 79+ | Optional |
-| WebHID (`navigator.hid`) | Chromium-only | ✗ | ✗ | Chromium-only | Optional |
+| WebUSB (`navigator.usb`) | 61+ | ✗ | ✗ | 79+ | Optional (Chromium-only; limited passthrough) |
+| WebHID (`navigator.hid`) | 89+ | ✗ | ✗ | 89+ | Optional (Chromium-only; not a passthrough API) |
+| WebSerial (`navigator.serial`) | 89+ | ✗ | ✗ | 89+ | Optional (Chromium-only) |
+
+Legend: `✓` supported · `🚧` in progress/partial · `✗` not available.
 
 ---
 
@@ -86,6 +87,7 @@ WebUSB (`navigator.usb`) enables direct access to USB peripherals from the brows
 - **Secure context:** requires `https://` (or `http://localhost`).
 - **User activation:** `navigator.usb.requestDevice()` requires **transient user activation** and must be called directly from a user gesture handler on the **main thread**.
 - **Workers:** user activation does **not** propagate across `postMessage()` to workers, so a “click → postMessage → worker calls `requestDevice()`” flow will fail.
+- For passthrough feasibility constraints (Chromium “protected interface classes”, transfer limits, and OS driver requirements), see [`docs/webusb.md`](./webusb.md).
 
 ### Architecture options for Aero
 
@@ -111,8 +113,6 @@ WebHID (`navigator.hid`) enables direct access to HID-class devices from the bro
 - **Report descriptor access:** WebHID does **not** expose the raw HID report descriptor bytes. It only provides a structured view (collections/reports/items), so Aero must synthesize a report descriptor when it needs byte-accurate HID descriptors for a Windows 7 guest.
 
 See: [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
-
----
 
 ## Cross-Origin Isolation (COOP/COEP) Deployment Requirements
 
