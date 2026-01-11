@@ -218,7 +218,7 @@ debug path.
 Used by the production L2 tunnel:
 
 - **WebSocket:** `GET /l2` (subprotocol `aero-l2-tunnel-v1`)
-- **WebRTC:** DataChannel label `l2` (must be fully reliable)
+- **WebRTC:** DataChannel label `l2` (must be fully reliable and ordered; `ordered = true`)
 
 See: [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
 

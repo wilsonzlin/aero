@@ -286,7 +286,7 @@ Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networki
 - **UDP:** [`proxy/webrtc-udp-relay`](./proxy/webrtc-udp-relay/) is the primary UDP path. It relays UDP over a WebRTC DataChannel (`label="udp"`, `ordered=false`, `maxRetransmits=0`) using versioned v1/v2 datagram framing and signaling defined in:
   - [`proxy/webrtc-udp-relay/PROTOCOL.md`](./proxy/webrtc-udp-relay/PROTOCOL.md)
 
-  The same service also exposes `GET /udp` as a WebSocket UDP relay fallback using the same v1/v2 framing (useful when WebRTC isn’t available).
+  The same service also exposes `GET /udp` as a WebSocket UDP relay fallback using the same v1/v2 framing. WebSockets are reliable and ordered, so this cannot preserve true UDP loss/reordering semantics; treat it as a fallback/debug path when WebRTC isn’t available.
 
   When deploying the relay separately, `backend/aero-gateway` can optionally mint short-lived relay credentials via the `udpRelay` field in `POST /session` (or `POST /udp-relay/token`).
 
