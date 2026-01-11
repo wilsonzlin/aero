@@ -766,6 +766,7 @@ VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamI
     ULONG respLen;
     ULONG virtioStatus;
     UCHAR channels;
+    ULONG frameBytes;
 
     if (!VirtioSndCtrlIsValidStreamId(StreamId)) {
         return STATUS_INVALID_PARAMETER;
@@ -775,6 +776,18 @@ VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamI
     }
 
     channels = VirtioSndCtrlFixedChannelsForStream(StreamId);
+    frameBytes = (ULONG)channels * 2u; /* S16_LE => 2 bytes per sample */
+    if (frameBytes == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /*
+     * Validate period sizing up-front so callers don't accidentally submit
+     * misaligned PCM buffers.
+     */
+    if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes || (BufferBytes % frameBytes) != 0 || (PeriodBytes % frameBytes) != 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     RtlZeroMemory(&req, sizeof(req));
     req.code = VIRTIO_SND_R_PCM_SET_PARAMS;
