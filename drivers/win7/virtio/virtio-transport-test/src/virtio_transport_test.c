@@ -73,6 +73,8 @@ NTSTATUS VirtioTestEvtDevicePrepareHardware(
     NTSTATUS status;
     UINT64 negotiated;
     ULONG i;
+    UCHAR revisionId;
+    VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE layoutFailure;
 
     ctx = VirtioTestGetContext(Device);
 
@@ -84,14 +86,32 @@ NTSTATUS VirtioTestEvtDevicePrepareHardware(
         return status;
     }
 
+    revisionId = 0;
+    status = VirtioPciModernValidateAeroContractV1RevisionId(&ctx->Vdev, &revisionId);
+    if (!NT_SUCCESS(status)) {
+        if (status == STATUS_NOT_SUPPORTED) {
+            DbgPrint(
+                "virtio-transport-test: unsupported Aero virtio contract revision ID 0x%02X (expected 0x%02X)\n",
+                (UINT)revisionId,
+                (UINT)VIRTIO_PCI_AERO_CONTRACT_V1_REVISION_ID);
+        } else {
+            DbgPrint(
+                "virtio-transport-test: VirtioPciModernValidateAeroContractV1RevisionId failed 0x%08X\n",
+                status);
+        }
+
+        VirtioPciModernUninit(&ctx->Vdev);
+        ctx->VdevInitialized = FALSE;
+        return status;
+    }
+
     status = VirtioPciModernMapBars(&ctx->Vdev, ResourcesRaw, ResourcesTranslated);
     if (!NT_SUCCESS(status)) {
         DbgPrint("virtio-transport-test: VirtioPciModernMapBars failed 0x%08X\n", status);
         VirtioPciModernUninit(&ctx->Vdev);
+        ctx->VdevInitialized = FALSE;
         return status;
     }
-
-    ctx->VdevInitialized = TRUE;
 
     DbgPrint("virtio-transport-test: virtio caps (all=%lu)\n", ctx->Vdev.Caps.AllCount);
     for (i = 0; i < ctx->Vdev.Caps.AllCount; i++) {
@@ -145,6 +165,78 @@ NTSTATUS VirtioTestEvtDevicePrepareHardware(
             b->Length,
             b->Va);
     }
+
+    layoutFailure = VirtioPciAeroContractV1LayoutFailureNone;
+    status = VirtioPciModernValidateAeroContractV1FixedLayout(&ctx->Vdev, &layoutFailure);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint("virtio-transport-test: Aero contract v1 fixed-layout validation failed: %s\n",
+                 VirtioPciAeroContractV1LayoutFailureToString(layoutFailure));
+
+        switch (layoutFailure) {
+        case VirtioPciAeroContractV1LayoutFailureCommonCfg:
+            DbgPrint(
+                "virtio-transport-test:  COMMON expected bar=%u off=0x%lX len>=0x%lX; got bar=%u off=0x%lX len=0x%lX\n",
+                (UINT)VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_COMMON_OFFSET,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_COMMON_MIN_LEN,
+                (UINT)ctx->Vdev.Caps.CommonCfg.Bar,
+                ctx->Vdev.Caps.CommonCfg.Offset,
+                ctx->Vdev.Caps.CommonCfg.Length);
+            break;
+        case VirtioPciAeroContractV1LayoutFailureNotifyCfg:
+            DbgPrint(
+                "virtio-transport-test:  NOTIFY expected bar=%u off=0x%lX len>=0x%lX mult=%lu; got bar=%u off=0x%lX len=0x%lX mult=%lu\n",
+                (UINT)VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_OFFSET,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_MIN_LEN,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_OFF_MULTIPLIER,
+                (UINT)ctx->Vdev.Caps.NotifyCfg.Bar,
+                ctx->Vdev.Caps.NotifyCfg.Offset,
+                ctx->Vdev.Caps.NotifyCfg.Length,
+                ctx->Vdev.Caps.NotifyOffMultiplier);
+            break;
+        case VirtioPciAeroContractV1LayoutFailureIsrCfg:
+            DbgPrint(
+                "virtio-transport-test:  ISR expected bar=%u off=0x%lX len>=0x%lX; got bar=%u off=0x%lX len=0x%lX\n",
+                (UINT)VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_ISR_OFFSET,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_ISR_MIN_LEN,
+                (UINT)ctx->Vdev.Caps.IsrCfg.Bar,
+                ctx->Vdev.Caps.IsrCfg.Offset,
+                ctx->Vdev.Caps.IsrCfg.Length);
+            break;
+        case VirtioPciAeroContractV1LayoutFailureDeviceCfg:
+            DbgPrint(
+                "virtio-transport-test:  DEVICE expected bar=%u off=0x%lX len>=0x%lX; got bar=%u off=0x%lX len=0x%lX\n",
+                (UINT)VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_DEVICE_OFFSET,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_DEVICE_MIN_LEN,
+                (UINT)ctx->Vdev.Caps.DeviceCfg.Bar,
+                ctx->Vdev.Caps.DeviceCfg.Offset,
+                ctx->Vdev.Caps.DeviceCfg.Length);
+            break;
+        case VirtioPciAeroContractV1LayoutFailureNotifyOffMultiplier:
+            DbgPrint("virtio-transport-test:  notify_off_multiplier expected=%lu got=%lu\n",
+                     (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_OFF_MULTIPLIER,
+                     ctx->Vdev.Caps.NotifyOffMultiplier);
+            break;
+        case VirtioPciAeroContractV1LayoutFailureBar0Length:
+            DbgPrint("virtio-transport-test:  BAR0 length expected>=0x%lX got=0x%Ix\n",
+                     (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_MIN_LEN,
+                     ctx->Vdev.Bars[VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX].Length);
+            break;
+        default:
+            break;
+        }
+
+        VirtioPciModernUninit(&ctx->Vdev);
+        ctx->VdevInitialized = FALSE;
+        return status;
+    }
+
+    DbgPrint("virtio-transport-test: Aero contract v1 validation passed (rev=0x%02X)\n", (UINT)revisionId);
+
+    ctx->VdevInitialized = TRUE;
 
     negotiated = 0;
     {

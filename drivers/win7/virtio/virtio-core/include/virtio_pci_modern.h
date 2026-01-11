@@ -90,6 +90,25 @@ typedef struct _VIRTIO_PCI_MODERN_DEVICE {
 } VIRTIO_PCI_MODERN_DEVICE, *PVIRTIO_PCI_MODERN_DEVICE;
 
 /*
+ * Aero Windows 7 virtio contract (AERO-W7-VIRTIO) v1.0 gatekeeping.
+ *
+ * Contract v1 is identified by PCI Revision ID 0x01 and uses a fixed BAR0
+ * MMIO layout. See: docs/windows7-virtio-driver-contract.md
+ */
+#define VIRTIO_PCI_AERO_CONTRACT_V1_REVISION_ID           0x01u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX            0u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_MIN_LEN          0x4000u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_COMMON_OFFSET         0x0000u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_COMMON_MIN_LEN        0x0100u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_OFFSET         0x1000u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_MIN_LEN        0x0100u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_ISR_OFFSET            0x2000u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_ISR_MIN_LEN           0x0020u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_DEVICE_OFFSET         0x3000u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_DEVICE_MIN_LEN        0x0100u
+#define VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_OFF_MULTIPLIER 4u
+
+/*
  * Some helpers are specified in terms of a generic "VIRTIO_PCI_DEVICE".
  * In this codebase, that corresponds to the modern PCI transport device.
  */
@@ -106,6 +125,30 @@ NTSTATUS
 VirtioPciModernMapBars(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
                        _In_ WDFCMRESLIST ResourcesRaw,
                        _In_ WDFCMRESLIST ResourcesTranslated);
+
+typedef enum _VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE {
+    VirtioPciAeroContractV1LayoutFailureNone = 0,
+    VirtioPciAeroContractV1LayoutFailureCommonCfg,
+    VirtioPciAeroContractV1LayoutFailureNotifyCfg,
+    VirtioPciAeroContractV1LayoutFailureIsrCfg,
+    VirtioPciAeroContractV1LayoutFailureDeviceCfg,
+    VirtioPciAeroContractV1LayoutFailureNotifyOffMultiplier,
+    VirtioPciAeroContractV1LayoutFailureBar0Length,
+} VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE;
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciModernValidateAeroContractV1RevisionId(_In_ const VIRTIO_PCI_MODERN_DEVICE *Dev,
+                                                _Out_opt_ UCHAR *RevisionIdOut);
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciModernValidateAeroContractV1FixedLayout(_In_ const VIRTIO_PCI_MODERN_DEVICE *Dev,
+                                                 _Out_opt_ VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE *FailureOut);
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+PCSTR
+VirtioPciAeroContractV1LayoutFailureToString(_In_ VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE Failure);
 
 /*
  * Transport smoke-test helpers.

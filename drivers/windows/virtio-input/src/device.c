@@ -210,6 +210,8 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
 {
     PDEVICE_CONTEXT deviceContext;
     NTSTATUS status;
+    UCHAR revisionId;
+    VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE layoutFailure;
 
     PAGED_CODE();
 
@@ -225,8 +227,39 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
         return status;
     }
 
+    revisionId = 0;
+    status = VirtioPciModernValidateAeroContractV1RevisionId(&deviceContext->PciDevice, &revisionId);
+    if (!NT_SUCCESS(status)) {
+        if (status == STATUS_NOT_SUPPORTED) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "unsupported Aero virtio contract revision ID 0x%02X (expected 0x%02X)\n",
+                (ULONG)revisionId,
+                (ULONG)VIRTIO_PCI_AERO_CONTRACT_V1_REVISION_ID);
+        } else {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "VirtioPciModernValidateAeroContractV1RevisionId failed: %!STATUS!\n",
+                status);
+        }
+
+        VirtioPciModernUninit(&deviceContext->PciDevice);
+        return status;
+    }
+
     status = VirtioPciModernMapBars(&deviceContext->PciDevice, ResourcesRaw, ResourcesTranslated);
     if (!NT_SUCCESS(status)) {
+        VirtioPciModernUninit(&deviceContext->PciDevice);
+        return status;
+    }
+
+    layoutFailure = VirtioPciAeroContractV1LayoutFailureNone;
+    status = VirtioPciModernValidateAeroContractV1FixedLayout(&deviceContext->PciDevice, &layoutFailure);
+    if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "Aero contract v1 fixed-layout validation failed: %s\n",
+            VirtioPciAeroContractV1LayoutFailureToString(layoutFailure));
         VirtioPciModernUninit(&deviceContext->PciDevice);
         return status;
     }

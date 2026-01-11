@@ -10,7 +10,7 @@
 
 static ULONG
 VirtioPciReadConfig(
-    _In_ PPCI_BUS_INTERFACE_STANDARD PciInterface,
+    _In_ const PCI_BUS_INTERFACE_STANDARD *PciInterface,
     _Out_writes_bytes_(Length) PVOID Buffer,
     _In_ ULONG Offset,
     _In_ ULONG Length)
@@ -209,6 +209,156 @@ VirtioPciCfgTypeToString(_In_ UCHAR CfgType)
         return "PCI_CFG";
     default:
         return "UNKNOWN";
+    }
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciModernValidateAeroContractV1RevisionId(_In_ const VIRTIO_PCI_MODERN_DEVICE *Dev,
+                                                _Out_opt_ UCHAR *RevisionIdOut)
+{
+    UCHAR revisionId;
+    ULONG bytesRead;
+
+    if (RevisionIdOut != NULL) {
+        *RevisionIdOut = 0;
+    }
+
+    if (Dev == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Dev->PciInterface.ReadConfig == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    revisionId = 0;
+    bytesRead = VirtioPciReadConfig(&Dev->PciInterface, &revisionId, 0x08, sizeof(revisionId));
+    if (bytesRead != sizeof(revisionId)) {
+        VIRTIO_CORE_PRINT("PCI revision ID read failed (%lu/%lu)\n", bytesRead, (ULONG)sizeof(revisionId));
+        return STATUS_DEVICE_DATA_ERROR;
+    }
+
+    if (RevisionIdOut != NULL) {
+        *RevisionIdOut = revisionId;
+    }
+
+    if (revisionId != (UCHAR)VIRTIO_PCI_AERO_CONTRACT_V1_REVISION_ID) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static __forceinline BOOLEAN
+VirtioPciCapMatchesAeroContractV1(_In_ const VIRTIO_PCI_CAP_INFO *Cap,
+                                 _In_ UCHAR ExpectedBar,
+                                 _In_ ULONG ExpectedOffset,
+                                 _In_ ULONG ExpectedMinLen)
+{
+    if (Cap == NULL || !Cap->Present) {
+        return FALSE;
+    }
+
+    return Cap->Bar == ExpectedBar && Cap->Offset == ExpectedOffset && Cap->Length >= ExpectedMinLen;
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciModernValidateAeroContractV1FixedLayout(_In_ const VIRTIO_PCI_MODERN_DEVICE *Dev,
+                                                 _Out_opt_ VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE *FailureOut)
+{
+    if (FailureOut != NULL) {
+        *FailureOut = VirtioPciAeroContractV1LayoutFailureNone;
+    }
+
+    if (Dev == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!VirtioPciCapMatchesAeroContractV1(&Dev->Caps.CommonCfg,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_COMMON_OFFSET,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_COMMON_MIN_LEN)) {
+        if (FailureOut != NULL) {
+            *FailureOut = VirtioPciAeroContractV1LayoutFailureCommonCfg;
+        }
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    if (!VirtioPciCapMatchesAeroContractV1(&Dev->Caps.NotifyCfg,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_OFFSET,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_MIN_LEN)) {
+        if (FailureOut != NULL) {
+            *FailureOut = VirtioPciAeroContractV1LayoutFailureNotifyCfg;
+        }
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    if (!VirtioPciCapMatchesAeroContractV1(&Dev->Caps.IsrCfg,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_ISR_OFFSET,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_ISR_MIN_LEN)) {
+        if (FailureOut != NULL) {
+            *FailureOut = VirtioPciAeroContractV1LayoutFailureIsrCfg;
+        }
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    if (!VirtioPciCapMatchesAeroContractV1(&Dev->Caps.DeviceCfg,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_DEVICE_OFFSET,
+                                          VIRTIO_PCI_AERO_CONTRACT_V1_DEVICE_MIN_LEN)) {
+        if (FailureOut != NULL) {
+            *FailureOut = VirtioPciAeroContractV1LayoutFailureDeviceCfg;
+        }
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    if (Dev->Caps.NotifyOffMultiplier != VIRTIO_PCI_AERO_CONTRACT_V1_NOTIFY_OFF_MULTIPLIER) {
+        if (FailureOut != NULL) {
+            *FailureOut = VirtioPciAeroContractV1LayoutFailureNotifyOffMultiplier;
+        }
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    /*
+     * Contract v1 defines BAR0 size as 0x4000. We accept any mapping >= 0x4000
+     * so implementations can safely extend the BAR while preserving the fixed
+     * offsets required by v1 drivers.
+     */
+    if (Dev->Bars[VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_INDEX].Length < VIRTIO_PCI_AERO_CONTRACT_V1_BAR0_MIN_LEN) {
+        if (FailureOut != NULL) {
+            *FailureOut = VirtioPciAeroContractV1LayoutFailureBar0Length;
+        }
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+PCSTR
+VirtioPciAeroContractV1LayoutFailureToString(_In_ VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE Failure)
+{
+    switch (Failure) {
+    case VirtioPciAeroContractV1LayoutFailureNone:
+        return "None";
+    case VirtioPciAeroContractV1LayoutFailureCommonCfg:
+        return "COMMON_CFG capability not at expected BAR0/offset/length";
+    case VirtioPciAeroContractV1LayoutFailureNotifyCfg:
+        return "NOTIFY_CFG capability not at expected BAR0/offset/length";
+    case VirtioPciAeroContractV1LayoutFailureIsrCfg:
+        return "ISR_CFG capability not at expected BAR0/offset/length";
+    case VirtioPciAeroContractV1LayoutFailureDeviceCfg:
+        return "DEVICE_CFG capability not at expected BAR0/offset/length";
+    case VirtioPciAeroContractV1LayoutFailureNotifyOffMultiplier:
+        return "notify_off_multiplier mismatch";
+    case VirtioPciAeroContractV1LayoutFailureBar0Length:
+        return "BAR0 mapping is smaller than contract minimum";
+    default:
+        return "Unknown";
     }
 }
 
