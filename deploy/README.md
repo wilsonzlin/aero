@@ -317,6 +317,20 @@ Using `websocat`:
 websocat --insecure --protocol aero-l2-tunnel-v1 wss://localhost/l2
 ```
 
+### Production note: egress policy
+
+`aero-l2-proxy` is a **network egress surface**. For production deployments you should configure a
+deny-by-default policy (ports/domains) to avoid exposing an open proxy.
+
+Supported env vars include:
+
+- `AERO_L2_ALLOWED_TCP_PORTS` (comma-separated)
+- `AERO_L2_ALLOWED_UDP_PORTS` (comma-separated)
+- `AERO_L2_ALLOWED_DOMAINS` / `AERO_L2_BLOCKED_DOMAINS` (comma-separated suffixes)
+- `AERO_L2_ALLOW_PRIVATE_IPS=1` (dev-only; disables private/reserved IP blocking)
+
+See also: `docs/l2-tunnel-runbook.md` (production checklist).
+
 ## CORS / origin strategy
 
 ### Recommended (no CORS): same-origin UI + gateway
