@@ -1149,13 +1149,6 @@ fn parse_descriptor_low(raw: u64) -> ParsedDesc {
     }
 }
 
-fn parse_system_descriptor(raw_low: u64, raw_high: u64) -> ParsedDesc {
-    let mut desc = parse_descriptor_low(raw_low);
-    let base_high = (raw_high & 0xFFFF_FFFF) as u64;
-    desc.base |= base_high << 32;
-    desc
-}
-
 fn table_for_selector(state: &CpuState, selector: u16) -> Result<(u64, u32), Exception> {
     let ti = (selector & 0b100) != 0;
     if ti {
@@ -1268,79 +1261,6 @@ fn load_segment_descriptor<B: CpuBus>(
         state.update_mode();
     }
 
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SystemSeg {
-    Ldtr,
-    Tr,
-}
-
-fn load_system_segment<B: CpuBus>(
-    state: &mut CpuState,
-    bus: &mut B,
-    seg: SystemSeg,
-    selector: u16,
-) -> Result<(), Exception> {
-    require_cpl0(state)?;
-    if selector == 0 {
-        if seg == SystemSeg::Tr {
-            return Err(Exception::gp0());
-        }
-        let dst = match seg {
-            SystemSeg::Ldtr => &mut state.tables.ldtr,
-            SystemSeg::Tr => &mut state.tables.tr,
-        };
-        dst.selector = 0;
-        dst.base = 0;
-        dst.limit = 0;
-        dst.access = crate::state::SEG_ACCESS_UNUSABLE;
-        return Ok(());
-    }
-
-    let (table_base, table_limit) = table_for_selector(state, selector)?;
-    let index = (selector >> 3) as u64;
-    let byte_off = index * 8;
-
-    let long_mode = state.mode == CpuMode::Long;
-    let entry_size = if long_mode { 16 } else { 8 };
-    if byte_off + (entry_size as u64) - 1 > table_limit as u64 {
-        return Err(Exception::gp(selector));
-    }
-
-    let raw_low = bus.read_u64(table_base + byte_off)?;
-    let desc = if long_mode {
-        let raw_high = bus.read_u64(table_base + byte_off + 8)?;
-        parse_system_descriptor(raw_low, raw_high)
-    } else {
-        parse_descriptor_low(raw_low)
-    };
-
-    if desc.s {
-        return Err(Exception::gp(selector));
-    }
-    if !desc.present {
-        return Err(Exception::np(selector));
-    }
-
-    let access = (desc.typ as u32)
-        | ((desc.s as u32) << 4)
-        | ((desc.dpl as u32) << 5)
-        | ((desc.present as u32) << 7)
-        | ((desc.avl as u32) << 8)
-        | ((desc.l as u32) << 9)
-        | ((desc.db as u32) << 10)
-        | ((desc.g as u32) << 11);
-
-    let dst = match seg {
-        SystemSeg::Ldtr => &mut state.tables.ldtr,
-        SystemSeg::Tr => &mut state.tables.tr,
-    };
-    dst.selector = selector;
-    dst.base = desc.base;
-    dst.limit = desc.limit;
-    dst.access = access;
     Ok(())
 }
 
@@ -1674,8 +1594,8 @@ fn instr_ltr_lldt<B: CpuBus>(
     require_cpl0(state)?;
     let selector = read_op_u16(state, bus, instr, 0, next_ip)?;
     match instr.mnemonic() {
-        Mnemonic::Ltr => load_system_segment(state, bus, SystemSeg::Tr, selector),
-        Mnemonic::Lldt => load_system_segment(state, bus, SystemSeg::Ldtr, selector),
+        Mnemonic::Ltr => state.load_tr(bus, selector),
+        Mnemonic::Lldt => state.load_ldtr(bus, selector),
         _ => Err(Exception::InvalidOpcode),
     }
 }
