@@ -239,14 +239,15 @@ These driver bundle artifacts include **all** staged CI-packaged drivers under `
 
 ### 6) Package Guest Tools media (ISO/ZIP) (optional)
 
-`ci/package-guest-tools.ps1` consumes the signed driver packages under `out/packages/` and produces the Guest Tools ISO/zip. Unlike the driver bundle ZIP/ISO, Guest Tools includes only the drivers selected by the packager spec:
+`ci/package-guest-tools.ps1` consumes the signed driver packages under `out/packages/` and produces the Guest Tools ISO/zip. Unlike the driver bundle ZIP/ISO, Guest Tools includes only the drivers selected by a packager spec (`-SpecPath`):
 
-- `tools/packaging/specs/win7-aero-guest-tools.json`
+- **CI/release workflows:** `tools/packaging/specs/win7-signed.json`
+- **Local default (when `-SpecPath` is omitted):** `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation)
 
 This means a driver can be CI-packaged (built + cataloged + signed) and appear in the driver bundle artifacts, but still be omitted from Guest Tools if it is not selected by the spec (for example `virtio-transport-test`).
 
 ```powershell
-.\ci\package-guest-tools.ps1 -InputRoot .\out\packages -CertPath .\out\certs\aero-test.cer -OutDir .\out\artifacts
+.\ci\package-guest-tools.ps1 -InputRoot .\out\packages -CertPath .\out\certs\aero-test.cer -OutDir .\out\artifacts -SpecPath .\tools\packaging\specs\win7-signed.json
 ```
 
 Outputs:
