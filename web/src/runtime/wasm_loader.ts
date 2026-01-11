@@ -229,6 +229,25 @@ export interface WasmApi {
             collectionsJson: unknown,
             preferredPort?: number,
         ): number;
+        /**
+         * Newer UHCI runtime builds support attaching WebHID devices behind the external hub
+         * topology (e.g. `guestPath` like `[0, 3]`).
+         *
+         * Optional to allow older deployed wasm builds.
+         */
+        webhid_attach_at_path?(
+            deviceId: number,
+            vendorId: number,
+            productId: number,
+            productName: string | undefined,
+            collectionsJson: unknown,
+            guestPath: number[],
+        ): void;
+        /**
+         * Optional external hub port-count hint for the UHCI runtime path. Older builds may ignore
+         * this and rely on root-port-only WebHID attachment.
+         */
+        webhid_attach_hub?(guestPath: number[], portCount?: number): void;
         webhid_detach(deviceId: number): void;
         webhid_push_input_report(deviceId: number, reportId: number, data: Uint8Array): void;
         webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }>;

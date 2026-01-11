@@ -29,6 +29,8 @@ mod webusb_uhci_passthrough_harness;
 pub use webusb_uhci_passthrough_harness::WebUsbUhciPassthroughHarness;
 #[cfg(target_arch = "wasm32")]
 mod uhci_runtime;
+#[cfg(target_arch = "wasm32")]
+pub use uhci_runtime::UhciRuntime;
 
 #[cfg(target_arch = "wasm32")]
 mod uhci_controller_bridge;

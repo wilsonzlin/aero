@@ -75,6 +75,7 @@ import {
 import { InMemoryHidGuestBridge, ensureArrayBufferBacked } from "../hid/in_memory_hid_guest_bridge";
 import { UhciHidTopologyManager } from "../hid/uhci_hid_topology";
 import { WasmHidGuestBridge, type HidGuestBridge, type HidHostSink } from "../hid/wasm_hid_guest_bridge";
+import { WasmUhciHidGuestBridge } from "../hid/wasm_uhci_hid_guest_bridge";
 import {
   isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
   isHidAttachMessage as isHidPassthroughAttachMessage,
@@ -150,6 +151,7 @@ type UhciRuntimeInstance = InstanceType<UhciRuntimeCtor>;
 let uhciRuntime: UhciRuntimeInstance | null = null;
 let uhciRuntimeWebUsbBridge: UhciRuntimeWebUsbBridge | null = null;
 let uhciRuntimeHidGuest: WasmUhciHidGuestBridge | null = null;
+let pendingUhciRuntimeHubConfig: { guestPath: GuestUsbPath; portCount?: number } | null = null;
 
 let pendingWasmInit: { api: WasmApi; variant: WasmVariant } | null = null;
 let wasmReadySent = false;
@@ -159,7 +161,6 @@ const WEBUSB_GUEST_ROOT_PORT = 1;
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
 // harness panel, demo driver, etc). The demo uses 1_000_000_000 and the harness uses 2_000_000_000.
 const UHCI_RUNTIME_WEBUSB_ID_BASE = 3_000_000_000;
-const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
 
 function rewriteUsbHostActionId(action: UsbHostAction, id: number): UsbHostAction {
   switch (action.kind) {
@@ -293,82 +294,6 @@ class UhciRuntimeWebUsbBridge {
   }
 }
 
-class WasmUhciHidGuestBridge implements HidGuestBridge {
-  readonly #uhci: UhciRuntimeInstance;
-  readonly #host: HidHostSink;
-  readonly #attached = new Set<number>();
-
-  constructor(opts: { uhci: UhciRuntimeInstance; host: HidHostSink }) {
-    this.#uhci = opts.uhci;
-    this.#host = opts.host;
-  }
-
-  attach(msg: HidAttachMessage): void {
-    this.detach({ type: "hid.detach", deviceId: msg.deviceId });
-    const preferredPort = msg.guestPath?.[0] ?? msg.guestPort;
-    try {
-      this.#uhci.webhid_attach(
-        msg.deviceId >>> 0,
-        msg.vendorId >>> 0,
-        msg.productId >>> 0,
-        msg.productName,
-        msg.collections,
-        preferredPort === undefined ? undefined : (preferredPort >>> 0),
-      );
-      this.#attached.add(msg.deviceId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.#host.error(`UHCI runtime hid.attach failed: ${message}`, msg.deviceId);
-    }
-  }
-
-  detach(msg: HidDetachMessage): void {
-    this.#attached.delete(msg.deviceId);
-    try {
-      this.#uhci.webhid_detach(msg.deviceId >>> 0);
-    } catch {
-      // ignore
-    }
-  }
-
-  inputReport(msg: HidInputReportMessage): void {
-    try {
-      this.#uhci.webhid_push_input_report(msg.deviceId >>> 0, msg.reportId >>> 0, msg.data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.#host.error(`UHCI runtime hid.inputReport failed: ${message}`, msg.deviceId);
-    }
-  }
-
-  poll(): void {
-    let drained: Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> = [];
-    try {
-      drained = this.#uhci.webhid_drain_output_reports();
-    } catch {
-      return;
-    }
-
-    if (!Array.isArray(drained) || drained.length === 0) return;
-    let remaining = MAX_HID_OUTPUT_REPORTS_PER_TICK;
-    for (const report of drained) {
-      if (remaining <= 0) return;
-      remaining -= 1;
-      this.#host.sendReport({
-        deviceId: report.deviceId >>> 0,
-        reportType: report.reportType,
-        reportId: report.reportId >>> 0,
-        data: report.data,
-      });
-    }
-  }
-
-  destroy(): void {
-    for (const deviceId of Array.from(this.#attached)) {
-      this.detach({ type: "hid.detach", deviceId });
-    }
-  }
-}
-
 let webUsbGuestAttached = false;
 let webUsbGuestLastError: string | null = null;
 let lastWebUsbGuestSnapshot: UsbGuestWebUsbSnapshot | null = null;
@@ -466,6 +391,7 @@ function maybeInitUhciRuntime(): void {
     const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
     uhciDevice = dev;
     uhciRuntime = runtime;
+    applyPendingUhciRuntimeHubConfig();
     mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
     uhciHidTopology.setUhciBridge(null);
@@ -790,9 +716,27 @@ function findFirstSendableReport(
   return null;
 }
 
+function applyPendingUhciRuntimeHubConfig(): void {
+  const runtime = uhciRuntime;
+  const cfg = pendingUhciRuntimeHubConfig;
+  if (!runtime || !cfg) return;
+
+  const fn = (runtime as unknown as { webhid_attach_hub?: unknown }).webhid_attach_hub;
+  if (typeof fn !== "function") return;
+  try {
+    // Newer UHCI runtime builds support the external-hub topology directly. Older
+    // builds will ignore this and fall back to the root-port attachment scheme.
+    fn.call(runtime, cfg.guestPath, cfg.portCount);
+  } catch (err) {
+    console.warn("[io.worker] Failed to configure UHCI runtime external hub", err);
+  }
+}
+
 function handleHidPassthroughAttachHub(msg: Extract<HidPassthroughMessage, { type: "hid:attachHub" }>): void {
   uhciHidTopology.setHubConfig(msg.guestPath, msg.portCount);
   maybeInitUhciDevice();
+  pendingUhciRuntimeHubConfig = { guestPath: msg.guestPath, ...(msg.portCount !== undefined ? { portCount: msg.portCount } : {}) };
+  applyPendingUhciRuntimeHubConfig();
   if (import.meta.env.DEV) {
     const hint = msg.portCount !== undefined ? ` ports=${msg.portCount}` : "";
     console.info(`[hid] attachHub path=${msg.guestPath.join(".")}${hint}`);
