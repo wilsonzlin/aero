@@ -108,6 +108,7 @@
 
   <ItemGroup>
     <ClCompile Include="src\aerogpu_d3d9_driver.cpp" />
+    <ClCompile Include="src\aerogpu_kmd_query.cpp" />
     <ClCompile Include="src\aerogpu_log.cpp" />
     <ClCompile Include="src\dllmain.cpp" />
   </ItemGroup>
@@ -116,6 +117,7 @@
     <ClInclude Include="include\aerogpu_d3d9_umd.h" />
     <ClInclude Include="src\aerogpu_cmd_writer.h" />
     <ClInclude Include="src\aerogpu_d3d9_objects.h" />
+    <ClInclude Include="src\aerogpu_kmd_query.h" />
     <ClInclude Include="src\aerogpu_log.h" />
   </ItemGroup>
 

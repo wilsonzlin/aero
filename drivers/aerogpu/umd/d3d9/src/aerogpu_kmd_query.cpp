@@ -1,0 +1,331 @@
+#include "aerogpu_kmd_query.h"
+
+#include <cstring>
+
+#if defined(_WIN32)
+  #include "aerogpu_dbgctl_escape.h"
+#endif
+
+namespace aerogpu {
+
+#if defined(_WIN32)
+
+namespace {
+
+constexpr bool NtSuccess(long st) {
+  return st >= 0;
+}
+
+enum D3DKMT_ESCAPETYPE {
+  D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
+};
+
+struct D3DKMT_ESCAPEFLAGS {
+  union {
+    struct {
+      unsigned int HardwareAccess : 1;
+      unsigned int Reserved : 31;
+    };
+    unsigned int Value;
+  };
+};
+
+static_assert(sizeof(aerogpu_escape_query_fence_out) == 32, "aerogpu_escape_query_fence_out ABI mismatch");
+
+} // namespace
+
+// Minimal D3DKMT ABI declarations for Win7 user-mode calls. These must match
+// the gdi32.dll exported function ABI.
+struct AerogpuKmdQuery::D3DKMT_OPENADAPTERFROMLUID {
+  LUID AdapterLuid;       // in
+  D3DKMT_HANDLE hAdapter; // out
+};
+
+struct AerogpuKmdQuery::D3DKMT_OPENADAPTERFROMHDC {
+  HDC hDc;                // in
+  D3DKMT_HANDLE hAdapter; // out
+  LUID AdapterLuid;       // out
+  unsigned int VidPnSourceId; // out
+};
+
+struct AerogpuKmdQuery::D3DKMT_CLOSEADAPTER {
+  D3DKMT_HANDLE hAdapter; // in
+};
+
+struct AerogpuKmdQuery::D3DKMT_ESCAPE {
+  D3DKMT_HANDLE hAdapter;
+  D3DKMT_HANDLE hDevice;
+  D3DKMT_HANDLE hContext;
+  D3DKMT_ESCAPETYPE Type;
+  D3DKMT_ESCAPEFLAGS Flags;
+  void* pPrivateDriverData;
+  unsigned int PrivateDriverDataSize;
+};
+
+AerogpuKmdQuery::AerogpuKmdQuery() = default;
+
+AerogpuKmdQuery::~AerogpuKmdQuery() {
+  Shutdown();
+}
+
+bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  ShutdownLocked();
+
+  gdi32_ = LoadLibraryW(L"gdi32.dll");
+  if (!gdi32_) {
+    return false;
+  }
+
+  open_adapter_from_luid_ =
+      reinterpret_cast<PFND3DKMTOpenAdapterFromLuid>(GetProcAddress(gdi32_, "D3DKMTOpenAdapterFromLuid"));
+  open_adapter_from_hdc_ =
+      reinterpret_cast<PFND3DKMTOpenAdapterFromHdc>(GetProcAddress(gdi32_, "D3DKMTOpenAdapterFromHdc"));
+  close_adapter_ =
+      reinterpret_cast<PFND3DKMTCloseAdapter>(GetProcAddress(gdi32_, "D3DKMTCloseAdapter"));
+  escape_ = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(gdi32_, "D3DKMTEscape"));
+
+  if (!close_adapter_ || !escape_) {
+    ShutdownLocked();
+    return false;
+  }
+  if (!open_adapter_from_luid_ && !open_adapter_from_hdc_) {
+    ShutdownLocked();
+    return false;
+  }
+
+  // Preferred path: open directly from LUID.
+  if (open_adapter_from_luid_) {
+    D3DKMT_OPENADAPTERFROMLUID data{};
+    data.AdapterLuid = adapter_luid;
+    data.hAdapter = 0;
+    const NTSTATUS st = open_adapter_from_luid_(&data);
+    if (NtSuccess(st) && data.hAdapter != 0) {
+      adapter_ = data.hAdapter;
+      adapter_luid_ = adapter_luid;
+      return true;
+    }
+  }
+
+  // Fallback path: match the LUID by enumerating display HDCs.
+  if (!open_adapter_from_hdc_) {
+    ShutdownLocked();
+    return false;
+  }
+
+  DISPLAY_DEVICEW dd;
+  std::memset(&dd, 0, sizeof(dd));
+  dd.cb = sizeof(dd);
+
+  bool opened = false;
+  for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &dd, 0); ++i) {
+    const bool active = (dd.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0;
+    if (!active) {
+      std::memset(&dd, 0, sizeof(dd));
+      dd.cb = sizeof(dd);
+      continue;
+    }
+
+    HDC hdc = CreateDCW(L"DISPLAY", dd.DeviceName, nullptr, nullptr);
+    if (!hdc) {
+      std::memset(&dd, 0, sizeof(dd));
+      dd.cb = sizeof(dd);
+      continue;
+    }
+
+    D3DKMT_OPENADAPTERFROMHDC open_hdc{};
+    open_hdc.hDc = hdc;
+    open_hdc.hAdapter = 0;
+    std::memset(&open_hdc.AdapterLuid, 0, sizeof(open_hdc.AdapterLuid));
+    open_hdc.VidPnSourceId = 0;
+
+    const NTSTATUS st = open_adapter_from_hdc_(&open_hdc);
+    DeleteDC(hdc);
+
+    if (!NtSuccess(st) || open_hdc.hAdapter == 0) {
+      std::memset(&dd, 0, sizeof(dd));
+      dd.cb = sizeof(dd);
+      continue;
+    }
+
+    const bool luid_match = (open_hdc.AdapterLuid.LowPart == adapter_luid.LowPart) &&
+                            (open_hdc.AdapterLuid.HighPart == adapter_luid.HighPart);
+    if (!luid_match) {
+      D3DKMT_CLOSEADAPTER close{};
+      close.hAdapter = open_hdc.hAdapter;
+      close_adapter_(&close);
+
+      std::memset(&dd, 0, sizeof(dd));
+      dd.cb = sizeof(dd);
+      continue;
+    }
+
+    adapter_ = open_hdc.hAdapter;
+    adapter_luid_ = open_hdc.AdapterLuid;
+    opened = true;
+    break;
+  }
+
+  if (!opened) {
+    ShutdownLocked();
+  }
+
+  return opened;
+}
+
+bool AerogpuKmdQuery::InitFromHdc(HDC hdc) {
+  if (!hdc) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  ShutdownLocked();
+
+  gdi32_ = LoadLibraryW(L"gdi32.dll");
+  if (!gdi32_) {
+    return false;
+  }
+
+  open_adapter_from_hdc_ =
+      reinterpret_cast<PFND3DKMTOpenAdapterFromHdc>(GetProcAddress(gdi32_, "D3DKMTOpenAdapterFromHdc"));
+  close_adapter_ =
+      reinterpret_cast<PFND3DKMTCloseAdapter>(GetProcAddress(gdi32_, "D3DKMTCloseAdapter"));
+  escape_ = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(gdi32_, "D3DKMTEscape"));
+
+  if (!open_adapter_from_hdc_ || !close_adapter_ || !escape_) {
+    ShutdownLocked();
+    return false;
+  }
+
+  D3DKMT_OPENADAPTERFROMHDC data{};
+  data.hDc = hdc;
+  data.hAdapter = 0;
+  std::memset(&data.AdapterLuid, 0, sizeof(data.AdapterLuid));
+  data.VidPnSourceId = 0;
+
+  const NTSTATUS st = open_adapter_from_hdc_(&data);
+  if (!NtSuccess(st) || data.hAdapter == 0) {
+    ShutdownLocked();
+    return false;
+  }
+
+  adapter_ = data.hAdapter;
+  adapter_luid_ = data.AdapterLuid;
+  return true;
+}
+
+void AerogpuKmdQuery::Shutdown() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  ShutdownLocked();
+}
+
+void AerogpuKmdQuery::ShutdownLocked() {
+  if (adapter_ && close_adapter_) {
+    D3DKMT_CLOSEADAPTER close{};
+    close.hAdapter = adapter_;
+    close_adapter_(&close);
+  }
+
+  adapter_ = 0;
+  std::memset(&adapter_luid_, 0, sizeof(adapter_luid_));
+
+  open_adapter_from_luid_ = nullptr;
+  open_adapter_from_hdc_ = nullptr;
+  close_adapter_ = nullptr;
+  escape_ = nullptr;
+
+  if (gdi32_) {
+    FreeLibrary(gdi32_);
+    gdi32_ = nullptr;
+  }
+}
+
+bool AerogpuKmdQuery::QueryFence(uint64_t* last_submitted, uint64_t* last_completed) {
+  if (!last_submitted && !last_completed) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!adapter_ || !escape_) {
+    return false;
+  }
+
+  aerogpu_escape_query_fence_out out;
+  std::memset(&out, 0, sizeof(out));
+  out.hdr.version = AEROGPU_ESCAPE_VERSION;
+  out.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+  out.hdr.size = sizeof(out);
+  out.hdr.reserved0 = 0;
+
+  D3DKMT_ESCAPE esc{};
+  std::memset(&esc, 0, sizeof(esc));
+  esc.hAdapter = adapter_;
+  esc.hDevice = 0;
+  esc.hContext = 0;
+  esc.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+  esc.Flags.Value = 0;
+  esc.pPrivateDriverData = &out;
+  esc.PrivateDriverDataSize = static_cast<unsigned int>(sizeof(out));
+
+  const NTSTATUS st = escape_(&esc);
+  if (!NtSuccess(st)) {
+    return false;
+  }
+
+  if (last_submitted) {
+    *last_submitted = static_cast<uint64_t>(out.last_submitted_fence);
+  }
+  if (last_completed) {
+    *last_completed = static_cast<uint64_t>(out.last_completed_fence);
+  }
+  return true;
+}
+
+bool AerogpuKmdQuery::WaitForFence(uint64_t fence, uint32_t timeout_ms) {
+  const DWORD start = GetTickCount();
+
+  uint32_t iteration = 0;
+  for (;;) {
+    uint64_t completed = 0;
+    if (!QueryFence(nullptr, &completed)) {
+      return false;
+    }
+    if (completed >= fence) {
+      return true;
+    }
+
+    const DWORD elapsed = GetTickCount() - start;
+    if (elapsed >= timeout_ms) {
+      return false;
+    }
+
+    // Yield early (Sleep(0)) then back off to 1ms sleeps.
+    Sleep((iteration < 4) ? 0 : 1);
+    iteration++;
+  }
+}
+
+#else
+
+AerogpuKmdQuery::AerogpuKmdQuery() = default;
+AerogpuKmdQuery::~AerogpuKmdQuery() = default;
+
+bool AerogpuKmdQuery::InitFromLuid(LUID) {
+  return false;
+}
+
+void AerogpuKmdQuery::Shutdown() {}
+
+bool AerogpuKmdQuery::QueryFence(uint64_t*, uint64_t*) {
+  return false;
+}
+
+bool AerogpuKmdQuery::WaitForFence(uint64_t, uint32_t) {
+  return false;
+}
+
+void AerogpuKmdQuery::ShutdownLocked() {}
+
+#endif
+
+} // namespace aerogpu

@@ -6,7 +6,6 @@
 #include <memory>
 #include <thread>
 
-#include "aerogpu_dbgctl_escape.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
 #include "aerogpu_wddm_alloc.h"
@@ -107,140 +106,6 @@ void sleep_ms(uint32_t ms) {
 #endif
 }
 
-#if defined(_WIN32)
-using NTSTATUS = LONG;
-
-#ifndef NT_SUCCESS
-#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
-#endif
-
-using D3DKMT_HANDLE = UINT;
-
-typedef struct D3DKMT_OPENADAPTERFROMHDC {
-  HDC hDc;
-  D3DKMT_HANDLE hAdapter;
-  LUID AdapterLuid;
-  UINT VidPnSourceId;
-} D3DKMT_OPENADAPTERFROMHDC;
-
-typedef struct D3DKMT_CLOSEADAPTER {
-  D3DKMT_HANDLE hAdapter;
-} D3DKMT_CLOSEADAPTER;
-
-typedef enum D3DKMT_ESCAPETYPE {
-  D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
-} D3DKMT_ESCAPETYPE;
-
-typedef struct D3DKMT_ESCAPEFLAGS {
-  union {
-    struct {
-      UINT HardwareAccess : 1;
-      UINT Reserved : 31;
-    };
-    UINT Value;
-  };
-} D3DKMT_ESCAPEFLAGS;
-
-typedef struct D3DKMT_ESCAPE {
-  D3DKMT_HANDLE hAdapter;
-  D3DKMT_HANDLE hDevice;
-  D3DKMT_HANDLE hContext;
-  D3DKMT_ESCAPETYPE Type;
-  D3DKMT_ESCAPEFLAGS Flags;
-  VOID* pPrivateDriverData;
-  UINT PrivateDriverDataSize;
-} D3DKMT_ESCAPE;
-
-typedef NTSTATUS(WINAPI* PFND3DKMTOpenAdapterFromHdc)(D3DKMT_OPENADAPTERFROMHDC* pData);
-typedef NTSTATUS(WINAPI* PFND3DKMTCloseAdapter)(D3DKMT_CLOSEADAPTER* pData);
-typedef NTSTATUS(WINAPI* PFND3DKMTEscape)(D3DKMT_ESCAPE* pData);
-
-struct D3DKMT_FUNCS {
-  HMODULE gdi32 = NULL;
-  PFND3DKMTOpenAdapterFromHdc OpenAdapterFromHdc = nullptr;
-  PFND3DKMTCloseAdapter CloseAdapter = nullptr;
-  PFND3DKMTEscape Escape = nullptr;
-};
-
-D3DKMT_FUNCS& d3dkmt_funcs() {
-  static D3DKMT_FUNCS funcs;
-  return funcs;
-}
-
-bool ensure_d3dkmt_loaded() {
-  D3DKMT_FUNCS& f = d3dkmt_funcs();
-  if (f.OpenAdapterFromHdc && f.CloseAdapter && f.Escape) {
-    return true;
-  }
-
-  if (!f.gdi32) {
-    f.gdi32 = GetModuleHandleW(L"gdi32.dll");
-    if (!f.gdi32) {
-      f.gdi32 = LoadLibraryW(L"gdi32.dll");
-    }
-  }
-  if (!f.gdi32) {
-    return false;
-  }
-
-  f.OpenAdapterFromHdc = reinterpret_cast<PFND3DKMTOpenAdapterFromHdc>(GetProcAddress(f.gdi32, "D3DKMTOpenAdapterFromHdc"));
-  f.CloseAdapter = reinterpret_cast<PFND3DKMTCloseAdapter>(GetProcAddress(f.gdi32, "D3DKMTCloseAdapter"));
-  f.Escape = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(f.gdi32, "D3DKMTEscape"));
-  return f.OpenAdapterFromHdc && f.CloseAdapter && f.Escape;
-}
-
-bool kmd_open_adapter_from_hdc(HDC hdc, D3DKMT_HANDLE* out_adapter) {
-  if (!hdc || !out_adapter) {
-    return false;
-  }
-  if (!ensure_d3dkmt_loaded()) {
-    return false;
-  }
-
-  D3DKMT_OPENADAPTERFROMHDC open{};
-  open.hDc = hdc;
-  NTSTATUS st = d3dkmt_funcs().OpenAdapterFromHdc(&open);
-  if (!NT_SUCCESS(st)) {
-    return false;
-  }
-
-  *out_adapter = open.hAdapter;
-  return true;
-}
-
-void kmd_close_adapter(D3DKMT_HANDLE adapter) {
-  if (!adapter) {
-    return;
-  }
-  if (!ensure_d3dkmt_loaded()) {
-    return;
-  }
-
-  D3DKMT_CLOSEADAPTER close{};
-  close.hAdapter = adapter;
-  d3dkmt_funcs().CloseAdapter(&close);
-}
-
-bool kmd_escape(D3DKMT_HANDLE adapter, void* data, UINT size) {
-  if (!adapter || !data || !size) {
-    return false;
-  }
-  if (!ensure_d3dkmt_loaded()) {
-    return false;
-  }
-
-  D3DKMT_ESCAPE e{};
-  e.hAdapter = adapter;
-  e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
-  e.Flags.Value = 0;
-  e.pPrivateDriverData = data;
-  e.PrivateDriverDataSize = size;
-
-  NTSTATUS st = d3dkmt_funcs().Escape(&e);
-  return NT_SUCCESS(st);
-}
-#endif // defined(_WIN32)
-
 struct FenceSnapshot {
   uint64_t last_submitted = 0;
   uint64_t last_completed = 0;
@@ -253,18 +118,12 @@ FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
   }
 
 #if defined(_WIN32)
-  if (adapter->kmt_adapter_open) {
-    aerogpu_escape_query_fence_out q{};
-    q.hdr.version = AEROGPU_ESCAPE_VERSION;
-    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
-    q.hdr.size = sizeof(q);
-    q.hdr.reserved0 = 0;
-
-    if (kmd_escape(static_cast<D3DKMT_HANDLE>(adapter->kmt_adapter), &q, sizeof(q))) {
-      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-      adapter->last_submitted_fence = std::max<uint64_t>(adapter->last_submitted_fence, static_cast<uint64_t>(q.last_submitted_fence));
-      adapter->completed_fence = std::max<uint64_t>(adapter->completed_fence, static_cast<uint64_t>(q.last_completed_fence));
-    }
+  uint64_t submitted = 0;
+  uint64_t completed = 0;
+  if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    adapter->last_submitted_fence = std::max<uint64_t>(adapter->last_submitted_fence, submitted);
+    adapter->completed_fence = std::max<uint64_t>(adapter->completed_fence, completed);
   }
 #endif
 
@@ -654,13 +513,6 @@ HRESULT flush_locked(Device* dev) {
 
 HRESULT AEROGPU_D3D9_CALL adapter_close(AEROGPU_D3D9DDI_HADAPTER hAdapter) {
   auto* adapter = as_adapter(hAdapter);
-#if defined(_WIN32)
-  if (adapter && adapter->kmt_adapter_open) {
-    kmd_close_adapter(static_cast<D3DKMT_HANDLE>(adapter->kmt_adapter));
-    adapter->kmt_adapter_open = false;
-    adapter->kmt_adapter = 0;
-  }
-#endif
   delete adapter;
   return S_OK;
 }
@@ -1692,18 +1544,6 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
   }
 
   auto* adapter = new aerogpu::Adapter();
-#if defined(_WIN32)
-  {
-    // Prefer using the real KMD fence counter when available. This enables
-    // D3D9Ex max-frame-latency throttling and present statistics to track real
-    // GPU progress.
-    UINT kmt_adapter = 0;
-    if (pOpenAdapter->hDc && aerogpu::kmd_open_adapter_from_hdc(pOpenAdapter->hDc, &kmt_adapter)) {
-      adapter->kmt_adapter = kmt_adapter;
-      adapter->kmt_adapter_open = true;
-    }
-  }
-#endif
   pOpenAdapter->hAdapter = adapter;
 
   std::memset(pAdapterFuncs, 0, sizeof(*pAdapterFuncs));
@@ -1712,5 +1552,23 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
   pAdapterFuncs->pfnCreateDevice = aerogpu::adapter_create_device;
 
   aerogpu::logf("aerogpu-d3d9: OpenAdapter2 interface_version=%u\n", pOpenAdapter->interface_version);
+
+#if defined(_WIN32)
+  // Best-effort wiring for Win7 bring-up: initialize the KMD fence query helper
+  // so we can observe real submission/completion fences via D3DKMTEscape.
+  //
+  // Failure is non-fatal; the UMD can fall back to conservative CPU-side
+  // behavior when the query path is unavailable.
+  if (pOpenAdapter->hDc && adapter->kmd_query.InitFromHdc(pOpenAdapter->hDc)) {
+    uint64_t submitted = 0;
+    uint64_t completed = 0;
+    if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+      aerogpu::logf("aerogpu-d3d9: KMD fence submitted=%llu completed=%llu\n",
+                    static_cast<unsigned long long>(submitted),
+                    static_cast<unsigned long long>(completed));
+    }
+  }
+#endif
+
   return S_OK;
 }

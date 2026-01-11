@@ -9,6 +9,7 @@
 
 #include "../include/aerogpu_d3d9_umd.h"
 
+#include "aerogpu_kmd_query.h"
 #include "aerogpu_cmd_writer.h"
 
 namespace aerogpu {
@@ -98,11 +99,8 @@ struct Adapter {
   uint64_t last_submitted_fence = 0;
   uint64_t completed_fence = 0;
 
-  // Optional D3DKMT adapter handle for the bring-up fence query escape path.
-  // This is populated opportunistically during OpenAdapter2 when running on
-  // Windows, and is ignored in non-Windows builds.
-  uint32_t kmt_adapter = 0;
-  bool kmt_adapter_open = false;
+  // Optional best-effort KMD query path (Win7 user-mode D3DKMTEscape).
+  AerogpuKmdQuery kmd_query;
 };
 
 struct DeviceStateStream {

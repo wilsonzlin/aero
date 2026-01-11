@@ -13,6 +13,9 @@
     <ClCompile Include="src\aerogpu_d3d9_driver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\aerogpu_kmd_query.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\aerogpu_log.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -31,6 +34,9 @@
     <ClInclude Include="src\aerogpu_d3d9_objects.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\aerogpu_kmd_query.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\aerogpu_log.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -41,4 +47,3 @@
     <None Include="aerogpu_d3d9_x64.def" />
   </ItemGroup>
 </Project>
-
