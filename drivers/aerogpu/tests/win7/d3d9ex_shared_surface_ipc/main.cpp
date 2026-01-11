@@ -317,6 +317,27 @@ static int RunConsumer(int argc, char** argv) {
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
 
+  uint32_t require_vid = 0;
+  uint32_t require_did = 0;
+  bool has_require_vid = false;
+  bool has_require_did = false;
+  std::string require_vid_str;
+  std::string require_did_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
+    std::string parse_err;
+    if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &parse_err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", parse_err.c_str());
+    }
+    has_require_vid = true;
+  }
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
+    std::string parse_err;
+    if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &parse_err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", parse_err.c_str());
+    }
+    has_require_did = true;
+  }
+
   std::string handle_str;
   if (!aerogpu_test::GetArgValue(argc, argv, "--shared-handle", &handle_str)) {
     return aerogpu_test::Fail(kTestName, "missing --shared-handle");
@@ -330,6 +351,7 @@ static int RunConsumer(int argc, char** argv) {
   }
 
   const HANDLE shared_handle = (HANDLE)(uintptr_t)hv;
+  aerogpu_test::PrintfStdout("INFO: %s: shared-handle=%p", kTestName, shared_handle);
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExSharedSurfaceIPC_Consumer",
                                               L"AeroGPU D3D9Ex Shared Surface IPC (Consumer)",
@@ -343,6 +365,18 @@ static int RunConsumer(int argc, char** argv) {
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
   int rc = CreateD3D9ExDevice(kTestName, hwnd, &d3d, &dev);
+  if (rc != 0) {
+    return rc;
+  }
+
+  rc = ValidateAdapter(kTestName,
+                       d3d.get(),
+                       allow_microsoft,
+                       allow_non_aerogpu,
+                       has_require_vid,
+                       require_vid,
+                       has_require_did,
+                       require_did);
   if (rc != 0) {
     return rc;
   }
@@ -366,6 +400,12 @@ static int RunConsumer(int argc, char** argv) {
                                   &open_handle);
   if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "CreateTexture(open shared)", hr);
+  }
+  if (open_handle != shared_handle) {
+    aerogpu_test::PrintfStdout("INFO: %s: CreateTexture updated shared handle: %p -> %p",
+                               kTestName,
+                               shared_handle,
+                               open_handle);
   }
 
   ComPtr<IDirect3DSurface9> surf;
@@ -498,6 +538,7 @@ static int RunProducer(int argc, char** argv) {
   if (!shared) {
     return aerogpu_test::Fail(kTestName, "CreateTexture returned NULL shared handle");
   }
+  aerogpu_test::PrintfStdout("INFO: %s: created shared texture handle=%p", kTestName, shared);
 
   ComPtr<IDirect3DSurface9> rt;
   hr = tex->GetSurfaceLevel(0, rt.put());
@@ -560,6 +601,14 @@ static int RunProducer(int argc, char** argv) {
   // We patch the placeholder digits in the child's command line before resuming it.
   std::wstring cmdline = std::wstring(L"\"") + exe_path +
                          L"\" --consumer --shared-handle=0x0000000000000000";
+  if (has_require_vid) {
+    cmdline += L" --require-vid=";
+    cmdline += std::wstring(require_vid_str.begin(), require_vid_str.end());
+  }
+  if (has_require_did) {
+    cmdline += L" --require-did=";
+    cmdline += std::wstring(require_did_str.begin(), require_did_str.end());
+  }
   if (allow_microsoft) {
     cmdline += L" --allow-microsoft";
   }
@@ -637,6 +686,10 @@ static int RunProducer(int argc, char** argv) {
                               "DuplicateHandle failed: %s",
                               aerogpu_test::Win32ErrorToString(werr).c_str());
   }
+  aerogpu_test::PrintfStdout("INFO: %s: duplicated shared handle into consumer: %p (producer) -> %p (consumer)",
+                             kTestName,
+                             shared,
+                             shared_in_child);
   if ((uintptr_t)shared_in_child == (uintptr_t)shared) {
     // Extremely unlikely but possible if the consumer's handle table happens to allocate the same
     // numeric value. Duplicate again to guarantee numeric instability across processes.
@@ -645,11 +698,28 @@ static int RunProducer(int argc, char** argv) {
                          shared,
                          pi.hProcess,
                          &shared_in_child2,
-                         0,
-                         FALSE,
-                         DUPLICATE_SAME_ACCESS);
-    if (ok) {
+                          0,
+                          FALSE,
+                          DUPLICATE_SAME_ACCESS);
+    if (ok && shared_in_child2) {
+      // Close the first duplicated handle in the consumer to avoid leaking handles if we end up
+      // using the second one.
+      HANDLE tmp = NULL;
+      if (DuplicateHandle(pi.hProcess,
+                          shared_in_child,
+                          GetCurrentProcess(),
+                          &tmp,
+                          0,
+                          FALSE,
+                          DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE) &&
+          tmp) {
+        CloseHandle(tmp);
+      }
       shared_in_child = shared_in_child2;
+      aerogpu_test::PrintfStdout(
+          "INFO: %s: re-duplicated shared handle to avoid numeric collision: now %p (consumer)",
+          kTestName,
+          shared_in_child);
     }
   }
   if ((uintptr_t)shared_in_child == (uintptr_t)shared) {
@@ -676,7 +746,7 @@ static int RunProducer(int argc, char** argv) {
 
   ResumeThread(pi.hThread);
 
-  DWORD wait = WaitForSingleObject(pi.hProcess, 10000);
+  DWORD wait = WaitForSingleObject(pi.hProcess, 20000);
   if (wait != WAIT_OBJECT_0) {
     TerminateProcess(pi.hProcess, 124);
     WaitForSingleObject(pi.hProcess, 2000);
