@@ -1053,7 +1053,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         return ringSt;
     }
 
-    if (adapter->DxgkInterface.DxgkCbEnableInterrupt) {
+    if (interruptRegistered && adapter->DxgkInterface.DxgkCbEnableInterrupt) {
         adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
     }
 
