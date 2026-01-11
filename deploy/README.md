@@ -451,7 +451,8 @@ curl -k https://localhost/healthz
 # - Default (AUTH_MODE=none): should return 200 + {"iceServers":[...]} with no credentials.
 # - If AUTH_MODE=api_key: requires an API key (X-API-Key) matching API_KEY.
 curl -k https://localhost/webrtc/ice
-curl -k -H "X-API-Key: <API_KEY>" https://localhost/webrtc/ice
+# Or (api_key mode):
+# curl -k -H "X-API-Key: <API_KEY>" https://localhost/webrtc/ice
 
 # Session bootstrap (sets a Secure cookie when behind the TLS proxy and returns relay config):
 curl -k -i -X POST https://localhost/session -H 'content-type: application/json' -d '{}'
