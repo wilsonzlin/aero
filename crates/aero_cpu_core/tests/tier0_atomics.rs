@@ -333,6 +333,49 @@ fn lock_xadd_updates_memory_register_and_flags() {
 }
 
 #[test]
+fn lock_add_and_logic_ops_update_memory_and_flags() {
+    // LOCK ADD dword ptr [rsi], ecx
+    {
+        let mut state = CpuState::new(CpuMode::Bit64);
+        let mut bus = FlatTestBus::new(BUS_SIZE);
+        let addr = 0x540;
+        state.write_reg(Register::RSI, addr);
+
+        bus.write_u32(addr, 0x8000_0000).unwrap();
+        state.write_reg(Register::ECX, 0x8000_0001);
+
+        exec_steps(&mut state, &mut bus, &[0xF0, 0x01, 0x0E], 1).unwrap();
+
+        assert_eq!(bus.read_u32(addr).unwrap(), 1);
+        assert_eq!(state.read_reg(Register::ECX), 0x8000_0001);
+        assert!(state.get_flag(FLAG_CF));
+        assert!(state.get_flag(FLAG_OF));
+        assert!(!state.get_flag(FLAG_ZF));
+        assert!(!state.get_flag(FLAG_SF));
+    }
+
+    // LOCK OR dword ptr [rsi], ecx
+    {
+        let mut state = CpuState::new(CpuMode::Bit64);
+        let mut bus = FlatTestBus::new(BUS_SIZE);
+        let addr = 0x550;
+        state.write_reg(Register::RSI, addr);
+
+        bus.write_u32(addr, 0).unwrap();
+        state.write_reg(Register::ECX, 0x8000_0001);
+
+        exec_steps(&mut state, &mut bus, &[0xF0, 0x09, 0x0E], 1).unwrap();
+
+        assert_eq!(bus.read_u32(addr).unwrap(), 0x8000_0001);
+        assert_eq!(state.read_reg(Register::ECX), 0x8000_0001);
+        assert!(!state.get_flag(FLAG_CF));
+        assert!(!state.get_flag(FLAG_OF));
+        assert!(!state.get_flag(FLAG_ZF));
+        assert!(state.get_flag(FLAG_SF));
+    }
+}
+
+#[test]
 fn lock_inc_and_dec_update_memory_and_preserve_cf() {
     // INC
     {
@@ -410,6 +453,11 @@ fn lock_bit_test_ops_update_memory_and_cf() {
 fn lock_prefix_on_register_operand_is_invalid_opcode() {
     let mut state = CpuState::new(CpuMode::Bit64);
     let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    // LOCK ADD eax, ecx
+    bus.load(CODE_BASE, &[0xF0, 0x01, 0xC8]);
+    state.set_rip(CODE_BASE);
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
 
     // LOCK CMPXCHG eax, ecx
     bus.load(CODE_BASE, &[0xF0, 0x0F, 0xB1, 0xC8]);

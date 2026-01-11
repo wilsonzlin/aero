@@ -64,12 +64,38 @@ pub fn exec<B: CpuBus>(
     match instr.mnemonic() {
         Mnemonic::Add | Mnemonic::Adc | Mnemonic::Sub | Mnemonic::Sbb | Mnemonic::Cmp => {
             let bits = op_bits(state, instr, 0)?;
-            let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
             let src = read_op_sized(state, bus, instr, 1, bits, next_ip)?;
             let carry_in = match instr.mnemonic() {
                 Mnemonic::Adc | Mnemonic::Sbb => state.get_flag(FLAG_CF) as u64,
                 _ => 0,
             };
+
+            if instr.has_lock_prefix() {
+                // LOCK is only valid for RMW operations with a memory destination operand.
+                if instr.mnemonic() == Mnemonic::Cmp || instr.op_kind(0) != OpKind::Memory {
+                    return Err(Exception::InvalidOpcode);
+                }
+
+                let addr = calc_ea(state, instr, next_ip, true)?;
+                let old = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                    let rhs = src.wrapping_add(carry_in);
+                    let res = match instr.mnemonic() {
+                        Mnemonic::Add | Mnemonic::Adc => old.wrapping_add(rhs),
+                        Mnemonic::Sub | Mnemonic::Sbb => old.wrapping_sub(rhs),
+                        _ => old,
+                    } & mask_bits(bits);
+                    (res, old)
+                })?;
+                let (_, flags) = match instr.mnemonic() {
+                    Mnemonic::Add | Mnemonic::Adc => add_with_flags(state, old, src, carry_in, bits),
+                    Mnemonic::Sub | Mnemonic::Sbb => sub_with_flags(state, old, src, carry_in, bits),
+                    _ => unreachable!(),
+                };
+                state.set_rflags(flags);
+                return Ok(ExecOutcome::Continue);
+            }
+
+            let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
             let (res, flags) = match instr.mnemonic() {
                 Mnemonic::Add | Mnemonic::Adc => add_with_flags(state, dst, src, carry_in, bits),
                 Mnemonic::Sub | Mnemonic::Sbb | Mnemonic::Cmp => {
@@ -123,6 +149,19 @@ pub fn exec<B: CpuBus>(
         }
         Mnemonic::Neg => {
             let bits = op_bits(state, instr, 0)?;
+            if instr.has_lock_prefix() {
+                if instr.op_kind(0) != OpKind::Memory {
+                    return Err(Exception::InvalidOpcode);
+                }
+                let addr = calc_ea(state, instr, next_ip, true)?;
+                let old = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                    let res = (!old).wrapping_add(1) & mask_bits(bits);
+                    (res, old)
+                })?;
+                let (_, flags) = neg_with_flags(state, old, bits);
+                state.set_rflags(flags);
+                return Ok(ExecOutcome::Continue);
+            }
             let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
             let (res, flags) = neg_with_flags(state, dst, bits);
             state.set_rflags(flags);
@@ -131,8 +170,34 @@ pub fn exec<B: CpuBus>(
         }
         Mnemonic::And | Mnemonic::Or | Mnemonic::Xor | Mnemonic::Test => {
             let bits = op_bits(state, instr, 0)?;
-            let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
             let src = read_op_sized(state, bus, instr, 1, bits, next_ip)?;
+
+            if instr.has_lock_prefix() {
+                if instr.mnemonic() == Mnemonic::Test || instr.op_kind(0) != OpKind::Memory {
+                    return Err(Exception::InvalidOpcode);
+                }
+                let addr = calc_ea(state, instr, next_ip, true)?;
+                let old = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                    let res = match instr.mnemonic() {
+                        Mnemonic::And => old & src,
+                        Mnemonic::Or => old | src,
+                        Mnemonic::Xor => old ^ src,
+                        _ => old,
+                    } & mask_bits(bits);
+                    (res, old)
+                })?;
+                let res = match instr.mnemonic() {
+                    Mnemonic::And => old & src,
+                    Mnemonic::Or => old | src,
+                    Mnemonic::Xor => old ^ src,
+                    _ => old,
+                } & mask_bits(bits);
+                let flags = logic_flags(state, res, bits);
+                state.set_rflags(flags);
+                return Ok(ExecOutcome::Continue);
+            }
+
+            let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
             let res = match instr.mnemonic() {
                 Mnemonic::And | Mnemonic::Test => dst & src,
                 Mnemonic::Or => dst | src,
@@ -148,6 +213,17 @@ pub fn exec<B: CpuBus>(
         }
         Mnemonic::Not => {
             let bits = op_bits(state, instr, 0)?;
+            if instr.has_lock_prefix() {
+                if instr.op_kind(0) != OpKind::Memory {
+                    return Err(Exception::InvalidOpcode);
+                }
+                let addr = calc_ea(state, instr, next_ip, true)?;
+                super::atomic_rmw_sized(bus, addr, bits, |old| {
+                    let res = (!old) & mask_bits(bits);
+                    (res, ())
+                })?;
+                return Ok(ExecOutcome::Continue);
+            }
             let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
             let res = (!dst) & mask_bits(bits);
             write_op_sized(state, bus, instr, 0, res, bits, next_ip)?;
