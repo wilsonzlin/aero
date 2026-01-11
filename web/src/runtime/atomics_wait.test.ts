@@ -84,8 +84,9 @@ describe('waitUntilNotEqual', () => {
 
       const notifier = new Worker(
         `
-        import { workerData } from 'node:worker_threads';
+        import { parentPort, workerData } from 'node:worker_threads';
         const i32 = new Int32Array(workerData.sab);
+        parentPort?.postMessage('ready');
         setTimeout(() => {
           Atomics.store(i32, 0, 1);
           Atomics.notify(i32, 0, 1);
@@ -95,6 +96,12 @@ describe('waitUntilNotEqual', () => {
       );
 
       try {
+        // Ensure the worker thread is fully initialized before we enter the
+        // blocking Atomics.wait() path. Under heavy load, starting the worker
+        // can take long enough that a short wait timeout flakes.
+        await new Promise<void>((resolve) => {
+          notifier.once('message', () => resolve());
+        });
         await expect(waitUntilNotEqual(i32, 0, 0, { canBlock: true, timeoutMs: 1000 })).resolves.toBe('ok');
       } finally {
         await notifier.terminate();
