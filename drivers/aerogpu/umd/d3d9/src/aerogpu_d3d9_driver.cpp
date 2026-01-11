@@ -569,6 +569,23 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
 HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   auto* dev = as_device(hDevice);
+  if (!dev) {
+    return S_OK;
+  }
+
+  // Best-effort: flush any outstanding work so we don't abandon a partially
+  // constructed submission stream.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    flush_locked(dev);
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  dev->wddm_context.destroy(dev->wddm_callbacks);
+  wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
+  dev->wddm_device = 0;
+#endif
+
   delete dev;
   return S_OK;
 }
@@ -1556,8 +1573,65 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     return E_INVALIDARG;
   }
 
-  auto* dev = new Device(adapter);
-  pCreateDevice->hDevice = dev;
+  auto dev = std::make_unique<Device>(adapter);
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if (!pCreateDevice->pCallbacks) {
+    return E_INVALIDARG;
+  }
+
+  dev->wddm_callbacks = *reinterpret_cast<const WddmDeviceCallbacks*>(pCreateDevice->pCallbacks);
+
+  HRESULT hr = wddm_create_device(dev->wddm_callbacks, pCreateDevice->hAdapter, &dev->wddm_device);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = wddm_create_context(dev->wddm_callbacks, dev->wddm_device, &dev->wddm_context);
+  if (FAILED(hr)) {
+    wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
+    dev->wddm_device = 0;
+    return hr;
+  }
+
+  // Validate the runtime-provided submission buffers. These must be present for
+  // DMA buffer construction; later milestones will build commands directly into
+  // them.
+  if (!dev->wddm_context.pCommandBuffer ||
+      dev->wddm_context.CommandBufferSize < sizeof(aerogpu_cmd_stream_header) ||
+      !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
+      !dev->wddm_context.pPatchLocationList || dev->wddm_context.PatchLocationListSize == 0 ||
+      dev->wddm_context.hSyncObject == 0) {
+    logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
+         "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u sync=%llu\n",
+         dev->wddm_context.pCommandBuffer,
+         dev->wddm_context.CommandBufferSize,
+         dev->wddm_context.pAllocationList,
+         dev->wddm_context.AllocationListSize,
+         dev->wddm_context.pPatchLocationList,
+         dev->wddm_context.PatchLocationListSize,
+         static_cast<unsigned long long>(dev->wddm_context.hSyncObject));
+
+    dev->wddm_context.destroy(dev->wddm_callbacks);
+    wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
+    dev->wddm_device = 0;
+    return E_FAIL;
+  }
+
+  logf("aerogpu-d3d9: WDDM ctx device=%llu context=%llu sync=%llu "
+       "cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u\n",
+       static_cast<unsigned long long>(dev->wddm_device),
+       static_cast<unsigned long long>(dev->wddm_context.hContext),
+       static_cast<unsigned long long>(dev->wddm_context.hSyncObject),
+       dev->wddm_context.pCommandBuffer,
+       dev->wddm_context.CommandBufferSize,
+       dev->wddm_context.pAllocationList,
+       dev->wddm_context.AllocationListSize,
+       dev->wddm_context.pPatchLocationList,
+       dev->wddm_context.PatchLocationListSize);
+#endif
+
+  pCreateDevice->hDevice = dev.get();
 
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
   pDeviceFuncs->pfnDestroyDevice = device_destroy;
@@ -1602,6 +1676,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnIssueQuery = device_issue_query;
   pDeviceFuncs->pfnGetQueryData = device_get_query_data;
 
+  dev.release();
   return S_OK;
 }
 

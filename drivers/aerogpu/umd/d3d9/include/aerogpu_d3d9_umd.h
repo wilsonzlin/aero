@@ -144,6 +144,9 @@ typedef struct AEROGPU_D3D9DDIARG_CREATEDEVICE {
   AEROGPU_D3D9DDI_HADAPTER hAdapter;
   AEROGPU_D3D9DDI_HDEVICE hDevice; // out: driver-owned handle
   uint32_t flags;
+  // WDDM builds provide a D3DDDI_DEVICECALLBACKS pointer here. In compat builds
+  // this remains NULL and the driver uses an in-process submission stub.
+  const void* pCallbacks;
 } AEROGPU_D3D9DDIARG_CREATEDEVICE;
 
 typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {

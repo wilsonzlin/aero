@@ -11,6 +11,7 @@
 
 #include "aerogpu_kmd_query.h"
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_wddm_context.h"
 #include "aerogpu_wddm_alloc_list.h"
 
 namespace aerogpu {
@@ -129,6 +130,11 @@ struct Device {
 
   Adapter* adapter = nullptr;
   std::mutex mutex;
+
+  // WDDM state (only populated in real Win7/WDDM builds).
+  WddmDeviceCallbacks wddm_callbacks{};
+  WddmHandle wddm_device = 0;
+  WddmContext wddm_context{};
 
   CmdWriter cmd;
 
