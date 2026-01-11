@@ -70,6 +70,9 @@ CI validates the deployment artifacts under:
 Reproduce locally:
 
 ```bash
+# Deploy manifest labelling/hygiene
+node scripts/ci/check-deploy-manifests.mjs
+
 # Terraform (requires `terraform`; CI also runs `tflint`)
 cd infra/aws-s3-cloudfront-range
 terraform fmt -check -recursive
@@ -82,8 +85,30 @@ tflint
 
 # Helm/Kubernetes (requires `helm` + `kubeconform`)
 CHART=deploy/k8s/chart/aero-gateway
-helm lint "$CHART" -f "$CHART/values-dev.yaml"
-helm lint "$CHART" -f "$CHART/values-prod.yaml"
+for values in \
+  values-dev.yaml \
+  values-prod.yaml \
+  values-traefik.yaml \
+  values-prod-certmanager.yaml \
+  values-prod-certmanager-issuer.yaml \
+  values-prod-appheaders.yaml; do
+  helm lint "$CHART" -f "$CHART/$values"
+done
+
+for values in \
+  values-dev.yaml \
+  values-prod.yaml \
+  values-traefik.yaml \
+  values-prod-certmanager.yaml \
+  values-prod-certmanager-issuer.yaml \
+  values-prod-appheaders.yaml; do
+  out="/tmp/aero-${values%.yaml}.yaml"
+  helm template aero-gateway "$CHART" -n aero -f "$CHART/$values" > "$out"
+  kubeconform -strict -ignore-missing-schemas \
+    -schema-location default \
+    -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+    -kubernetes-version 1.28.0 -summary "$out"
+done
 ```
 
 ## Production DNS requirements
