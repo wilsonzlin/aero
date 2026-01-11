@@ -485,7 +485,11 @@ function New-PackagerSpecFromStagedDrivers {
   }
 
   $json = $spec | ConvertTo-Json -Depth 10
-  $json | Set-Content -LiteralPath $SpecOutPath -Encoding UTF8
+  # serde_json does NOT accept UTF-8 BOM, and Windows PowerShell 5.1 writes BOM by
+  # default for `-Encoding UTF8`. Always write UTF-8 without BOM so the Rust packager
+  # can parse the generated spec reliably on all hosts.
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($SpecOutPath, $json, $utf8NoBom)
 }
 
 $repoRootResolved = Resolve-RepoPath -Path "."
