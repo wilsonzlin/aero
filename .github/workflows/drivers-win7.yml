@@ -400,6 +400,23 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\sign-drivers.ps1' -ToolchainJson 'out\toolchain.json'
 
+      - name: Verify signed package staging (out/packages + aero-test.cer)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (!(Test-Path -LiteralPath 'out/packages')) {
+            throw "Expected signed driver packages to exist at out/packages."
+          }
+          $inf = Get-ChildItem -LiteralPath 'out/packages' -Recurse -File -Filter '*.inf' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $inf) {
+            throw "Expected at least one .inf file under out/packages after catalog/signing."
+          }
+          if (!(Test-Path -LiteralPath 'out/certs/aero-test.cer')) {
+            throw "Expected signing certificate to exist at out/certs/aero-test.cer."
+          }
+
       - name: Upload signed packages (out/packages + aero-test.cer)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         uses: actions/upload-artifact@v4
