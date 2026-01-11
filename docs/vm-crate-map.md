@@ -20,7 +20,6 @@ crates/aero-wasm      (wasm-bindgen JS API)
   │     ├── crates/platform       (port I/O bus, chipset/reset wiring)
   │     ├── crates/devices        (core device models: serial/i8042/A20/reset)
   │     ├── crates/firmware       (BIOS HLE + ACPI/SMBIOS helpers)
-  │     │     └── crates/machine  (firmware-facing CPU/memory traits used by BIOS)
   │     └── crates/aero-snapshot  (snapshot file format + save/restore machinery)
   └── (deprecated) `DemoVm` export is implemented as a thin wrapper around `aero-machine`
 ```
@@ -52,17 +51,14 @@ crates/aero-wasm      (wasm-bindgen JS API)
 
 **How it fits**
 - Called by `aero-machine` during `Machine::reset()` (POST) and when the CPU triggers a BIOS interrupt hypercall.
+-
+**Note on the retired `crates/machine` harness**
 
-#### `crates/machine` (`machine`)
-
-**What it does**
-- Firmware-facing primitives used by the HLE BIOS:
-  - real-mode CPU state used during BIOS POST/interrupt dispatch
-  - a `BlockDevice` trait (512-byte sector interface)
-  - memory access traits (`MemoryAccess`, `FirmwareMemory`, `A20Gate`)
-
-**How it fits**
-- Used by `firmware` and bridged into the canonical `aero_cpu_core::state::CpuState` by `aero-machine`.
+Historically, the BIOS was typed on a separate `crates/machine` abstraction (`machine::CpuState`,
+`machine::MemoryAccess`, etc). That harness has been retired; BIOS now runs directly on the
+canonical CPU core state (`aero_cpu_core::state::CpuState`) and the canonical guest physical memory
+bus (`memory::MemoryBus`), with a small set of firmware-local traits for ROM mapping, A20 control,
+and block devices.
 
 #### `crates/memory` (`memory`)
 
