@@ -1198,10 +1198,10 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Run benchmarks
-        run: cargo bench
+        run: cargo bench --locked
       
-       - name: Compare with baseline
-         run: ./scripts/compare-benchmarks.sh
+      - name: Compare with baseline
+        run: ./scripts/compare-benchmarks.sh
 ```
 
 #### CI note: GPU timing is optional
