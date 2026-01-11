@@ -255,7 +255,7 @@ where
         if !opfs_platform::file_handle_supports_sync_access_handle(&file) {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "OPFS sync access handles are unavailable; this API requires DedicatedWorkerGlobalScope",
+                "OPFS sync access handles are not supported in this browser (FileSystemFileHandle.createSyncAccessHandle missing)",
             ));
         }
 
