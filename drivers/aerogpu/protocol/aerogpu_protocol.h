@@ -1,7 +1,17 @@
 /*
- * AeroGPU Protocol
+ * AeroGPU Protocol (LEGACY bring-up ABI)
  *
- * This header defines the guest<->emulator ABI for the AeroGPU virtual device.
+ * This header defines the original guest<->emulator ABI for the AeroGPU virtual
+ * device.
+ *
+ * It is kept so the legacy Win7 KMD and the emulator's legacy AeroGPU device
+ * model can continue to function during migration.
+ *
+ * New code should prefer the versioned ABI split across:
+ *   - `aerogpu_pci.h`  (PCI/MMIO + versioning + features)
+ *   - `aerogpu_ring.h` (submission descriptors + optional `aerogpu_alloc_table`)
+ *   - `aerogpu_cmd.h`  (command stream with `aerogpu_handle_t` and
+ *                       `backing_alloc_id`, plus shared surface export/import)
  *
  * It intentionally contains two layers:
  *   1) A command stream "wire format" used by Windows user-mode drivers (UMDs).
@@ -9,7 +19,7 @@
  *
  * The command stream is intentionally conservative:
  *   - Little-endian, fixed-size POD structs.
- *   - No pointers; most references use 32-bit "allocation indices".
+ *   - No pointers; most references use 32-bit "allocation indices" (legacy model).
  *   - Extensible: new commands can be appended without changing old ones.
  *
  * The KMD-level ABI is designed for Windows 7 WDDM 1.1 bring-up:
