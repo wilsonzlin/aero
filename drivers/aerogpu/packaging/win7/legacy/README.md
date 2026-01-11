@@ -14,11 +14,21 @@ This requires building the emulator with the legacy device model enabled:
 
 `cargo build --locked -p emulator --features emulator/aerogpu-legacy`
 
+## CI / Guest Tools packaging
+
+CI-produced driver packages (and Guest Tools media built from them) include a legacy-binding INF under:
+
+- `legacy\aerogpu.inf` (sourced from `drivers/aerogpu/legacy/aerogpu.inf`)
+
+This avoids staging two different `aerogpu.inf` files at the package root (CI packaging flattens INF files by name)
+while still keeping the legacy INF's `SourceDisksNames` relative path pointing at the package root (the parent
+directory of `legacy\`).
+
 ## Install (repo/dev layout)
 
-These INFs are stored under `packaging/win7/legacy/` so the default driver package does not accidentally bind to
-`VEN_1AED`. They are designed to be used with the **same binaries staged into the parent directory**
-(`drivers/aerogpu/packaging/win7/`).
+The legacy INFs in this directory are stored under `packaging/win7/legacy/` so the default driver package does not
+accidentally bind to `VEN_1AED`. The repo/dev variants (`aerogpu.inf`, `aerogpu_dx11.inf`) are designed to be used with
+the **same binaries staged into the parent directory** (`drivers/aerogpu/packaging/win7/`).
 
 From repo root (after building the driver), stage the packaging directory, sign it, then install using the legacy INF:
 

@@ -43,7 +43,11 @@ WDDM stack.
 
 It is retained for optional compatibility/bring-up and regression testing:
 
-- The in-tree Win7 driver package INFs do **not** bind to `PCI\VEN_1AED&DEV_0001` by default (use `drivers/aerogpu/packaging/win7/legacy/` instead).
+- The canonical Win7 AeroGPU INFs (`drivers/aerogpu/packaging/win7/aerogpu.inf`, `aerogpu_dx11.inf`) bind only to the
+  versioned ABI identity (`PCI\VEN_A3A0&DEV_0001`).
+  - For the legacy bring-up identity (`PCI\VEN_1AED&DEV_0001`), use the legacy INFs under
+    `drivers/aerogpu/packaging/win7/legacy/`.
+    - CI packages / Guest Tools also include a staged copy at `legacy/aerogpu.inf` (sourced from `drivers/aerogpu/legacy/`).
 - The emulator's legacy device model is feature-gated behind `emulator/aerogpu-legacy`.
 
 `drivers/aerogpu/protocol/aerogpu_pci.h` is the newer, versioned ABI intended
@@ -58,8 +62,10 @@ The supported Windows 7 driver package lives under:
 
 The in-tree Win7 AeroGPU INFs (`aerogpu.inf`, `aerogpu_dx11.inf`) bind to the canonical `A3A0:0001` (`PCI\VEN_A3A0&DEV_0001`)
 HWID only. The Win7 KMD still has a compatibility path for the deprecated legacy bring-up ABI (`1AED:0001` / `PCI\VEN_1AED&DEV_0001`),
-but the shipped INFs intentionally do not match it. If you need the legacy device model, use the legacy INFs under
-`drivers/aerogpu/packaging/win7/legacy/` (see its `README.md`) and enable the legacy emulator device model feature (`emulator/aerogpu-legacy`).
+but the canonical INFs intentionally do not match it.
+
+If you need the legacy device model, use the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` (see its
+`README.md`) and enable the legacy emulator device model feature (`emulator/aerogpu-legacy`).
 
 An older AeroGPU driver stack existed during early bring-up; it is **not** the supported driver
 package and was not WOW64-complete on Win7 x64. It is archived under

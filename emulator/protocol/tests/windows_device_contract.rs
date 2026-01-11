@@ -636,6 +636,7 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
     // beyond the intended compatibility surface. The legacy identity (1AED) is still supported for
     // optional compatibility testing, but it should remain confined to:
     //   - docs/abi/aerogpu-pci-identity.md (mapping doc / source-of-truth context)
+    //   - drivers/aerogpu/legacy/ (CI-staged legacy INF copy; kept out of the canonical driver package root)
     //   - drivers/aerogpu/protocol/legacy/
     //   - drivers/aerogpu/packaging/win7/README.md (install docs reference both HWIDs)
     //   - drivers/aerogpu/packaging/win7/legacy/
@@ -658,6 +659,7 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
 
     let allowed_mapping_doc = b"docs/abi/aerogpu-pci-identity.md";
     let allowed_prefixes: &[&[u8]] = &[
+        b"drivers/aerogpu/legacy/",
         b"drivers/aerogpu/protocol/legacy/",
         b"drivers/aerogpu/legacy/",
         b"drivers/aerogpu/packaging/win7/README.md",

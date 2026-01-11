@@ -19,7 +19,9 @@ The helper scripts (`install.cmd`, `sign_test.cmd`, etc.) auto-detect the packag
 
 Packaging is controlled by `drivers/aerogpu/ci-package.json`. By default, CI packages are **D3D9-only**:
 
-- Included: `aerogpu.inf`
+- Included:
+  - `aerogpu.inf` (canonical HWID binding: `A3A0:0001`)
+  - `legacy/aerogpu.inf` (legacy HWID binding: `1AED:0001`; shipped under `legacy/` to avoid INF name collisions)
 - Not included: `aerogpu_dx11.inf` (optional D3D10/11 UMD variant)
 
 ### Getting the optional DX11 INF (`aerogpu_dx11.inf`)
@@ -67,7 +69,7 @@ Copy the built driver binaries into this directory (same folder as the `.inf` fi
 >
 > If you built via the CI scripts, skip staging and instead copy/install the ready-to-install
 > package under `out/packages/aerogpu/<arch>/` (see section 3). Note: CI outputs are
-> **D3D9-only** by default (`aerogpu.inf` only); see section 0 for how to get the DX11 variant.
+> **D3D9-only** by default (`aerogpu.inf` + `legacy/aerogpu.inf`); see section 0 for how to get the DX11 variant.
 
 ### Required (D3D9)
 
@@ -240,12 +242,14 @@ shutdown /r /t 0
 ```bat
 cd C:\path\to\out\packages\aerogpu\x64
 pnputil -i -a aerogpu.inf
+:: legacy bring-up device model:
+pnputil -i -a legacy\aerogpu.inf
 :: or (use the helper script shipped in the package):
 packaging\win7\install.cmd
 :: install.cmd also runs packaging\win7\verify_umd_registration.cmd to sanity-check UMD placement + registry values.
 ```
 
-Note: CI packages include only `aerogpu.inf` (D3D9-only) by default. To install the optional
+Note: CI packages include `aerogpu.inf` and `legacy/aerogpu.inf` (D3D9-only) by default. To install the optional
 D3D10/11 UMD variant, see section 0.
 
 ### 4.2 Sign inside the Win7 VM (optional)
