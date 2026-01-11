@@ -257,13 +257,15 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
             if matches!(mode, DecodeMode::Bits16 | DecodeMode::Bits32)
                 && opcode.map == OpcodeMap::Primary
                 && matches!(opcode.opcode, 0x9A | 0xEA)
-                && !prefixes.lock
-                && prefixes.rep.is_none() =>
+                && !prefixes.lock =>
         {
             // Far call/jmp (`CALLF/JMPF ptr16:16/32`) is used during boot and mode transitions.
             // Some third-party decoders treat it as invalid in certain configurations; if the
             // upstream decoder rejects it, decode its length manually so the interpreter/JIT can
             // keep going.
+            //
+            // Note: iced-x86 accepts REP/REPNZ prefixes on these opcodes (they are ignored), so we
+            // must not treat them as invalid here.
             let ptr_len = match operand_size {
                 OperandSize::Bits16 => 4,
                 OperandSize::Bits32 => 6,
