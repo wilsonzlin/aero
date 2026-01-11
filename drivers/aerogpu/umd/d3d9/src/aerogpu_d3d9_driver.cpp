@@ -224,7 +224,7 @@ bool submit_log_enabled() {
   return g_submit_log_enabled;
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
 // Some D3D9 UMD DDI members vary across WDK header vintages. Use compile-time
 // detection (SFINAE) so the UMD can populate as many entrypoints as possible
 // without hard-failing compilation when a member is absent.
@@ -331,7 +331,7 @@ AEROGPU_DEFINE_HAS_MEMBER(NumAllocations);
 #undef AEROGPU_DEFINE_HAS_MEMBER
 #endif
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
 template <typename T, typename = void>
 struct aerogpu_has_member_pDrvPrivate : std::false_type {};
 
@@ -516,7 +516,7 @@ uint64_t monotonic_ms() {
 }
 
 namespace {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
 template <typename T, typename = void>
 struct has_member_hAllocation : std::false_type {};
 template <typename T>
@@ -2807,7 +2807,7 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
   }
 
   bool use_src_storage = src->storage.size() >= bytes_needed;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   // Guest-backed resources may still allocate a CPU shadow buffer (e.g. shared
   // resources opened via OpenResource). On real WDDM builds the authoritative
   // bytes live in the WDDM allocation, so prefer mapping it directly.
@@ -2818,7 +2818,7 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
   if (use_src_storage) {
     src_base = src->storage.data();
   } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
     if (src->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
                                               dev->wddm_device,
@@ -2839,7 +2839,7 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
   }
 
   bool use_dst_storage = dst->storage.size() >= bytes_needed;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (dst->backing_alloc_id != 0) {
     use_dst_storage = false;
   }
@@ -2847,7 +2847,7 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
   if (use_dst_storage) {
     dst_base = dst->storage.data();
   } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
     if (dst->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
                                               dev->wddm_device,
@@ -2879,7 +2879,7 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
                 row_bytes);
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   if (dst_map.wddm_locked) {
     (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
   }
@@ -3121,7 +3121,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
     }
     if (dev->up_vertex_buffer) {
       (void)emit_destroy_resource_locked(dev, dev->up_vertex_buffer->handle);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
       if (dev->up_vertex_buffer->wddm_hAllocation != 0 && dev->wddm_device != 0) {
         (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, dev->up_vertex_buffer->wddm_hAllocation);
         dev->up_vertex_buffer->wddm_hAllocation = 0;
@@ -3132,7 +3132,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
     }
     if (dev->up_index_buffer) {
       (void)emit_destroy_resource_locked(dev, dev->up_index_buffer->handle);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
       if (dev->up_index_buffer->wddm_hAllocation != 0 && dev->wddm_device != 0) {
         (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, dev->up_index_buffer->wddm_hAllocation);
         dev->up_index_buffer->wddm_hAllocation = 0;
@@ -3151,7 +3151,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
           continue;
         }
         (void)emit_destroy_resource_locked(dev, bb->handle);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
         if (bb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
           (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, bb->wddm_hAllocation);
           bb->wddm_hAllocation = 0;
@@ -3277,7 +3277,7 @@ HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, ui
 
   bool has_wddm_allocation = false;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   if (dev->wddm_device != 0) {
     const uint32_t alloc_id = allocate_umd_alloc_id(dev->adapter);
     if (alloc_id == 0) {
@@ -3617,7 +3617,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
   bool has_wddm_allocation = (res->wddm_hAllocation != 0);
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   if (!open_existing_shared && dev->wddm_device != 0) {
     uint32_t alloc_id = res->backing_alloc_id;
     if (alloc_id == 0) {
@@ -3704,7 +3704,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   return trace.ret(S_OK);
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
 template <typename OpenResourceT>
 WddmAllocationHandle get_wddm_allocation_from_openresource(const OpenResourceT* open_resource) {
   if (!open_resource) {
@@ -4023,7 +4023,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   // per-process close.
   (void)emit_destroy_resource_locked(dev, res->handle);
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
     // Ensure the allocation handle is no longer referenced by the current DMA
     // buffer before we destroy it.
@@ -4109,7 +4109,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
         if (!created) {
           continue;
         }
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
         if (created->wddm_hAllocation != 0 && dev->wddm_device != 0) {
           (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, created->wddm_hAllocation);
           created->wddm_hAllocation = 0;
@@ -4183,7 +4183,7 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
   }
 
   bool use_src_storage = src->storage.size() >= src_bytes;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (src->backing_alloc_id != 0) {
     use_src_storage = false;
   }
@@ -4191,7 +4191,7 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
   if (use_src_storage) {
     src_base = src->storage.data();
   } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
     if (src->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
                                               dev->wddm_device,
@@ -4212,7 +4212,7 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
   }
 
   bool use_dst_storage = dst->storage.size() >= dst_bytes;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (dst->backing_alloc_id != 0) {
     use_dst_storage = false;
   }
@@ -4220,7 +4220,7 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
   if (use_dst_storage) {
     dst_base = dst->storage.data();
   } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
     if (dst->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
                                               dev->wddm_device,
@@ -4269,7 +4269,7 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
       const size_t src_off = static_cast<size_t>(y) * src->row_pitch + static_cast<size_t>(left) * bpp;
       const size_t dst_off = static_cast<size_t>(y) * dst->row_pitch + static_cast<size_t>(left) * bpp;
       if (src_off + row_bytes > src_bytes || dst_off + row_bytes > dst_bytes) {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
         if (dst_map.wddm_locked) {
           (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
         }
@@ -4283,7 +4283,7 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
     }
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   if (dst_map.wddm_locked) {
     (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
   }
@@ -4395,7 +4395,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_swap_chain(
       continue;
     }
     (void)emit_destroy_resource_locked(dev, bb->handle);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
     if (bb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, bb->wddm_hAllocation);
       bb->wddm_hAllocation = 0;
@@ -4569,7 +4569,7 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const D3D9DDI_PRESEN
       continue;
     }
     emit_destroy_resource_locked(dev, bb->handle);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
     if (bb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, bb->wddm_hAllocation);
       bb->wddm_hAllocation = 0;
@@ -4592,7 +4592,7 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const D3D9DDI_PRESEN
       continue;
     }
     (void)emit_destroy_resource_locked(dev, bb->handle);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
     if (bb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, bb->wddm_hAllocation);
       bb->wddm_hAllocation = 0;
@@ -5029,7 +5029,7 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
   res->locked_flags = pLock->flags;
   res->locked_ptr = nullptr;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
     void* ptr = nullptr;
     const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
@@ -5096,7 +5096,7 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   const uint32_t locked_flags = res->locked_flags;
   res->locked_flags = 0;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
     const HRESULT hr = wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, res->wddm_hAllocation);
     if (FAILED(hr)) {
@@ -6286,13 +6286,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     }
 
     const uint8_t* src_vertices = nullptr;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     void* vb_ptr = nullptr;
     bool vb_locked = false;
 #endif
 
     bool use_vb_storage = ss.vb->storage.size() >= static_cast<size_t>(src_offset_u64 + size_u64);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     // Guest-backed buffers may still allocate a CPU shadow buffer (e.g. shared
     // resources opened via OpenResource). On real WDDM builds the authoritative
     // bytes live in the WDDM allocation, so prefer mapping it directly.
@@ -6304,7 +6304,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     if (use_vb_storage) {
       src_vertices = ss.vb->storage.data() + static_cast<size_t>(src_offset_u64);
     } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
         const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
                                                      dev->wddm_device,
@@ -6331,7 +6331,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
         ss.stride_bytes,
         vertex_count,
         &converted);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     if (vb_locked) {
       const HRESULT unlock_hr = wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, ss.vb->wddm_hAllocation);
       if (FAILED(unlock_hr)) {
@@ -6899,7 +6899,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       uint32_t max_vtx = 0;
       bool have_bounds = false;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       struct AutoUnlock {
         Device* dev = nullptr;
         WddmAllocationHandle hAllocation = 0;
@@ -6932,7 +6932,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 
       // Lock index buffer if we don't have a CPU shadow copy.
       bool use_ib_storage = dev->index_buffer->storage.size() >= static_cast<size_t>(index_offset_u64 + index_bytes_u64);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       // Guest-backed buffers can have a CPU shadow allocation when they are
       // shared/OpenResource'd; in WDDM builds the underlying allocation memory is
       // authoritative.
@@ -6943,7 +6943,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       if (use_ib_storage) {
         index_data = dev->index_buffer->storage.data() + static_cast<size_t>(index_offset_u64);
       } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
         if (dev->index_buffer->wddm_hAllocation != 0 && dev->wddm_device != 0) {
           const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
                                                        dev->wddm_device,
@@ -7003,7 +7003,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       }
 
       bool use_vb_storage = ss.vb->storage.size() >= static_cast<size_t>(vb_range_offset + vb_range_size);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       if (ss.vb->backing_alloc_id != 0) {
         use_vb_storage = false;
       }
@@ -7011,7 +7011,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       if (use_vb_storage) {
         vb_base = ss.vb->storage.data() + static_cast<size_t>(vb_range_offset);
       } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
         if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
           const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
                                                        dev->wddm_device,
@@ -8319,7 +8319,7 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(D3DDDI_HDEVICE hDevice) {
   return trace.ret(kD3dErrWasStillDrawing);
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
 namespace {
 
 std::atomic<uint64_t> g_raster_status_sim_line{0};
@@ -8575,7 +8575,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   const uint64_t flags = pCreateDevice ? static_cast<uint64_t>(pCreateDevice->Flags) : 0;
   D3d9TraceCall trace(
       D3d9TraceFunc::AdapterCreateDevice, adapter_ptr, flags, d3d9_trace_arg_ptr(pDeviceFuncs), d3d9_trace_arg_ptr(pCreateDevice));
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   if (!pCreateDevice || !pDeviceFuncs) {
     return trace.ret(E_INVALIDARG);
   }
@@ -9478,7 +9478,7 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
     return E_INVALIDARG;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
   // The D3D runtime passes a D3D_UMD_INTERFACE_VERSION in the OpenAdapter args.
   // Be defensive: if the runtime asks for a newer interface than the headers we
   // are compiled against, fail cleanly rather than returning a vtable that does
