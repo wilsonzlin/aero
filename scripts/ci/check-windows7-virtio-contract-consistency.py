@@ -47,6 +47,8 @@ VIRTIO_DEVICE_TYPE_IDS: Mapping[str, int] = {
     "virtio-snd": 25,
 }
 
+SUPPORTED_VIRTIO_DEVICES = tuple(VIRTIO_DEVICE_TYPE_IDS.keys())
+
 AERO_DEVICES_PCI_PROFILE_RS = REPO_ROOT / "crates/devices/src/pci/profile.rs"
 AERO_VIRTIO_DEVICE_SOURCES: Mapping[str, Path] = {
     "virtio-blk": REPO_ROOT / "crates/aero-virtio/src/devices/blk.rs",
@@ -351,6 +353,7 @@ def parse_windows_device_contract_table(md: str) -> Mapping[str, PciIdentity]:
         "virtio-input (mouse)",
     }
     out: dict[str, PciIdentity] = {}
+    extra: list[str] = []
     for line in md.splitlines():
         if not line.lstrip().startswith("|"):
             continue
@@ -364,6 +367,9 @@ def parse_windows_device_contract_table(md: str) -> Mapping[str, PciIdentity]:
         if not m:
             continue
         name = m.group("name").strip()
+        if name.startswith("virtio-") and name not in expected_rows:
+            extra.append(name)
+            continue
         if name not in expected_rows:
             continue
         pci_vendor_s, pci_device_s = m.group("pci").split(":")
@@ -374,6 +380,14 @@ def parse_windows_device_contract_table(md: str) -> Mapping[str, PciIdentity]:
             subsystem_vendor_id=parse_hex(subsys_vendor_s),
             subsystem_device_id=parse_hex(subsys_device_s),
             revision_id=int(m.group("rev"), 16),
+        )
+
+    if extra:
+        fail(
+            format_error(
+                f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: found virtio rows that are not covered by AERO-W7-VIRTIO v1 checks:",
+                [f"unexpected row: {name!r}" for name in sorted(extra)],
+            )
         )
 
     missing = sorted(expected_rows - set(out.keys()))
@@ -645,6 +659,17 @@ def main() -> None:
         contract_subsystem_ids,
     ) = parse_w7_contract_pci_identification_tables(w7_md)
 
+    # Ensure the contract doesn't silently grow new virtio devices without also
+    # extending this checker.
+    unknown_contract_devices = sorted(set(contract_virtio_types) - set(SUPPORTED_VIRTIO_DEVICES))
+    if unknown_contract_devices:
+        errors.append(
+            format_error(
+                "AERO-W7-VIRTIO table 1.1.1 contains virtio devices not covered by this CI check:",
+                [f"unexpected device: {name!r}" for name in unknown_contract_devices],
+            )
+        )
+
     # ---------------------------------------------------------------------
     # 0) Fixed virtio-pci invariants that must never drift.
     # ---------------------------------------------------------------------
@@ -829,7 +854,25 @@ def main() -> None:
     if not isinstance(devices, list):
         fail(f"'devices' must be a list in {WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}")
 
-    for device_name in ("virtio-blk", "virtio-net", "virtio-snd", "virtio-input"):
+    extra_manifest_virtio = sorted(
+        {
+            entry.get("device")
+            for entry in devices
+            if isinstance(entry, dict)
+            and isinstance(entry.get("device"), str)
+            and entry.get("device", "").startswith("virtio-")
+            and entry.get("device") not in SUPPORTED_VIRTIO_DEVICES
+        }
+    )
+    if extra_manifest_virtio:
+        errors.append(
+            format_error(
+                f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: manifest contains virtio devices not covered by AERO-W7-VIRTIO v1 checks:",
+                [f"unexpected device: {name!r}" for name in extra_manifest_virtio],
+            )
+        )
+
+    for device_name in SUPPORTED_VIRTIO_DEVICES:
         entry = _find_manifest_device(devices, device_name)
         vendor = _parse_manifest_hex_u16(entry, "pci_vendor_id", device=device_name)
         dev_id = _parse_manifest_hex_u16(entry, "pci_device_id", device=device_name)
