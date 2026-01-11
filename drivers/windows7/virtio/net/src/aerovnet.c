@@ -384,9 +384,17 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
     VIRTQ_SG Sg[2];
     UINT16 Head;
     NTSTATUS Status;
+    UINT16 NeededDesc;
 
-    // Each receive buffer is posted as a 2-descriptor chain: header + payload.
-    if (!Adapter->RxVq.Vq || Adapter->RxVq.Vq->num_free < 2) {
+    // Each receive buffer is posted as a header + payload descriptor chain.
+    // When indirect descriptors are available, this consumes 1 ring descriptor
+    // (with an indirect table containing 2 entries). Otherwise it consumes 2.
+    if (!Adapter->RxVq.Vq) {
+      break;
+    }
+
+    NeededDesc = (Adapter->RxVq.Vq->indirect_pool_va != NULL && Adapter->RxVq.Vq->indirect_num_free != 0) ? 1 : 2;
+    if (Adapter->RxVq.Vq->num_free < NeededDesc) {
       break;
     }
 
@@ -666,34 +674,46 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
     size_t IndirectBytes = sizeof(VIRTQ_DESC) * (size_t)TableCount * (size_t)IndirectMaxDesc;
 
     if (IndirectBytes == 0 || IndirectBytes > 0xFFFFFFFFu) {
-      return NDIS_STATUS_RESOURCES;
+      IndirectMaxDesc = 0;
+      IndirectBytes = 0;
     }
 
-    Vq->IndirectBytes = (ULONG)IndirectBytes;
-    Vq->IndirectVa = MmAllocateContiguousMemorySpecifyCache(Vq->IndirectBytes, Low, High, Skip, MmCached);
-    if (!Vq->IndirectVa) {
-      return NDIS_STATUS_RESOURCES;
+    if (IndirectMaxDesc != 0) {
+      Vq->IndirectBytes = (ULONG)IndirectBytes;
+      Vq->IndirectVa = MmAllocateContiguousMemorySpecifyCache(Vq->IndirectBytes, Low, High, Skip, MmCached);
+      if (Vq->IndirectVa) {
+        RtlZeroMemory(Vq->IndirectVa, Vq->IndirectBytes);
+        Vq->IndirectPa = (UINT64)MmGetPhysicalAddress(Vq->IndirectVa).QuadPart;
+      } else {
+        // Indirect is negotiated but optional. Fall back to direct descriptors.
+        Vq->IndirectBytes = 0;
+        Vq->IndirectPa = 0;
+        IndirectMaxDesc = 0;
+      }
     }
-    RtlZeroMemory(Vq->IndirectVa, Vq->IndirectBytes);
-    Vq->IndirectPa = (UINT64)MmGetPhysicalAddress(Vq->IndirectVa).QuadPart;
 
     NtStatus = VirtqSplitInit(Vq->Vq,
                              QueueSize,
                              FALSE,
                              TRUE,
                              Vq->RingVa,
-                             Vq->RingPa,
-                             4,
-                             Vq->IndirectVa,
-                             Vq->IndirectPa,
-                             TableCount,
-                             IndirectMaxDesc);
+                              Vq->RingPa,
+                              4,
+                              Vq->IndirectVa,
+                              Vq->IndirectPa,
+                              (Vq->IndirectVa != NULL) ? TableCount : 0,
+                              (Vq->IndirectVa != NULL) ? IndirectMaxDesc : 0);
   } else {
     NtStatus = VirtqSplitInit(Vq->Vq, QueueSize, FALSE, TRUE, Vq->RingVa, Vq->RingPa, 4, NULL, 0, 0, 0);
   }
 
   if (!NT_SUCCESS(NtStatus)) {
     return NDIS_STATUS_FAILURE;
+  }
+
+  if (Vq->Vq->indirect_pool_va != NULL) {
+    // Use indirect descriptors for all multi-segment chains (RX header+payload, TX header+SG list).
+    Vq->Vq->indirect_threshold = 1;
   }
 
   // Disable MSI-X for this queue; INTx/ISR is required by contract v1.
@@ -771,7 +791,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return NDIS_STATUS_NOT_SUPPORTED;
   }
 
-  Status = AerovNetSetupVq(Adapter, &Adapter->RxVq, 0, 256, 0);
+  Status = AerovNetSetupVq(Adapter, &Adapter->RxVq, 0, 256, 2);
   if (Status != NDIS_STATUS_SUCCESS) {
     AeroVirtioFailDevice(&Adapter->Vdev);
     AeroVirtioResetDevice(&Adapter->Vdev);
