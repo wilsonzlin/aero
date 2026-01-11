@@ -116,7 +116,7 @@ echo "deploy smoke: checking deploy/docker-compose.yml defaults" >&2
 # Ensure the canonical deploy stack continues to work out-of-the-box:
 # - `/l2` should not require session-cookie auth unless explicitly enabled.
 # - Operators can opt into session-cookie auth by setting `AERO_L2_AUTH_MODE=session` (legacy alias: `cookie`) and should set
-#   `SESSION_SECRET` explicitly for production; the deploy stack can also generate one automatically).
+#   `SESSION_SECRET` explicitly for production; the deploy stack can also generate one automatically.
 env \
   -u AERO_L2_AUTH_MODE \
   -u AERO_L2_SESSION_SECRET \
