@@ -2526,6 +2526,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const support = workerCoordinator.checkSupport();
 
   const statusList = el("ul");
+  const vmStateLine = el("div", { class: "mono", text: "" });
   const heartbeatLine = el("div", { class: "mono", text: "" });
   const frameLine = el("div", { class: "mono", text: "" });
   const sharedFramebufferLine = el("div", { class: "mono", text: "" });
@@ -2613,7 +2614,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const startButton = el("button", {
     text: "Start workers",
     onclick: () => {
-      error.textContent = "";
       const config = configManager.getState().effective;
       try {
         const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
@@ -2669,6 +2669,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
               : undefined,
             showDebugOverlay: true,
           });
+          schedulerWorker = gpuWorker;
+          schedulerFrameStateSab = frameStateSab;
+          schedulerSharedFramebuffer = sharedFramebuffer;
         }
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
@@ -2685,10 +2688,56 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       jitClientWorker = null;
       frameScheduler?.stop();
       frameScheduler = null;
+      schedulerWorker = null;
+      schedulerFrameStateSab = null;
+      schedulerSharedFramebuffer = null;
       workerCoordinator.stop();
       useWorkerPresentation = false;
       teardownVgaPresenter();
       if (canvasTransferred) resetVgaCanvas();
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const restartButton = el("button", {
+    text: "Restart VM",
+    onclick: () => {
+      frameScheduler?.stop();
+      frameScheduler = null;
+      schedulerWorker = null;
+      schedulerFrameStateSab = null;
+      schedulerSharedFramebuffer = null;
+      try {
+        workerCoordinator.restart();
+      } catch (err) {
+        error.textContent = err instanceof Error ? err.message : String(err);
+      }
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const resetButton = el("button", {
+    text: "Reset VM",
+    onclick: () => {
+      frameScheduler?.stop();
+      frameScheduler = null;
+      schedulerWorker = null;
+      schedulerFrameStateSab = null;
+      schedulerSharedFramebuffer = null;
+      workerCoordinator.reset("ui");
+      update();
+    },
+  }) as HTMLButtonElement;
+
+  const powerOffButton = el("button", {
+    text: "Power off",
+    onclick: () => {
+      frameScheduler?.stop();
+      frameScheduler = null;
+      schedulerWorker = null;
+      schedulerFrameStateSab = null;
+      schedulerSharedFramebuffer = null;
+      workerCoordinator.powerOff();
       update();
     },
   }) as HTMLButtonElement;
@@ -2729,6 +2778,34 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let vgaPresenter: VgaPresenter | null = null;
   let vgaShared: ReturnType<typeof wrapSharedFramebuffer> | null = null;
   let vgaSab: SharedArrayBuffer | null = null;
+  let schedulerWorker: Worker | null = null;
+  let schedulerFrameStateSab: SharedArrayBuffer | null = null;
+  let schedulerSharedFramebuffer: SharedArrayBuffer | null = null;
+
+  workerCoordinator.addEventListener("fatal", (ev) => {
+    const detail = ev.detail;
+    frameScheduler?.stop();
+    frameScheduler = null;
+    schedulerWorker = null;
+    schedulerFrameStateSab = null;
+    schedulerSharedFramebuffer = null;
+    error.textContent = JSON.stringify(detail, null, 2);
+  });
+
+  workerCoordinator.addEventListener("nonfatal", (ev) => {
+    const detail = ev.detail;
+    if (detail.role === "gpu" && (detail.kind === "gpu_device_lost" || detail.kind === "gpu_error")) {
+      frameScheduler?.stop();
+      frameScheduler = null;
+      schedulerWorker = null;
+      schedulerFrameStateSab = null;
+      schedulerSharedFramebuffer = null;
+    }
+    // Surface nonfatal events for debugging (without clobbering an existing fatal error).
+    if (!error.textContent) {
+      error.textContent = JSON.stringify(detail, null, 2);
+    }
+  });
 
   function ensureVgaPresenter(): void {
     const sab = workerCoordinator.getVgaFramebuffer();
@@ -2775,6 +2852,15 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
     startButton.disabled = !support.ok || !report.wasmThreads || !config.enableWorkers || anyActive;
     stopButton.disabled = !anyActive;
+    restartButton.disabled = !support.ok || !report.wasmThreads || !config.enableWorkers;
+    resetButton.disabled = !anyActive;
+    powerOffButton.disabled = !anyActive;
+
+    const vmState = workerCoordinator.getVmState();
+    const pendingRestart = workerCoordinator.getPendingFullRestart();
+    vmStateLine.textContent = pendingRestart
+      ? `vmState=${vmState} (restart in ${Math.max(0, Math.round(pendingRestart.atMs - performance.now()))}ms)`
+      : `vmState=${vmState}`;
     jitDemoButton.disabled = statuses.jit.state !== "ready" || jitDemoInFlight;
     forceJitCspBlock.disabled = anyActive;
 
@@ -2828,6 +2914,73 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     guestRamValue.textContent =
       config.guestMemoryMiB % 1024 === 0 ? `${config.guestMemoryMiB / 1024} GiB` : `${config.guestMemoryMiB} MiB`;
 
+    // Keep the GPU frame scheduler attached to the current GPU worker instance.
+    // This runs before `ensureVgaPresenter()` so we don't accidentally create a
+    // main-thread context right before attempting `transferControlToOffscreen()`.
+    const gpuWorker = workerCoordinator.getWorker("gpu");
+    const sharedFramebuffer = workerCoordinator.getVgaFramebuffer();
+    if (!gpuWorker || !frameStateSab || !sharedFramebuffer) {
+      frameScheduler?.stop();
+      frameScheduler = null;
+      schedulerWorker = null;
+      schedulerFrameStateSab = null;
+      schedulerSharedFramebuffer = null;
+    } else if (
+      schedulerWorker !== gpuWorker ||
+      schedulerFrameStateSab !== frameStateSab ||
+      schedulerSharedFramebuffer !== sharedFramebuffer
+    ) {
+      let offscreen: OffscreenCanvas | undefined;
+      if (useWorkerPresentation) {
+        // Always recreate the canvas before transferring to a new worker since
+        // `transferControlToOffscreen()` is one-shot per HTMLCanvasElement.
+        if (canvasTransferred) resetVgaCanvas();
+
+        if (
+          report.offscreenCanvas &&
+          "transferControlToOffscreen" in vgaCanvas &&
+          typeof (vgaCanvas as unknown as { transferControlToOffscreen?: unknown }).transferControlToOffscreen === "function"
+        ) {
+          try {
+            offscreen = (vgaCanvas as unknown as HTMLCanvasElement & { transferControlToOffscreen: () => OffscreenCanvas }).transferControlToOffscreen();
+            canvasTransferred = true;
+          } catch {
+            offscreen = undefined;
+            canvasTransferred = false;
+            useWorkerPresentation = false;
+          }
+        } else {
+          canvasTransferred = false;
+          useWorkerPresentation = false;
+        }
+      } else if (canvasTransferred) {
+        // If we somehow ended up in main-thread presentation mode with a transferred
+        // canvas, recover by recreating it.
+        teardownVgaPresenter();
+        resetVgaCanvas();
+      }
+
+      frameScheduler?.stop();
+      frameScheduler = startFrameScheduler({
+        gpuWorker,
+        sharedFrameState: frameStateSab,
+        sharedFramebuffer,
+        sharedFramebufferOffsetBytes: 0,
+        canvas: offscreen,
+        initOptions: offscreen
+          ? {
+              outputWidth: 640,
+              outputHeight: 480,
+              dpr: window.devicePixelRatio || 1,
+            }
+          : undefined,
+        showDebugOverlay: true,
+      });
+      schedulerWorker = gpuWorker;
+      schedulerFrameStateSab = frameStateSab;
+      schedulerSharedFramebuffer = sharedFramebuffer;
+    }
+
     if (anyActive) {
       ensureVgaPresenter();
       if (vgaShared) {
@@ -2838,6 +2991,14 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       }
     } else {
       teardownVgaPresenter();
+    }
+
+    const lastFatal = workerCoordinator.getLastFatalEvent();
+    if (vmState === "running") {
+      // Clear stale error output after a successful restart.
+      if (error.textContent) error.textContent = "";
+    } else if (lastFatal) {
+      error.textContent = JSON.stringify(lastFatal, null, 2);
     }
   }
 
@@ -2856,12 +3017,16 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       guestRamValue,
       startButton,
       stopButton,
+      restartButton,
+      resetButton,
+      powerOffButton,
       jitDemoButton,
       forceJitCspBlock,
       forceJitCspLabel,
     ),
     vgaCanvasRow,
     vgaInfoLine,
+    vmStateLine,
     heartbeatLine,
     frameLine,
     sharedFramebufferLine,

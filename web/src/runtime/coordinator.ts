@@ -1,10 +1,11 @@
 import type { AeroConfig } from "../config/aero_config";
+import { ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { decodeEvent, encodeCommand, type Command, type Event } from "../ipc/protocol";
 import { perf } from "../perf/perf";
-import type { PlatformFeatureReport } from "../platform/features";
 import { WorkerKind } from "../perf/record.js";
 import type { PerfChannel } from "../perf/shared.js";
+import type { PlatformFeatureReport } from "../platform/features";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -42,12 +43,70 @@ export interface WorkerWasmStatus {
   value: number;
 }
 
+export type VmLifecycleState = "stopped" | "starting" | "running" | "restarting" | "resetting" | "poweredOff" | "failed";
+
+export type WorkerCoordinatorFatalKind =
+  | "start_failed"
+  | "worker_error"
+  | "worker_message_error"
+  | "worker_reported_error"
+  | "ipc_panic"
+  | "ipc_triple_fault"
+  | "gpu_fatal";
+
+export type WorkerCoordinatorNonFatalKind = "gpu_device_lost" | "gpu_error" | "ipc_log";
+
+export interface WorkerCoordinatorFatalDetail {
+  kind: WorkerCoordinatorFatalKind;
+  role?: WorkerRole;
+  message: string;
+  stack?: string;
+  atMs: number;
+}
+
+export interface WorkerCoordinatorNonFatalDetail {
+  kind: WorkerCoordinatorNonFatalKind;
+  role?: WorkerRole;
+  message: string;
+  stack?: string;
+  atMs: number;
+}
+
+export interface WorkerCoordinatorStateChangeDetail {
+  prev: VmLifecycleState;
+  next: VmLifecycleState;
+  reason?: string;
+  atMs: number;
+}
+
+export interface WorkerCoordinatorEventMap {
+  fatal: WorkerCoordinatorFatalDetail;
+  nonfatal: WorkerCoordinatorNonFatalDetail;
+  statechange: WorkerCoordinatorStateChangeDetail;
+}
+
 interface WorkerInfo {
   role: WorkerRole;
+  instanceId: number;
   worker: Worker;
   status: WorkerStatus;
   commandRing: RingBuffer;
   eventRing: RingBuffer;
+}
+
+type GpuWorkerGpuErrorMessage = {
+  type: "gpu_error";
+  fatal: boolean;
+  error: { message?: string; stack?: string };
+};
+
+type GpuWorkerErrorEventMessage = {
+  type: "gpu_error_event";
+  event: { category?: string; message?: string };
+};
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
 
 function maybeGetHudPerfChannel(): PerfChannel | null {
@@ -76,10 +135,64 @@ function workerRoleToPerfWorkerKind(role: WorkerRole): number {
   }
 }
 
+function formatWorkerError(ev: ErrorEvent): { message: string; stack?: string } {
+  const base = ev.message || "Worker error";
+  const location =
+    ev.filename && typeof ev.lineno === "number" && typeof ev.colno === "number"
+      ? `${ev.filename}:${ev.lineno}:${ev.colno}`
+      : ev.filename
+        ? ev.filename
+        : "";
+  const message = location ? `${base} @ ${location}` : base;
+  const stack = (ev.error as { stack?: unknown } | null | undefined)?.stack;
+  return { message, stack: typeof stack === "string" ? stack : undefined };
+}
+
+function isGpuWorkerGpuErrorMessage(data: unknown): data is GpuWorkerGpuErrorMessage {
+  if (!data || typeof data !== "object") return false;
+  const msg = data as { type?: unknown; fatal?: unknown; error?: unknown };
+  return msg.type === "gpu_error" && typeof msg.fatal === "boolean" && typeof msg.error === "object" && msg.error !== null;
+}
+
+function isGpuWorkerErrorEventMessage(data: unknown): data is GpuWorkerErrorEventMessage {
+  if (!data || typeof data !== "object") return false;
+  const msg = data as { type?: unknown; event?: unknown };
+  return msg.type === "gpu_error_event" && typeof msg.event === "object" && msg.event !== null;
+}
+
+class RestartBackoff {
+  private attempts = 0;
+
+  constructor(
+    private readonly baseDelayMs: number,
+    private readonly maxDelayMs: number,
+    private readonly jitterFraction = 0.2,
+  ) {}
+
+  reset(): void {
+    this.attempts = 0;
+  }
+
+  nextDelayMs(): number {
+    this.attempts += 1;
+    const unclamped = this.baseDelayMs * 2 ** Math.max(0, this.attempts - 1);
+    const delay = Math.min(this.maxDelayMs, unclamped);
+    const jitter = delay * this.jitterFraction;
+    const randomized = delay + (Math.random() * 2 - 1) * jitter;
+  return Math.max(0, Math.round(randomized));
+  }
+
+  getAttemptCount(): number {
+    return this.attempts;
+  }
+}
+
 export class WorkerCoordinator {
+  private readonly events = new EventTarget();
   private shared?: SharedMemoryViews;
   private workers: Partial<Record<WorkerRole, WorkerInfo>> = {};
   private runId = 0;
+  private nextWorkerInstanceId = 1;
   private frameStateSab?: SharedArrayBuffer;
   private platformFeatures: PlatformFeatureReport | null = null;
   private nextCmdSeq = 1;
@@ -99,17 +212,81 @@ export class WorkerCoordinator {
   private audioCapacityFrames = 0;
   private audioChannelCount = 0;
   private audioDstSampleRate = 0;
+
   private activeConfig: AeroConfig | null = null;
   private configVersion = 0;
   private workerConfigAckVersions: Partial<Record<WorkerRole, number>> = {};
+
+  private vmState: VmLifecycleState = "stopped";
+  private lastFatal: WorkerCoordinatorFatalDetail | null = null;
+  private lastNonFatal: WorkerCoordinatorNonFatalDetail | null = null;
+
+  private readonly fullRestartBackoff = new RestartBackoff(500, 30_000);
+  private readonly workerRestartBackoff: Record<WorkerRole, RestartBackoff> = {
+    cpu: new RestartBackoff(250, 10_000),
+    gpu: new RestartBackoff(250, 10_000),
+    io: new RestartBackoff(250, 10_000),
+    jit: new RestartBackoff(250, 10_000),
+  };
+
+  private pendingFullRestartTimer: number | null = null;
+  private pendingWorkerRestartTimers: Partial<Record<WorkerRole, number>> = {};
+  private pendingFullRestart:
+    | {
+        atMs: number;
+        delayMs: number;
+        reason: string;
+        attempt: number;
+      }
+    | null = null;
+
+  addEventListener<K extends keyof WorkerCoordinatorEventMap>(
+    type: K,
+    listener: (event: CustomEvent<WorkerCoordinatorEventMap[K]>) => void,
+    options?: boolean | AddEventListenerOptions,
+  ): void {
+    this.events.addEventListener(type, listener as unknown as EventListener, options);
+  }
+
+  removeEventListener<K extends keyof WorkerCoordinatorEventMap>(
+    type: K,
+    listener: (event: CustomEvent<WorkerCoordinatorEventMap[K]>) => void,
+    options?: boolean | EventListenerOptions,
+  ): void {
+    this.events.removeEventListener(type, listener as unknown as EventListener, options);
+  }
 
   checkSupport(): { ok: boolean; reason?: string } {
     return checkSharedMemorySupport();
   }
 
+  getVmState(): VmLifecycleState {
+    return this.vmState;
+  }
+
+  getLastFatalEvent(): WorkerCoordinatorFatalDetail | null {
+    return this.lastFatal;
+  }
+
+  getLastNonFatalEvent(): WorkerCoordinatorNonFatalDetail | null {
+    return this.lastNonFatal;
+  }
+
+  getPendingFullRestart():
+    | {
+        atMs: number;
+        delayMs: number;
+        reason: string;
+        attempt: number;
+      }
+    | null {
+    return this.pendingFullRestart;
+  }
+
   start(config: AeroConfig, opts?: { platformFeatures?: PlatformFeatureReport }): void {
     if (this.shared) return;
 
+    this.cancelPendingRestarts();
     this.activeConfig = config;
     if (opts?.platformFeatures) {
       this.platformFeatures = opts.platformFeatures;
@@ -123,74 +300,47 @@ export class WorkerCoordinator {
       throw new Error(support.reason ?? "Shared memory unsupported");
     }
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: config.guestMemoryMiB });
-    const shared = createSharedMemoryViews(segments);
-    this.shared = shared;
-    this.runId += 1;
-    const runId = this.runId;
-    this.nextCmdSeq = 1;
-    this.workerConfigAckVersions = {};
-    // Dedicated, tiny SharedArrayBuffer for GPU frame scheduling state/metrics.
-    // Keeping it separate from the main control region avoids growing the core IPC layout.
-    this.frameStateSab = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+    this.setVmState("starting", "start");
 
-    const perfChannel = maybeGetHudPerfChannel();
+    try {
+      const segments = allocateSharedMemorySegments({ guestRamMiB: config.guestMemoryMiB });
+      const shared = createSharedMemoryViews(segments);
+      this.shared = shared;
+      this.runId += 1;
+      const runId = this.runId;
+      this.nextCmdSeq = 1;
+      this.workerConfigAckVersions = {};
+      this.wasmStatus = {};
+      this.lastHeartbeatFromRing = 0;
 
-    for (const role of WORKER_ROLES) {
-      const regions = ringRegionsForWorker(role);
-      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
-      const eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+      // Dedicated, tiny SharedArrayBuffer for GPU frame scheduling state/metrics.
+      // Keeping it separate from the main control region avoids growing the core IPC layout.
+      this.frameStateSab = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
 
-      // IMPORTANT: Keep the `new Worker(new URL(..., import.meta.url), ...)` shape so Vite
-      // can statically detect and bundle workers (including their own dependencies/assets).
-      let worker: Worker;
-      switch (role) {
-        case "cpu":
-          worker = new Worker(new URL("../workers/cpu.worker.ts", import.meta.url), { type: "module" });
-          break;
-        case "gpu":
-          worker = new Worker(new URL("../workers/gpu.worker.ts", import.meta.url), { type: "module" });
-          break;
-        case "io":
-          worker = new Worker(new URL("../workers/io.worker.ts", import.meta.url), { type: "module" });
-          break;
-        case "jit":
-          worker = new Worker(new URL("../workers/jit.worker.ts", import.meta.url), { type: "module" });
-          break;
-        default: {
-          const neverRole: never = role;
-          throw new Error(`Unknown worker role: ${String(neverRole)}`);
-        }
+      const perfChannel = maybeGetHudPerfChannel();
+
+      for (const role of WORKER_ROLES) {
+        this.spawnWorker(role, segments);
       }
-      perf.registerWorker(worker, { threadName: role });
-      if (perf.traceEnabled) perf.instant("boot:worker:spawn", "p", { role });
 
-      const info: WorkerInfo = {
-        role,
-        worker,
-        status: { state: "starting" },
-        commandRing,
-        eventRing,
-      };
-      this.workers[role] = info;
+      this.broadcastConfig(config);
+      for (const role of WORKER_ROLES) {
+        void this.eventLoop(role, runId);
+      }
 
-      worker.onmessage = (ev) => this.onWorkerMessage(role, ev.data);
-      worker.onerror = (ev) => {
-        info.status = { state: "failed", error: ev.message };
-        setReadyFlag(shared.status, role, false);
-      };
-      worker.onmessageerror = () => {
-        info.status = { state: "failed", error: "worker message deserialization failed" };
-        setReadyFlag(shared.status, role, false);
-      };
+      void this.postWorkerInitMessages({ runId, segments, perfChannel });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.recordFatal({
+        kind: "start_failed",
+        message,
+        stack: err instanceof Error ? err.stack : undefined,
+        atMs: nowMs(),
+      });
+      this.stopWorkersInternal({ clearShared: true });
+      this.setVmState("failed", "start_failed");
+      throw err;
     }
-
-    this.broadcastConfig(config);
-    for (const role of WORKER_ROLES) {
-      void this.eventLoop(role, runId);
-    }
-
-    void this.postWorkerInitMessages({ runId, segments, perfChannel });
   }
 
   updateConfig(config: AeroConfig): void {
@@ -210,12 +360,7 @@ export class WorkerCoordinator {
 
     const desiredLayout = computeGuestRamLayout(config.guestMemoryMiB * 1024 * 1024);
     if (this.shared.guestLayout.guest_size !== desiredLayout.guest_size) {
-      this.stop();
-      try {
-        this.start(config);
-      } catch (err) {
-        console.error(err);
-      }
+      this.restart();
       return;
     }
 
@@ -223,28 +368,96 @@ export class WorkerCoordinator {
   }
 
   stop(): void {
-    const shared = this.shared;
-    if (!shared) return;
-
-    // Cancel any in-flight async loops, then wake waiters so they can exit.
-    this.runId += 1;
-    Atomics.store(shared.status, StatusIndex.StopRequested, 1);
-
+    this.cancelPendingRestarts();
+    this.fullRestartBackoff.reset();
     for (const role of WORKER_ROLES) {
-      const info = this.workers[role];
-      if (!info) continue;
-      // Best-effort: workers are expected to observe the stop request via the
-      // shutdown command or shared StopRequested flag.
-      void this.trySendCommand(info, { kind: "shutdown" });
-      info.status = { state: "stopped" };
-      setReadyFlag(shared.status, role, false);
+      this.workerRestartBackoff[role].reset();
+    }
+    this.stopWorkersInternal({ clearShared: true });
+    this.setVmState("stopped", "stop");
+  }
+
+  powerOff(): void {
+    this.cancelPendingRestarts();
+    this.fullRestartBackoff.reset();
+    for (const role of WORKER_ROLES) {
+      this.workerRestartBackoff[role].reset();
+    }
+    this.stopWorkersInternal({ clearShared: true });
+    this.setVmState("poweredOff", "poweroff");
+  }
+
+  restart(): void {
+    const config = this.activeConfig;
+    if (!config) {
+      throw new Error("Cannot restart without an active config.");
     }
 
-    this.workers = {};
-    this.shared = undefined;
-    this.wasmStatus = {};
-    this.frameStateSab = undefined;
+    this.cancelPendingRestarts();
+    this.fullRestartBackoff.reset();
+    for (const role of WORKER_ROLES) {
+      this.workerRestartBackoff[role].reset();
+    }
+
+    this.setVmState("restarting", "restart");
+    this.stopWorkersInternal({ clearShared: true });
+
+    try {
+      this.start(config);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  /**
+   * Attempt to restart a single worker in-place.
+   *
+   * Note: only `gpu` is currently treated as safely restartable without tearing down
+   * the entire VM, since cpu/io/jit workers share global stop flags and guest state.
+   */
+  restartWorker(role: WorkerRole): void {
+    if (role !== "gpu") {
+      this.restart();
+      return;
+    }
+
+    this.cancelPendingWorkerRestart(role);
+    this.workerRestartBackoff[role].reset();
+    this.requestWorkerRestart(role, { reason: "restartWorker", useBackoff: false });
+  }
+
+  reset(reason = "reset"): void {
+    const shared = this.shared;
+    const config = this.activeConfig;
+    if (!shared || !config) return;
+    if (!config.enableWorkers) return;
+    if (this.vmState === "resetting") return;
+
+    this.cancelPendingRestarts();
+    this.setVmState("resetting", reason);
+
+    // Tear down workers but keep shared memory segments so guest RAM can be preserved.
+    this.stopWorkersInternal({ clearShared: false });
+
+    this.resetSharedStatus(shared);
+    this.resetAllRings(shared.segments.control);
+    if (this.frameStateSab) new Int32Array(this.frameStateSab).fill(0);
+
+    this.nextCmdSeq = 1;
     this.workerConfigAckVersions = {};
+    this.wasmStatus = {};
+    this.lastHeartbeatFromRing = 0;
+
+    const runId = this.runId;
+    const perfChannel = maybeGetHudPerfChannel();
+    for (const role of WORKER_ROLES) {
+      this.spawnWorker(role, shared.segments);
+    }
+    this.broadcastConfig(config);
+    for (const role of WORKER_ROLES) {
+      void this.eventLoop(role, runId);
+    }
+    void this.postWorkerInitMessages({ runId, segments: shared.segments, perfChannel });
   }
 
   getWorker(role: WorkerRole): Worker | undefined {
@@ -409,14 +622,251 @@ export class WorkerCoordinator {
     this.setAudioRingBuffer(ringBuffer, capacityFrames, channelCount, sampleRate);
   }
 
+  private emitEvent<K extends keyof WorkerCoordinatorEventMap>(type: K, detail: WorkerCoordinatorEventMap[K]): void {
+    this.events.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  private setVmState(next: VmLifecycleState, reason?: string): void {
+    const prev = this.vmState;
+    if (prev === next) return;
+    this.vmState = next;
+
+    const atMs = nowMs();
+    this.emitEvent("statechange", { prev, next, reason, atMs });
+
+    if (perf.traceEnabled) {
+      if (next === "resetting") perf.instant("vm:reset", "p", { reason });
+      else if (next === "poweredOff") perf.instant("vm:poweroff", "p", { reason });
+      else if (next === "restarting") perf.instant("vm:restart", "p", { reason });
+      else if (next === "starting") perf.instant("vm:start", "p", { reason });
+      else if (next === "running") perf.instant("vm:running", "p", { reason });
+      else if (next === "failed") perf.instant("vm:failed", "p", { reason });
+      else if (next === "stopped") perf.instant("vm:stopped", "p", { reason });
+    }
+  }
+
+  private recordFatal(detail: WorkerCoordinatorFatalDetail): void {
+    this.lastFatal = detail;
+    this.emitEvent("fatal", detail);
+    if (perf.traceEnabled) perf.instant("vm:fatal", "p", { kind: detail.kind, role: detail.role ?? "unknown" });
+  }
+
+  private recordNonFatal(detail: WorkerCoordinatorNonFatalDetail): void {
+    this.lastNonFatal = detail;
+    this.emitEvent("nonfatal", detail);
+  }
+
+  private cancelPendingWorkerRestart(role: WorkerRole): void {
+    const timer = this.pendingWorkerRestartTimers[role];
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      delete this.pendingWorkerRestartTimers[role];
+    }
+  }
+
+  private cancelPendingRestarts(): void {
+    if (this.pendingFullRestartTimer !== null) {
+      clearTimeout(this.pendingFullRestartTimer);
+      this.pendingFullRestartTimer = null;
+      this.pendingFullRestart = null;
+    }
+    for (const role of WORKER_ROLES) {
+      this.cancelPendingWorkerRestart(role);
+    }
+  }
+
+  private resetSharedStatus(shared: SharedMemoryViews): void {
+    const layout = shared.guestLayout;
+    shared.status.fill(0);
+    Atomics.store(shared.status, StatusIndex.GuestBase, layout.guest_base | 0);
+    Atomics.store(shared.status, StatusIndex.GuestSize, layout.guest_size | 0);
+    Atomics.store(shared.status, StatusIndex.RuntimeReserved, layout.runtime_reserved | 0);
+  }
+
+  private resetAllRings(control: SharedArrayBuffer): void {
+    for (const role of WORKER_ROLES) {
+      const regions = ringRegionsForWorker(role);
+      this.resetRing(control, regions.command.byteOffset);
+      this.resetRing(control, regions.event.byteOffset);
+    }
+  }
+
+  private resetRing(control: SharedArrayBuffer, offsetBytes: number): void {
+    const ctrl = new Int32Array(control, offsetBytes, ringCtrl.WORDS);
+    const cap = Atomics.load(ctrl, ringCtrl.CAPACITY);
+    Atomics.store(ctrl, ringCtrl.HEAD, 0);
+    Atomics.store(ctrl, ringCtrl.TAIL_RESERVE, 0);
+    Atomics.store(ctrl, ringCtrl.TAIL_COMMIT, 0);
+    Atomics.store(ctrl, ringCtrl.CAPACITY, cap);
+    Atomics.notify(ctrl, ringCtrl.HEAD, 1);
+    Atomics.notify(ctrl, ringCtrl.TAIL_COMMIT, 1);
+  }
+
+  private stopWorkersInternal(options: { clearShared: boolean }): void {
+    const shared = this.shared;
+    if (!shared) return;
+
+    this.runId += 1;
+    Atomics.store(shared.status, StatusIndex.StopRequested, 1);
+
+    for (const role of WORKER_ROLES) {
+      const info = this.workers[role];
+      if (!info) continue;
+      void this.trySendCommand(info, { kind: "shutdown" });
+      info.worker.terminate();
+      info.status = { state: "stopped" };
+      setReadyFlag(shared.status, role, false);
+    }
+
+    this.workers = {};
+    this.wasmStatus = {};
+    this.workerConfigAckVersions = {};
+
+    if (options.clearShared) {
+      this.shared = undefined;
+      this.frameStateSab = undefined;
+      this.lastHeartbeatFromRing = 0;
+      this.nextCmdSeq = 1;
+    }
+  }
+
+  private scheduleFullRestart(reason: string): void {
+    const cfg = this.activeConfig;
+    if (!cfg?.enableWorkers) {
+      this.setVmState("failed", reason);
+      return;
+    }
+    if (this.pendingFullRestartTimer !== null) return;
+
+    const delayMs = this.fullRestartBackoff.nextDelayMs();
+    const attempt = this.fullRestartBackoff.getAttemptCount();
+    const atMs = nowMs() + delayMs;
+    this.pendingFullRestart = { atMs, delayMs, reason, attempt };
+    if (perf.traceEnabled) perf.instant("vm:restart:schedule", "p", { reason, delayMs, attempt });
+
+    this.setVmState("restarting", reason);
+    this.stopWorkersInternal({ clearShared: true });
+
+    this.pendingFullRestartTimer = globalThis.setTimeout(() => {
+      this.pendingFullRestartTimer = null;
+      this.pendingFullRestart = null;
+      const latest = this.activeConfig;
+      if (!latest?.enableWorkers) {
+        this.setVmState("stopped", "restart_cancelled");
+        return;
+      }
+      try {
+        this.start(latest);
+      } catch (err) {
+        console.error(err);
+      }
+    }, delayMs) as unknown as number;
+  }
+
+  private requestWorkerRestart(role: WorkerRole, opts: { reason: string; useBackoff: boolean }): void {
+    const shared = this.shared;
+    const cfg = this.activeConfig;
+    if (!shared || !cfg?.enableWorkers) return;
+    if (this.pendingFullRestartTimer !== null) return;
+    if (this.pendingWorkerRestartTimers[role] !== undefined) return;
+
+    const delayMs = opts.useBackoff ? this.workerRestartBackoff[role].nextDelayMs() : 0;
+    const attempt = this.workerRestartBackoff[role].getAttemptCount();
+    if (perf.traceEnabled) perf.instant("vm:worker:restart:schedule", "p", { role, reason: opts.reason, delayMs, attempt });
+
+    this.terminateWorker(role);
+    if (this.vmState === "running") {
+      this.setVmState("starting", `worker_restart:${role}`);
+    }
+
+    this.pendingWorkerRestartTimers[role] = globalThis.setTimeout(() => {
+      delete this.pendingWorkerRestartTimers[role];
+      if (!this.shared) return;
+      const latestConfig = this.activeConfig;
+      if (!latestConfig?.enableWorkers) return;
+
+      if (perf.traceEnabled) perf.instant("vm:worker:restart", "p", { role, reason: opts.reason });
+
+      this.resetRing(this.shared.segments.control, ringRegionsForWorker(role).command.byteOffset);
+      this.resetRing(this.shared.segments.control, ringRegionsForWorker(role).event.byteOffset);
+
+      const runId = this.runId;
+      const perfChannel = maybeGetHudPerfChannel();
+      this.spawnWorker(role, this.shared.segments);
+      this.sendConfigToWorker(role, this.configVersion, latestConfig);
+      void this.postWorkerInitMessages({ runId, segments: this.shared.segments, perfChannel, roles: [role] });
+    }, delayMs) as unknown as number;
+  }
+
+  private terminateWorker(role: WorkerRole): void {
+    const shared = this.shared;
+    const info = this.workers[role];
+    if (!shared || !info) return;
+
+    setReadyFlag(shared.status, role, false);
+    info.worker.terminate();
+    delete this.workers[role];
+    delete this.wasmStatus[role];
+    this.workerConfigAckVersions[role] = 0;
+    info.eventRing.waitForDataAsync(0).catch(() => {});
+  }
+
+  private spawnWorker(role: WorkerRole, segments: SharedMemoryViews["segments"]): void {
+    const shared = this.shared;
+    if (!shared) return;
+
+    const regions = ringRegionsForWorker(role);
+    const commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+    const eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+
+    let worker: Worker;
+    switch (role) {
+      case "cpu":
+        worker = new Worker(new URL("../workers/cpu.worker.ts", import.meta.url), { type: "module" });
+        break;
+      case "gpu":
+        worker = new Worker(new URL("../workers/gpu.worker.ts", import.meta.url), { type: "module" });
+        break;
+      case "io":
+        worker = new Worker(new URL("../workers/io.worker.ts", import.meta.url), { type: "module" });
+        break;
+      case "jit":
+        worker = new Worker(new URL("../workers/jit.worker.ts", import.meta.url), { type: "module" });
+        break;
+      default: {
+        const neverRole: never = role;
+        throw new Error(`Unknown worker role: ${String(neverRole)}`);
+      }
+    }
+
+    perf.registerWorker(worker, { threadName: role });
+    if (perf.traceEnabled) perf.instant("boot:worker:spawn", "p", { role });
+
+    const instanceId = this.nextWorkerInstanceId++;
+    const info: WorkerInfo = { role, instanceId, worker, status: { state: "starting" }, commandRing, eventRing };
+    this.workers[role] = info;
+
+    worker.onmessage = (ev) => this.onWorkerMessage(role, instanceId, ev.data);
+    worker.onerror = (ev) => this.onWorkerScriptError(role, instanceId, ev);
+    worker.onmessageerror = () => this.onWorkerMessageError(role, instanceId);
+
+    setReadyFlag(shared.status, role, false);
+  }
+
+  private sendConfigToWorker(role: WorkerRole, version: number, config: AeroConfig): void {
+    const info = this.workers[role];
+    if (!info) return;
+
+    this.workerConfigAckVersions[role] = 0;
+    const msg: ConfigUpdateMessage = { kind: "config.update", version, config, platformFeatures: this.platformFeatures ?? undefined };
+    info.worker.postMessage(msg);
+  }
+
   private broadcastConfig(config: AeroConfig): void {
     this.configVersion += 1;
     const version = this.configVersion;
     for (const role of WORKER_ROLES) {
-      const info = this.workers[role];
-      if (!info) continue;
-      const msg: ConfigUpdateMessage = { kind: "config.update", version, config, platformFeatures: this.platformFeatures ?? undefined };
-      info.worker.postMessage(msg);
+      this.sendConfigToWorker(role, version, config);
     }
   }
 
@@ -424,8 +874,10 @@ export class WorkerCoordinator {
     runId: number;
     segments: SharedMemoryViews["segments"];
     perfChannel: PerfChannel | null;
+    roles?: WorkerRole[];
   }): Promise<void> {
     const { runId, segments, perfChannel } = opts;
+    const roles = opts.roles ?? WORKER_ROLES;
 
     const tryVariantOrder: WasmVariant[] = ["threaded", "single"];
     let precompiled: { variant: WasmVariant; module: WebAssembly.Module } | null = null;
@@ -448,13 +900,12 @@ export class WorkerCoordinator {
       }
     }
 
-    // The coordinator may have been stopped/restarted while we were precompiling.
     if (!this.shared || this.runId !== runId) return;
 
     let moduleToSend: WebAssembly.Module | undefined = precompiled?.module;
     let variantToSend: WasmVariant | undefined = precompiled?.variant;
 
-    for (const role of WORKER_ROLES) {
+    for (const role of roles) {
       const info = this.workers[role];
       if (!info) continue;
 
@@ -491,7 +942,6 @@ export class WorkerCoordinator {
           info.worker.postMessage(baseInit);
         }
       } catch (err) {
-        // Older browsers may not support structured cloning WebAssembly.Module.
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[wasm] Failed to send precompiled module to worker (${role}); falling back. Error: ${msg}`);
         moduleToSend = undefined;
@@ -501,10 +951,11 @@ export class WorkerCoordinator {
     }
   }
 
-  private onWorkerMessage(role: WorkerRole, data: unknown): void {
+  private onWorkerMessage(role: WorkerRole, instanceId: number, data: unknown): void {
     const info = this.workers[role];
     const shared = this.shared;
     if (!info || !shared) return;
+    if (info.instanceId !== instanceId) return;
 
     const maybeAck = data as Partial<ConfigAckMessage>;
     if (maybeAck?.kind === "config.ack" && typeof maybeAck.version === "number") {
@@ -512,11 +963,39 @@ export class WorkerCoordinator {
       return;
     }
 
-    // Workers currently use structured `postMessage` for READY/ERROR only.
+    if (role === "gpu") {
+      if (isGpuWorkerGpuErrorMessage(data)) {
+        const err = data.error as { message?: unknown; stack?: unknown } | undefined;
+        const msgText = typeof err?.message === "string" ? err.message : "GPU error";
+        const stackText = typeof err?.stack === "string" ? err.stack : undefined;
+        if (data.fatal) {
+          info.status = { state: "failed", error: msgText };
+          setReadyFlag(shared.status, role, false);
+          this.recordFatal({ kind: "gpu_fatal", role, message: msgText, stack: stackText, atMs: nowMs() });
+          this.scheduleFullRestart("gpu_fatal");
+        } else {
+          this.recordNonFatal({ kind: "gpu_error", role, message: msgText, stack: stackText, atMs: nowMs() });
+        }
+        return;
+      }
+
+      if (isGpuWorkerErrorEventMessage(data)) {
+        const evt = (data as GpuWorkerErrorEventMessage).event as { category?: unknown; message?: unknown };
+        const category = typeof evt.category === "string" ? evt.category : "";
+        const msgText = typeof evt.message === "string" ? evt.message : "GPU event";
+        if (category === "DeviceLost") {
+          this.recordNonFatal({ kind: "gpu_device_lost", role, message: msgText, atMs: nowMs() });
+          this.requestWorkerRestart("gpu", { reason: "gpu_device_lost", useBackoff: true });
+        }
+        return;
+      }
+    }
+
     const msg = data as Partial<ProtocolMessage>;
     if (msg?.type === MessageType.READY) {
       info.status = { state: "ready" };
       setReadyFlag(shared.status, role, true);
+      this.workerRestartBackoff[role].reset();
 
       if ((role === "io" || role === "cpu") && this.micRingBuffer) {
         info.worker.postMessage({
@@ -540,27 +1019,87 @@ export class WorkerCoordinator {
 
       // Kick the worker to start its minimal demo loop.
       void this.trySendCommand(info, { kind: "nop", seq: this.nextCmdSeq++ });
+
+      this.maybeMarkRunning();
       return;
     }
 
     if (msg?.type === MessageType.WASM_READY) {
       const wasmMsg = msg as Partial<WasmReadyMessage>;
-      if (
-        (wasmMsg.variant === "single" || wasmMsg.variant === "threaded") &&
-        typeof wasmMsg.value === "number"
-      ) {
-        this.wasmStatus[role] = {
-          variant: wasmMsg.variant,
-          value: wasmMsg.value,
-        };
+      if ((wasmMsg.variant === "single" || wasmMsg.variant === "threaded") && typeof wasmMsg.value === "number") {
+        this.wasmStatus[role] = { variant: wasmMsg.variant, value: wasmMsg.value };
       }
       return;
     }
 
     if (msg?.type === MessageType.ERROR && typeof (msg as { message?: unknown }).message === "string") {
-      info.status = { state: "failed", error: (msg as { message: string }).message };
+      const message = (msg as { message: string }).message;
+      info.status = { state: "failed", error: message };
       setReadyFlag(shared.status, role, false);
+
+      if (role === "gpu") {
+        const lower = message.toLowerCase();
+        const kind: WorkerCoordinatorNonFatalKind =
+          lower.includes("context lost") || lower.includes("device lost") ? "gpu_device_lost" : "gpu_error";
+        this.recordNonFatal({ kind, role, message, atMs: nowMs() });
+        this.requestWorkerRestart("gpu", { reason: kind, useBackoff: true });
+        return;
+      }
+
+      this.recordFatal({ kind: "worker_reported_error", role, message, atMs: nowMs() });
+      this.scheduleFullRestart("worker_reported_error");
     }
+  }
+
+  private onWorkerScriptError(role: WorkerRole, instanceId: number, ev: ErrorEvent): void {
+    const shared = this.shared;
+    const info = this.workers[role];
+    if (!shared || !info) return;
+    if (info.instanceId !== instanceId) return;
+
+    const formatted = formatWorkerError(ev);
+    info.status = { state: "failed", error: formatted.message };
+    setReadyFlag(shared.status, role, false);
+    this.recordFatal({ kind: "worker_error", role, message: formatted.message, stack: formatted.stack, atMs: nowMs() });
+
+    if (role === "gpu") {
+      this.requestWorkerRestart("gpu", { reason: "worker_error", useBackoff: true });
+    } else {
+      this.scheduleFullRestart("worker_error");
+    }
+  }
+
+  private onWorkerMessageError(role: WorkerRole, instanceId: number): void {
+    const shared = this.shared;
+    const info = this.workers[role];
+    if (!shared || !info) return;
+    if (info.instanceId !== instanceId) return;
+
+    const message = "worker message deserialization failed";
+    info.status = { state: "failed", error: message };
+    setReadyFlag(shared.status, role, false);
+    this.recordFatal({ kind: "worker_message_error", role, message, atMs: nowMs() });
+
+    if (role === "gpu") {
+      this.requestWorkerRestart("gpu", { reason: "worker_message_error", useBackoff: true });
+    } else {
+      this.scheduleFullRestart("worker_message_error");
+    }
+  }
+
+  private maybeMarkRunning(): void {
+    if (this.vmState === "poweredOff" || this.vmState === "stopped" || this.vmState === "failed") {
+      return;
+    }
+
+    for (const role of WORKER_ROLES) {
+      if (this.workers[role]?.status.state !== "ready") {
+        return;
+      }
+    }
+
+    this.fullRestartBackoff.reset();
+    this.setVmState("running", "all_ready");
   }
 
   private drainEventRing(info: WorkerInfo): void {
@@ -578,10 +1117,14 @@ export class WorkerCoordinator {
       this.handleEvent(info, evt);
     }
   }
+
   private async eventLoop(role: WorkerRole, runId: number): Promise<void> {
     while (this.shared && this.runId === runId) {
       const info = this.workers[role];
-      if (!info) return;
+      if (!info) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        continue;
+      }
 
       this.drainEventRing(info);
 
@@ -617,21 +1160,31 @@ export class WorkerCoordinator {
             console.error(prefix, evt.message);
             break;
         }
+        if (evt.level === "warn" || evt.level === "error") {
+          this.recordNonFatal({ kind: "ipc_log", role: info.role, message: `${evt.level}: ${evt.message}`, atMs: nowMs() });
+        }
         return;
       }
+      case "resetRequest":
+        if (perf.traceEnabled) perf.instant("vm:reset:request", "p", { role: info.role });
+        this.reset("resetRequest");
+        return;
+      case "tripleFault":
+        this.recordFatal({ kind: "ipc_triple_fault", role: info.role, message: "Triple fault", atMs: nowMs() });
+        this.reset("tripleFault");
+        return;
       case "panic":
         info.status = { state: "failed", error: evt.message };
         setReadyFlag(shared.status, info.role, false);
+        this.recordFatal({ kind: "ipc_panic", role: info.role, message: evt.message, atMs: nowMs() });
+        this.scheduleFullRestart("ipc_panic");
         return;
       default:
-        // Ignore events that aren't currently consumed by the JS coordinator.
         return;
     }
   }
 
   private trySendCommand(info: WorkerInfo, cmd: Command): boolean {
-    // Coordinator runs on the browser main thread where `Atomics.wait` is not
-    // allowed, so this must be non-blocking.
     return info.commandRing.tryPush(encodeCommand(cmd));
   }
 }
