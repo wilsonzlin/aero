@@ -21,6 +21,13 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
     }, timeoutMs);
 
     const onMessage = (msg: unknown) => {
+      const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
+      if (maybeProtocol?.type === MessageType.ERROR) {
+        cleanup();
+        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
+        return;
+      }
       let matched = false;
       try {
         matched = predicate(msg);
@@ -88,12 +95,11 @@ describe("workers/net.worker (worker_threads)", () => {
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
-    const loaderUrl = new URL("../../../scripts/ts-transpile-loader.mjs", import.meta.url);
+    const registerUrl = new URL("./test_workers/register_ts_strip_loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
-    const loaderFlag = process.allowedNodeEnvironmentFlags.has("--loader") ? "--loader" : "--experimental-loader";
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: [loaderFlag, loaderUrl.href, "--import", shimUrl.href],
+      execArgv: ["--experimental-transform-types", "--import", registerUrl.href, "--import", shimUrl.href],
     } as unknown as WorkerOptions);
 
     try {
