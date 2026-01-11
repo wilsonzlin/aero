@@ -58,6 +58,10 @@ runs:
           echo "error: resolved empty Node version" >&2
           exit 1
         fi
+        if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "error: expected an exact Node version like 22.11.0 in $root/.nvmrc; got '$version'" >&2
+          exit 1
+        fi
 
         echo "node_version=$version" >> "$GITHUB_OUTPUT"
 

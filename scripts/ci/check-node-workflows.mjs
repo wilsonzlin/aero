@@ -24,6 +24,23 @@ function stripQuotes(value) {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const workflowsDir = path.join(repoRoot, ".github", "workflows");
+const nvmrcPath = path.join(repoRoot, ".nvmrc");
+
+let pinnedNodeRaw = null;
+try {
+  pinnedNodeRaw = fs.readFileSync(nvmrcPath, "utf8");
+} catch (err) {
+  console.error(`error: missing .nvmrc (expected at ${rel(nvmrcPath)})`);
+  console.error("This repo pins its canonical Node.js version via a checked-in .nvmrc file.");
+  process.exit(1);
+}
+
+const pinnedNode = pinnedNodeRaw.trim().replace(/^v/, "");
+if (!/^\d+\.\d+\.\d+$/.test(pinnedNode)) {
+  console.error(`error: invalid .nvmrc value: ${JSON.stringify(pinnedNodeRaw.trim())}`);
+  console.error("Expected an exact version like \"22.11.0\" (major.minor.patch).");
+  process.exit(1);
+}
 
 if (!fs.existsSync(workflowsDir)) {
   console.error(`error: workflows directory not found: ${rel(workflowsDir)}`);

@@ -4,12 +4,12 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 function parseVersion(version) {
-  const match = version.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/);
   if (!match) return null;
   return {
     major: Number(match[1]),
-    minor: match[2] === undefined ? 0 : Number(match[2]),
-    patch: match[3] === undefined ? 0 : Number(match[3]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
     raw: version.trim().replace(/^v/, ""),
   };
 }
@@ -40,7 +40,9 @@ try {
 const expected = parseVersion(expectedRaw);
 if (!expected) {
   console.error("error: Unable to parse .nvmrc");
-  console.error(`Expected a version like "22.11.0", got: ${JSON.stringify(expectedRaw.trim())}`);
+  console.error(
+    `Expected an exact version like "22.11.0" (major.minor.patch), got: ${JSON.stringify(expectedRaw.trim())}`,
+  );
   process.exit(1);
 }
 
