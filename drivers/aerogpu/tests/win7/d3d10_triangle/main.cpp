@@ -32,6 +32,27 @@ static int FailD3D10WithRemovedReason(aerogpu_test::TestReporter* reporter,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+struct MapDoNotWaitThreadArgs {
+  ID3D10Texture2D* tex;
+  HRESULT hr;
+};
+
+static DWORD WINAPI MapDoNotWaitThreadProc(LPVOID param) {
+  MapDoNotWaitThreadArgs* args = (MapDoNotWaitThreadArgs*)param;
+  args->hr = E_FAIL;
+
+  D3D10_MAPPED_TEXTURE2D mapped;
+  ZeroMemory(&mapped, sizeof(mapped));
+  args->hr = args->tex->Map(0, D3D10_MAP_READ, D3D10_MAP_FLAG_DO_NOT_WAIT, &mapped);
+  if (SUCCEEDED(args->hr)) {
+    args->tex->Unmap(0);
+  }
+
+  args->tex->Release();
+  args->tex = NULL;
+  return 0;
+}
+
 static int RunD3D10Triangle(int argc, char** argv) {
   const char* kTestName = "d3d10_triangle";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -343,13 +364,28 @@ static int RunD3D10Triangle(int argc, char** argv) {
   // either return DXGI_ERROR_WAS_STILL_DRAWING (in-flight copy) or succeed if the
   // work completed quickly.
   {
-    D3D10_MAPPED_TEXTURE2D map_nowait;
-    ZeroMemory(&map_nowait, sizeof(map_nowait));
-    hr = staging->Map(0, D3D10_MAP_READ, D3D10_MAP_FLAG_DO_NOT_WAIT, &map_nowait);
+    MapDoNotWaitThreadArgs args;
+    ZeroMemory(&args, sizeof(args));
+    args.tex = staging.get();
+    args.hr = E_FAIL;
+    staging->AddRef();
+
+    HANDLE thread = CreateThread(NULL, 0, &MapDoNotWaitThreadProc, &args, 0, NULL);
+    if (!thread) {
+      staging->Release();
+      return reporter.Fail("CreateThread(Map DO_NOT_WAIT) failed");
+    }
+    const DWORD wait = WaitForSingleObject(thread, 250);
+    CloseHandle(thread);
+    if (wait == WAIT_TIMEOUT) {
+      return reporter.Fail("Map(staging, DO_NOT_WAIT) appears to have blocked (>250ms)");
+    }
+
+    hr = args.hr;
     if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
       // Expected: the CopyResource is still being processed by the GPU.
     } else if (SUCCEEDED(hr)) {
-      staging->Unmap(0);
+      // Allowed: work completed quickly.
     } else {
       return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(staging, DO_NOT_WAIT)", hr, device.get());
     }

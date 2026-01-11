@@ -25,6 +25,37 @@ static int FailD3D10WithRemovedReason(aerogpu_test::TestReporter* reporter,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+struct MapThreadArgs {
+  ID3D10Texture2D* tex;
+  UINT map_flags;
+  HRESULT hr;
+  UINT row_pitch;
+  uint32_t pixel;
+  bool has_pixel;
+};
+
+static DWORD WINAPI MapThreadProc(LPVOID param) {
+  MapThreadArgs* args = (MapThreadArgs*)param;
+  args->hr = E_FAIL;
+  args->row_pitch = 0;
+  args->pixel = 0;
+  args->has_pixel = false;
+
+  D3D10_MAPPED_TEXTURE2D mapped;
+  ZeroMemory(&mapped, sizeof(mapped));
+  args->hr = args->tex->Map(0, D3D10_MAP_READ, args->map_flags, &mapped);
+  if (SUCCEEDED(args->hr) && mapped.pData) {
+    args->row_pitch = mapped.RowPitch;
+    args->pixel = aerogpu_test::ReadPixelBGRA(mapped.pData, (int)mapped.RowPitch, 0, 0);
+    args->has_pixel = true;
+    args->tex->Unmap(0);
+  }
+
+  args->tex->Release();
+  args->tex = NULL;
+  return 0;
+}
+
 static int RunD3D10MapDoNotWait(int argc, char** argv) {
   const char* kTestName = "d3d10_map_do_not_wait";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -213,64 +244,92 @@ static int RunD3D10MapDoNotWait(int argc, char** argv) {
   device->Flush();
 
   bool saw_still_drawing = false;
-  D3D10_MAPPED_TEXTURE2D map;
-  ZeroMemory(&map, sizeof(map));
 
-  const DWORD loop_start = GetTickCount();
-  for (;;) {
-    ZeroMemory(&map, sizeof(map));
-    const DWORD t0 = GetTickCount();
-    hr = staging->Map(0, D3D10_MAP_READ, D3D10_MAP_FLAG_DO_NOT_WAIT, &map);
-    const DWORD t1 = GetTickCount();
+  // Map with DO_NOT_WAIT should never block. On typical async drivers it should
+  // return DXGI_ERROR_WAS_STILL_DRAWING; if it succeeds immediately that's fine,
+  // but it still must return promptly.
+  {
+    MapThreadArgs args;
+    ZeroMemory(&args, sizeof(args));
+    args.tex = staging.get();
+    args.map_flags = D3D10_MAP_FLAG_DO_NOT_WAIT;
+    args.hr = E_FAIL;
+    staging->AddRef();
 
-    // DO_NOT_WAIT must not block indefinitely; allow some scheduler jitter.
-    if (t1 - t0 > 250) {
-      return reporter.Fail("Map(DO_NOT_WAIT) took too long: %lu ms", (unsigned long)(t1 - t0));
+    HANDLE thread = CreateThread(NULL, 0, &MapThreadProc, &args, 0, NULL);
+    if (!thread) {
+      staging->Release();
+      return reporter.Fail("CreateThread(Map DO_NOT_WAIT) failed");
+    }
+    const DWORD wait = WaitForSingleObject(thread, 250);
+    CloseHandle(thread);
+    if (wait == WAIT_TIMEOUT) {
+      return reporter.Fail("Map(READ, DO_NOT_WAIT) appears to have blocked (>250ms)");
     }
 
-    if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+    if (args.hr == DXGI_ERROR_WAS_STILL_DRAWING) {
       saw_still_drawing = true;
-      if (GetTickCount() - loop_start > 2000) {
-        break;
+      aerogpu_test::PrintfStdout("INFO: %s: Map(DO_NOT_WAIT) => DXGI_ERROR_WAS_STILL_DRAWING", kTestName);
+    } else if (SUCCEEDED(args.hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: Map(DO_NOT_WAIT) succeeded immediately", kTestName);
+      if (!args.has_pixel) {
+        return reporter.Fail("Map(DO_NOT_WAIT) returned NULL pData");
       }
-      Sleep(0);
-      continue;
-    }
-
-    if (FAILED(hr)) {
-      return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(staging, DO_NOT_WAIT)", hr, device.get());
-    }
-    break;
-  }
-
-  if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
-    // Make sure the blocking path eventually succeeds.
-    ZeroMemory(&map, sizeof(map));
-    hr = staging->Map(0, D3D10_MAP_READ, 0, &map);
-    if (FAILED(hr)) {
-      return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(staging, blocking)", hr, device.get());
+      const UINT min_row_pitch = (UINT)(kWidth * 4);
+      if (args.row_pitch < min_row_pitch) {
+        return reporter.Fail("Map(DO_NOT_WAIT) returned too-small RowPitch=%u (min=%u)",
+                             (unsigned)args.row_pitch,
+                             (unsigned)min_row_pitch);
+      }
+      const uint32_t expected = 0xFFFF0000u;  // red in BGRA memory order
+      if ((args.pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+        return reporter.Fail("Map(DO_NOT_WAIT) pixel mismatch at (0,0): got 0x%08lX expected ~0x%08lX",
+                             (unsigned long)args.pixel,
+                             (unsigned long)expected);
+      }
+    } else {
+      return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(DO_NOT_WAIT)", args.hr, device.get());
     }
   }
 
-  if (!map.pData) {
-    staging->Unmap(0);
-    return reporter.Fail("Map(staging) returned NULL pData");
+  // A blocking map should always succeed and yield the cleared pixels.
+  MapThreadArgs args;
+  ZeroMemory(&args, sizeof(args));
+  args.tex = staging.get();
+  args.map_flags = 0;
+  args.hr = E_FAIL;
+  staging->AddRef();
+
+  HANDLE thread = CreateThread(NULL, 0, &MapThreadProc, &args, 0, NULL);
+  if (!thread) {
+    staging->Release();
+    return reporter.Fail("CreateThread(Map blocking) failed");
   }
-  const UINT min_row_pitch = kWidth * 4u;
-  if (map.RowPitch < min_row_pitch) {
-    staging->Unmap(0);
-    return reporter.Fail("Map(staging) returned too-small RowPitch=%u (min=%u)",
-                         (unsigned)map.RowPitch,
+  const DWORD wait = WaitForSingleObject(thread, 30000);
+  CloseHandle(thread);
+  if (wait == WAIT_TIMEOUT) {
+    return reporter.Fail("Map(READ) appears to have hung (>30000ms)");
+  }
+
+  if (FAILED(args.hr)) {
+    return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(READ)", args.hr, device.get());
+  }
+  if (!args.has_pixel) {
+    return reporter.Fail("Map(READ) returned NULL pData");
+  }
+  const UINT min_row_pitch = (UINT)(kWidth * 4);
+  if (args.row_pitch < min_row_pitch) {
+    return reporter.Fail("Map(READ) returned too-small RowPitch=%u (min=%u)",
+                         (unsigned)args.row_pitch,
                          (unsigned)min_row_pitch);
   }
 
-  const uint32_t center = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth / 2, kHeight / 2);
+  const uint32_t pixel = args.pixel;
   const uint32_t expected = 0xFFFF0000u;  // red in BGRA memory order
-  staging->Unmap(0);
 
-  if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
-    return reporter.Fail("center pixel mismatch: got 0x%08lX expected ~0x%08lX",
-                         (unsigned long)center,
+  if ((pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+    return reporter.Fail("pixel mismatch at (0,0): got 0x%08lX expected ~0x%08lX",
+                         (unsigned long)pixel,
                          (unsigned long)expected);
   }
 
@@ -287,4 +346,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D10MapDoNotWait(argc, argv);
 }
-
