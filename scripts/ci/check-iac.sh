@@ -25,10 +25,11 @@ CHART="${CHART:-deploy/k8s/chart/aero-gateway}"
 CRD_SCHEMA_LOCATION="${CRD_SCHEMA_LOCATION:-https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json}"
 
 echo "==> Deploy manifest hygiene (labels + docker compose config)"
-node scripts/ci/check-deploy-manifests.mjs
+# Run in "CI mode" so the script enforces docker compose availability.
+CI=true node scripts/ci/check-deploy-manifests.mjs
 
 echo "==> Security header templates (canonicalization)"
-node scripts/ci/check-security-headers.mjs
+CI=true node scripts/ci/check-security-headers.mjs
 
 echo "==> Terraform fmt"
 terraform fmt -check -diff -recursive infra
