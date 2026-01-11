@@ -326,13 +326,13 @@ jobs:
         if: needs.policy.outputs.win7_virtio_snd_changed == 'true'
         run: |
           set -euo pipefail
-          cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-host-tests
-          cmake --build out/virtiosnd-host-tests
-          ctest --test-dir out/virtiosnd-host-tests --output-on-failure --no-tests=error
+          cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-host-tests -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/virtiosnd-host-tests --parallel
+          ctest --test-dir out/virtiosnd-host-tests --output-on-failure --no-tests=error --timeout 60
           if command -v clang >/dev/null 2>&1; then
-            CC=clang cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-host-tests-clang
-            cmake --build out/virtiosnd-host-tests-clang
-            ctest --test-dir out/virtiosnd-host-tests-clang --output-on-failure --no-tests=error
+            CC=clang cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-host-tests-clang -DCMAKE_BUILD_TYPE=Release
+            cmake --build out/virtiosnd-host-tests-clang --parallel
+            ctest --test-dir out/virtiosnd-host-tests-clang --output-on-failure --no-tests=error --timeout 60
           fi
   qemu-boot:
     name: QEMU boot tests (boot sector + FreeDOS)
