@@ -10,6 +10,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ClCompile Include="src\aerogpu_d3d9_blit.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\aerogpu_d3d9_driver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -38,6 +41,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\aerogpu_cmd_writer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\aerogpu_d3d9_blit.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\aerogpu_d3d9_builtin_shaders.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\aerogpu_d3d9_objects.h">

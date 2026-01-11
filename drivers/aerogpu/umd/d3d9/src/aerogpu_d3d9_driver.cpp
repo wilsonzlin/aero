@@ -19,6 +19,7 @@
   #define D3DPS_VERSION(major, minor) (0xFFFF0000u | ((major) << 8) | (minor))
 #endif
 
+#include "aerogpu_d3d9_blit.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
 #include "aerogpu_wddm_alloc.h"
@@ -875,6 +876,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   // constructed submission stream.
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
+    destroy_blit_objects_locked(dev);
     flush_locked(dev);
   }
 
@@ -1410,6 +1412,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_sampler_state(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  if (stage < 16 && state < 16) {
+    dev->sampler_states[stage][state] = value;
+  }
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_sampler_state>(AEROGPU_CMD_SET_SAMPLER_STATE);
   cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
   cmd->slot = stage;
@@ -1428,6 +1434,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (state < 256) {
+    dev->render_states[state] = value;
+  }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_state>(AEROGPU_CMD_SET_RENDER_STATE);
   cmd->state = state;
@@ -1582,6 +1592,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  float* dst = (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? dev->vs_consts_f : dev->ps_consts_f;
+  if (start_reg < 256) {
+    const uint32_t write_regs = std::min(vec4_count, 256u - start_reg);
+    std::memcpy(dst + start_reg * 4, pData, static_cast<size_t>(write_regs) * 4 * sizeof(float));
+  }
+
   const size_t payload_size = static_cast<size_t>(vec4_count) * 4 * sizeof(float);
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_shader_constants_f>(
       AEROGPU_CMD_SET_SHADER_CONSTANTS_F, pData, payload_size);
@@ -1591,6 +1607,77 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   cmd->reserved0 = 0;
 
   return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_blt(AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_BLT* pBlt) {
+  if (!hDevice.pDrvPrivate || !pBlt) {
+    return E_INVALIDARG;
+  }
+
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  auto* src = as_resource(pBlt->hSrc);
+  auto* dst = as_resource(pBlt->hDst);
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  logf("aerogpu-d3d9: Blt src=%p dst=%p filter=%u\n", src, dst, pBlt->filter);
+
+  return blit_locked(dev, dst, pBlt->pDstRect, src, pBlt->pSrcRect, pBlt->filter);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_color_fill(AEROGPU_D3D9DDI_HDEVICE hDevice,
+                                             const AEROGPU_D3D9DDIARG_COLORFILL* pColorFill) {
+  if (!hDevice.pDrvPrivate || !pColorFill) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  auto* dst = as_resource(pColorFill->hDst);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  logf("aerogpu-d3d9: ColorFill dst=%p color=0x%08x\n", dst, pColorFill->color_argb);
+  return color_fill_locked(dev, dst, pColorFill->pRect, pColorFill->color_argb);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_update_surface(AEROGPU_D3D9DDI_HDEVICE hDevice,
+                                                 const AEROGPU_D3D9DDIARG_UPDATESURFACE* pUpdateSurface) {
+  if (!hDevice.pDrvPrivate || !pUpdateSurface) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  auto* src = as_resource(pUpdateSurface->hSrc);
+  auto* dst = as_resource(pUpdateSurface->hDst);
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  logf("aerogpu-d3d9: UpdateSurface src=%p dst=%p\n", src, dst);
+  return update_surface_locked(dev, src, pUpdateSurface->pSrcRect, dst, pUpdateSurface->pDstRect);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_update_texture(AEROGPU_D3D9DDI_HDEVICE hDevice,
+                                                 const AEROGPU_D3D9DDIARG_UPDATETEXTURE* pUpdateTexture) {
+  if (!hDevice.pDrvPrivate || !pUpdateTexture) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  auto* src = as_resource(pUpdateTexture->hSrc);
+  auto* dst = as_resource(pUpdateTexture->hDst);
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  logf("aerogpu-d3d9: UpdateTexture src=%p dst=%p\n", src, dst);
+  return update_texture_locked(dev, src, dst);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
@@ -2127,6 +2214,11 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnGetRenderTargetData = device_get_render_target_data;
   pDeviceFuncs->pfnCopyRects = device_copy_rects;
   pDeviceFuncs->pfnWaitForIdle = device_wait_for_idle;
+
+  pDeviceFuncs->pfnBlt = device_blt;
+  pDeviceFuncs->pfnColorFill = device_color_fill;
+  pDeviceFuncs->pfnUpdateSurface = device_update_surface;
+  pDeviceFuncs->pfnUpdateTexture = device_update_texture;
 
   dev.release();
   return S_OK;

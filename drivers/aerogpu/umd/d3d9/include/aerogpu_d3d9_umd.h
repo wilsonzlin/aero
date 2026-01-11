@@ -395,6 +395,40 @@ typedef struct AEROGPU_D3D9DDIARG_GETQUERYDATA {
 } AEROGPU_D3D9DDIARG_GETQUERYDATA;
 
 typedef D3D9DDI_ADAPTERFUNCS AEROGPU_D3D9DDI_ADAPTERFUNCS;
+// -----------------------------------------------------------------------------
+// Compositor-critical 2D operations (StretchRect/Blt, ColorFill, Update*)
+// -----------------------------------------------------------------------------
+
+// Minimal D3D9 StretchRect/Blt argument subset.
+typedef struct AEROGPU_D3D9DDIARG_BLT {
+  AEROGPU_D3D9DDI_HRESOURCE hSrc;
+  AEROGPU_D3D9DDI_HRESOURCE hDst;
+  const RECT* pSrcRect; // NULL == full resource
+  const RECT* pDstRect; // NULL == full resource
+  uint32_t filter;      // D3DTEXTUREFILTERTYPE numeric (POINT/LINEAR supported)
+  uint32_t flags;       // reserved (0)
+} AEROGPU_D3D9DDIARG_BLT;
+
+typedef struct AEROGPU_D3D9DDIARG_COLORFILL {
+  AEROGPU_D3D9DDI_HRESOURCE hDst;
+  const RECT* pRect;     // NULL == full resource
+  uint32_t color_argb;   // D3DCOLOR (0xAARRGGBB)
+  uint32_t flags;        // reserved (0)
+} AEROGPU_D3D9DDIARG_COLORFILL;
+
+typedef struct AEROGPU_D3D9DDIARG_UPDATESURFACE {
+  AEROGPU_D3D9DDI_HRESOURCE hSrc;
+  const RECT* pSrcRect; // NULL == full source
+  AEROGPU_D3D9DDI_HRESOURCE hDst;
+  const RECT* pDstRect; // NULL == full destination
+  uint32_t flags;       // reserved (0)
+} AEROGPU_D3D9DDIARG_UPDATESURFACE;
+
+typedef struct AEROGPU_D3D9DDIARG_UPDATETEXTURE {
+  AEROGPU_D3D9DDI_HRESOURCE hSrc;
+  AEROGPU_D3D9DDI_HRESOURCE hDst;
+  uint32_t flags; // reserved (0)
+} AEROGPU_D3D9DDIARG_UPDATETEXTURE;
 typedef struct AEROGPU_D3D9DDI_DEVICEFUNCS AEROGPU_D3D9DDI_DEVICEFUNCS;
 
 typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_DESTROYDEVICE)(
@@ -474,6 +508,15 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_COPYRECTS)(
 typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_WAITFORIDLE)(
     AEROGPU_D3D9DDI_HDEVICE hDevice);
 
+typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_BLT)(
+    AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_BLT* pBlt);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_COLORFILL)(
+    AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_COLORFILL* pColorFill);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_UPDATESURFACE)(
+    AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_UPDATESURFACE* pUpdateSurface);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_UPDATETEXTURE)(
+    AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_UPDATETEXTURE* pUpdateTexture);
+
 struct AEROGPU_D3D9DDI_DEVICEFUNCS {
   PFN_AEROGPU_D3D9DDI_DESTROYDEVICE pfnDestroyDevice;
   PFN_AEROGPU_D3D9DDI_CREATERESOURCE pfnCreateResource;
@@ -521,6 +564,12 @@ struct AEROGPU_D3D9DDI_DEVICEFUNCS {
   PFN_AEROGPU_D3D9DDI_GETRENDERTARGETDATA pfnGetRenderTargetData;
   PFN_AEROGPU_D3D9DDI_COPYRECTS pfnCopyRects;
   PFN_AEROGPU_D3D9DDI_WAITFORIDLE pfnWaitForIdle;
+
+  // 2D compositor helpers.
+  PFN_AEROGPU_D3D9DDI_BLT pfnBlt;
+  PFN_AEROGPU_D3D9DDI_COLORFILL pfnColorFill;
+  PFN_AEROGPU_D3D9DDI_UPDATESURFACE pfnUpdateSurface;
+  PFN_AEROGPU_D3D9DDI_UPDATETEXTURE pfnUpdateTexture;
 };
 
 // -----------------------------------------------------------------------------

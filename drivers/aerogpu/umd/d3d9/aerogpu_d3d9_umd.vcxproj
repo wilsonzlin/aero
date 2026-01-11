@@ -107,6 +107,7 @@
   </ItemDefinitionGroup>
 
   <ItemGroup>
+    <ClCompile Include="src\aerogpu_d3d9_blit.cpp" />
     <ClCompile Include="src\aerogpu_d3d9_driver.cpp" />
     <ClCompile Include="src\aerogpu_kmd_query.cpp" />
     <ClCompile Include="src\aerogpu_log.cpp" />
@@ -119,6 +120,8 @@
     <ClInclude Include="include\aerogpu_d3d9_umd.h" />
     <ClInclude Include="src\aerogpu_cmd_stream_writer.h" />
     <ClInclude Include="src\aerogpu_cmd_writer.h" />
+    <ClInclude Include="src\aerogpu_d3d9_blit.h" />
+    <ClInclude Include="src\aerogpu_d3d9_builtin_shaders.h" />
     <ClInclude Include="src\aerogpu_d3d9_objects.h" />
     <ClInclude Include="src\aerogpu_kmd_query.h" />
     <ClInclude Include="src\aerogpu_log.h" />

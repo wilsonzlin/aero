@@ -149,6 +149,37 @@ struct DeviceStateStream {
 struct Device {
   explicit Device(Adapter* adapter) : adapter(adapter) {
     cmd.reset();
+
+    // Initialize D3D9 state caches to API defaults so helper paths can save and
+    // restore state even if the runtime never explicitly sets it.
+    //
+    // Render state defaults (numeric values from d3d9types.h).
+    // - COLORWRITEENABLE = 0xF (RGBA)
+    // - SRCBLEND = ONE (2)
+    // - DESTBLEND = ZERO (1)
+    // - BLENDOP = ADD (1)
+    // - ZENABLE = TRUE (1)
+    // - ZWRITEENABLE = TRUE (1)
+    // - CULLMODE = CCW (3)
+    render_states[168] = 0xFu; // D3DRS_COLORWRITEENABLE
+    render_states[19] = 2u;    // D3DRS_SRCBLEND
+    render_states[20] = 1u;    // D3DRS_DESTBLEND
+    render_states[171] = 1u;   // D3DRS_BLENDOP
+    render_states[7] = 1u;     // D3DRS_ZENABLE
+    render_states[14] = 1u;    // D3DRS_ZWRITEENABLE
+    render_states[22] = 3u;    // D3DRS_CULLMODE
+
+    // Sampler defaults per stage:
+    // - ADDRESSU/V = WRAP (1)
+    // - MIN/MAG = POINT (1)
+    // - MIP = NONE (0)
+    for (uint32_t stage = 0; stage < 16; ++stage) {
+      sampler_states[stage][1] = 1u; // D3DSAMP_ADDRESSU
+      sampler_states[stage][2] = 1u; // D3DSAMP_ADDRESSV
+      sampler_states[stage][5] = 1u; // D3DSAMP_MAGFILTER
+      sampler_states[stage][6] = 1u; // D3DSAMP_MINFILTER
+      sampler_states[stage][7] = 0u; // D3DSAMP_MIPFILTER
+    }
   }
 
   Adapter* adapter = nullptr;
@@ -188,6 +219,24 @@ struct Device {
   AEROGPU_D3D9DDI_VIEWPORT viewport = {0, 0, 0, 0, 0.0f, 1.0f};
   RECT scissor_rect = {0, 0, 0, 0};
   BOOL scissor_enabled = FALSE;
+
+  // D3D9 state caches used by helper paths (blits, color fills) so they can
+  // temporarily override state and restore it afterwards.
+  //
+  // D3D9 state IDs are sparse, but the commonly-used ranges fit comfortably in
+  // 0..255 and the values are cheap to track.
+  uint32_t render_states[256] = {};
+  uint32_t sampler_states[16][16] = {};
+
+  // Shader float constant register caches (float4 registers).
+  float vs_consts_f[256 * 4] = {};
+  float ps_consts_f[256 * 4] = {};
+
+  // Built-in resources used for blit/copy operations (StretchRect/Blt).
+  Shader* builtin_copy_vs = nullptr;
+  Shader* builtin_copy_ps = nullptr;
+  VertexDecl* builtin_copy_decl = nullptr;
+  Resource* builtin_copy_vb = nullptr;
 };
 
 } // namespace aerogpu
