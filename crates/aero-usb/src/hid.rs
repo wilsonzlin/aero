@@ -7,10 +7,17 @@ use alloc::vec::Vec;
 extern crate alloc;
 
 const REQ_GET_STATUS: u8 = 0x00;
+const REQ_CLEAR_FEATURE: u8 = 0x01;
+const REQ_SET_FEATURE: u8 = 0x03;
 const REQ_SET_ADDRESS: u8 = 0x05;
 const REQ_GET_DESCRIPTOR: u8 = 0x06;
 const REQ_GET_CONFIGURATION: u8 = 0x08;
 const REQ_SET_CONFIGURATION: u8 = 0x09;
+const REQ_GET_INTERFACE: u8 = 0x0A;
+const REQ_SET_INTERFACE: u8 = 0x0B;
+
+const FEATURE_ENDPOINT_HALT: u16 = 0x0000;
+const FEATURE_DEVICE_REMOTE_WAKEUP: u16 = 0x0001;
 
 const REQ_HID_GET_REPORT: u8 = 0x01;
 const REQ_HID_GET_IDLE: u8 = 0x02;
@@ -131,6 +138,8 @@ pub struct UsbHidKeyboard {
     pending_address: Option<u8>,
     configuration: u8,
     pending_configuration: Option<u8>,
+    remote_wakeup_enabled: bool,
+    interrupt_in_halted: bool,
     protocol: u8,
     idle_rate: u8,
     leds: u8,
@@ -147,6 +156,8 @@ impl UsbHidKeyboard {
             pending_address: None,
             configuration: 0,
             pending_configuration: None,
+            remote_wakeup_enabled: false,
+            interrupt_in_halted: false,
             protocol: 1, // Report protocol by default.
             idle_rate: 0,
             leds: 0,
@@ -212,6 +223,9 @@ impl UsbHidKeyboard {
         }
         if let Some(cfg) = self.pending_configuration.take() {
             self.configuration = cfg;
+            if self.configuration == 0 {
+                self.pending_reports.clear();
+            }
         }
     }
 
@@ -355,7 +369,25 @@ impl UsbHidKeyboard {
                 self.get_descriptor(desc_type, index)
             }
             (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
-            (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x80, REQ_GET_STATUS) => {
+                let mut status = 0u16;
+                if self.remote_wakeup_enabled {
+                    status |= 1 << 1;
+                }
+                Some(status.to_le_bytes().to_vec())
+            }
+            (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x82, REQ_GET_STATUS) => {
+                if setup.index == 0x81 {
+                    let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
+                    Some(status.to_le_bytes().to_vec())
+                } else {
+                    None
+                }
+            }
+            (0x81, REQ_GET_INTERFACE) => {
+                ((setup.index & 0xFF) == 0).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
@@ -379,12 +411,52 @@ impl UsbHidKeyboard {
     fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
         match (setup.request_type, setup.request) {
             (0x00, REQ_SET_ADDRESS) => {
+                if setup.value > 127 {
+                    return false;
+                }
                 self.pending_address = Some((setup.value & 0x7F) as u8);
                 true
             }
             (0x00, REQ_SET_CONFIGURATION) => {
-                self.pending_configuration = Some((setup.value & 0xFF) as u8);
+                let cfg = (setup.value & 0xFF) as u8;
+                if cfg > 1 {
+                    return false;
+                }
+                self.pending_configuration = Some(cfg);
                 true
+            }
+            (0x00, REQ_CLEAR_FEATURE) => {
+                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                    self.remote_wakeup_enabled = false;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x00, REQ_SET_FEATURE) => {
+                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                    self.remote_wakeup_enabled = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) == 0,
+            (0x02, REQ_CLEAR_FEATURE) => {
+                if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
+                    self.interrupt_in_halted = false;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x02, REQ_SET_FEATURE) => {
+                if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
+                    self.interrupt_in_halted = true;
+                    true
+                } else {
+                    false
+                }
             }
             (0x21, REQ_HID_SET_IDLE) => {
                 self.idle_rate = (setup.value >> 8) as u8;
@@ -423,6 +495,8 @@ impl UsbDevice for UsbHidKeyboard {
         self.pending_address = None;
         self.configuration = 0;
         self.pending_configuration = None;
+        self.remote_wakeup_enabled = false;
+        self.interrupt_in_halted = false;
         self.protocol = 1;
         self.idle_rate = 0;
         self.leds = 0;
@@ -501,6 +575,12 @@ impl UsbDevice for UsbHidKeyboard {
 
     fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
         if ep == 1 {
+            if self.configuration == 0 {
+                return UsbHandshake::Nak;
+            }
+            if self.interrupt_in_halted {
+                return UsbHandshake::Stall;
+            }
             let Some(report) = self.pending_reports.pop_front() else {
                 return UsbHandshake::Nak;
             };
@@ -547,6 +627,8 @@ pub struct UsbHidMouse {
     pending_address: Option<u8>,
     configuration: u8,
     pending_configuration: Option<u8>,
+    remote_wakeup_enabled: bool,
+    interrupt_in_halted: bool,
     protocol: u8,
     idle_rate: u8,
     ep0: Ep0Control,
@@ -565,6 +647,8 @@ impl UsbHidMouse {
             pending_address: None,
             configuration: 0,
             pending_configuration: None,
+            remote_wakeup_enabled: false,
+            interrupt_in_halted: false,
             protocol: 1,
             idle_rate: 0,
             ep0: Ep0Control::new(),
@@ -629,6 +713,9 @@ impl UsbHidMouse {
         }
         if let Some(cfg) = self.pending_configuration.take() {
             self.configuration = cfg;
+            if self.configuration == 0 {
+                self.pending_reports.clear();
+            }
         }
     }
 
@@ -761,7 +848,25 @@ impl UsbHidMouse {
                 self.get_descriptor(desc_type, index)
             }
             (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
-            (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x80, REQ_GET_STATUS) => {
+                let mut status = 0u16;
+                if self.remote_wakeup_enabled {
+                    status |= 1 << 1;
+                }
+                Some(status.to_le_bytes().to_vec())
+            }
+            (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x82, REQ_GET_STATUS) => {
+                if setup.index == 0x81 {
+                    let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
+                    Some(status.to_le_bytes().to_vec())
+                } else {
+                    None
+                }
+            }
+            (0x81, REQ_GET_INTERFACE) => {
+                ((setup.index & 0xFF) == 0).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
@@ -778,12 +883,52 @@ impl UsbHidMouse {
     fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
         match (setup.request_type, setup.request) {
             (0x00, REQ_SET_ADDRESS) => {
+                if setup.value > 127 {
+                    return false;
+                }
                 self.pending_address = Some((setup.value & 0x7F) as u8);
                 true
             }
             (0x00, REQ_SET_CONFIGURATION) => {
-                self.pending_configuration = Some((setup.value & 0xFF) as u8);
+                let cfg = (setup.value & 0xFF) as u8;
+                if cfg > 1 {
+                    return false;
+                }
+                self.pending_configuration = Some(cfg);
                 true
+            }
+            (0x00, REQ_CLEAR_FEATURE) => {
+                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                    self.remote_wakeup_enabled = false;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x00, REQ_SET_FEATURE) => {
+                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                    self.remote_wakeup_enabled = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) == 0,
+            (0x02, REQ_CLEAR_FEATURE) => {
+                if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
+                    self.interrupt_in_halted = false;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x02, REQ_SET_FEATURE) => {
+                if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
+                    self.interrupt_in_halted = true;
+                    true
+                } else {
+                    false
+                }
             }
             (0x21, REQ_HID_SET_IDLE) => {
                 self.idle_rate = (setup.value >> 8) as u8;
@@ -822,6 +967,8 @@ impl UsbDevice for UsbHidMouse {
         self.pending_address = None;
         self.configuration = 0;
         self.pending_configuration = None;
+        self.remote_wakeup_enabled = false;
+        self.interrupt_in_halted = false;
         self.protocol = 1;
         self.idle_rate = 0;
         self.ep0 = Ep0Control::new();
@@ -896,6 +1043,12 @@ impl UsbDevice for UsbHidMouse {
 
     fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
         if ep == 1 {
+            if self.configuration == 0 {
+                return UsbHandshake::Nak;
+            }
+            if self.interrupt_in_halted {
+                return UsbHandshake::Stall;
+            }
             let Some(report) = self.pending_reports.pop_front() else {
                 return UsbHandshake::Nak;
             };
@@ -982,6 +1135,8 @@ pub struct UsbHidGamepad {
     pending_address: Option<u8>,
     configuration: u8,
     pending_configuration: Option<u8>,
+    remote_wakeup_enabled: bool,
+    interrupt_in_halted: bool,
     protocol: u8,
     idle_rate: u8,
     ep0: Ep0Control,
@@ -997,6 +1152,8 @@ impl UsbHidGamepad {
             pending_address: None,
             configuration: 0,
             pending_configuration: None,
+            remote_wakeup_enabled: false,
+            interrupt_in_halted: false,
             protocol: 1,
             idle_rate: 0,
             ep0: Ep0Control::new(),
@@ -1075,6 +1232,9 @@ impl UsbHidGamepad {
         }
         if let Some(cfg) = self.pending_configuration.take() {
             self.configuration = cfg;
+            if self.configuration == 0 {
+                self.pending_reports.clear();
+            }
         }
     }
 
@@ -1218,7 +1378,25 @@ impl UsbHidGamepad {
                 self.get_descriptor(desc_type, index)
             }
             (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
-            (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x80, REQ_GET_STATUS) => {
+                let mut status = 0u16;
+                if self.remote_wakeup_enabled {
+                    status |= 1 << 1;
+                }
+                Some(status.to_le_bytes().to_vec())
+            }
+            (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x82, REQ_GET_STATUS) => {
+                if setup.index == 0x81 {
+                    let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
+                    Some(status.to_le_bytes().to_vec())
+                } else {
+                    None
+                }
+            }
+            (0x81, REQ_GET_INTERFACE) => {
+                ((setup.index & 0xFF) == 0).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
@@ -1235,12 +1413,52 @@ impl UsbHidGamepad {
     fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
         match (setup.request_type, setup.request) {
             (0x00, REQ_SET_ADDRESS) => {
+                if setup.value > 127 {
+                    return false;
+                }
                 self.pending_address = Some((setup.value & 0x7F) as u8);
                 true
             }
             (0x00, REQ_SET_CONFIGURATION) => {
-                self.pending_configuration = Some((setup.value & 0xFF) as u8);
+                let cfg = (setup.value & 0xFF) as u8;
+                if cfg > 1 {
+                    return false;
+                }
+                self.pending_configuration = Some(cfg);
                 true
+            }
+            (0x00, REQ_CLEAR_FEATURE) => {
+                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                    self.remote_wakeup_enabled = false;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x00, REQ_SET_FEATURE) => {
+                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                    self.remote_wakeup_enabled = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) == 0,
+            (0x02, REQ_CLEAR_FEATURE) => {
+                if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
+                    self.interrupt_in_halted = false;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x02, REQ_SET_FEATURE) => {
+                if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
+                    self.interrupt_in_halted = true;
+                    true
+                } else {
+                    false
+                }
             }
             (0x21, REQ_HID_SET_IDLE) => {
                 self.idle_rate = (setup.value >> 8) as u8;
@@ -1279,6 +1497,8 @@ impl UsbDevice for UsbHidGamepad {
         self.pending_address = None;
         self.configuration = 0;
         self.pending_configuration = None;
+        self.remote_wakeup_enabled = false;
+        self.interrupt_in_halted = false;
         self.protocol = 1;
         self.idle_rate = 0;
         self.ep0 = Ep0Control::new();
@@ -1349,6 +1569,12 @@ impl UsbDevice for UsbHidGamepad {
 
     fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
         if ep == 1 {
+            if self.configuration == 0 {
+                return UsbHandshake::Nak;
+            }
+            if self.interrupt_in_halted {
+                return UsbHandshake::Stall;
+            }
             let Some(report) = self.pending_reports.pop_front() else {
                 return UsbHandshake::Nak;
             };
@@ -1393,6 +1619,8 @@ pub struct UsbHidCompositeInput {
     pending_address: Option<u8>,
     configuration: u8,
     pending_configuration: Option<u8>,
+    remote_wakeup_enabled: bool,
+    interrupt_in_halted: [bool; 3],
     protocols: [u8; 3],
     idle_rates: [u8; 3],
     ep0: Ep0Control,
@@ -1415,6 +1643,8 @@ impl UsbHidCompositeInput {
             pending_address: None,
             configuration: 0,
             pending_configuration: None,
+            remote_wakeup_enabled: false,
+            interrupt_in_halted: [false; 3],
             protocols: [1; 3],
             idle_rates: [0; 3],
             ep0: Ep0Control::new(),
@@ -1546,6 +1776,11 @@ impl UsbHidCompositeInput {
         }
         if let Some(cfg) = self.pending_configuration.take() {
             self.configuration = cfg;
+            if self.configuration == 0 {
+                self.pending_keyboard_reports.clear();
+                self.pending_mouse_reports.clear();
+                self.pending_gamepad_reports.clear();
+            }
         }
     }
 
@@ -1725,7 +1960,27 @@ impl UsbHidCompositeInput {
                 self.get_descriptor(desc_type, index, interface)
             }
             (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
-            (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x80, REQ_GET_STATUS) => {
+                let mut status = 0u16;
+                if self.remote_wakeup_enabled {
+                    status |= 1 << 1;
+                }
+                Some(status.to_le_bytes().to_vec())
+            }
+            (0x81, REQ_GET_STATUS) => ((setup.index & 0xFF) <= 2).then_some(vec![0, 0]),
+            (0x82, REQ_GET_STATUS) => {
+                let halted = match (setup.index & 0xFF) as u8 {
+                    0x81 => self.interrupt_in_halted[0],
+                    0x82 => self.interrupt_in_halted[1],
+                    0x83 => self.interrupt_in_halted[2],
+                    _ => return None,
+                };
+                let status: u16 = if halted { 1 } else { 0 };
+                Some(status.to_le_bytes().to_vec())
+            }
+            (0x81, REQ_GET_INTERFACE) => {
+                ((setup.index & 0xFF) <= 2).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match (interface, report_type) {
@@ -1752,11 +2007,59 @@ impl UsbHidCompositeInput {
         let interface = (setup.index & 0xFF) as usize;
         match (setup.request_type, setup.request) {
             (0x00, REQ_SET_ADDRESS) => {
+                if setup.value > 127 {
+                    return false;
+                }
                 self.pending_address = Some((setup.value & 0x7F) as u8);
                 true
             }
             (0x00, REQ_SET_CONFIGURATION) => {
-                self.pending_configuration = Some((setup.value & 0xFF) as u8);
+                let cfg = (setup.value & 0xFF) as u8;
+                if cfg > 1 {
+                    return false;
+                }
+                self.pending_configuration = Some(cfg);
+                true
+            }
+            (0x00, REQ_CLEAR_FEATURE) => {
+                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                    self.remote_wakeup_enabled = false;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x00, REQ_SET_FEATURE) => {
+                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                    self.remote_wakeup_enabled = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) <= 2,
+            (0x02, REQ_CLEAR_FEATURE) => {
+                if setup.value != FEATURE_ENDPOINT_HALT {
+                    return false;
+                }
+                match (setup.index & 0xFF) as u8 {
+                    0x81 => self.interrupt_in_halted[0] = false,
+                    0x82 => self.interrupt_in_halted[1] = false,
+                    0x83 => self.interrupt_in_halted[2] = false,
+                    _ => return false,
+                }
+                true
+            }
+            (0x02, REQ_SET_FEATURE) => {
+                if setup.value != FEATURE_ENDPOINT_HALT {
+                    return false;
+                }
+                match (setup.index & 0xFF) as u8 {
+                    0x81 => self.interrupt_in_halted[0] = true,
+                    0x82 => self.interrupt_in_halted[1] = true,
+                    0x83 => self.interrupt_in_halted[2] = true,
+                    _ => return false,
+                }
                 true
             }
             (0x21, REQ_HID_SET_IDLE) => {
@@ -1804,6 +2107,8 @@ impl UsbDevice for UsbHidCompositeInput {
         self.pending_address = None;
         self.configuration = 0;
         self.pending_configuration = None;
+        self.remote_wakeup_enabled = false;
+        self.interrupt_in_halted = [false; 3];
         self.protocols = [1; 3];
         self.idle_rates = [0; 3];
         self.ep0 = Ep0Control::new();
@@ -1886,6 +2191,12 @@ impl UsbDevice for UsbHidCompositeInput {
     fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
         match ep {
             1 => {
+                if self.configuration == 0 {
+                    return UsbHandshake::Nak;
+                }
+                if self.interrupt_in_halted[0] {
+                    return UsbHandshake::Stall;
+                }
                 let Some(report) = self.pending_keyboard_reports.pop_front() else {
                     return UsbHandshake::Nak;
                 };
@@ -1894,6 +2205,12 @@ impl UsbDevice for UsbHidCompositeInput {
                 return UsbHandshake::Ack { bytes: len };
             }
             2 => {
+                if self.configuration == 0 {
+                    return UsbHandshake::Nak;
+                }
+                if self.interrupt_in_halted[1] {
+                    return UsbHandshake::Stall;
+                }
                 let Some(report) = self.pending_mouse_reports.pop_front() else {
                     return UsbHandshake::Nak;
                 };
@@ -1902,6 +2219,12 @@ impl UsbDevice for UsbHidCompositeInput {
                 return UsbHandshake::Ack { bytes: len };
             }
             3 => {
+                if self.configuration == 0 {
+                    return UsbHandshake::Nak;
+                }
+                if self.interrupt_in_halted[2] {
+                    return UsbHandshake::Stall;
+                }
                 let Some(report) = self.pending_gamepad_reports.pop_front() else {
                     return UsbHandshake::Nak;
                 };
@@ -2107,6 +2430,21 @@ mod tests {
     fn mouse_boot_protocol_report_is_three_bytes() {
         let mut mouse = UsbHidMouse::new();
         mouse.protocol = 0;
+
+        // Interrupt IN endpoints are only valid once the device is configured.
+        mouse.handle_setup(SetupPacket {
+            request_type: 0x00,
+            request: REQ_SET_CONFIGURATION,
+            value: 1,
+            index: 0,
+            length: 0,
+        });
+        let mut empty = [0u8; 0];
+        assert_eq!(
+            mouse.handle_in(0, &mut empty),
+            UsbHandshake::Ack { bytes: 0 }
+        );
+
         mouse.movement(1, -2);
 
         let mut buf = [0u8; 8];
@@ -2115,5 +2453,90 @@ mod tests {
             UsbHandshake::Ack { bytes: 3 }
         );
         assert_eq!(&buf[..3], &[0x00, 0x01, 0xfe]);
+    }
+
+    #[test]
+    fn keyboard_standard_status_and_endpoint_halt_bits() {
+        let mut kb = UsbHidKeyboard::new();
+
+        // Default: remote wakeup disabled.
+        kb.handle_setup(SetupPacket {
+            request_type: 0x80,
+            request: REQ_GET_STATUS,
+            value: 0,
+            index: 0,
+            length: 2,
+        });
+        let mut status = [0u8; 2];
+        assert_eq!(kb.handle_in(0, &mut status), UsbHandshake::Ack { bytes: 2 });
+        assert_eq!(status, [0, 0]);
+        assert_eq!(kb.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
+
+        // Enable remote wakeup.
+        kb.handle_setup(SetupPacket {
+            request_type: 0x00,
+            request: REQ_SET_FEATURE,
+            value: FEATURE_DEVICE_REMOTE_WAKEUP,
+            index: 0,
+            length: 0,
+        });
+        let mut empty = [0u8; 0];
+        assert_eq!(kb.handle_in(0, &mut empty), UsbHandshake::Ack { bytes: 0 });
+
+        kb.handle_setup(SetupPacket {
+            request_type: 0x80,
+            request: REQ_GET_STATUS,
+            value: 0,
+            index: 0,
+            length: 2,
+        });
+        assert_eq!(kb.handle_in(0, &mut status), UsbHandshake::Ack { bytes: 2 });
+        assert_eq!(status, [0x02, 0x00]);
+        assert_eq!(kb.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
+
+        // Configure device so interrupt endpoints are enabled.
+        kb.handle_setup(SetupPacket {
+            request_type: 0x00,
+            request: REQ_SET_CONFIGURATION,
+            value: 1,
+            index: 0,
+            length: 0,
+        });
+        assert_eq!(kb.handle_in(0, &mut empty), UsbHandshake::Ack { bytes: 0 });
+
+        // Halt interrupt endpoint 0x81.
+        kb.handle_setup(SetupPacket {
+            request_type: 0x02,
+            request: REQ_SET_FEATURE,
+            value: FEATURE_ENDPOINT_HALT,
+            index: 0x81,
+            length: 0,
+        });
+        assert_eq!(kb.handle_in(0, &mut empty), UsbHandshake::Ack { bytes: 0 });
+
+        kb.handle_setup(SetupPacket {
+            request_type: 0x82,
+            request: REQ_GET_STATUS,
+            value: 0,
+            index: 0x81,
+            length: 2,
+        });
+        assert_eq!(kb.handle_in(0, &mut status), UsbHandshake::Ack { bytes: 2 });
+        assert_eq!(status, [0x01, 0x00]);
+        assert_eq!(kb.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
+
+        let mut buf = [0u8; 8];
+        assert_eq!(kb.handle_in(1, &mut buf), UsbHandshake::Stall);
+
+        // Clear halt and verify the endpoint goes back to NAK (no report queued).
+        kb.handle_setup(SetupPacket {
+            request_type: 0x02,
+            request: REQ_CLEAR_FEATURE,
+            value: FEATURE_ENDPOINT_HALT,
+            index: 0x81,
+            length: 0,
+        });
+        assert_eq!(kb.handle_in(0, &mut empty), UsbHandshake::Ack { bytes: 0 });
+        assert_eq!(kb.handle_in(1, &mut buf), UsbHandshake::Nak);
     }
 }
