@@ -33,7 +33,10 @@ impl UsbDevice for DummyUsbDevice {
 fn control_no_data(dev: &mut dyn UsbDevice, setup: SetupPacket) {
     dev.handle_setup(setup);
     let mut buf = [0u8; 0];
-    assert!(matches!(dev.handle_in(0, &mut buf), UsbHandshake::Ack { .. }));
+    assert!(matches!(
+        dev.handle_in(0, &mut buf),
+        UsbHandshake::Ack { .. }
+    ));
 }
 
 fn control_in(dev: &mut dyn UsbDevice, setup: SetupPacket, max_packet: usize) -> Vec<u8> {
@@ -55,10 +58,7 @@ fn control_in(dev: &mut dyn UsbDevice, setup: SetupPacket, max_packet: usize) ->
     }
 
     // Status stage (OUT ZLP).
-    assert!(matches!(
-        dev.handle_out(0, &[]),
-        UsbHandshake::Ack { .. }
-    ));
+    assert!(matches!(dev.handle_out(0, &[]), UsbHandshake::Ack { .. }));
     out
 }
 
@@ -122,4 +122,3 @@ fn usb_hub_interrupt_bitmap_and_descriptor_scale_with_port_count() {
     assert_eq!(cfg_desc[22], 2);
     assert_eq!(cfg_desc[23], 0);
 }
-

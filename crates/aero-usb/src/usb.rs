@@ -228,9 +228,9 @@ impl UsbBus {
             if hub_idx >= num_ports {
                 panic!("invalid hub port {hub_port} at depth {depth} (hub has {num_ports} ports)");
             }
-            current = hub
-                .downstream_device_mut(hub_idx)
-                .unwrap_or_else(|| panic!("no device attached at hub port {hub_port} (depth {depth})"));
+            current = hub.downstream_device_mut(hub_idx).unwrap_or_else(|| {
+                panic!("no device attached at hub port {hub_port} (depth {depth})")
+            });
         }
 
         let hub = current
@@ -286,9 +286,9 @@ impl UsbBus {
             if hub_idx >= num_ports {
                 panic!("invalid hub port {hub_port} at depth {depth} (hub has {num_ports} ports)");
             }
-            current = hub
-                .downstream_device_mut(hub_idx)
-                .unwrap_or_else(|| panic!("no device attached at hub port {hub_port} (depth {depth})"));
+            current = hub.downstream_device_mut(hub_idx).unwrap_or_else(|| {
+                panic!("no device attached at hub port {hub_port} (depth {depth})")
+            });
         }
 
         let hub = current

@@ -299,10 +299,12 @@ impl UsbDeviceModel for UsbPassthroughDevice {
         }
 
         let id = self.alloc_id();
-        self.actions
-            .push_back(UsbHostAction::BulkIn { id, ep, len: max_len });
-        self.ep_inflight
-            .insert(ep, EpInflight { id, len: max_len });
+        self.actions.push_back(UsbHostAction::BulkIn {
+            id,
+            ep,
+            len: max_len,
+        });
+        self.ep_inflight.insert(ep, EpInflight { id, len: max_len });
         UsbInResult::Nak
     }
 

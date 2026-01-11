@@ -43,4 +43,3 @@ pub trait UsbHub {
     /// Number of downstream ports on this hub.
     fn num_ports(&self) -> usize;
 }
-

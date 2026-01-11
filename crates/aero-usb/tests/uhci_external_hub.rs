@@ -51,7 +51,9 @@ struct TestMemory {
 
 impl TestMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn read_u32(&self, addr: u32) -> u32 {
@@ -338,7 +340,13 @@ fn interrupt_out(
     ctrl.step_frame(mem, irq);
 }
 
-fn enumerate_hub(ctrl: &mut UhciController, mem: &mut TestMemory, irq: &mut TestIrq, alloc: &mut Alloc, fl_base: u32) {
+fn enumerate_hub(
+    ctrl: &mut UhciController,
+    mem: &mut TestMemory,
+    irq: &mut TestIrq,
+    alloc: &mut Alloc,
+    fl_base: u32,
+) {
     // GET_DESCRIPTOR(Device)
     let dev_desc = control_in(
         ctrl,
@@ -710,7 +718,11 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
     }
     let bitmap = interrupt_in(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 1, 1, 1);
     assert_eq!(bitmap.len(), 1);
-    assert_ne!(bitmap[0] & 0x02, 0, "expected port1 change bit in hub bitmap");
+    assert_ne!(
+        bitmap[0] & 0x02,
+        0,
+        "expected port1 change bit in hub bitmap"
+    );
 
     // Clear change bits for port1 and then enumerate device 1 at address 5.
     for feature in [20u16, 16u16, 17u16] {
@@ -732,40 +744,19 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
     }
 
     enumerate_passthrough_device(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        5,
-        0x1234,
-        0x0001,
+        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 5, 0x1234, 0x0001,
     );
 
     // Power + reset port2 and enumerate device2 at address 6.
     power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 1, 2);
     enumerate_passthrough_device(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        6,
-        0x1234,
-        0x0002,
+        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 6, 0x1234, 0x0002,
     );
 
     // Power + reset port3 and enumerate device3 at address 7.
     power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 1, 3);
     enumerate_passthrough_device(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        7,
-        0x1234,
-        0x0003,
+        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 7, 0x1234, 0x0003,
     );
 
     // Functional proof: each device has independent interrupt IN and OUT endpoints.
@@ -795,9 +786,15 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
     let out2 = [0x10, 0x20];
     let out3 = [0xde, 0xad, 0xbe, 0xef];
 
-    interrupt_out(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 5, 1, &out1);
-    interrupt_out(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 6, 1, &out2);
-    interrupt_out(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 7, 1, &out3);
+    interrupt_out(
+        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 5, 1, &out1,
+    );
+    interrupt_out(
+        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 6, 1, &out2,
+    );
+    interrupt_out(
+        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 7, 1, &out3,
+    );
 
     let dev1 = ctrl
         .bus_mut()
@@ -849,4 +846,3 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
 
     assert!(irq.raised);
 }
-
