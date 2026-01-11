@@ -25,6 +25,54 @@ static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (reason != S_OK) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: device removed reason: %s", test_name, aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
+  CloseHandle(h);
+}
+
 static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_swapchain_rotate_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -354,6 +402,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
     } else {
       reporter.AddArtifactPathW(bmp_path);
     }
+
+    std::vector<uint8_t> tight((size_t)bb_desc.Width * (size_t)bb_desc.Height * 4u, 0);
+    for (UINT y = 0; y < bb_desc.Height; ++y) {
+      const uint8_t* src_row = (const uint8_t*)map.pData + (size_t)y * (size_t)map.RowPitch;
+      memcpy(&tight[(size_t)y * (size_t)bb_desc.Width * 4u], src_row, (size_t)bb_desc.Width * 4u);
+    }
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_swapchain_rotate_sanity_buffer0.bin",
+                    &tight[0],
+                    (UINT)tight.size());
   }
   context->Unmap(staging0.get(), 0);
 
@@ -388,6 +447,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
     } else {
       reporter.AddArtifactPathW(bmp_path);
     }
+
+    std::vector<uint8_t> tight((size_t)bb_desc.Width * (size_t)bb_desc.Height * 4u, 0);
+    for (UINT y = 0; y < bb_desc.Height; ++y) {
+      const uint8_t* src_row = (const uint8_t*)map.pData + (size_t)y * (size_t)map.RowPitch;
+      memcpy(&tight[(size_t)y * (size_t)bb_desc.Width * 4u], src_row, (size_t)bb_desc.Width * 4u);
+    }
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_swapchain_rotate_sanity_buffer1.bin",
+                    &tight[0],
+                    (UINT)tight.size());
   }
   context->Unmap(staging1.get(), 0);
 
@@ -396,6 +466,7 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
 
   if ((after0 & 0x00FFFFFFu) != (expected0 & 0x00FFFFFFu) ||
       (after1 & 0x00FFFFFFu) != (expected1 & 0x00FFFFFFu)) {
+    PrintDeviceRemovedReasonIfAny(kTestName, device.get());
     return reporter.Fail(
         "swapchain buffer identity mismatch after Present: before(buffer0=0x%08lX buffer1=0x%08lX) after(buffer0=0x%08lX buffer1=0x%08lX) (expected after buffer0~0x%08lX buffer1~0x%08lX)",
         (unsigned long)before0,
