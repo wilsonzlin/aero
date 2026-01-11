@@ -9,19 +9,55 @@ const { ipcBuffer } = workerData as { ipcBuffer: SharedArrayBuffer };
 const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
 const evtQ = openRingByKind(ipcBuffer, queueKind.EVT);
 
-const io = new AeroIpcIoClient(cmdQ, evtQ);
+const irqEvents: Array<{ irq: number; level: boolean }> = [];
+const a20Events: boolean[] = [];
+let resetRequests = 0;
+const serialBytes: number[] = [];
+
+const io = new AeroIpcIoClient(cmdQ, evtQ, {
+  onIrq: (irq, level) => irqEvents.push({ irq, level }),
+  onA20: (enabled) => a20Events.push(enabled),
+  onReset: () => {
+    resetRequests += 1;
+  },
+  onSerialOutput: (_port, data) => {
+    for (const b of data) serialBytes.push(b);
+  },
+});
 
 try {
   const status64 = io.portRead(0x64, 1);
   io.portWrite(0x64, 1, 0x20);
   const cmdByte = io.portRead(0x60, 1);
 
+  // Enable IRQ1 for keyboard output, then send a keyboard reset command (0xFF).
+  io.portWrite(0x64, 1, 0x60);
+  io.portWrite(0x60, 1, 0x01);
+  io.portWrite(0x60, 1, 0xff);
+  const kbd0 = io.portRead(0x60, 1);
+  const kbd1 = io.portRead(0x60, 1);
+
+  // Toggle A20 via i8042 output port (0xD1).
+  io.portWrite(0x64, 1, 0xd1);
+  io.portWrite(0x60, 1, 0x03);
+
+  // Reset request via i8042 command (0xFE).
+  io.portWrite(0x64, 1, 0xfe);
+
+  // Emit a couple bytes via COM1 THR.
+  io.portWrite(0x3f8, 1, 0x48);
+  io.portWrite(0x3f8, 1, 0x69);
+
   parentPort!.postMessage({
     ok: true,
     status64,
     cmdByte,
+    kbd: [kbd0, kbd1],
+    irqEvents,
+    a20Events,
+    resetRequests,
+    serialBytes,
   });
 } catch (err) {
   parentPort!.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });
 }
-

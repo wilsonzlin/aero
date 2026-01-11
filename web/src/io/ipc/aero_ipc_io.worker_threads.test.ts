@@ -35,8 +35,18 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
     });
 
     try {
-      const [result] = (await withTimeout(once(cpuWorker, "message") as Promise<[any]>, 2000, "cpu worker result")) as [
-        { ok: boolean; status64?: number; cmdByte?: number; error?: string },
+      const [result] = (await withTimeout(once(cpuWorker, "message") as Promise<[any]>, 4000, "cpu worker result")) as [
+        {
+          ok: boolean;
+          status64?: number;
+          cmdByte?: number;
+          kbd?: number[];
+          irqEvents?: Array<{ irq: number; level: boolean }>;
+          a20Events?: boolean[];
+          resetRequests?: number;
+          serialBytes?: number[];
+          error?: string;
+        },
       ];
 
       expect(result.ok).toBe(true);
@@ -45,10 +55,23 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       expect((result.status64 ?? 0) & 0x04).toBe(0x04);
       // Default command byte is 0x00.
       expect(result.cmdByte).toBe(0x00);
+
+      // Keyboard reset command (0xFF) should return ACK (0xFA) + self-test pass (0xAA).
+      expect(result.kbd).toEqual([0xfa, 0xaa]);
+      // IRQ1 should pulse high while keyboard bytes are pending.
+      expect(result.irqEvents).toEqual([
+        { irq: 1, level: true },
+        { irq: 1, level: false },
+      ]);
+      // A20 gate should be enabled when writing output port 0x03.
+      expect(result.a20Events).toEqual([true]);
+      // Reset request should be surfaced exactly once.
+      expect(result.resetRequests).toBe(1);
+      // UART serial output should contain "Hi".
+      expect(result.serialBytes).toEqual([0x48, 0x69]);
     } finally {
       await cpuWorker.terminate();
       await ioWorker.terminate();
     }
   });
 });
-

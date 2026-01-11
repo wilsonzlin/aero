@@ -6,6 +6,7 @@ import { encodeEvent } from "../../../ipc/protocol.ts";
 import { DeviceManager } from "../../device_manager.ts";
 import type { IrqSink } from "../../device_manager.ts";
 import { I8042Controller } from "../../devices/i8042.ts";
+import { UART_COM1, Uart16550, type SerialOutputSink } from "../../devices/uart16550.ts";
 import { AeroIpcIoServer } from "../aero_ipc_io.ts";
 
 const { ipcBuffer, tickIntervalMs } = workerData as {
@@ -30,10 +31,18 @@ const systemControl = {
   },
 };
 
+const serialSink: SerialOutputSink = {
+  write: (port, data) => {
+    evtQ.pushBlocking(encodeEvent({ kind: "serialOutput", port: port & 0xffff, data }));
+  },
+};
+
 const mgr = new DeviceManager(irqSink);
 const i8042 = new I8042Controller(mgr.irqSink, { systemControl });
 mgr.registerPortIo(0x0060, 0x0060, i8042);
 mgr.registerPortIo(0x0064, 0x0064, i8042);
 
-new AeroIpcIoServer(cmdQ, evtQ, mgr, { tickIntervalMs }).run();
+const uart = new Uart16550(UART_COM1, serialSink);
+mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
 
+new AeroIpcIoServer(cmdQ, evtQ, mgr, { tickIntervalMs }).run();
