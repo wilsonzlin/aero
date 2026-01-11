@@ -28,6 +28,7 @@
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_d3d9_submit.h"
+#include "aerogpu_win7_abi.h"
 #include "aerogpu_log.h"
 #include "aerogpu_alloc.h"
 #include "aerogpu_trace.h"
@@ -6297,10 +6298,11 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
       dev->wddm_context.CommandBufferSize < min_cmd_buffer_size ||
       !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
       !dev->wddm_context.pPatchLocationList || dev->wddm_context.PatchLocationListSize == 0 ||
-      !dev->wddm_context.pDmaBufferPrivateData || dev->wddm_context.DmaBufferPrivateDataSize == 0 ||
+      !dev->wddm_context.pDmaBufferPrivateData ||
+      dev->wddm_context.DmaBufferPrivateDataSize < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES ||
       dev->wddm_context.hSyncObject == 0) {
     aerogpu::logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
-                  "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u dma_priv=%p bytes=%u sync=0x%08x\n",
+                  "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u dma_priv=%p bytes=%u (need>=%u) sync=0x%08x\n",
                   dev->wddm_context.pCommandBuffer,
                   static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
                   dev->wddm_context.pAllocationList,
@@ -6309,6 +6311,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                   static_cast<unsigned>(dev->wddm_context.PatchLocationListSize),
                   dev->wddm_context.pDmaBufferPrivateData,
                   static_cast<unsigned>(dev->wddm_context.DmaBufferPrivateDataSize),
+                  static_cast<unsigned>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES),
                   static_cast<unsigned>(dev->wddm_context.hSyncObject));
 
     dev->wddm_context.destroy(dev->wddm_callbacks);
