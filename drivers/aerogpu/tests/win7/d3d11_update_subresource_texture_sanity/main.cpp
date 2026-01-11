@@ -308,9 +308,10 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
         context->Unmap(staging.get(), 0);
         return aerogpu_test::Fail(
             kTestName,
-            "pixel mismatch at (%d,%d): got BGRA=0x%08lX expected BGRA=0x%08lX",
+            "pixel mismatch at (%d,%d) [%s]: got BGRA=0x%08lX expected BGRA=0x%08lX",
             x,
             y,
+            in_patch ? "box update region" : "base region",
             (unsigned long)got,
             (unsigned long)exp);
       }
