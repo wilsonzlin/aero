@@ -4,7 +4,7 @@ import {
   computeShaderCacheKey,
   computeWebGpuCapsHash,
   compileWgslModule,
-} from "./gpu/persistent_cache.ts";
+} from "./gpu-cache/persistent_cache.ts";
 
 function logLine(line) {
   console.log(line);

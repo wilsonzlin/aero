@@ -43,7 +43,7 @@ pub struct PersistedShaderArtifact {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ShaderCacheKey(pub String);
 
-#[wasm_bindgen(module = "/web/gpu/persistent_cache.ts")]
+#[wasm_bindgen(module = "/web/gpu-cache/persistent_cache.ts")]
 extern "C" {
     #[wasm_bindgen(js_name = computeShaderCacheKey)]
     async fn js_compute_shader_cache_key(dxbc: js_sys::Uint8Array, flags: JsValue) -> JsValue;
@@ -144,4 +144,3 @@ impl ShaderCache {
         Ok(())
     }
 }
-

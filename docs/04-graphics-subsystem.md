@@ -1134,7 +1134,7 @@ Track at minimum:
 
 Telemetry should be queryable from the UI/devtools overlay to confirm the persistent cache is working and to diagnose regressions.
 
-See `web/gpu/persistent_cache.ts` for a concrete implementation of the persistent cache layer.
+See `web/gpu-cache/persistent_cache.ts` for a concrete implementation of the persistent cache layer.
 
 
 ### Graphics telemetry hooks (PF-007)

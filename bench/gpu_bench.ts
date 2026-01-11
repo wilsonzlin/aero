@@ -220,8 +220,8 @@ export async function runGpuBenchmarksInPage(page, opts = {}) {
   ];
 
   const scriptPaths = [
-    path.join(repoRoot, "web/gpu/persistent_cache.ts"),
-    path.join(repoRoot, "web/gpu/telemetry.ts"),
+    path.join(repoRoot, "web/gpu-cache/persistent_cache.ts"),
+    path.join(repoRoot, "web/src/gpu/telemetry.ts"),
     path.join(repoRoot, "bench/scenarios/vga_text_scroll.ts"),
     path.join(repoRoot, "bench/scenarios/vbe_lfb_blit.ts"),
     path.join(repoRoot, "bench/scenarios/webgpu_triangle_batch.ts"),

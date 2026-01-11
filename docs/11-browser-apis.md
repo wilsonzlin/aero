@@ -759,7 +759,7 @@ IndexedDB is used for **small key/value** data that benefits from persistence ac
 
 ### Database Design (GPU Cache)
 
-Concrete layout used by `web/gpu/persistent_cache.ts`:
+Concrete layout used by `web/gpu-cache/persistent_cache.ts`:
 
 - Database name: `aero-gpu-cache`
 - Object store: `shaders` (keyPath: `key`, indexed by `lastUsed`)
@@ -803,7 +803,7 @@ The application should expose an explicit `clear_cache()` API (for UI + debuggin
 - clears the `aero-gpu-cache` IndexedDB database
 - deletes any OPFS files used by the cache (if OPFS indirection is enabled)
 
-In `web/gpu/persistent_cache.ts`, this is exposed as:
+In `web/gpu-cache/persistent_cache.ts`, this is exposed as:
 
 - `await PersistentGpuCache.clearAll()` (drop everything)
 - `await cache.clearCache()` (clear stores for an existing open handle)

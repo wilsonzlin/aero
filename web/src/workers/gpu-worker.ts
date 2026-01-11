@@ -49,7 +49,7 @@ import {
   HEADER_INDEX_WIDTH,
 } from "../display/framebuffer_protocol";
 
-import { GpuTelemetry } from '../../gpu/telemetry.ts';
+import { GpuTelemetry } from '../gpu/telemetry.ts';
 import type { AeroConfig } from '../config/aero_config';
 import { createSharedMemoryViews, ringRegionsForWorker, setReadyFlag, StatusIndex, type WorkerRole } from '../runtime/shared_layout';
 import { RingBuffer } from '../ipc/ring_buffer';

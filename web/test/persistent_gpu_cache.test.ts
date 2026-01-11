@@ -7,7 +7,7 @@ import {
   computePipelineCacheKey,
   computeShaderCacheKey,
   formatCacheKey,
-} from "../gpu/persistent_cache.ts";
+} from "../gpu-cache/persistent_cache.ts";
 
 test("formatCacheKey changes with schema version / backend kind / device fingerprint", () => {
   const base = {
@@ -62,4 +62,3 @@ test("computePipelineCacheKey is stable", async () => {
   const k2 = await computePipelineCacheKey(desc);
   assert.equal(k1, k2);
 });
-

@@ -109,6 +109,8 @@ export class WebGpuPresenter {
   device;
   /** @type {GPUQueue} */
   queue;
+  /** @type {HTMLCanvasElement | OffscreenCanvas} */
+  canvas;
   /** @type {GPUCanvasContext} */
   context;
   /** @type {GPUTextureFormat} */
@@ -138,6 +140,8 @@ export class WebGpuPresenter {
 
   /** @type {WebGpuPresenterOptions} */
   opts;
+  /** @type {"opaque" | "premultiplied"} */
+  _alphaMode;
 
   /**
    * @param {GPUDevice} device
@@ -149,19 +153,23 @@ export class WebGpuPresenter {
    */
   constructor(
     device: GPUDevice,
+    canvas: HTMLCanvasElement | OffscreenCanvas,
     context: GPUCanvasContext,
     canvasFormat: GPUTextureFormat,
     viewFormat: GPUTextureFormat,
     srgbEncodeInShader: boolean,
     opts: any,
+    alphaMode: "opaque" | "premultiplied",
   ) {
     this.device = device;
     this.queue = device.queue;
+    this.canvas = canvas;
     this.context = context;
     this.canvasFormat = canvasFormat;
     this.viewFormat = viewFormat;
     this.srgbEncodeInShader = srgbEncodeInShader;
     this.opts = opts;
+    this._alphaMode = alphaMode;
 
     const module = device.createShaderModule({ code: BLIT_WGSL });
     this.pipeline = device.createRenderPipeline({
@@ -204,17 +212,19 @@ export class WebGpuPresenter {
   /**
    * Create and configure a WebGPU presenter.
    *
-   * @param {HTMLCanvasElement} canvas
+   * @param {HTMLCanvasElement | OffscreenCanvas} canvas
    * @param {WebGpuPresenterOptions=} opts
    */
-  static async create(canvas: HTMLCanvasElement, opts: any = {}) {
+  static async create(canvas: HTMLCanvasElement | OffscreenCanvas, opts: any = {}) {
     if (!navigator.gpu) throw new Error("WebGPU not supported");
 
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
     if (!adapter) throw new Error("No WebGPU adapter");
 
-    const device = await adapter.requestDevice();
-    const context = canvas.getContext("webgpu");
+    const requiredFeatures = (opts.requiredFeatures ?? []) as GPUFeatureName[];
+    const device =
+      requiredFeatures.length > 0 ? await adapter.requestDevice({ requiredFeatures }) : await adapter.requestDevice();
+    const context = (canvas as any).getContext("webgpu");
     if (!context) throw new Error("Canvas WebGPU context not available");
 
     const resolvedOpts = {
@@ -269,7 +279,25 @@ export class WebGpuPresenter {
       srgbEncodeInShader = resolvedOpts.outputColorSpace === "srgb";
     }
 
-    return new WebGpuPresenter(device, context, canvasFormat, viewFormat, srgbEncodeInShader, resolvedOpts);
+    return new WebGpuPresenter(device, canvas, context, canvasFormat, viewFormat, srgbEncodeInShader, resolvedOpts, alphaMode);
+  }
+
+  /**
+   * Reconfigure the canvas context after the backing canvas size changes.
+   *
+   * WebGPU canvases generally require calling `configure()` again on resize.
+   */
+  reconfigureCanvas() {
+    const config: any = {
+      device: this.device,
+      format: this.canvasFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      alphaMode: this._alphaMode,
+    };
+    if (this.viewFormat !== this.canvasFormat) {
+      config.viewFormats = [this.viewFormat];
+    }
+    (this.context as any).configure(config);
   }
 
   /**
@@ -358,9 +386,9 @@ export class WebGpuPresenter {
   async presentAndReadbackRgba8(): Promise<Uint8Array> {
     if (!this.srcTex) throw new Error("presentAndReadbackRgba8() called before setSourceRgba8()");
 
-    const canvas = (this.context as any).canvas as HTMLCanvasElement;
-    const width = canvas.width;
-    const height = canvas.height;
+    const canvas = this.canvas as any;
+    const width = (canvas.width ?? 0) as number;
+    const height = (canvas.height ?? 0) as number;
 
     // WebGPU requires bytesPerRow to be a multiple of 256.
     const unpaddedBytesPerRow = width * 4;
