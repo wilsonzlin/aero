@@ -332,11 +332,11 @@ HeaderT* append_with_payload_locked(Device* dev, uint32_t opcode, const void* pa
 }
 
 bool upload_resource_bytes_locked(Device* dev,
-                                 aerogpu_handle_t resource_handle,
+                                 Resource* res,
                                  uint64_t offset_bytes,
                                  const uint8_t* data,
                                  size_t size_bytes) {
-  if (!dev || !resource_handle || !data) {
+  if (!dev || !res || !res->handle || !data) {
     return false;
   }
 
@@ -347,6 +347,20 @@ bool upload_resource_bytes_locked(Device* dev,
   while (remaining) {
     // Ensure we can at least fit a minimal upload packet (header + 1 byte).
     const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return false;
+    }
+
+    // Uploads write into the destination resource. Track the backing allocation
+    // so the KMD alloc table contains the required (alloc_id -> GPA) mapping even
+    // when the patch-location list is empty.
+    HRESULT hr = track_resource_allocation_locked(dev, res, /*write=*/true);
+    if (FAILED(hr)) {
+      return false;
+    }
+
+    // Allocation tracking may have split/flushed the submission; re-validate the
+    // command buffer capacity before computing the chunk size.
     if (!ensure_cmd_space(dev, min_needed)) {
       return false;
     }
@@ -372,7 +386,7 @@ bool upload_resource_bytes_locked(Device* dev,
       return false;
     }
 
-    cmd->resource_handle = resource_handle;
+    cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;
     cmd->offset_bytes = cur_offset;
     cmd->size_bytes = chunk;
@@ -855,7 +869,7 @@ HRESULT blit_locked(Device* dev,
   // Upload vertices (bring-up path uses UPLOAD_RESOURCE so the host doesn't need
   // to dereference guest allocations).
   if (!upload_resource_bytes_locked(dev,
-                                    dev->builtin_copy_vb->handle,
+                                    dev->builtin_copy_vb,
                                     /*offset_bytes=*/0,
                                     reinterpret_cast<const uint8_t*>(verts),
                                     sizeof(verts))) {
@@ -1192,7 +1206,7 @@ HRESULT update_surface_locked(Device* dev,
     }
 
     if (!upload_resource_bytes_locked(dev,
-                                      dst->handle,
+                                      dst,
                                       /*offset_bytes=*/dst_off,
                                       dst->storage.data() + dst_off,
                                       row_bytes)) {
@@ -1236,7 +1250,7 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
   }
 
   if (!upload_resource_bytes_locked(dev,
-                                    dst->handle,
+                                    dst,
                                     /*offset_bytes=*/0,
                                     dst->storage.data(),
                                     dst->storage.size())) {

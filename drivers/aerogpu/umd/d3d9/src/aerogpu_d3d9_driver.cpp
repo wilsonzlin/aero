@@ -3486,6 +3486,21 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
         return trace.ret(E_OUTOFMEMORY);
       }
 
+      // Uploads write into the resource. Track its backing allocation so the
+      // KMD/emulator can resolve the destination memory via the per-submit alloc
+      // table even though we keep the patch-location list empty.
+      HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/true);
+      if (FAILED(track_hr)) {
+        return trace.ret(track_hr);
+      }
+
+      // Allocation tracking may have split/flushed the submission; ensure we
+      // still have room for at least a minimal upload packet before sizing the
+      // next chunk.
+      if (!ensure_cmd_space(dev, min_needed)) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+
       const size_t avail = dev->cmd.bytes_remaining();
       size_t chunk = 0;
       if (avail > sizeof(aerogpu_cmd_upload_resource)) {
