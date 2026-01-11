@@ -1,11 +1,11 @@
 use std::collections::{HashMap, VecDeque};
 
 use aero_cpu::CpuBus;
-use aero_types::{Cond, FlagSet, Gpr, Width};
+use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
 
 use crate::tier1_ir::{BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId};
 use crate::t2_ir::{
-    BinOp, Block, BlockId, Flag, FlagMask, Function, Instr, Operand, Terminator, ValueId,
+    BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, ValueId,
 };
 use crate::{discover_block, translate_block, BlockLimits};
 
@@ -396,34 +396,14 @@ impl LowerCtx {
     }
 }
 
-fn map_gpr(reg: Gpr) -> crate::Reg {
-    match reg {
-        Gpr::Rax => crate::Reg::Rax,
-        Gpr::Rcx => crate::Reg::Rcx,
-        Gpr::Rdx => crate::Reg::Rdx,
-        Gpr::Rbx => crate::Reg::Rbx,
-        Gpr::Rsp => crate::Reg::Rsp,
-        Gpr::Rbp => crate::Reg::Rbp,
-        Gpr::Rsi => crate::Reg::Rsi,
-        Gpr::Rdi => crate::Reg::Rdi,
-        Gpr::R8 => crate::Reg::R8,
-        Gpr::R9 => crate::Reg::R9,
-        Gpr::R10 => crate::Reg::R10,
-        Gpr::R11 => crate::Reg::R11,
-        Gpr::R12 => crate::Reg::R12,
-        Gpr::R13 => crate::Reg::R13,
-        Gpr::R14 => crate::Reg::R14,
-        Gpr::R15 => crate::Reg::R15,
-    }
+fn map_gpr(reg: Gpr) -> Gpr {
+    reg
 }
 
-fn map_flag(flag: aero_types::Flag) -> Option<Flag> {
+fn map_flag(flag: Flag) -> Option<Flag> {
     match flag {
-        aero_types::Flag::Cf => Some(Flag::Cf),
-        aero_types::Flag::Zf => Some(Flag::Zf),
-        aero_types::Flag::Sf => Some(Flag::Sf),
-        aero_types::Flag::Of => Some(Flag::Of),
-        aero_types::Flag::Pf | aero_types::Flag::Af => None,
+        Flag::Cf | Flag::Zf | Flag::Sf | Flag::Of => Some(flag),
+        Flag::Pf | Flag::Af => None,
     }
 }
 
