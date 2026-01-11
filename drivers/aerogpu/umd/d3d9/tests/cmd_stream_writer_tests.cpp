@@ -515,18 +515,42 @@ bool TestEventQueryGetDataSemantics() {
   cleanup.hQuery = create_query.hQuery;
   cleanup.has_query = true;
 
+  auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
+  auto* query = reinterpret_cast<Query*>(create_query.hQuery.pDrvPrivate);
+
+  // Some D3D9Ex callers have been observed to pass 0 for END, so cover both the
+  // explicit D3DISSUE_END bit and the 0-valued encoding.
   AEROGPU_D3D9DDIARG_ISSUEQUERY issue{};
   issue.hQuery = create_query.hQuery;
-  issue.flags = 0x1u; // D3DISSUE_END
+  issue.flags = 0; // END (0 encoding)
   hr = cleanup.device_funcs.pfnIssueQuery(create_dev.hDevice, &issue);
-  if (!Check(hr == S_OK, "IssueQuery(END)")) {
+  if (!Check(hr == S_OK, "IssueQuery(END=0)")) {
     return false;
   }
 
-  auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
-  auto* query = reinterpret_cast<Query*>(create_query.hQuery.pDrvPrivate);
+  const uint64_t fence_value0 = query->fence_value.load(std::memory_order_acquire);
+  if (!Check(fence_value0 != 0, "event query fence_value (END=0)")) {
+    return false;
+  }
+
+  // Issue again with the explicit END bit so we lock in both paths.
+  hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
+                                     /*flags=*/0x1u,
+                                     /*color_rgba8=*/0xFFFFFFFFu,
+                                     /*depth=*/1.0f,
+                                     /*stencil=*/0);
+  if (!Check(hr == S_OK, "Clear (before IssueQuery(D3DISSUE_END))")) {
+    return false;
+  }
+
+  issue.flags = 0x1u; // D3DISSUE_END
+  hr = cleanup.device_funcs.pfnIssueQuery(create_dev.hDevice, &issue);
+  if (!Check(hr == S_OK, "IssueQuery(D3DISSUE_END)")) {
+    return false;
+  }
+
   const uint64_t fence_value = query->fence_value.load(std::memory_order_acquire);
-  if (!Check(fence_value != 0, "event query fence_value")) {
+  if (!Check(fence_value >= fence_value0, "event query fence_value monotonic")) {
     return false;
   }
 
