@@ -348,6 +348,9 @@ uint64_t submit(Device* dev) {
 }
 
 HRESULT flush_locked(Device* dev) {
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
+  cmd->reserved0 = 0;
+  cmd->reserved1 = 0;
   submit(dev);
   return S_OK;
 }
@@ -1102,9 +1105,11 @@ HRESULT AEROGPU_D3D9_CALL device_present(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
   cmd->scanout_id = 0;
   cmd->flags = (pPresent->sync_interval == 1) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+  cmd->d3d9_present_flags = pPresent->flags;
+  cmd->reserved0 = 0;
 
   submit(dev);
   return S_OK;
