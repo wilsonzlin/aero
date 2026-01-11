@@ -9,6 +9,7 @@ mod dns;
 mod origin;
 mod overrides;
 mod policy;
+mod session_limits;
 mod server;
 mod session;
 

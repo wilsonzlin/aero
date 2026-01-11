@@ -248,6 +248,9 @@ To bound abuse and accidental infinite loops, the proxy applies coarse, best-eff
 
 - `AERO_L2_MAX_CONNECTIONS` (default: `64`): process-wide concurrent tunnel cap (`0` disables).
   - When exceeded, upgrades are rejected with **HTTP 429**.
+- `AERO_L2_MAX_TUNNELS_PER_SESSION` (default: `1`): concurrent tunnel cap per authenticated gateway session (`aero_session`).
+  - Applies only to cookie-authenticated sessions; token-only connections rely on `AERO_L2_MAX_CONNECTIONS`.
+  - When exceeded, upgrades are rejected with **HTTP 429**.
 - `AERO_L2_MAX_BYTES_PER_CONNECTION` (default: `0` = unlimited): total bytes per connection (rx + tx).
 - `AERO_L2_MAX_FRAMES_PER_SECOND` (default: `0` = unlimited): inbound messages per second per connection.
 

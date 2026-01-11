@@ -498,6 +498,63 @@ async fn max_connections_enforced() {
 }
 
 #[tokio::test]
+async fn max_tunnels_per_session_enforced() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie");
+    let _secret = EnvVarGuard::set("AERO_L2_SESSION_SECRET", "sekrit");
+    let _max_tunnels = EnvVarGuard::set("AERO_L2_MAX_TUNNELS_PER_SESSION", "1");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(60);
+    let token = make_session_token("sekrit", "sid-test", exp);
+    let cookie = format!("aero_session={token}");
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("cookie", HeaderValue::from_str(&cookie).unwrap());
+    let (mut ws1, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("cookie", HeaderValue::from_str(&cookie).unwrap());
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected per-session tunnel limit enforcement");
+    assert_http_status(err, StatusCode::TOO_MANY_REQUESTS);
+
+    let _ = ws1.send(Message::Close(None)).await;
+
+    // Wait for the server-side session to observe the close and release the permit.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("cookie", HeaderValue::from_str(&cookie).unwrap());
+    let (mut ws2, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws2.send(Message::Close(None)).await;
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn byte_quota_closes_connection() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");

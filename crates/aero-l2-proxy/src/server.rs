@@ -27,8 +27,12 @@ use ring::hmac;
 use serde::Deserialize;
 
 use crate::{
-    capture::CaptureManager, dns::DnsService, metrics::Metrics, session, ProxyConfig,
-    TUNNEL_SUBPROTOCOL,
+    capture::CaptureManager,
+    dns::DnsService,
+    metrics::Metrics,
+    session,
+    session_limits::{SessionTunnelPermit, SessionTunnelTracker},
+    ProxyConfig, TUNNEL_SUBPROTOCOL,
 };
 
 const SESSION_COOKIE_NAME: &str = "aero_session";
@@ -48,6 +52,7 @@ pub(crate) struct AppState {
     pub(crate) metrics: Metrics,
     pub(crate) capture: CaptureManager,
     pub(crate) connections: Option<Arc<Semaphore>>,
+    pub(crate) session_tunnels: Option<Arc<SessionTunnelTracker>>,
     pub(crate) shutting_down: Arc<AtomicBool>,
     pub(crate) shutdown_rx: watch::Receiver<bool>,
 }
@@ -123,6 +128,12 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
     let connections = (cfg.security.max_connections != 0)
         .then(|| Arc::new(Semaphore::new(cfg.security.max_connections)));
 
+    let session_tunnels = (cfg.security.max_tunnels_per_session != 0).then(|| {
+        Arc::new(SessionTunnelTracker::new(
+            cfg.security.max_tunnels_per_session,
+        ))
+    });
+
     let shutting_down = Arc::new(AtomicBool::new(false));
     let (shutdown_broadcast, sessions_shutdown_rx) = watch::channel(false);
 
@@ -133,6 +144,7 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
         metrics,
         capture,
         connections,
+        session_tunnels,
         shutting_down: shutting_down.clone(),
         shutdown_rx: sessions_shutdown_rx,
     };
@@ -256,9 +268,10 @@ async fn l2_ws_handler(
             .into_response();
     }
 
-    if let Err(resp) = enforce_security(&state, &headers, &uri, client_ip) {
-        return *resp;
-    }
+    let session_id = match enforce_security(&state, &headers, &uri, client_ip) {
+        Ok(session_id) => session_id,
+        Err(resp) => return *resp,
+    };
 
     let permit = match &state.connections {
         None => None,
@@ -284,9 +297,36 @@ async fn l2_ws_handler(
         },
     };
 
+    let session_tunnel_permit: Option<SessionTunnelPermit> = match (
+        session_id.as_deref(),
+        state.session_tunnels.as_ref(),
+    ) {
+        (Some(session_id), Some(tracker)) => tracker.try_acquire(session_id),
+        _ => None,
+    };
+
+    if session_id.is_some() && state.session_tunnels.is_some() && session_tunnel_permit.is_none() {
+        state.metrics.upgrade_reject_max_tunnels_per_session();
+        tracing::info!(
+            reason = "max_tunnels_per_session_exceeded",
+            origin = %origin_from_headers(&headers).unwrap_or("<missing>"),
+            auth_mode = %auth_mode(&state),
+            token_present = token_present(state.cfg.security.auth_mode, &headers, &uri),
+            cookie_present = session_cookie_present(&headers),
+            client_ip = %client_ip,
+            "rejected l2 websocket upgrade",
+        );
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "max tunnels per session exceeded".to_string(),
+        )
+            .into_response();
+    }
+
     ws.protocols([TUNNEL_SUBPROTOCOL])
         .on_upgrade(move |socket| async move {
             let _permit = permit;
+            let _session_tunnel_permit = session_tunnel_permit;
             handle_l2_ws(socket, state).await;
         })
 }
@@ -303,11 +343,12 @@ fn enforce_security(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
     client_ip: std::net::IpAddr,
-) -> Result<(), Box<axum::response::Response>> {
+) -> Result<Option<String>, Box<axum::response::Response>> {
     // Auth is enforced before Origin checks so callers get a consistent 401 response when missing
     // credentials, even if the request is also missing/invalid Origin (see tests/security.rs).
     let token_present = token_present(state.cfg.security.auth_mode, headers, uri);
     let cookie_present = session_cookie_present(headers);
+    let mut session_id = None;
     match state.cfg.security.auth_mode {
         crate::config::AuthMode::None => {}
         crate::config::AuthMode::ApiKey => {
@@ -352,11 +393,10 @@ fn enforce_security(
                 .unwrap_or("");
             let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
             let cookie_present = session_token.is_some();
-            let ok = session_token
+            let sid = session_token
                 .as_deref()
-                .and_then(|token| verify_session_token(token, secret))
-                .is_some();
-            if !ok {
+                .and_then(|token| verify_session_token(token, secret));
+            if sid.is_none() {
                 if cookie_present {
                     state.metrics.upgrade_reject_auth_invalid();
                 } else {
@@ -383,6 +423,7 @@ fn enforce_security(
                         .into_response(),
                 ));
             }
+            session_id = sid;
         }
         crate::config::AuthMode::Jwt => {
             let secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
@@ -430,11 +471,10 @@ fn enforce_security(
                 .unwrap_or("");
             let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
             let cookie_present = session_token.is_some();
-            let cookie_ok = session_token
+            let sid = session_token
                 .as_deref()
-                .and_then(|token| verify_session_token(token, cookie_secret))
-                .is_some();
-            if !cookie_ok {
+                .and_then(|token| verify_session_token(token, cookie_secret));
+            if sid.is_none() {
                 let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
                 let token_present = token.is_some();
                 let jwt_ok = token
@@ -467,6 +507,8 @@ fn enforce_security(
                             .into_response(),
                     ));
                 }
+            } else {
+                session_id = sid;
             }
         }
     }
@@ -598,7 +640,7 @@ fn enforce_security(
         }
     }
 
-    Ok(())
+    Ok(session_id)
 }
 
 fn auth_mode(state: &AppState) -> &'static str {

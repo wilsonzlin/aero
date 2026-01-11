@@ -36,6 +36,8 @@ pub struct SecurityConfig {
     pub session_secret: Option<Vec<u8>>,
     /// Process-wide concurrent tunnel cap (`0` disables).
     pub max_connections: usize,
+    /// Concurrent tunnel cap per authenticated gateway session (`0` disables).
+    pub max_tunnels_per_session: usize,
     /// Total bytes per connection (rx + tx, `0` disables).
     pub max_bytes_per_connection: u64,
     /// Inbound messages per second per connection (`0` disables).
@@ -66,6 +68,7 @@ impl Default for SecurityConfig {
             jwt_secret: None,
             session_secret: None,
             max_connections: 64,
+            max_tunnels_per_session: 1,
             max_bytes_per_connection: 0,
             max_frames_per_second: 0,
         }
@@ -210,6 +213,11 @@ impl SecurityConfig {
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(Self::default().max_connections);
 
+        let max_tunnels_per_session = std::env::var("AERO_L2_MAX_TUNNELS_PER_SESSION")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(Self::default().max_tunnels_per_session);
+
         let max_bytes_per_connection = std::env::var("AERO_L2_MAX_BYTES_PER_CONNECTION")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -230,6 +238,7 @@ impl SecurityConfig {
             jwt_secret,
             session_secret,
             max_connections,
+            max_tunnels_per_session,
             max_bytes_per_connection,
             max_frames_per_second,
         })
