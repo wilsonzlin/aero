@@ -10,11 +10,6 @@ use crate::io::pci::{MmioDevice, PciDevice};
 
 use memory::MemoryBus;
 
-/// Guest → host Ethernet sink used by higher-level glue (e.g. tracing).
-pub trait NetworkBackend {
-    fn transmit(&mut self, frame: Vec<u8>);
-}
-
 /// PCI wrapper exposing an [`E1000Device`] through the emulator's device traits.
 #[derive(Debug)]
 pub struct E1000PciDevice {
