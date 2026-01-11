@@ -80,12 +80,15 @@ Queue programming (modern):
   - read `queue_notify_off` (doorbell selector)
   - write `queue_desc`, `queue_avail`, `queue_used` (64-bit guest physical addrs)
   - write `queue_enable = 1` to activate
-- Unlike legacy/transitional devices, there is no PFN register and the ring does
-  **not** need to be a single 4 KiB-aligned physically-contiguous region.
+- Unlike legacy/transitional devices, there is no PFN register and the descriptor
+  table, avail ring, and used ring do **not** need to live in a single 4 KiB-aligned
+  physically-contiguous allocation (each structure is programmed separately).
   Contract v1 follows the standard virtio alignment rules:
   - `queue_desc`: 16-byte aligned
   - `queue_avail`: 2-byte aligned
   - `queue_used`: 4-byte aligned
+- Each structure must still occupy a contiguous range in guest physical address
+  space (it is a linear array/ring in memory).
 - Windows 7 drivers should program the 64-bit queue address fields using two
   32-bit MMIO accesses (`*_lo` then `*_hi`) rather than a single 64-bit MMIO write.
 
@@ -176,7 +179,7 @@ must link **exactly one** of them.
 
 - `include/virtio_queue.h` + `src/virtio_queue.c`
   - Windows kernel convenience wrapper around split rings:
-    - allocates ring memory as a single physically-contiguous block (for simplicity; modern virtio does not require contiguity)
+    - allocates descriptor/avail/used in a single physically-contiguous block (convenient but not required by modern)
       and maintains a descriptor free list
     - programs queues via `VirtioPciSetupQueue` and sets `queue_enable`
     - caches the queue’s notify address and kicks via the modern notify region (`NOTIFY_CFG`)
