@@ -3,6 +3,7 @@
 #include "../include/aerogpu_d3d9_umd.h"
 
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -71,7 +72,7 @@ class AllocationListTracker {
   AllocationListTracker() = default;
   AllocationListTracker(D3DDDI_ALLOCATIONLIST* list_base,
                         UINT list_capacity,
-                        UINT max_allocation_list_slot_id = 0xFFFFu);
+                        UINT max_allocation_list_slot_id = std::numeric_limits<UINT>::max());
 
   // Rebinds the tracker to a new runtime-provided allocation list for a fresh
   // submission. Clears any tracked state and reserves internal maps to the new
@@ -81,6 +82,10 @@ class AllocationListTracker {
               UINT max_allocation_list_slot_id = 0xFFFFu);
 
   void reset();
+
+  // Rebinds the tracker to a new allocation-list buffer (e.g. if the runtime
+  // rotates DMA buffers and returns new list pointers after a submission).
+  void rebind(D3DDDI_ALLOCATIONLIST* list_base, UINT list_capacity);
 
   UINT list_len() const {
     return list_len_;

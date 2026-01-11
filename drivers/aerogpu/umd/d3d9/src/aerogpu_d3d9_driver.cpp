@@ -5777,6 +5777,22 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
       (void)submit(dev, /*is_present=*/false);
 
+      // Track the present source allocation so the KMD can resolve the backing
+      // `alloc_id` via the per-submit allocation table even though we keep the
+      // patch-location list empty.
+      //
+      // Ensure command space before tracking: tracking may split/submit and must
+      // not occur after command-buffer overflow handling.
+      if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_present_ex), 4))) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      if (auto* src_res = as_resource(pPresentEx->hSrc)) {
+        const HRESULT track_hr = track_resource_allocation_locked(dev, src_res, /*write=*/false);
+        if (track_hr < 0) {
+          return trace.ret(track_hr);
+        }
+      }
+
       auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
       if (!cmd) {
         return trace.ret(E_OUTOFMEMORY);
@@ -5843,7 +5859,36 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
             }
             sc->backbuffers.back()->handle = saved;
 
-            bool ok = emit_set_render_targets_locked(dev);
+            bool ok = true;
+            // Track allocations referenced by the rebinding commands so the KMD can
+            // resolve alloc_id -> GPA even if no draw occurs before the next
+            // flush/present.
+            if (track_render_targets_locked(dev) < 0) {
+              ok = false;
+            }
+            for (uint32_t stage = 0; ok && stage < 16; ++stage) {
+              if (!is_backbuffer(dev->textures[stage])) {
+                continue;
+              }
+              if (track_resource_allocation_locked(dev, dev->textures[stage], /*write=*/false) < 0) {
+                ok = false;
+              }
+            }
+            for (uint32_t stream = 0; ok && stream < 16; ++stream) {
+              if (!is_backbuffer(dev->streams[stream].vb)) {
+                continue;
+              }
+              if (track_resource_allocation_locked(dev, dev->streams[stream].vb, /*write=*/false) < 0) {
+                ok = false;
+              }
+            }
+            if (ok && is_backbuffer(dev->index_buffer)) {
+              if (track_resource_allocation_locked(dev, dev->index_buffer, /*write=*/false) < 0) {
+                ok = false;
+              }
+            }
+
+            ok = ok && emit_set_render_targets_locked(dev);
             for (uint32_t stage = 0; ok && stage < 16; ++stage) {
               if (!is_backbuffer(dev->textures[stage])) {
                 continue;
@@ -5902,6 +5947,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
               }
               sc->backbuffers[0]->handle = undo_saved;
               dev->cmd.reset();
+              dev->alloc_list_tracker.reset();
             }
           }
         }
@@ -5995,6 +6041,18 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
     (void)submit(dev, /*is_present=*/false);
 
+    // Track the present source allocation so the KMD can resolve it when the
+    // Present callback hands the DMA buffer to the kernel.
+    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_present_ex), 4))) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    if (auto* src_res = as_resource(pPresent->hSrc)) {
+      const HRESULT track_hr = track_resource_allocation_locked(dev, src_res, /*write=*/false);
+      if (track_hr < 0) {
+        return trace.ret(track_hr);
+      }
+    }
+
     auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
     if (!cmd) {
       return trace.ret(E_OUTOFMEMORY);
@@ -6083,7 +6141,33 @@ HRESULT AEROGPU_D3D9_CALL device_present(
           }
           sc->backbuffers.back()->handle = saved;
 
-          bool ok = emit_set_render_targets_locked(dev);
+          bool ok = true;
+          if (track_render_targets_locked(dev) < 0) {
+            ok = false;
+          }
+          for (uint32_t stage = 0; ok && stage < 16; ++stage) {
+            if (!is_backbuffer(dev->textures[stage])) {
+              continue;
+            }
+            if (track_resource_allocation_locked(dev, dev->textures[stage], /*write=*/false) < 0) {
+              ok = false;
+            }
+          }
+          for (uint32_t stream = 0; ok && stream < 16; ++stream) {
+            if (!is_backbuffer(dev->streams[stream].vb)) {
+              continue;
+            }
+            if (track_resource_allocation_locked(dev, dev->streams[stream].vb, /*write=*/false) < 0) {
+              ok = false;
+            }
+          }
+          if (ok && is_backbuffer(dev->index_buffer)) {
+            if (track_resource_allocation_locked(dev, dev->index_buffer, /*write=*/false) < 0) {
+              ok = false;
+            }
+          }
+
+          ok = ok && emit_set_render_targets_locked(dev);
           for (uint32_t stage = 0; ok && stage < 16; ++stage) {
             if (!is_backbuffer(dev->textures[stage])) {
               continue;
@@ -6139,6 +6223,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
             }
             sc->backbuffers[0]->handle = undo_saved;
             dev->cmd.reset();
+            dev->alloc_list_tracker.reset();
           }
         }
       }

@@ -126,6 +126,18 @@ void AllocationListTracker::reset() {
   alloc_id_to_handle_.clear();
 }
 
+void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base, UINT list_capacity) {
+  list_base_ = list_base;
+  list_capacity_ = list_capacity;
+
+  // Preserve the current max slot id; callers can construct a new tracker if
+  // they need different semantics.
+  handle_to_entry_.reserve(list_capacity_);
+  alloc_id_to_handle_.reserve(list_capacity_);
+
+  reset();
+}
+
 AllocRef AllocationListTracker::track_buffer_read(WddmAllocationHandle hAllocation, UINT alloc_id) {
   return track_common(hAllocation, alloc_id, /*write=*/false);
 }
