@@ -92,6 +92,16 @@ pub mod queue_kind {
     pub const NET_RX: u32 = 3;
 }
 
+/// Queue kinds used by the browser runtime's `ioIpcSab` segment.
+///
+/// These mirror `web/src/runtime/shared_layout.ts` (`IO_IPC_*_QUEUE_KIND`).
+pub mod io_ipc_queue_kind {
+    pub const CMD: u32 = 0;
+    pub const EVT: u32 = 1;
+    pub const NET_TX: u32 = 2;
+    pub const NET_RX: u32 = 3;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueueRegion {
     pub kind: u32,
