@@ -22,8 +22,6 @@ pub struct AssistContext {
     /// Deterministic increment applied to `state.msr.tsc` after each `RDTSC` /
     /// `RDTSCP`.
     pub tsc_step: u64,
-    /// Backing storage for `IA32_TSC_AUX` (returned in `RDTSCP` ECX).
-    pub tsc_aux: u32,
     /// Optional log of `INVLPG` linear addresses (useful for integration tests).
     pub invlpg_log: Vec<u64>,
 }
@@ -33,7 +31,6 @@ impl Default for AssistContext {
         Self {
             features: CpuFeatures::default(),
             tsc_step: 1,
-            tsc_aux: 0,
             invlpg_log: Vec::new(),
         }
     }
@@ -78,6 +75,22 @@ pub fn handle_assist<B: CpuBus>(
     // caller doesn't go through `tier0::exec::step` immediately.
     bus.sync(state);
     Ok(())
+}
+
+/// Execute an assist using a pre-decoded instruction.
+///
+/// This is used by Tier-0 execution glue that already fetched/decoded the
+/// instruction bytes and wants to avoid an extra decode pass.
+pub fn handle_assist_decoded<B: CpuBus>(
+    ctx: &mut AssistContext,
+    state: &mut CpuState,
+    bus: &mut B,
+    decoded: &DecodedInst,
+) -> Result<(), Exception> {
+    exec_decoded(ctx, state, bus, decoded).map_err(|e| {
+        state.apply_exception_side_effects(&e);
+        e
+    })
 }
 
 fn exec_decoded<B: CpuBus>(
@@ -449,7 +462,7 @@ fn instr_cpuid(ctx: &AssistContext, state: &mut CpuState) {
 // MSRs
 // -------------------------------------------------------------------------------------------------
 
-fn msr_read(ctx: &AssistContext, state: &CpuState, msr_index: u32) -> Result<u64, Exception> {
+fn msr_read(_ctx: &AssistContext, state: &CpuState, msr_index: u32) -> Result<u64, Exception> {
     match msr_index {
         msr::IA32_EFER => Ok(state.msr.efer),
         msr::IA32_STAR => Ok(state.msr.star),
@@ -464,7 +477,7 @@ fn msr_read(ctx: &AssistContext, state: &CpuState, msr_index: u32) -> Result<u64
         msr::IA32_KERNEL_GS_BASE => Ok(state.msr.kernel_gs_base),
         msr::IA32_APIC_BASE => Ok(state.msr.apic_base),
         msr::IA32_TSC => Ok(state.msr.tsc),
-        msr::IA32_TSC_AUX => Ok(ctx.tsc_aux as u64),
+        msr::IA32_TSC_AUX => Ok(state.msr.tsc_aux as u64),
         _ => Err(Exception::gp0()),
     }
 }
@@ -551,7 +564,7 @@ fn msr_write(
             Ok(())
         }
         msr::IA32_TSC_AUX => {
-            ctx.tsc_aux = value as u32;
+            state.msr.tsc_aux = value as u32;
             Ok(())
         }
         _ => Err(Exception::gp0()),
@@ -592,7 +605,7 @@ fn instr_rdtscp(ctx: &AssistContext, state: &mut CpuState) {
     let tsc = state.msr.tsc;
     state.write_reg(Register::EAX, tsc as u32 as u64);
     state.write_reg(Register::EDX, (tsc >> 32) as u32 as u64);
-    state.write_reg(Register::ECX, ctx.tsc_aux as u64);
+    state.write_reg(Register::ECX, state.msr.tsc_aux as u64);
     state.msr.tsc = state.msr.tsc.wrapping_add(ctx.tsc_step);
 }
 

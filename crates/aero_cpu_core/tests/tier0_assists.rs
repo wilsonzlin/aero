@@ -1,6 +1,7 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
 use aero_cpu_core::mem::FlatTestBus;
+use aero_cpu_core::msr;
 use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
 use aero_cpu_core::CpuBus;
 use aero_x86::Register;
@@ -98,4 +99,53 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
 
     // CLI/STI should leave IF set.
     assert!(state.get_flag(RFLAGS_IF));
+}
+
+#[test]
+fn tier0_assists_rdtscp_reads_ia32_tsc_aux_from_cpu_state() {
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    // WRMSR IA32_TSC_AUX=0xAABBCCDD; RDTSCP; mov [0x500], ecx; ret
+    let code: Vec<u8> = vec![
+        0xB9, // mov ecx, imm32
+        (msr::IA32_TSC_AUX as u32).to_le_bytes()[0],
+        (msr::IA32_TSC_AUX as u32).to_le_bytes()[1],
+        (msr::IA32_TSC_AUX as u32).to_le_bytes()[2],
+        (msr::IA32_TSC_AUX as u32).to_le_bytes()[3],
+        0xB8, 0xDD, 0xCC, 0xBB, 0xAA, // mov eax, 0xAABB_CCDD
+        0x31, 0xD2, // xor edx, edx
+        0x0F, 0x30, // wrmsr
+        0x0F, 0x01, 0xF9, // rdtscp
+        0x89, 0x0D, 0x00, 0x05, 0x00, 0x00, // mov [0x500], ecx
+        0xC3, // ret
+    ];
+    bus.load(CODE_BASE, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(CODE_BASE);
+    state.segments.cs.selector = 0x08; // CPL0 for WRMSR
+
+    let sp_pushed = STACK_TOP - 4;
+    bus.write_u32(sp_pushed, RETURN_IP).expect("stack write");
+    state.write_reg(Register::ESP, sp_pushed);
+
+    let mut ctx = AssistContext::default();
+    loop {
+        if state.rip() == RETURN_IP as u64 {
+            break;
+        }
+        let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1024);
+        match res.exit {
+            BatchExit::Completed | BatchExit::Branch => continue,
+            BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
+            BatchExit::BiosInterrupt(vector) => {
+                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+            }
+            BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
+            BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
+        }
+    }
+
+    assert_eq!(bus.read_u32(0x500).unwrap(), 0xAABB_CCDD);
+    assert_eq!(state.msr.tsc_aux, 0xAABB_CCDD);
 }

@@ -653,6 +653,8 @@ pub struct MsrState {
     pub kernel_gs_base: u64,
     pub apic_base: u64,
     pub tsc: u64,
+    pub tsc_aux: u32,
+    pub _pad0: u32,
 }
 
 impl Default for MsrState {
@@ -673,6 +675,8 @@ impl Default for MsrState {
             // (Intel SDM: IA32_APIC_BASE[11]=global enable, [8]=BSP).
             apic_base: 0xFEE0_0000 | (1 << 11) | (1 << 8),
             tsc: 0,
+            tsc_aux: 0,
+            _pad0: 0,
         }
     }
 }
@@ -714,9 +718,6 @@ pub struct CpuState {
     pub debug: DebugRegs,
     pub msr: MsrState,
 
-    /// Explicit padding to keep the floating point state 16-byte aligned.
-    pub _pad_align16: [u8; 8],
-
     /// x87/MMX architectural state (enough for `FXSAVE`/`FXRSTOR`).
     pub fpu: FpuState,
     /// SSE architectural state (XMM0-15 + MXCSR).
@@ -749,7 +750,6 @@ impl Default for CpuState {
             control: ControlRegs::default(),
             debug: DebugRegs::default(),
             msr: MsrState::default(),
-            _pad_align16: [0; 8],
             fpu: FpuState::default(),
             sse: SseState::default(),
             a20_enabled: true,

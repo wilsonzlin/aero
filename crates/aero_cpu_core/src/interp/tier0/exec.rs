@@ -1,5 +1,5 @@
 use super::{exec_decoded, ExecOutcome, Tier0Config};
-use crate::assist::{handle_assist, AssistContext};
+use crate::assist::{handle_assist_decoded, AssistContext};
 use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
 use crate::state::CpuState;
@@ -172,7 +172,7 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
 }
 
 /// Tier-0 batch execution wrapper that resolves [`StepExit::Assist`] exits via
-/// [`crate::assist::handle_assist`].
+/// the [`crate::assist`] module.
 ///
 /// This keeps the core Tier-0 interpreter minimal while still allowing it to
 /// execute privileged/IO/time instructions required by OS boot code.
@@ -202,58 +202,77 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
 
     let mut executed = 0u64;
     while executed < max_insts {
-        match step_with_config(cfg, state, bus) {
-            Ok(StepExit::Continue) => executed += 1,
-            Ok(StepExit::Branch) => {
+        bus.sync(state);
+
+        let ip = state.rip();
+        let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
+        let bytes = match bus.fetch(fetch_addr, 15) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                state.apply_exception_side_effects(&e);
+                return BatchResult {
+                    executed,
+                    exit: BatchExit::Exception(e),
+                };
+            }
+        };
+
+        let addr_size_override = has_addr_size_override(&bytes, state.bitness());
+        let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                let e = Exception::InvalidOpcode;
+                state.apply_exception_side_effects(&e);
+                return BatchResult {
+                    executed,
+                    exit: BatchExit::Exception(e),
+                };
+            }
+        };
+        let next_ip_raw = ip.wrapping_add(decoded.len as u64);
+        let next_ip = next_ip_raw & state.mode.ip_mask();
+
+        let outcome = match exec_decoded(cfg, state, bus, &decoded, next_ip, addr_size_override) {
+            Ok(v) => v,
+            Err(e) => {
+                state.apply_exception_side_effects(&e);
+                return BatchResult {
+                    executed,
+                    exit: BatchExit::Exception(e),
+                };
+            }
+        };
+
+        match outcome {
+            ExecOutcome::Continue => {
+                state.set_rip(next_ip);
+                executed += 1;
+            }
+            ExecOutcome::Branch => {
                 executed += 1;
                 return BatchResult {
                     executed,
                     exit: BatchExit::Branch,
                 };
             }
-            Ok(StepExit::Halted) => {
+            ExecOutcome::Halt => {
+                state.set_rip(next_ip);
                 executed += 1;
+                if let Some(vector) = state.take_pending_bios_int() {
+                    return BatchResult {
+                        executed,
+                        exit: BatchExit::BiosInterrupt(vector),
+                    };
+                }
+                state.halted = true;
                 return BatchResult {
                     executed,
                     exit: BatchExit::Halted,
                 };
             }
-            Ok(StepExit::BiosInterrupt(vector)) => {
-                executed += 1;
-                return BatchResult {
-                    executed,
-                    exit: BatchExit::BiosInterrupt(vector),
-                };
-            }
-            Ok(StepExit::Assist(r)) => {
-                // Preserve the "basic block" behavior of `run_batch` by returning
-                // `Branch` when the assist instruction changes RIP.
-                let ip = state.rip();
-                let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
-                let bytes = match bus.fetch(fetch_addr, 15) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        state.apply_exception_side_effects(&e);
-                        return BatchResult {
-                            executed,
-                            exit: BatchExit::Exception(e),
-                        };
-                    }
-                };
-                let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {
-                    Ok(decoded) => decoded,
-                    Err(_) => {
-                        let e = Exception::InvalidOpcode;
-                        state.apply_exception_side_effects(&e);
-                        return BatchResult {
-                            executed,
-                            exit: BatchExit::Exception(e),
-                        };
-                    }
-                };
-                let next_ip_raw = ip.wrapping_add(decoded.len as u64);
-
-                if let Err(e) = handle_assist(ctx, state, bus, r) {
+            ExecOutcome::Assist(_reason) => {
+                // Execute the instruction via the assist layer using the already decoded form.
+                if let Err(e) = handle_assist_decoded(ctx, state, bus, &decoded) {
                     return BatchResult {
                         executed,
                         exit: BatchExit::Exception(e),
@@ -261,6 +280,8 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                 }
                 executed += 1;
 
+                // Preserve the "basic block" behavior of `run_batch`: treat any
+                // control-transfer assist (i.e. RIP != fallthrough) as a branch.
                 let expected_next = next_ip_raw & state.mode.ip_mask();
                 if state.rip() != expected_next {
                     return BatchResult {
@@ -268,12 +289,6 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                         exit: BatchExit::Branch,
                     };
                 }
-            }
-            Err(e) => {
-                return BatchResult {
-                    executed,
-                    exit: BatchExit::Exception(e),
-                };
             }
         }
     }
