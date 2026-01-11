@@ -106,6 +106,7 @@ pub struct VirtioSnd<O: AudioSink, I: AudioCaptureSource = NullCaptureSource> {
     capture: PcmStream,
     capture_telemetry: CaptureTelemetry,
     host_sample_rate_hz: u32,
+    capture_sample_rate_hz: u32,
     /// Resampler for the playback/TX path (guest 48kHz -> host/output rate).
     resampler: LinearResampler,
     decoded_frames_scratch: Vec<[f32; 2]>,
@@ -159,6 +160,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             },
             capture_telemetry: CaptureTelemetry::default(),
             host_sample_rate_hz,
+            capture_sample_rate_hz: host_sample_rate_hz,
             resampler: LinearResampler::new(PCM_SAMPLE_RATE_HZ, host_sample_rate_hz),
             decoded_frames_scratch: Vec::new(),
             resampled_scratch: Vec::new(),
@@ -177,13 +179,37 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         if self.host_sample_rate_hz == host_sample_rate_hz {
             return;
         }
+        let prev = self.host_sample_rate_hz;
         self.host_sample_rate_hz = host_sample_rate_hz;
         self.resampler
             .reset_rates(PCM_SAMPLE_RATE_HZ, host_sample_rate_hz);
         self.decoded_frames_scratch.clear();
         self.resampled_scratch.clear();
+
+        // If the capture path is still using the default (same as the previous host/output rate),
+        // keep it in sync. Callers that want distinct playback + capture rates should set
+        // `set_capture_sample_rate_hz(...)` explicitly.
+        if self.capture_sample_rate_hz == prev {
+            self.capture_sample_rate_hz = host_sample_rate_hz;
+            self.capture_resampler
+                .reset_rates(host_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+            self.capture_frames_scratch.clear();
+            self.capture_interleaved_scratch.clear();
+            self.capture_samples_scratch.clear();
+        }
+    }
+
+    pub fn set_capture_sample_rate_hz(&mut self, capture_sample_rate_hz: u32) {
+        assert!(
+            capture_sample_rate_hz > 0,
+            "capture_sample_rate_hz must be non-zero"
+        );
+        if self.capture_sample_rate_hz == capture_sample_rate_hz {
+            return;
+        }
+        self.capture_sample_rate_hz = capture_sample_rate_hz;
         self.capture_resampler
-            .reset_rates(host_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+            .reset_rates(capture_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
         self.capture_frames_scratch.clear();
         self.capture_interleaved_scratch.clear();
         self.capture_samples_scratch.clear();
@@ -559,7 +585,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 self.capture_telemetry.dropped_samples +=
                     self.capture_source.take_dropped_samples();
 
-                if self.host_sample_rate_hz == PCM_SAMPLE_RATE_HZ {
+                if self.capture_sample_rate_hz == PCM_SAMPLE_RATE_HZ {
                     self.capture_samples_scratch.resize(samples_needed, 0.0);
                     let got = self
                         .capture_source
@@ -578,13 +604,14 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 } else {
                     // Resample host microphone samples from the host/input rate to the guest contract
                     // rate (48kHz). `AudioCaptureSource` itself has no sample rate metadata, so the
-                    // device relies on `host_sample_rate_hz` being configured to match the host
-                    // capture graph (typically `AudioContext.sampleRate`).
-                    if self.capture_resampler.src_rate_hz() != self.host_sample_rate_hz
+                    // device relies on `capture_sample_rate_hz` being configured to match the host
+                    // capture graph (typically `AudioContext.sampleRate`). By default, the capture
+                    // rate tracks `host_sample_rate_hz`.
+                    if self.capture_resampler.src_rate_hz() != self.capture_sample_rate_hz
                         || self.capture_resampler.dst_rate_hz() != PCM_SAMPLE_RATE_HZ
                     {
                         self.capture_resampler
-                            .reset_rates(self.host_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+                            .reset_rates(self.capture_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
                     }
 
                     let required_src = self
@@ -864,7 +891,7 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
         self.decoded_frames_scratch.clear();
         self.resampled_scratch.clear();
         self.capture_resampler
-            .reset_rates(self.host_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+            .reset_rates(self.capture_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
         self.capture_frames_scratch.clear();
         self.capture_interleaved_scratch.clear();
         self.capture_samples_scratch.clear();

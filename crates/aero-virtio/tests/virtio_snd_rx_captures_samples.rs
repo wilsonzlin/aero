@@ -497,10 +497,10 @@ fn virtio_snd_rx_captures_samples() {
 }
 
 #[test]
-fn virtio_snd_rx_resamples_host_rate_to_guest_48k() {
-    // Provide fewer host-rate samples than the guest is requesting. When the host
-    // sample rate is lower than the guest contract (44.1kHz -> 48kHz), the RX
-    // path must upsample rather than underrun.
+fn virtio_snd_rx_resamples_capture_rate_to_guest_48k() {
+    // Provide fewer capture-rate samples than the guest is requesting. When the
+    // host capture sample rate is lower than the guest contract (44.1kHz -> 48kHz),
+    // the RX path must upsample rather than underrun.
     let capture = TestCaptureSource {
         samples: vec![1.0; 45],
         pos: 0,
@@ -510,9 +510,12 @@ fn virtio_snd_rx_resamples_host_rate_to_guest_48k() {
     let snd = VirtioSnd::new_with_capture_and_host_sample_rate(
         aero_audio::ring::AudioRingBuffer::new_stereo(8),
         capture,
-        44_100,
+        48_000,
     );
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    dev.device_mut::<VirtioSnd<aero_audio::ring::AudioRingBuffer, TestCaptureSource>>()
+        .unwrap()
+        .set_capture_sample_rate_hz(44_100);
     let caps = parse_caps(&dev);
 
     let mut mem = GuestRam::new(0x40000);

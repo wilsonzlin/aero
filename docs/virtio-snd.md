@@ -121,7 +121,9 @@ ring buffer (`SharedArrayBuffer`) via `aero_platform::audio::mic_bridge::MicBrid
 
 ### Capture sample-rate conversion
 
-The browser microphone capture graph runs at the owning `AudioContext.sampleRate` (which browsers may ignore; Safari/iOS often uses 44.1kHz). The virtio-snd guest-facing ABI is fixed at 48kHz S16_LE, so the RX/capture path resamples from `host_sample_rate_hz` to **48kHz** before encoding PCM payload bytes.
+The browser microphone capture graph runs at the owning `AudioContext.sampleRate` (which browsers may ignore; Safari/iOS often uses 44.1kHz). The virtio-snd guest-facing ABI is fixed at 48kHz S16_LE, so the RX/capture path resamples from the host capture rate to **48kHz** before encoding PCM payload bytes.
+
+In `aero_virtio::devices::snd::VirtioSnd`, the host capture rate is tracked by `capture_sample_rate_hz` (defaults to `host_sample_rate_hz`).
 
 ### AudioWorklet ring buffer layout
 
@@ -156,7 +158,7 @@ TX PCM samples are:
 RX PCM samples are:
 
 1. read as mono `f32` from the capture backend (typically `MicBridge`) at the host/input sample rate
-2. resampled from the host/input sample rate (`host_sample_rate_hz`) to the guest contract rate (**48kHz**)
+2. resampled from the host/input sample rate (`capture_sample_rate_hz`, defaulting to `host_sample_rate_hz`) to the guest contract rate (**48kHz**)
 3. encoded as S16_LE and written into the guest RX payload buffers.
 
 `host_sample_rate_hz` defaults to 48kHz, but can be configured via:
@@ -164,6 +166,10 @@ RX PCM samples are:
 - `VirtioSnd::new_with_host_sample_rate(...)`
 - `VirtioSnd::new_with_capture_and_host_sample_rate(...)`
 - `VirtioSnd::set_host_sample_rate_hz(...)`
+
+If the capture input rate differs from the playback/output rate, override it via:
+
+- `VirtioSnd::set_capture_sample_rate_hz(...)`
 
 ## Windows 7 Driver Strategy
 
