@@ -101,7 +101,14 @@ impl AeroGpuPciDevice {
         AEROGPU_PCI_BAR0_SIZE_BYTES
     }
 
-    pub fn tick(&mut self, now: Instant) {
+    pub fn tick(&mut self, mem: &mut dyn MemoryBus, now: Instant) {
+        // If vblank pacing is disabled (by config or by disabling the scanout), do not allow any
+        // vsync-delayed fences to remain queued forever.
+        if self.vblank_interval.is_none() || !self.regs.scanout0.enable {
+            self.executor.flush_pending_fences(&mut self.regs, mem);
+            self.update_irq_level();
+        }
+
         let Some(interval) = self.vblank_interval else {
             return;
         };
@@ -126,6 +133,8 @@ impl AeroGpuPciDevice {
             if (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) != 0 {
                 self.regs.irq_status |= irq_bits::SCANOUT_VBLANK;
             }
+
+            self.executor.process_vblank_tick(&mut self.regs, mem);
 
             next += interval;
             ticks += 1;
@@ -153,6 +162,7 @@ impl AeroGpuPciDevice {
             let tail = mem.read_u32(self.regs.ring_gpa + RING_TAIL_OFFSET);
             AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
         }
+        self.executor.reset();
         self.regs.completed_fence = 0;
         self.regs.irq_status = 0;
         self.update_irq_level();
@@ -243,6 +253,9 @@ impl AeroGpuPciDevice {
             }
             mmio::IRQ_ENABLE => {
                 self.regs.irq_enable = value;
+                if (value & irq_bits::FENCE) == 0 {
+                    self.regs.irq_status &= !irq_bits::FENCE;
+                }
                 if (value & irq_bits::SCANOUT_VBLANK) == 0 {
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
                 }
@@ -259,6 +272,7 @@ impl AeroGpuPciDevice {
                     // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
                     self.next_vblank = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
+                    self.executor.flush_pending_fences(&mut self.regs, mem);
                     self.update_irq_level();
                 }
                 self.regs.scanout0.enable = new_enable;

@@ -13,7 +13,9 @@ struct VecMemory {
 
 impl VecMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -220,10 +222,100 @@ fn vblank_tick_sets_irq_status() {
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
 
     let t0 = Instant::now();
-    dev.tick(t0);
+    dev.tick(&mut mem, t0);
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
 
-    dev.tick(t0 + Duration::from_millis(100));
+    dev.tick(&mut mem, t0 + Duration::from_millis(100));
     assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
     assert!(dev.irq_level());
+}
+
+#[test]
+fn vsynced_present_fence_completes_on_vblank() {
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.vblank_hz = Some(10);
+
+    let mut mem = VecMemory::new(0x40_000);
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+
+    // Enable scanout so vblank ticks run.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = 64u32;
+
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + 24, 0); // head
+    mem.write_u32(ring_gpa + 28, 1); // tail
+
+    // Command buffer: ACMD header + PRESENT(vsync).
+    let cmd_gpa = 0x4000u64;
+    let cmd_size_bytes = 40u32;
+
+    mem.write_u32(cmd_gpa + 0, 0x444D_4341); // "ACMD"
+    mem.write_u32(cmd_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
+    mem.write_u32(cmd_gpa + 12, 0); // flags
+    mem.write_u32(cmd_gpa + 16, 0);
+    mem.write_u32(cmd_gpa + 20, 0);
+
+    // aerogpu_cmd_present
+    mem.write_u32(cmd_gpa + 24, 0x700); // opcode
+    mem.write_u32(cmd_gpa + 28, 16); // size_bytes
+    mem.write_u32(cmd_gpa + 32, 0); // scanout_id
+    mem.write_u32(cmd_gpa + 36, 1); // AEROGPU_PRESENT_FLAG_VSYNC
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + 64;
+    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa + 4, 0); // flags
+    mem.write_u32(desc_gpa + 8, 0); // context_id
+    mem.write_u32(desc_gpa + 12, 0); // engine_id
+    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + 24, cmd_size_bytes); // cmd_size_bytes
+    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
+
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert!(!dev.irq_level());
+
+    let head_after = mem.read_u32(ring_gpa + 24);
+    assert_eq!(head_after, 1);
+
+    let t0 = Instant::now();
+    dev.tick(&mut mem, t0);
+    assert_eq!(dev.regs.completed_fence, 0);
+
+    dev.tick(&mut mem, t0 + Duration::from_millis(100));
+
+    assert_eq!(dev.regs.completed_fence, 42);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert!(dev.irq_level());
+
+    assert_eq!(mem.read_u32(fence_gpa + 0), AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(mem.read_u64(fence_gpa + 8), 42);
 }

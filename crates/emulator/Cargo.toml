@@ -11,11 +11,11 @@ net_log = []
 sinc-resampler = []
 
 [dependencies]
-aero-protocol = { path = "../../emulator/protocol" }
 aero-devices = { path = "../devices" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-platform = { path = "../platform" }
+aero-protocol = { path = "../../emulator/protocol" }
 aero-storage = { path = "../aero-storage" }
 font8x8 = "0.3"
 memory = { path = "../memory" }
