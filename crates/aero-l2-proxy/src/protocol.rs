@@ -24,6 +24,13 @@ pub const ERROR_CODE_QUOTA_CONNECTIONS: u16 = 8;
 ///
 /// The returned payload is truncated as needed to fit within `max_payload_bytes`.
 pub fn encode_error_payload(code: u16, message: &str, max_payload_bytes: usize) -> Vec<u8> {
+    // Need space for the 4-byte header (code + msg_len). If the configured max is below that,
+    // return an empty payload so callers can still emit an ERROR control message within their
+    // configured limits (the peer will still see an ERROR type, even if it cannot decode a
+    // structured code/message).
+    if max_payload_bytes < 4 {
+        return Vec::new();
+    }
     // Need space for the 4-byte header (code + msg_len).
     let max_msg_len = max_payload_bytes.saturating_sub(4).min(u16::MAX as usize);
 
@@ -41,6 +48,29 @@ pub fn encode_error_payload(code: u16, message: &str, max_payload_bytes: usize) 
     out.extend_from_slice(&msg_len.to_be_bytes());
     out.extend_from_slice(msg_bytes);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_error_payload_respects_max_payload_bytes() {
+        // Underflow: cannot fit the structured header, so return an empty payload.
+        assert_eq!(encode_error_payload(1, "hi", 0).len(), 0);
+        assert_eq!(encode_error_payload(1, "hi", 3).len(), 0);
+
+        // Exactly enough space for the structured header, but no message bytes.
+        assert_eq!(encode_error_payload(1, "hi", 4).len(), 4);
+
+        // Message is truncated to fit and must respect UTF-8 boundaries.
+        let payload = encode_error_payload(1, "hi", 5);
+        assert_eq!(payload.len(), 5);
+
+        // Emoji is 4 bytes; if only 1 byte is available for the message, it must be dropped.
+        let payload = encode_error_payload(1, "😃", 5);
+        assert_eq!(payload.len(), 4);
+    }
 }
 
 /// Attempt to decode a structured `ERROR` payload.
