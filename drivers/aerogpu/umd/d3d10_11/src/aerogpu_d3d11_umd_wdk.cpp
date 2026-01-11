@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <cstdint>
 #include <cstddef>
 #include <cstdio>
 #include <cmath>
@@ -873,6 +874,125 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
   return S_OK;
 }
 
+template <typename T, typename = void>
+struct has_member_hContext : std::false_type {};
+template <typename T>
+struct has_member_hContext<T, std::void_t<decltype(std::declval<T>().hContext)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hAdapter : std::false_type {};
+template <typename T>
+struct has_member_hAdapter<T, std::void_t<decltype(std::declval<T>().hAdapter)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ObjectCount : std::false_type {};
+template <typename T>
+struct has_member_ObjectCount<T, std::void_t<decltype(std::declval<T>().ObjectCount)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ObjectHandleArray : std::false_type {};
+template <typename T>
+struct has_member_ObjectHandleArray<T, std::void_t<decltype(std::declval<T>().ObjectHandleArray)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hSyncObjects : std::false_type {};
+template <typename T>
+struct has_member_hSyncObjects<T, std::void_t<decltype(std::declval<T>().hSyncObjects)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_FenceValueArray : std::false_type {};
+template <typename T>
+struct has_member_FenceValueArray<T, std::void_t<decltype(std::declval<T>().FenceValueArray)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_FenceValue : std::false_type {};
+template <typename T>
+struct has_member_FenceValue<T, std::void_t<decltype(std::declval<T>().FenceValue)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Timeout : std::false_type {};
+template <typename T>
+struct has_member_Timeout<T, std::void_t<decltype(std::declval<T>().Timeout)>> : std::true_type {};
+
+template <typename T>
+static T UintPtrToD3dHandle(std::uintptr_t value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<T>(value);
+  } else {
+    return static_cast<T>(value);
+  }
+}
+
+template <typename WaitArgsT>
+static void FillWaitForSyncObjectArgs(WaitArgsT* args,
+                                      D3DKMT_HANDLE hContext,
+                                      D3DKMT_HANDLE hAdapter,
+                                      const D3DKMT_HANDLE* handles,
+                                      const UINT64* fence_values,
+                                      UINT64 fence_value,
+                                      UINT64 timeout) {
+  if (!args) {
+    return;
+  }
+
+  if constexpr (has_member_hContext<WaitArgsT>::value) {
+    using FieldT = std::remove_reference_t<decltype(args->hContext)>;
+    args->hContext = UintPtrToD3dHandle<FieldT>(static_cast<std::uintptr_t>(hContext));
+  }
+  if constexpr (has_member_hAdapter<WaitArgsT>::value) {
+    using FieldT = std::remove_reference_t<decltype(args->hAdapter)>;
+    args->hAdapter = UintPtrToD3dHandle<FieldT>(static_cast<std::uintptr_t>(hAdapter));
+  }
+  if constexpr (has_member_ObjectCount<WaitArgsT>::value) {
+    args->ObjectCount = 1;
+  }
+
+  auto assign_handles = [&](auto& field) {
+    using FieldT = std::remove_reference_t<decltype(field)>;
+    if constexpr (std::is_pointer_v<FieldT>) {
+      using Pointee = std::remove_pointer_t<FieldT>;
+      using Base = std::remove_const_t<Pointee>;
+      field = reinterpret_cast<FieldT>(const_cast<Base*>(reinterpret_cast<const Base*>(handles)));
+    } else if constexpr (std::is_array_v<FieldT>) {
+      using ElemT = std::remove_reference_t<decltype(field[0])>;
+      field[0] = handles ? UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(handles[0]))
+                         : UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(0));
+    } else {
+      using ElemT = std::remove_reference_t<FieldT>;
+      field = handles ? UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(handles[0])) : UintPtrToD3dHandle<ElemT>(0);
+    }
+  };
+
+  if constexpr (has_member_ObjectHandleArray<WaitArgsT>::value) {
+    assign_handles(args->ObjectHandleArray);
+  } else if constexpr (has_member_hSyncObjects<WaitArgsT>::value) {
+    assign_handles(args->hSyncObjects);
+  }
+
+  auto assign_fence_values = [&](auto& field) {
+    using FieldT = std::remove_reference_t<decltype(field)>;
+    if constexpr (std::is_pointer_v<FieldT>) {
+      using Pointee = std::remove_pointer_t<FieldT>;
+      using Base = std::remove_const_t<Pointee>;
+      field = reinterpret_cast<FieldT>(const_cast<Base*>(reinterpret_cast<const Base*>(fence_values)));
+    } else if constexpr (std::is_array_v<FieldT>) {
+      field[0] = static_cast<std::remove_reference_t<decltype(field[0])>>(fence_value);
+    } else {
+      field = static_cast<FieldT>(fence_value);
+    }
+  };
+
+  if constexpr (has_member_FenceValueArray<WaitArgsT>::value) {
+    assign_fence_values(args->FenceValueArray);
+  } else if constexpr (has_member_FenceValue<WaitArgsT>::value) {
+    assign_fence_values(args->FenceValue);
+  }
+
+  if constexpr (has_member_Timeout<WaitArgsT>::value) {
+    args->Timeout = timeout;
+  }
+}
+
 static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
   if (!dev) {
     return E_INVALIDARG;
@@ -897,29 +1017,14 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
     auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
     if (cb && cb->pfnWaitForSynchronizationObjectCb && dev->runtime_device) {
       D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
-      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
-        args.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
-      }
-      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectCount) {
-        args.ObjectCount = 1;
-      }
-      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
-        args.ObjectHandleArray = handles;
-      }
-      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
-        args.hSyncObjects = handles;
-      }
-      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
-        args.FenceValueArray = fence_values;
-      }
-      __if_not_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
-        __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
-          args.FenceValue = fence_value;
-        }
-      }
-      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::Timeout) {
-        args.Timeout = timeout;
-      }
+      FillWaitForSyncObjectArgs(
+          &args,
+          static_cast<D3DKMT_HANDLE>(dev->kmt_context),
+          /*hAdapter=*/0,
+          handles,
+          fence_values,
+          fence_value,
+          timeout);
 
       const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb,
                                            MakeRtDeviceHandle(dev),
@@ -947,25 +1052,14 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
   }
 
   D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
-  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
-    args.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
-  }
-  args.ObjectCount = 1;
-  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
-    args.ObjectHandleArray = handles;
-  }
-  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
-    args.hSyncObjects = handles;
-  }
-  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
-    args.FenceValueArray = fence_values;
-  }
-  __if_not_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
-    __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
-      args.FenceValue = fence_value;
-    }
-  }
-  args.Timeout = timeout;
+  FillWaitForSyncObjectArgs(
+      &args,
+      static_cast<D3DKMT_HANDLE>(dev->kmt_context),
+      /*hAdapter=*/0,
+      handles,
+      fence_values,
+      fence_value,
+      timeout);
 
   const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
   if (st == STATUS_TIMEOUT) {

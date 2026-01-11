@@ -1534,7 +1534,8 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
       // Different Win7-era WDKs disagree on which HRESULT represents a timeout.
       // Map the common wait-timeout HRESULTs to DXGI_ERROR_WAS_STILL_DRAWING so
       // higher-level D3D code can use this for Map(DO_NOT_WAIT) behavior.
-      if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
+      if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
+          hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
         return kDxgiErrorWasStillDrawing;
       }
       if (FAILED(hr)) {
