@@ -133,6 +133,8 @@ async function runLoop(): Promise<void> {
     throw new Error("net.worker was not initialized correctly (missing forwarder or rings).");
   }
 
+  const hasWaitAsync = typeof (Atomics as any).waitAsync === "function";
+
   // Use a single loop: drain control commands, pump the forwarder, then park on
   // the NET_TX ring while idle. The `waitForDataAsync` call keeps the worker
   // responsive to WebSocket and `postMessage()` events while avoiding spin.
@@ -157,7 +159,20 @@ async function runLoop(): Promise<void> {
       continue;
     }
     const timeoutMs = pendingRx ? NET_PENDING_RX_POLL_MS : NET_IDLE_WAIT_MS;
-    await txRing.waitForDataAsync(timeoutMs);
+    if (hasWaitAsync) {
+      await txRing.waitForDataAsync(timeoutMs);
+    } else {
+      // In worker contexts without `Atomics.waitAsync`, `RingBuffer.waitForDataAsync()`
+      // falls back to a tight polling loop. Use a short blocking `Atomics.wait()` slice
+      // instead, then yield to service `postMessage` / WebSocket events.
+      try {
+        txRing.waitForData(Math.min(timeoutMs, NET_PENDING_RX_POLL_MS));
+      } catch {
+        await txRing.waitForDataAsync(timeoutMs);
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
 
   pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
