@@ -16,4 +16,3 @@ ingress:
 secrets:
   data:
     SESSION_SECRET: "__REPLACE_ME__"
-    ADMIN_API_KEY: "__REPLACE_ME__"

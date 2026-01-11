@@ -2,7 +2,7 @@
 # Create a local values file (do not commit it) and set at minimum:
 #   - gateway.image.tag
 #   - ingress.host (+ TLS settings for production)
-#   - secrets.data.SESSION_SECRET / secrets.data.ADMIN_API_KEY
+#   - secrets.data.SESSION_SECRET
 
 nameOverride: ""
 fullnameOverride: ""
@@ -104,7 +104,6 @@ secrets:
   data:
     # Placeholders only; override in your local values file.
     SESSION_SECRET: "__REPLACE_ME__"
-    ADMIN_API_KEY: "__REPLACE_ME__"
 
 ingress:
   enabled: true

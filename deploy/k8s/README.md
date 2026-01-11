@@ -174,7 +174,6 @@ secrets:
   # Strongly recommended: generate randomly (e.g. `openssl rand -hex 32`)
   data:
     SESSION_SECRET: "<REPLACE_WITH_RANDOM_SECRET>"
-    ADMIN_API_KEY: "<REPLACE_WITH_RANDOM_KEY>"
 
 # If your ingress controller does not allow header snippet annotations, you can
 # alternatively enable COOP/COEP at the application layer and disable ingress injection:
@@ -202,7 +201,7 @@ In real clusters you will often manage secrets via:
 - SOPS
 - your CI/CD system
 
-In that case, create the Secret separately (must contain keys like `SESSION_SECRET`, `ADMIN_API_KEY`, etc.) and configure Helm to use it:
+In that case, create the Secret separately (must contain keys like `SESSION_SECRET`, and any other gateway env vars you want to keep secret) and configure Helm to use it:
 
 ```bash
 helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \

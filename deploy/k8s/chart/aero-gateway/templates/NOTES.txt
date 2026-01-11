@@ -9,9 +9,9 @@
    (Ingress disabled; use kubectl port-forward or expose the Service)
    {{- end }}
 
-{{- if and .Values.secrets.create (or (eq (index .Values.secrets.data "SESSION_SECRET") "__REPLACE_ME__") (eq (index .Values.secrets.data "ADMIN_API_KEY") "__REPLACE_ME__")) }}
-NOTE: You are deploying with placeholder secrets. For production, set secrets.data.* to real values
-      or set secrets.create=false and provide secrets.existingSecret.
+{{- if and .Values.secrets.create (eq (index .Values.secrets.data "SESSION_SECRET") "__REPLACE_ME__") }}
+NOTE: You are deploying with a placeholder SESSION_SECRET. For production, set secrets.data.SESSION_SECRET
+      to a real value or set secrets.create=false and provide secrets.existingSecret.
 {{- end }}
 
 2. Verify COOP/COEP headers (required for SharedArrayBuffer):
