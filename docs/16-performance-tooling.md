@@ -12,6 +12,22 @@ This doc describes the expected workflows and how to interpret the outputs.
 
 ---
 
+## Perf tooling unit tests
+
+Perf tooling source lives in `web/src/perf/`, and its unit tests live alongside the implementation as `web/src/perf/**/*.test.ts`.
+
+These tests are executed in CI by the **root** Vitest suite. To run them locally (including coverage):
+
+```bash
+npm run test:unit:coverage
+```
+
+If a perf unit test needs DOM APIs (e.g. HUD tests), opt into `jsdom` per-file:
+
+```ts
+// @vitest-environment jsdom
+```
+
 ## Perf HUD
 
 The Perf HUD is a lightweight overlay that shows a rolling snapshot of key emulator metrics while the system is running.

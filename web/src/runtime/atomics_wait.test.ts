@@ -82,6 +82,8 @@ describe('waitUntilNotEqual', () => {
       const i32 = new Int32Array(sab);
       Atomics.store(i32, 0, 0);
 
+      // Use an ESM worker so this test is stable across Node versions (some
+      // versions treat eval workers as ESM by default under `"type": "module"`).
       const notifier = new Worker(
         `
         import { parentPort, workerData } from 'node:worker_threads';

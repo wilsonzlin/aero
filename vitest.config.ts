@@ -2,6 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // Keep unit tests fast and deterministic; stub browser APIs explicitly.
+    environment: "node",
     // These tests exercise blocking Atomics.wait() + Node worker_threads.
     // On newer Node releases, Vitest's default thread pool can interfere with
     // nested Worker scheduling / Atomics wakeups, causing flakes/timeouts.
@@ -13,7 +15,7 @@ export default defineConfig({
       reporter: ["text", "lcov"],
       reportsDirectory: "coverage",
       include: ["web/src/**/*.ts"],
-      exclude: ["web/src/**/*.d.ts"]
-    }
-  }
+      exclude: ["web/src/**/*.d.ts"],
+    },
+  },
 });
