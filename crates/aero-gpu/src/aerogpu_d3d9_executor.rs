@@ -2061,13 +2061,10 @@ impl AerogpuD3d9Executor {
                     if size_bytes == 0 {
                         return Ok(());
                     }
-                    // WebGPU buffer mapping is promise-based on wasm, but this executor is
-                    // synchronous today. Until the wasm path is made async, ignore WRITEBACK_DST
-                    // rather than failing the submission.
-                    #[cfg(not(target_arch = "wasm32"))]
+                    // `WRITEBACK_DST` requires async execution on wasm so we can await
+                    // `wgpu::Buffer::map_async`. The sync entrypoint errors out when pending
+                    // writebacks are present; the async entrypoint flushes + awaits them.
                     let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
-                    #[cfg(target_arch = "wasm32")]
-                    let writeback = false;
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "COPY_BUFFER: unknown flags 0x{flags:08X}"
@@ -2281,13 +2278,10 @@ impl AerogpuD3d9Executor {
                     if width == 0 || height == 0 {
                         return Ok(());
                     }
-                    // WebGPU buffer mapping is promise-based on wasm, but this executor is
-                    // synchronous today. Until the wasm path is made async, ignore WRITEBACK_DST
-                    // rather than failing the submission.
-                    #[cfg(not(target_arch = "wasm32"))]
+                    // `WRITEBACK_DST` requires async execution on wasm so we can await
+                    // `wgpu::Buffer::map_async`. The sync entrypoint errors out when pending
+                    // writebacks are present; the async entrypoint flushes + awaits them.
                     let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
-                    #[cfg(target_arch = "wasm32")]
-                    let writeback = false;
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "COPY_TEXTURE2D: unknown flags 0x{flags:08X}"

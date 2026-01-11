@@ -1633,8 +1633,8 @@ fn d3d9_cmd_stream_clear_color_depth_stencil_d24s8_respects_scissor_rect() {
 
     // Full-screen triangle (POSITION float4) at z=0.5.
     //
-    // Note: Keep clockwise winding so the draw stays visible even if culling is enabled (D3D9
-    // defaults to `D3DCULL_CCW` with clockwise front faces).
+    // Note: Keep clockwise winding so the draw stays visible under the default D3D9 cull mode
+    // (`D3DCULL_CCW` with clockwise front faces).
     let vertices: [f32; 12] = [
         -1.0, -1.0, 0.5, 1.0, //
         -1.0, 3.0, 0.5, 1.0, //
