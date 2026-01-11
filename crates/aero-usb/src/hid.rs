@@ -259,16 +259,16 @@ impl UsbHidKeyboard {
     }
 
     fn device_descriptor() -> &'static [u8] {
-        // Full-speed USB HID keyboard; bMaxPacketSize0 = 8 (common for HID).
+        // Full-speed USB HID keyboard; bMaxPacketSize0 = 64 (matches emulator-side HID models).
         static DESC: [u8; 18] = [
             18,
             DESC_DEVICE,
-            0x10,
-            0x01,
+            0x00,
+            0x02,
             0x00,
             0x00,
             0x00,
-            8,
+            0x40,
             0x34,
             0x12,
             0x01,
@@ -750,12 +750,12 @@ impl UsbHidMouse {
         static DESC: [u8; 18] = [
             18,
             DESC_DEVICE,
-            0x10,
-            0x01,
+            0x00,
+            0x02,
             0x00,
             0x00,
             0x00,
-            8,
+            0x40,
             0x34,
             0x12,
             0x02,
@@ -1267,12 +1267,12 @@ impl UsbHidGamepad {
         static DESC: [u8; 18] = [
             18,
             DESC_DEVICE,
-            0x10,
-            0x01,
+            0x00,
+            0x02,
             0x00,
             0x00,
             0x00,
-            8,
+            0x40,
             0x34,
             0x12,
             0x03,
@@ -1814,12 +1814,12 @@ impl UsbHidCompositeInput {
         static DESC: [u8; 18] = [
             18,
             DESC_DEVICE,
-            0x10,
-            0x01,
+            0x00,
+            0x02,
             0x00,
             0x00,
             0x00,
-            8,
+            0x40,
             0x34,
             0x12,
             0x04,

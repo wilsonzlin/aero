@@ -159,10 +159,9 @@ fn control_in(
     alloc: &mut Alloc,
     fl_base: u32,
     devaddr: u8,
+    max_packet: usize,
     setup: SetupPacket,
 ) -> Vec<u8> {
-    let max_packet = 8usize;
-
     let qh_addr = alloc.alloc(0x20, 0x10);
     let setup_buf = alloc.alloc(8, 0x10);
     let setup_td = alloc.alloc(0x20, 0x10);
@@ -299,7 +298,33 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
 
     ctrl.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut irq);
 
-    // GET_DESCRIPTOR(Device).
+    let mut ep0_max_packet = 8usize;
+
+    // GET_DESCRIPTOR(Device) - first 8 bytes (host learns max packet size).
+    let dev_desc8 = control_in(
+        &mut ctrl,
+        &mut mem,
+        &mut irq,
+        &mut alloc,
+        fl_base,
+        0,
+        ep0_max_packet,
+        SetupPacket {
+            request_type: 0x80,
+            request: 0x06,
+            value: 0x0100,
+            index: 0,
+            length: 8,
+        },
+    );
+    assert_eq!(dev_desc8.len(), 8);
+    assert_eq!(dev_desc8[0], 18);
+    assert_eq!(dev_desc8[1], 0x01);
+    assert_eq!(dev_desc8[2..4], [0x00, 0x02]); // bcdUSB = 2.00
+    ep0_max_packet = dev_desc8[7] as usize;
+    assert_eq!(ep0_max_packet, 0x40);
+
+    // GET_DESCRIPTOR(Device) - full descriptor.
     let dev_desc = control_in(
         &mut ctrl,
         &mut mem,
@@ -307,6 +332,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
         &mut alloc,
         fl_base,
         0,
+        ep0_max_packet,
         SetupPacket {
             request_type: 0x80,
             request: 0x06,
@@ -318,6 +344,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
     assert_eq!(dev_desc.len(), 18);
     assert_eq!(dev_desc[0], 18);
     assert_eq!(dev_desc[1], 0x01);
+    assert_eq!(dev_desc[7], 0x40);
 
     // SET_ADDRESS(1). Status stage still targets address 0.
     control_no_data(
@@ -344,6 +371,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
         &mut alloc,
         fl_base,
         1,
+        ep0_max_packet,
         SetupPacket {
             request_type: 0x80,
             request: 0x06,
@@ -385,6 +413,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
         &mut alloc,
         fl_base,
         1,
+        ep0_max_packet,
         SetupPacket {
             request_type: 0xA1,
             request: 0x01,
@@ -402,6 +431,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
         &mut alloc,
         fl_base,
         1,
+        ep0_max_packet,
         SetupPacket {
             request_type: 0xA1,
             request: 0x01,
@@ -419,6 +449,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
         &mut alloc,
         fl_base,
         1,
+        ep0_max_packet,
         SetupPacket {
             request_type: 0xA1,
             request: 0x01,
@@ -445,6 +476,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
             &mut alloc,
             fl_base,
             1,
+            ep0_max_packet,
             SetupPacket {
                 request_type: 0x81,
                 request: 0x06,
@@ -464,6 +496,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
             &mut alloc,
             fl_base,
             1,
+            ep0_max_packet,
             SetupPacket {
                 request_type: 0x81,
                 request: 0x06,
