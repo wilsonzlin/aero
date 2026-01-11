@@ -42,10 +42,11 @@ static uint8_t PatternByte(size_t i) {
   return (uint8_t)((i * 131u + 7u) & 0xFFu);
 }
 
-static void DumpBytesToFileIfRequested(const char* test_name,
-                                       const wchar_t* file_name,
-                                       const void* data,
-                                       UINT byte_count) {
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
   if (!file_name || !data || byte_count == 0) {
     return;
   }
@@ -71,6 +72,9 @@ static void DumpBytesToFileIfRequested(const char* test_name,
                                test_name,
                                (unsigned)byte_count,
                                path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
   }
   CloseHandle(h);
 }
@@ -323,14 +327,11 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   }
 
   if (dump) {
-    const std::wstring dir = aerogpu_test::GetModuleDir();
-    const std::wstring path =
-        aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity_discard0.bin");
-    DumpBytesToFileIfRequested(kTestName,
-                               L"d3d11_map_dynamic_buffer_sanity_discard0.bin",
-                               map.pData,
-                               kByteWidth);
-    reporter.AddArtifactPathW(path);
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_map_dynamic_buffer_sanity_discard0.bin",
+                    map.pData,
+                    kByteWidth);
   }
 
   const uint8_t* got = (const uint8_t*)map.pData;
@@ -360,11 +361,8 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   }
   if (dump) {
     // Keep the original dump name for the final buffer contents.
-    const std::wstring dir = aerogpu_test::GetModuleDir();
-    const std::wstring path = aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity.bin");
-    DumpBytesToFileIfRequested(
-        kTestName, L"d3d11_map_dynamic_buffer_sanity.bin", map.pData, kByteWidth);
-    reporter.AddArtifactPathW(path);
+    DumpBytesToFile(
+        kTestName, &reporter, L"d3d11_map_dynamic_buffer_sanity.bin", map.pData, kByteWidth);
   }
 
   got = (const uint8_t*)map.pData;
@@ -450,12 +448,8 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   }
 
   if (dump) {
-    const std::wstring dir = aerogpu_test::GetModuleDir();
-    const std::wstring path =
-        aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity_index.bin");
-    DumpBytesToFileIfRequested(
-        kTestName, L"d3d11_map_dynamic_buffer_sanity_index.bin", map.pData, kByteWidth);
-    reporter.AddArtifactPathW(path);
+    DumpBytesToFile(
+        kTestName, &reporter, L"d3d11_map_dynamic_buffer_sanity_index.bin", map.pData, kByteWidth);
   }
 
   got = (const uint8_t*)map.pData;
@@ -567,12 +561,11 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   }
 
   if (dump) {
-    const std::wstring dir = aerogpu_test::GetModuleDir();
-    const std::wstring path =
-        aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity_constant_discard0.bin");
-    DumpBytesToFileIfRequested(
-        kTestName, L"d3d11_map_dynamic_buffer_sanity_constant_discard0.bin", map.pData, cb_desc.ByteWidth);
-    reporter.AddArtifactPathW(path);
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_map_dynamic_buffer_sanity_constant_discard0.bin",
+                    map.pData,
+                    cb_desc.ByteWidth);
   }
 
   got = (const uint8_t*)map.pData;
@@ -606,12 +599,11 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   }
 
   if (dump) {
-    const std::wstring dir = aerogpu_test::GetModuleDir();
-    const std::wstring path =
-        aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity_constant.bin");
-    DumpBytesToFileIfRequested(
-        kTestName, L"d3d11_map_dynamic_buffer_sanity_constant.bin", map.pData, cb_desc.ByteWidth);
-    reporter.AddArtifactPathW(path);
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_map_dynamic_buffer_sanity_constant.bin",
+                    map.pData,
+                    cb_desc.ByteWidth);
   }
 
   got = (const uint8_t*)map.pData;
