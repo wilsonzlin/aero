@@ -142,6 +142,18 @@ template <typename T>
 struct has_member_pAllocationList<T, std::void_t<decltype(std::declval<T&>().pAllocationList)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_HandleList : std::false_type {};
+
+template <typename T>
+struct has_member_HandleList<T, std::void_t<decltype(std::declval<T&>().HandleList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_phAllocations : std::false_type {};
+
+template <typename T>
+struct has_member_phAllocations<T, std::void_t<decltype(std::declval<T&>().phAllocations)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_AllocationCount : std::false_type {};
 
 template <typename T>
@@ -397,6 +409,10 @@ HRESULT invoke_destroy_allocation_cb(CallbackFn cb,
     data.phAllocationList = allocs;
   } else if constexpr (has_member_pAllocationList<Args>::value) {
     data.pAllocationList = allocs;
+  } else if constexpr (has_member_HandleList<Args>::value) {
+    data.HandleList = allocs;
+  } else if constexpr (has_member_phAllocations<Args>::value) {
+    data.phAllocations = allocs;
   } else {
     return E_NOTIMPL;
   }
