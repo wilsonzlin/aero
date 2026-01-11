@@ -261,7 +261,7 @@ On Windows you can mount `virtio-win.iso` directly via `Mount-DiskImage`.
 On Linux/macOS, you can:
 
 - extract first with `tools/virtio-win/extract.py` and then pass `-VirtioWinRoot`, or
-- run under `pwsh` and pass `-VirtioWinIso` (auto-extract fallback when `Mount-DiskImage` is unavailable), or
+- run under `pwsh` and pass `-VirtioWinIso` (auto-extract fallback when `Mount-DiskImage` is unavailable or fails), or
 - use the one-shot `.sh` wrappers under `drivers/scripts/`.
 
 Quick one-liner wrapper (does both steps):
@@ -297,7 +297,7 @@ python3 tools/virtio-win/extract.py \
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root -NoZip
 ```
 
-Option B: pass `-VirtioWinIso` directly under `pwsh` (auto-extract fallback on non-Windows):
+Option B: pass `-VirtioWinIso` directly under `pwsh` (auto-extract fallback on non-Windows when mounting is unavailable or fails):
 
 ```bash
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinIso virtio-win.iso -NoZip
@@ -390,7 +390,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
 ```
 
 On Linux/macOS, you can either extract first and pass `-VirtioWinRoot`, pass `-VirtioWinIso` directly under `pwsh`
-(auto-extract fallback), or use the `.sh` wrapper (`drivers/scripts/make-guest-tools-from-virtio-win.sh`):
+(auto-extract fallback when mounting is unavailable or fails), or use the `.sh` wrapper (`drivers/scripts/make-guest-tools-from-virtio-win.sh`):
 
 ```bash
 python3 tools/virtio-win/extract.py \
@@ -409,11 +409,11 @@ This wrapper:
 
 1. Extracts a Win7 driver pack from `virtio-win.iso` (using `drivers/scripts/make-driver-pack.ps1`).
 2. Converts it into the input layout expected by the Rust Guest Tools packager.
-3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `minimal`):
-   - `-Profile minimal` (default): `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
-   - `-Profile full`: `tools/packaging/specs/win7-virtio-full.json`
-     - required: `viostor` + `netkvm`
-     - optional (included if present): `vioinput` + `viosnd`
+3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `full`):
+   - `-Profile full` (default): `tools/packaging/specs/win7-virtio-full.json`
+      - required: `viostor` + `netkvm`
+      - optional (included if present): `vioinput` + `viosnd`
+   - `-Profile minimal`: `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
 
 Advanced overrides:
 

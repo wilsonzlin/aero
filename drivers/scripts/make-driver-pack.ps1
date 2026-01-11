@@ -12,7 +12,7 @@ On Linux/macOS, `Mount-DiskImage` is not available. Use the cross-platform extra
 
 Alternatively, you may pass `-VirtioWinIso` when running under PowerShell 7 (`pwsh`)
 on Linux/macOS: this script will automatically fall back to running the extractor if
-`Mount-DiskImage` is unavailable (requires Python + `7z` or `pycdlib`).
+`Mount-DiskImage` is unavailable **or fails to mount** (requires Python + `7z` or `pycdlib`).
 
 The produced driver pack staging directory/zip includes:
 

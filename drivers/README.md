@@ -65,7 +65,7 @@ python3 tools/virtio-win/extract.py \
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
 ```
 
-Option B: pass `-VirtioWinIso` directly under `pwsh` (auto-extract fallback on non-Windows):
+Option B: pass `-VirtioWinIso` directly under `pwsh` (auto-extract fallback on non-Windows if mounting is unavailable or fails):
 
 ```bash
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinIso virtio-win.iso
@@ -108,7 +108,7 @@ On non-Windows hosts you have three options:
 
 - Use the `.sh` wrapper: `drivers/scripts/make-virtio-driver-iso.sh`
 - Extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot`
-- Run under `pwsh` and pass `-VirtioWinIso` directly (auto-extract fallback when `Mount-DiskImage` is unavailable)
+- Run under `pwsh` and pass `-VirtioWinIso` directly (auto-extract fallback when `Mount-DiskImage` is unavailable or fails)
 
 See also: `docs/virtio-windows-drivers.md`.
 
@@ -132,7 +132,7 @@ On non-Windows hosts you have three options:
 
 - Use the `.sh` wrapper: `drivers/scripts/make-guest-tools-from-virtio-win.sh`
 - Extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot`
-- Run under `pwsh` and pass `-VirtioWinIso` directly (auto-extract fallback when `Mount-DiskImage` is unavailable)
+- Run under `pwsh` and pass `-VirtioWinIso` directly (auto-extract fallback when `Mount-DiskImage` is unavailable or fails)
 
 Profiles:
 
