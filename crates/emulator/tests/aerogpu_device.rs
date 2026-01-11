@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC};
-use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_MMIO_MAGIC};
+use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_ABI_MAJOR, AEROGPU_MMIO_MAGIC};
 use emulator::devices::aerogpu_ring::{AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC};
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
@@ -115,8 +115,10 @@ fn doorbell_accepts_newer_minor_abi_version() {
     let entry_count = 8u32;
     let entry_stride = 64u32;
 
-    // Ring header: advertise a newer minor version while keeping the same major.
-    let newer_minor = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1);
+    // Ring header: advertise an unknown minor version while keeping the same major.
+    // The protocol versioning rules require consumers to accept forward-compatible minor
+    // extensions and ignore what they don't understand.
+    let newer_minor = (AEROGPU_ABI_MAJOR << 16) | 999;
     mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, newer_minor);
     mem.write_u32(ring_gpa + 8, ring_size);
@@ -183,12 +185,18 @@ fn doorbell_accepts_larger_submit_desc_stride_and_size() {
     mem.write_u32(ring_gpa + 16, entry_stride);
     mem.write_u32(ring_gpa + 20, 0);
     mem.write_u32(ring_gpa + 24, 0); // head
-    mem.write_u32(ring_gpa + 28, 1); // tail
+    mem.write_u32(ring_gpa + 28, 2); // tail
 
-    // Submit descriptor at slot 0 with an extended size.
-    let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 128); // desc_size_bytes
-    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+    // Submit descriptors at slots 0 and 1 with an extended size.
+    // Slot 1 is deliberately placed at 64 + entry_stride to verify the device uses
+    // `entry_stride_bytes` when walking the ring.
+    let desc0_gpa = ring_gpa + 64;
+    mem.write_u32(desc0_gpa + 0, 128); // desc_size_bytes
+    mem.write_u64(desc0_gpa + 48, 41); // signal_fence
+
+    let desc1_gpa = ring_gpa + 64 + u64::from(entry_stride);
+    mem.write_u32(desc1_gpa + 0, 128); // desc_size_bytes
+    mem.write_u64(desc1_gpa + 48, 42); // signal_fence
 
     dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
     dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
@@ -197,7 +205,8 @@ fn doorbell_accepts_larger_submit_desc_stride_and_size() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     assert_eq!(dev.regs.stats.malformed_submissions, 0);
-    assert_eq!(mem.read_u32(ring_gpa + 24), 1);
+    assert_eq!(dev.regs.stats.submissions, 2);
+    assert_eq!(mem.read_u32(ring_gpa + 24), 2);
     assert_eq!(dev.regs.completed_fence, 42);
 }
 
