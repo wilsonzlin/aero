@@ -17,6 +17,20 @@ fn align_up(v: usize, a: usize) -> usize {
 }
 
 #[test]
+fn cmd_writer_default_emits_valid_stream_header() {
+    let buf = AerogpuCmdWriter::default().finish();
+    assert!(buf.len() >= AerogpuCmdStreamHeader::SIZE_BYTES);
+
+    let stream = decode_cmd_stream_header_le(&buf).expect("cmd stream header must decode");
+    let magic = stream.magic;
+    let abi_version = stream.abi_version;
+    let size_bytes = stream.size_bytes;
+    assert_eq!(magic, AEROGPU_CMD_STREAM_MAGIC);
+    assert_eq!(abi_version, AEROGPU_ABI_VERSION_U32);
+    assert_eq!(size_bytes as usize, buf.len());
+}
+
+#[test]
 fn cmd_writer_emits_aligned_packets_and_updates_stream_size() {
     let mut w = AerogpuCmdWriter::new();
 

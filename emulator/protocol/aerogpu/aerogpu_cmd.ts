@@ -298,8 +298,26 @@ export interface AerogpuVertexBufferBinding {
   offsetBytes: number;
 }
 
+function isPowerOfTwo(v: number): boolean {
+  if (!Number.isSafeInteger(v) || v <= 0) return false;
+  let x = v;
+  while (x % 2 === 0) x /= 2;
+  return x === 1;
+}
+
 function alignUp(v: number, a: number): number {
-  return Math.ceil(v / a) * a;
+  if (!Number.isSafeInteger(v) || v < 0) {
+    throw new Error(`alignUp: value must be a non-negative safe integer (got ${v})`);
+  }
+  if (!isPowerOfTwo(a)) {
+    throw new Error(`alignUp: alignment must be a positive power-of-two safe integer (got ${a})`);
+  }
+  const rem = v % a;
+  const aligned = rem === 0 ? v : v + (a - rem);
+  if (!Number.isSafeInteger(aligned)) {
+    throw new Error(`alignUp: result not a safe integer (v=${v}, a=${a})`);
+  }
+  return aligned;
 }
 
 /**
@@ -311,6 +329,10 @@ export class AerogpuCmdWriter {
   private buf: ArrayBuffer = new ArrayBuffer(0);
   private view: DataView = new DataView(this.buf);
   private len = 0;
+
+  private static _alignUp(v: number, a: number): number {
+    return alignUp(v, a);
+  }
 
   constructor() {
     this.reset();
@@ -328,6 +350,9 @@ export class AerogpuCmdWriter {
   }
 
   finish(): Uint8Array {
+    if (this.len > 0xffffffff) {
+      throw new Error(`command stream too large for u32 sizeBytes: ${this.len}`);
+    }
     this.view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, this.len, true);
     return new Uint8Array(this.buf, 0, this.len).slice();
   }
@@ -343,8 +368,14 @@ export class AerogpuCmdWriter {
   }
 
   private appendRaw(opcode: AerogpuCmdOpcode, cmdSize: number): number {
-    const alignedSize = alignUp(cmdSize, 4);
+    const alignedSize = AerogpuCmdWriter._alignUp(cmdSize, 4);
+    if (alignedSize > 0xffffffff) {
+      throw new Error(`command packet too large for u32 sizeBytes: ${alignedSize}`);
+    }
     const offset = this.len;
+    if (offset + alignedSize > 0xffffffff) {
+      throw new Error(`command stream too large for u32 sizeBytes: ${offset + alignedSize}`);
+    }
     this.ensureCapacity(offset + alignedSize);
     new Uint8Array(this.buf, offset, alignedSize).fill(0);
     this.view.setUint32(offset + AEROGPU_CMD_HDR_OFF_OPCODE, opcode, true);

@@ -189,3 +189,12 @@ test("AerogpuCmdWriter emits copy packets", () => {
   assert.equal(view.getUint32(pkt2 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 16);
   assert.equal(pkt2 + 16, bytes.byteLength);
 });
+
+test("alignUp handles values > 2^31 without signed 32-bit wrap", () => {
+  const alignUpFn = (AerogpuCmdWriter as any)._alignUp as (v: number, a: number) => number;
+
+  const v = 2 ** 31 + 1;
+  const aligned = alignUpFn(v, 4);
+  assert.ok(Number.isSafeInteger(aligned));
+  assert.equal(aligned, 2 ** 31 + 4);
+});
