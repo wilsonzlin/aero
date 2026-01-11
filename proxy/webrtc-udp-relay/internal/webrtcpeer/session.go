@@ -87,6 +87,8 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				maxPacketLifeTime := dc.MaxPacketLifeTime()
 				if maxRetransmits != nil || maxPacketLifeTime != nil {
 					reason = "partial_reliability"
+				} else if !dc.Ordered() {
+					reason = "unordered"
 				}
 
 				var maxRetransmitsValue any
