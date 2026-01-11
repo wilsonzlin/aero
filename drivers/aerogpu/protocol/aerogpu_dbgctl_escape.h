@@ -13,31 +13,20 @@
  */
 #pragma once
 
-/*
- * This header intentionally does NOT include `aerogpu_protocol.h` (legacy,
- * monolithic ABI) because it macro-conflicts with the versioned ABI headers
- * (`aerogpu_pci.h` + `aerogpu_ring.h`) used by the KMD.
- *
- * This escape ABI is stable across x86/x64 and is shared between:
- * - the Win7 AeroGPU KMD (`DxgkDdiEscape`), and
- * - bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`).
- */
-
 #include <stddef.h>
-#include <stdint.h>
+#include "aerogpu_escape.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Escape ops specific to dbgctl. */
-#define AEROGPU_ESCAPE_VERSION 1u
-#define AEROGPU_ESCAPE_OP_QUERY_DEVICE 1u
 #define AEROGPU_ESCAPE_OP_QUERY_FENCE 2u
 #define AEROGPU_ESCAPE_OP_DUMP_RING 3u
 #define AEROGPU_ESCAPE_OP_SELFTEST 4u
 #define AEROGPU_ESCAPE_OP_QUERY_VBLANK 5u
 #define AEROGPU_ESCAPE_OP_DUMP_VBLANK AEROGPU_ESCAPE_OP_QUERY_VBLANK
+#define AEROGPU_ESCAPE_OP_DUMP_RING_V2 6u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 
@@ -55,20 +44,12 @@ enum aerogpu_dbgctl_selftest_error {
   AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT = 5,
 };
 
+enum aerogpu_dbgctl_vblank_flags {
+  /* KMD observed AEROGPU_FEATURE_VBLANK and populated vblank fields. */
+  AEROGPU_DBGCTL_VBLANK_SUPPORTED = (1u << 0),
+};
+
 #pragma pack(push, 1)
-
-typedef struct aerogpu_escape_header {
-  uint32_t version; /* AEROGPU_ESCAPE_VERSION */
-  uint32_t op;      /* AEROGPU_ESCAPE_OP_* */
-  uint32_t size;    /* total size including this header */
-  uint32_t reserved0;
-} aerogpu_escape_header;
-
-typedef struct aerogpu_escape_query_device_out {
-  aerogpu_escape_header hdr;
-  uint32_t mmio_version; /* legacy MMIO version or versioned ABI version */
-  uint32_t reserved0;
-} aerogpu_escape_query_device_out;
 
 typedef struct aerogpu_escape_query_fence_out {
   aerogpu_escape_header hdr;
@@ -101,6 +82,40 @@ typedef struct aerogpu_escape_dump_ring_inout {
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_ring_inout) == (40 + (AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS * 24)));
 
+enum aerogpu_dbgctl_ring_format {
+  AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN = 0,
+  AEROGPU_DBGCTL_RING_FORMAT_LEGACY = 1,
+  AEROGPU_DBGCTL_RING_FORMAT_AGPU = 2,
+};
+
+typedef struct aerogpu_dbgctl_ring_desc_v2 {
+  uint64_t fence; /* signal_fence */
+  uint64_t cmd_gpa;
+  uint32_t cmd_size_bytes;
+  uint32_t flags;
+  uint64_t alloc_table_gpa;
+  uint32_t alloc_table_size_bytes;
+  uint32_t reserved0;
+} aerogpu_dbgctl_ring_desc_v2;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_dbgctl_ring_desc_v2) == 40);
+
+typedef struct aerogpu_escape_dump_ring_v2_inout {
+  aerogpu_escape_header hdr;
+  uint32_t ring_id;
+  uint32_t ring_format; /* enum aerogpu_dbgctl_ring_format */
+  uint32_t ring_size_bytes;
+  uint32_t head;
+  uint32_t tail;
+  uint32_t desc_count;
+  uint32_t desc_capacity;
+  uint32_t reserved0;
+  uint32_t reserved1;
+  aerogpu_dbgctl_ring_desc_v2 desc[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
+} aerogpu_escape_dump_ring_v2_inout;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_ring_v2_inout) == (52 + (AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS * 40)));
+
 typedef struct aerogpu_escape_selftest_inout {
   aerogpu_escape_header hdr;
   uint32_t timeout_ms;
@@ -127,7 +142,7 @@ typedef struct aerogpu_escape_query_vblank_out {
   uint64_t vblank_seq;
   uint64_t last_vblank_time_ns;
   uint32_t vblank_period_ns;
-  uint32_t reserved1;
+  uint32_t reserved0;
 } aerogpu_escape_query_vblank_out;
 
 #define AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID (1u << 31)
@@ -142,7 +157,7 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, flags) ==
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_seq) == 32);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, last_vblank_time_ns) == 40);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_period_ns) == 48);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, reserved1) == 52);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, reserved0) == 52);
 
 typedef aerogpu_escape_query_vblank_out aerogpu_escape_dump_vblank_inout;
 

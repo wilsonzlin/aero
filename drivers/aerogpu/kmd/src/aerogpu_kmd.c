@@ -1988,6 +1988,37 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         return STATUS_NOT_SUPPORTED;
     }
 
+    if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_device_v2_out)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        aerogpu_escape_query_device_v2_out* out = (aerogpu_escape_query_device_v2_out*)pEscape->pPrivateDriverData;
+        out->hdr.version = AEROGPU_ESCAPE_VERSION;
+        out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2;
+        out->hdr.size = sizeof(*out);
+        out->hdr.reserved0 = 0;
+
+        uint32_t magic = 0;
+        uint32_t version = 0;
+        uint64_t features = 0;
+        if (adapter->Bar0) {
+            magic = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                version = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
+                features = (uint64_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                           ((uint64_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+            } else {
+                version = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_VERSION);
+            }
+        }
+
+        out->detected_mmio_magic = magic;
+        out->abi_version_u32 = version;
+        out->features_lo = features;
+        out->features_hi = 0;
+        return STATUS_SUCCESS;
+    }
+
     if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_DEVICE) {
         if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_device_out)) {
             return STATUS_BUFFER_TOO_SMALL;
@@ -1996,6 +2027,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.version = AEROGPU_ESCAPE_VERSION;
         out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE;
         out->hdr.size = sizeof(*out);
+        out->hdr.reserved0 = 0;
         if (!adapter->Bar0) {
             out->mmio_version = 0;
         } else if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
@@ -2118,6 +2150,111 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     io->desc[i].desc_gpa = (uint64_t)entry.submit.desc_gpa;
                     io->desc[i].desc_size_bytes = entry.submit.desc_size;
                     io->desc[i].flags = entry.submit.flags;
+                }
+            }
+        }
+
+        KeReleaseSpinLock(&adapter->RingLock, oldIrql);
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_DUMP_RING_V2) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_dump_ring_v2_inout)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        aerogpu_escape_dump_ring_v2_inout* io = (aerogpu_escape_dump_ring_v2_inout*)pEscape->pPrivateDriverData;
+
+        /* Only ring 0 is currently implemented. */
+        if (io->ring_id != 0) {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        io->hdr.version = AEROGPU_ESCAPE_VERSION;
+        io->hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+        io->hdr.size = sizeof(*io);
+        io->hdr.reserved0 = 0;
+        io->ring_size_bytes = adapter->RingSizeBytes;
+        io->reserved0 = 0;
+        io->reserved1 = 0;
+
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            io->ring_format = AEROGPU_DBGCTL_RING_FORMAT_AGPU;
+        } else if (adapter->AbiKind == AEROGPU_ABI_KIND_LEGACY) {
+            io->ring_format = AEROGPU_DBGCTL_RING_FORMAT_LEGACY;
+        } else {
+            io->ring_format = AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN;
+        }
+
+        io->desc_capacity = (io->desc_capacity > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS)
+                                ? AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS
+                                : io->desc_capacity;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
+
+        ULONG head = 0;
+        ULONG tail = 0;
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
+            head = adapter->RingHeader->head;
+            tail = adapter->RingHeader->tail;
+        } else if (adapter->Bar0) {
+            head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+            tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+        }
+        io->head = head;
+        io->tail = tail;
+
+        ULONG pending = 0;
+        if (adapter->RingEntryCount != 0) {
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                pending = tail - head;
+                if (pending > adapter->RingEntryCount) {
+                    pending = adapter->RingEntryCount;
+                }
+            } else if (tail >= head) {
+                pending = tail - head;
+            } else {
+                pending = tail + adapter->RingEntryCount - head;
+            }
+        }
+
+        ULONG outCount = pending;
+        if (outCount > io->desc_capacity) {
+            outCount = io->desc_capacity;
+        }
+        io->desc_count = outCount;
+
+        RtlZeroMemory(io->desc, sizeof(io->desc));
+        if (adapter->RingVa && adapter->RingEntryCount && outCount) {
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
+                struct aerogpu_submit_desc* ring =
+                    (struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
+                for (ULONG i = 0; i < outCount; ++i) {
+                    const ULONG idx = (head + i) & (adapter->RingEntryCount - 1);
+                    const struct aerogpu_submit_desc entry = ring[idx];
+                    io->desc[i].fence = (uint64_t)entry.signal_fence;
+                    io->desc[i].cmd_gpa = (uint64_t)entry.cmd_gpa;
+                    io->desc[i].cmd_size_bytes = entry.cmd_size_bytes;
+                    io->desc[i].flags = entry.flags;
+                    io->desc[i].alloc_table_gpa = (uint64_t)entry.alloc_table_gpa;
+                    io->desc[i].alloc_table_size_bytes = entry.alloc_table_size_bytes;
+                    io->desc[i].reserved0 = 0;
+                }
+            } else {
+                aerogpu_legacy_ring_entry* ring = (aerogpu_legacy_ring_entry*)adapter->RingVa;
+                for (ULONG i = 0; i < outCount; ++i) {
+                    const ULONG idx = (head + i) % adapter->RingEntryCount;
+                    const aerogpu_legacy_ring_entry entry = ring[idx];
+                    if (entry.type != AEROGPU_LEGACY_RING_ENTRY_SUBMIT) {
+                        continue;
+                    }
+                    io->desc[i].fence = (uint64_t)entry.submit.fence;
+                    io->desc[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
+                    io->desc[i].cmd_size_bytes = entry.submit.desc_size;
+                    io->desc[i].flags = entry.submit.flags;
+                    io->desc[i].alloc_table_gpa = 0;
+                    io->desc[i].alloc_table_size_bytes = 0;
+                    io->desc[i].reserved0 = 0;
                 }
             }
         }
@@ -2385,7 +2522,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             out->last_vblank_time_ns = 0;
             out->vblank_period_ns = 0;
         }
-        out->reserved1 = 0;
+        out->reserved0 = 0;
         return STATUS_SUCCESS;
     }
 

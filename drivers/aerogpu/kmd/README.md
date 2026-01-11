@@ -127,16 +127,16 @@ The driver uses `DbgPrintEx` in checked builds (`DBG=1`). Typical workflow:
 
 ## Escape channel
 
-`DxgkDdiEscape` supports a bring-up query:
+`DxgkDdiEscape` supports bring-up/debug queries:
 
-- `AEROGPU_ESCAPE_OP_QUERY_DEVICE` (see `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`)
-  - returns the device's reported ABI version (`AEROGPU_MMIO_REG_ABI_VERSION` for new devices,
-    or the legacy `AEROGPU_LEGACY_REG_VERSION`)
+- `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (see `drivers/aerogpu/protocol/aerogpu_escape.h`)
+  - returns the detected device ABI (`detected_mmio_magic`), ABI version, and (for versioned devices) feature bits
+  - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response
 
 Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` (see `aerogpu_dbgctl_escape.h`)
-- `AEROGPU_ESCAPE_OP_DUMP_RING` (see `aerogpu_dbgctl_escape.h`)
+- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (see `aerogpu_dbgctl_escape.h`)
 - `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
 

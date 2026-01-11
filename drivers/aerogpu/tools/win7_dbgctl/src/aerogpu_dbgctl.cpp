@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <wchar.h>
 
+#include "aerogpu_pci.h"
 #include "aerogpu_dbgctl_escape.h"
 
 typedef LONG NTSTATUS;
@@ -228,27 +229,86 @@ static const wchar_t *SelftestErrorToString(uint32_t code) {
 }
 
 static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
-  aerogpu_escape_query_device_out q;
+  static const uint32_t kLegacyMmioMagic = 0x41524750u; // "ARGP" little-endian
+
+  aerogpu_escape_query_device_v2_out q;
   ZeroMemory(&q, sizeof(q));
   q.hdr.version = AEROGPU_ESCAPE_VERSION;
-  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2;
   q.hdr.size = sizeof(q);
   q.hdr.reserved0 = 0;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
-    PrintNtStatus(L"D3DKMTEscape(query-version) failed", f, st);
-    return 2;
+    // Fall back to legacy QUERY_DEVICE for older drivers.
+    aerogpu_escape_query_device_out q1;
+    ZeroMemory(&q1, sizeof(q1));
+    q1.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q1.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE;
+    q1.hdr.size = sizeof(q1);
+    q1.hdr.reserved0 = 0;
+
+    st = SendAerogpuEscape(f, hAdapter, &q1, sizeof(q1));
+    if (!NT_SUCCESS(st)) {
+      PrintNtStatus(L"D3DKMTEscape(query-version) failed", f, st);
+      return 2;
+    }
+
+    const uint32_t major = (uint32_t)(q1.mmio_version >> 16);
+    const uint32_t minor = (uint32_t)(q1.mmio_version & 0xFFFFu);
+    wprintf(L"AeroGPU escape ABI: %lu\n", (unsigned long)q1.hdr.version);
+    wprintf(L"AeroGPU device version: 0x%08lx (%lu.%lu)\n",
+            (unsigned long)q1.mmio_version,
+            (unsigned long)major,
+            (unsigned long)minor);
+    return 0;
   }
 
-  uint32_t major = (uint32_t)(q.mmio_version >> 16);
-  uint32_t minor = (uint32_t)(q.mmio_version & 0xFFFFu);
+  const wchar_t *abiStr = L"unknown";
+  if (q.detected_mmio_magic == kLegacyMmioMagic) {
+    abiStr = L"legacy (ARGP)";
+  } else if (q.detected_mmio_magic == AEROGPU_MMIO_MAGIC) {
+    abiStr = L"new (AGPU)";
+  }
+
+  const uint32_t major = (uint32_t)(q.abi_version_u32 >> 16);
+  const uint32_t minor = (uint32_t)(q.abi_version_u32 & 0xFFFFu);
 
   wprintf(L"AeroGPU escape ABI: %lu\n", (unsigned long)q.hdr.version);
-  wprintf(L"AeroGPU MMIO version: 0x%08lx (%lu.%lu)\n",
-          (unsigned long)q.mmio_version,
+  wprintf(L"AeroGPU device ABI: %s\n", abiStr);
+  wprintf(L"AeroGPU MMIO magic: 0x%08lx\n", (unsigned long)q.detected_mmio_magic);
+  wprintf(L"AeroGPU ABI version: 0x%08lx (%lu.%lu)\n",
+          (unsigned long)q.abi_version_u32,
           (unsigned long)major,
           (unsigned long)minor);
+
+  if (q.detected_mmio_magic == AEROGPU_MMIO_MAGIC) {
+    wprintf(L"AeroGPU features:\n");
+    wprintf(L"  lo=0x%I64x hi=0x%I64x\n", (unsigned long long)q.features_lo, (unsigned long long)q.features_hi);
+    wprintf(L"  decoded:");
+    bool any = false;
+    if (q.features_lo & AEROGPU_FEATURE_FENCE_PAGE) {
+      wprintf(L"%sFENCE_PAGE", any ? L", " : L" ");
+      any = true;
+    }
+    if (q.features_lo & AEROGPU_FEATURE_CURSOR) {
+      wprintf(L"%sCURSOR", any ? L", " : L" ");
+      any = true;
+    }
+    if (q.features_lo & AEROGPU_FEATURE_SCANOUT) {
+      wprintf(L"%sSCANOUT", any ? L", " : L" ");
+      any = true;
+    }
+    if (q.features_lo & AEROGPU_FEATURE_VBLANK) {
+      wprintf(L"%sVBLANK", any ? L", " : L" ");
+      any = true;
+    }
+    if (!any) {
+      wprintf(L" (none)");
+    }
+    wprintf(L"\n");
+  }
+
   return 0;
 }
 
@@ -274,6 +334,60 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 }
 
 static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ringId) {
+  // Prefer the extended dump-ring packet (supports both legacy and new rings),
+  // but fall back to the legacy format for older drivers.
+  aerogpu_escape_dump_ring_v2_inout q2;
+  ZeroMemory(&q2, sizeof(q2));
+  q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q2.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+  q2.hdr.size = sizeof(q2);
+  q2.hdr.reserved0 = 0;
+  q2.ring_id = ringId;
+  q2.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
+  if (NT_SUCCESS(st)) {
+    const wchar_t *fmt = L"unknown";
+    switch (q2.ring_format) {
+    case AEROGPU_DBGCTL_RING_FORMAT_LEGACY:
+      fmt = L"legacy";
+      break;
+    case AEROGPU_DBGCTL_RING_FORMAT_AGPU:
+      fmt = L"agpu";
+      break;
+    default:
+      fmt = L"unknown";
+      break;
+    }
+
+    wprintf(L"Ring %lu (%s)\n", (unsigned long)q2.ring_id, fmt);
+    wprintf(L"  size: %lu bytes\n", (unsigned long)q2.ring_size_bytes);
+    wprintf(L"  head: 0x%08lx\n", (unsigned long)q2.head);
+    wprintf(L"  tail: 0x%08lx\n", (unsigned long)q2.tail);
+    wprintf(L"  descriptors: %lu\n", (unsigned long)q2.desc_count);
+
+    uint32_t count = q2.desc_count;
+    if (count > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+      count = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+    }
+
+    for (uint32_t i = 0; i < count; ++i) {
+      const aerogpu_dbgctl_ring_desc_v2 *d = &q2.desc[i];
+      if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+        wprintf(L"    [%lu] fence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx allocTableGpa=0x%I64x allocTableBytes=%lu\n",
+                (unsigned long)i, (unsigned long long)d->fence, (unsigned long long)d->cmd_gpa,
+                (unsigned long)d->cmd_size_bytes, (unsigned long)d->flags,
+                (unsigned long long)d->alloc_table_gpa, (unsigned long)d->alloc_table_size_bytes);
+      } else {
+        wprintf(L"    [%lu] fence=0x%I64x descGpa=0x%I64x descBytes=%lu flags=0x%08lx\n",
+                (unsigned long)i, (unsigned long long)d->fence, (unsigned long long)d->cmd_gpa,
+                (unsigned long)d->cmd_size_bytes, (unsigned long)d->flags);
+      }
+    }
+
+    return 0;
+  }
+
   aerogpu_escape_dump_ring_inout q;
   ZeroMemory(&q, sizeof(q));
   q.hdr.version = AEROGPU_ESCAPE_VERSION;
@@ -283,7 +397,7 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
   q.ring_id = ringId;
   q.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
 
-  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTEscape(dump-ring) failed", f, st);
     return 2;

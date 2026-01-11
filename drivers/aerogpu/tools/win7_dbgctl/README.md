@@ -23,13 +23,15 @@ Minimum supported commands:
   Prints the available `\\.\DISPLAY*` names to use with `--display`.
 
 - `aerogpu_dbgctl --query-version`  
-  Prints the AeroGPU MMIO/device version as reported by the KMD via `DxgkDdiEscape`.
+  Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (for AGPU) device feature bits.
 
 - `aerogpu_dbgctl --query-fence`  
   Prints the last submitted fence and last completed fence.
 
 - `aerogpu_dbgctl --dump-ring`  
-  Dumps ring head/tail + recent descriptors (if exposed by the driver).
+  Dumps ring head/tail + recent descriptors. Supports both:
+  - legacy ARGP ring entries (descriptor GPA/size)
+  - new AGPU ring entries (`aerogpu_submit_desc`: cmd GPA/size, alloc table, signal fence)
 
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
@@ -101,10 +103,10 @@ The AeroGPU KMD is expected to implement `DxgkDdiEscape` handling for these pack
 
 Escape ops used:
 
-- `AEROGPU_ESCAPE_OP_QUERY_DEVICE` → `--query-version`
+- `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version`
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
-- `AEROGPU_ESCAPE_OP_DUMP_RING` → `--dump-ring`
-- `AEROGPU_ESCAPE_OP_QUERY_VBLANK` → `--dump-vblank`
+- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`
+- `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
 
 ## Notes / troubleshooting
