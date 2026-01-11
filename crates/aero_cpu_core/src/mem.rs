@@ -379,4 +379,3 @@ impl CpuBus for FlatTestBus {
         Ok(())
     }
 }
-

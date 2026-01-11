@@ -1089,6 +1089,16 @@ impl CpuState {
 
     // ---- Compatibility helpers for tier-0 interpreter ---------------------
 
+    #[inline]
+    pub fn irq13_pending(&self) -> bool {
+        self.irq13_pending
+    }
+
+    #[inline]
+    pub fn set_irq13_pending(&mut self, pending: bool) {
+        self.irq13_pending = pending;
+    }
+
     /// Returns the segment base for a segment register.
     ///
     /// In long mode, only FS/GS bases are used for linear address formation

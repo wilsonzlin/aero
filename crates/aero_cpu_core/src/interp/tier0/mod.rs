@@ -5,12 +5,14 @@ mod ops_alu;
 mod ops_cf;
 mod ops_data;
 mod ops_fx;
+mod ops_sse;
 mod ops_string;
 mod ops_x87;
 
 use crate::exception::{AssistReason, Exception};
+use crate::fpu::FpKind;
 use crate::mem::CpuBus;
-use crate::state::CpuState;
+use crate::state::{CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS, CR4_OSFXSR};
 use aero_x86::{DecodedInst, Mnemonic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +70,9 @@ fn exec_decoded<B: CpuBus>(
     if ops_fx::handles_mnemonic(mnem) {
         return ops_fx::exec(state, bus, decoded, next_ip);
     }
+    if ops_sse::handles_mnemonic(mnem) {
+        return ops_sse::exec(state, bus, decoded, next_ip);
+    }
     if ops_x87::handles_mnemonic(mnem) {
         return ops_x87::exec(state, bus, decoded, next_ip);
     }
@@ -76,6 +81,10 @@ fn exec_decoded<B: CpuBus>(
     }
 
     match mnem {
+        Mnemonic::Wait => {
+            exec_wait(state)?;
+            Ok(ExecOutcome::Continue)
+        }
         Mnemonic::Hlt => Ok(ExecOutcome::Halt),
         Mnemonic::In
         | Mnemonic::Out
@@ -119,4 +128,44 @@ fn exec_decoded<B: CpuBus>(
         | Mnemonic::Mfence => Ok(ExecOutcome::Assist(AssistReason::Unsupported)),
         _ => Err(Exception::InvalidOpcode),
     }
+}
+
+pub(super) fn check_fp_available(state: &CpuState, kind: FpKind) -> Result<(), Exception> {
+    let cr0 = state.control.cr0;
+
+    if (cr0 & CR0_EM) != 0 {
+        return Err(Exception::InvalidOpcode);
+    }
+
+    if matches!(kind, FpKind::Sse) && (state.control.cr4 & CR4_OSFXSR) == 0 {
+        return Err(Exception::InvalidOpcode);
+    }
+
+    if (cr0 & CR0_TS) != 0 {
+        return Err(Exception::DeviceNotAvailable);
+    }
+
+    Ok(())
+}
+
+pub(super) fn exec_wait(state: &mut CpuState) -> Result<(), Exception> {
+    let cr0 = state.control.cr0;
+
+    if (cr0 & CR0_EM) != 0 {
+        return Err(Exception::InvalidOpcode);
+    }
+
+    if (cr0 & CR0_MP) != 0 && (cr0 & CR0_TS) != 0 {
+        return Err(Exception::DeviceNotAvailable);
+    }
+
+    if state.fpu.has_unmasked_exception() {
+        if (cr0 & CR0_NE) != 0 {
+            return Err(Exception::X87Fpu);
+        }
+
+        state.set_irq13_pending(true);
+    }
+
+    Ok(())
 }

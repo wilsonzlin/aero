@@ -1,76 +1,92 @@
-use aero_cpu_core::system::{Cpu, CR0_EM, CR0_MP, CR0_TS, CR4_OSFXSR};
-use aero_cpu_core::{CpuState, Exception, FXSAVE_AREA_SIZE};
+use aero_cpu_core::interp::tier0::exec::{step, StepExit};
+use aero_cpu_core::mem::FlatTestBus;
+use aero_cpu_core::state::{CpuMode, CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS, CR4_OSFXSR};
+use aero_cpu_core::Exception;
+
+fn init(code: &[u8]) -> (CpuState, FlatTestBus) {
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    (state, bus)
+}
 
 #[test]
 fn sse_ts_raises_nm_and_clearing_ts_allows_execution() {
-    let mut cpu = Cpu::default();
-    cpu.cs = 0x8; // CPL0
-    cpu.cr4 |= CR4_OSFXSR;
-
-    let mut state = CpuState::default();
+    // xorps xmm0, xmm1
+    let code = [0x0F, 0x57, 0xC1];
+    let (mut state, mut bus) = init(&code);
+    state.control.cr4 |= CR4_OSFXSR;
     state.sse.xmm[0] = 0x00ff;
     state.sse.xmm[1] = 0xff00;
 
-    cpu.cr0 |= CR0_TS;
-    assert_eq!(
-        cpu.instr_xorps(&mut state, 0, 1),
-        Err(Exception::DeviceNotAvailable)
-    );
+    state.control.cr0 |= CR0_TS;
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::DeviceNotAvailable));
 
-    cpu.cr0 &= !CR0_TS;
-    assert_eq!(cpu.instr_xorps(&mut state, 0, 1), Ok(()));
+    state.control.cr0 &= !CR0_TS;
+    assert_eq!(step(&mut state, &mut bus), Ok(StepExit::Continue));
     assert_eq!(state.sse.xmm[0], 0x00ff ^ 0xff00);
 }
 
 #[test]
 fn wait_with_ts_and_mp_raises_nm() {
-    let mut cpu = Cpu::default();
-    cpu.cr0 |= CR0_TS | CR0_MP;
-
-    let state = CpuState::default();
-    assert_eq!(
-        cpu.instr_wait(&state.fpu),
-        Err(Exception::DeviceNotAvailable)
-    );
+    // wait/fwait
+    let code = [0x9B];
+    let (mut state, mut bus) = init(&code);
+    state.control.cr0 |= CR0_TS | CR0_MP;
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::DeviceNotAvailable));
 }
 
 #[test]
-fn sse_requires_osfxsr() {
-    let mut cpu = Cpu::default();
-    let mut state = CpuState::default();
+fn wait_pending_exception_with_ne_raises_mf() {
+    let code = [0x9B];
+    let (mut state, mut bus) = init(&code);
 
-    assert_eq!(cpu.instr_xorps(&mut state, 0, 0), Err(Exception::InvalidOpcode));
+    // Unmask invalid operation (IM=0) and set the corresponding status flag (IE=1).
+    state.fpu.fcw = 0x037E;
+    state.fpu.fsw = 0x0001;
+    state.control.cr0 |= CR0_NE;
 
-    let mut fx_area = [0u8; FXSAVE_AREA_SIZE];
-    assert_eq!(
-        cpu.instr_fxsave(&state, &mut fx_area),
-        Err(Exception::InvalidOpcode)
-    );
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::X87Fpu));
 }
 
 #[test]
 fn x87_em_raises_ud() {
-    let mut cpu = Cpu::default();
-    cpu.cr0 |= CR0_EM;
-
-    let mut state = CpuState::default();
-    assert_eq!(cpu.instr_fninit(&mut state), Err(Exception::InvalidOpcode));
+    // fninit
+    let code = [0xDB, 0xE3];
+    let (mut state, mut bus) = init(&code);
+    state.control.cr0 |= CR0_EM;
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
 }
 
 #[test]
-fn clts_clears_ts_and_unblocks_sse() {
-    let mut cpu = Cpu::default();
-    cpu.cs = 0x8; // CPL0
-    cpu.cr4 |= CR4_OSFXSR;
-    cpu.cr0 |= CR0_TS;
-
-    let mut state = CpuState::default();
-    assert_eq!(
-        cpu.instr_xorps(&mut state, 0, 0),
-        Err(Exception::DeviceNotAvailable)
-    );
-
-    cpu.clts().unwrap();
-    assert_eq!(cpu.instr_xorps(&mut state, 0, 0), Ok(()));
+fn x87_ts_raises_nm() {
+    // fninit
+    let code = [0xDB, 0xE3];
+    let (mut state, mut bus) = init(&code);
+    state.control.cr0 |= CR0_TS;
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::DeviceNotAvailable));
 }
 
+#[test]
+fn sse_requires_osfxsr() {
+    // xorps xmm0, xmm0
+    let code = [0x0F, 0x57, 0xC0];
+    let (mut state, mut bus) = init(&code);
+    // Ensure `#UD` has priority over `#NM` when both OSFXSR=0 and TS=1.
+    state.control.cr0 |= CR0_TS;
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
+}
+
+#[test]
+fn wait_pending_exception_with_ne0_sets_irq13_pending() {
+    let code = [0x9B];
+    let (mut state, mut bus) = init(&code);
+
+    state.fpu.fcw = 0x037E;
+    state.fpu.fsw = 0x0001;
+
+    assert_eq!(step(&mut state, &mut bus), Ok(StepExit::Continue));
+    assert!(state.irq13_pending());
+}
