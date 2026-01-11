@@ -81,6 +81,71 @@ class CreateAllocationTrace:
     entries: List[CreateAllocationDesc] = field(default_factory=list)
 
 
+@dataclass
+class WdkFlagMasks:
+    allocationinfo: Dict[str, int] = field(default_factory=dict)
+    createallocation: Dict[str, int] = field(default_factory=dict)
+
+
+def _decode_flag_names(value: int, masks: Dict[str, int]) -> Tuple[List[str], int]:
+    names: List[str] = []
+    covered = 0
+    for (name, mask) in masks.items():
+        if mask == 0:
+            continue
+        covered |= mask
+        if value & mask:
+            names.append(name)
+    names.sort(key=lambda n: masks.get(n, 0))
+    unknown = value & ~covered
+    return (names, unknown)
+
+
+def parse_wdk_abi_probe_flags(lines: Iterable[str]) -> Optional[WdkFlagMasks]:
+    """
+    Parse the output of `drivers/aerogpu/kmd/tools/wdk_abi_probe/kmd_wdk_abi_probe.exe`.
+
+    This is optional, but useful when interpreting `flags_in`/`flags_out` and `create_flags`
+    from `aerogpu_dbgctl --dump-createalloc` because it provides a header-accurate mapping
+    from bitfield names -> numeric masks.
+    """
+    out = WdkFlagMasks()
+    current: Optional[str] = None  # "alloc" | "create"
+    saw_any = False
+
+    for raw in lines:
+        line = raw.rstrip("\r\n")
+
+        if "== DXGK_ALLOCATIONINFO::Flags masks ==" in line:
+            current = "alloc"
+            continue
+        if "== DXGKARG_CREATEALLOCATION::Flags masks ==" in line:
+            current = "create"
+            continue
+        if line.startswith("==") and line.endswith("=="):
+            current = None
+            continue
+
+        if not current:
+            continue
+
+        m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s+0x([0-9a-fA-F]+)\s*$", line)
+        if not m:
+            continue
+
+        saw_any = True
+        name = m.group(1)
+        mask = int(m.group(2), 16)
+        if current == "alloc":
+            out.allocationinfo[name] = mask
+        else:
+            out.createallocation[name] = mask
+
+    if not saw_any:
+        return None
+    return out
+
+
 def _bytes_per_pixel_dxgi(fmt: int) -> Optional[int]:
     # Keep this intentionally tiny: we only need the common swapchain formats for backbuffer matching.
     # DXGI_FORMAT enum values come from dxgiformat.h.
@@ -326,6 +391,23 @@ def parse_createalloc_dump(lines: Iterable[str]) -> Optional[CreateAllocationTra
     return trace
 
 
+def _createalloc_entry_dict(e: CreateAllocationDesc, masks: Optional[WdkFlagMasks]) -> dict:
+    d = asdict(e)
+    if masks is None:
+        return d
+
+    (in_names, in_unknown) = _decode_flag_names(e.flags_in, masks.allocationinfo)
+    (out_names, out_unknown) = _decode_flag_names(e.flags_out, masks.allocationinfo)
+    (create_names, create_unknown) = _decode_flag_names(e.create_flags, masks.createallocation)
+    d["flags_in_names"] = in_names
+    d["flags_out_names"] = out_names
+    d["create_flags_names"] = create_names
+    d["flags_in_unknown"] = in_unknown
+    d["flags_out_unknown"] = out_unknown
+    d["create_flags_unknown"] = create_unknown
+    return d
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(
         description="Parse AeroGPU Win7 trace_resources logs and extract DXGI swapchain backbuffer descriptors."
@@ -335,6 +417,11 @@ def main(argv: List[str]) -> int:
         "--createalloc",
         dest="createalloc_path",
         help="Optional path to `aerogpu_dbgctl --dump-createalloc` output for correlating backbuffers to CreateAllocation flags.",
+    )
+    ap.add_argument(
+        "--wdk-abi",
+        dest="wdk_abi_path",
+        help="Optional path to `kmd_wdk_abi_probe.exe` output for decoding CreateAllocation flags into named bits.",
     )
     ap.add_argument(
         "--json",
@@ -355,6 +442,11 @@ def main(argv: List[str]) -> int:
     if args.createalloc_path:
         with open(args.createalloc_path, "r", encoding="utf-8", errors="replace") as f:
             createalloc = parse_createalloc_dump(f)
+
+    wdk_masks: Optional[WdkFlagMasks] = None
+    if args.wdk_abi_path:
+        with open(args.wdk_abi_path, "r", encoding="utf-8", errors="replace") as f:
+            wdk_masks = parse_wdk_abi_probe_flags(f)
 
     pending: Optional[CreateResourceDesc] = None
     resources: Dict[int, CreateResourceDesc] = {}
@@ -453,11 +545,16 @@ def main(argv: List[str]) -> int:
         "resources_by_handle": {str(k): asdict(v) for (k, v) in resources.items()},
         "present_events": [{"api": api, "sync": sync, "src_handle": src} for (api, sync, src) in presents],
     }
+    if wdk_masks is not None:
+        output["wdk_abi_flag_masks"] = {
+            "allocationinfo": wdk_masks.allocationinfo,
+            "createallocation": wdk_masks.createallocation,
+        }
     if createalloc is not None:
         output["createalloc_trace"] = {
             "write_index": createalloc.write_index,
             "entry_count": createalloc.entry_count,
-            "entries": [asdict(e) for e in createalloc.entries],
+            "entries": [_createalloc_entry_dict(e, wdk_masks) for e in createalloc.entries],
         }
 
         matches: Dict[str, List[dict]] = {}
@@ -468,7 +565,7 @@ def main(argv: List[str]) -> int:
             expected = _expected_alloc_size(d)
             if expected is None:
                 continue
-            matched = [asdict(e) for e in createalloc.entries if e.size_bytes == expected]
+            matched = [_createalloc_entry_dict(e, wdk_masks) for e in createalloc.entries if e.size_bytes == expected]
             if matched:
                 matches[str(h)] = matched
         output["swapchain_createalloc_matches"] = matches
@@ -530,11 +627,28 @@ def main(argv: List[str]) -> int:
                 if matched:
                     print(f"  createalloc candidates (size_bytes={expected}):")
                     for e in matched:
-                        print(
+                        line = (
                             f"    call={e.call_seq} alloc_id={e.alloc_id} size={e.size_bytes} pitch={e.pitch_bytes} "
                             f"create_flags=0x{e.create_flags:08X} priv_flags=0x{e.priv_flags:08X} "
                             f"flags=0x{e.flags_in:08X}->0x{e.flags_out:08X}"
                         )
+                        if wdk_masks is not None:
+                            (create_names, create_unknown) = _decode_flag_names(e.create_flags, wdk_masks.createallocation)
+                            (in_names, in_unknown) = _decode_flag_names(e.flags_in, wdk_masks.allocationinfo)
+                            (out_names, out_unknown) = _decode_flag_names(e.flags_out, wdk_masks.allocationinfo)
+                            if create_names:
+                                line += f" create=[{','.join(create_names)}]"
+                            if create_unknown:
+                                line += f" create_unknown=0x{create_unknown:08X}"
+                            if in_names:
+                                line += f" in=[{','.join(in_names)}]"
+                            if in_unknown:
+                                line += f" in_unknown=0x{in_unknown:08X}"
+                            if out_names:
+                                line += f" out=[{','.join(out_names)}]"
+                            if out_unknown:
+                                line += f" out_unknown=0x{out_unknown:08X}"
+                        print(line)
                 else:
                     print(f"  createalloc candidates: (none match size_bytes={expected})")
         print("")

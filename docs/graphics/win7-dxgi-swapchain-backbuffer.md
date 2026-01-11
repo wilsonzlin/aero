@@ -133,6 +133,13 @@ python scripts/parse_win7_dxgi_swapchain_trace.py --createalloc=createalloc.txt 
 python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
 ```
 
+To decode `flags_in`/`flags_out` and `create_flags` into named bitfields, build and run the Win7 WDK ABI probe
+(`drivers/aerogpu/kmd/tools/wdk_abi_probe`) and pass its output to the parser:
+
+```bash
+python scripts/parse_win7_dxgi_swapchain_trace.py --wdk-abi=wdk_abi_probe.txt --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
+```
+
 ### Capturing KMD-facing allocation flags (optional but recommended)
 
 To understand which **WDDM allocation flags** are required for `Present` stability, capture what
