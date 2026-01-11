@@ -51,8 +51,9 @@ runs:
           exit 1
         fi
 
-        # Trim whitespace / CRLF
+        # Trim whitespace / CRLF and tolerate `.nvmrc` values prefixed with `v`.
         version="$(echo "$version" | tr -d '\r' | xargs)"
+        version="${version#v}"
         if [[ -z "$version" ]]; then
           echo "error: resolved empty Node version" >&2
           exit 1
@@ -60,11 +61,11 @@ runs:
 
         echo "node_version=$version" >> "$GITHUB_OUTPUT"
 
-      - id: detect
-        name: Detect Node workspace
-        shell: bash
-        run: |
-          set -euo pipefail
+    - id: detect
+      name: Detect Node workspace
+      shell: bash
+      run: |
+        set -euo pipefail
 
         root="${{ inputs.working-directory }}"
         if [[ -z "$root" ]]; then
@@ -99,20 +100,20 @@ runs:
           exit 1
         fi
 
-          if [[ -z "$lockfile" ]]; then
-            echo "error: resolver did not return lockfile (CI requires a lockfile)" >&2
-            echo "$kv" >&2
-            exit 1
-          fi
- 
-          install_dir="$(dirname "$lockfile")"
-          if [[ -z "$install_dir" ]]; then
-            install_dir="."
-          fi
+        if [[ -z "$lockfile" ]]; then
+          echo "error: resolver did not return lockfile (CI requires a lockfile)" >&2
+          echo "$kv" >&2
+          exit 1
+        fi
 
-          echo "dir=$dir" >> "$GITHUB_OUTPUT"
-          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
-          echo "install_dir=$install_dir" >> "$GITHUB_OUTPUT"
+        install_dir="$(dirname "$lockfile")"
+        if [[ -z "$install_dir" ]]; then
+          install_dir="."
+        fi
+
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+        echo "install_dir=$install_dir" >> "$GITHUB_OUTPUT"
 
     - name: Setup Node
       uses: actions/setup-node@v4
