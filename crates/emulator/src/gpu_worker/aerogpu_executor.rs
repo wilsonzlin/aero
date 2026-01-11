@@ -1744,7 +1744,13 @@ impl AerogpuSubmissionTrace {
         // Only capture the command stream if the descriptor is consistent. Malformed descriptors
         // are still recorded (with an empty cmd stream) so tracing can't be disabled by guests
         // that set `cmd_size_bytes` without a valid GPA.
-        let cmd_stream_bytes = if desc.cmd_gpa != 0 && desc.cmd_size_bytes != 0 {
+        let cmd_stream_bytes = if desc.cmd_gpa != 0
+            && desc.cmd_size_bytes != 0
+            && desc
+                .cmd_gpa
+                .checked_add(u64::from(desc.cmd_size_bytes))
+                .is_some()
+        {
             if desc.cmd_size_bytes > MAX_CAPTURE_BYTES {
                 return Err(TraceWriteError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -1759,7 +1765,13 @@ impl AerogpuSubmissionTrace {
             Vec::new()
         };
 
-        let alloc_table_bytes = if desc.alloc_table_gpa != 0 && desc.alloc_table_size_bytes != 0 {
+        let alloc_table_bytes = if desc.alloc_table_gpa != 0
+            && desc.alloc_table_size_bytes != 0
+            && desc
+                .alloc_table_gpa
+                .checked_add(u64::from(desc.alloc_table_size_bytes))
+                .is_some()
+        {
             if desc.alloc_table_size_bytes > MAX_CAPTURE_BYTES {
                 return Err(TraceWriteError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
