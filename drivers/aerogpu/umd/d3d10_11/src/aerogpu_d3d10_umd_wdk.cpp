@@ -1274,6 +1274,9 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
+    __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+      dealloc.hContext = UintPtrToD3dHandle<decltype(dealloc.hContext)>(static_cast<std::uintptr_t>(dev->hContext));
+    }
     __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
       dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     }
@@ -1347,6 +1350,9 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
     D3DDDICB_ALLOCATE alloc = {};
+    __if_exists(D3DDDICB_ALLOCATE::hContext) {
+      alloc.hContext = UintPtrToD3dHandle<decltype(alloc.hContext)>(static_cast<std::uintptr_t>(dev->hContext));
+    }
     alloc.hResource = hRTResource;
     alloc.NumAllocations = 1;
     alloc.pAllocationInfo = alloc_info;
@@ -1673,6 +1679,9 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
+    __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+      dealloc.hContext = UintPtrToD3dHandle<decltype(dealloc.hContext)>(static_cast<std::uintptr_t>(dev->hContext));
+    }
     __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
       dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     }
