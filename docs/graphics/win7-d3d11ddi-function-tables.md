@@ -494,6 +494,12 @@ These are required if you want `IDXGISwapChain::Present` to work.
 | `pfnRotateResourceIdentities` | REQUIRED | `void`: must rotate the “identity” of backbuffer resources after present. |
 
 > Win7 uses `D3D10DDIARG_PRESENT` (DXGI 1.1) even for D3D11 devices. Don’t invent a D3D11-specific present structure.
+>
+> Note: depending on `D3D11DDI_INTERFACE_VERSION`, these entrypoints can live on either:
+> * `D3D11DDI_DEVICEFUNCS` (device table), or
+> * `D3D11DDI_DEVICECONTEXTFUNCS` (immediate context table).
+>
+> Treat them as REQUIRED wherever they appear.
 
 ---
 
@@ -619,7 +625,7 @@ Special note for Win7 bring-up:
 
 ### 5.8 Present callouts (Win7 DXGI)
 
-Present itself is device-level (`D3D11DDI_DEVICEFUNCS::pfnPresent`), but it interacts with context submission:
+Present/RotateResourceIdentities may be surfaced on either the device or immediate context table (interface-version dependent), but it interacts with context submission:
 
 * DXGI typically expects rendering to the backbuffer to be **submitted** before present returns.
 * A common minimal policy is: `pfnPresent` performs an implicit `Flush` / submit of outstanding work.
@@ -659,7 +665,7 @@ Tests:
 | `CopyResource` | context `pfnCopyResource`. |
 | `Flush` | context `pfnFlush`. |
 | `Map` / `Unmap` | context `pfnMap` / `pfnUnmap`. |
-| `IDXGISwapChain::Present` | device `pfnPresent` (DXGI uses `D3D10DDIARG_PRESENT`) + likely `pfnRotateResourceIdentities`. |
+| `IDXGISwapChain::Present` | `pfnPresent` + likely `pfnRotateResourceIdentities` (table depends on interface version; DXGI uses `D3D10DDIARG_PRESENT`). |
 
 ### 6.2 `readback_sanity` (render-to-texture + staging readback; no Present)
 
