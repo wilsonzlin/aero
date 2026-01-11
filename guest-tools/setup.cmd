@@ -34,7 +34,10 @@ set "ARG_STAGE_ONLY=0"
 set "ARG_FORCE_TESTSIGN=0"
 set "ARG_SKIP_TESTSIGN=0"
 set "ARG_FORCE_NOINTEGRITY=0"
+set "ARG_FORCE_SIGNING_POLICY="
 set "ARG_NO_REBOOT=0"
+
+set "SIGNING_POLICY=testsigning"
 
 set "REBOOT_REQUIRED=0"
 set "CHANGED_TESTSIGNING=0"
@@ -50,11 +53,16 @@ for %%A in (%*) do (
   if /i "%%~A"=="/stageonly" set "ARG_STAGE_ONLY=1"
   if /i "%%~A"=="/stage-only" set "ARG_STAGE_ONLY=1"
   if /i "%%~A"=="/testsigning" set "ARG_FORCE_TESTSIGN=1"
+  if /i "%%~A"=="/forcetestsigning" set "ARG_FORCE_TESTSIGN=1"
   if /i "%%~A"=="/force-testsigning" set "ARG_FORCE_TESTSIGN=1"
   if /i "%%~A"=="/notestsigning" set "ARG_SKIP_TESTSIGN=1"
   if /i "%%~A"=="/no-testsigning" set "ARG_SKIP_TESTSIGN=1"
   if /i "%%~A"=="/nointegritychecks" set "ARG_FORCE_NOINTEGRITY=1"
+  if /i "%%~A"=="/forcenointegritychecks" set "ARG_FORCE_NOINTEGRITY=1"
   if /i "%%~A"=="/no-integrity-checks" set "ARG_FORCE_NOINTEGRITY=1"
+  if /i "%%~A"=="/forcesigningpolicy:none" set "ARG_FORCE_SIGNING_POLICY=none"
+  if /i "%%~A"=="/forcesigningpolicy:testsigning" set "ARG_FORCE_SIGNING_POLICY=testsigning"
+  if /i "%%~A"=="/forcesigningpolicy:nointegritychecks" set "ARG_FORCE_SIGNING_POLICY=nointegritychecks"
   if /i "%%~A"=="/noreboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
 )
@@ -79,6 +87,7 @@ call :log_manifest
 
 call :require_admin || goto :fail
 call :detect_arch || goto :fail
+call :load_signing_policy
 call :apply_force_defaults || goto :fail
 call :load_config || goto :fail
 call :validate_storage_service_infs || goto :fail
@@ -99,7 +108,7 @@ call :log ""
 call :log "Recovery if boot fails after switching storage to virtio-blk:"
 call :log "  - switch storage back to AHCI and boot"
 call :log "  - review %LOG%"
-call :log "  - ensure Win7 x64 test signing is enabled if using test-signed drivers"
+call :log "  - if using test-signed/custom-signed drivers on Win7 x64: enable Test Signing or nointegritychecks"
 
 call :log_summary
 call :maybe_reboot
@@ -110,12 +119,16 @@ exit /b 0
 echo Usage: setup.cmd [options]
 echo.
 echo Options:
-echo   /force, /quiet        Non-interactive: implies /noreboot and enables /testsigning on x64
-echo                        (unless /notestsigning is provided)
+echo   /force, /quiet        Non-interactive: implies /noreboot; on x64 applies signing_policy without prompting
+echo                        (use /forcesigningpolicy:none to keep boot policy unchanged)
 echo   /stageonly           Only stage drivers into the Driver Store (no install attempts)
-echo   /testsigning         Enable test signing on x64 without prompting
+echo   /testsigning         Enable test signing on x64 without prompting (overrides manifest)
+echo   /forcetestsigning    Same as /testsigning
 echo   /notestsigning       Skip enabling test signing (x64)
-echo   /nointegritychecks   Disable signature enforcement (x64; not recommended)
+echo   /nointegritychecks   Disable signature enforcement (x64; not recommended; overrides manifest)
+echo   /forcenointegritychecks  Same as /nointegritychecks
+echo   /forcesigningpolicy:none^|testsigning^|nointegritychecks
+echo                      Override the signing policy read from manifest.json (if present)
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo.
 echo Logs are written to C:\AeroGuestTools\install.log
@@ -252,17 +265,40 @@ exit /b 0
 :apply_force_defaults
 if not "%ARG_FORCE%"=="1" exit /b 0
 
-rem /force implies /testsigning on x64 unless the operator explicitly disables it.
-if /i "%OS_ARCH%"=="amd64" (
-  if "%ARG_SKIP_TESTSIGN%"=="1" (
-    call :log "Force mode: /notestsigning specified; leaving test signing unchanged."
-  ) else if "%ARG_FORCE_NOINTEGRITY%"=="1" (
-    call :log "Force mode: /nointegritychecks specified; leaving test signing unchanged."
-  ) else (
-    set "ARG_FORCE_TESTSIGN=1"
-    call :log "Force mode: will enable Test Signing on x64 (implied)."
-  )
+if /i not "%OS_ARCH%"=="amd64" exit /b 0
+
+rem /force skips prompts. Apply the effective signing policy unless the operator
+rem explicitly disables/overrides it.
+if /i "%SIGNING_POLICY%"=="none" (
+  call :log "Force mode: signing_policy=none; leaving Test Signing / nointegritychecks unchanged."
+  exit /b 0
 )
+
+if /i "%SIGNING_POLICY%"=="nointegritychecks" (
+  if "%ARG_FORCE_NOINTEGRITY%"=="1" (
+    call :log "Force mode: will enable nointegritychecks on x64 (explicit)."
+    exit /b 0
+  )
+  set "ARG_FORCE_NOINTEGRITY=1"
+  call :log "Force mode: will enable nointegritychecks on x64 (implied by signing_policy)."
+  exit /b 0
+)
+
+rem Default: signing_policy=testsigning.
+if "%ARG_SKIP_TESTSIGN%"=="1" (
+  call :log "Force mode: /notestsigning specified; leaving test signing unchanged."
+  exit /b 0
+)
+if "%ARG_FORCE_NOINTEGRITY%"=="1" (
+  call :log "Force mode: /nointegritychecks specified; leaving test signing unchanged."
+  exit /b 0
+)
+if "%ARG_FORCE_TESTSIGN%"=="1" (
+  call :log "Force mode: will enable Test Signing on x64 (explicit)."
+  exit /b 0
+)
+set "ARG_FORCE_TESTSIGN=1"
+call :log "Force mode: will enable Test Signing on x64 (implied)."
 exit /b 0
 
 :load_config
@@ -308,10 +344,54 @@ if /i "%OS_ARCH%"=="amd64" (
 
 exit /b 0
 
+:load_signing_policy
+set "SIGNING_POLICY=testsigning"
+set "MANIFEST_FILE=%SCRIPT_DIR%manifest.json"
+
+set "FOUND_POLICY="
+if exist "%MANIFEST_FILE%" (
+  for /f "usebackq tokens=4 delims=^"" %%P in (`findstr /i "signing_policy" "%MANIFEST_FILE%"`) do (
+    set "FOUND_POLICY=%%P"
+    goto :load_signing_policy_parsed
+  )
+)
+
+:load_signing_policy_parsed
+if exist "%MANIFEST_FILE%" (
+  if defined FOUND_POLICY (
+    if /i "!FOUND_POLICY!"=="none" set "SIGNING_POLICY=none"
+    if /i "!FOUND_POLICY!"=="testsigning" set "SIGNING_POLICY=testsigning"
+    if /i "!FOUND_POLICY!"=="nointegritychecks" set "SIGNING_POLICY=nointegritychecks"
+    if /i not "!FOUND_POLICY!"=="none" if /i not "!FOUND_POLICY!"=="testsigning" if /i not "!FOUND_POLICY!"=="nointegritychecks" (
+      call :log "WARNING: manifest.json has unknown signing_policy: !FOUND_POLICY! (defaulting to testsigning)."
+      set "SIGNING_POLICY=testsigning"
+    ) else (
+      call :log "Signing policy from manifest.json: %SIGNING_POLICY%"
+    )
+  ) else (
+    call :log "WARNING: manifest.json present but signing_policy was not detected (defaulting to testsigning)."
+  )
+)
+
+rem Explicit CLI overrides always win over the manifest/default.
+if defined ARG_FORCE_SIGNING_POLICY (
+  set "SIGNING_POLICY=%ARG_FORCE_SIGNING_POLICY%"
+)
+if "%ARG_FORCE_TESTSIGN%"=="1" set "SIGNING_POLICY=testsigning"
+if "%ARG_FORCE_NOINTEGRITY%"=="1" set "SIGNING_POLICY=nointegritychecks"
+
+call :log "Effective signing_policy: %SIGNING_POLICY%"
+exit /b 0
+
 :install_certs
 set "CERT_DIR=%SCRIPT_DIR%certs"
 call :log ""
 call :log "Installing Aero certificate(s) from %CERT_DIR% ..."
+
+if not exist "%CERT_DIR%" (
+  call :log "WARNING: Certificate directory not found; skipping certificate installation."
+  exit /b 0
+)
 
 set "FOUND_CERT=0"
 
@@ -337,8 +417,8 @@ for %%F in ("%CERT_DIR%\*.p7b") do (
 )
 
 if "%FOUND_CERT%"=="0" (
-  call :log "ERROR: No certificates found under %CERT_DIR% (expected *.cer/*.crt and/or *.p7b)."
-  exit /b %EC_CERTS_MISSING%
+  call :log "WARNING: No certificates found under %CERT_DIR% (expected *.cer/*.crt and/or *.p7b). Skipping certificate installation."
+  exit /b 0
 )
 
 exit /b 0
@@ -428,10 +508,34 @@ for /f "tokens=1,2" %%A in ('"%SYS32%\bcdedit.exe" /enum {current} ^| findstr /i
   if /i "%%B"=="Yes" set "TESTSIGNING=1"
 )
 
-if "%ARG_FORCE_NOINTEGRITY%"=="1" (
+call :log ""
+call :log "Windows 7 x64 detected. Effective signing_policy=%SIGNING_POLICY%"
+
+if /i "%SIGNING_POLICY%"=="none" (
+  call :log "Signing policy is 'none'; not changing Test Signing / nointegritychecks."
+  exit /b 0
+)
+
+if /i "%SIGNING_POLICY%"=="nointegritychecks" (
+  call :log "Kernel driver signature enforcement is strict. This media is intended for drivers that may not be accepted by Win7 x64."
+  call :log "To allow them to load, disable signature enforcement (nointegritychecks)."
+
   if "%NOINTEGRITY%"=="1" (
-    call :log ""
     call :log "nointegritychecks is already enabled."
+    exit /b 0
+  )
+
+  set "DO_ENABLE=0"
+  if "%ARG_FORCE_NOINTEGRITY%"=="1" (
+    set "DO_ENABLE=1"
+  ) else (
+    choice /c YN /n /m "Enable nointegritychecks now? [Y/N] "
+    if errorlevel 2 set "DO_ENABLE=0"
+    if errorlevel 1 set "DO_ENABLE=1"
+  )
+
+  if "%DO_ENABLE%"=="0" (
+    call :log "nointegritychecks was not enabled."
     exit /b 0
   )
 
@@ -441,7 +545,8 @@ if "%ARG_FORCE_NOINTEGRITY%"=="1" (
     call :log "ERROR: Failed to enable nointegritychecks."
     call :log "You may need to run this manually and reboot:"
     call :log "  bcdedit /set nointegritychecks on"
-    exit /b 1
+    if "%ARG_FORCE_NOINTEGRITY%"=="1" exit /b 1
+    exit /b 0
   )
 
   > "%STATE_NOINTEGRITY%" echo nointegritychecks enabled by Aero Guest Tools on %DATE% %TIME%
@@ -451,14 +556,13 @@ if "%ARG_FORCE_NOINTEGRITY%"=="1" (
   exit /b 0
 )
 
+rem Default: signing_policy=testsigning (legacy behavior).
 if "%ARG_SKIP_TESTSIGN%"=="1" (
-  call :log ""
   call :log "Skipping test signing changes (/notestsigning)."
   exit /b 0
 )
 
-call :log ""
-call :log "Windows 7 x64 detected. Kernel driver signature enforcement is strict."
+call :log "Kernel driver signature enforcement is strict."
 call :log "If Aero drivers are test-signed/custom-signed, enable Test Signing mode."
 call :log "Alternative (less safe): disable signature checks entirely (nointegritychecks)."
 

@@ -33,6 +33,18 @@ struct Cli {
     #[arg(long, default_value = "AERO_GUEST_TOOLS")]
     volume_id: String,
 
+    /// Driver signing / boot policy for the packaged media.
+    ///
+    /// - `testsigning`: prompt to enable Test Signing on Win7 x64 (default)
+    /// - `nointegritychecks`: prompt to disable signature enforcement on Win7 x64
+    /// - `none`: do not prompt or change boot policy (for WHQL/production-signed drivers)
+    #[arg(
+        long,
+        env = "AERO_GUEST_TOOLS_SIGNING_POLICY",
+        default_value = "testsigning"
+    )]
+    signing_policy: aero_packager::SigningPolicy,
+
     /// Override SOURCE_DATE_EPOCH (seconds since Unix epoch) for deterministic timestamps.
     #[arg(long)]
     source_date_epoch: Option<i64>,
@@ -53,6 +65,7 @@ fn main() -> anyhow::Result<()> {
         version: cli.version,
         build_id: cli.build_id,
         volume_id: cli.volume_id,
+        signing_policy: cli.signing_policy,
         source_date_epoch,
     };
 

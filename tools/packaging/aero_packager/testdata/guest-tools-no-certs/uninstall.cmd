@@ -1,0 +1,3 @@
+@echo off
+echo Uninstalling Aero Guest Tools...
+

@@ -23,6 +23,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         version: "1.2.3".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
         source_date_epoch: 0,
     };
     let config2 = aero_packager::PackageConfig {
@@ -163,6 +164,8 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     assert_eq!(manifest.package.version, "1.2.3");
     assert_eq!(manifest.package.build_id, "test");
     assert_eq!(manifest.package.source_date_epoch, 0);
+    assert_eq!(manifest.signing_policy, aero_packager::SigningPolicy::TestSigning);
+    assert!(manifest.certs_required);
 
     let mut manifest_paths = BTreeSet::new();
     for entry in &manifest.files {
@@ -200,8 +203,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
 }
 
 #[test]
-fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
-) -> anyhow::Result<()> {
+fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
 
@@ -247,6 +249,7 @@ fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
         source_date_epoch: 0,
     };
 
@@ -258,32 +261,20 @@ fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
     assert!(tree.contains("drivers/amd64/testdrv/test.inf"));
 
     assert!(
-        !tree
-            .paths
-            .iter()
-            .any(|p| p.starts_with("drivers/x86/stray/")),
+        !tree.paths.iter().any(|p| p.starts_with("drivers/x86/stray/")),
         "stray driver unexpectedly packaged for x86"
     );
     assert!(
-        !tree
-            .paths
-            .iter()
-            .any(|p| p.starts_with("drivers/amd64/stray/")),
+        !tree.paths.iter().any(|p| p.starts_with("drivers/amd64/stray/")),
         "stray driver unexpectedly packaged for amd64"
     );
 
     assert!(
-        !tree
-            .paths
-            .iter()
-            .any(|p| p.starts_with("drivers/x86/optdrv/")),
+        !tree.paths.iter().any(|p| p.starts_with("drivers/x86/optdrv/")),
         "missing optional driver unexpectedly packaged for x86"
     );
     assert!(
-        !tree
-            .paths
-            .iter()
-            .any(|p| p.starts_with("drivers/amd64/optdrv/")),
+        !tree.paths.iter().any(|p| p.starts_with("drivers/amd64/optdrv/")),
         "missing optional driver unexpectedly packaged for amd64"
     );
 
@@ -340,6 +331,7 @@ fn optional_drivers_are_validated_when_present() -> anyhow::Result<()> {
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
         source_date_epoch: 0,
     };
 
@@ -405,9 +397,10 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
         guest_tools_dir,
         out_dir: out_dir.path().to_path_buf(),
         spec_path,
-        version: "1.2.3".to_string(),
+        version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
         source_date_epoch: 0,
     };
 
@@ -417,7 +410,90 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
         msg.contains("refusing to package private key material"),
         "unexpected error: {msg}"
     );
+    Ok(())
+}
 
+#[test]
+fn package_outputs_allow_empty_certs_when_signing_policy_none() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools-no-certs");
+
+    let out1 = tempfile::tempdir()?;
+    let out2 = tempfile::tempdir()?;
+
+    let config1 = aero_packager::PackageConfig {
+        drivers_dir: drivers_dir.clone(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        out_dir: out1.path().to_path_buf(),
+        spec_path: spec_path.clone(),
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::None,
+        source_date_epoch: 0,
+    };
+    let config2 = aero_packager::PackageConfig {
+        out_dir: out2.path().to_path_buf(),
+        ..config1.clone()
+    };
+
+    let outputs1 = aero_packager::package_guest_tools(&config1)?;
+    let outputs2 = aero_packager::package_guest_tools(&config2)?;
+
+    // Deterministic outputs even when certs are omitted.
+    assert_eq!(fs::read(&outputs1.iso_path)?, fs::read(&outputs2.iso_path)?);
+    assert_eq!(fs::read(&outputs1.zip_path)?, fs::read(&outputs2.zip_path)?);
+    assert_eq!(
+        fs::read(&outputs1.manifest_path)?,
+        fs::read(&outputs2.manifest_path)?
+    );
+
+    let manifest_bytes = fs::read(&outputs1.manifest_path)?;
+    let manifest: aero_packager::Manifest = serde_json::from_slice(&manifest_bytes)?;
+    assert_eq!(manifest.signing_policy, aero_packager::SigningPolicy::None);
+    assert!(!manifest.certs_required);
+
+    let iso_bytes = fs::read(&outputs1.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+    assert!(
+        !tree.paths.iter().any(|p| p.starts_with("certs/") && !p.ends_with("README.md")),
+        "expected no certificates in ISO when signing_policy=none"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn packaging_fails_when_signing_policy_requires_certs_but_none_present() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools-no-certs");
+    let spec_path = testdata.join("spec.json");
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir,
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("contains no certificate files"),
+        "unexpected error: {msg}"
+    );
     Ok(())
 }
 

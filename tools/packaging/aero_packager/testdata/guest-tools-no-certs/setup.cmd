@@ -1,0 +1,3 @@
+@echo off
+echo Installing Aero Guest Tools...
+

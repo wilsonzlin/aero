@@ -25,10 +25,13 @@ Designed for the standard flow:
 ### What it does
 
 1. Creates a state directory at `C:\AeroGuestTools\`.
-2. Installs Aero signing certificate(s) from `certs\` (`*.cer`, `*.crt`, `*.p7b`) into:
+2. Installs Aero signing certificate(s) from `certs\` (`*.cer`, `*.crt`, `*.p7b`) **if any are present** into:
    - `Root` (Trusted Root Certification Authorities)
    - `TrustedPublisher` (Trusted Publishers)
-3. On **Windows 7 x64**, optionally enables **test signing** (`bcdedit /set testsigning on`).
+3. On **Windows 7 x64**, may enable a driver-signing boot policy depending on `manifest.json`:
+   - `testsigning` (`bcdedit /set testsigning on`)
+   - `nointegritychecks` (`bcdedit /set nointegritychecks on`) (**not recommended**)
+   - `none` (do not prompt or change boot policy; for WHQL/production-signed drivers)
 4. Stages all driver packages found under:
    - `drivers\x86\` (on Win7 x86)
    - `drivers\amd64\` (on Win7 x64)
@@ -53,20 +56,39 @@ Run as Administrator:
 setup.cmd
 ```
 
+### Signing policy (manifest.json)
+
+Guest Tools media built by `tools/packaging/aero_packager` includes a `manifest.json` file that carries a `signing_policy` field.
+
+`setup.cmd` uses this policy to decide whether to prompt for enabling Test Mode / signature bypass on **Windows 7 x64**:
+
+- `none`: do not prompt or change `bcdedit` settings (for WHQL/production-signed drivers).
+- `testsigning`: prompt to enable Test Signing (default for dev/test builds).
+- `nointegritychecks`: prompt to disable signature enforcement (**not recommended**).
+
+Explicit command-line flags override the manifest.
+
 Optional flags:
 
 - `setup.cmd /force` (or `setup.cmd /quiet`)  
   Fully non-interactive/unattended mode:
-  - implies `/noreboot` (never prompts reboot/shutdown)
-  - on x64, implies `/testsigning` unless `/notestsigning` is also provided
+   - implies `/noreboot` (never prompts reboot/shutdown)
+   - on x64, applies the effective `signing_policy` without prompting (e.g. enables Test Signing or `nointegritychecks`)
+     - use `/forcesigningpolicy:none` to keep boot policy unchanged
 - `setup.cmd /stageonly`  
   Only adds driver packages to the Driver Store (does not attempt immediate installs).
 - `setup.cmd /testsigning`  
   On x64, enable test signing without prompting.
+- `setup.cmd /forcetestsigning`  
+  Alias of `/testsigning` (overrides `manifest.json`).
 - `setup.cmd /notestsigning`  
   On x64, do not change the test-signing state.
 - `setup.cmd /nointegritychecks`  
   On x64, disable signature enforcement entirely (**not recommended**; use only if test signing is not sufficient).
+- `setup.cmd /forcenointegritychecks`  
+  Alias of `/nointegritychecks` (overrides `manifest.json`).
+- `setup.cmd /forcesigningpolicy:none|testsigning|nointegritychecks`  
+  Override the `signing_policy` read from `manifest.json` (if present).
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 
@@ -75,8 +97,19 @@ Exit codes (for automation):
 - `0`: success
 - `10`: Administrator privileges required
 - `11`: driver directory missing (`drivers\\<arch>\\`)
-- `12`: no certificate files found under `certs\\`
 - `13`: `AERO_VIRTIO_BLK_SERVICE` does not match any `AddService` name in the staged driver INFs
+## Building Guest Tools media for WHQL / production-signed drivers
+
+If you are shipping only WHQL/production-signed drivers (for example from `virtio-win`), you can build Guest Tools media that:
+
+- contains **no** `certs\*.cer/*.crt/*.p7b`, and
+- does **not** prompt to enable Test Mode / `nointegritychecks` by default.
+
+When building artifacts with `tools/packaging/aero_packager`, set:
+
+- `--signing-policy none` (or `AERO_GUEST_TOOLS_SIGNING_POLICY=none`)
+
+and ensure the input Guest Tools `certs\` directory contains **zero** certificate files.
 
 ## `uninstall.cmd`
 
@@ -96,6 +129,8 @@ Optional flags:
   Fully non-interactive alias for `/force /noreboot`.
 - `uninstall.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
+
+If the current Guest Tools media `manifest.json` has `signing_policy=none`, `uninstall.cmd` also defaults to **not** prompting about Test Signing / `nointegritychecks` changes.
 
 Output:
 

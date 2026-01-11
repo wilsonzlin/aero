@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 pub use iso9660::read_joliet_file_entries;
 pub use iso9660::read_joliet_tree;
 pub use iso9660::{IsoFileEntry, IsoFileTree};
-pub use manifest::{Manifest, ManifestFileEntry};
+pub use manifest::{Manifest, ManifestFileEntry, SigningPolicy};
 pub use spec::{DriverSpec, PackagingSpec};
 
 /// Configuration for producing the distributable "Aero Drivers / Guest Tools" media.
@@ -25,6 +25,7 @@ pub struct PackageConfig {
     pub version: String,
     pub build_id: String,
     pub volume_id: String,
+    pub signing_policy: SigningPolicy,
     /// Seconds since Unix epoch used for timestamps inside the ISO/zip.
     pub source_date_epoch: i64,
 }
@@ -70,6 +71,7 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
         config.version.clone(),
         config.build_id.clone(),
         config.source_date_epoch,
+        config.signing_policy,
         file_entries,
     );
 
@@ -230,50 +232,54 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
 
     // Certificates.
     let certs_dir = config.guest_tools_dir.join("certs");
-    if !certs_dir.is_dir() {
+    if certs_dir.is_dir() {
+        let mut certs = Vec::new();
+        let mut found_cert = false;
+        for entry in walkdir::WalkDir::new(&certs_dir)
+            .follow_links(false)
+            .sort_by_file_name()
+        {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let rel = entry
+                .path()
+                .strip_prefix(&certs_dir)
+                .expect("walkdir under certs_dir");
+            let rel_str = path_to_slash(rel);
+            let lower = rel_str.to_ascii_lowercase();
+            // Include only public certificate artifacts and docs (no private keys).
+            let is_cert =
+                lower.ends_with(".cer") || lower.ends_with(".crt") || lower.ends_with(".p7b");
+            let is_doc = lower == "readme.md";
+            if !(is_cert || is_doc) {
+                continue;
+            }
+            if is_cert {
+                found_cert = true;
+            }
+            certs.push(FileToPackage {
+                rel_path: format!("certs/{}", rel_str),
+                bytes: fs::read(entry.path())
+                    .with_context(|| format!("read {}", entry.path().display()))?,
+            });
+        }
+        if config.signing_policy.certs_required() && !found_cert {
+            bail!(
+                "guest tools certs directory contains no certificate files (*.cer/*.crt/*.p7b), \
+                 but signing_policy={} requires at least one: {}",
+                config.signing_policy,
+                certs_dir.to_string_lossy(),
+            );
+        }
+        out.extend(certs);
+    } else if config.signing_policy.certs_required() {
         bail!(
             "guest tools missing required directory: {}",
             certs_dir.to_string_lossy()
         );
     }
-    let mut certs = Vec::new();
-    let mut found_cert = false;
-    for entry in walkdir::WalkDir::new(&certs_dir)
-        .follow_links(false)
-        .sort_by_file_name()
-    {
-        let entry = entry?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let rel = entry
-            .path()
-            .strip_prefix(&certs_dir)
-            .expect("walkdir under certs_dir");
-        let rel_str = path_to_slash(rel);
-        let lower = rel_str.to_ascii_lowercase();
-        // Include only public certificate artifacts and docs (no private keys).
-        let is_cert = lower.ends_with(".cer") || lower.ends_with(".crt") || lower.ends_with(".p7b");
-        let is_doc = lower == "readme.md";
-        if !(is_cert || is_doc) {
-            continue;
-        }
-        if is_cert {
-            found_cert = true;
-        }
-        certs.push(FileToPackage {
-            rel_path: format!("certs/{}", rel_str),
-            bytes: fs::read(entry.path())
-                .with_context(|| format!("read {}", entry.path().display()))?,
-        });
-    }
-    if !found_cert {
-        bail!(
-            "guest tools certs directory contains no certificate files (*.cer/*.crt/*.p7b): {}",
-            certs_dir.to_string_lossy()
-        );
-    }
-    out.extend(certs);
 
     // Optional: include documentation alongside the packaged driver tree.
     // (Driver binaries themselves come from `drivers_dir`.)

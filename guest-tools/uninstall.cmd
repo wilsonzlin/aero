@@ -27,6 +27,8 @@ set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
 set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 
 set "ARG_FORCE=0"
+set "SIGNING_POLICY=testsigning"
+
 set "ARG_NO_REBOOT=0"
 if /i "%~1"=="/?" goto :usage
 if /i "%~1"=="-h" goto :usage
@@ -53,6 +55,7 @@ call :log "Logs: %LOG%"
 
 call :require_admin || goto :fail
 call :load_config || goto :fail
+call :load_signing_policy
 
 call :log ""
 call :log "WARNING:"
@@ -141,6 +144,36 @@ if not exist "%CONFIG_FILE%" (
 call "%CONFIG_FILE%"
 exit /b 0
 
+:load_signing_policy
+set "SIGNING_POLICY=testsigning"
+set "MANIFEST_FILE=%SCRIPT_DIR%manifest.json"
+
+set "FOUND_POLICY="
+if exist "%MANIFEST_FILE%" (
+  for /f "usebackq tokens=4 delims=^"" %%P in (`findstr /i "signing_policy" "%MANIFEST_FILE%"`) do (
+    set "FOUND_POLICY=%%P"
+    goto :load_signing_policy_parsed
+  )
+)
+
+:load_signing_policy_parsed
+if exist "%MANIFEST_FILE%" (
+  if defined FOUND_POLICY (
+    if /i "!FOUND_POLICY!"=="none" set "SIGNING_POLICY=none"
+    if /i "!FOUND_POLICY!"=="testsigning" set "SIGNING_POLICY=testsigning"
+    if /i "!FOUND_POLICY!"=="nointegritychecks" set "SIGNING_POLICY=nointegritychecks"
+    if /i not "!FOUND_POLICY!"=="none" if /i not "!FOUND_POLICY!"=="testsigning" if /i not "!FOUND_POLICY!"=="nointegritychecks" (
+      call :log "WARNING: manifest.json has unknown signing_policy: !FOUND_POLICY! (defaulting to testsigning)."
+      set "SIGNING_POLICY=testsigning"
+    ) else (
+      call :log "Signing policy from manifest.json: %SIGNING_POLICY%"
+    )
+  )
+)
+
+call :log "Effective signing_policy: %SIGNING_POLICY%"
+exit /b 0
+
 :remove_driver_packages
 call :log ""
 call :log "Removing Aero driver packages from Driver Store (best-effort)..."
@@ -181,6 +214,7 @@ exit /b 0
 
 :maybe_disable_testsigning
 rem Only prompt if we previously enabled it.
+if /i "%SIGNING_POLICY%"=="none" exit /b 0
 if not exist "%STATE_TESTSIGN%" exit /b 0
 
 if "%ARG_FORCE%"=="1" (
@@ -206,6 +240,7 @@ exit /b 0
 
 :maybe_disable_nointegritychecks
 rem Only prompt if we previously enabled it.
+if /i "%SIGNING_POLICY%"=="none" exit /b 0
 if not exist "%STATE_NOINTEGRITY%" exit /b 0
 
 if "%ARG_FORCE%"=="1" (
