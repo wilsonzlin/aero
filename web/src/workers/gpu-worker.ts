@@ -24,7 +24,21 @@ import {
   FRAME_PRESENTING,
   FRAME_SEQ_INDEX,
   FRAME_STATUS_INDEX,
-} from "../shared/frameProtocol";
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+  isGpuWorkerMessageBase,
+  type GpuRuntimeErrorEvent,
+  type GpuRuntimeFallbackInfo,
+  type GpuRuntimeCursorSetImageMessage,
+  type GpuRuntimeCursorSetStateMessage,
+  type GpuRuntimeInitMessage,
+  type GpuRuntimeInitOptions,
+  type GpuRuntimeInMessage,
+  type GpuRuntimeOutMessage,
+  type GpuRuntimeScreenshotRequestMessage,
+  type GpuRuntimeSubmitAerogpuMessage,
+  type GpuRuntimeStatsCountersV1,
+} from "../ipc/gpu-protocol";
 
 import {
   dirtyTilesToRects,
@@ -66,21 +80,6 @@ import {
 import type { Presenter, PresenterBackendKind, PresenterInitOptions } from "../gpu/presenter";
 import { PresenterError } from "../gpu/presenter";
 import { RawWebGl2Presenter } from "../gpu/raw-webgl2-presenter-backend";
-import type {
-  GpuRuntimeErrorEvent,
-  GpuRuntimeInMessage,
-  GpuRuntimeFallbackInfo,
-  GpuRuntimeCursorSetImageMessage,
-  GpuRuntimeCursorSetStateMessage,
-  GpuRuntimeEventsMessage,
-  GpuRuntimeInitMessage,
-  GpuRuntimeInitOptions,
-  GpuRuntimeOutMessage,
-  GpuRuntimeScreenshotRequestMessage,
-  GpuRuntimeSubmitAerogpuMessage,
-  GpuRuntimeStatsCountersV1,
-  GpuRuntimeStatsMessage,
-} from "./gpu_runtime_protocol";
 import {
   AEROGPU_CMD_CREATE_TEXTURE2D_SIZE,
   AEROGPU_CMD_DESTROY_RESOURCE_SIZE,
@@ -101,8 +100,12 @@ type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<v
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 void installWorkerPerfHandlers();
 
-const postToMain = (msg: GpuRuntimeOutMessage, transfer?: Transferable[]) => {
-  ctx.postMessage(msg, transfer ?? []);
+const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
+
+type OutboundGpuRuntimeMessage = Omit<GpuRuntimeOutMessage, "protocol" | "protocolVersion">;
+
+const postToMain = (msg: OutboundGpuRuntimeMessage, transfer?: Transferable[]) => {
+  ctx.postMessage({ ...msg, ...GPU_MESSAGE_BASE }, transfer ?? []);
 };
 
 const postRuntimeError = (message: string) => {
@@ -556,7 +559,7 @@ function backendKindForEvent(): string {
 
 function postGpuEvents(events: GpuRuntimeErrorEvent[]): void {
   if (events.length === 0) return;
-  postToMain({ type: "events", version: 1, events } satisfies GpuRuntimeEventsMessage);
+  postToMain({ type: "events", version: 1, events });
 }
 
 function emitGpuEvent(event: GpuRuntimeErrorEvent): void {
@@ -669,7 +672,7 @@ function postStatsMessage(wasmStats?: unknown): void {
     ...(backendKind ? { backendKind } : {}),
     counters: getStatsCounters(),
     ...(wasmStats === undefined ? {} : { wasm: wasmStats }),
-  } satisfies GpuRuntimeStatsMessage);
+  });
 }
 
 function getModuleExportFn<T extends (...args: any[]) => any>(names: readonly string[]): T | null {
@@ -1678,8 +1681,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     return;
   }
 
-  const msg = data as Partial<GpuRuntimeInMessage>;
-  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
+  if (!isGpuWorkerMessageBase(data) || typeof (data as { type?: unknown }).type !== "string") return;
+  const msg = data as GpuRuntimeInMessage;
 
   switch (msg.type) {
     case "init": {

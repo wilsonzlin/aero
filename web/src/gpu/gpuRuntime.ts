@@ -4,7 +4,7 @@ import type {
   GpuRuntimeOutMessage,
   GpuRuntimeReadyMessage,
   GpuRuntimeStatsMessage,
-} from "../workers/gpu_runtime_protocol";
+} from "../ipc/gpu-protocol";
 import { createGpuWorker, type GpuWorkerHandle } from "../main/createGpuWorker";
 import { RawWebGL2Presenter } from './raw-webgl2-presenter';
 

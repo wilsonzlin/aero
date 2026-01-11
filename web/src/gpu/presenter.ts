@@ -37,6 +37,12 @@ export interface PresenterInitOptions {
    */
   wasmMemory?: WebAssembly.Memory;
   /**
+   * WebGPU-only: required device features to request during init.
+   *
+   * WebGL2 backends ignore this.
+   */
+  requiredFeatures?: GPUFeatureName[];
+  /**
    * Receives recoverable errors (forwards to main thread in worker integration).
    */
   onError?: (error: PresenterError) => void;
@@ -68,4 +74,3 @@ export class PresenterError extends Error {
     this.cause = cause;
   }
 }
-

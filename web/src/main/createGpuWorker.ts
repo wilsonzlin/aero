@@ -6,17 +6,23 @@ import {
   SHARED_FRAMEBUFFER_MAGIC,
   SHARED_FRAMEBUFFER_VERSION,
 } from "../ipc/shared-layout";
-import { FRAME_DIRTY, FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../shared/frameProtocol";
+import {
+  FRAME_DIRTY,
+  FRAME_PRESENTED,
+  FRAME_SEQ_INDEX,
+  FRAME_STATUS_INDEX,
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+  isGpuWorkerMessageBase,
+  type GpuRuntimeEventsMessage,
+  type GpuRuntimeInitOptions,
+  type GpuRuntimeOutMessage,
+  type GpuRuntimeReadyMessage,
+  type GpuRuntimeScreenshotResponseMessage,
+  type GpuRuntimeSubmitCompleteMessage,
+  type GpuRuntimeStatsMessage,
+} from "../ipc/gpu-protocol";
 import { perf } from "../perf/perf";
-import type {
-  GpuRuntimeInitOptions,
-  GpuRuntimeEventsMessage,
-  GpuRuntimeOutMessage,
-  GpuRuntimeReadyMessage,
-  GpuRuntimeScreenshotResponseMessage,
-  GpuRuntimeSubmitCompleteMessage,
-  GpuRuntimeStatsMessage,
-} from "../workers/gpu_runtime_protocol";
 
 export interface CreateGpuWorkerParams {
   canvas: HTMLCanvasElement;
@@ -85,13 +91,15 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     throw new Error("OffscreenCanvas is not supported in this browser.");
   }
 
+  const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
+
   const strideBytes = params.width * 4;
   const layout = computeSharedFramebufferLayout(params.width, params.height, strideBytes, FramebufferFormat.RGBA8, 0);
 
   const sharedFramebuffer = new SharedArrayBuffer(layout.totalBytes);
   const header = new Int32Array(sharedFramebuffer, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
 
-  // Shared frame pacing state (mirrors the layout in `src/shared/frameProtocol.ts`).
+  // Shared frame pacing state (mirrors the layout in `src/ipc/gpu-protocol.ts` - FRAME_* constants).
   const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
   const frameState = new Int32Array(sharedFrameState);
 
@@ -181,31 +189,33 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   worker.addEventListener("message", (event) => {
-    const msg = event.data as GpuRuntimeOutMessage;
-    if (!msg || typeof msg !== "object" || typeof (msg as { type?: unknown }).type !== "string") return;
+    const msg = event.data as unknown;
+    if (!isGpuWorkerMessageBase(msg) || typeof (msg as { type?: unknown }).type !== "string") return;
 
-    switch (msg.type) {
+    const typed = msg as GpuRuntimeOutMessage;
+
+    switch (typed.type) {
       case "ready":
         readySettled = true;
-        readyResolve(msg);
+        readyResolve(typed);
         break;
       case "screenshot": {
-        const pending = screenshotRequests.get(msg.requestId);
+        const pending = screenshotRequests.get(typed.requestId);
         if (!pending) return;
-        screenshotRequests.delete(msg.requestId);
-        pending.resolve(msg);
+        screenshotRequests.delete(typed.requestId);
+        pending.resolve(typed);
         break;
       }
       case "submit_complete": {
-        const pending = submitRequests.get(msg.requestId);
+        const pending = submitRequests.get(typed.requestId);
         if (!pending) return;
-        submitRequests.delete(msg.requestId);
-        pending.resolve(msg);
+        submitRequests.delete(typed.requestId);
+        pending.resolve(typed);
         break;
       }
       case "error": {
-        params.onError?.(msg);
-        const err = new Error(`gpu-worker error: ${msg.message}`);
+        params.onError?.(typed);
+        const err = new Error(`gpu-worker error: ${typed.message}`);
         if (!readySettled) {
           readySettled = true;
           readyReject(err);
@@ -214,10 +224,10 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         break;
       }
       case "stats":
-        params.onStats?.(msg);
+        params.onStats?.(typed);
         break;
       case "events":
-        params.onEvents?.(msg);
+        params.onEvents?.(typed);
         break;
       default:
         break;
@@ -242,6 +252,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
 
   worker.postMessage(
     {
+      ...GPU_MESSAGE_BASE,
       type: "init",
       canvas: offscreen,
       sharedFrameState,
@@ -253,12 +264,12 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   );
 
   function resize(width: number, height: number, devicePixelRatio: number): void {
-    worker.postMessage({ type: "resize", width, height, dpr: devicePixelRatio });
+    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "resize", width, height, dpr: devicePixelRatio });
   }
 
   function presentTestPattern(): void {
     publishFrame(createTestPattern(params.width, params.height));
-    worker.postMessage({ type: "tick", frameTimeMs: performance.now() });
+    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
   }
 
   function submitAerogpu(
@@ -273,6 +284,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         if (allocTable) transfer.push(allocTable);
         worker.postMessage(
           {
+            ...GPU_MESSAGE_BASE,
             type: "submit_aerogpu",
             requestId,
             signalFence,
@@ -293,7 +305,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     return ready.then(
       () => {
         const requestId = nextRequestId++;
-        worker.postMessage({ type: "screenshot", requestId });
+        worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId });
         return new Promise<GpuRuntimeScreenshotResponseMessage>((resolve, reject) => {
           screenshotRequests.set(requestId, { resolve, reject });
         });
@@ -303,7 +315,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   function shutdown(): void {
-    worker.postMessage({ type: "shutdown" });
+    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
     worker.terminate();
   }
 

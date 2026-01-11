@@ -6,7 +6,16 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
   computeSharedFramebufferLayout,
 } from "./src/ipc/shared-layout";
-import { FRAME_DIRTY, FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./src/shared/frameProtocol";
+import {
+  FRAME_DIRTY,
+  FRAME_PRESENTED,
+  FRAME_SEQ_INDEX,
+  FRAME_STATUS_INDEX,
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+} from "./src/ipc/gpu-protocol";
+
+const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
 declare global {
   interface Window {
@@ -135,6 +144,7 @@ async function main() {
     const onMessage = (event: MessageEvent) => {
       const msg = event.data as any;
       if (!msg || typeof msg !== "object") return;
+      if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
       if (msg.type === "ready") {
         gpu.removeEventListener("message", onMessage);
         resolve();
@@ -149,6 +159,7 @@ async function main() {
   gpu.addEventListener("message", (event: MessageEvent) => {
     const msg = event.data as any;
     if (!msg || typeof msg !== "object") return;
+    if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
     if (msg.type === "error") {
       renderError(String(msg.message ?? "gpu worker error"));
       return;
@@ -168,6 +179,7 @@ async function main() {
 
   gpu.postMessage(
     {
+      ...GPU_MESSAGE_BASE,
       type: "init",
       canvas: offscreen,
       sharedFrameState,
@@ -187,7 +199,7 @@ async function main() {
     includeCursor: boolean,
   ): Promise<{ width: number; height: number; rgba8: ArrayBuffer; frameSeq: number }> => {
     const requestId = nextRequestId++;
-    gpu.postMessage({ type: "screenshot", requestId, includeCursor });
+    gpu.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId, includeCursor });
     return new Promise((resolve, reject) => {
       pendingScreenshots.set(requestId, { resolve, reject });
       setTimeout(() => {
@@ -203,14 +215,14 @@ async function main() {
     await ready;
 
     // Upload the base frame first.
-    gpu.postMessage({ type: "tick", frameTimeMs: performance.now() });
+    gpu.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
 
     // Cursor image: 1x1 red @ 50% alpha.
     const cursorBytes = new Uint8Array([255, 0, 0, 128]);
-    gpu.postMessage({ type: "cursor_set_image", width: 1, height: 1, rgba8: cursorBytes.buffer }, [
+    gpu.postMessage({ ...GPU_MESSAGE_BASE, type: "cursor_set_image", width: 1, height: 1, rgba8: cursorBytes.buffer }, [
       cursorBytes.buffer,
     ]);
-    gpu.postMessage({ type: "cursor_set_state", enabled: true, x: 0, y: 0, hotX: 0, hotY: 0 });
+    gpu.postMessage({ ...GPU_MESSAGE_BASE, type: "cursor_set_state", enabled: true, x: 0, y: 0, hotX: 0, hotY: 0 });
 
     // Give the worker a moment to upload cursor state before capture.
     await sleep(10);

@@ -7,7 +7,9 @@ import {
   SHARED_FRAMEBUFFER_MAGIC,
   SHARED_FRAMEBUFFER_VERSION,
 } from "./src/ipc/shared-layout";
-import { FRAME_DIRTY, FRAME_STATUS_INDEX } from "./src/shared/frameProtocol";
+import { FRAME_DIRTY, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "./src/ipc/gpu-protocol";
+
+const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
 declare global {
   interface Window {
@@ -126,6 +128,7 @@ async function main() {
     const onMessage = (event: MessageEvent) => {
       const msg = event.data as any;
       if (!msg || typeof msg !== "object") return;
+      if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
       if (msg.type === "ready") {
         gpu.removeEventListener("message", onMessage);
         resolve();
@@ -140,6 +143,7 @@ async function main() {
   gpu.addEventListener("message", (event: MessageEvent) => {
     const msg = event.data as any;
     if (!msg || typeof msg !== "object") return;
+    if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
     if (msg.type === "error") {
       renderError(String(msg.message ?? "gpu worker error"));
       return;
@@ -154,6 +158,7 @@ async function main() {
 
   gpu.postMessage(
     {
+      ...GPU_MESSAGE_BASE,
       type: "init",
       canvas: offscreen,
       sharedFrameState,
@@ -166,7 +171,7 @@ async function main() {
 
   const requestScreenshot = (): Promise<{ width: number; height: number; rgba8: ArrayBuffer; frameSeq: number }> => {
     const requestId = nextRequestId++;
-    gpu.postMessage({ type: "screenshot", requestId });
+    gpu.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId });
     return new Promise((resolve, reject) => {
       pendingScreenshots.set(requestId, { resolve, reject });
       setTimeout(() => {
@@ -190,7 +195,7 @@ async function main() {
     // Tick loop: drive the worker presenter while the CPU mock publishes frames.
     const tick = () => {
       if (Atomics.load(frameState, FRAME_STATUS_INDEX) === FRAME_DIRTY) {
-        gpu.postMessage({ type: "tick", frameTimeMs: performance.now() });
+        gpu.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
       }
       requestAnimationFrame(tick);
     };

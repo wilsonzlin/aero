@@ -77,7 +77,7 @@ export type WorkerInitMessage = {
   /**
    * Optional SharedArrayBuffer used for main-thread ↔ GPU-worker frame pacing state.
    *
-   * Layout is defined in `src/shared/frameProtocol.ts`.
+   * Layout is defined in `src/ipc/gpu-protocol.ts` (FRAME_* constants).
    */
   frameStateSab?: SharedArrayBuffer;
   /**

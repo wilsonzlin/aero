@@ -117,7 +117,10 @@ export class WebGpuPresenterBackend implements Presenter {
       throw new PresenterError('webgpu_no_adapter', 'navigator.gpu.requestAdapter() returned null');
     }
 
-    const device = await adapter.requestDevice?.();
+    const requiredFeatures = (this.opts.requiredFeatures ?? []) as GPUFeatureName[];
+    const device = await adapter.requestDevice?.(
+      requiredFeatures.length ? { requiredFeatures } : undefined,
+    );
     if (!device) {
       throw new PresenterError('webgpu_no_device', 'adapter.requestDevice() returned null');
     }

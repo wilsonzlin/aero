@@ -1,6 +1,7 @@
 import { fnv1a32Hex } from "./src/utils/fnv1a";
 import { startFrameScheduler } from "./src/main/frameScheduler";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
+import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "./src/ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 
 declare global {
@@ -39,6 +40,8 @@ function samplePixel(rgba: Uint8Array, width: number, x: number, y: number): num
 }
 
 async function main() {
+  const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
+
   const canvas = $("frame");
   if (!(canvas instanceof HTMLCanvasElement)) {
     renderError("Canvas element not found");
@@ -113,7 +116,7 @@ async function main() {
 
   gpuWorker.addEventListener("message", (event: MessageEvent) => {
     const msg = event.data as any;
-    if (!msg || typeof msg !== "object") return;
+    if (!isGpuWorkerMessageBase(msg) || typeof msg.type !== "string") return;
     if (msg.type === "ready") {
       presenterReadyResolved = true;
       presenterReadyResolve?.();
@@ -169,7 +172,7 @@ async function main() {
 
   const requestScreenshot = (): Promise<{ width: number; height: number; pixels: ArrayBuffer }> => {
     const requestId = nextRequestId++;
-    gpuWorker.postMessage({ type: "screenshot", requestId });
+    gpuWorker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId });
     return new Promise((resolve, reject) => {
       pendingScreenshots.set(requestId, { resolve, reject });
       setTimeout(() => {

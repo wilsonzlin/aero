@@ -12,7 +12,7 @@ test("gpu worker can present shared-layout framebuffer and screenshot matches", 
   const result = await page.evaluate(
     async ({ width, height, expectedHash }) => {
       const shared = await import("/web/src/ipc/shared-layout.ts");
-      const fp = await import("/web/src/shared/frameProtocol.ts");
+      const fp = await import("/web/src/ipc/gpu-protocol.ts");
 
       const tileSize = 32;
       const strideBytes = width * 4;
@@ -78,20 +78,23 @@ test("gpu worker can present shared-layout framebuffer and screenshot matches", 
 
       const worker = new Worker("/web/src/workers/gpu.worker.ts", { type: "module" });
 
-      const ready = new Promise<void>((resolve, reject) => {
-        worker.addEventListener("message", (ev: MessageEvent) => {
-          if (ev.data?.type === "ready") resolve();
-          if (ev.data?.type === "error") reject(new Error(ev.data?.message ?? "gpu worker error"));
+        const ready = new Promise<void>((resolve, reject) => {
+          worker.addEventListener("message", (ev: MessageEvent) => {
+            if (ev.data?.protocol !== fp.GPU_PROTOCOL_NAME || ev.data?.protocolVersion !== fp.GPU_PROTOCOL_VERSION) return;
+            if (ev.data?.type === "ready") resolve();
+            if (ev.data?.type === "error") reject(new Error(ev.data?.message ?? "gpu worker error"));
+          });
         });
-      });
 
-      worker.postMessage(
-        {
-          type: "init",
-          canvas: offscreen,
-          sharedFrameState,
-          sharedFramebuffer,
-          sharedFramebufferOffsetBytes: 0,
+        worker.postMessage(
+          {
+            protocol: fp.GPU_PROTOCOL_NAME,
+            protocolVersion: fp.GPU_PROTOCOL_VERSION,
+            type: "init",
+            canvas: offscreen,
+            sharedFrameState,
+            sharedFramebuffer,
+            sharedFramebufferOffsetBytes: 0,
           options: {
             forceBackend: "webgl2_raw",
             disableWebGpu: true,
@@ -112,27 +115,28 @@ test("gpu worker can present shared-layout framebuffer and screenshot matches", 
       Atomics.store(header, shared.SharedFramebufferHeaderIndex.FRAME_DIRTY, 1);
       Atomics.notify(header, shared.SharedFramebufferHeaderIndex.FRAME_SEQ);
 
-      Atomics.store(frameState, fp.FRAME_SEQ_INDEX, 1);
-      Atomics.store(frameState, fp.FRAME_STATUS_INDEX, fp.FRAME_DIRTY);
-      worker.postMessage({ type: "tick", frameTimeMs: performance.now() });
+        Atomics.store(frameState, fp.FRAME_SEQ_INDEX, 1);
+        Atomics.store(frameState, fp.FRAME_STATUS_INDEX, fp.FRAME_DIRTY);
+        worker.postMessage({ protocol: fp.GPU_PROTOCOL_NAME, protocolVersion: fp.GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: performance.now() });
 
-      const screenshot = await new Promise<any>((resolve, reject) => {
-        worker.addEventListener("message", (ev: MessageEvent) => {
-          if (ev.data?.type === "screenshot" && ev.data?.requestId === 1) resolve(ev.data);
-          if (ev.data?.type === "error") reject(new Error(ev.data?.message ?? "gpu worker error"));
+        const screenshot = await new Promise<any>((resolve, reject) => {
+          worker.addEventListener("message", (ev: MessageEvent) => {
+            if (ev.data?.protocol !== fp.GPU_PROTOCOL_NAME || ev.data?.protocolVersion !== fp.GPU_PROTOCOL_VERSION) return;
+            if (ev.data?.type === "screenshot" && ev.data?.requestId === 1) resolve(ev.data);
+            if (ev.data?.type === "error") reject(new Error(ev.data?.message ?? "gpu worker error"));
+          });
+          worker.postMessage({ protocol: fp.GPU_PROTOCOL_NAME, protocolVersion: fp.GPU_PROTOCOL_VERSION, type: "screenshot", requestId: 1 });
         });
-        worker.postMessage({ type: "screenshot", requestId: 1 });
-      });
 
       const digest = await crypto.subtle.digest("SHA-256", screenshot.rgba8);
       const hash = Array.from(new Uint8Array(digest))
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
 
-      const frameDirty = Atomics.load(header, shared.SharedFramebufferHeaderIndex.FRAME_DIRTY);
+        const frameDirty = Atomics.load(header, shared.SharedFramebufferHeaderIndex.FRAME_DIRTY);
 
-      worker.postMessage({ type: "shutdown" });
-      worker.terminate();
+        worker.postMessage({ protocol: fp.GPU_PROTOCOL_NAME, protocolVersion: fp.GPU_PROTOCOL_VERSION, type: "shutdown" });
+        worker.terminate();
 
       return { width: screenshot.width, height: screenshot.height, hash, frameDirty };
     },

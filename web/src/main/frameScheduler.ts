@@ -3,9 +3,13 @@ import {
   FRAME_PRESENTED,
   FRAME_PRESENTING,
   FRAME_STATUS_INDEX,
-} from '../shared/frameProtocol';
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+  isGpuWorkerMessageBase,
+  type GpuRuntimeInitOptions,
+  type GpuRuntimeOutMessage,
+} from '../ipc/gpu-protocol';
 import { perf } from '../perf/perf';
-import type { GpuRuntimeInitOptions, GpuRuntimeOutMessage } from "../workers/gpu_runtime_protocol";
 
 import { DebugOverlay } from '../../ui/debug_overlay.ts';
 
@@ -43,6 +47,8 @@ export const startFrameScheduler = ({
   overlayParent,
   debugOverlayToggleKey = 'F3',
 }: FrameSchedulerOptions): FrameSchedulerHandle => {
+  const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
+
   let rafId: number | null = null;
   let stopped = false;
 
@@ -59,6 +65,7 @@ export const startFrameScheduler = ({
   try {
     gpuWorker.postMessage(
       {
+        ...GPU_MESSAGE_BASE,
         type: "init",
         canvas,
         sharedFrameState,
@@ -90,18 +97,21 @@ export const startFrameScheduler = ({
     }
   };
 
-  const onWorkerMessage = (event: MessageEvent<GpuRuntimeOutMessage>) => {
+  const onWorkerMessage = (event: MessageEvent<unknown>) => {
     const msg = event.data;
-    if (msg.type === 'metrics') {
-      metrics.framesReceived = msg.framesReceived;
-      metrics.framesPresented = msg.framesPresented;
-      metrics.framesDropped = msg.framesDropped;
-      updateTelemetry(msg);
+    if (!isGpuWorkerMessageBase(msg) || typeof (msg as { type?: unknown }).type !== "string") return;
+
+    const typed = msg as GpuRuntimeOutMessage;
+    if (typed.type === 'metrics') {
+      metrics.framesReceived = typed.framesReceived;
+      metrics.framesPresented = typed.framesPresented;
+      metrics.framesDropped = typed.framesDropped;
+      updateTelemetry(typed);
       return;
     }
 
-    if (msg.type === 'error') {
-      console.error(`gpu-worker: ${msg.message}`);
+    if (typed.type === 'error') {
+      console.error(`gpu-worker: ${typed.message}`);
     }
   };
 
@@ -119,25 +129,25 @@ export const startFrameScheduler = ({
 
     perf.spanBegin('frame');
     try {
-      perf.spanBegin('render');
-      try {
-        if (shouldSendTick()) {
-        perf.spanBegin('present');
+        perf.spanBegin('render');
         try {
-          try {
-            gpuWorker.postMessage({ type: 'tick', frameTimeMs });
-          } catch (err) {
-            console.error('[frameScheduler] Failed to post tick to GPU worker; stopping scheduler.', err);
-            stop();
-            return;
+          if (shouldSendTick()) {
+            perf.spanBegin('present');
+            try {
+              try {
+                gpuWorker.postMessage({ ...GPU_MESSAGE_BASE, type: 'tick', frameTimeMs });
+              } catch (err) {
+                console.error('[frameScheduler] Failed to post tick to GPU worker; stopping scheduler.', err);
+                stop();
+                return;
+              }
+            } finally {
+              perf.spanEnd('present');
+            }
           }
         } finally {
-          perf.spanEnd('present');
+          perf.spanEnd('render');
         }
-      }
-      } finally {
-        perf.spanEnd('render');
-      }
 
       rafId = requestAnimationFrame(loop);
     } finally {

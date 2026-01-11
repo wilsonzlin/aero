@@ -7,6 +7,9 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
   const expectedWhiteHash = "0fbba07a833d4dcfc7024eaf313661a0ba8f80a05c6d29b8801c612e10e60dee";
 
   const result = await page.evaluate(async () => {
+    const proto = await import("/web/src/ipc/gpu-protocol.ts");
+    const GPU_MESSAGE_BASE = { protocol: proto.GPU_PROTOCOL_NAME, protocolVersion: proto.GPU_PROTOCOL_VERSION };
+
     const canvas = document.createElement("canvas");
     document.body.appendChild(canvas);
 
@@ -42,12 +45,14 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
 
     const readyMsg = await new Promise<any>((resolve, reject) => {
       worker.addEventListener("message", (ev: MessageEvent) => {
+        if (!proto.isGpuWorkerMessageBase(ev.data) || typeof (ev.data as any)?.type !== "string") return;
         if (ev.data?.type === "ready") resolve(ev.data);
         if (ev.data?.type === "error") reject(new Error(ev.data?.message ?? "gpu worker error"));
       });
 
       worker.postMessage(
         {
+          ...GPU_MESSAGE_BASE,
           type: "init",
           canvas: offscreen,
           sharedFrameState,
@@ -70,14 +75,15 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
     Atomics.add(header, 6, 1);
     Atomics.add(frameState, 1, 1);
     Atomics.store(frameState, 0, 1); // FRAME_DIRTY
-    worker.postMessage({ type: "tick", frameTimeMs: performance.now() });
+    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
 
     const screenshot = await new Promise<any>((resolve, reject) => {
       worker.addEventListener("message", (ev: MessageEvent) => {
+        if (!proto.isGpuWorkerMessageBase(ev.data) || typeof (ev.data as any)?.type !== "string") return;
         if (ev.data?.type === "screenshot" && ev.data?.requestId === 1) resolve(ev.data);
         if (ev.data?.type === "error") reject(new Error(ev.data?.message ?? "gpu worker error"));
       });
-      worker.postMessage({ type: "screenshot", requestId: 1 });
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId: 1 });
     });
 
     const digest = await crypto.subtle.digest("SHA-256", screenshot.rgba8);
@@ -85,7 +91,7 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
 
-    worker.postMessage({ type: "shutdown" });
+    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
     worker.terminate();
 
     return { readyMsg, screenshot: { width: screenshot.width, height: screenshot.height, hash } };

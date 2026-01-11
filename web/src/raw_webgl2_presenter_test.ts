@@ -4,19 +4,20 @@ import {
   FRAME_PRESENTED,
   FRAME_SEQ_INDEX,
   FRAME_STATUS_INDEX,
-} from "./shared/frameProtocol";
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+  isGpuWorkerMessageBase,
+  type GpuRuntimeInMessage,
+  type GpuRuntimeOutMessage,
+  type GpuRuntimeReadyMessage,
+  type GpuRuntimeScreenshotResponseMessage,
+} from "./ipc/gpu-protocol";
 import {
   HEADER_INDEX_FRAME_COUNTER,
   initFramebufferHeader,
   requiredFramebufferBytes,
   wrapSharedFramebuffer,
 } from "./display/framebuffer_protocol";
-import type {
-  GpuRuntimeInMessage,
-  GpuRuntimeOutMessage,
-  GpuRuntimeReadyMessage,
-  GpuRuntimeScreenshotResponseMessage,
-} from "./workers/gpu_runtime_protocol";
 
 declare global {
   interface Window {
@@ -39,6 +40,8 @@ if (!(canvasEl instanceof HTMLCanvasElement)) {
   throw new Error("Canvas element not found");
 }
 const canvas: HTMLCanvasElement = canvasEl;
+
+const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
 let worker: Worker | null = null;
 let sharedFramebuffer: SharedArrayBuffer | null = null;
@@ -69,7 +72,7 @@ function rejectPending(err: unknown): void {
 function destroyWorker(): void {
   if (worker) {
     try {
-      worker.postMessage({ type: "shutdown" } satisfies GpuRuntimeInMessage);
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" } satisfies GpuRuntimeInMessage);
     } catch {
       // Ignore and just terminate below.
     }
@@ -90,7 +93,7 @@ async function waitForPresented(timeoutMs = 2_000): Promise<void> {
     const status = Atomics.load(frameState, FRAME_STATUS_INDEX);
     if (status === FRAME_PRESENTED) return;
     if (status === FRAME_DIRTY) {
-      worker.postMessage({ type: "tick", frameTimeMs: performance.now() } satisfies GpuRuntimeInMessage);
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() } satisfies GpuRuntimeInMessage);
     }
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
@@ -140,22 +143,24 @@ async function init(opts: {
   });
 
   worker.addEventListener("message", (event) => {
-    const msg = event.data as GpuRuntimeOutMessage;
-    if (!msg || typeof msg !== "object" || typeof (msg as { type?: unknown }).type !== "string") return;
+    const msg = event.data as unknown;
+    if (!isGpuWorkerMessageBase(msg) || typeof (msg as { type?: unknown }).type !== "string") return;
 
-    switch (msg.type) {
+    const typed = msg as GpuRuntimeOutMessage;
+
+    switch (typed.type) {
       case "ready":
-        readyResolve?.(msg);
+        readyResolve?.(typed);
         break;
       case "screenshot": {
-        const pending = pendingScreenshots.get(msg.requestId);
+        const pending = pendingScreenshots.get(typed.requestId);
         if (!pending) return;
-        pendingScreenshots.delete(msg.requestId);
-        pending.resolve(msg);
+        pendingScreenshots.delete(typed.requestId);
+        pending.resolve(typed);
         break;
       }
       case "error": {
-        const err = new Error(msg.message);
+        const err = new Error(typed.message);
         if (readyReject) readyReject(err);
         rejectPending(err);
         break;
@@ -173,6 +178,7 @@ async function init(opts: {
 
   worker.postMessage(
     {
+      ...GPU_MESSAGE_BASE,
       type: "init",
       canvas: offscreen,
       sharedFrameState,
@@ -211,7 +217,7 @@ function present(pixels: Uint8Array, strideBytes: number): void {
   Atomics.store(frameState, FRAME_SEQ_INDEX, newSeq);
   Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
 
-  worker.postMessage({ type: "tick", frameTimeMs: performance.now() } satisfies GpuRuntimeInMessage);
+  worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() } satisfies GpuRuntimeInMessage);
 }
 
 async function screenshot(): Promise<{ width: number; height: number; pixels: Uint8Array }> {
@@ -221,7 +227,7 @@ async function screenshot(): Promise<{ width: number; height: number; pixels: Ui
   await waitForPresented();
 
   const requestId = nextRequestId++;
-  worker.postMessage({ type: "screenshot", requestId } satisfies GpuRuntimeInMessage);
+  worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId } satisfies GpuRuntimeInMessage);
   const msg = await new Promise<GpuRuntimeScreenshotResponseMessage>((resolve, reject) => {
     pendingScreenshots.set(requestId, { resolve, reject });
     setTimeout(() => {

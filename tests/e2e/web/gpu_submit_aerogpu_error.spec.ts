@@ -11,11 +11,13 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
     <canvas id="c"></canvas>
     <script type="module">
        import { fnv1a32Hex } from "/web/src/utils/fnv1a.ts";
-
-      const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
-
-      const W = 64;
-      const H = 64;
+       import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "/web/src/ipc/gpu-protocol.ts";
+ 
+       const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
+ 
+       const W = 64;
+       const H = 64;
+       const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
 
       function triangleRgba(w, h) {
         const out = new Uint8Array(w * h * 4);
@@ -137,14 +139,14 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
               nextErrorResolve = resolve;
             });
 
-          const onMessage = (event) => {
-            const msg = event.data;
-            if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
-            if (msg.type === "ready") {
-              readyResolve(msg);
-              return;
-            }
-            if (msg.type === "error") {
+           const onMessage = (event) => {
+             const msg = event.data;
+             if (!isGpuWorkerMessageBase(msg) || typeof msg.type !== "string") return;
+             if (msg.type === "ready") {
+               readyResolve(msg);
+               return;
+             }
+             if (msg.type === "error") {
               errors.push(String(msg.message ?? ""));
               if (nextErrorResolve) {
                 nextErrorResolve(msg);
@@ -186,13 +188,14 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
           frameState[0] = 0; // FRAME_PRESENTED
           frameState[1] = 0; // seq
 
-          worker.postMessage(
-            {
-              type: "init",
-              canvas: offscreen,
-              sharedFrameState,
-              sharedFramebuffer,
-              sharedFramebufferOffsetBytes: 0,
+           worker.postMessage(
+             {
+               ...GPU_MESSAGE_BASE,
+               type: "init",
+               canvas: offscreen,
+               sharedFrameState,
+               sharedFramebuffer,
+               sharedFramebufferOffsetBytes: 0,
               options: {
                 forceBackend: "webgl2_raw",
                 outputWidth: W,
@@ -215,15 +218,16 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
           const badSubmitRequestId = nextRequestId++;
           const badSubmitPromise = new Promise((resolve, reject) => pending.set(badSubmitRequestId, { resolve, reject }));
           const badErrorPromise = waitForNextError();
-          worker.postMessage(
-            {
-              type: "submit_aerogpu",
-              requestId: badSubmitRequestId,
-              signalFence: 1n,
-              cmdStream: bad,
-            },
-            [bad],
-          );
+           worker.postMessage(
+             {
+               ...GPU_MESSAGE_BASE,
+               type: "submit_aerogpu",
+               requestId: badSubmitRequestId,
+               signalFence: 1n,
+               cmdStream: bad,
+             },
+             [bad],
+           );
 
           await Promise.all([badSubmitPromise, badErrorPromise]);
 
@@ -233,22 +237,23 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
 
           const submitRequestId = nextRequestId++;
           const submitPromise = new Promise((resolve, reject) => pending.set(submitRequestId, { resolve, reject }));
-          worker.postMessage(
-            {
-              type: "submit_aerogpu",
-              requestId: submitRequestId,
-              signalFence: 2n,
-              cmdStream,
-            },
-            [cmdStream],
-          );
+           worker.postMessage(
+             {
+               ...GPU_MESSAGE_BASE,
+               type: "submit_aerogpu",
+               requestId: submitRequestId,
+               signalFence: 2n,
+               cmdStream,
+             },
+             [cmdStream],
+           );
           await submitPromise;
 
-          const screenshotRequestId = nextRequestId++;
-          const screenshotPromise = new Promise((resolve, reject) => pending.set(screenshotRequestId, { resolve, reject }));
-          worker.postMessage({ type: "screenshot", requestId: screenshotRequestId });
-          const screenshot = await screenshotPromise;
-          const actual = new Uint8Array(screenshot.rgba8);
+           const screenshotRequestId = nextRequestId++;
+           const screenshotPromise = new Promise((resolve, reject) => pending.set(screenshotRequestId, { resolve, reject }));
+           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId: screenshotRequestId });
+           const screenshot = await screenshotPromise;
+           const actual = new Uint8Array(screenshot.rgba8);
 
           const hash = fnv1a32Hex(actual);
           const expectedHash = fnv1a32Hex(expected);
@@ -260,11 +265,11 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
             errors,
           };
 
-          worker.postMessage({ type: "shutdown" });
-          worker.terminate();
-        } catch (e) {
-          window.__AERO_SUBMIT_ERROR_RESULT__ = { pass: false, error: String(e) };
-        }
+           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
+           worker.terminate();
+         } catch (e) {
+           window.__AERO_SUBMIT_ERROR_RESULT__ = { pass: false, error: String(e) };
+         }
       })();
     </script>
   `);

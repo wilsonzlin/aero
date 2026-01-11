@@ -1,97 +1,89 @@
 /**
- * Lightweight JS fallback for the microbench WASM module.
+ * Lightweight JS fallback for the `aero-microbench` wasm-pack output.
  *
  * The canonical build uses `wasm-pack` to generate this module from
  * `crates/aero-microbench` into `web/src/wasm/aero_microbench/`.
  *
- * Repo-root builds (`npm run build`) don't currently run the WASM build step, but
- * we still want the app bundle (and CI perf harness) to build cleanly. This file
- * provides a small, deterministic implementation so the microbench suite remains
- * callable even when the WASM output is not present.
+ * The repo-root build/typecheck flows should not depend on having Rust/WASM
+ * toolchains available, so this file provides a tiny deterministic
+ * implementation that matches the API expected by `web/src/bench/microbench.ts`.
  *
  * When the real WASM module is generated, it will overwrite this file locally.
  */
 
-/** @returns {Promise<void>} */
+function clampU32(value) {
+  const n = Number.isFinite(value) ? Math.floor(value) : 0;
+  if (n <= 0) return 0;
+  if (n >= 0xffff_ffff) return 0xffff_ffff;
+  return n >>> 0;
+}
+
+function clampBytes(bytes) {
+  // Keep allocations bounded; this is just a placeholder module.
+  return Math.min(clampU32(bytes), 64 * 1024);
+}
+
+function clampIters(iters) {
+  // Cap work so calling code cannot accidentally lock up the page.
+  return Math.min(clampU32(iters), 1_000_000);
+}
+
 export default async function initMicrobench() {
-  // No-op for JS fallback.
+  // wasm-pack builds expose an async init. The JS fallback has no init work.
 }
 
-/**
- * Integer ALU benchmark.
- * @param {number} iters
- * @returns {number}
- */
 export function bench_integer_alu(iters) {
-  // Keep the arithmetic in the 32-bit range so results are stable.
+  const n = clampIters(iters);
   let acc = 0;
-  let x = 0x12345678;
-  for (let i = 0; i < iters; i += 1) {
-    x = (x + 0x9e3779b9) | 0;
-    x = (x ^ (x >>> 16)) | 0;
-    acc = (acc + x) | 0;
+  for (let i = 0; i < n; i++) {
+    acc = (acc + ((i ^ acc) + 0x9e37_79b9)) | 0;
+    acc ^= acc >>> 16;
   }
   return acc >>> 0;
 }
 
-/**
- * Branch-heavy benchmark.
- * @param {number} iters
- * @returns {number}
- */
 export function bench_branchy(iters) {
+  const n = clampIters(iters);
   let acc = 0;
-  let x = 0xdeadbeef;
-  for (let i = 0; i < iters; i += 1) {
-    x = (x * 1664525 + 1013904223) | 0;
-    if (x & 1) acc = (acc + 3) | 0;
-    else if (x & 2) acc = (acc ^ 0x55aa55aa) | 0;
-    else acc = (acc - 7) | 0;
+  for (let i = 0; i < n; i++) {
+    if ((i & 7) === 0) acc = (acc + i) | 0;
+    else if ((i & 7) === 1) acc = (acc - i) | 0;
+    else if ((i & 7) === 2) acc ^= i;
+    else if ((i & 7) === 3) acc = (acc * 3) | 0;
+    else if ((i & 7) === 4) acc = (acc * 5 + 1) | 0;
+    else acc = (acc + (i ^ (acc >>> 1))) | 0;
   }
   return acc >>> 0;
 }
 
-/**
- * "memcpy" benchmark.
- * @param {number} bytes
- * @param {number} iters
- * @returns {number}
- */
 export function bench_memcpy(bytes, iters) {
-  const size = Math.max(0, bytes | 0);
-  const src = new Uint8Array(size);
-  for (let i = 0; i < size; i += 1) src[i] = i & 0xff;
-  const dst = new Uint8Array(size);
-
-  let checksum = 0;
-  for (let i = 0; i < iters; i += 1) {
+  const len = clampBytes(bytes);
+  const n = Math.min(clampU32(iters), 10_000);
+  const src = new Uint8Array(len);
+  const dst = new Uint8Array(len);
+  for (let i = 0; i < len; i++) src[i] = (i * 31 + 7) & 0xff;
+  for (let i = 0; i < n; i++) {
     dst.set(src);
-    // Touch a few bytes so the loop can't be elided completely.
-    checksum = (checksum + dst[(i * 997) % (size || 1)]) | 0;
+    // Mix a tiny checksum so work isn't optimized away.
+    src[0] ^= dst[(i * 17) % len];
   }
-  return checksum >>> 0;
+  return (src[0] | (src[len - 1] << 8) | (dst[0] << 16) | (dst[len - 1] << 24)) >>> 0;
 }
 
-/**
- * Simple FNV-1a hash benchmark.
- * @param {number} bytes
- * @param {number} iters
- * @returns {number}
- */
 export function bench_hash(bytes, iters) {
-  const size = Math.max(0, bytes | 0);
-  const buf = new Uint8Array(size);
-  for (let i = 0; i < size; i += 1) buf[i] = i & 0xff;
+  const len = clampBytes(bytes);
+  const n = Math.min(clampU32(iters), 10_000);
+  const data = new Uint8Array(len);
+  for (let i = 0; i < len; i++) data[i] = (i * 131 + 13) & 0xff;
 
   let hash = 0x811c9dc5;
-  for (let i = 0; i < iters; i += 1) {
-    let h = hash;
-    for (let j = 0; j < size; j += 1) {
-      h ^= buf[j];
-      h = Math.imul(h, 0x01000193);
+  for (let iter = 0; iter < n; iter++) {
+    // FNV-1a over a bounded slice.
+    for (let i = 0; i < len; i++) {
+      hash ^= data[i];
+      hash = Math.imul(hash, 0x0100_0193) >>> 0;
     }
-    hash = h >>> 0;
+    data[iter % len] ^= hash & 0xff;
   }
   return hash >>> 0;
 }
-

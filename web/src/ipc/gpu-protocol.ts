@@ -1,5 +1,78 @@
 import type { PresenterBackendKind, PresenterInitOptions } from "../gpu/presenter";
 
+/**
+ * Canonical postMessage protocol between the main thread and the GPU worker.
+ *
+ * This file intentionally replaces:
+ * - `web/src/ipc/gpu-messages.ts` (legacy wasm presenter types)
+ * - `web/src/shared/frameProtocol.ts` (frame pacing SharedArrayBuffer layout)
+ * - `web/src/workers/gpu_runtime_protocol.ts` (runtime worker messages)
+ *
+ * Keep the protocol explicitly versioned so we can evolve it without requiring
+ * lockstep changes across all callers (Playwright harnesses, demos, etc).
+ */
+
+export const GPU_PROTOCOL_NAME = "aero.gpu" as const;
+export const GPU_PROTOCOL_VERSION = 1 as const;
+
+export type GpuProtocolVersion = typeof GPU_PROTOCOL_VERSION;
+
+export type GpuWorkerMessageBase = {
+  protocol: typeof GPU_PROTOCOL_NAME;
+  protocolVersion: GpuProtocolVersion;
+};
+
+export function isGpuWorkerMessageBase(msg: unknown): msg is GpuWorkerMessageBase {
+  if (!msg || typeof msg !== "object") return false;
+  const record = msg as Record<string, unknown>;
+  return record.protocol === GPU_PROTOCOL_NAME && record.protocolVersion === GPU_PROTOCOL_VERSION;
+}
+
+export type BackendKind = "webgpu" | "webgl2";
+
+export interface GpuAdapterInfo {
+  vendor?: string;
+  renderer?: string;
+  description?: string;
+}
+
+export interface FrameTimingsReport {
+  frame_index: number;
+  backend: BackendKind;
+  cpu_encode_us: number;
+  cpu_submit_us: number;
+  gpu_us?: number;
+}
+
+/**
+ * Init options used by the legacy `aero-gpu` wasm presenter shim.
+ *
+ * The runtime uses the richer `GpuRuntimeInitOptions` below.
+ */
+export interface GpuWorkerInitOptions {
+  preferWebGpu?: boolean;
+  disableWebGpu?: boolean;
+  requiredFeatures?: string[];
+}
+
+// -----------------------------------------------------------------------------
+// Shared frame pacing state (SharedArrayBuffer + Atomics).
+// -----------------------------------------------------------------------------
+
+export const FRAME_STATUS_INDEX = 0;
+export const FRAME_SEQ_INDEX = 1;
+export const FRAME_METRICS_RECEIVED_INDEX = 2;
+export const FRAME_METRICS_PRESENTED_INDEX = 3;
+export const FRAME_METRICS_DROPPED_INDEX = 4;
+
+export const FRAME_PRESENTED = 0;
+export const FRAME_DIRTY = 1;
+export const FRAME_PRESENTING = 2;
+
+// -----------------------------------------------------------------------------
+// Runtime GPU worker protocol (main -> worker).
+// -----------------------------------------------------------------------------
+
 export type GpuRuntimeInitOptions = {
   /**
    * Force a specific presenter backend.
@@ -51,7 +124,7 @@ export type GpuRuntimeInitOptions = {
   wasmModuleUrl?: string;
 };
 
-export type GpuRuntimeInitMessage = {
+export type GpuRuntimeInitMessage = GpuWorkerMessageBase & {
   type: "init";
   canvas?: OffscreenCanvas;
   sharedFrameState: SharedArrayBuffer;
@@ -60,19 +133,19 @@ export type GpuRuntimeInitMessage = {
   options?: GpuRuntimeInitOptions;
 };
 
-export type GpuRuntimeResizeMessage = {
+export type GpuRuntimeResizeMessage = GpuWorkerMessageBase & {
   type: "resize";
   width: number;
   height: number;
   dpr: number;
 };
 
-export type GpuRuntimeTickMessage = {
+export type GpuRuntimeTickMessage = GpuWorkerMessageBase & {
   type: "tick";
   frameTimeMs: number;
 };
 
-export type GpuRuntimeScreenshotRequestMessage = {
+export type GpuRuntimeScreenshotRequestMessage = GpuWorkerMessageBase & {
   type: "screenshot";
   requestId: number;
   /**
@@ -84,14 +157,14 @@ export type GpuRuntimeScreenshotRequestMessage = {
   includeCursor?: boolean;
 };
 
-export type GpuRuntimeCursorSetImageMessage = {
+export type GpuRuntimeCursorSetImageMessage = GpuWorkerMessageBase & {
   type: "cursor_set_image";
   width: number;
   height: number;
   rgba8: ArrayBuffer;
 };
 
-export type GpuRuntimeCursorSetStateMessage = {
+export type GpuRuntimeCursorSetStateMessage = GpuWorkerMessageBase & {
   type: "cursor_set_state";
   enabled: boolean;
   x: number;
@@ -100,7 +173,7 @@ export type GpuRuntimeCursorSetStateMessage = {
   hotY: number;
 };
 
-export type GpuRuntimeSubmitAerogpuMessage = {
+export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
   type: "submit_aerogpu";
   requestId: number;
   /**
@@ -122,7 +195,7 @@ export type GpuRuntimeSubmitAerogpuMessage = {
   allocTable?: ArrayBuffer;
 };
 
-export type GpuRuntimeShutdownMessage = { type: "shutdown" };
+export type GpuRuntimeShutdownMessage = GpuWorkerMessageBase & { type: "shutdown" };
 
 export type GpuRuntimeInMessage =
   | GpuRuntimeInitMessage
@@ -134,6 +207,10 @@ export type GpuRuntimeInMessage =
   | GpuRuntimeSubmitAerogpuMessage
   | GpuRuntimeShutdownMessage;
 
+// -----------------------------------------------------------------------------
+// Runtime GPU worker protocol (worker -> main).
+// -----------------------------------------------------------------------------
+
 export type GpuRuntimeFallbackInfo = {
   from: PresenterBackendKind;
   to: PresenterBackendKind;
@@ -141,13 +218,13 @@ export type GpuRuntimeFallbackInfo = {
   originalErrorMessage?: string;
 };
 
-export type GpuRuntimeReadyMessage = {
+export type GpuRuntimeReadyMessage = GpuWorkerMessageBase & {
   type: "ready";
   backendKind: PresenterBackendKind | "headless";
   fallback?: GpuRuntimeFallbackInfo;
 };
 
-export type GpuRuntimeMetricsMessage = {
+export type GpuRuntimeMetricsMessage = GpuWorkerMessageBase & {
   type: "metrics";
   framesReceived: number;
   framesPresented: number;
@@ -155,14 +232,14 @@ export type GpuRuntimeMetricsMessage = {
   telemetry?: unknown;
 };
 
-export type GpuRuntimeErrorMessage = {
+export type GpuRuntimeErrorMessage = GpuWorkerMessageBase & {
   type: "error";
   message: string;
   code?: string;
   backend?: PresenterBackendKind;
 };
 
-export type GpuRuntimeScreenshotResponseMessage = {
+export type GpuRuntimeScreenshotResponseMessage = GpuWorkerMessageBase & {
   type: "screenshot";
   requestId: number;
   width: number;
@@ -176,7 +253,7 @@ export type GpuRuntimeScreenshotResponseMessage = {
   frameSeq?: number;
 };
 
-export type GpuRuntimeSubmitCompleteMessage = {
+export type GpuRuntimeSubmitCompleteMessage = GpuWorkerMessageBase & {
   type: "submit_complete";
   requestId: number;
   completedFence: bigint;
@@ -195,7 +272,7 @@ export type GpuRuntimeStatsCountersV1 = {
   surface_reconfigures: number;
 };
 
-export type GpuRuntimeStatsMessage = {
+export type GpuRuntimeStatsMessage = GpuWorkerMessageBase & {
   type: "stats";
   /**
    * Version tag for forward-compatible telemetry parsing.
@@ -227,7 +304,7 @@ export type GpuRuntimeErrorEvent = {
   details?: unknown;
 };
 
-export type GpuRuntimeEventsMessage = {
+export type GpuRuntimeEventsMessage = GpuWorkerMessageBase & {
   type: "events";
   /**
    * Version tag for forward-compatible event parsing.
