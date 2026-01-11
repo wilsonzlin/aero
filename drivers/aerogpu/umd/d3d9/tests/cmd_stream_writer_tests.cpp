@@ -3135,6 +3135,142 @@ bool TestAllocationListSplitResetsOnEmptySubmit() {
   return true;
 }
 
+bool TestDrawStateTrackingDedupsSharedAllocIds() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // When the same shared allocation is opened multiple times, the D3D9 runtime
+  // can hand us distinct WDDM allocation handles that alias the same alloc_id.
+  // The allocation list (and host-side alloc table) is keyed by alloc_id, so a
+  // draw referencing both handles should still only consume a single allocation
+  // list entry.
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST alloc_list[1] = {};
+  dev->alloc_list_tracker.rebind(alloc_list, 1, 0xFFFFu);
+
+  Resource rt{};
+  rt.kind = ResourceKind::Texture2D;
+  rt.handle = 1;
+  rt.backing_alloc_id = 1;
+  rt.share_token = 0x1122334455667788ull;
+  rt.wddm_hAllocation = 100;
+
+  Resource tex{};
+  tex.kind = ResourceKind::Texture2D;
+  tex.handle = 2;
+  tex.backing_alloc_id = 1;
+  tex.share_token = 0x1122334455667788ull;
+  tex.wddm_hAllocation = 200;
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->render_targets[0] = &rt;
+    dev->textures[0] = &tex;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->alloc_list_tracker.list_len() == 1, "draw tracking dedups shared alloc_id")) {
+      return false;
+    }
+  }
+
+  if (!Check(alloc_list[0].hAllocation == rt.wddm_hAllocation, "allocation list uses first tracked handle")) {
+    return false;
+  }
+  return Check(alloc_list[0].WriteOperation == 1, "render-target write upgrades allocation list entry");
+}
+
 bool TestOpenResourceCapturesWddmAllocationForTracking() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -6558,6 +6694,7 @@ int main() {
   failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
+  failures += !aerogpu::TestDrawStateTrackingDedupsSharedAllocIds();
   failures += !aerogpu::TestOpenResourceCapturesWddmAllocationForTracking();
   failures += !aerogpu::TestOpenResourceAcceptsAllocPrivV2();
   failures += !aerogpu::TestInvalidPayloadArgs();

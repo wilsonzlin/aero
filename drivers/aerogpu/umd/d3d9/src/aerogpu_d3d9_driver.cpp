@@ -2574,7 +2574,12 @@ HRESULT track_draw_state_locked(Device* dev) {
   }
 #endif
 
-  std::array<WddmAllocationHandle, 4 + 1 + 16 + 16 + 1> unique_allocs{};
+  // The allocation list is keyed by the stable `alloc_id` (backing_alloc_id) and
+  // can legally alias multiple per-process WDDM allocation handles to the same
+  // alloc_id for shared resources. Count unique alloc_ids rather than WDDM
+  // handles so we don't incorrectly reject valid draws on small allocation lists
+  // (e.g. shared resources opened multiple times).
+  std::array<UINT, 4 + 1 + 16 + 16 + 1> unique_allocs{};
   size_t unique_alloc_len = 0;
   auto add_alloc = [&unique_allocs, &unique_alloc_len](const Resource* res) {
     if (!res) {
@@ -2586,13 +2591,13 @@ HRESULT track_draw_state_locked(Device* dev) {
     if (res->wddm_hAllocation == 0) {
       return;
     }
-    const WddmAllocationHandle h = res->wddm_hAllocation;
+    const UINT alloc_id = res->backing_alloc_id;
     for (size_t i = 0; i < unique_alloc_len; ++i) {
-      if (unique_allocs[i] == h) {
+      if (unique_allocs[i] == alloc_id) {
         return;
       }
     }
-    unique_allocs[unique_alloc_len++] = h;
+    unique_allocs[unique_alloc_len++] = alloc_id;
   };
 
   for (uint32_t i = 0; i < 4; i++) {
