@@ -33,7 +33,9 @@ See: [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virti
 
 ## Design notes
 
+- Driver architecture overview: [`design.md`](design.md)
 - PortCls/WaveRT plan: [`portcls-wavert-design.md`](portcls-wavert-design.md)
+- Source tracking (clean-room policy): [`../SOURCES.md`](../SOURCES.md)
 
 ## See also (Aero docs / host implementation)
 

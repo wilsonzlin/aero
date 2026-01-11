@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
 # virtio-snd (Windows 7) - clean-room WDM driver skeleton.
 #
 # Build with the WDK 7600/7.1 "build" utility from:

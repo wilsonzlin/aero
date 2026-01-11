@@ -30,6 +30,11 @@ Aero constrains virtio to a small, testable subset. The definitive contract is:
   - §2: split-ring virtqueue subset
   - §3.4: virtio-snd device contract (queue layout, minimum feature set, minimal PCM)
 
+## In-repo implementation guides consulted
+
+- Virtqueue split-ring implementation guide (Windows 7): `docs/virtio/virtqueue-split-ring-win7.md`
+- virtio-pci modern interrupts on Windows 7 (MSI-X vs INTx): `docs/windows/virtio-pci-modern-interrupts.md`
+
 ## Microsoft public documentation (PortCls / WaveRT)
 
 The driver’s Windows-facing behavior is derived from publicly available WDK
