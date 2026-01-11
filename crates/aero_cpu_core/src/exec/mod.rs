@@ -1,5 +1,5 @@
+use crate::assist::{handle_assist_decoded, AssistContext};
 use crate::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitRuntime};
-use crate::{assist::AssistContext, assist::handle_assist};
 
 pub trait ExecCpu {
     fn rip(&self) -> u64;
@@ -306,7 +306,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     // Preserve basic-block behavior: treat this instruction as a block boundary.
                     break;
                 }
-                StepExit::Assist(other) => {
+                StepExit::Assist(_reason) => {
                     // Some privileged assists (notably `MOV SS, r/m16` and `POP SS`) create an
                     // interrupt shadow, inhibiting maskable interrupts for the following
                     // instruction. Decode here so we can update the interrupt bookkeeping in
@@ -328,8 +328,12 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         _ => false,
                     };
 
-                    handle_assist(&mut self.assist, &mut cpu.cpu.state, &mut cpu.bus, other)
+                    // `handle_assist_decoded` does not implicitly sync paging state (unlike
+                    // `handle_assist`), so keep the bus coherent before and after.
+                    cpu.bus.sync(&cpu.cpu.state);
+                    handle_assist_decoded(&mut self.assist, &mut cpu.cpu.state, &mut cpu.bus, &decoded)
                         .expect("handle tier0 assist");
+                    cpu.bus.sync(&cpu.cpu.state);
                     cpu.cpu.pending.retire_instruction();
                     if inhibits_interrupt {
                         cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
