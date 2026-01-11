@@ -3,12 +3,18 @@ use std::net::{Ipv4Addr, SocketAddr};
 use aero_l2_proxy::{start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
 use aero_net_stack::packet::*;
 use futures_util::{SinkExt, StreamExt};
-use tokio::{io::AsyncReadExt, io::AsyncWriteExt, net::TcpListener, sync::oneshot};
+use tokio::{
+    io::AsyncReadExt,
+    io::AsyncWriteExt,
+    net::{TcpListener, UdpSocket},
+    sync::oneshot,
+};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Message};
 
 #[tokio::test]
 async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     let echo = start_tcp_echo_server().await;
+    let udp_echo = start_udp_echo_server().await;
 
     std::env::set_var("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     std::env::set_var("AERO_L2_DNS_A", "echo.local=203.0.113.10");
@@ -18,6 +24,14 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
             "203.0.113.10:{}=127.0.0.1:{}",
             echo.addr.port(),
             echo.addr.port()
+        ),
+    );
+    std::env::set_var(
+        "AERO_L2_UDP_FORWARD",
+        format!(
+            "203.0.113.11:{}=127.0.0.1:{}",
+            udp_echo.addr.port(),
+            udp_echo.addr.port()
         ),
     );
 
@@ -123,6 +137,38 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     let eth = EthernetFrame::parse(&arp_reply).unwrap();
     let arp = ArpPacket::parse(eth.payload).unwrap();
     let gateway_mac = arp.sender_hw;
+
+    // --- UDP echo probe ---
+    let udp_remote_ip = Ipv4Addr::new(203, 0, 113, 11);
+    let udp_remote_port = udp_echo.addr.port();
+    let udp_guest_port = 50000;
+    let udp_payload = b"hi-udp";
+    let udp_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        gateway_mac,
+        guest_ip,
+        udp_remote_ip,
+        udp_guest_port,
+        udp_remote_port,
+        udp_payload,
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&udp_frame).into()))
+        .await
+        .unwrap();
+
+    let udp_resp = wait_for_eth_frame(&mut ws_rx, |f| {
+        let Ok(udp) = parse_udp_from_frame(f) else {
+            return false;
+        };
+        udp.src_port == udp_remote_port
+            && udp.dst_port == udp_guest_port
+            && udp.payload == udp_payload
+    })
+    .await
+    .unwrap();
+    let udp = parse_udp_from_frame(&udp_resp).unwrap();
+    assert_eq!(udp.payload, udp_payload);
 
     // --- DNS query for echo.local ---
     let dns_id = 0x1234;
@@ -310,6 +356,7 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     ws_tx.send(Message::Close(None)).await.unwrap();
 
     proxy.shutdown().await;
+    udp_echo.shutdown().await;
     echo.shutdown().await;
 }
 
@@ -333,6 +380,8 @@ impl EchoServer {
         }
     }
 }
+
+type UdpEchoServer = EchoServer;
 
 async fn start_tcp_echo_server() -> EchoServer {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -360,6 +409,33 @@ async fn start_tcp_echo_server() -> EchoServer {
                             }
                         }
                     });
+                }
+            }
+        }
+    });
+
+    EchoServer {
+        addr,
+        shutdown: Some(shutdown_tx),
+        task: Some(task),
+    }
+}
+
+async fn start_udp_echo_server() -> UdpEchoServer {
+    let socket = UdpSocket::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = socket.local_addr().unwrap();
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+
+    let task = tokio::spawn(async move {
+        let mut buf = vec![0u8; 2048];
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                recv = socket.recv_from(&mut buf) => {
+                    let Ok((n, peer)) = recv else {
+                        break;
+                    };
+                    let _ = socket.send_to(&buf[..n], peer).await;
                 }
             }
         }
@@ -444,6 +520,19 @@ fn parse_tcp_from_frame(frame: &[u8]) -> anyhow::Result<TcpSegment<'_>> {
         return Err(anyhow::anyhow!("not tcp"));
     }
     Ok(TcpSegment::parse(ip.payload).map_err(|err| anyhow::anyhow!("tcp parse: {err:?}"))?)
+}
+
+fn parse_udp_from_frame(frame: &[u8]) -> anyhow::Result<UdpDatagram<'_>> {
+    let eth =
+        EthernetFrame::parse(frame).map_err(|err| anyhow::anyhow!("ethernet parse: {err:?}"))?;
+    if eth.ethertype != EtherType::IPV4 {
+        return Err(anyhow::anyhow!("not ipv4"));
+    }
+    let ip = Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
+    if ip.protocol != Ipv4Protocol::UDP {
+        return Err(anyhow::anyhow!("not udp"));
+    }
+    Ok(UdpDatagram::parse(ip.payload).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))?)
 }
 
 fn dns_response_has_a_record(frame: &[u8], id: u16) -> bool {

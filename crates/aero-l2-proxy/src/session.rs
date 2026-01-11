@@ -67,6 +67,9 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
 
     let mut cfg = StackConfig::default();
     cfg.host_policy.enabled = true;
+    // This service always fulfills UDP proxy actions using tokio `UdpSocket`s (no WebRTC relay),
+    // so ensure the stack labels outbound UDP actions as `UdpTransport::Proxy`.
+    cfg.webrtc_udp = false;
     let mut stack = NetworkStack::new(cfg);
 
     let mut tcp_conns: HashMap<u32, TcpConnHandle> = HashMap::new();
