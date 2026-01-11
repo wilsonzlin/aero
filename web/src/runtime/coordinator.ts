@@ -67,7 +67,7 @@ export type WorkerCoordinatorFatalKind =
   | "ipc_triple_fault"
   | "gpu_fatal";
 
-export type WorkerCoordinatorNonFatalKind = "gpu_device_lost" | "gpu_error" | "ipc_log";
+export type WorkerCoordinatorNonFatalKind = "gpu_device_lost" | "gpu_error" | "ipc_log" | "net_error";
 
 export interface WorkerCoordinatorFatalDetail {
   kind: WorkerCoordinatorFatalKind;
@@ -447,11 +447,12 @@ export class WorkerCoordinator {
   /**
    * Attempt to restart a single worker in-place.
    *
-   * Note: only `gpu` is currently treated as safely restartable without tearing down
-   * the entire VM, since cpu/io/jit workers share global stop flags and guest state.
+   * Note: `gpu` and `net` are treated as restartable without tearing down the entire
+   * VM; other workers share stop flags and guest state, so we fall back to a full
+   * restart.
    */
   restartWorker(role: WorkerRole): void {
-    if (role !== "gpu") {
+    if (role !== "gpu" && role !== "net") {
       this.restart();
       return;
     }
@@ -1170,6 +1171,12 @@ export class WorkerCoordinator {
         return;
       }
 
+      if (role === "net") {
+        this.recordNonFatal({ kind: "net_error", role, message, atMs: nowMs() });
+        this.requestWorkerRestart("net", { reason: "net_error", useBackoff: true });
+        return;
+      }
+
       this.recordFatal({ kind: "worker_reported_error", role, message, atMs: nowMs() });
       this.scheduleFullRestart("worker_reported_error");
     }
@@ -1186,8 +1193,8 @@ export class WorkerCoordinator {
     setReadyFlag(shared.status, role, false);
     this.recordFatal({ kind: "worker_error", role, message: formatted.message, stack: formatted.stack, atMs: nowMs() });
 
-    if (role === "gpu") {
-      this.requestWorkerRestart("gpu", { reason: "worker_error", useBackoff: true });
+    if (role === "gpu" || role === "net") {
+      this.requestWorkerRestart(role, { reason: "worker_error", useBackoff: true });
     } else {
       this.scheduleFullRestart("worker_error");
     }
@@ -1204,8 +1211,8 @@ export class WorkerCoordinator {
     setReadyFlag(shared.status, role, false);
     this.recordFatal({ kind: "worker_message_error", role, message, atMs: nowMs() });
 
-    if (role === "gpu") {
-      this.requestWorkerRestart("gpu", { reason: "worker_message_error", useBackoff: true });
+    if (role === "gpu" || role === "net") {
+      this.requestWorkerRestart(role, { reason: "worker_message_error", useBackoff: true });
     } else {
       this.scheduleFullRestart("worker_message_error");
     }

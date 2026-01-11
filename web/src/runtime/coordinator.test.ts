@@ -49,5 +49,12 @@ describe("runtime/coordinator", () => {
     expect(() => (coordinator as any).spawnWorker("net", segments)).not.toThrow();
     expect((coordinator as any).workers.net).toBeTruthy();
   });
-});
 
+  it("treats net as restartable without requiring a full VM restart", () => {
+    const coordinator = new WorkerCoordinator();
+    // With `net` marked restartable, this should not call `restart()` (which
+    // requires an active config) and should be a no-op when the coordinator
+    // isn't running.
+    expect(() => coordinator.restartWorker("net")).not.toThrow();
+  });
+});
