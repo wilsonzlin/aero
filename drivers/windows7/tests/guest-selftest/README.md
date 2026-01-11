@@ -61,14 +61,17 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Also emits a separate `virtio-snd-capture` marker by attempting to detect a virtio-snd **capture** endpoint
     (MMDevice `eCapture`).
     - Missing capture is reported as **SKIP** by default; use `--require-snd-capture` to make it **FAIL**.
-    - Use `--test-snd-capture` to run a shared-mode WASAPI capture smoke test when a capture endpoint exists
-      (otherwise only endpoint detection is performed).
+    - By default, when virtio-snd playback is exercised (device present or `--require-snd`), the selftest also runs a
+      shared-mode WASAPI capture smoke test when a capture endpoint exists.
+    - Use `--test-snd-capture` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`) to force the capture smoke test
+      even when virtio-snd playback would otherwise be skipped (for example when running an older selftest binary or
+      when debugging outside the strict host harness setup).
       - The smoke test attempts to initialize a capture stream at the contract fixed format:
         **48kHz / 16-bit / mono PCM** (with a `WAVE_FORMAT_EXTENSIBLE` fallback if required by the endpoint).
       - By default, the smoke test **PASS**es even if the captured audio is only silence.
       - Use `--require-non-silence` to fail the capture smoke test if no non-silent buffers are observed.
-      - `--test-snd-capture` can also be enabled via env var: `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`.
-    - When a capture smoke test runs, the selftest also runs a **full-duplex** regression check (`virtio-snd-duplex`):
+    - When a capture smoke test runs (default when virtio-snd is present), the selftest also runs a **full-duplex**
+      regression check (`virtio-snd-duplex`):
       - Opens a matching **render** endpoint (48kHz/16-bit/stereo PCM) and a matching **capture** endpoint
         (48kHz/16-bit/mono PCM) in shared-mode WASAPI.
       - Starts both streams and runs them concurrently for a short fixed duration while:
@@ -104,11 +107,11 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 # Example: virtio-snd present => playback + capture markers:
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set
-AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
-AERO_VIRTIO_SELFTEST|RESULT|PASS
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=wasapi|frames=...|non_silence=...|silence_only=...
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS|frames=...|non_silence=...
+ AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+ AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 # Example: virtio-snd failure => overall FAIL:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|...
@@ -128,15 +131,16 @@ Notes:
   (and will `SKIP`/`FAIL` the capture marker similarly, depending on `--require-snd-capture`).
 - If the virtio-snd capture endpoint is missing, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing`
   (unless `--require-snd-capture` is set).
-- When a capture smoke test runs (`--test-snd-capture` or `--require-non-silence`), the `virtio-snd-capture` marker includes
-  extra diagnostics such as `method=...`, `frames=...`, and whether any non-silence was observed. If `--require-non-silence`
-  is set and only silence is captured, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence`.
+- When a capture smoke test runs (default when virtio-snd is present, or forced via `--test-snd-capture` / `--require-non-silence`),
+  the `virtio-snd-capture` marker includes extra diagnostics such as `method=...`, `frames=...`, and whether any non-silence
+  was observed. If `--require-non-silence` is set and only silence is captured, the tool emits
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence`.
 - If the virtio-snd test is disabled via `--disable-snd`, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
 - If capture is disabled via `--disable-snd-capture`, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled` (playback behavior unchanged).
 - The duplex marker (`virtio-snd-duplex`) is emitted whenever the virtio-snd section runs:
-  - `SKIP|flag_not_set` unless a capture smoke test is enabled (`--test-snd-capture` or `--require-non-silence`).
+  - `SKIP|flag_not_set` when virtio-snd is skipped (and capture smoke testing is not forced).
   - `PASS|frames=...|non_silence=...` when the duplex test runs successfully.
   - `FAIL|reason=...|hr=...` if any WASAPI call fails or capture returns no frames.
   - `SKIP|endpoint_missing` when the duplex test is enabled but a matching endpoint cannot be found.
