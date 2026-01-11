@@ -82,6 +82,14 @@ function recomputeJitEnabled(): void {
 
 recomputeJitEnabled();
 
+function isCspBlockedError(err: unknown): boolean {
+  if (err instanceof DOMException) {
+    if (err.name === "SecurityError") return true;
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return /wasm-unsafe-eval|content security policy|csp/i.test(msg);
+}
+
 function cacheKeyForWasmBytes(wasmBytes: ArrayBuffer): string {
   const bytes = new Uint8Array(wasmBytes);
   const hash = fnv1a32Hex(bytes);
@@ -244,7 +252,12 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
     } catch (err) {
       const durationMs = performance.now() - startMs;
       const message = err instanceof Error ? err.message : String(err);
-      postJitResponse({ type: "jit:error", id: req.id, code: "compile_failed", message, durationMs });
+      const code = isCspBlockedError(err) ? "csp_blocked" : "compile_failed";
+      if (code === "csp_blocked") {
+        currentPlatformFeatures.jit_dynamic_wasm = false;
+        recomputeJitEnabled();
+      }
+      postJitResponse({ type: "jit:error", id: req.id, code, message, durationMs });
     }
     return;
   }
@@ -262,7 +275,12 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
     const durationMs = performance.now() - startMs;
     perfJitMs += durationMs;
     const message = err instanceof Error ? err.message : String(err);
-    postJitResponse({ type: "jit:error", id: req.id, code: "compile_failed", message, durationMs });
+    const code = isCspBlockedError(err) ? "csp_blocked" : "compile_failed";
+    if (code === "csp_blocked") {
+      currentPlatformFeatures.jit_dynamic_wasm = false;
+      recomputeJitEnabled();
+    }
+    postJitResponse({ type: "jit:error", id: req.id, code, message, durationMs });
     return;
   } finally {
     inflightCompiles.delete(key);
