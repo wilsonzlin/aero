@@ -130,6 +130,8 @@ async fn run_session_inner(
 
     let start = tokio::time::Instant::now();
     let mut fatal_err: Option<anyhow::Error> = None;
+    let mut consecutive_protocol_errors: u32 = 0;
+    const MAX_CONSECUTIVE_PROTOCOL_ERRORS: u32 = 3;
 
     // Optional server-driven keepalive/RTT measurement.
     let ping_enabled = state.cfg.ping_interval.is_some();
@@ -185,6 +187,7 @@ async fn run_session_inner(
                         let now_ms = elapsed_ms(start);
                         match aero_l2_protocol::decode_with_limits(&data, &state.l2_limits) {
                             Ok(decoded) => {
+                                consecutive_protocol_errors = 0;
                                 match decoded.msg_type {
                                     aero_l2_protocol::L2_TUNNEL_TYPE_FRAME => {
                                         let frame = decoded.payload;
@@ -267,7 +270,12 @@ async fn run_session_inner(
                                 ) {
                                     let _ = ws_out_tx.send(Message::Binary(wire)).await;
                                 }
-                                break;
+
+                                consecutive_protocol_errors = consecutive_protocol_errors.saturating_add(1);
+                                if consecutive_protocol_errors >= MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+                                    break;
+                                }
+                                continue;
                             }
                         }
                     }

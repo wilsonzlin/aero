@@ -130,6 +130,57 @@ async fn capture_creates_non_empty_file() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn invalid_messages_are_dropped_without_closing_session() {
+    let server = TestServer::start(None).await;
+
+    let mut req = server.ws_url().into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        tokio_tungstenite::tungstenite::http::HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_sender, mut ws_receiver) = ws.split();
+
+    // Send a malformed protocol message (too short / missing header).
+    ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            vec![0u8; 1].into(),
+        ))
+        .await
+        .unwrap();
+
+    // The proxy may send an ERROR control message; drain one message if present.
+    let _ = tokio::time::timeout(Duration::from_millis(200), ws_receiver.next()).await;
+
+    // Follow up with a valid L2 protocol FRAME; if the session was closed, this send would fail.
+    let frame = vec![0u8; 60];
+    let wire = aero_l2_protocol::encode_frame(&frame).unwrap();
+    ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Binary(wire.into()))
+        .await
+        .unwrap();
+
+    let _ = ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Close(None))
+        .await;
+
+    let body = reqwest::get(server.http_url("/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let dropped = parse_metric(&body, "l2_frames_dropped_total").unwrap();
+    assert!(dropped >= 1, "expected dropped counter >= 1, got {dropped}");
+
+    let rx = parse_metric(&body, "l2_frames_rx_total").unwrap();
+    assert!(rx >= 1, "expected rx counter >= 1, got {rx}");
+
+    server.shutdown().await;
+}
+
 fn find_capture_file(dir: &std::path::Path) -> Option<(std::path::PathBuf, u64)> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
