@@ -46,18 +46,34 @@ function runResolver({ repoRoot, resolverPath }, extraArgs = []) {
   return parseKeyVal(stdout);
 }
 
-test("detect-node-dir: prefers repo root when root + web exist (override-able)", () => {
+test("detect-node-dir: prefers repo root when root + web exist", () => {
+  const temp = setupTempRepo();
+  try {
+    writeJson(path.join(temp.repoRoot, "package.json"), { name: "root", version: "1.0.0" });
+    writeJson(path.join(temp.repoRoot, "package-lock.json"), { lockfileVersion: 3 });
+    writeJson(path.join(temp.repoRoot, "web/package.json"), { name: "web", version: "0.0.0" });
+
+    const detected = runResolver(temp);
+    assert.equal(detected.dir, ".");
+    assert.equal(detected.lockfile, "package-lock.json");
+    assert.equal(detected.package_name, "root");
+
+    const overridden = runResolver(temp, ["--node-dir", "web"]);
+    assert.equal(overridden.dir, "web");
+    assert.equal(overridden.lockfile, "package-lock.json");
+    assert.equal(overridden.package_name, "web");
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("detect-node-dir: uses workspace lockfile when present", () => {
   const temp = setupTempRepo();
   try {
     writeJson(path.join(temp.repoRoot, "package.json"), { name: "root", version: "1.0.0" });
     writeJson(path.join(temp.repoRoot, "package-lock.json"), { lockfileVersion: 3 });
     writeJson(path.join(temp.repoRoot, "web/package.json"), { name: "web", version: "0.0.0" });
     writeJson(path.join(temp.repoRoot, "web/package-lock.json"), { lockfileVersion: 3 });
-
-    const detected = runResolver(temp);
-    assert.equal(detected.dir, ".");
-    assert.equal(detected.lockfile, "package-lock.json");
-    assert.equal(detected.package_name, "root");
 
     const overridden = runResolver(temp, ["--node-dir", "web"]);
     assert.equal(overridden.dir, "web");

@@ -62,11 +62,11 @@ runs:
 
         echo "node_version=$version" >> "$GITHUB_OUTPUT"
 
-    - id: detect
-      name: Detect Node workspace
-      shell: bash
-      run: |
-        set -euo pipefail
+      - id: detect
+        name: Detect Node workspace
+        shell: bash
+        run: |
+          set -euo pipefail
 
         root="${{ inputs.working-directory }}"
         if [[ -z "$root" ]]; then
@@ -101,14 +101,20 @@ runs:
           exit 1
         fi
 
-        if [[ -z "$lockfile" ]]; then
-          echo "error: resolver did not return lockfile (CI requires a lockfile)" >&2
-          echo "$kv" >&2
-          exit 1
-        fi
+          if [[ -z "$lockfile" ]]; then
+            echo "error: resolver did not return lockfile (CI requires a lockfile)" >&2
+            echo "$kv" >&2
+            exit 1
+          fi
+ 
+          install_dir="$(dirname "$lockfile")"
+          if [[ -z "$install_dir" ]]; then
+            install_dir="."
+          fi
 
-        echo "dir=$dir" >> "$GITHUB_OUTPUT"
-        echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+          echo "install_dir=$install_dir" >> "$GITHUB_OUTPUT"
 
     - name: Setup Node
       uses: actions/setup-node@v4
@@ -120,5 +126,5 @@ runs:
     - name: Install dependencies (npm ci)
       if: ${{ inputs.skip-npm-ci != 'true' }}
       shell: bash
-      working-directory: ${{ steps.detect.outputs.dir }}
+      working-directory: ${{ steps.detect.outputs.install_dir }}
       run: npm ci
