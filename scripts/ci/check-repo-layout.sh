@@ -24,6 +24,16 @@ cd "$(git rev-parse --show-toplevel)"
 need_file "docs/repo-layout.md"
 need_file "docs/adr/0001-repo-layout.md"
 
+# Canonical shared protocol vectors (used by cross-language conformance tests).
+need_file "protocol-vectors/README.md"
+need_file "protocol-vectors/udp-relay.json"
+need_file "protocol-vectors/tcp-mux-v1.json"
+
+# Guardrail: avoid reintroducing a second, competing "canonical" vectors directory.
+if [[ -d "tests/protocol-vectors" ]]; then
+  die "tests/protocol-vectors is deprecated; use protocol-vectors/ instead"
+fi
+
 # Guardrail: an obsolete prototype GPU device crate must not be reintroduced.
 # (The canonical AeroGPU protocol is A3A0; see drivers/aerogpu/protocol/.)
 retired_gpu_device_dir="crates/aero-gpu""-device"
