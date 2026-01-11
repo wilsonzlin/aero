@@ -125,6 +125,18 @@ static bool ParseUintPtr(const std::string& s, uintptr_t* out, std::string* err)
   return true;
 }
 
+static bool IsLikelyNtHandle(HANDLE h) {
+  if (!h) {
+    return false;
+  }
+  HANDLE dup = NULL;
+  if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &dup, 0, FALSE, DUPLICATE_SAME_ACCESS) || !dup) {
+    return false;
+  }
+  CloseHandle(dup);
+  return true;
+}
+
 static int CheckD3D9Adapter(const char* test_name, IDirect3D9Ex* d3d, const AdapterRequirements& req) {
   D3DADAPTER_IDENTIFIER9 ident;
   ZeroMemory(&ident, sizeof(ident));
@@ -551,6 +563,7 @@ static int RunChild(int argc,
   }
 
   const HANDLE shared_handle = (HANDLE)handle_value;
+  const bool shared_handle_is_nt = IsLikelyNtHandle(shared_handle);
   aerogpu_test::PrintfStdout("INFO: %s: shared handle=%p", kTestName, shared_handle);
 
   const int kWidth = 64;
@@ -632,10 +645,12 @@ static int RunChild(int argc,
     }
   }
 
-  if (open_handle && open_handle != shared_handle) {
+  if (open_handle && open_handle != shared_handle && IsLikelyNtHandle(open_handle)) {
     CloseHandle(open_handle);
   }
-  CloseHandle(shared_handle);
+  if (shared_handle_is_nt) {
+    CloseHandle(shared_handle);
+  }
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
@@ -671,6 +686,7 @@ static int RunParent(int argc,
 
   SharedResourceKind kind = kSharedTexture;
   HANDLE shared_handle = NULL;
+  bool shared_handle_is_nt = false;
   ComPtr<IDirect3DTexture9> tex;
   ComPtr<IDirect3DSurface9> surface;
 
@@ -686,9 +702,12 @@ static int RunParent(int argc,
                                   &shared_handle);
   if (SUCCEEDED(hr) && tex && shared_handle) {
     kind = kSharedTexture;
+    shared_handle_is_nt = IsLikelyNtHandle(shared_handle);
     hr = tex->GetSurfaceLevel(0, surface.put());
     if (FAILED(hr)) {
-      CloseHandle(shared_handle);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
       return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
     }
   } else {
@@ -711,19 +730,24 @@ static int RunParent(int argc,
       return aerogpu_test::Fail(kTestName,
                                 "CreateRenderTargetEx(create shared) succeeded but returned NULL shared handle");
     }
+    shared_handle_is_nt = IsLikelyNtHandle(shared_handle);
   }
 
   if (validate_sharing) {
     rc = RenderTriangleToSurface(kTestName, dev.get(), surface.get(), kWidth, kHeight);
     if (rc != 0) {
-      CloseHandle(shared_handle);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
       return rc;
     }
 
     rc = ValidateSurfacePixels(
         kTestName, L"d3d9ex_shared_surface_parent.bmp", dump, dev.get(), surface.get());
     if (rc != 0) {
-      CloseHandle(shared_handle);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
       return rc;
     }
   } else {
@@ -731,12 +755,16 @@ static int RunParent(int argc,
     // primary purpose of this test is cross-process open + submit, not correctness of data sharing.
     hr = dev->ColorFill(surface.get(), NULL, D3DCOLOR_XRGB(255, 0, 0));
     if (FAILED(hr)) {
-      CloseHandle(shared_handle);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
       return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ColorFill(parent)", hr);
     }
     hr = dev->Flush();
     if (FAILED(hr)) {
-      CloseHandle(shared_handle);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
       return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Flush(parent)", hr);
     }
   }
@@ -748,11 +776,15 @@ static int RunParent(int argc,
 
   // Ensure the shared handle is not inherited: the child should only observe it via DuplicateHandle
   // into the child process (which is closer to how DWM consumes app surfaces).
-  SetHandleInformation(shared_handle, HANDLE_FLAG_INHERIT, 0);
+  if (shared_handle_is_nt) {
+    SetHandleInformation(shared_handle, HANDLE_FLAG_INHERIT, 0);
+  }
 
   std::wstring exe_path = GetModulePath();
   if (exe_path.empty()) {
-    CloseHandle(shared_handle);
+    if (shared_handle_is_nt) {
+      CloseHandle(shared_handle);
+    }
     return aerogpu_test::Fail(kTestName, "GetModuleFileNameW failed");
   }
 
@@ -809,42 +841,52 @@ static int RunParent(int argc,
                            &pi);
   if (!ok) {
     DWORD err = GetLastError();
-    CloseHandle(shared_handle);
+    if (shared_handle_is_nt) {
+      CloseHandle(shared_handle);
+    }
     return aerogpu_test::Fail(
         kTestName, "CreateProcessW failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
+  std::string patch_err;
   HANDLE child_handle_value = NULL;
-  if (!DuplicateHandle(GetCurrentProcess(),
-                       shared_handle,
-                       pi.hProcess,
-                       &child_handle_value,
-                       0,
-                       FALSE,
-                       DUPLICATE_SAME_ACCESS) ||
-      !child_handle_value) {
-    DWORD err = GetLastError();
-    TerminateProcess(pi.hProcess, 1);
-    WaitForSingleObject(pi.hProcess, 5000);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    CloseHandle(shared_handle);
-    return aerogpu_test::Fail(kTestName,
-                              "DuplicateHandle(into child) failed: %s",
-                              aerogpu_test::Win32ErrorToString(err).c_str());
+  bool duplicated_into_child = false;
+  DWORD duplicate_err = 0;
+  if (DuplicateHandle(GetCurrentProcess(),
+                      shared_handle,
+                      pi.hProcess,
+                      &child_handle_value,
+                      0,
+                      FALSE,
+                      DUPLICATE_SAME_ACCESS) &&
+      child_handle_value) {
+    duplicated_into_child = true;
+  } else {
+    duplicate_err = GetLastError();
   }
 
-  std::string patch_err;
-  const std::string child_handle_hex = FormatHandleHex(child_handle_value);
-  aerogpu_test::PrintfStdout("INFO: %s: duplicated handle into child as %s",
-                             kTestName,
-                             child_handle_hex.c_str());
+  std::string child_handle_hex;
+  if (duplicated_into_child) {
+    child_handle_hex = FormatHandleHex(child_handle_value);
+    aerogpu_test::PrintfStdout("INFO: %s: duplicated handle into child as %s",
+                               kTestName,
+                               child_handle_hex.c_str());
+  } else {
+    child_handle_hex = FormatHandleHex(shared_handle);
+    aerogpu_test::PrintfStdout("INFO: %s: DuplicateHandle(into child) failed (%s); passing raw handle %s",
+                               kTestName,
+                               aerogpu_test::Win32ErrorToString(duplicate_err).c_str(),
+                               child_handle_hex.c_str());
+  }
+
   if (!PatchChildCommandLineSharedHandle(pi.hProcess, child_handle_hex, &patch_err)) {
     TerminateProcess(pi.hProcess, 1);
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared_handle);
+    if (shared_handle_is_nt) {
+      CloseHandle(shared_handle);
+    }
     return aerogpu_test::Fail(kTestName, "failed to patch child command line: %s", patch_err.c_str());
   }
 
@@ -860,7 +902,9 @@ static int RunParent(int argc,
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared_handle);
+    if (shared_handle_is_nt) {
+      CloseHandle(shared_handle);
+    }
     return aerogpu_test::Fail(kTestName, "child timed out");
   }
   if (wait != WAIT_OBJECT_0) {
@@ -869,7 +913,9 @@ static int RunParent(int argc,
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared_handle);
+    if (shared_handle_is_nt) {
+      CloseHandle(shared_handle);
+    }
     return aerogpu_test::Fail(kTestName,
                               "WaitForSingleObject(child) failed: %s",
                               aerogpu_test::Win32ErrorToString(err).c_str());
@@ -880,7 +926,9 @@ static int RunParent(int argc,
     DWORD err = GetLastError();
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared_handle);
+    if (shared_handle_is_nt) {
+      CloseHandle(shared_handle);
+    }
     return aerogpu_test::Fail(kTestName,
                               "GetExitCodeProcess failed: %s",
                               aerogpu_test::Win32ErrorToString(err).c_str());
@@ -888,7 +936,9 @@ static int RunParent(int argc,
 
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
-  CloseHandle(shared_handle);
+  if (shared_handle_is_nt) {
+    CloseHandle(shared_handle);
+  }
 
   if (exit_code != 0) {
     return aerogpu_test::Fail(kTestName, "child failed with exit code %lu", (unsigned long)exit_code);
