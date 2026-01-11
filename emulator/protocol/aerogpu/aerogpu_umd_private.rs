@@ -31,6 +31,13 @@ pub const AEROGPU_UMDPRIV_FLAG_IS_LEGACY: u32 = 1u32 << 0;
 pub const AEROGPU_UMDPRIV_FLAG_HAS_VBLANK: u32 = 1u32 << 1;
 pub const AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE: u32 = 1u32 << 2;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuUmdPrivateDecodeError {
+    BufferTooSmall,
+    BadSizeField { found: u32 },
+    UnsupportedStructVersion { found: u32 },
+}
+
 /// Version 1 of the UMDRIVERPRIVATE discovery blob returned by the KMD.
 ///
 /// This struct is packed to match the on-the-wire ABI (no pointers; stable across x86/x64).
@@ -52,6 +59,22 @@ pub struct AerogpuUmdPrivateV1 {
 impl AerogpuUmdPrivateV1 {
     pub const SIZE_BYTES: usize = 64;
 
+    pub fn validate_prefix(&self) -> Result<(), AerogpuUmdPrivateDecodeError> {
+        // Forward-compat: `size_bytes` is a minimum so newer KMDs can append fields without
+        // bumping `struct_version`.
+        if self.size_bytes < Self::SIZE_BYTES as u32 {
+            return Err(AerogpuUmdPrivateDecodeError::BadSizeField {
+                found: self.size_bytes,
+            });
+        }
+        if self.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1 {
+            return Err(AerogpuUmdPrivateDecodeError::UnsupportedStructVersion {
+                found: self.struct_version,
+            });
+        }
+        Ok(())
+    }
+
     pub fn decode_from_le_bytes(buf: &[u8]) -> Option<Self> {
         if buf.len() < Self::SIZE_BYTES {
             return None;
@@ -72,5 +95,12 @@ impl AerogpuUmdPrivateV1 {
                 u64::from_le_bytes(buf[56..64].try_into().unwrap()),
             ],
         })
+    }
+
+    pub fn decode_from_le_bytes_checked(buf: &[u8]) -> Result<Self, AerogpuUmdPrivateDecodeError> {
+        let decoded =
+            Self::decode_from_le_bytes(buf).ok_or(AerogpuUmdPrivateDecodeError::BufferTooSmall)?;
+        decoded.validate_prefix()?;
+        Ok(decoded)
     }
 }

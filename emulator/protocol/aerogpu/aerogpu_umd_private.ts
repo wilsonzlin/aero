@@ -53,9 +53,19 @@ export function decodeUmdPrivateV1(view: DataView, byteOffset = 0): AerogpuUmdPr
     throw new AerogpuUmdPrivateError("Buffer too small for aerogpu_umd_private_v1");
   }
 
+  const sizeBytes = view.getUint32(byteOffset + AEROGPU_UMD_PRIVATE_V1_OFF_SIZE_BYTES, true);
+  if (sizeBytes < AEROGPU_UMD_PRIVATE_V1_SIZE) {
+    throw new AerogpuUmdPrivateError(`umd_private.size_bytes too small: ${sizeBytes}`);
+  }
+
+  const structVersion = view.getUint32(byteOffset + AEROGPU_UMD_PRIVATE_V1_OFF_STRUCT_VERSION, true);
+  if (structVersion !== AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+    throw new AerogpuUmdPrivateError(`umd_private.struct_version unsupported: ${structVersion}`);
+  }
+
   return {
-    sizeBytes: view.getUint32(byteOffset + AEROGPU_UMD_PRIVATE_V1_OFF_SIZE_BYTES, true),
-    structVersion: view.getUint32(byteOffset + AEROGPU_UMD_PRIVATE_V1_OFF_STRUCT_VERSION, true),
+    sizeBytes,
+    structVersion,
     deviceMmioMagic: view.getUint32(byteOffset + AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_MMIO_MAGIC, true),
     deviceAbiVersionU32: view.getUint32(byteOffset + AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_ABI_VERSION_U32, true),
     deviceFeatures: view.getBigUint64(byteOffset + AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_FEATURES, true),
