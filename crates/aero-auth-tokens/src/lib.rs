@@ -97,8 +97,10 @@ pub fn verify_gateway_session_token(
     let payload: serde_json::Value = serde_json::from_slice(&payload_raw).ok()?;
     let obj = payload.as_object()?;
 
-    let v = obj.get("v")?.as_i64()?;
-    if v != 1 {
+    // Gateway accepts any JSON number that parses to `1` (e.g. `1` or `1.0`),
+    // since it compares the parsed JS number with `!== 1`.
+    let v = obj.get("v")?.as_f64()?;
+    if v != 1.0 {
         return None;
     }
     let sid = obj.get("sid")?.as_str()?;
