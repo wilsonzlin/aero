@@ -103,6 +103,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         "README.md",
         "THIRD_PARTY_NOTICES.md",
         "licenses/virtio-win/LICENSE.txt",
+        "licenses/virtio-win/driver-pack-manifest.json",
         "config/devices.cmd",
         "manifest.json",
         "config/README.md",

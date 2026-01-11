@@ -165,6 +165,13 @@ if (Test-Path -LiteralPath $driverPackLicenses -PathType Container) {
   Copy-Item -LiteralPath $driverPackLicenses -Destination $guestToolsStageDir -Recurse -Force
 }
 
+$driverPackManifest = Join-Path $driverPackRoot "manifest.json"
+if (Test-Path -LiteralPath $driverPackManifest -PathType Leaf) {
+  $virtioLicensesDir = Join-Path (Join-Path $guestToolsStageDir "licenses") "virtio-win"
+  Ensure-Directory -Path $virtioLicensesDir
+  Copy-Item -LiteralPath $driverPackManifest -Destination (Join-Path $virtioLicensesDir "driver-pack-manifest.json") -Force
+}
+
 $guestToolsNoticesStage = Join-Path $guestToolsStageDir "THIRD_PARTY_NOTICES.md"
 if (-not (Test-Path -LiteralPath $guestToolsNoticesStage -PathType Leaf)) {
   throw "Expected third-party notices file not found after staging: $guestToolsNoticesStage"

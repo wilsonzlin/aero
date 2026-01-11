@@ -100,6 +100,7 @@ When building Guest Tools from a virtio-win ISO/root using the wrapper script,
 upstream virtio-win license/notice files (if present) are also included under:
 
 - `licenses/virtio-win/`
+  - Includes `driver-pack-manifest.json` (copied from the extracted driver pack) to preserve virtio-win ISO provenance.
 
 ## In-guest install workflow (post-install)
 

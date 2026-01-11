@@ -328,7 +328,8 @@ Outputs:
 - `dist/guest-tools/manifest.json`
 
 The Guest Tools ISO/zip root also includes `THIRD_PARTY_NOTICES.md`, and will include
-upstream virtio-win license/notice files (if present) under `licenses/virtio-win/`.
+upstream virtio-win license/notice files (if present) under `licenses/virtio-win/`
+(including `driver-pack-manifest.json` for virtio-win ISO provenance).
 
 ---
 
