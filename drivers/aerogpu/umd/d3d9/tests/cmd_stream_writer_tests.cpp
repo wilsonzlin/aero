@@ -1694,6 +1694,122 @@ bool TestPresentStatsAndFrameLatency() {
   return true;
 }
 
+bool TestPresentSplitsRenderAndPresentSubmissions() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnClear != nullptr, "Clear must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnPresentEx != nullptr, "PresentEx must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
+  if (!Check(dev != nullptr && adapter != nullptr, "device/adapter pointers")) {
+    return false;
+  }
+
+  uint64_t base_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    base_fence = adapter->last_submitted_fence;
+  }
+
+  // Emit a render command so PresentEx must flush it via a Render submission
+  // before issuing the Present submission.
+  hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
+                                     /*flags=*/0,
+                                     /*color_rgba8=*/0,
+                                     /*depth=*/1.0f,
+                                     /*stencil=*/0);
+  if (!Check(hr == S_OK, "Clear")) {
+    return false;
+  }
+
+  bool has_pending_render = false;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    has_pending_render = !dev->cmd.empty();
+  }
+  if (!Check(has_pending_render, "Clear emits pending render work")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDIARG_PRESENTEX present{};
+  present.hSrc.pDrvPrivate = nullptr;
+  present.hWnd = nullptr;
+  present.sync_interval = 1;
+  present.d3d9_present_flags = 0;
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx")) {
+    return false;
+  }
+
+  uint64_t final_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    final_fence = adapter->last_submitted_fence;
+  }
+
+  if (!Check(final_fence == base_fence + 2,
+             "PresentEx flushes render work then presents (two submissions)")) {
+    return false;
+  }
+
+  uint64_t present_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->inflight_present_fences.size() == 1, "inflight_present_fences contains one fence")) {
+      return false;
+    }
+    present_fence = dev->inflight_present_fences.front();
+  }
+  return Check(present_fence == base_fence + 2, "present fence corresponds to second submission");
+}
+
 bool TestGetDisplayModeExReturnsPrimaryMode() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -4757,6 +4873,7 @@ int main() {
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
   failures += !aerogpu::TestSharedResourceCreateAndOpenEmitsExportImport();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
+  failures += !aerogpu::TestPresentSplitsRenderAndPresentSubmissions();
   failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
