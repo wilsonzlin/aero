@@ -2778,6 +2778,13 @@ function renderWebHidPassthroughPanel(): HTMLElement {
     return `${name} [${device.vendorId.toString(16).padStart(4, "0")}:${device.productId.toString(16).padStart(4, "0")}]`;
   };
 
+  const canForgetDevice = (device: HIDDevice): device is HIDDevice & { forget: () => Promise<void> } => {
+    // `HIDDevice.forget()` is Chromium-only for now; hide the button on browsers that
+    // do not implement the API.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return typeof (device as any).forget === "function";
+  };
+
   const render = (): void => {
     const state = webHidManager.getState();
     const workerAttached = webHidBroker.isWorkerAttached();
@@ -2824,6 +2831,20 @@ function renderWebHidPassthroughPanel(): HTMLElement {
                   }
                 },
               }),
+              canForgetDevice(device)
+                ? el("button", {
+                    text: "Forget",
+                    onclick: async () => {
+                      error.textContent = "";
+                      try {
+                        await device.forget();
+                        await webHidManager.refreshKnownDevices();
+                      } catch (err) {
+                        error.textContent = err instanceof Error ? err.message : String(err);
+                      }
+                    },
+                  })
+                : null,
             ),
           )
         : [el("li", { text: "No known devices. Use “Request device…” to grant access." })]),
@@ -2853,20 +2874,35 @@ function renderWebHidPassthroughPanel(): HTMLElement {
                       }
                     },
                   }),
-              el("button", {
-                text: "Detach",
-                onclick: async () => {
-                  error.textContent = "";
-                  try {
-                    await webHidBroker.detachDevice(attachment.device);
-                  } catch (err) {
-                    error.textContent = err instanceof Error ? err.message : String(err);
-                  }
-                },
-              }),
-            );
-          })
-        : [el("li", { text: "No devices attached." })]),
+               el("button", {
+                 text: "Detach",
+                 onclick: async () => {
+                   error.textContent = "";
+                   try {
+                     await webHidBroker.detachDevice(attachment.device);
+                   } catch (err) {
+                     error.textContent = err instanceof Error ? err.message : String(err);
+                   }
+                 },
+               }),
+               canForgetDevice(attachment.device)
+                 ? el("button", {
+                     text: "Forget",
+                     onclick: async () => {
+                       error.textContent = "";
+                       try {
+                         await webHidBroker.detachDevice(attachment.device);
+                         await attachment.device.forget();
+                         await webHidManager.refreshKnownDevices();
+                       } catch (err) {
+                         error.textContent = err instanceof Error ? err.message : String(err);
+                       }
+                     },
+                   })
+                 : null,
+             );
+           })
+         : [el("li", { text: "No devices attached." })]),
     );
   };
 
@@ -2878,7 +2914,7 @@ function renderWebHidPassthroughPanel(): HTMLElement {
 
   const hint = el("div", {
     class: "mono",
-    text: "WebHID permissions persist per-origin. To revoke access, use your browser's site settings and remove HID device permissions for this site.",
+    text: "WebHID permissions persist per-origin. Some Chromium builds support revoking permissions via the “Forget” buttons below; otherwise, use your browser's site settings and remove HID device permissions for this site.",
   });
 
   return el(
