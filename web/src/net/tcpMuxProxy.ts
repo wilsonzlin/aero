@@ -523,11 +523,15 @@ export class WebSocketTcpMuxProxyClient {
   private handleMuxFrame(frame: TcpMuxFrame): void {
     switch (frame.msgType) {
       case TcpMuxMsgType.DATA: {
+        const st = this.streams.get(frame.streamId);
+        if (!st || st.closed) return;
         this.maybeNotifyOpen(frame.streamId);
         this.onData?.(frame.streamId, frame.payload);
         return;
       }
       case TcpMuxMsgType.CLOSE: {
+        const st = this.streams.get(frame.streamId);
+        if (!st || st.closed) return;
         this.maybeNotifyOpen(frame.streamId);
         let flags: number;
         try {
@@ -544,8 +548,6 @@ export class WebSocketTcpMuxProxyClient {
         }
 
         if ((flags & TcpMuxCloseFlags.FIN) !== 0) {
-          const st = this.streams.get(frame.streamId);
-          if (!st || st.closed) return;
           st.remoteFin = true;
 
           if (st.localFin) {
@@ -566,6 +568,10 @@ export class WebSocketTcpMuxProxyClient {
         return;
       }
       case TcpMuxMsgType.ERROR: {
+        if (frame.streamId !== 0) {
+          const st = this.streams.get(frame.streamId);
+          if (!st || st.closed) return;
+        }
         this.maybeNotifyOpen(frame.streamId);
         let decoded: TcpMuxError;
         try {
