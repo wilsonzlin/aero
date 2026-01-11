@@ -2519,6 +2519,13 @@ HRESULT AEROGPU_APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
   const uint32_t map_type_u = static_cast<uint32_t>(map_type);
   if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
+    if (!dev->cmd.empty()) {
+      HRESULT submit_hr = S_OK;
+      submit_locked(dev, /*want_present=*/false, &submit_hr);
+      if (FAILED(submit_hr)) {
+        return submit_hr;
+      }
+    }
     // STAGING READ must observe results of prior GPU work (CopyResource, etc).
     const uint64_t fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
     HRESULT wait = (map_flags & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
@@ -2715,6 +2722,13 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
 
   // Conservative: only support generic map on buffers and staging textures for now.
   if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
+    if (!dev->cmd.empty()) {
+      HRESULT submit_hr = S_OK;
+      submit_locked(dev, /*want_present=*/false, &submit_hr);
+      if (FAILED(submit_hr)) {
+        return submit_hr;
+      }
+    }
     const uint64_t fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
     HRESULT wait = (map_flags & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
     if (FAILED(wait)) {
@@ -3898,6 +3912,14 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   }
 
   if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
+    if (!dev->cmd.empty()) {
+      HRESULT submit_hr = S_OK;
+      submit_locked(dev, /*want_present=*/false, &submit_hr);
+      if (FAILED(submit_hr)) {
+        set_error(dev, submit_hr);
+        return;
+      }
+    }
     const uint64_t fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
     HRESULT wait =
         (map_flags_u & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
@@ -4220,10 +4242,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   }
 
   HRESULT init_hr = InitKernelDeviceContext(device, hAdapter);
-  if (FAILED(init_hr)) {
+  if (FAILED(init_hr) || device->kmt_fence_syncobj == 0) {
     DestroyKernelDeviceContext(device);
     device->~AeroGpuDevice();
-    return init_hr;
+    return FAILED(init_hr) ? init_hr : E_FAIL;
   }
 
   InitDeviceFuncsWithStubs(pCreateDevice->pDeviceFuncs);
@@ -4407,10 +4429,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   }
 
   HRESULT init_hr = InitKernelDeviceContext(device, hAdapter);
-  if (FAILED(init_hr)) {
+  if (FAILED(init_hr) || device->kmt_fence_syncobj == 0) {
     DestroyKernelDeviceContext(device);
     device->~AeroGpuDevice();
-    return init_hr;
+    return FAILED(init_hr) ? init_hr : E_FAIL;
   }
 
   InitDeviceFuncsWithStubs(pCreateDevice->pDeviceFuncs);

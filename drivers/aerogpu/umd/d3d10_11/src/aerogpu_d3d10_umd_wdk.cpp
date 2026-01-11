@@ -2037,6 +2037,13 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   }
 
   if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
+    if (!dev->cmd.empty()) {
+      HRESULT submit_hr = S_OK;
+      submit_locked(dev, /*want_present=*/false, &submit_hr);
+      if (FAILED(submit_hr)) {
+        return submit_hr;
+      }
+    }
     const uint64_t fence = dev->last_submitted_fence;
     const HRESULT wait = (map_flags_u & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
     if (FAILED(wait)) {
