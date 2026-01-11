@@ -25,6 +25,7 @@ see [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterface()` fail with an opaque `DOMException`:
 
 - For a quick browser-level smoke test, use the in-app **WebUSB** panel (main UI) or open the standalone diagnostics page:
+  - For an end-to-end passthrough smoke test (UHCI TDs → WASM harness → WebUSB → completions), use the in-app **“UHCI passthrough harness (WebUSB)”** panel. It runs a minimal USB enumeration sequence and prints the resulting device + configuration descriptor bytes.
   - `/webusb_diagnostics.html`
   - The diagnostics page can also list `navigator.usb.getDevices()` (already-granted devices) and copy a JSON summary for bug reports.
 - **Secure context required:** WebUSB requires `https://` or `http://localhost` (`isSecureContext === true`).
