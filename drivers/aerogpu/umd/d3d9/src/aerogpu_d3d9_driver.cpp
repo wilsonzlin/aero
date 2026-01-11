@@ -2268,7 +2268,12 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
   cmd->scanout_id = 0;
-  cmd->flags = (pPresentEx->sync_interval != 0) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+  bool vsync = (pPresentEx->sync_interval != 0);
+  if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
+    // Only request vblank-paced presents when the active device reports vblank support.
+    vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
+  }
+  cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
   cmd->d3d9_present_flags = pPresentEx->d3d9_present_flags;
   cmd->reserved0 = 0;
 
@@ -2316,7 +2321,11 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
   cmd->scanout_id = 0;
-  cmd->flags = (pPresent->sync_interval != 0) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+  bool vsync = (pPresent->sync_interval != 0);
+  if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
+    vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
+  }
+  cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
   cmd->d3d9_present_flags = pPresent->flags;
   cmd->reserved0 = 0;
 
@@ -3029,6 +3038,9 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
       aerogpu_umd_private_v1 priv;
       std::memset(&priv, 0, sizeof(priv));
       if (adapter->kmd_query.QueryUmdPrivate(&priv)) {
+        adapter->umd_private = priv;
+        adapter->umd_private_valid = true;
+
         char magicStr[5] = {0, 0, 0, 0, 0};
         magicStr[0] = (char)((priv.device_mmio_magic >> 0) & 0xFF);
         magicStr[1] = (char)((priv.device_mmio_magic >> 8) & 0xFF);
@@ -3085,6 +3097,9 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
       aerogpu_umd_private_v1 priv;
       std::memset(&priv, 0, sizeof(priv));
       if (adapter->kmd_query.QueryUmdPrivate(&priv)) {
+        adapter->umd_private = priv;
+        adapter->umd_private_valid = true;
+
         char magicStr[5] = {0, 0, 0, 0, 0};
         magicStr[0] = (char)((priv.device_mmio_magic >> 0) & 0xFF);
         magicStr[1] = (char)((priv.device_mmio_magic >> 8) & 0xFF);

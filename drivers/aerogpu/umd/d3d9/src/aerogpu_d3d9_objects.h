@@ -156,6 +156,12 @@ struct Adapter {
   std::atomic<bool> kmd_query_available{false};
   uint64_t last_kmd_fence_query_ms = 0;
   AerogpuKmdQuery kmd_query;
+
+  // Cached KMD UMDRIVERPRIVATE discovery blob (queried via D3DKMTQueryAdapterInfo).
+  // If this is populated, the UMD can make runtime decisions based on the active
+  // AeroGPU MMIO ABI (legacy "ARGP" vs new "AGPU") and the reported feature bits.
+  aerogpu_umd_private_v1 umd_private = {};
+  bool umd_private_valid = false;
 };
 
 struct DeviceStateStream {
