@@ -90,7 +90,7 @@ build the emulator with the legacy device model enabled (feature `emulator/aerog
 See `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD
 supports both ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
-Before installing, confirm your VM's device model reports the above Hardware ID:
+Before installing, confirm your VM's device model reports the expected Hardware ID:
 
 1. In the Win7 VM: Device Manager → Display adapters (or unknown device) → Properties → Details → *Hardware Ids*
 2. Copy the `PCI\VEN_....&DEV_....` value.

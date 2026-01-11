@@ -184,10 +184,12 @@ The D3D9Ex UMD is responsible for translating the Microsoft D3D9 runtime’s DDI
 
 ### Device discovery (active ABI + feature bits)
 
-Because AeroGPU currently has both a legacy bring-up ABI (`ARGP`) and a newer versioned ABI (`AGPU`), UMDs should not hardcode assumptions about:
+Because the repo also contains a legacy bring-up ABI (`ARGP`) alongside the newer versioned ABI (`AGPU`), UMDs should not hardcode assumptions about:
 
 - which BAR0/MMIO ABI they are running against,
 - which optional features are available (`AEROGPU_FEATURE_VBLANK`, `AEROGPU_FEATURE_FENCE_PAGE`, etc.).
+
+> Note: the in-tree Win7 driver stack supports both the legacy `"ARGP"` and versioned `"AGPU"` device models and auto-detects the active ABI via BAR0 MMIO magic. Prefer the versioned ABI for new work.
 
 Instead, the UMD should call `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` early during adapter open and decode the returned `aerogpu_umd_private_v1` struct from:
 

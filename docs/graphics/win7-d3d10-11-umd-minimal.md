@@ -116,7 +116,7 @@ Practical implication for D3D10/11 bring-up: whenever this doc says “flush/sub
 
 ### 1.6 AeroGPU device discovery (UMDRIVERPRIVATE)
 
-UMDs must not assume a specific AeroGPU BAR0 ABI is present (legacy `"ARGP"` vs new `"AGPU"`), or that optional features like vblank timing and fence pages exist.
+UMDs must not assume optional features like vblank timing and fence pages exist, or a specific AeroGPU BAR0 ABI (legacy `"ARGP"` vs versioned `"AGPU"`).
 
 During adapter open, query:
 

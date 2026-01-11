@@ -22,6 +22,9 @@ HWID only. Installing against the legacy bring-up HWID requires a custom INF tha
 packets implemented by the installed KMD. The tool is primarily developed against the versioned ("AGPU") path, but
 keeps best-effort compatibility decoding for legacy ("ARGP") devices and older KMD builds.
 
+Note: the in-tree Win7 packaging INFs bind only to `PCI\\VEN_A3A0&DEV_0001`; installing against the legacy device model
+requires a custom INF that matches `PCI\\VEN_1AED&DEV_0001`.
+
 ## Features
 
 Minimum supported commands:

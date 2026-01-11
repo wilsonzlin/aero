@@ -159,6 +159,8 @@ run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
 run_all.cmd --require-vid=0x1AED --require-did=0x0001
 ```
 
+Note: the in-tree Win7 driver package binds to the versioned device (`VID=0xA3A0`). Running against the legacy device model (`VID=0x1AED`) requires enabling the legacy emulator device model feature (`emulator/aerogpu-legacy`) and using a custom INF that matches the legacy HWID.
+
 You can find the correct VID/DID in the Win7 guest via:
 
 * Device Manager → Display adapters → Properties → Details → **Hardware Ids**
