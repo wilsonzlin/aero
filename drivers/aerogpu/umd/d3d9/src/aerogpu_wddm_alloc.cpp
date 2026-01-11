@@ -262,6 +262,12 @@ template <typename T>
 struct has_member_DoNotWait<T, std::void_t<decltype(std::declval<T&>().DoNotWait)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_DonotWait : std::false_type {};
+
+template <typename T>
+struct has_member_DonotWait<T, std::void_t<decltype(std::declval<T&>().DonotWait)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_CpuVisible : std::false_type {};
 
 template <typename T>
@@ -309,7 +315,8 @@ void set_lock_flags(FlagsT& flags, uint32_t lock_flags) {
                                  has_member_NoOverwrite<FlagsT>::value ||
                                  has_member_NoOverWrite<FlagsT>::value ||
                                  has_member_ReadOnly<FlagsT>::value ||
-                                 has_member_DoNotWait<FlagsT>::value;
+                                 has_member_DoNotWait<FlagsT>::value ||
+                                 has_member_DonotWait<FlagsT>::value;
   if constexpr (has_bitfields) {
     if constexpr (has_member_Discard<FlagsT>::value) {
       flags.Discard = discard ? 1u : 0u;
@@ -325,6 +332,9 @@ void set_lock_flags(FlagsT& flags, uint32_t lock_flags) {
     }
     if constexpr (has_member_DoNotWait<FlagsT>::value) {
       flags.DoNotWait = do_not_wait ? 1u : 0u;
+    }
+    if constexpr (has_member_DonotWait<FlagsT>::value) {
+      flags.DonotWait = do_not_wait ? 1u : 0u;
     }
   } else if constexpr (has_member_Value<FlagsT>::value &&
                        std::is_integral_v<std::remove_reference_t<decltype(std::declval<FlagsT&>().Value)>>) {
