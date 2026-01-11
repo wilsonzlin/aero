@@ -68,6 +68,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_query_latency/
   d3d9ex_shared_surface/
   d3d9ex_shared_surface_ipc/
+  d3d9ex_alloc_id_persistence/
   d3d9ex_shared_surface_wow64/
   d3d9ex_shared_surface_many_producers/
   d3d9ex_shared_allocations/

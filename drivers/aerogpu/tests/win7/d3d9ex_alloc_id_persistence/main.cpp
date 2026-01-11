@@ -763,7 +763,7 @@ static int RunParent(int argc, char** argv) {
   const char* kTestName = "d3d9ex_alloc_id_persistence";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--show] [--iterations=N] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--dump] [--show] [--json[=PATH]] [--iterations=N] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
