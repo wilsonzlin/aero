@@ -2809,22 +2809,28 @@ void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT NumViews,
                                              const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
   auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !phViews || NumViews == 0) {
+  if (!dev || NumViews == 0) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   for (UINT i = 0; i < NumViews; i++) {
+    const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
     aerogpu_handle_t tex = 0;
-    if (phViews[i].pDrvPrivate) {
+    Resource* res = nullptr;
+    if (phViews && phViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[i]);
       if (view) {
-        tex = view->resource ? view->resource->handle : view->texture;
+        res = view->resource;
+        tex = res ? res->handle : view->texture;
       }
+    }
+    if (slot < dev->current_vs_srvs.size()) {
+      dev->current_vs_srvs[slot] = res;
     }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
     cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
-    cmd->slot = StartSlot + i;
+    cmd->slot = slot;
     cmd->texture = tex;
     cmd->reserved0 = 0;
   }
@@ -2835,22 +2841,28 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT NumViews,
                                              const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
   auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !phViews || NumViews == 0) {
+  if (!dev || NumViews == 0) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   for (UINT i = 0; i < NumViews; i++) {
+    const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
     aerogpu_handle_t tex = 0;
-    if (phViews[i].pDrvPrivate) {
+    Resource* res = nullptr;
+    if (phViews && phViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[i]);
       if (view) {
-        tex = view->resource ? view->resource->handle : view->texture;
+        res = view->resource;
+        tex = res ? res->handle : view->texture;
       }
+    }
+    if (slot < dev->current_ps_srvs.size()) {
+      dev->current_ps_srvs[slot] = res;
     }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
     cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-    cmd->slot = StartSlot + i;
+    cmd->slot = slot;
     cmd->texture = tex;
     cmd->reserved0 = 0;
   }
@@ -2914,6 +2926,8 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_rtv = 0;
   dev->current_rtv_resource = nullptr;
   dev->current_dsv = 0;
+  dev->current_vs_srvs.fill(nullptr);
+  dev->current_ps_srvs.fill(nullptr);
   dev->current_vs = 0;
   dev->current_ps = 0;
   dev->current_gs = 0;
@@ -4130,6 +4144,35 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     if (new_rtv) {
       cmd->colors[0] = new_rtv;
     }
+  }
+
+  auto is_rotated = [&resources](const Resource* res) -> bool {
+    if (!res) {
+      return false;
+    }
+    return std::find(resources.begin(), resources.end(), res) != resources.end();
+  };
+
+  for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
+    if (!is_rotated(dev->current_vs_srvs[slot])) {
+      continue;
+    }
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
+    cmd->slot = slot;
+    cmd->texture = dev->current_vs_srvs[slot] ? dev->current_vs_srvs[slot]->handle : 0;
+    cmd->reserved0 = 0;
+  }
+
+  for (uint32_t slot = 0; slot < dev->current_ps_srvs.size(); ++slot) {
+    if (!is_rotated(dev->current_ps_srvs[slot])) {
+      continue;
+    }
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+    cmd->slot = slot;
+    cmd->texture = dev->current_ps_srvs[slot] ? dev->current_ps_srvs[slot]->handle : 0;
+    cmd->reserved0 = 0;
   }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)

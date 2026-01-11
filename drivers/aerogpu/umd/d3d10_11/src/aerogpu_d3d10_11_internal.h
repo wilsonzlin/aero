@@ -8,6 +8,7 @@
 // defined in `drivers/aerogpu/protocol/aerogpu_cmd.h`.
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -45,6 +46,11 @@ constexpr uint32_t kD3D11UsageDefault = 0;
 constexpr uint32_t kD3D11UsageImmutable = 1;
 constexpr uint32_t kD3D11UsageDynamic = 2;
 constexpr uint32_t kD3D11UsageStaging = 3;
+
+// D3D11 supports up to 128 shader-resource view slots per stage. We track the
+// currently bound SRV resources so RotateResourceIdentities can re-emit bindings
+// when swapchain backbuffer handles are rotated.
+constexpr uint32_t kAeroGpuD3D11MaxSrvSlots = 128;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 constexpr uint32_t kDxgiFormatUnknown = 0;
@@ -331,6 +337,8 @@ struct Device {
   aerogpu_handle_t current_rtv = 0;
   Resource* current_rtv_resource = nullptr;
   aerogpu_handle_t current_dsv = 0;
+  std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_vs_srvs{};
+  std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_ps_srvs{};
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_gs = 0;
