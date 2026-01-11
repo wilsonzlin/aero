@@ -489,18 +489,18 @@ impl Machine {
 
     /// Debug/testing helper: read a single guest physical byte.
     pub fn read_physical_u8(&mut self, paddr: u64) -> u8 {
-        MemoryAccess::read_u8(&self.mem, paddr)
+        self.mem.read_u8(paddr)
     }
 
     /// Debug/testing helper: read a little-endian u16 from guest physical memory.
     pub fn read_physical_u16(&mut self, paddr: u64) -> u16 {
-        MemoryAccess::read_u16(&self.mem, paddr)
+        self.mem.read_u16(paddr)
     }
 
     /// Debug/testing helper: read a range of guest physical memory into a new buffer.
     pub fn read_physical_bytes(&mut self, paddr: u64, len: usize) -> Vec<u8> {
         let mut out = vec![0u8; len];
-        MemoryAccess::read_physical(&self.mem, paddr, &mut out);
+        self.mem.read_physical(paddr, &mut out);
         out
     }
 
