@@ -76,10 +76,14 @@ When running against the **versioned** AGPU device, treat BAR0 as the canonical 
 4. **Vblank timing + IRQs (when `AEROGPU_FEATURE_VBLANK` is set)**
    - Enable vblank IRQs via `AEROGPU_MMIO_REG_IRQ_ENABLE` (bit `AEROGPU_IRQ_SCANOUT_VBLANK`).
    - Poll status via `AEROGPU_MMIO_REG_IRQ_STATUS` and ack IRQs via `AEROGPU_MMIO_REG_IRQ_ACK`.
-    - Consume timing information from:
-      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO`/`HI`
-      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO`/`HI`
-      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
+   - Consume timing information from:
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO`/`HI`
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO`/`HI`
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
+
+   Win7/WDDM note: dxgkrnl gates vblank delivery via `DxgkDdiControlInterrupt` using
+   `DXGK_INTERRUPT_TYPE_CRTC_VSYNC`. The miniport ISR must notify vblank via
+   `DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId`.
 
 ## Scanline / raster status (`DxgkDdiGetScanLine`)
 

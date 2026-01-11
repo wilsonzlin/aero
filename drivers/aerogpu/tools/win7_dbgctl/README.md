@@ -55,7 +55,9 @@ Minimum supported commands:
   Works on both legacy and new AeroGPU devices as long as the device exposes
   `AEROGPU_FEATURE_VBLANK` in `FEATURES_LO/HI`.
   When available, it also prints `vblank_interrupt_type` (the `DXGK_INTERRUPT_TYPE`
-  value dxgkrnl enabled via `DxgkDdiControlInterrupt`).
+  value dxgkrnl enabled via `DxgkDdiControlInterrupt`). On Win7/WDDM 1.1 this should
+  correspond to `DXGK_INTERRUPT_TYPE_CRTC_VSYNC` (see `drivers/aerogpu/kmd/tools/wdk_abi_probe`
+  if you need the numeric enum value).
   Use `--vblank-samples` to observe changes over time and estimate the effective Hz/jitter.
   If `vblank_seq` stays at 0, ensure scanout is enabled/visible (some device models only tick vblank
   counters while scanout is enabled).
