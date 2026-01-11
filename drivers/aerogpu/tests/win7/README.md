@@ -152,8 +152,10 @@ To require a specific PCI VID/DID (recommended for automation):
 ```cmd
 :: Versioned ABI device model (AEROGPU_PCI_VENDOR_ID=0xA3A0 in aerogpu_pci.h)
 run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
-
+ 
 :: Legacy bring-up device model (AEROGPU_PCI_VENDOR_ID=0x1AED in aerogpu_protocol.h)
+:: NOTE: the shipped Win7 AeroGPU INFs bind to PCI\\VEN_A3A0&DEV_0001 only; installing against the
+:: legacy 1AED device model requires a custom INF and enabling `emulator/aerogpu-legacy`.
 run_all.cmd --require-vid=0x1AED --require-did=0x0001
 ```
 
