@@ -532,8 +532,8 @@ blocklists. To keep CI reliable, WebGPU tests are:
 
 - **Tagged** with `@webgpu` (Playwright grep tag)
 - **Gated** via `AERO_REQUIRE_WEBGPU`:
-  - If `navigator.gpu` is missing and `AERO_REQUIRE_WEBGPU != 1`, tests **skip**
-  - If `AERO_REQUIRE_WEBGPU=1` and WebGPU is still unavailable, tests **fail**
+  - If `navigator.gpu` is missing and `AERO_REQUIRE_WEBGPU` is unset/false, tests **skip**
+  - If `AERO_REQUIRE_WEBGPU` is enabled (`1/true/yes/on`) and WebGPU is still unavailable, tests **fail**
 - Run via a dedicated Playwright project, `chromium-webgpu`, which adds extra
   Chromium flags intended to maximize WebGPU availability in headless:
   - `--enable-unsafe-webgpu`: expose WebGPU in automation/insecure origins
