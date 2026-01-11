@@ -117,3 +117,124 @@ jobs:
           name: gpu-perf-smoke-${{ github.run_id }}
           path: ${{ steps.node-workspace-head.outputs.dir }}/gpu-perf-results
           if-no-files-found: error
+
+  gpu-perf-comment:
+    name: PR comment (gpu perf smoke)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    needs: [gpu-perf-smoke]
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Download GPU perf artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: gpu-perf-smoke-${{ github.run_id }}
+          path: gpu-perf-results
+
+      - name: Comment on PR (summary)
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("node:fs");
+            const path = require("node:path");
+
+            const summaryPath = path.join(process.env.GITHUB_WORKSPACE, "gpu-perf-results", "compare", "summary.json");
+            if (!fs.existsSync(summaryPath)) {
+              core.warning(`GPU perf summary not found at ${summaryPath}; skipping PR comment.`);
+              return;
+            }
+
+            const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+            const fmtPct = (pct) => `${pct > 0 ? "+" : ""}${(pct * 100).toFixed(1)}%`;
+            const fmtDelta = (n, unit) => `${n > 0 ? "+" : ""}${n.toFixed(1)}${unit ?? ""}`;
+
+            const lines = [];
+            lines.push("<!-- aero-gpu-perf-smoke -->");
+            lines.push("### GPU perf (smoke)");
+            lines.push("");
+            lines.push(`Report + artifacts: ${runUrl}`);
+            lines.push("");
+            lines.push(`Baseline: \`${summary.baselineMeta?.gitSha ?? "unknown"}\``);
+            lines.push(`Candidate: \`${summary.candidateMeta?.gitSha ?? "unknown"}\``);
+            lines.push(`Policy: \`${summary.profile ?? "unknown"}\` (\`${summary.thresholdsFile ?? "unknown"}\`)`);
+            lines.push(`Iterations: median-of-${summary.candidateMeta?.iterations ?? "?"}`);
+
+            if (summary.status === "unstable") {
+              lines.push("");
+              lines.push("Result: **Unstable** (extreme variance detected; see artifacts for raw samples)");
+            } else if (summary.status === "regression") {
+              lines.push("");
+              lines.push("Result: **Regression**");
+            } else if (summary.status === "pass") {
+              lines.push("");
+              lines.push("Result: **No significant regressions**");
+            }
+
+            const bullets = [];
+            const take = (arr) => (Array.isArray(arr) ? arr.slice(0, 5) : []);
+            for (const r of take(summary.topRegressions)) {
+              const label = `${r.scenario}.${r.metric}`;
+              const unit = r.unit ? ` ${r.unit}` : "";
+              const suffix = r.informational ? " _(info)_" : "";
+              bullets.push(`- \`${label}\`: ${fmtPct(r.deltaPct)} (${fmtDelta(r.deltaAbs, unit)})${suffix}`);
+            }
+            if (bullets.length) {
+              lines.push("");
+              lines.push("Top regressions:");
+              lines.push(...bullets);
+            }
+
+            const improvements = [];
+            for (const r of take(summary.topImprovements)) {
+              const label = `${r.scenario}.${r.metric}`;
+              const unit = r.unit ? ` ${r.unit}` : "";
+              const suffix = r.informational ? " _(info)_" : "";
+              improvements.push(`- \`${label}\`: ${fmtPct(r.deltaPct)} (${fmtDelta(r.deltaAbs, unit)})${suffix}`);
+            }
+            if (improvements.length) {
+              lines.push("");
+              lines.push("Top improvements:");
+              lines.push(...improvements);
+            }
+
+            const body = lines.join("\\n");
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const marker = "<!-- aero-gpu-perf-smoke -->";
+            const botLogin = "github-actions[bot]";
+            const previous = existing.find(
+              (c) => c.user?.login === botLogin && typeof c.body === "string" && c.body.includes(marker),
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
