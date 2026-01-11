@@ -11,13 +11,19 @@ The goal is to keep three moving parts coherent and spec-aligned:
 
 Implementation references (current repo):
 
-- Rust device model + canonical host-action wire types: `crates/aero-usb/src/passthrough.rs`
-- WASM export bridge (JS object conversion): `crates/aero-wasm/src/lib.rs` (`UsbPassthroughBridge`)
-- TS WebUSB backend + executor: `web/src/usb/webusb_{backend,executor}.ts`
-- Production host main-thread broker + cross-thread message protocol: `web/src/usb/{usb_broker,usb_proxy_protocol}.ts`
-- Production host UI panel (device selection + known devices): `web/src/usb/usb_broker_panel.ts`
+- Rust wire contract + action/completion queue (`UsbPassthroughDevice`): `crates/aero-usb/src/passthrough.rs`
+- Rust guest-visible UHCI controller + TD handshake mapping: `crates/aero-usb/src/uhci.rs`
+- WASM export bridge (`UsbPassthroughBridge`): `crates/aero-wasm/src/lib.rs`
+- TS WebUSB backend/executor (`WebUsbBackend`): `web/src/usb/webusb_backend.ts` (+ `web/src/usb/webusb_executor.ts`)
+- TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`)
+- TS UI harness panels:
+  - WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts`
+  - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
-- (Legacy Vite harness) TS main-thread broker + worker client RPC: `src/platform/webusb_{broker,client,protocol}.ts`
+- (Legacy repo-root harness) TS main-thread broker + worker client RPC: `src/platform/webusb_{broker,client,protocol}.ts`
+
+Note: `crates/emulator/src/io/usb/*` also contains an older UHCI + passthrough model used by
+native/emulator tests. The browser/WASM runtime uses `aero-usb` + `aero-wasm` + `web/`.
 
 ---
 
@@ -73,56 +79,55 @@ Key properties:
 - One in-flight action per endpoint (recommended) to keep data-toggle behavior coherent
   (see [Bulk transfers](#bulk-transfers-packet-granularity-and-toggle-sync)).
 
-Current shapes (canonical; see `crates/aero-usb/src/passthrough.rs` and `web/src/usb/webusb_backend.ts`):
+Canonical wire shapes (locked down by `docs/fixtures/webusb_passthrough_wire.json` and shared
+between Rust and TypeScript; see `crates/aero-usb/src/passthrough.rs` and
+`web/src/usb/webusb_backend.ts`):
 
-```rust
-enum UsbHostAction {
-  ControlIn { id: u64, setup: SetupPacket },
-  ControlOut { id: u64, setup: SetupPacket, data: Vec<u8> },
-  BulkIn { id: u64, endpoint: u8, length: u32 },
-  BulkOut { id: u64, endpoint: u8, data: Vec<u8> },
-}
+```ts
+type SetupPacket = {
+  bmRequestType: number;
+  bRequest: number;
+  wValue: number;
+  wIndex: number;
+  wLength: number;
+};
 
-enum UsbHostCompletionIn {
-  Success { data: Vec<u8> },
-  Stall,
-  Error { message: String },
-}
+type UsbHostAction =
+  | { kind: "controlIn"; id: number; setup: SetupPacket }
+  | { kind: "controlOut"; id: number; setup: SetupPacket; data: Uint8Array }
+  | { kind: "bulkIn"; id: number; endpoint: number; length: number }
+  | { kind: "bulkOut"; id: number; endpoint: number; data: Uint8Array };
 
-enum UsbHostCompletionOut {
-  Success { bytesWritten: u32 },
-  Stall,
-  Error { message: String },
-}
-
-enum UsbHostCompletion {
-  ControlIn { id: u64, result: UsbHostCompletionIn },
-  ControlOut { id: u64, result: UsbHostCompletionOut },
-  BulkIn { id: u64, result: UsbHostCompletionIn },
-  BulkOut { id: u64, result: UsbHostCompletionOut },
-}
+type UsbHostCompletion =
+  | { kind: "controlIn"; id: number; status: "success"; data: Uint8Array }
+  | { kind: "controlIn"; id: number; status: "stall" }
+  | { kind: "controlIn"; id: number; status: "error"; message: string }
+  | { kind: "controlOut"; id: number; status: "success"; bytesWritten: number }
+  | { kind: "controlOut"; id: number; status: "stall" }
+  | { kind: "controlOut"; id: number; status: "error"; message: string }
+  | { kind: "bulkIn"; id: number; status: "success"; data: Uint8Array }
+  | { kind: "bulkIn"; id: number; status: "stall" }
+  | { kind: "bulkIn"; id: number; status: "error"; message: string }
+  | { kind: "bulkOut"; id: number; status: "success"; bytesWritten: number }
+  | { kind: "bulkOut"; id: number; status: "stall" }
+  | { kind: "bulkOut"; id: number; status: "error"; message: string };
 ```
 
 The `id` correlates an action with its completion and is also how we prevent duplicate
 WebUSB calls when the guest retries a NAKed TD.
 
-Cancellation behavior (important):
+Cancellation behavior:
 
-- A new control SETUP can legally abort a previous control transfer. The passthrough model may
-  drop the previous in-flight request and ignore its eventual completion (WebUSB does not provide
-  strong cancellation for an in-flight transfer).
-- If the host has not yet dequeued the old `UsbHostAction`, the model may also remove it from the
-  action queue so the host does not execute a stale transfer.
-- Stale completions are therefore expected and must be safely ignored (the Rust model already
-  does this by checking `id` against in-flight state).
-
-In Aero, the canonical passthrough state machine (`crates/aero-usb/src/passthrough.rs`) handles this
-internally: when a new SETUP differs from the in-flight one, it cancels the old request and drops
-any queued-but-undrained host action for it. Any eventual completion from the host is treated as
-stale and ignored by `id`.
-
-(The legacy emulator USB stack has a separate UHCI endpoint-0 control pipe that can also trigger
-cancellation via an explicit hook.)
+- A new control SETUP can legally abort a previous control transfer. `UsbPassthroughDevice` treats
+  any new `(setup, data)` tuple as a new request. It cancels the previous in-flight id and:
+  - if the host has not dequeued the old `UsbHostAction` yet, it drops it from the action queue so
+    we do not execute a stale control transfer, and
+  - ignores any later completion for the canceled id (WebUSB does not provide strong cancellation
+    for an in-flight transfer).
+- Stale completions are expected and must be ignored (the Rust model does this by checking `id`
+  against in-flight state in `push_completion`).
+- `UsbPassthroughDevice::reset()` clears queued actions/completions and cancels all in-flight
+  requests.
 
 Idempotency / retry behavior (important):
 
@@ -135,14 +140,6 @@ Idempotency / retry behavior (important):
   - non-control endpoints use a per-endpoint in-flight map for the same reason
   - completions are keyed by `id` and consumed exactly once
 
-Descriptor status (current code):
-
-- Enumeration for passthrough is performed by forwarding standard control requests
-  (e.g. `GET_DESCRIPTOR`) to the physical device over WebUSB.
-- For a full-speed UHCI guest, the production WebUSB backend will attempt to fetch
-  `OTHER_SPEED_CONFIGURATION` and rewrite it to a normal `CONFIGURATION` descriptor before returning
-  it (see `executeWebUsbControlIn` in `web/src/usb/webusb_backend.ts`).
-
 ### Layer 2 (host/TS): WebUSB executor + broker (main thread)
 
 The host side owns the actual `USBDevice` handle and performs WebUSB calls:
@@ -154,19 +151,15 @@ The host side owns the actual `USBDevice` handle and performs WebUSB calls:
   - (re)open/select configuration/claim interfaces
   - handling `disconnect` events and surfacing errors to UI
 
-In this repo, there are two WebUSB “hosts”:
+In this repo, the production WebUSB integration lives under `web/src/usb/`:
 
-- **Production browser host (under `web/`)**:
-  - **Main-thread broker** (owns the `USBDevice` and services `usb.action` requests): `web/src/usb/usb_broker.ts`
-  - **Structured-clone message protocol**: `web/src/usb/usb_proxy_protocol.ts`
-  - **WebUSB backend/executor** (implements the Rust `UsbHostAction`/`UsbHostCompletion` contract): `web/src/usb/webusb_backend.ts`
-- **Repo-root Vite harness (under `src/`)**:
-  - **Main-thread broker** (owns the `USBDevice`): `src/platform/webusb_broker.ts`
-  - **Worker client** (RPC stub used from workers): `src/platform/webusb_client.ts`
-  - **Typed request/response protocol**: `src/platform/webusb_protocol.ts`
+- **Executor** (canonical `UsbHostAction` contract): `web/src/usb/webusb_backend.ts`
+  - (thin wrapper): `web/src/usb/webusb_executor.ts`
+- **Main thread broker** (worker proxy): `web/src/usb/usb_broker.ts`
+  - (message schema + validators): `web/src/usb/usb_proxy_protocol.ts`
 
-Both patterns attach a `MessagePort` to a worker so WebUSB calls can be serviced on the main thread
-without relying on `USBDevice` being transferable/structured-cloneable.
+Note: there is also a legacy broker/client RPC implementation under `src/platform/webusb_*` used
+by the older repo-root harness. The browser runtime uses the `web/` implementation.
 
 ### Device lifecycle: open/configuration/interface claiming
 
@@ -176,18 +169,16 @@ WebUSB requires the browser process to:
 2. `device.selectConfiguration(...)` (if no active configuration)
 3. `device.claimInterface(...)` for any interface whose endpoints will be used
 
-In the repo-root Vite harness, these operations are exposed to workers via the `WebUsbBroker`/`WebUsbClient`
-protocol (`src/platform/webusb_protocol.ts`). The current RPC surface includes:
+In this repo:
 
-- open/close
-- select configuration
-- claim/release interface
-- reset
-- controlTransferIn/controlTransferOut
-- transferIn/transferOut
+- `WebUsbBackend.ensureOpenAndClaimed()` (`web/src/usb/webusb_backend.ts`) performs the open/select
+  configuration/claim steps before executing a `UsbHostAction`.
+- If WebUSB must run on the main thread, `UsbBroker` (`web/src/usb/usb_broker.ts`) owns the
+  `USBDevice` handle and services worker requests via the `usb_proxy_protocol.ts` message schema.
 
-If the guest requires alternate interface settings or endpoint-halt recovery, extend the
-protocol to cover `selectAlternateInterface` / `clearHalt` as needed.
+If the guest requires alternate interface settings or endpoint-halt recovery, extend
+`WebUsbBackend` and the broker/protocol to cover `selectAlternateInterface` / `clearHalt` as
+needed.
 
 Important constraints for passthrough:
 
@@ -203,9 +194,10 @@ Important constraints for passthrough:
   - virtualize them (presenting descriptors/configuration state to the guest without mutating the
     already-open physical device).
 
-The Rust `UsbHostAction` wire contract intentionally does not include “select configuration / claim
-interface” actions; these operations are expected to be performed by the host-side broker when
-attaching a physical device.
+The current Rust `UsbHostAction` surface does not yet include “select configuration / claim
+interface” actions; today, open/config/claim is handled by `WebUsbBackend.ensureOpenAndClaimed()`,
+and guest `SET_CONFIGURATION` / `SET_INTERFACE` requests are forwarded as plain control transfers
+unless explicitly virtualized.
 
 ### Encoding `SetupPacket` for WebUSB
 
@@ -237,9 +229,9 @@ In this repo:
 - The production WebUSB executor has helpers for this conversion and direction checking:
   `web/src/usb/webusb_backend.ts` (`parseBmRequestType`, `validateControlTransferDirection`,
   `setupPacketToWebUsbParameters`).
-- The legacy harness broker RPC layer (`src/platform/webusb_broker.ts`) serializes `USBInTransferResult.data`
-  (a `DataView`) into `{ data: ArrayBuffer, dataOffset, dataLength }` so the worker can avoid
-  copying unless needed.
+- `WebUsbBackend` normalizes WebUSB `DataView` payloads into `Uint8Array` completions
+  (`dataViewToUint8Array`). If you forward completions across `postMessage`, you may transfer the
+  underlying `ArrayBuffer` to avoid copies.
 
 ### Physical disconnect / guest hot-unplug
 
@@ -249,13 +241,12 @@ port so the guest OS can tear down drivers cleanly.
 
 In this repo:
 
-- `web/src/usb/usb_broker.ts` listens for `navigator.usb` connect/disconnect events and broadcasts
-  `usb.selected` updates to attached worker ports.
-- `src/platform/webusb_broker.ts` (legacy harness) also listens for `usb.addEventListener('disconnect', ...)` and broadcasts
-  `{ type: 'disconnect', deviceId }` events to attached worker ports.
-- `src/platform/webusb_client.ts` exposes `onBrokerEvent(...)` for workers to subscribe.
-- The UHCI root hub supports detach via `RootHub::detach(port)` (`crates/emulator/src/io/usb/hub/root.rs`),
-  which sets the connect-status-change bits the guest driver expects.
+- `UsbBroker` listens for `navigator.usb` disconnect events and tears down the selected device
+  (`web/src/usb/usb_broker.ts`). It resolves any in-flight actions and broadcasts
+  `{ type: "usb.selected", ok: false, error: ... }` to attached worker ports.
+- Guest-side hot-unplug should detach the emulated device from its UHCI port so the guest observes
+  the connect-status-change bits (e.g. `UhciController::disconnect_device(port)` in
+  `crates/aero-usb/src/uhci.rs`).
 
 Recommended behavior on a physical disconnect:
 
@@ -299,58 +290,35 @@ UHCI represents the same operation as a TD chain:
 2. **DATA TD(s)** (PID=IN or OUT, DATA1 toggling)
 3. **STATUS TD** (zero-length, PID opposite of DATA, DATA1)
 
-Aero mapping (current code):
+Aero mapping (current `aero-usb` stack):
 
 - **SETUP TD**
-  - Decoded into a `SetupPacket` by the UHCI scheduler (`crates/emulator/src/io/usb/uhci/schedule.rs`).
-  - Routed to the endpoint-0 control pipe state machine (`AttachedUsbDevice` in
-    `crates/emulator/src/io/usb/core/mod.rs`).
-  - For **Control-IN** requests (Device→Host), `AttachedUsbDevice::handle_setup` calls the device
-    model’s `handle_control_request(setup, None)` immediately:
-    - `ControlResponse::Nak` → SETUP TD **ACKs** and the control pipe enters a pending state. The
-      subsequent **DATA (IN)** stage is NAKed until the asynchronous host completion arrives (this
-      is how “WebUSB Promise pending” is represented).
-    - `ControlResponse::Data(bytes)` → SETUP TD ACKs and the bytes become the source for subsequent
-      IN DATA TDs (including `bytes=[]` which results in a zero-length DATA packet / ZLP when
-      `wLength > 0`).
-    - `ControlResponse::Ack` → SETUP TD ACKs. If `wLength > 0`, the control pipe still completes a
-      one-shot **DATA (IN)** stage with a zero-length packet (ZLP), then proceeds to STATUS.
-      Otherwise (`wLength == 0`) it skips directly to STATUS.
-    - `ControlResponse::Stall` → SETUP TD stalls.
-  - For **Control-OUT** requests with `wLength > 0`, SETUP TD ACKs and the control pipe transitions to
-    “collect OUT data bytes”.
-  - **`SET_ADDRESS` virtualization:** the control pipe intercepts the standard `SET_ADDRESS` request
-    and updates only the guest-visible address state. This request must **not** be forwarded to the
-    physical device (the host OS already enumerated it).
-    - If a new SETUP arrives before the `SET_ADDRESS` status stage completes, the pending address is
-      discarded (matching USB semantics: a new SETUP aborts the previous control transfer).
+  - Decoded and dispatched by `UhciController` (`crates/aero-usb/src/uhci.rs`): it reads the 8-byte
+    setup packet, parses `aero_usb::usb::SetupPacket`, and calls `UsbDevice::handle_setup` via
+    `UsbBus` (`crates/aero-usb/src/usb.rs`).
+  - SETUP TDs always complete with **ACK** once a device is present. NAK is not used for SETUP.
 
-Note: on real USB, devices must **ACK SETUP** transactions; NAK is not a valid handshake for the
-SETUP stage. Aero’s control pipe therefore always ACKs the SETUP TD and expresses “pending” via
-NAK on the DATA/STATUS TDs until the asynchronous host completion arrives.
+- **DATA + STATUS TDs**
+  - The UHCI-visible passthrough device wrapper turns the full control request (setup + optional OUT
+    data stage) into exactly one `UsbHostAction::ControlIn` / `UsbHostAction::ControlOut`
+    (wire `kind: "controlIn" | "controlOut"`) via
+    `UsbPassthroughDevice::handle_control_request` (`crates/aero-usb/src/passthrough.rs`).
+  - While the host action is in-flight, retries of the relevant **DATA** or **STATUS** TD return
+    **NAK**, leaving the TD active so the UHCI schedule retries it on later frames.
+    - Control-IN: pending is applied to the **DATA (IN)** stage (and to **STATUS (OUT)** when
+      `wLength == 0`).
+    - Control-OUT: OUT **DATA** TDs are ACKed as bytes are buffered; pending is applied to
+      **STATUS (IN)** once the full payload is buffered (or immediately when `wLength == 0`).
+  - When the host completion arrives:
+    - Control-IN: the completion’s `data` is served to IN TDs. An empty payload is represented as an
+      ACK with `bytes=0` (ZLP). (`UhciController` encodes a 0-byte completion as `actlen=0x7FF`.)
+    - Control-OUT: once the completion reports `status: "success"`, the STATUS stage ACKs with a
+      0-byte packet.
+    - `status: "stall"` maps to STALL; `status: "error"` maps to TIMEOUT (see
+      [Host completion to guest TD status mapping](#host-completion-to-guest-td-status-mapping)).
 
-- **DATA TD(s)**
-  - **Control-IN:** IN DATA TDs read from the already-buffered `Data(bytes)` returned by
-    `handle_control_request` and are chunked to each TD’s `max_len`.
-    - If the control pipe is still waiting on an async completion, **IN DATA TDs are NAKed**
-      (the SETUP TD is not retried).
-  - **Control-OUT:** OUT DATA TDs append into an internal buffer until `wLength` bytes are received.
-    Once complete, the device model is called exactly once:
-    - `handle_control_request(setup, Some(data))`
-    - If it returns `Nak`, the *final* OUT DATA TD **ACKs** (payload already buffered) and the
-      control pipe represents “still waiting” by NAKing the **STATUS (IN)** stage until completion.
-
-- **STATUS TD**
-  - Driven entirely by the control-pipe state machine (zero-length IN for Control-OUT, or zero-length
-    OUT for Control-IN).
-  - When a control transfer is pending (`ControlResponse::Nak`), STATUS TDs are where the NAK
-    backpressure is applied for:
-    - Control-IN requests with `wLength == 0` (NAK the STATUS OUT stage), and
-    - Control-OUT requests (NAK the STATUS IN stage).
-  - This stage may call back into the device model to poll for completion.
-
-Net effect: control requests are emitted as **one host action per request**, and NAK is used to keep
-the relevant TD active until the asynchronous host completion arrives.
+Special-case note: `SET_ADDRESS` must be virtualized for full guest enumeration (guest-visible USB
+address changes must not be forwarded to the physical device, which is already host-enumerated).
 
 ### Bulk transfers: packet granularity and toggle sync
 
@@ -367,7 +335,7 @@ Why:
 - Collapsing multiple guest TDs into one WebUSB transfer advances the physical endpoint’s
   toggle multiple times while the guest only advances once, desynchronizing the stream.
 
-Note: the current UHCI scheduler in `crates/emulator/src/io/usb/uhci/schedule.rs` does not yet model
+Note: the current `aero-usb` UHCI implementation (`crates/aero-usb/src/uhci.rs`) does not yet model
 the TD token’s data-toggle bit. The “one packet per action” rule is therefore forward-looking, but
 still the recommended shape to avoid subtle bugs once toggle tracking is implemented.
 
@@ -376,9 +344,9 @@ Mapping:
 - **Bulk OUT TD** → `UsbHostAction::BulkOut { endpoint, data }` → `USBDevice.transferOut(endpoint & 0x0f, ...)`
 - **Bulk IN TD** → `UsbHostAction::BulkIn { endpoint, length }` → `USBDevice.transferIn(endpoint & 0x0f, ...)`
 
-(`ep` is passed through from the UHCI stack. For IN transfers it is typically an endpoint address
+(`endpoint` is passed through from the UHCI stack. For IN transfers it is typically an endpoint address
 with the direction bit set (`0x80 | ep_num`), while for OUT transfers it is typically just the
-endpoint number. In either case, the host side should use `ep & 0x0f` as the WebUSB
+endpoint number. In either case, the host side should use `endpoint & 0x0f` as the WebUSB
 `endpointNumber`, and use the action kind to determine direction.)
 
 Pending behavior:
@@ -397,32 +365,32 @@ At the browser layer, WebUSB returns a `USBTransferStatus` (`"ok" | "stall" | "b
 `controlTransfer*` / `transfer*` calls, and can also throw `DOMException`s for other failures
 (permissions, disconnects, OS driver issues, etc).
 
-The WebUSB host integration should normalize those outcomes into `UsbHostCompletion` objects (see
-above) and send them back to the Rust device model.
+`web/src/usb/webusb_backend.ts` normalizes those outcomes into the canonical `UsbHostCompletion`
+wire shape:
 
-Recommended normalization rules:
+Recommended normalization rules (current implementation):
 
-- `status === "ok"` → `{ status: "success", data }` / `{ status: "success", bytesWritten }`
-- `status === "stall"` → `{ status: "stall" }`
-- `status === "babble"` → `{ status: "error", message: "babble" }` (until we model babble explicitly at the UHCI level)
-- thrown `DOMException` / other failures → `{ status: "error", message: ... }`
+- `status === "ok"` → `status: "success"` (with `data` for IN or `bytesWritten` for OUT)
+- `status === "stall"` → `status: "stall"`
+- `status === "babble"` → `status: "error"` (with a message)
+- thrown `DOMException` / other failures → `status: "error"` (with a message)
 
 Guest-visible behavior is then derived from the Rust mapping in
-`crates/aero-usb/src/passthrough.rs` (and, when wired into UHCI, by the TD status mapping in
-`crates/aero-usb/src/uhci.rs`):
+`crates/aero-usb/src/passthrough.rs`:
 
-| Host-side completion (`UsbHostCompletion`) | Guest-visible outcome | Notes |
+| Host completion (`UsbHostCompletion`) | Guest-visible outcome | Notes |
 |---|---|---|
-| `{ status: "success", data }` | `DATA` (for IN TDs) | Data is truncated to `wLength` for control-IN and to the TD `max_len` for bulk IN. |
-| `{ status: "success", bytesWritten }` | `ACK` | OUT TD completes successfully. |
+| `{ status: "success", data }` (IN kinds) | `DATA` (for IN TDs) | Data is truncated to `wLength` for control-IN and to the TD `max_len` for bulk IN. |
+| `{ status: "success", bytesWritten }` (OUT kinds) | `ACK` | OUT TD completes successfully. |
 | `{ status: "stall" }` | `STALL` | TD completes with STALLED; guest driver is responsible for recovery. |
-| `{ status: "error", message }` | `TIMEOUT/CRC` (current behavior) | The passthrough model maps errors to `Timeout` to unblock the guest. |
+| `{ status: "error", message }` | `TIMEOUT` | Passthrough maps non-stall errors to a UHCI timeout/CRC error to unblock the guest. |
 | (no completion yet; action in-flight) | `NAK` | Keep TD active so the UHCI schedule naturally retries without duplicating host work. |
 
-Implementation note: in the `aero-usb` UHCI scheduler, `Nak` is a first-class “retry later” outcome:
+Implementation note: in `aero-usb`, `Nak` is a first-class “retry later” outcome:
 
-- `UsbHandshake::Nak` sets the TD NAK bit and keeps the TD active (`crates/aero-usb/src/uhci.rs`).
-- `UsbHandshake::Timeout` completes the TD with the UHCI "timeout/CRC" error bit set.
+- `UhciController` sets `TD_CTRL_NAK` and leaves the TD active (`crates/aero-usb/src/uhci.rs`).
+- `UsbPassthroughDevice` returns `ControlResponse::Nak` / `UsbInResult::Nak` / `UsbOutResult::Nak`
+  while a host action is pending (`crates/aero-usb/src/passthrough.rs`).
 
 ---
 
@@ -453,9 +421,8 @@ Approach:
    - Use it as the basis for the guest-visible configuration, but rewrite the top-level
       `bDescriptorType` from `OTHER_SPEED_CONFIGURATION` to `CONFIGURATION` before exposing
       it to the guest stack (the layout is otherwise identical).
-3. If not present:
-   - Fall back to the regular `CONFIGURATION` descriptor (device is likely full-speed-only),
-     or reject passthrough if the device cannot sensibly operate under a full-speed host.
+3. If not present (or rejected by WebUSB):
+   - Fall back to the regular `CONFIGURATION` descriptor.
 
 Practical implications:
 
@@ -465,10 +432,9 @@ Practical implications:
   typically valid (it is legal to transfer less than max packet size), but correctness
   depends on descriptors matching what the guest believes.
 
-In this repo, the production WebUSB backend attempts this by issuing
-`GET_DESCRIPTOR(OTHER_SPEED_CONFIGURATION)` first and rewriting the top-level `bDescriptorType` byte
-to `CONFIGURATION` before returning it to the guest (`executeWebUsbControlIn` in
-`web/src/usb/webusb_backend.ts`).
+In this repo, the production WebUSB executor performs this as a best-effort fixup inside
+`executeWebUsbControlIn` (`web/src/usb/webusb_backend.ts`; see `shouldTranslateConfigurationDescriptor`
+and `rewriteOtherSpeedConfigAsConfig`).
 
 ---
 
@@ -482,9 +448,9 @@ to `CONFIGURATION` before returning it to the guest (`executeWebUsbControlIn` in
 - the main thread is responsible for prompting and persisting the selected device,
 - the emulator worker cannot autonomously attach arbitrary devices.
 
-In the repo-root harness broker (`src/platform/webusb_broker.ts`), this is enforced via `navigator.userActivation`.
-In the production host, callers are expected to invoke `UsbBroker.requestDevice()` from a click handler; browsers will
-otherwise throw (typically `NotAllowedError`).
+In this repo, the production UI triggers selection via `UsbBroker.requestDevice()` (which must be
+called directly from a click handler; see `web/src/usb/usb_broker_panel.ts` and
+`web/src/usb/usb_broker.ts`).
 
 ### `USBDevice` is likely non-transferable
 
@@ -492,8 +458,8 @@ In practice, `USBDevice` should be treated as **non-structured-cloneable** and t
 non-transferable to workers. Even if some browser versions eventually allow worker access,
 this should not be relied upon for the core architecture.
 
-The Vite harness includes a probe that attempts both structured cloning and transfer-list
-transfer of a `USBDevice` to validate this assumption (`src/main.ts`).
+The production WebUSB diagnostics panel includes a probe worker that attempts structured cloning of
+the selected `USBDevice` (`web/src/usb/webusb_panel.ts`, `web/src/usb/webusb_probe_worker.ts`).
 
 ### Recommended architecture when WebUSB is unavailable in workers
 
@@ -502,10 +468,9 @@ Assume WebUSB calls must run on the main thread:
 - **Worker (WASM):** UHCI + `UsbPassthroughDevice` emits actions via a queue/ring buffer.
 - **Main thread:** broker/executor receives actions, calls WebUSB, and returns completions.
 
-This pattern is implemented by:
-
-- production host: `UsbBroker` + `usb_proxy_protocol` (`web/src/usb/{usb_broker,usb_proxy_protocol}.ts`)
-- repo-root harness: `WebUsbBroker` + `WebUsbClient` (`src/platform/webusb_{broker,client,protocol}.ts`)
+This pattern is implemented by `UsbBroker` (main thread) using a `postMessage` protocol
+(`web/src/usb/usb_broker.ts`, `web/src/usb/usb_proxy_protocol.ts`). (A legacy broker/client RPC
+implementation also exists under `src/platform/webusb_*`.)
 
 If the emulator uses WASM threads / SharedArrayBuffer (preferred), use the existing
 cross-thread IPC mechanism described in [`docs/11-browser-apis.md`](./11-browser-apis.md)
@@ -536,14 +501,8 @@ Aero maintains a best-effort list for diagnostics and UX:
 These lists may differ slightly by Chromium version. When in doubt, verify on the target
 browser via `chrome://usb-internals` and keep the repo’s classifier in sync.
 
-### TODO: Protected interface class list (confirm and cite)
-
-TODO: Confirm the exact “protected interface class” policy used by the Chromium version we
-target (including whether any subclass/protocol combinations are treated specially), and
-record:
-
-- the Chromium source reference (file path / CL) and last-verified Chrome/Edge version
-- the final canonical list (class/subclass/protocol) used by Aero for compatibility docs
+For the canonical documentation of Chromium’s protected interface classes (and Aero’s
+compatibility guidance), see [`docs/webusb.md`](./webusb.md#1-chromium-protected-interface-classes).
 
 ---
 
@@ -551,34 +510,26 @@ record:
 
 ### Web UI smoke panel (manual)
 
-Use the production WebUSB panels rendered from `web/src/main.ts`:
+Use the Web UI:
 
-- WebUSB diagnostics/probe panel: `web/src/usb/webusb_panel.ts`
-- WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts`
+- WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts` (also available as `/webusb_diagnostics.html`)
+- WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
 
-Or the repo-root Vite harness WebUSB panel (`src/main.ts`).
+These panels cover: device selection (`requestDevice`), open/claim failures, protected interface
+behavior, and a basic `GET_DESCRIPTOR(Device)` control transfer smoke test.
 
-These panels:
+### Rust/TypeScript unit tests (automated)
 
-- prompts for a device (`requestDevice`)
-- probe worker-side WebUSB availability and (non-)transferability of `USBDevice` (where supported)
-- demonstrate broker-backed worker I/O via a main-thread WebUSB broker
-- runs a simple control transfer (`GET_DESCRIPTOR(Device)`) and prints the raw bytes
-- (recommended extension) add buttons for `transferIn`/`transferOut` so bulk endpoints can be smoke-tested too
-
-This is primarily for debugging permission issues, protected interfaces, and descriptor
-translation.
-
-### Emulator unit tests (automated)
-
-The Rust passthrough device model already has unit tests in
-`crates/aero-usb/src/passthrough.rs` that validate:
+The Rust passthrough device model has unit tests in `crates/aero-usb/src/passthrough.rs` that validate:
 
 - control-IN/OUT emits exactly one `UsbHostAction` and returns NAK while in flight
 - bulk IN/OUT emits one action per endpoint while in flight (no duplicates) and completes on
   injected `UsbHostCompletion`
 
-Extend these tests as the descriptor model and more error mapping is implemented.
+That file also includes a serde round-trip test to ensure the canonical wire fixture
+(`docs/fixtures/webusb_passthrough_wire.json`) matches the `UsbHostAction`/`UsbHostCompletion` shapes.
+
+The TypeScript side has unit tests for the WebUSB executor/broker under `web/src/usb/*test.ts`.
 
 ---
 
