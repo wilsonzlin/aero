@@ -1,3 +1,5 @@
+pub mod aerospar;
+pub mod aerosprs;
 pub mod qcow2;
 pub mod raw;
 pub mod sparse;
@@ -8,11 +10,12 @@ use crate::io::storage::error::DiskResult;
 
 pub use qcow2::Qcow2Disk;
 pub use raw::RawDisk;
-pub use sparse::{SparseDisk, SparseHeader};
+pub use sparse::SparseDisk;
 pub use vhd::VhdDisk;
 
 const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
-const SPARSE_MAGIC: [u8; 8] = *b"AEROSPRS";
+const AEROSPAR_MAGIC: [u8; 8] = *b"AEROSPAR";
+const AEROSPRS_MAGIC: [u8; 8] = *b"AEROSPRS";
 const VHD_COOKIE: [u8; 8] = *b"conectix";
 
 pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> {
@@ -41,7 +44,7 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
     if len >= 8 {
         let mut magic = [0u8; 8];
         storage.read_at(0, &mut magic)?;
-        if magic == SPARSE_MAGIC {
+        if magic == AEROSPAR_MAGIC || magic == AEROSPRS_MAGIC {
             return Ok(DiskFormat::Sparse);
         }
     }

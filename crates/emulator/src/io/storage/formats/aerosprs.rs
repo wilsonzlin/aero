@@ -1,0 +1,558 @@
+use crate::io::storage::disk::{ByteStorage, DiskBackend};
+use crate::io::storage::error::{DiskError, DiskResult};
+
+const SPARSE_MAGIC: [u8; 8] = *b"AEROSPRS";
+const SPARSE_VERSION: u32 = 1;
+const HEADER_SIZE: u64 = 4096;
+const JOURNAL_SIZE: u64 = 4096;
+const JOURNAL_MAGIC: [u8; 4] = *b"JNL1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SparseHeader {
+    pub sector_size: u32,
+    pub block_size: u32,
+    pub total_sectors: u64,
+    pub table_offset: u64,
+    pub table_entries: u64,
+    pub journal_offset: u64,
+    pub data_offset: u64,
+}
+
+impl SparseHeader {
+    fn encode(&self) -> [u8; HEADER_SIZE as usize] {
+        let mut buf = [0u8; HEADER_SIZE as usize];
+        buf[..8].copy_from_slice(&SPARSE_MAGIC);
+        buf[8..12].copy_from_slice(&SPARSE_VERSION.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.sector_size.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.block_size.to_le_bytes());
+        buf[20..28].copy_from_slice(&self.total_sectors.to_le_bytes());
+        buf[28..36].copy_from_slice(&self.table_offset.to_le_bytes());
+        buf[36..44].copy_from_slice(&self.table_entries.to_le_bytes());
+        buf[44..52].copy_from_slice(&self.journal_offset.to_le_bytes());
+        buf[52..60].copy_from_slice(&self.data_offset.to_le_bytes());
+        buf
+    }
+
+    fn decode(buf: &[u8]) -> DiskResult<Self> {
+        if buf.len() < HEADER_SIZE as usize {
+            return Err(DiskError::CorruptImage("sparse header truncated"));
+        }
+        if buf[..8] != SPARSE_MAGIC {
+            return Err(DiskError::CorruptImage("sparse magic mismatch"));
+        }
+        let version = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+        if version != SPARSE_VERSION {
+            return Err(DiskError::Unsupported("sparse version"));
+        }
+        let sector_size = u32::from_le_bytes(buf[12..16].try_into().unwrap());
+        let block_size = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+        let total_sectors = u64::from_le_bytes(buf[20..28].try_into().unwrap());
+        let table_offset = u64::from_le_bytes(buf[28..36].try_into().unwrap());
+        let table_entries = u64::from_le_bytes(buf[36..44].try_into().unwrap());
+        let journal_offset = u64::from_le_bytes(buf[44..52].try_into().unwrap());
+        let data_offset = u64::from_le_bytes(buf[52..60].try_into().unwrap());
+
+        if sector_size == 0 || block_size == 0 {
+            return Err(DiskError::CorruptImage("invalid sector/block size"));
+        }
+        if (block_size as u64) % sector_size as u64 != 0 {
+            return Err(DiskError::CorruptImage(
+                "block size must be multiple of sector size",
+            ));
+        }
+        if table_offset < HEADER_SIZE {
+            return Err(DiskError::CorruptImage("table offset invalid"));
+        }
+        if journal_offset < HEADER_SIZE {
+            return Err(DiskError::CorruptImage("journal offset invalid"));
+        }
+        if data_offset < HEADER_SIZE {
+            return Err(DiskError::CorruptImage("data offset invalid"));
+        }
+
+        Ok(Self {
+            sector_size,
+            block_size,
+            total_sectors,
+            table_offset,
+            table_entries,
+            journal_offset,
+            data_offset,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct JournalRecord {
+    state: u8,
+    logical_block: u64,
+    physical_offset: u64,
+}
+
+impl JournalRecord {
+    fn empty() -> Self {
+        Self {
+            state: 0,
+            logical_block: 0,
+            physical_offset: 0,
+        }
+    }
+
+    fn encode(&self) -> [u8; JOURNAL_SIZE as usize] {
+        let mut buf = [0u8; JOURNAL_SIZE as usize];
+        buf[..4].copy_from_slice(&JOURNAL_MAGIC);
+        buf[4] = self.state;
+        buf[8..16].copy_from_slice(&self.logical_block.to_le_bytes());
+        buf[16..24].copy_from_slice(&self.physical_offset.to_le_bytes());
+        buf
+    }
+
+    fn decode(buf: &[u8]) -> DiskResult<Self> {
+        if buf.len() < JOURNAL_SIZE as usize {
+            return Err(DiskError::CorruptImage("sparse journal truncated"));
+        }
+        if buf[..4] != JOURNAL_MAGIC {
+            // Treat missing magic as empty journal for forward compatibility.
+            return Ok(Self::empty());
+        }
+        let state = buf[4];
+        let logical_block = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+        let physical_offset = u64::from_le_bytes(buf[16..24].try_into().unwrap());
+        Ok(Self {
+            state,
+            logical_block,
+            physical_offset,
+        })
+    }
+}
+
+pub struct SparseDisk<S> {
+    storage: S,
+    header: SparseHeader,
+    table: Vec<u64>,
+}
+
+impl<S: ByteStorage> SparseDisk<S> {
+    pub fn create(
+        mut storage: S,
+        sector_size: u32,
+        total_sectors: u64,
+        block_size: u32,
+    ) -> DiskResult<Self> {
+        if sector_size != 512 && sector_size != 4096 {
+            return Err(DiskError::Unsupported("sector size (expected 512 or 4096)"));
+        }
+        if block_size == 0 || (block_size as u64) % sector_size as u64 != 0 {
+            return Err(DiskError::Unsupported(
+                "block size must be a multiple of sector size",
+            ));
+        }
+
+        let total_bytes = total_sectors
+            .checked_mul(sector_size as u64)
+            .ok_or(DiskError::Unsupported("disk size overflow"))?;
+        let block_size_u64 = block_size as u64;
+        let table_entries = total_bytes.div_ceil(block_size_u64);
+        let table_bytes = table_entries
+            .checked_mul(8)
+            .ok_or(DiskError::Unsupported("table size overflow"))?;
+
+        let journal_offset = HEADER_SIZE;
+        let table_offset = journal_offset + JOURNAL_SIZE;
+        let data_offset = align_up(table_offset + table_bytes, block_size_u64);
+
+        let header = SparseHeader {
+            sector_size,
+            block_size,
+            total_sectors,
+            table_offset,
+            table_entries,
+            journal_offset,
+            data_offset,
+        };
+
+        storage.write_at(0, &header.encode())?;
+        storage.write_at(journal_offset, &JournalRecord::empty().encode())?;
+        storage.write_at(table_offset, &vec![0u8; table_bytes as usize])?;
+        storage.set_len(data_offset)?;
+        storage.flush()?;
+
+        Ok(Self {
+            storage,
+            header,
+            table: vec![0u64; table_entries as usize],
+        })
+    }
+
+    pub fn open(mut storage: S) -> DiskResult<Self> {
+        let mut header_buf = vec![0u8; HEADER_SIZE as usize];
+        storage.read_at(0, &mut header_buf)?;
+        let header = SparseHeader::decode(&header_buf)?;
+
+        let table_bytes = header.table_entries as usize * 8;
+        let mut table_buf = vec![0u8; table_bytes];
+        storage.read_at(header.table_offset, &mut table_buf)?;
+        let mut table = Vec::with_capacity(header.table_entries as usize);
+        for chunk in table_buf.chunks_exact(8) {
+            table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+        }
+
+        let mut disk = Self {
+            storage,
+            header,
+            table,
+        };
+        disk.recover_journal()?;
+        Ok(disk)
+    }
+
+    pub fn header(&self) -> &SparseHeader {
+        &self.header
+    }
+
+    pub fn allocated_blocks(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+        self.table
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, &phys)| (phys != 0).then_some((idx as u64, phys)))
+    }
+
+    pub fn into_storage(self) -> S {
+        self.storage
+    }
+
+    fn recover_journal(&mut self) -> DiskResult<()> {
+        let mut jbuf = vec![0u8; JOURNAL_SIZE as usize];
+        self.storage
+            .read_at(self.header.journal_offset, &mut jbuf)?;
+        let record = JournalRecord::decode(&jbuf)?;
+        if record.state == 0 {
+            return Ok(());
+        }
+        if record.logical_block >= self.header.table_entries {
+            return Err(DiskError::CorruptImage(
+                "journal logical block out of range",
+            ));
+        }
+        if record.physical_offset != 0
+            && record.physical_offset % self.header.block_size as u64 != 0
+        {
+            return Err(DiskError::CorruptImage(
+                "journal physical offset not aligned",
+            ));
+        }
+        let idx = record.logical_block as usize;
+        let existing = self.table[idx];
+        if existing != 0 && existing != record.physical_offset {
+            return Err(DiskError::CorruptImage(
+                "journal conflicts with allocation table",
+            ));
+        }
+        self.table[idx] = record.physical_offset;
+        self.write_table_entry(record.logical_block, record.physical_offset)?;
+
+        // Clearing the journal is idempotent; if we crash before it lands on disk the record will
+        // be replayed again on next open.
+        self.storage
+            .write_at(self.header.journal_offset, &JournalRecord::empty().encode())?;
+        self.storage.flush()?;
+        Ok(())
+    }
+
+    fn write_table_entry(&mut self, logical_block: u64, physical_offset: u64) -> DiskResult<()> {
+        let offset = self
+            .header
+            .table_offset
+            .checked_add(logical_block.checked_mul(8).unwrap())
+            .ok_or(DiskError::Unsupported("table offset overflow"))?;
+        self.storage
+            .write_at(offset, &physical_offset.to_le_bytes())?;
+        Ok(())
+    }
+
+    fn check_rw_range(&self, lba: u64, bytes: usize) -> DiskResult<(u64, u64)> {
+        if bytes % self.header.sector_size as usize != 0 {
+            return Err(DiskError::UnalignedBuffer {
+                len: bytes,
+                sector_size: self.header.sector_size,
+            });
+        }
+        let sectors = (bytes / self.header.sector_size as usize) as u64;
+        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.header.total_sectors,
+        })?;
+        if end > self.header.total_sectors {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.header.total_sectors,
+            });
+        }
+        Ok((sectors, end))
+    }
+
+    fn allocate_block(&mut self) -> DiskResult<u64> {
+        let block_size = self.header.block_size as u64;
+        let mut len = self.storage.len()?;
+        if len < self.header.data_offset {
+            len = self.header.data_offset;
+        }
+        let offset = align_up(len, block_size);
+        // Ensure the newly allocated block is fully zero-initialized so partial writes preserve
+        // the semantics of unallocated blocks returning zero.
+        self.storage
+            .write_at(offset, &vec![0u8; block_size as usize])?;
+        Ok(offset)
+    }
+}
+
+impl<S: ByteStorage> DiskBackend for SparseDisk<S> {
+    fn sector_size(&self) -> u32 {
+        self.header.sector_size
+    }
+
+    fn total_sectors(&self) -> u64 {
+        self.header.total_sectors
+    }
+
+    fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
+        let (sectors, _) = self.check_rw_range(lba, buf.len())?;
+        if sectors == 0 {
+            return Ok(());
+        }
+        let sector_size = self.header.sector_size as u64;
+        let block_size = self.header.block_size as u64;
+
+        let mut remaining = buf;
+        let mut cur_lba = lba;
+        while !remaining.is_empty() {
+            let byte_offset = cur_lba * sector_size;
+            let logical_block = byte_offset / block_size;
+            let block_off = (byte_offset % block_size) as usize;
+            let physical = self.table[logical_block as usize];
+            let max_in_block = (block_size as usize).saturating_sub(block_off);
+            let to_copy = max_in_block.min(remaining.len());
+
+            if physical == 0 {
+                remaining[..to_copy].fill(0);
+            } else {
+                self.storage
+                    .read_at(physical + block_off as u64, &mut remaining[..to_copy])?;
+            }
+
+            remaining = &mut remaining[to_copy..];
+            cur_lba += (to_copy as u64) / sector_size;
+        }
+        Ok(())
+    }
+
+    fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
+        let (sectors, _) = self.check_rw_range(lba, buf.len())?;
+        if sectors == 0 {
+            return Ok(());
+        }
+        let sector_size = self.header.sector_size as u64;
+        let block_size = self.header.block_size as u64;
+
+        let mut remaining = buf;
+        let mut cur_lba = lba;
+        while !remaining.is_empty() {
+            let byte_offset = cur_lba * sector_size;
+            let logical_block = byte_offset / block_size;
+            let block_off = (byte_offset % block_size) as usize;
+            let max_in_block = (block_size as usize).saturating_sub(block_off);
+            let to_copy = max_in_block.min(remaining.len());
+            let idx = logical_block as usize;
+
+            let physical = if self.table[idx] == 0 {
+                // If this sub-range is all zeros and the block is currently unallocated, we can
+                // keep it sparse.
+                if remaining[..to_copy].iter().all(|b| *b == 0) {
+                    remaining = &remaining[to_copy..];
+                    cur_lba += (to_copy as u64) / sector_size;
+                    continue;
+                }
+
+                let new_physical = self.allocate_block()?;
+                // Write data into the freshly zero-initialized block.
+                self.storage
+                    .write_at(new_physical + block_off as u64, &remaining[..to_copy])?;
+                // Commit mapping via journal + table update.
+                let rec = JournalRecord {
+                    state: 1,
+                    logical_block,
+                    physical_offset: new_physical,
+                };
+                self.storage
+                    .write_at(self.header.journal_offset, &rec.encode())?;
+                self.storage.flush()?;
+
+                self.table[idx] = new_physical;
+                self.write_table_entry(logical_block, new_physical)?;
+                self.storage.flush()?;
+
+                self.storage
+                    .write_at(self.header.journal_offset, &JournalRecord::empty().encode())?;
+                // Clearing the journal doesn't need to be immediately flushed for correctness; the
+                // table entry is the source of truth. We do it anyway to keep opens fast.
+                self.storage.flush()?;
+                new_physical
+            } else {
+                let physical = self.table[idx];
+                self.storage
+                    .write_at(physical + block_off as u64, &remaining[..to_copy])?;
+                physical
+            };
+
+            let _ = physical; // reserved for future coalescing/trace hooks
+
+            remaining = &remaining[to_copy..];
+            cur_lba += (to_copy as u64) / sector_size;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
+        self.storage.flush()
+    }
+}
+
+fn align_up(value: u64, align: u64) -> u64 {
+    if align == 0 {
+        return value;
+    }
+    let rem = value % align;
+    if rem == 0 {
+        value
+    } else {
+        value + (align - rem)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::storage::disk::ByteStorage;
+
+    #[derive(Default, Clone)]
+    struct MemStorage {
+        data: Vec<u8>,
+    }
+
+    impl ByteStorage for MemStorage {
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
+            let offset = offset as usize;
+            let end = offset + buf.len();
+            if end > self.data.len() {
+                return Err(DiskError::Io("read past end".into()));
+            }
+            buf.copy_from_slice(&self.data[offset..end]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
+            let offset = offset as usize;
+            let end = offset + buf.len();
+            if end > self.data.len() {
+                self.data.resize(end, 0);
+            }
+            self.data[offset..end].copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> DiskResult<()> {
+            Ok(())
+        }
+
+        fn len(&mut self) -> DiskResult<u64> {
+            Ok(self.data.len() as u64)
+        }
+
+        fn set_len(&mut self, len: u64) -> DiskResult<()> {
+            self.data.resize(len as usize, 0);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn header_roundtrip() {
+        let header = SparseHeader {
+            sector_size: 512,
+            block_size: 1024 * 1024,
+            total_sectors: 1024,
+            table_offset: 4096 + 4096,
+            table_entries: 1,
+            journal_offset: 4096,
+            data_offset: 8192,
+        };
+        let enc = header.encode();
+        let dec = SparseHeader::decode(&enc).unwrap();
+        assert_eq!(header, dec);
+    }
+
+    #[test]
+    fn unallocated_reads_zero() {
+        let storage = MemStorage::default();
+        let mut disk = SparseDisk::create(storage, 512, 2048, 1024 * 1024).unwrap();
+        let mut buf = vec![0xAA; 512 * 4];
+        disk.read_sectors(0, &mut buf).unwrap();
+        assert!(buf.iter().all(|b| *b == 0));
+    }
+
+    #[test]
+    fn writes_persist_across_open() {
+        let storage = MemStorage::default();
+        let mut disk = SparseDisk::create(storage, 512, 4096, 1024 * 1024).unwrap();
+        let mut data = vec![0u8; 512 * 8];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(3);
+        }
+        disk.write_sectors(10, &data).unwrap();
+        disk.flush().unwrap();
+
+        let storage = disk.into_storage();
+        let mut disk = SparseDisk::open(storage).unwrap();
+        let mut read_back = vec![0u8; data.len()];
+        disk.read_sectors(10, &mut read_back).unwrap();
+        assert_eq!(data, read_back);
+    }
+
+    #[test]
+    fn journal_replays_on_open() {
+        let mut storage = MemStorage::default();
+        {
+            let disk = SparseDisk::create(storage.clone(), 512, 4096, 1024 * 1024).unwrap();
+            storage = disk.into_storage();
+        }
+
+        // Manually allocate the first data block and write a pattern, then write a journal record
+        // mapping logical block 0 to it without updating the allocation table.
+        let mut header_buf = vec![0u8; HEADER_SIZE as usize];
+        storage.read_at(0, &mut header_buf).unwrap();
+        let header = SparseHeader::decode(&header_buf).unwrap();
+        let block_offset = header.data_offset;
+
+        storage
+            .write_at(block_offset, &vec![0x5A; header.block_size as usize])
+            .unwrap();
+        storage
+            .set_len(block_offset + header.block_size as u64)
+            .unwrap();
+
+        let rec = JournalRecord {
+            state: 1,
+            logical_block: 0,
+            physical_offset: block_offset,
+        };
+        storage
+            .write_at(header.journal_offset, &rec.encode())
+            .unwrap();
+
+        let mut disk = SparseDisk::open(storage).unwrap();
+        let mut buf = vec![0u8; 512];
+        disk.read_sectors(0, &mut buf).unwrap();
+        assert!(buf.iter().all(|b| *b == 0x5A));
+    }
+}

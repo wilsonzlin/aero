@@ -14,6 +14,7 @@ sinc-resampler = []
 aero-devices = { path = "../devices" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-platform = { path = "../platform" }
+aero-storage = { path = "../aero-storage" }
 font8x8 = "0.3"
 memory = { path = "../memory" }
 aero-net-e1000 = { path = "../aero-net-e1000" }

@@ -1,4 +1,4 @@
-use emulator::io::storage::disk::{DiskBackend, DiskError, DiskResult};
+use emulator::io::storage::disk::{ByteStorage, DiskBackend, DiskError, DiskResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpfsBackendMode {
@@ -16,10 +16,8 @@ mod wasm {
     use crate::platform::storage::opfs as opfs_platform;
     use js_sys::{Object, Reflect, Uint8Array};
     use st_idb::{
-        DiskBackend as StIdbDiskBackend,
-        IndexedDbBackend as StIndexedDbBackend,
-        IndexedDbBackendOptions,
-        StorageError as StIdbError,
+        DiskBackend as StIdbDiskBackend, IndexedDbBackend as StIndexedDbBackend,
+        IndexedDbBackendOptions, StorageError as StIdbError,
     };
     use wasm_bindgen::JsValue;
 
@@ -60,10 +58,204 @@ mod wasm {
             StIdbError::QuotaExceeded => DiskError::QuotaExceeded,
             StIdbError::OutOfBounds { .. } => DiskError::OutOfBounds,
             StIdbError::Corrupt(msg) => DiskError::CorruptImage(msg),
-            StIdbError::UnsupportedFormat(version) => DiskError::Io(format!(
-                "unsupported indexeddb format version {version}"
-            )),
+            StIdbError::UnsupportedFormat(version) => {
+                DiskError::Io(format!("unsupported indexeddb format version {version}"))
+            }
             StIdbError::Js(err) => DiskError::Io(format!("{err:?}")),
+        }
+    }
+
+    pub struct OpfsByteStorage {
+        file: opfs_platform::FileHandle,
+        handle: opfs_platform::SyncAccessHandle,
+        at_key: JsValue,
+        rw_opts: Object,
+        closed: bool,
+    }
+
+    impl core::fmt::Debug for OpfsByteStorage {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("OpfsByteStorage")
+                .field("closed", &self.closed)
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl Drop for OpfsByteStorage {
+        fn drop(&mut self) {
+            if self.closed {
+                return;
+            }
+            let _ = self.handle.flush();
+            let _ = self.handle.close();
+            self.closed = true;
+        }
+    }
+
+    impl OpfsByteStorage {
+        pub async fn open(path: &str, create: bool) -> DiskResult<Self> {
+            if !opfs_platform::is_opfs_supported() {
+                return Err(DiskError::NotSupported(
+                    "OPFS is unavailable (navigator.storage.getDirectory missing)".to_string(),
+                ));
+            }
+
+            let file = opfs_platform::open_file(path, create).await?;
+
+            if !opfs_platform::is_worker_scope()
+                || !opfs_platform::file_handle_supports_sync_access_handle(&file)
+            {
+                return Err(DiskError::NotSupported(
+                    "OPFS sync access handles are unavailable; use OpfsAsyncBackend instead"
+                        .to_string(),
+                ));
+            }
+
+            let at_key = JsValue::from_str("at");
+            let rw_opts = Object::new();
+            Reflect::set(&rw_opts, &at_key, &JsValue::from_f64(0.0))
+                .map_err(opfs_platform::disk_error_from_js)?;
+
+            let handle = opfs_platform::create_sync_handle(&file).await?;
+
+            Ok(Self {
+                file,
+                handle,
+                at_key,
+                rw_opts,
+                closed: false,
+            })
+        }
+
+        pub fn is_closed(&self) -> bool {
+            self.closed
+        }
+
+        pub fn close(&mut self) -> DiskResult<()> {
+            if self.closed {
+                return Ok(());
+            }
+            self.flush()?;
+            self.handle
+                .close()
+                .map_err(opfs_platform::disk_error_from_js)?;
+            self.closed = true;
+            Ok(())
+        }
+
+        fn read_exact(&mut self, mut offset: u64, mut buf: &mut [u8]) -> DiskResult<()> {
+            while !buf.is_empty() {
+                set_at(&self.rw_opts, &self.at_key, offset)?;
+                let read =
+                    self.handle
+                        .read(buf, self.rw_opts.as_ref())
+                        .map_err(opfs_platform::disk_error_from_js)? as usize;
+                if read == 0 {
+                    return Err(DiskError::Io("short read (0 bytes)".to_string()));
+                }
+                offset += read as u64;
+                buf = &mut buf[read..];
+            }
+            Ok(())
+        }
+
+        fn write_all(&mut self, mut offset: u64, mut buf: &[u8]) -> DiskResult<()> {
+            while !buf.is_empty() {
+                set_at(&self.rw_opts, &self.at_key, offset)?;
+                let wrote =
+                    self.handle
+                        .write(buf, self.rw_opts.as_ref())
+                        .map_err(opfs_platform::disk_error_from_js)? as usize;
+                if wrote == 0 {
+                    return Err(DiskError::Io("short write (0 bytes)".to_string()));
+                }
+                offset += wrote as u64;
+                buf = &buf[wrote..];
+            }
+            Ok(())
+        }
+
+        fn ensure_capacity(&mut self, len: u64) -> DiskResult<()> {
+            let current_size = js_number_to_u64_checked(
+                self.handle
+                    .get_size()
+                    .map_err(opfs_platform::disk_error_from_js)?,
+            )?;
+            if len <= current_size {
+                return Ok(());
+            }
+            self.handle
+                .truncate(u64_to_f64_checked(len)?)
+                .map_err(opfs_platform::disk_error_from_js)?;
+            Ok(())
+        }
+    }
+
+    impl ByteStorage for OpfsByteStorage {
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
+            if self.closed {
+                return Err(DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
+            }
+            let end = offset
+                .checked_add(buf.len() as u64)
+                .ok_or_else(|| DiskError::OutOfBounds)?;
+            let size = self.len()?;
+            if end > size {
+                return Err(DiskError::OutOfBounds);
+            }
+            self.read_exact(offset, buf)
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
+            if self.closed {
+                return Err(DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
+            }
+            let end = offset
+                .checked_add(buf.len() as u64)
+                .ok_or_else(|| DiskError::OutOfBounds)?;
+            self.ensure_capacity(end)?;
+            self.write_all(offset, buf)
+        }
+
+        fn flush(&mut self) -> DiskResult<()> {
+            if self.closed {
+                return Err(DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
+            }
+            self.handle
+                .flush()
+                .map_err(opfs_platform::disk_error_from_js)?;
+            Ok(())
+        }
+
+        fn len(&mut self) -> DiskResult<u64> {
+            if self.closed {
+                return Err(DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
+            }
+            js_number_to_u64_checked(
+                self.handle
+                    .get_size()
+                    .map_err(opfs_platform::disk_error_from_js)?,
+            )
+        }
+
+        fn set_len(&mut self, len: u64) -> DiskResult<()> {
+            if self.closed {
+                return Err(DiskError::InvalidState(
+                    "backend already closed".to_string(),
+                ));
+            }
+            self.handle
+                .truncate(u64_to_f64_checked(len)?)
+                .map_err(opfs_platform::disk_error_from_js)?;
+            Ok(())
         }
     }
 
@@ -516,13 +708,10 @@ mod wasm {
                 )));
             }
 
-            let inner = StIndexedDbBackend::open(
-                db_name,
-                size_bytes,
-                IndexedDbBackendOptions::default(),
-            )
-            .await
-            .map_err(disk_error_from_idb)?;
+            let inner =
+                StIndexedDbBackend::open(db_name, size_bytes, IndexedDbBackendOptions::default())
+                    .await
+                    .map_err(disk_error_from_idb)?;
 
             Ok(Self {
                 inner,
@@ -559,7 +748,10 @@ mod wasm {
             let offset = lba
                 .checked_mul(self.sector_size as u64)
                 .ok_or(DiskError::OutOfBounds)?;
-            self.inner.read_at(offset, buf).await.map_err(disk_error_from_idb)
+            self.inner
+                .read_at(offset, buf)
+                .await
+                .map_err(disk_error_from_idb)
         }
 
         pub async fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
@@ -611,13 +803,16 @@ mod wasm {
         pub async fn open(path: &str, create: bool, size_bytes: u64) -> DiskResult<Self> {
             match OpfsBackend::open(path, create, size_bytes).await {
                 Ok(backend) => Ok(Self::Sync(backend)),
-                Err(DiskError::NotSupported(_)) => match OpfsAsyncBackend::open(path, create, size_bytes).await {
-                    Ok(backend) => Ok(Self::Async(backend)),
-                    Err(DiskError::NotSupported(_)) => Ok(Self::IndexedDb(
-                        OpfsIndexedDbBackend::open(&format!("aero-opfs:{path}"), size_bytes).await?,
-                    )),
-                    Err(e) => Err(e),
-                },
+                Err(DiskError::NotSupported(_)) => {
+                    match OpfsAsyncBackend::open(path, create, size_bytes).await {
+                        Ok(backend) => Ok(Self::Async(backend)),
+                        Err(DiskError::NotSupported(_)) => Ok(Self::IndexedDb(
+                            OpfsIndexedDbBackend::open(&format!("aero-opfs:{path}"), size_bytes)
+                                .await?,
+                        )),
+                        Err(e) => Err(e),
+                    }
+                }
                 Err(e) => Err(e),
             }
         }
@@ -646,7 +841,7 @@ mod wasm {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{OpfsAsyncBackend, OpfsBackend, OpfsIndexedDbBackend, OpfsStorage};
+pub use wasm::{OpfsAsyncBackend, OpfsBackend, OpfsByteStorage, OpfsIndexedDbBackend, OpfsStorage};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
@@ -689,6 +884,37 @@ mod native {
 
     #[derive(Debug)]
     pub struct OpfsAsyncBackend;
+
+    #[derive(Debug)]
+    pub struct OpfsByteStorage;
+
+    impl OpfsByteStorage {
+        pub async fn open(_path: &str, _create: bool) -> DiskResult<Self> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+    }
+
+    impl ByteStorage for OpfsByteStorage {
+        fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> DiskResult<()> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> DiskResult<()> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+
+        fn flush(&mut self) -> DiskResult<()> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+
+        fn len(&mut self) -> DiskResult<u64> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+
+        fn set_len(&mut self, _len: u64) -> DiskResult<()> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+    }
 
     #[derive(Debug)]
     pub struct OpfsIndexedDbBackend;
@@ -737,4 +963,6 @@ mod native {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{OpfsAsyncBackend, OpfsBackend, OpfsIndexedDbBackend, OpfsStorage};
+pub use native::{
+    OpfsAsyncBackend, OpfsBackend, OpfsByteStorage, OpfsIndexedDbBackend, OpfsStorage,
+};
