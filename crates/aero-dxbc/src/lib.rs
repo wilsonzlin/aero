@@ -9,8 +9,9 @@
 mod dxbc;
 mod error;
 mod fourcc;
+mod signature;
 
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
 pub use crate::error::DxbcError;
 pub use crate::fourcc::FourCC;
-
+pub use crate::signature::{parse_signature_chunk, SignatureChunk, SignatureEntry};

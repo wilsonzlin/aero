@@ -20,6 +20,11 @@ pub enum DxbcError {
         /// Human-friendly context describing what went wrong.
         context: String,
     },
+    /// A chunk payload is malformed (e.g. truncated or internally inconsistent).
+    InvalidChunk {
+        /// Human-friendly context describing what went wrong.
+        context: String,
+    },
 }
 
 impl DxbcError {
@@ -41,12 +46,19 @@ impl DxbcError {
         }
     }
 
+    pub(crate) fn invalid_chunk(context: impl Into<String>) -> Self {
+        Self::InvalidChunk {
+            context: context.into(),
+        }
+    }
+
     /// Returns the human-friendly context associated with this error.
     pub fn context(&self) -> &str {
         match self {
             Self::MalformedHeader { context }
             | Self::MalformedOffsets { context }
-            | Self::OutOfBounds { context } => context,
+            | Self::OutOfBounds { context }
+            | Self::InvalidChunk { context } => context,
         }
     }
 }
@@ -59,9 +71,9 @@ impl fmt::Display for DxbcError {
                 write!(f, "malformed DXBC chunk offsets: {context}")
             }
             Self::OutOfBounds { context } => write!(f, "DXBC out of bounds: {context}"),
+            Self::InvalidChunk { context } => write!(f, "invalid DXBC chunk: {context}"),
         }
     }
 }
 
 impl std::error::Error for DxbcError {}
-

@@ -1,5 +1,6 @@
 use crate::error::DxbcError;
 use crate::fourcc::FourCC;
+use crate::signature::{parse_signature_chunk, SignatureChunk};
 use core::fmt;
 
 const DXBC_MAGIC: FourCC = FourCC(*b"DXBC");
@@ -218,6 +219,15 @@ impl<'a> DxbcFile<'a> {
     /// Iterates over all chunks matching `fourcc`, in file order.
     pub fn get_chunks(&self, fourcc: FourCC) -> impl Iterator<Item = DxbcChunk<'a>> + '_ {
         self.chunks().filter(move |chunk| chunk.fourcc == fourcc)
+    }
+
+    /// Returns and parses the first signature chunk matching `kind`, if any.
+    ///
+    /// Signature chunks include `ISGN`, `OSGN`, and `PSGN` (and may also appear
+    /// as `ISG1`, `OSG1`, `PSG1` depending on the compiler/toolchain).
+    pub fn get_signature(&self, kind: FourCC) -> Option<Result<SignatureChunk, DxbcError>> {
+        let chunk = self.get_chunk(kind)?;
+        Some(parse_signature_chunk(chunk.data))
     }
 
     /// Returns the first shader bytecode chunk (`SHEX` or `SHDR`) in file order.
