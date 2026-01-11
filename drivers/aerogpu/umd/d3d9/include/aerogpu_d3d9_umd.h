@@ -92,14 +92,6 @@ typedef struct _LUID {
   #define D3DERR_WASSTILLDRAWING ((HRESULT)0x8876021CL)
 #endif
 
-// HRESULT helpers (normally provided by Windows headers).
-#ifndef SUCCEEDED
-  #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
-#endif
-#ifndef FAILED
-  #define FAILED(hr) (((HRESULT)(hr)) < 0)
-#endif
-
 #if defined(_WIN32)
   #define AEROGPU_D3D9_CALL __stdcall
   #define AEROGPU_D3D9_EXPORT extern "C" __declspec(dllexport)
