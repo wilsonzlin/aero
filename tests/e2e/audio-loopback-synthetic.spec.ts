@@ -32,8 +32,8 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
   expect(result.enabled).toBe(true);
   expect(result.state).toBe("running");
   // Startup can be racy across CI environments; allow a tiny tolerance.
-  expect(result.underruns).toBeLessThanOrEqual(1);
+  // Underruns are counted as missing frames (a single render quantum is 128 frames).
+  expect(result.underruns).toBeLessThanOrEqual(128);
   expect(result.bufferLevelFrames).toBeGreaterThan(0);
   expect(result.backend === "worker" || result.backend === "main").toBe(true);
 });
-
