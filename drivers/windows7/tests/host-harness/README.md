@@ -8,7 +8,7 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
 - PowerShell:
   - Windows PowerShell 5.1 or PowerShell 7+ should work
 - A **prepared Windows 7 image** that:
-  - has the virtio drivers installed (virtio-blk + virtio-net)
+  - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input)
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
   - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
@@ -159,6 +159,7 @@ On completion, the workflow uploads the serial log and harness output as the `wi
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
   - `virtio-net-pci` with `-netdev user`
+  - `virtio-keyboard-pci` + `virtio-mouse-pci` (virtio-input)
   - `-drive if=virtio` for virtio-blk testing
   - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set
 - Watches the serial log for:

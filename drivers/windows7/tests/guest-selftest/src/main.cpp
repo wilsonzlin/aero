@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // aero-virtio-selftest: Windows 7 user-mode functional tests for Aero virtio drivers.
-// Primary targets: virtio-blk + virtio-net. Output is written to stdout, a log file, and COM1.
+// Primary targets: virtio-blk + virtio-net + virtio-input. Output is written to stdout, a log file, and COM1.
 
 #include <windows.h>
 
@@ -14,6 +14,7 @@
 #include <initguid.h>
 #include <iphlpapi.h>
 #include <ntddstor.h>
+#include <winioctl.h>
 #include <winhttp.h>
 #include <ws2tcpip.h>
 
@@ -96,10 +97,20 @@ static bool ContainsInsensitive(const std::wstring& haystack, const std::wstring
   return ToLower(haystack).find(ToLower(needle)) != std::wstring::npos;
 }
 
+// Windows 7 SDKs do not consistently ship the HIDClass IOCTL definitions in user-mode headers.
+// Define the subset we need (report descriptor read) locally so the selftest stays buildable with
+// a plain Win7-compatible SDK toolchain.
+#ifndef HID_CTL_CODE
+#define HID_CTL_CODE(id) CTL_CODE(FILE_DEVICE_KEYBOARD, (id), METHOD_NEITHER, FILE_ANY_ACCESS)
+#endif
+#ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR
+#define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(0x002)
+#endif
+
 static std::wstring NormalizeGuidLikeString(std::wstring s) {
   s = ToLower(std::move(s));
   s.erase(std::remove_if(s.begin(), s.end(),
-                         [](wchar_t c) { return c == L'{' || c == L'}' || c == L'\r' || c == L'\n'; }),
+                          [](wchar_t c) { return c == L'{' || c == L'}' || c == L'\r' || c == L'\n'; }),
           s.end());
   return s;
 }
@@ -710,6 +721,263 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
   CloseHandle(h);
   DeleteFileW(test_file.c_str());
   return true;
+}
+
+struct VirtioInputTestResult {
+  bool ok = false;
+  int matched_devices = 0;
+  int keyboard_collections = 0;
+  int mouse_collections = 0;
+  std::string reason;
+};
+
+static bool IsVirtioInputHardwareId(const std::vector<std::wstring>& hwids) {
+  for (const auto& id : hwids) {
+    if (ContainsInsensitive(id, L"VEN_1AF4&DEV_1052")) return true;
+    // Some stacks may expose HID-style IDs (VID/PID) instead of PCI-style VEN/DEV.
+    if (ContainsInsensitive(id, L"VID_1AF4&PID_1052")) return true;
+  }
+  return false;
+}
+
+static bool LooksLikeVirtioInputInterfacePath(const std::wstring& device_path) {
+  return ContainsInsensitive(device_path, L"VEN_1AF4&DEV_1052") ||
+         ContainsInsensitive(device_path, L"VID_1AF4&PID_1052");
+}
+
+static HANDLE OpenHidDeviceForIoctl(const wchar_t* path) {
+  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  const DWORD flags = FILE_ATTRIBUTE_NORMAL;
+  const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_READ, 0};
+
+  for (const DWORD access : desired_accesses) {
+    HANDLE h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
+    if (h != INVALID_HANDLE_VALUE) return h;
+  }
+  return INVALID_HANDLE_VALUE;
+}
+
+static std::optional<std::vector<uint8_t>> ReadHidReportDescriptor(Logger& log, HANDLE h) {
+  if (h == INVALID_HANDLE_VALUE) return std::nullopt;
+
+  std::vector<uint8_t> buf(8192);
+  DWORD bytes = 0;
+  if (!DeviceIoControl(h, IOCTL_HID_GET_REPORT_DESCRIPTOR, nullptr, 0, buf.data(),
+                       static_cast<DWORD>(buf.size()), &bytes, nullptr)) {
+    log.Logf("virtio-input: IOCTL_HID_GET_REPORT_DESCRIPTOR failed err=%lu", GetLastError());
+    return std::nullopt;
+  }
+  if (bytes == 0 || bytes > buf.size()) {
+    log.Logf("virtio-input: IOCTL_HID_GET_REPORT_DESCRIPTOR returned unexpected size=%lu", bytes);
+    return std::nullopt;
+  }
+
+  buf.resize(bytes);
+  return buf;
+}
+
+struct HidReportDescriptorSummary {
+  int keyboard_app_collections = 0;
+  int mouse_app_collections = 0;
+};
+
+static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector<uint8_t>& desc) {
+  HidReportDescriptorSummary out{};
+
+  uint32_t usage_page = 0;
+  std::vector<uint32_t> usage_page_stack;
+  std::vector<uint32_t> local_usages;
+  std::optional<uint32_t> local_usage_min;
+
+  auto clear_locals = [&]() {
+    local_usages.clear();
+    local_usage_min.reset();
+  };
+
+  size_t i = 0;
+  while (i < desc.size()) {
+    const uint8_t prefix = desc[i++];
+    if (prefix == 0xFE) {
+      // Long item: 0xFE, size, tag, data...
+      if (i + 2 > desc.size()) break;
+      const uint8_t size = desc[i++];
+      i++; // long item tag (ignored)
+      if (i + size > desc.size()) break;
+      i += size;
+      continue;
+    }
+
+    const uint8_t size_code = prefix & 0x3;
+    const uint8_t type = (prefix >> 2) & 0x3;
+    const uint8_t tag = (prefix >> 4) & 0xF;
+
+    const size_t data_size = (size_code == 3) ? 4 : size_code;
+    if (i + data_size > desc.size()) break;
+
+    uint32_t value = 0;
+    for (size_t j = 0; j < data_size; j++) {
+      value |= static_cast<uint32_t>(desc[i + j]) << (8u * j);
+    }
+    i += data_size;
+
+    switch (type) {
+      case 0: { // Main
+        // Collection (tag 0xA) + Application (0x01)
+        if (tag == 0xA) {
+          const uint8_t collection_type = static_cast<uint8_t>(value & 0xFF);
+          if (collection_type == 0x01) {
+            std::optional<uint32_t> usage;
+            if (!local_usages.empty()) {
+              usage = local_usages.front();
+            } else if (local_usage_min.has_value()) {
+              usage = *local_usage_min;
+            }
+
+            if (usage.has_value()) {
+              // Generic Desktop Page (0x01): Keyboard (0x06), Mouse (0x02)
+              if (usage_page == 0x01 && *usage == 0x06) out.keyboard_app_collections++;
+              if (usage_page == 0x01 && *usage == 0x02) out.mouse_app_collections++;
+            }
+          }
+        }
+        // Local items are cleared after each main item per HID spec.
+        clear_locals();
+        break;
+      }
+      case 1: { // Global
+        if (tag == 0x0) { // Usage Page
+          usage_page = value;
+        } else if (tag == 0xA) { // Push
+          usage_page_stack.push_back(usage_page);
+        } else if (tag == 0xB) { // Pop
+          if (!usage_page_stack.empty()) {
+            usage_page = usage_page_stack.back();
+            usage_page_stack.pop_back();
+          }
+        }
+        break;
+      }
+      case 2: { // Local
+        if (tag == 0x0) { // Usage
+          local_usages.push_back(value);
+        } else if (tag == 0x1) { // Usage Minimum
+          local_usage_min = value;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return out;
+}
+
+static VirtioInputTestResult VirtioInputTest(Logger& log) {
+  VirtioInputTestResult out{};
+
+  // {4D1E55B2-F16F-11CF-88CB-001111000030}
+  static const GUID kHidInterfaceGuid = {0x4D1E55B2,
+                                         0xF16F,
+                                         0x11CF,
+                                         {0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30}};
+
+  HDEVINFO devinfo = SetupDiGetClassDevsW(&kHidInterfaceGuid, nullptr, nullptr,
+                                         DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+  if (devinfo == INVALID_HANDLE_VALUE) {
+    out.reason = "setupapi_classdevs_failed";
+    log.Logf("virtio-input: SetupDiGetClassDevs(GUID_DEVINTERFACE_HID) failed: %lu", GetLastError());
+    return out;
+  }
+
+  bool had_error = false;
+
+  for (DWORD idx = 0;; idx++) {
+    SP_DEVICE_INTERFACE_DATA iface{};
+    iface.cbSize = sizeof(iface);
+    if (!SetupDiEnumDeviceInterfaces(devinfo, nullptr, &kHidInterfaceGuid, idx, &iface)) {
+      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      continue;
+    }
+
+    DWORD detail_size = 0;
+    SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, nullptr, 0, &detail_size, nullptr);
+    if (detail_size == 0) continue;
+
+    std::vector<BYTE> detail_buf(detail_size);
+    auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detail_buf.data());
+    detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+    SP_DEVINFO_DATA dev{};
+    dev.cbSize = sizeof(dev);
+
+    if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, detail_size, nullptr, &dev)) {
+      continue;
+    }
+
+    const std::wstring device_path = detail->DevicePath;
+    const auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
+
+    if (!IsVirtioInputHardwareId(hwids) && !LooksLikeVirtioInputInterfacePath(device_path)) {
+      continue;
+    }
+
+    out.matched_devices++;
+
+    auto desc = GetDevicePropertyString(devinfo, &dev, SPDRP_DEVICEDESC);
+    if (desc) {
+      log.Logf("virtio-input: HID device match desc=%s path=%s", WideToUtf8(*desc).c_str(),
+               WideToUtf8(device_path).c_str());
+    } else {
+      log.Logf("virtio-input: HID device match path=%s", WideToUtf8(device_path).c_str());
+    }
+
+    HANDLE h = OpenHidDeviceForIoctl(device_path.c_str());
+    if (h == INVALID_HANDLE_VALUE) {
+      had_error = true;
+      log.Logf("virtio-input: CreateFile(%s) failed err=%lu", WideToUtf8(device_path).c_str(),
+               GetLastError());
+      continue;
+    }
+
+    const auto report_desc = ReadHidReportDescriptor(log, h);
+    CloseHandle(h);
+    if (!report_desc.has_value()) {
+      had_error = true;
+      continue;
+    }
+
+    const auto summary = SummarizeHidReportDescriptor(*report_desc);
+    out.keyboard_collections += summary.keyboard_app_collections;
+    out.mouse_collections += summary.mouse_app_collections;
+
+    log.Logf("virtio-input: report_descriptor bytes=%zu keyboard_app_collections=%d "
+             "mouse_app_collections=%d",
+             report_desc->size(), summary.keyboard_app_collections, summary.mouse_app_collections);
+  }
+
+  SetupDiDestroyDeviceInfoList(devinfo);
+
+  if (out.matched_devices == 0) {
+    out.reason = "no_matching_hid_devices";
+    log.LogLine("virtio-input: no virtio-input HID devices detected");
+    return out;
+  }
+  if (had_error) {
+    out.reason = "ioctl_or_open_failed";
+    return out;
+  }
+  if (out.keyboard_collections <= 0) {
+    out.reason = "missing_keyboard_collection";
+    return out;
+  }
+  if (out.mouse_collections <= 0) {
+    out.reason = "missing_mouse_collection";
+    return out;
+  }
+
+  out.ok = true;
+  return out;
 }
 
 struct VirtioNetAdapter {
@@ -1595,6 +1863,13 @@ int wmain(int argc, wchar_t** argv) {
   const bool blk_ok = VirtioBlkTest(log, opt);
   log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
   all_ok = all_ok && blk_ok;
+
+  const auto input = VirtioInputTest(log);
+  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input|%s|devices=%d|keyboard_collections=%d|"
+           "mouse_collections=%d|reason=%s",
+           input.ok ? "PASS" : "FAIL", input.matched_devices, input.keyboard_collections,
+           input.mouse_collections, input.reason.empty() ? "-" : input.reason.c_str());
+  all_ok = all_ok && input.ok;
 
   // Network tests require Winsock initialized for getaddrinfo.
   WSADATA wsa{};

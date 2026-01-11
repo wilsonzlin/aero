@@ -4,9 +4,10 @@ This directory contains a **basic, automatable functional test harness** for the
 
 Goals:
 - Run **end-to-end**, **repeatable** tests under **QEMU**.
-- Validate **virtio-blk** (disk I/O) and **virtio-net** (DHCP + outbound TCP) without manual UI interaction.
+- Validate **virtio-blk** (disk I/O), **virtio-net** (DHCP + outbound TCP), and **virtio-input** (HID enumeration)
+  without manual UI interaction.
 - Produce logs over **COM1 serial** so the host can deterministically parse **PASS/FAIL**.
-- Keep the structure extensible (virtio-snd / virtio-input later).
+- Keep the structure extensible (virtio-snd later).
 
 Non-goals:
 - No Windows images are committed (see [Image strategy](#image-strategy-no-redistribution)).
@@ -28,6 +29,7 @@ drivers/windows7/tests/
 - Detects virtio devices via SetupAPI (hardware IDs like `VEN_1AF4` / `VIRTIO`).
 - Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
+- Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate keyboard/mouse collections).
 - Logs to:
   - stdout
   - `C:\aero-virtio-selftest.log`
@@ -37,6 +39,7 @@ The selftest emits machine-parseable markers:
 
 ```
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
@@ -59,6 +62,7 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
 - Launches QEMU with:
   - virtio-blk disk
   - virtio-net NIC (user-mode networking / slirp)
+  - virtio-input keyboard + mouse devices (`virtio-keyboard-pci`, `virtio-mouse-pci`)
   - COM1 redirected to a host log file
 - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL`.
 - Exits with `0` on PASS, non-zero on FAIL/timeout.
@@ -100,8 +104,9 @@ The guest tool is structured so adding more tests is straightforward:
   to make this a hard failure).
 
 ### virtio-input (planned)
-- Enumerate HID devices (SetupAPI / Raw Input).
-- Optionally inject synthetic events (requires emulator support).
+Implemented:
+- Enumerate HID devices via SetupAPI/HIDClass.
+- Validate virtio-input HID report descriptors contain keyboard/mouse collections.
 
 When adding tests:
 - Emit `AERO_VIRTIO_SELFTEST|TEST|<name>|PASS/FAIL|...` lines.

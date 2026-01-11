@@ -8,7 +8,7 @@ PowerShell is inconvenient (e.g. Linux CI).
 
 It:
 - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
-- launches QEMU with virtio-blk + virtio-net (and optionally virtio-snd) and COM1 redirected to a log file
+- launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
 """
 
@@ -211,6 +211,10 @@ def main() -> int:
             "user,id=net0",
             "-device",
             "virtio-net-pci,netdev=net0",
+            "-device",
+            "virtio-keyboard-pci",
+            "-device",
+            "virtio-mouse-pci",
             "-drive",
             drive,
         ]

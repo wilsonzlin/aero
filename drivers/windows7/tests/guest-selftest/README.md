@@ -16,6 +16,12 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Wait for link + DHCP IPv4 address (non-APIPA).
   - DNS resolution (`getaddrinfo`)
   - HTTP GET to a configurable URL (WinHTTP)
+- **virtio-input**
+  - Enumerate HID devices (SetupAPI via `GUID_DEVINTERFACE_HID`).
+  - Detect virtio-input devices by hardware ID containing `VEN_1AF4&DEV_1052`.
+  - Read the HID report descriptor (`IOCTL_HID_GET_REPORT_DESCRIPTOR`) and sanity-check that:
+    - at least one HID keyboard application collection exists
+    - at least one HID mouse application collection exists
 - **virtio-snd**
   - Detect a virtio-snd audio device (`PCI\\VEN_1AF4&DEV_1059`) via SetupAPI (`GUID_DEVCLASS_MEDIA`).
   - If present, run a WaveOut playback smoke test (48kHz, 16-bit, stereo PCM).
@@ -32,6 +38,7 @@ The host harness parses these markers from COM1 serial:
 ```
 AERO_VIRTIO_SELFTEST|START|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS

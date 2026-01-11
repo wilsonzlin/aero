@@ -312,6 +312,8 @@ try {
     "-serial", "chardev:charserial0",
     "-netdev", $netdev,
     "-device", $nic,
+    "-device", "virtio-keyboard-pci",
+    "-device", "virtio-mouse-pci",
     "-drive", $drive
   ) + $virtioSndArgs + $QemuExtraArgs
 
