@@ -9,7 +9,8 @@ If you are building from source / working on a PR, the GitHub Actions workflow
 
 - `aero-guest-tools.iso`
 - `aero-guest-tools.zip`
-- `aero-guest-tools.manifest.json` (a copy of the `manifest.json` inside the ISO/zip; includes build metadata and SHA-256 hashes)
+- `manifest.json` (build metadata + SHA-256 hashes)
+- `aero-guest-tools.manifest.json` (alias of `manifest.json` used by CI/release asset publishing)
 
 ## Quick start (overview)
 
