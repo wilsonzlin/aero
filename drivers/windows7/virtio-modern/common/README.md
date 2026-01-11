@@ -35,6 +35,25 @@ Not implemented (out of scope for contract v1):
 
 - `include/aero_virtio_pci_modern.h` – public API and `virtio_pci_common_cfg` layout
 - `src/aero_virtio_pci_modern.c` – implementation (no WDF dependencies)
+- `tests/` – small host-side unit tests for the transport (runs against a fake MMIO device model)
+
+## Host-side unit tests
+
+The transport has a minimal host-buildable unit test harness that exercises:
+
+- feature negotiation (`FEATURES_OK` acceptance/rejection)
+- queue programming (`queue_desc/avail/used` + `queue_enable`)
+- notify doorbell writes
+- ISR read-to-ack semantics
+- `config_generation` retry logic for device config reads
+
+Run:
+
+```sh
+cmake -S . -B build
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
 
 ## Integrating from a driver (StorPort / NDIS / WDM)
 
@@ -100,4 +119,3 @@ status = AeroVirtioReadDeviceConfig(&vdev, 0, &cfg, sizeof(cfg));
 ## Licensing
 
 All code in this directory is dual-licensed under **MIT OR Apache-2.0** (see SPDX headers).
-
