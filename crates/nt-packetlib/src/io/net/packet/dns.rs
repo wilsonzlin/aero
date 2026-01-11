@@ -166,6 +166,10 @@ impl<'a> DnsResponseBuilder<'a> {
         len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn write(&self, out: &mut [u8]) -> Result<usize, PacketError> {
         let len = self.len();
         ensure_out_buf_len(out, len)?;

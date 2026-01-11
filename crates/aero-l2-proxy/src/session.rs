@@ -436,14 +436,14 @@ async fn run_session_inner(
                 };
                 let now_ms = elapsed_ms(start);
 
-                match &event {
-                    SessionEvent::Tcp(TcpProxyEvent::Closed { connection_id } | TcpProxyEvent::Error { connection_id }) => {
-                        if let Some(handle) = tcp_conns.remove(connection_id) {
-                            handle.task.abort();
-                            state.metrics.tcp_conn_closed();
-                        }
+                if let SessionEvent::Tcp(
+                    TcpProxyEvent::Closed { connection_id } | TcpProxyEvent::Error { connection_id },
+                ) = &event
+                {
+                    if let Some(handle) = tcp_conns.remove(connection_id) {
+                        handle.task.abort();
+                        state.metrics.tcp_conn_closed();
                     }
-                    _ => {}
                 }
 
                 let actions = match event {
@@ -545,6 +545,7 @@ fn duration_to_ns(dur: std::time::Duration) -> u64 {
         .saturating_add(u64::from(dur.subsec_nanos()))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_actions(
     stack: &mut NetworkStack,
     actions: Vec<Action>,
@@ -684,7 +685,7 @@ async fn process_actions(
                     dst_port,
                 };
 
-                if !udp_flows.contains_key(&key) {
+                if let std::collections::hash_map::Entry::Vacant(entry) = udp_flows.entry(key) {
                     let remote = forward
                         .map(|f| (f.host, f.port))
                         .unwrap_or_else(|| (dst_ip.to_string(), dst_port));
@@ -697,7 +698,7 @@ async fn process_actions(
                     let task = tokio::spawn(async move {
                         udp_task(key, socket_task, event_tx).await;
                     });
-                    udp_flows.insert(key, UdpFlowHandle { socket, task });
+                    entry.insert(UdpFlowHandle { socket, task });
                     state.metrics.udp_flow_opened();
                 }
 

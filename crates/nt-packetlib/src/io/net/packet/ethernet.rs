@@ -55,6 +55,10 @@ impl<'a> EthernetFrameBuilder<'a> {
         EthernetFrame::HEADER_LEN + self.payload.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     #[cfg(feature = "alloc")]
     pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
         let mut buf = alloc::vec![0u8; self.len()];

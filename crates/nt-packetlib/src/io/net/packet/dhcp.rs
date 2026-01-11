@@ -205,6 +205,10 @@ impl<'a> DhcpOfferAckBuilder<'a> {
             .ok_or(PacketError::Malformed("DHCP length overflow"))
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len().map(|len| len == 0).unwrap_or(false)
+    }
+
     #[cfg(feature = "alloc")]
     pub fn build_vec(&self) -> Result<alloc::vec::Vec<u8>, PacketError> {
         let len = self.len()?;
@@ -338,7 +342,7 @@ mod tests {
 
         // Spot-check that T1/T2 are present and match our defaults.
         let opts = &buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4..len];
-        fn find_opt<'a>(opts: &'a [u8], code: u8) -> Option<&'a [u8]> {
+        fn find_opt(opts: &[u8], code: u8) -> Option<&[u8]> {
             let mut i = 0;
             while i < opts.len() {
                 let c = opts[i];

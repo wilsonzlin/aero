@@ -726,6 +726,7 @@ impl NetworkStack {
         vec![Action::DnsResolve { request_id, name }]
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_dns_error(
         &mut self,
         txid: u16,
@@ -1065,10 +1066,12 @@ impl NetworkStack {
         let payload = tcp.payload();
 
         // Retransmitted SYN: resend SYN-ACK for idempotence.
-        if flags.contains(TcpFlags::SYN) && !flags.contains(TcpFlags::ACK) && !conn.syn_acked {
-            if tcp.seq_number() == conn.guest_isn {
-                out.extend(self.emit_tcp_syn_ack(&conn));
-            }
+        if flags.contains(TcpFlags::SYN)
+            && !flags.contains(TcpFlags::ACK)
+            && !conn.syn_acked
+            && tcp.seq_number() == conn.guest_isn
+        {
+            out.extend(self.emit_tcp_syn_ack(&conn));
         }
 
         // ACK bookkeeping (handshake + FIN).
@@ -1489,7 +1492,7 @@ impl NetworkStack {
 
     fn allocate_isn(&mut self) -> u32 {
         // Not cryptographic; just needs to avoid obvious collisions in tests and basic operation.
-        (self.next_tcp_id as u32)
+        self.next_tcp_id
             .wrapping_mul(1_000_000)
             .wrapping_add(self.ipv4_ident as u32)
     }

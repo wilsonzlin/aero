@@ -630,7 +630,7 @@ fn parse_dhcp_from_frame(frame: &[u8]) -> anyhow::Result<DhcpMessage> {
     if udp.src_port() != 67 || udp.dst_port() != 68 {
         return Err(anyhow::anyhow!("not dhcp"));
     }
-    Ok(DhcpMessage::parse(udp.payload()).map_err(|err| anyhow::anyhow!("dhcp parse: {err:?}"))?)
+    DhcpMessage::parse(udp.payload()).map_err(|err| anyhow::anyhow!("dhcp parse: {err:?}"))
 }
 
 fn parse_tcp_from_frame(frame: &[u8]) -> anyhow::Result<TcpSegment<'_>> {
@@ -644,7 +644,7 @@ fn parse_tcp_from_frame(frame: &[u8]) -> anyhow::Result<TcpSegment<'_>> {
     if ip.protocol() != Ipv4Protocol::TCP {
         return Err(anyhow::anyhow!("not tcp"));
     }
-    Ok(TcpSegment::parse(ip.payload()).map_err(|err| anyhow::anyhow!("tcp parse: {err:?}"))?)
+    TcpSegment::parse(ip.payload()).map_err(|err| anyhow::anyhow!("tcp parse: {err:?}"))
 }
 
 fn parse_udp_from_frame(frame: &[u8]) -> anyhow::Result<UdpDatagram<'_>> {
@@ -658,7 +658,7 @@ fn parse_udp_from_frame(frame: &[u8]) -> anyhow::Result<UdpDatagram<'_>> {
     if ip.protocol() != Ipv4Protocol::UDP {
         return Err(anyhow::anyhow!("not udp"));
     }
-    Ok(UdpDatagram::parse(ip.payload()).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))?)
+    UdpDatagram::parse(ip.payload()).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))
 }
 
 fn dns_response_has_a_record(frame: &[u8], id: u16) -> bool {
@@ -737,6 +737,7 @@ fn wrap_udp_ipv4_eth(
     .expect("build Ethernet frame")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wrap_tcp_ipv4_eth(
     src_mac: MacAddr,
     dst_mac: MacAddr,

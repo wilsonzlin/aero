@@ -148,7 +148,7 @@ fn parse_domain_list_env(var: &str) -> Vec<String> {
     raw.split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| normalize_domain(s))
+        .map(normalize_domain)
         .collect()
 }
 

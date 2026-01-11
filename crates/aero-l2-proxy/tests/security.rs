@@ -1,14 +1,15 @@
-use std::{net::SocketAddr, sync::Mutex, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 
 use aero_l2_proxy::{start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
     http::{HeaderValue, StatusCode},
     Error as WsError, Message,
 };
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct EnvVarGuard {
     key: &'static str,
@@ -75,7 +76,7 @@ fn assert_http_status(err: WsError, expected: StatusCode) {
 
 #[tokio::test]
 async fn subprotocol_required_rejects_missing_protocol() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
@@ -98,7 +99,7 @@ async fn subprotocol_required_rejects_missing_protocol() {
 
 #[tokio::test]
 async fn origin_required_by_default_rejects_missing_origin() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
@@ -120,7 +121,7 @@ async fn origin_required_by_default_rejects_missing_origin() {
 
 #[tokio::test]
 async fn wildcard_allowed_origins_still_requires_origin_header() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
@@ -142,7 +143,7 @@ async fn wildcard_allowed_origins_still_requires_origin_header() {
 
 #[tokio::test]
 async fn origin_allowlist_and_open_mode() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
@@ -194,7 +195,7 @@ async fn origin_allowlist_and_open_mode() {
 
 #[tokio::test]
 async fn token_required_query_and_subprotocol() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
@@ -281,7 +282,7 @@ async fn open_mode_disables_origin_but_not_token_auth() {
 
 #[tokio::test]
 async fn token_errors_take_precedence_over_origin_errors() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
@@ -316,7 +317,7 @@ async fn token_errors_take_precedence_over_origin_errors() {
 
 #[tokio::test]
 async fn max_connections_enforced() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
@@ -357,7 +358,7 @@ async fn max_connections_enforced() {
 
 #[tokio::test]
 async fn byte_quota_closes_connection() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
@@ -407,7 +408,7 @@ async fn byte_quota_closes_connection() {
 
 #[tokio::test]
 async fn byte_quota_counts_tx_bytes() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
@@ -496,7 +497,7 @@ async fn keepalive_ping_counts_toward_byte_quota() {
 
 #[tokio::test]
 async fn fps_quota_closes_connection() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");

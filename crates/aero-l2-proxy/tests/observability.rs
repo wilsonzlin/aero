@@ -230,10 +230,7 @@ async fn ping_rtt_histogram_increments() {
             let msg = match ws_receiver.next().await {
                 Some(Ok(msg)) => msg,
                 Some(Err(err)) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        err.to_string(),
-                    ))
+                    return Err(std::io::Error::other(err));
                 }
                 None => {
                     return Err(std::io::Error::new(

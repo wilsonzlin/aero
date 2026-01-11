@@ -81,7 +81,7 @@ impl SecurityConfig {
 
         let token = std::env::var("AERO_L2_TOKEN")
             .ok()
-            .and_then(|v| (!v.trim().is_empty()).then(|| v));
+            .and_then(|v| (!v.trim().is_empty()).then_some(v));
 
         let max_connections = std::env::var("AERO_L2_MAX_CONNECTIONS")
             .ok()

@@ -133,7 +133,7 @@ fn enhanced_packet_block(
 
 fn pad_to_32(buf: &mut Vec<u8>) {
     let pad_len = (4 - (buf.len() % 4)) % 4;
-    buf.extend(std::iter::repeat(0u8).take(pad_len));
+    buf.resize(buf.len() + pad_len, 0);
 }
 
 fn build_block(block_type: u32, body: &[u8], opts: &[u8]) -> Vec<u8> {

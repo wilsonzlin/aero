@@ -69,6 +69,10 @@ impl<'a> UdpPacketBuilder<'a> {
         Ok(len)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len().map(|len| len == 0).unwrap_or(false)
+    }
+
     #[cfg(feature = "alloc")]
     pub fn build_vec(
         &self,

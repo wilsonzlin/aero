@@ -218,7 +218,7 @@ impl<'a> TcpSegmentBuilder<'a> {
     }
 
     pub fn header_len(&self) -> Result<usize, PacketError> {
-        if !self.options.is_empty() && self.options.len() % 4 != 0 {
+        if !self.options.is_empty() && !self.options.len().is_multiple_of(4) {
             return Err(PacketError::Malformed(
                 "TCP options length not multiple of 4",
             ));
@@ -232,6 +232,10 @@ impl<'a> TcpSegmentBuilder<'a> {
 
     pub fn len(&self) -> Result<usize, PacketError> {
         Ok(self.header_len()? + self.payload.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len().map(|len| len == 0).unwrap_or(false)
     }
 
     #[cfg(feature = "alloc")]

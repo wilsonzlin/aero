@@ -69,7 +69,7 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
         cfg.dns_default_ttl_secs,
         cfg.dns_max_ttl_secs,
     )
-    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+    .map_err(std::io::Error::other)?;
 
     let l2_limits = aero_l2_protocol::Limits {
         max_frame_payload: cfg.l2_max_frame_payload,
@@ -192,7 +192,7 @@ async fn l2_ws_handler(
     }
 
     if let Err(resp) = enforce_security(&state, &headers, &uri) {
-        return resp;
+        return *resp;
     }
 
     let permit = match &state.connections {
@@ -227,14 +227,16 @@ fn enforce_security(
     state: &AppState,
     headers: &HeaderMap,
     uri: &axum::http::Uri,
-) -> Result<(), axum::response::Response> {
+) -> Result<(), Box<axum::response::Response>> {
     if let Some(expected) = state.cfg.security.token.as_deref() {
         let query_token = token_from_query(uri);
         let protocol_token = token_from_subprotocol(headers);
         let token_ok =
             query_token.as_deref() == Some(expected) || protocol_token.as_deref() == Some(expected);
         if !token_ok {
-            return Err((StatusCode::UNAUTHORIZED, "invalid token".to_string()).into_response());
+            return Err(Box::new(
+                (StatusCode::UNAUTHORIZED, "invalid token".to_string()).into_response(),
+            ));
         }
     }
 
@@ -246,18 +248,19 @@ fn enforce_security(
             .filter(|v| !v.is_empty());
 
         let Some(origin) = origin else {
-            return Err((StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response());
+            return Err(Box::new(
+                (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response(),
+            ));
         };
 
         match &state.cfg.security.allowed_origins {
             crate::config::AllowedOrigins::Any => {}
             crate::config::AllowedOrigins::List(list) => {
                 if !list.iter().any(|allowed| allowed == origin) {
-                    return Err((
-                        StatusCode::FORBIDDEN,
-                        format!("Origin not allowed: {origin}"),
-                    )
-                        .into_response());
+                    return Err(Box::new(
+                        (StatusCode::FORBIDDEN, format!("Origin not allowed: {origin}"))
+                            .into_response(),
+                    ));
                 }
             }
         }
@@ -307,12 +310,9 @@ fn from_hex(b: u8) -> Option<u8> {
 }
 
 fn token_from_subprotocol(headers: &HeaderMap) -> Option<String> {
-    let Some(value) = headers
+    let value = headers
         .get(axum::http::header::SEC_WEBSOCKET_PROTOCOL)
-        .and_then(|v| v.to_str().ok())
-    else {
-        return None;
-    };
+        .and_then(|v| v.to_str().ok())?;
 
     value.split(',').map(str::trim).find_map(|proto| {
         proto

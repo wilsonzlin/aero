@@ -430,8 +430,10 @@ fn udp_proxy_send_and_receive_roundtrip() {
 
 #[test]
 fn udp_proxy_fallback_transport() {
-    let mut cfg = StackConfig::default();
-    cfg.webrtc_udp = false;
+    let cfg = StackConfig {
+        webrtc_udp: false,
+        ..StackConfig::default()
+    };
     let mut stack = NetworkStack::new(cfg);
     let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
     dhcp_handshake(&mut stack, guest_mac);
@@ -586,8 +588,10 @@ fn tcp_buffered_payload_cap_sends_rst_and_frees_state() {
     let frame = extract_single_frame(
         &actions
             .iter()
-            .cloned()
-            .filter(|a| matches!(a, Action::EmitFrame(_)))
+            .filter_map(|a| match a {
+                Action::EmitFrame(f) => Some(Action::EmitFrame(f.clone())),
+                _ => None,
+            })
             .collect::<Vec<_>>(),
     );
     let seg = parse_tcp_from_frame(&frame);
@@ -859,7 +863,7 @@ fn assert_dns_response_has_rcode(frame: &[u8], id: u16, rcode: DnsResponseCode) 
     // QR=1
     assert_eq!(dns[2] & 0x80, 0x80);
     let flags = u16::from_be_bytes([dns[2], dns[3]]);
-    assert_eq!((flags & 0x000f) as u16, rcode as u16);
+    assert_eq!(flags & 0x000f, rcode as u16);
     // No answers expected for error responses.
     assert_eq!(&dns[6..8], &0u16.to_be_bytes());
 }
@@ -903,6 +907,7 @@ fn wrap_udp_ipv4_eth(
     .unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wrap_tcp_ipv4_eth(
     src_mac: MacAddr,
     dst_mac: MacAddr,
