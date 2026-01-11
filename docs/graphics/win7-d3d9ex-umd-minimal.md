@@ -140,7 +140,7 @@ Your `OpenAdapter*` must return an adapter funcs table with (at least) the follo
 | `pfnGetCaps` | Yes | Handle the caps queries D3D9Ex + DWM uses (see §3). Return consistent caps across calls. | Unused caps types can return `D3DDDIERR_INVALIDPARAMS`/`E_INVALIDARG` *if you are sure they aren’t queried*, but safest is to return “not supported” sizes/zeros for unknown types. |
 | `pfnCreateDevice` | Yes | Create a device/context; return `hDevice`; fill `D3DDDI_DEVICEFUNCS`. | N/A |
 | `pfnCloseAdapter` | Yes | Free adapter-private allocations; invalidate handles. | N/A |
-| `pfnQueryAdapterInfo` | Recommended | Return stable answers for core `D3DDDIQUERYADAPTERINFO_*` requests used by runtime (driver info, WDDM model, etc.). | For unknown query types, return `E_INVALIDARG`. Keep a trace log to discover what’s requested. |
+| `pfnQueryAdapterInfo` | Recommended | Return stable answers for core `D3DDDIQUERYADAPTERINFO_*` requests used by runtime (driver info, WDDM model, etc.). | For unknown query types, prefer returning `S_OK` with a zeroed output buffer (and logging once) so unexpected runtime/DWM probes do not break device bring-up. |
 
 Practical note: if `pfnQueryAdapterInfo` is wrong/incomplete, the runtime can still create devices, but DWM may refuse composition due to missing “driver model / feature” information.
 
@@ -161,7 +161,7 @@ Support at least these `D3DDDICAPS_TYPE`-style requests (names vary slightly by 
 Treat unknown caps types conservatively:
 
 * If you don’t recognize a caps request, log it and return a clean “unsupported” result rather than crashing.
-* Prefer returning `E_INVALIDARG` over `E_FAIL`.
+* Prefer returning `S_OK` with a zeroed output buffer (or otherwise deterministic “unsupported” output) over failing the call. If you must fail, prefer `E_INVALIDARG` over `E_FAIL`.
 
 ### 2.3 Device function table: minimum `D3DDDI_DEVICEFUNCS`
 

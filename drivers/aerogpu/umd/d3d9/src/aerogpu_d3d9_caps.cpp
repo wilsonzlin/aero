@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
@@ -45,6 +46,62 @@ std::atomic<bool> g_logged_caps_once{false};
 
 constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
 constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
+
+void log_unknown_get_caps_once(uint32_t type, uint32_t size) {
+  constexpr uint32_t kMaxSeen = 16;
+  static std::mutex mutex;
+  static uint32_t seen[kMaxSeen] = {};
+  static uint32_t seen_count = 0;
+  static bool overflow_logged = false;
+
+  std::lock_guard<std::mutex> lock(mutex);
+  for (uint32_t i = 0; i < seen_count; ++i) {
+    if (seen[i] == type) {
+      return;
+    }
+  }
+
+  if (seen_count < kMaxSeen) {
+    seen[seen_count++] = type;
+    logf("aerogpu-d3d9: GetCaps unknown type=%u size=%u\n", type, size);
+    return;
+  }
+
+  if (!overflow_logged) {
+    overflow_logged = true;
+    logf("aerogpu-d3d9: GetCaps unknown type=%u size=%u (suppressing further unknown caps logs)\n",
+         type,
+         size);
+  }
+}
+
+void log_unknown_query_adapter_info_once(uint32_t type, uint32_t size) {
+  constexpr uint32_t kMaxSeen = 16;
+  static std::mutex mutex;
+  static uint32_t seen[kMaxSeen] = {};
+  static uint32_t seen_count = 0;
+  static bool overflow_logged = false;
+
+  std::lock_guard<std::mutex> lock(mutex);
+  for (uint32_t i = 0; i < seen_count; ++i) {
+    if (seen[i] == type) {
+      return;
+    }
+  }
+
+  if (seen_count < kMaxSeen) {
+    seen[seen_count++] = type;
+    logf("aerogpu-d3d9: QueryAdapterInfo unknown type=%u size=%u\n", type, size);
+    return;
+  }
+
+  if (!overflow_logged) {
+    overflow_logged = true;
+    logf("aerogpu-d3d9: QueryAdapterInfo unknown type=%u size=%u (suppressing further unknown adapter-info logs)\n",
+         type,
+         size);
+  }
+}
 
 uint32_t format_ops_for_d3d9_format(uint32_t format) {
   switch (format) {
@@ -300,7 +357,7 @@ HRESULT get_caps(Adapter*, const D3D9DDIARG_GETCAPS* pGetCaps) {
       return E_INVALIDARG;
     }
     default:
-      logf("aerogpu-d3d9: GetCaps unknown type=%u size=%u\n", pGetCaps->Type, pGetCaps->DataSize);
+      log_unknown_get_caps_once(pGetCaps->Type, pGetCaps->DataSize);
       // Be permissive: unknown caps types should not break DWM/device bring-up.
       // Return a zeroed buffer to signal "no extra capabilities" rather than
       // failing the call.
@@ -355,9 +412,7 @@ HRESULT query_adapter_info(Adapter* adapter, const D3D9DDIARG_QUERYADAPTERINFO* 
         return S_OK;
       }
 #endif
-      logf("aerogpu-d3d9: QueryAdapterInfo unknown type=%u size=%u\n",
-           pQueryAdapterInfo->Type,
-           pQueryAdapterInfo->PrivateDriverDataSize);
+      log_unknown_query_adapter_info_once(pQueryAdapterInfo->Type, pQueryAdapterInfo->PrivateDriverDataSize);
       // Be permissive: unknown adapter-info queries should not break D3D9Ex/DWM
       // bring-up. Return a zeroed buffer to signal "no extra data" rather than
       // failing the call.

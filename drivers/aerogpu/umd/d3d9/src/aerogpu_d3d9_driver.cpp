@@ -5292,9 +5292,6 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const D3D9DDI_PRESEN
   // a later submission.
   (void)submit(dev);
 
-  if (!d3d9_pp_windowed(pp)) {
-    return E_NOTIMPL;
-  }
   if (d3d9_format_to_aerogpu(d3d9_pp_backbuffer_format(pp)) == AEROGPU_FORMAT_INVALID) {
     return E_INVALIDARG;
   }
