@@ -4861,7 +4861,10 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       ms->Format = format;
       ms->SampleCount = sample_count;
       ms->Flags = 0;
-      ms->NumQualityLevels = (sample_count == 1) ? 1u : 0u;
+      const uint32_t support = d3d11_format_support_flags(static_cast<uint32_t>(format));
+      const bool supported_format = (support & kD3D11FormatSupportTexture2D) != 0 &&
+                                    (support & (kD3D11FormatSupportRenderTarget | kD3D11FormatSupportDepthStencil)) != 0;
+      ms->NumQualityLevels = (sample_count == 1 && supported_format) ? 1u : 0u;
       return S_OK;
     }
 
@@ -9561,7 +9564,10 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
       }
       auto* ms = reinterpret_cast<AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(data);
       // No MSAA support yet; report only the implicit 1x case.
-      ms->NumQualityLevels = (ms->SampleCount == 1) ? 1u : 0u;
+      const uint32_t support = d3d11_format_support_flags(ms->Format);
+      const bool supported_format = (support & kD3D11FormatSupportTexture2D) != 0 &&
+                                    (support & (kD3D11FormatSupportRenderTarget | kD3D11FormatSupportDepthStencil)) != 0;
+      ms->NumQualityLevels = (ms->SampleCount == 1 && supported_format) ? 1u : 0u;
       return S_OK;
     }
 
