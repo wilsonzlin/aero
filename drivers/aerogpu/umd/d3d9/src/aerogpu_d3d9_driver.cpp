@@ -5649,9 +5649,11 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
   auto* dev = as_device(hDevice);
   uint32_t present_count = 0;
+  HRESULT present_hr = S_OK;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
 
+    bool occluded = false;
 #if defined(_WIN32)
     // Returning S_PRESENT_OCCLUDED from PresentEx helps some D3D9Ex clients avoid
     // pathological present loops when their target window is minimized/hidden.
@@ -5666,147 +5668,169 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
     }
     if (hwnd) {
       if (IsIconic(hwnd) || !IsWindowVisible(hwnd)) {
-        retire_completed_presents_locked(dev);
-        return trace.ret(kSPresentOccluded);
+        occluded = true;
       }
     }
 #endif
 
-    HRESULT hr = throttle_presents_locked(dev, pPresentEx->d3d9_present_flags);
-    if (hr != S_OK) {
-      return trace.ret(hr);
-    }
+    if (occluded) {
+      // Even when occluded, Present/PresentEx act as a flush point and must
+      // advance D3D9Ex present statistics (GetPresentStats/GetLastPresentCount).
+      retire_completed_presents_locked(dev);
+      (void)submit(dev, /*is_present=*/false);
 
-    // Submit any pending render work via the Render callback before issuing a
-    // Present submission. This ensures the KMD/emulator observes distinct
-    // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
-    (void)submit(dev, /*is_present=*/false);
+      dev->present_count++;
+      present_count = dev->present_count;
+      dev->present_refresh_count = dev->present_count;
+      dev->sync_refresh_count = dev->present_count;
+      dev->last_present_qpc = qpc_now();
 
-    auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
-    if (!cmd) {
-      return trace.ret(E_OUTOFMEMORY);
-    }
-    cmd->scanout_id = 0;
-    bool vsync = (pPresentEx->sync_interval != 0) && (pPresentEx->sync_interval != kD3dPresentIntervalImmediate);
-    if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
-      // Only request vblank-paced presents when the active device reports vblank support.
-      vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
-    }
-    cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
-    cmd->d3d9_present_flags = pPresentEx->d3d9_present_flags;
-    cmd->reserved0 = 0;
+      SwapChain* sc = dev->current_swapchain;
+      if (!sc && !dev->swapchains.empty()) {
+        sc = dev->swapchains[0];
+      }
+      if (sc) {
+        sc->present_count++;
+      }
 
-    const uint64_t submit_fence = submit(dev, /*is_present=*/true);
-    const uint64_t present_fence = submit_fence;
-    if (present_fence) {
-      dev->inflight_present_fences.push_back(present_fence);
-    }
+      present_hr = kSPresentOccluded;
+    } else {
+      HRESULT hr = throttle_presents_locked(dev, pPresentEx->d3d9_present_flags);
+      if (hr != S_OK) {
+        return trace.ret(hr);
+      }
 
-    dev->present_count++;
-    present_count = dev->present_count;
-    dev->present_refresh_count = dev->present_count;
-    dev->sync_refresh_count = dev->present_count;
-    dev->last_present_qpc = qpc_now();
-    SwapChain* sc = dev->current_swapchain;
-    if (!sc && !dev->swapchains.empty()) {
-      sc = dev->swapchains[0];
-    }
-    if (sc) {
-      sc->present_count++;
-      sc->last_present_fence = present_fence;
-      if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
-        auto is_backbuffer = [sc](const Resource* res) -> bool {
-          if (!sc || !res) {
-            return false;
-          }
-          return std::find(sc->backbuffers.begin(), sc->backbuffers.end(), res) != sc->backbuffers.end();
-        };
+      // Submit any pending render work via the Render callback before issuing a
+      // Present submission. This ensures the KMD/emulator observes distinct
+      // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
+      (void)submit(dev, /*is_present=*/false);
 
-        // Present-style backbuffer rotation swaps the host handles attached to the
-        // backbuffer Resource objects. If any backbuffers are currently bound via
-        // device state (RTs, textures, IA buffers), we must re-emit those binds so
-        // the host stops referencing the old handles.
-        size_t needed_bytes = align_up(sizeof(aerogpu_cmd_set_render_targets), 4);
-        for (uint32_t stage = 0; stage < 16; ++stage) {
-          if (is_backbuffer(dev->textures[stage])) {
-            needed_bytes += align_up(sizeof(aerogpu_cmd_set_texture), 4);
-          }
-        }
-        for (uint32_t stream = 0; stream < 16; ++stream) {
-          if (is_backbuffer(dev->streams[stream].vb)) {
-            needed_bytes += align_up(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding), 4);
-          }
-        }
-        if (is_backbuffer(dev->index_buffer)) {
-          needed_bytes += align_up(sizeof(aerogpu_cmd_set_index_buffer), 4);
-        }
+      auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
+      if (!cmd) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      cmd->scanout_id = 0;
+      bool vsync = (pPresentEx->sync_interval != 0) && (pPresentEx->sync_interval != kD3dPresentIntervalImmediate);
+      if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
+        // Only request vblank-paced presents when the active device reports vblank support.
+        vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
+      }
+      cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+      cmd->d3d9_present_flags = pPresentEx->d3d9_present_flags;
+      cmd->reserved0 = 0;
 
-        if (ensure_cmd_space(dev, needed_bytes)) {
-          const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
-          for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
-            sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
-          }
-          sc->backbuffers.back()->handle = saved;
+      const uint64_t submit_fence = submit(dev, /*is_present=*/true);
+      const uint64_t present_fence = submit_fence;
+      if (present_fence) {
+        dev->inflight_present_fences.push_back(present_fence);
+      }
 
-          bool ok = emit_set_render_targets_locked(dev);
-          for (uint32_t stage = 0; ok && stage < 16; ++stage) {
-            if (!is_backbuffer(dev->textures[stage])) {
-              continue;
+      dev->present_count++;
+      present_count = dev->present_count;
+      dev->present_refresh_count = dev->present_count;
+      dev->sync_refresh_count = dev->present_count;
+      dev->last_present_qpc = qpc_now();
+      SwapChain* sc = dev->current_swapchain;
+      if (!sc && !dev->swapchains.empty()) {
+        sc = dev->swapchains[0];
+      }
+      if (sc) {
+        sc->present_count++;
+        sc->last_present_fence = present_fence;
+        if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
+          auto is_backbuffer = [sc](const Resource* res) -> bool {
+            if (!sc || !res) {
+              return false;
             }
-            auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE);
-            if (!cmd) {
-              ok = false;
-              break;
+            return std::find(sc->backbuffers.begin(), sc->backbuffers.end(), res) != sc->backbuffers.end();
+          };
+
+          // Present-style backbuffer rotation swaps the host handles attached to the
+          // backbuffer Resource objects. If any backbuffers are currently bound via
+          // device state (RTs, textures, IA buffers), we must re-emit those binds so
+          // the host stops referencing the old handles.
+          size_t needed_bytes = align_up(sizeof(aerogpu_cmd_set_render_targets), 4);
+          for (uint32_t stage = 0; stage < 16; ++stage) {
+            if (is_backbuffer(dev->textures[stage])) {
+              needed_bytes += align_up(sizeof(aerogpu_cmd_set_texture), 4);
             }
-            cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-            cmd->slot = stage;
-            cmd->texture = dev->textures[stage] ? dev->textures[stage]->handle : 0;
-            cmd->reserved0 = 0;
+          }
+          for (uint32_t stream = 0; stream < 16; ++stream) {
+            if (is_backbuffer(dev->streams[stream].vb)) {
+              needed_bytes += align_up(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding), 4);
+            }
+          }
+          if (is_backbuffer(dev->index_buffer)) {
+            needed_bytes += align_up(sizeof(aerogpu_cmd_set_index_buffer), 4);
           }
 
-          for (uint32_t stream = 0; ok && stream < 16; ++stream) {
-            if (!is_backbuffer(dev->streams[stream].vb)) {
-              continue;
+          if (ensure_cmd_space(dev, needed_bytes)) {
+            const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
+            for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
+              sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
             }
+            sc->backbuffers.back()->handle = saved;
 
-            aerogpu_vertex_buffer_binding binding{};
-            binding.buffer = dev->streams[stream].vb ? dev->streams[stream].vb->handle : 0;
-            binding.stride_bytes = dev->streams[stream].stride_bytes;
-            binding.offset_bytes = dev->streams[stream].offset_bytes;
-            binding.reserved0 = 0;
-
-            auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
-                dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
-            if (!cmd) {
-              ok = false;
-              break;
-            }
-            cmd->start_slot = stream;
-            cmd->buffer_count = 1;
-          }
-
-          if (ok && is_backbuffer(dev->index_buffer)) {
-            auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
-            if (!cmd) {
-              ok = false;
-            } else {
-              cmd->buffer = dev->index_buffer ? dev->index_buffer->handle : 0;
-              cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
-              cmd->offset_bytes = dev->index_offset_bytes;
+            bool ok = emit_set_render_targets_locked(dev);
+            for (uint32_t stage = 0; ok && stage < 16; ++stage) {
+              if (!is_backbuffer(dev->textures[stage])) {
+                continue;
+              }
+              auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE);
+              if (!cmd) {
+                ok = false;
+                break;
+              }
+              cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+              cmd->slot = stage;
+              cmd->texture = dev->textures[stage] ? dev->textures[stage]->handle : 0;
               cmd->reserved0 = 0;
             }
-          }
 
-          if (!ok) {
-            // Preserve device/host state consistency: if we cannot emit the
-            // rebinding commands (command buffer too small), undo the rotation so
-            // future draws still target the host's current bindings.
-            const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
-            for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
-              sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
+            for (uint32_t stream = 0; ok && stream < 16; ++stream) {
+              if (!is_backbuffer(dev->streams[stream].vb)) {
+                continue;
+              }
+
+              aerogpu_vertex_buffer_binding binding{};
+              binding.buffer = dev->streams[stream].vb ? dev->streams[stream].vb->handle : 0;
+              binding.stride_bytes = dev->streams[stream].stride_bytes;
+              binding.offset_bytes = dev->streams[stream].offset_bytes;
+              binding.reserved0 = 0;
+
+              auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
+                  dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
+              if (!cmd) {
+                ok = false;
+                break;
+              }
+              cmd->start_slot = stream;
+              cmd->buffer_count = 1;
             }
-            sc->backbuffers[0]->handle = undo_saved;
-            dev->cmd.reset();
+
+            if (ok && is_backbuffer(dev->index_buffer)) {
+              auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+              if (!cmd) {
+                ok = false;
+              } else {
+                cmd->buffer = dev->index_buffer ? dev->index_buffer->handle : 0;
+                cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
+                cmd->offset_bytes = dev->index_offset_bytes;
+                cmd->reserved0 = 0;
+              }
+            }
+
+            if (!ok) {
+              // Preserve device/host state consistency: if we cannot emit the
+              // rebinding commands (command buffer too small), undo the rotation so
+              // future draws still target the host's current bindings.
+              const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
+              for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
+                sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
+              }
+              sc->backbuffers[0]->handle = undo_saved;
+              dev->cmd.reset();
+            }
           }
         }
       }
@@ -5814,7 +5838,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
   }
 
   d3d9_trace_maybe_dump_on_present(present_count);
-  return trace.ret(S_OK);
+  return trace.ret(present_hr);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_present(
@@ -5830,9 +5854,11 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 
   auto* dev = as_device(hDevice);
   uint32_t present_count = 0;
+  HRESULT present_hr = S_OK;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
 
+    bool occluded = false;
 #if defined(_WIN32)
     HWND hwnd = pPresent->hWnd;
     if (!hwnd) {
@@ -5853,12 +5879,40 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     }
     if (hwnd) {
       if (IsIconic(hwnd) || !IsWindowVisible(hwnd)) {
-        retire_completed_presents_locked(dev);
-        return trace.ret(kSPresentOccluded);
+        occluded = true;
       }
     }
 #endif
 
+    if (occluded) {
+      retire_completed_presents_locked(dev);
+      (void)submit(dev, /*is_present=*/false);
+
+      dev->present_count++;
+      present_count = dev->present_count;
+      dev->present_refresh_count = dev->present_count;
+      dev->sync_refresh_count = dev->present_count;
+      dev->last_present_qpc = qpc_now();
+
+      SwapChain* sc = as_swapchain(pPresent->hSwapChain);
+      if (sc) {
+        auto it = std::find(dev->swapchains.begin(), dev->swapchains.end(), sc);
+        if (it == dev->swapchains.end()) {
+          sc = nullptr;
+        }
+      }
+      if (!sc) {
+        sc = dev->current_swapchain;
+      }
+      if (!sc && !dev->swapchains.empty()) {
+        sc = dev->swapchains[0];
+      }
+      if (sc) {
+        sc->present_count++;
+      }
+
+      present_hr = kSPresentOccluded;
+    } else {
     HRESULT hr = throttle_presents_locked(dev, pPresent->flags);
     if (hr != S_OK) {
       return trace.ret(hr);
@@ -6017,10 +6071,11 @@ HRESULT AEROGPU_D3D9_CALL device_present(
         }
       }
     }
+    }
   }
 
   d3d9_trace_maybe_dump_on_present(present_count);
-  return trace.ret(S_OK);
+  return trace.ret(present_hr);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_maximum_frame_latency(
