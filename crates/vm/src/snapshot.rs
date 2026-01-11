@@ -218,6 +218,10 @@ impl<D: BlockDevice> SnapshotSource for Vm<D> {
         Ok(())
     }
 
+    fn dirty_page_size(&self) -> u32 {
+        self.mem.dirty_page_size()
+    }
+
     fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
         Some(self.mem.take_dirty_pages())
     }
@@ -283,6 +287,7 @@ pub fn save_vm_snapshot<D: BlockDevice>(
 ) -> Result<Vec<u8>, SnapshotError> {
     let mut save = SaveOptions::default();
     save.ram.mode = options.ram_mode;
+    save.ram.page_size = vm.mem.dirty_page_size();
     let mut cursor = Cursor::new(Vec::new());
     aero_snapshot::save_snapshot(&mut cursor, vm, save)?;
     Ok(cursor.into_inner())

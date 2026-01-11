@@ -208,6 +208,13 @@ impl PhysicalMemory {
         }
     }
 
+    pub fn dirty_page_size(&self) -> u32 {
+        self.dirty
+            .page_size
+            .try_into()
+            .expect("dirty page size must fit in u32")
+    }
+
     pub fn len(&self) -> usize {
         self.data.len()
     }
