@@ -273,7 +273,7 @@ pub struct AeroGpuExecutor {
 
     state: ExecutorState,
 
-    pipeline: wgpu::RenderPipeline,
+    pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
 }
@@ -355,33 +355,37 @@ fn fs_main() -> @location(0) vec4<f32> {
             }],
         }];
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("aerogpu.executor.pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &vertex_buffers,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        let mut pipelines = HashMap::new();
+        for fmt in [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Bgra8Unorm] {
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("aerogpu.executor.pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &vertex_buffers,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+            pipelines.insert(fmt, pipeline);
+        }
 
         Ok(Self {
             device,
@@ -389,7 +393,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             buffers: HashMap::new(),
             textures: HashMap::new(),
             state: ExecutorState::default(),
-            pipeline,
+            pipelines,
             bind_group_layout,
             sampler,
         })
@@ -1048,9 +1052,9 @@ fn fs_main() -> @location(0) vec4<f32> {
         let tex = self.textures.get(&color0).ok_or_else(|| {
             ExecutorError::Validation(format!("SET_RENDER_TARGETS unknown texture {color0}"))
         })?;
-        if tex.format != wgpu::TextureFormat::Rgba8Unorm {
+        if !self.pipelines.contains_key(&tex.format) {
             return Err(ExecutorError::Validation(format!(
-                "render target format must be Rgba8Unorm for now (got {:?})",
+                "render target format {:?} not supported by executor",
                 tex.format
             )));
         }
@@ -1261,7 +1265,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                 timestamp_writes: None,
             });
 
-            pass.set_pipeline(&self.pipeline);
+            let pipeline = self.pipelines.get(&rt_tex.format).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "no pipeline configured for render target format {:?}",
+                    rt_tex.format
+                ))
+            })?;
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.set_vertex_buffer(
                 0,
