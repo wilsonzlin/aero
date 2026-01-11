@@ -984,7 +984,7 @@ struct IdtGate32 {
 }
 
 fn read_idt_gate32<B: CpuBus>(
-    state: &CpuState,
+    state: &mut CpuState,
     bus: &mut B,
     vector: u8,
 ) -> Result<IdtGate32, Exception> {
@@ -994,32 +994,34 @@ fn read_idt_gate32<B: CpuBus>(
         return Err(Exception::gp0());
     }
     let addr = state.tables.idtr.base + offset;
+    // IDT reads are system-structure accesses and ignore paging U/S restrictions.
+    state.with_supervisor_access(bus, |bus| {
+        let offset_low = bus.read_u16(addr)? as u32;
+        let selector = bus.read_u16(addr + 2)?;
+        let type_attr = bus.read_u8(addr + 5)?;
+        let offset_high = bus.read_u16(addr + 6)? as u32;
+        let offset = offset_low | (offset_high << 16);
 
-    let offset_low = bus.read_u16(addr)? as u32;
-    let selector = bus.read_u16(addr + 2)?;
-    let type_attr = bus.read_u8(addr + 5)?;
-    let offset_high = bus.read_u16(addr + 6)? as u32;
-    let offset = offset_low | (offset_high << 16);
+        let present = (type_attr & 0x80) != 0;
+        let dpl = ((type_attr >> 5) & 0x3) as u8;
+        let gate_type = match type_attr & 0x0F {
+            0xE => GateType::Interrupt,
+            0xF => GateType::Trap,
+            _ => return Err(Exception::gp0()),
+        };
 
-    let present = (type_attr & 0x80) != 0;
-    let dpl = ((type_attr >> 5) & 0x3) as u8;
-    let gate_type = match type_attr & 0x0F {
-        0xE => GateType::Interrupt,
-        0xF => GateType::Trap,
-        _ => return Err(Exception::gp0()),
-    };
-
-    Ok(IdtGate32 {
-        offset,
-        selector,
-        gate_type,
-        dpl,
-        present,
+        Ok(IdtGate32 {
+            offset,
+            selector,
+            gate_type,
+            dpl,
+            present,
+        })
     })
 }
 
 fn read_descriptor_low_for_selector<B: CpuBus>(
-    state: &CpuState,
+    state: &mut CpuState,
     bus: &mut B,
     selector: u16,
 ) -> Result<ParsedDesc, Exception> {
@@ -1032,11 +1034,15 @@ fn read_descriptor_low_for_selector<B: CpuBus>(
     if byte_off + 7 > table_limit as u64 {
         return Err(Exception::gp(selector));
     }
-    let raw = bus.read_u64(table_base + byte_off)?;
+    // Descriptor fetches are system-structure reads and ignore paging U/S restrictions.
+    let raw = state.with_supervisor_access(bus, |bus| bus.read_u64(table_base + byte_off))?;
     Ok(parse_descriptor_low(raw))
 }
 
-fn tss32_ring0_stack<B: CpuBus>(state: &CpuState, bus: &mut B) -> Result<(u16, u32), Exception> {
+fn tss32_ring0_stack<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+) -> Result<(u16, u32), Exception> {
     if state.tables.tr.is_unusable()
         || !state.tables.tr.is_present()
         || (state.tables.tr.selector >> 3) == 0
@@ -1052,8 +1058,13 @@ fn tss32_ring0_stack<B: CpuBus>(state: &CpuState, bus: &mut B) -> Result<(u16, u
     {
         return Err(Exception::ts(0));
     }
-    let esp0 = bus.read_u32(base + 4)?;
-    let ss0 = bus.read_u16(base + 8)?;
+    // TSS reads are system-structure accesses and ignore paging U/S restrictions.
+    let (ss0, esp0) =
+        state.with_supervisor_access(bus, |bus| -> Result<(u16, u32), Exception> {
+            let esp0 = bus.read_u32(base + 4)?;
+            let ss0 = bus.read_u16(base + 8)?;
+            Ok((ss0, esp0))
+        })?;
     if (ss0 >> 3) == 0 {
         return Err(Exception::ts(0));
     }
@@ -1090,6 +1101,7 @@ fn instr_int_protected<B: CpuBus>(
     }
 
     let new_cpl = cs_desc.dpl;
+    let cs_sel = (gate.selector & !0b11) | (new_cpl as u16);
     let op_bits = state.bitness();
     let op_size = (op_bits / 8) as u32;
 
@@ -1111,6 +1123,11 @@ fn instr_int_protected<B: CpuBus>(
         load_segment_descriptor(state, bus, Register::SS, ss0, true)?;
         state.write_reg(Register::ESP, esp0 as u64);
 
+        // Switch to the handler's CPL before touching the ring-0 stack so paging
+        // permission checks observe the updated privilege level.
+        state.segments.cs.selector = cs_sel;
+        bus.sync(state);
+
         push_sized(state, bus, old_ss as u64, op_size)?;
         push_sized(state, bus, old_sp, op_size)?;
     }
@@ -1126,7 +1143,6 @@ fn instr_int_protected<B: CpuBus>(
     next_flags &= !RFLAGS_TF;
     state.set_rflags(next_flags);
 
-    let cs_sel = (gate.selector & !0b11) | (new_cpl as u16);
     load_segment_descriptor(state, bus, Register::CS, cs_sel, false)?;
     state.set_rip(gate.offset as u64);
     Ok(())
@@ -1268,7 +1284,8 @@ fn load_segment_descriptor<B: CpuBus>(
     if byte_off + 7 > table_limit as u64 {
         return Err(Exception::gp(selector));
     }
-    let raw = bus.read_u64(table_base + byte_off)?;
+    // Descriptor fetches are system-structure reads and ignore paging U/S restrictions.
+    let raw = state.with_supervisor_access(bus, |bus| bus.read_u64(table_base + byte_off))?;
     let desc = parse_descriptor_low(raw);
     if !desc.s {
         return Err(Exception::gp(selector));

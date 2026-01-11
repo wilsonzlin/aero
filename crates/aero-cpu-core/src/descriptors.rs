@@ -227,7 +227,7 @@ impl CpuState {
     /// user/supervisor checks, even when the CPU is executing with CPL3. Our
     /// paging adapter (`PagingBus`) caches CPL, so emulate that hardware behavior
     /// by temporarily forcing `CS.RPL=0` and syncing the bus.
-    fn with_supervisor_access<B: CpuBus, R>(
+    pub(crate) fn with_supervisor_access<B: CpuBus, R>(
         &mut self,
         bus: &mut B,
         f: impl FnOnce(&mut B) -> R,
