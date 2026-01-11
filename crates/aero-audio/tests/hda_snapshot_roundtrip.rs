@@ -727,3 +727,22 @@ fn hda_snapshot_restore_masks_stream_lvi_to_8bit() {
 
     assert_eq!(restored.stream_mut(0).lvi, 0x34);
 }
+
+#[test]
+fn hda_snapshot_restore_masks_dplbase_reserved_bits() {
+    let hda = HdaController::new();
+    let mut snap = hda.snapshot_state(AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    });
+
+    // DPLBASE: bit0 is enable, bits 6:1 are reserved and must read as 0, and the base is 128-byte aligned.
+    snap.dplbase = 0x1234_567f;
+
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+
+    let expected = (snap.dplbase & 1) | (snap.dplbase & !0x7f);
+    assert_eq!(restored.mmio_read(REG_DPLBASE, 4) as u32, expected);
+}

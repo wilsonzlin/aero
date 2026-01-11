@@ -2034,7 +2034,8 @@ impl HdaController {
         self.intctl = state.intctl;
         self.intsts = state.intsts;
 
-        self.dplbase = state.dplbase;
+        // Bits 6:1 are reserved and must read as 0; the base is 128-byte aligned.
+        self.dplbase = (state.dplbase & DPLBASE_ENABLE) | (state.dplbase & DPLBASE_ADDR_MASK);
         self.dpubase = state.dpubase;
 
         self.corblbase = state.corblbase;
