@@ -11,7 +11,7 @@ The repository intentionally contains *two* split-ring implementations:
      - drivers/windows/virtio/common/virtqueue_split.{c,h}
      - API surface: `VIRTQ_SPLIT` / `VirtqSplit*`
 
-  2) Legacy portable engine (used by Win7 miniports + host tests):
+  2) Portable split-ring engine (used by Win7 miniports + host tests):
       - drivers/windows7/virtio/common/src/virtqueue_split_legacy.c
       - drivers/windows7/virtio/common/include/virtqueue_split_legacy.h
       - API surface: `virtqueue_split_*` + `virtio_os_ops_t`
@@ -176,6 +176,7 @@ def main() -> None:
     # WinDDK 7600 build.exe SOURCES files (deprecated but kept in-tree)
     # ---------------------------------------------------------------------
     sources_files: dict[str, tuple[Path, str, str, str]] = {
+        # Miniports: portable split ring.
         "virtio-blk": (
             REPO_ROOT / "drivers/windows7/virtio-blk/sources",
             "virtqueue_split_legacy.c",
@@ -188,6 +189,7 @@ def main() -> None:
             "virtqueue_split.c",
             "virtio/common/include",
         ),
+        # WDM/KMDF: canonical split ring.
         "virtio-input": (
             REPO_ROOT / "drivers/windows7/virtio-input/sources",
             "virtqueue_split.c",
