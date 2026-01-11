@@ -329,11 +329,11 @@ For each entrypoint:
 - **Can be deferred:** None (keep strict).
  
 #### `DxgkDdiCommitVidPn`
- 
+   
 - **Purpose:** Apply a modeset (resolution/format) to hardware.
 - **AeroGPU MVP behavior:**
   - Save current mode in adapter state.
-  - Program emulator-facing MMIO regs (mode width/height/stride/format).
+  - Program scanout0 mode registers (`AEROGPU_MMIO_REG_SCANOUT0_WIDTH/HEIGHT/FORMAT/PITCH_BYTES`) as defined in `drivers/aerogpu/protocol/aerogpu_pci.h`.
   - Ensure a scanout allocation is set (see `SetVidPnSourceAddress`).
 - **Can be deferred:** Seamless mode transitions, panning, color calibration.
  
@@ -344,18 +344,21 @@ For each entrypoint:
 - **Can be deferred:** Dynamic scaling/rotation.
  
 #### `DxgkDdiSetVidPnSourceAddress`
- 
+   
 - **Purpose:** Point scanout at a given primary surface allocation (flip).
 - **AeroGPU MVP behavior:**
   - Extract the allocation’s guest-physical backing (PFNs).
-  - Write scanout base address + pitch + format to AeroGPU MMIO.
+  - Program scanout0 registers:
+    - `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO/HI`
+    - `AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES`
+    - `AEROGPU_MMIO_REG_SCANOUT0_FORMAT`
   - This becomes the source the emulator displays to the host canvas.
 - **Can be deferred:** Multi-plane overlay, stereo, rotation.
- 
+  
 #### `DxgkDdiSetVidPnSourceVisibility`
- 
+  
 - **Purpose:** Enable/disable scanout for a source (blanking).
-- **AeroGPU MVP behavior:** Toggle a `VISIBLE` bit in MMIO; emulator will present black when not visible.
+- **AeroGPU MVP behavior:** Set/clear `AEROGPU_MMIO_REG_SCANOUT0_ENABLE` (1/0); emulator will present black when not visible.
 - **Can be deferred:** DPMS, advanced power gating.
  
 #### `DxgkDdiQueryVidPnHardwareCapability`
@@ -381,10 +384,10 @@ For each entrypoint:
 - **Can be deferred:** Seamless transitions.
 
 #### `DxgkDdiGetScanLine` + `DxgkDdiControlInterrupt`
- 
+  
 - **Purpose:** Support vblank/vsync timing (DWM stability) and enable/disable interrupts.
 - **AeroGPU MVP behavior:**
-  - `ControlInterrupt`: gate whether the emulator generates vsync interrupts.
+  - `ControlInterrupt`: gate vblank interrupts by enabling/disabling `AEROGPU_IRQ_SCANOUT_VBLANK` in `AEROGPU_MMIO_REG_IRQ_ENABLE`.
   - `GetScanLine`: return a simulated scanline based on a host timer (or return “in vblank”).
 - **Can be deferred:** Accurate scanline emulation.
  
@@ -509,13 +512,14 @@ of either callback being used to release a handle.
 ### 4.5 Interrupts, DPC, and TDR
  
 #### `DxgkDdiInterruptRoutine`
- 
+  
 - **Purpose:** Handle device interrupts at DIRQL and notify dxgkrnl.
 - **AeroGPU MVP behavior:**
-  - Read MMIO interrupt status:
-    - `VSYNC` event
-    - `FENCE_COMPLETE` event (with completed fence value)
-  - Acknowledge/clear in MMIO.
+  - Read `AEROGPU_MMIO_REG_IRQ_STATUS` and handle causes:
+    - `AEROGPU_IRQ_SCANOUT_VBLANK` (vblank tick for scanout 0)
+    - `AEROGPU_IRQ_FENCE` (completed fence advanced; read `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO/HI`)
+    - `AEROGPU_IRQ_ERROR` (treat as fatal device error)
+  - Acknowledge via `AEROGPU_MMIO_REG_IRQ_ACK` (write-1-to-clear).
   - Call the appropriate Dxgk callback to queue DPC work and report interrupt type.
 - **Can be deferred:** Multiple interrupt sources beyond vsync + fence.
  
@@ -528,10 +532,10 @@ of either callback being used to release a handle.
 - **Can be deferred:** Fine-grained telemetry.
  
 #### `DxgkDdiResetFromTimeout` (TDR)
- 
+  
 - **Purpose:** Recover from a “GPU hang” detected by Windows TDR.
 - **AeroGPU MVP behavior:**
-  - Reset the virtual GPU via MMIO (clear rings, reset fence).
+  - Request a device reset via `AEROGPU_MMIO_REG_RING_CONTROL` (`AEROGPU_RING_CONTROL_RESET`), then re-init ring programming + optional fence page.
   - Mark contexts as reset as required by WDDM contract.
   - Ensure future submissions work.
 - **Can be deferred:** Per-engine resets, advanced hang diagnosis.
@@ -545,17 +549,17 @@ of either callback being used to release a handle.
 ### 4.6 Pointer (hardware cursor)
  
 #### `DxgkDdiSetPointerShape`
- 
+   
 - **Purpose:** Provide cursor bitmap/shape to hardware.
 - **AeroGPU MVP behavior:**
   - Store cursor image in a small internal buffer (or a dedicated “cursor allocation” in system memory).
-  - Write cursor metadata to MMIO so emulator can composite cursor in the scanout.
+  - If `AEROGPU_FEATURE_CURSOR` is set, program cursor registers (`AEROGPU_MMIO_REG_CURSOR_*`) so the emulator can composite the cursor in scanout.
 - **Can be deferred:** Color cursor formats beyond ARGB, animated cursor.
- 
+  
 #### `DxgkDdiSetPointerPosition`
- 
+  
 - **Purpose:** Update cursor position/visibility.
-- **AeroGPU MVP behavior:** Write x/y/visible to MMIO; emulator composites.
+- **AeroGPU MVP behavior:** Write cursor position (`AEROGPU_MMIO_REG_CURSOR_X/Y`) and visibility (`AEROGPU_MMIO_REG_CURSOR_ENABLE`) to MMIO; emulator composites.
 - **Can be deferred:** Multi-monitor cursor constraints.
  
 ---
@@ -637,15 +641,15 @@ MVP assumes:
 - One scanout surface active at a time.
  
 ### 6.2 How scanout is updated
- 
+  
 Windows flips/sets scanout via `DxgkDdiSetVidPnSourceAddress`. In our driver:
- 
+  
 1. dxgkrnl passes the primary allocation handle and presentation parameters.
 2. KMD resolves that allocation to:
    - guest physical address list (PFNs)
    - pitch
    - pixel format
-3. KMD programs AeroGPU MMIO “scanout registers” with this info.
+3. KMD programs scanout0 MMIO registers (`AEROGPU_MMIO_REG_SCANOUT0_*`) with this info.
 4. Emulator reads scanout surface from guest memory and displays it.
  
 ### 6.3 Vblank/vsync simulation (DWM stability)
@@ -655,7 +659,7 @@ DWM’s scheduling expects periodic vblank events. Because AeroGPU is virtual:
 - The emulator will generate a **fixed-rate vsync** (default 60Hz) using its host timer.
 - On each vsync:
   - Emulator raises the AeroGPU interrupt
-  - KMD `InterruptRoutine` reports a VSYNC interrupt for Source 0
+  - KMD `InterruptRoutine` reports a vblank interrupt for Source 0 (backed by `AEROGPU_IRQ_SCANOUT_VBLANK`)
  
 `GetScanLine` may be implemented as:
  
