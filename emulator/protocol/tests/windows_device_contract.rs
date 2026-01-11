@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use aero_protocol::aerogpu::aerogpu_pci::{
     AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, AEROGPU_PCI_DEVICE_ID,
@@ -191,5 +192,66 @@ fn windows_device_contract_is_located_in_docs() {
             .join("docs/windows-device-contract.json")
             .is_file(),
         "docs/windows-device-contract.json must exist relative to repo root"
+    );
+}
+
+#[test]
+fn no_aerogpu_1ae0_tokens_outside_archived_prototype_tree() {
+    // Guard against accidentally reintroducing the deprecated AeroGPU 1AE0 PCI identity into the
+    // active codebase/docs. The archived prototype lives under:
+    //   prototype/legacy-win7-aerogpu-1ae0/
+    //
+    // Keep this in sync with the task requirement:
+    //   Searching for the deprecated vendor-id tokens (e.g. `VEN_` + `1AE0`, `0x` + `1AE0`)
+    //   should only match inside archived/legacy locations.
+    let root = repo_root();
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "-z"])
+        .output()
+        .expect("failed to run git ls-files");
+    assert!(
+        output.status.success(),
+        "git ls-files failed with status {}",
+        output.status
+    );
+
+    let files = output.stdout;
+    let archive_prefix = b"prototype/legacy-win7-aerogpu-1ae0/";
+
+    // Build forbidden needles without embedding the full token in the source, so this file
+    // doesn't itself trip the repo-wide grep rule we're trying to enforce.
+    let forbidden_vendor = format!("VEN_{}", "1AE0");
+    let forbidden_hex = format!("0x{}", "1AE0");
+    let forbidden_vendor = forbidden_vendor.as_bytes();
+    let forbidden_hex = forbidden_hex.as_bytes();
+
+    let mut hits: Vec<String> = Vec::new();
+    for rel in files.split(|b| *b == 0) {
+        if rel.is_empty() {
+            continue;
+        }
+        if rel.starts_with(archive_prefix) {
+            continue;
+        }
+        let rel_str = String::from_utf8_lossy(rel);
+        let path = root.join(rel_str.as_ref());
+        let Ok(buf) = std::fs::read(&path) else {
+            // Skip unreadable files (shouldn't happen for tracked files, but keep this robust).
+            continue;
+        };
+
+        if buf.windows(forbidden_vendor.len()).any(|w| w == forbidden_vendor)
+            || buf.windows(forbidden_hex.len()).any(|w| w == forbidden_hex)
+        {
+            hits.push(rel_str.into_owned());
+        }
+    }
+
+    assert!(
+        hits.is_empty(),
+        "found deprecated AeroGPU 1AE0 tokens outside archive tree: {hits:#?}"
     );
 }
