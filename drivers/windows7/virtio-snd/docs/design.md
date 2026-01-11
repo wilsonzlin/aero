@@ -124,7 +124,7 @@ The virtio-snd device model in `crates/aero-virtio/src/devices/snd.rs` is expect
 the definitive contract in `docs/windows7-virtio-driver-contract.md`, including:
 
 - Contract v1 does **not** negotiate `VIRTIO_F_RING_EVENT_IDX`.
-- Queue sizes: `controlq/eventq = 64`, `txq/rxq = 256`.
+- Queue sizes: `controlq/eventq/rxq = 64`, `txq = 256`.
 
 Driver stance:
 
