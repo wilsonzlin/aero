@@ -41,8 +41,12 @@ param(
   [string] $SpecPath = "tools/packaging/specs/win7-aero-guest-tools.json",
   # Machine-readable device contract used to generate the packaged `config/devices.cmd`.
   #
-  # Defaults to the canonical Aero device contract, but callers that package upstream
-  # virtio-win drivers may need to override service names (e.g. viostor/netkvm).
+  # Defaults to the canonical Aero device contract.
+  #
+  # If you are packaging upstream virtio-win drivers, prefer the dedicated contract variant:
+  #   docs/windows-device-contract-virtio-win.json
+  # so the generated `devices.cmd` uses virtio-win service names (viostor/netkvm/vioinput/viosnd)
+  # while keeping Aero's emulator-presented PCI IDs/HWID patterns.
   [string] $WindowsDeviceContractPath = "docs/windows-device-contract.json",
   [string] $DriverNameMapJson,
   [string] $OutDir = "out/artifacts",
