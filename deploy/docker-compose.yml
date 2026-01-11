@@ -134,9 +134,11 @@ services:
       # Origin enforcement (recommended).
       #
       # By default, only allow the same HTTPS origin served by the reverse proxy.
+      # The L2 proxy accepts the shared `ALLOWED_ORIGINS` env var (also used by the gateway + WebRTC relay).
       # Append additional dev origins (comma-prefixed) via:
       #   AERO_L2_ALLOWED_ORIGINS_EXTRA=",https://localhost:5173"
-      AERO_L2_ALLOWED_ORIGINS: https://${AERO_DOMAIN:-localhost}${AERO_L2_ALLOWED_ORIGINS_EXTRA:-}
+      ALLOWED_ORIGINS: https://${AERO_DOMAIN:-localhost}
+      AERO_L2_ALLOWED_ORIGINS_EXTRA: ${AERO_L2_ALLOWED_ORIGINS_EXTRA:-}
 
       # L2 tunnel auth (Option C).
       #

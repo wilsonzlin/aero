@@ -8,8 +8,9 @@ use crate::{overrides::TestOverrides, policy::EgressPolicy};
 pub struct SecurityConfig {
     /// Disable Origin enforcement (trusted local development only).
     pub open: bool,
-    /// Comma-separated allowlist of exact Origin strings. `"*"` allows any Origin value (but still
-    /// requires the header unless `open=1`).
+    /// Comma-separated allowlist of normalized Origin strings.
+    ///
+    /// `"*"` allows any Origin value (but still requires the header unless `open=1`).
     pub allowed_origins: AllowedOrigins,
     /// Comma-separated allowlist of exact Host values accepted at WebSocket upgrade time.
     ///
@@ -84,33 +85,26 @@ impl SecurityConfig {
             .map(|v| v.trim() == "1")
             .unwrap_or(false);
 
-        let allowed_origins_raw = std::env::var("AERO_L2_ALLOWED_ORIGINS").ok();
-        let allowed_origins = match allowed_origins_raw {
-            Some(raw) => {
-                let mut out = Vec::new();
-                let mut any = false;
-                for entry in raw.split(',').map(str::trim) {
-                    if entry.is_empty() {
-                        continue;
-                    }
-                    if entry == "*" {
-                        any = true;
-                        break;
-                    }
-                    let normalized = crate::origin::normalize_origin(entry).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "invalid origin {entry:?} (expected an origin like \"https://example.com\")"
-                        )
-                    })?;
-                    out.push(normalized);
-                }
-                if any {
-                    AllowedOrigins::Any
-                } else {
-                    AllowedOrigins::List(out)
-                }
+        let allowed_origins = {
+            let base: Option<(&'static str, String)> =
+                match std::env::var("AERO_L2_ALLOWED_ORIGINS") {
+                    Ok(v) => Some(("AERO_L2_ALLOWED_ORIGINS", v)),
+                    Err(_) => std::env::var("ALLOWED_ORIGINS")
+                        .ok()
+                        .map(|v| ("ALLOWED_ORIGINS", v)),
+                };
+            let extra = std::env::var("AERO_L2_ALLOWED_ORIGINS_EXTRA")
+                .ok()
+                .map(|v| ("AERO_L2_ALLOWED_ORIGINS_EXTRA", v));
+
+            let mut sources = Vec::new();
+            if let Some(base) = base {
+                sources.push(base);
             }
-            None => AllowedOrigins::List(Vec::new()),
+            if let Some(extra) = extra {
+                sources.push(extra);
+            }
+            parse_allowed_origins(sources)?
         };
 
         let legacy_token = std::env::var("AERO_L2_TOKEN").ok().and_then(|v| {
@@ -242,6 +236,35 @@ impl SecurityConfig {
             max_bytes_per_connection,
             max_frames_per_second,
         })
+    }
+}
+
+fn parse_allowed_origins(sources: Vec<(&'static str, String)>) -> Result<AllowedOrigins> {
+    let mut out = Vec::new();
+    let mut any = false;
+
+    for (name, raw) in sources {
+        for entry in raw.split(',').map(str::trim) {
+            if entry.is_empty() {
+                continue;
+            }
+            if entry == "*" {
+                any = true;
+                continue;
+            }
+            let normalized = crate::origin::normalize_origin(entry).ok_or_else(|| {
+                anyhow!(
+                    "invalid origin entry {entry:?} in {name} (expected an origin like \"https://example.com\")"
+                )
+            })?;
+            out.push(normalized);
+        }
+    }
+
+    if any {
+        Ok(AllowedOrigins::Any)
+    } else {
+        Ok(AllowedOrigins::List(out))
     }
 }
 

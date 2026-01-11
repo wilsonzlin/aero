@@ -28,6 +28,10 @@ cargo run --locked -p aero-l2-proxy
 # Security knobs (Rust `crates/aero-l2-proxy`):
 # - Origin is enforced by default; configure an allowlist for your dev origin:
 #   AERO_L2_ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy
+#   # (or use the shared name supported by the gateway + WebRTC relay)
+#   ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy
+#   # Optionally append additional origins (comma-prefixed convention):
+#   ALLOWED_ORIGINS=https://localhost AERO_L2_ALLOWED_ORIGINS_EXTRA=",http://localhost:5173" cargo run --locked -p aero-l2-proxy
 # - Trusted local dev escape hatch (disables Origin enforcement):
 #   AERO_L2_OPEN=1 cargo run --locked -p aero-l2-proxy
 # - Optional token auth (recommended for internet-exposed deployments):

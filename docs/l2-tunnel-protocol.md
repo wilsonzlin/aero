@@ -219,9 +219,26 @@ These environment variables are enforced by the **production Rust implementation
 
 By default, `aero-l2-proxy` requires an `Origin` header on the WebSocket upgrade request and validates it against an allowlist:
 
-- `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins (exact match).
-  - Example: `https://app.example.com,https://staging.example.com`
-  - `*` allows any Origin value (still requires the header to be present).
+- `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins.
+  - If unset, falls back to `ALLOWED_ORIGINS` (shared with the gateway + WebRTC relay).
+  - `AERO_L2_ALLOWED_ORIGINS_EXTRA` (optional) is appended (comma-prefixed convention used by `deploy/docker-compose.yml`).
+  - `*` allows any **non-empty** Origin header value (still requires the header to be present unless `AERO_L2_OPEN=1`).
+
+Origins are normalized and compared as:
+
+```
+<lowercase-scheme>://<lowercase-host>[:port]
+```
+
+Configured origins (and the request `Origin` header) must:
+
+- be a full origin URL (e.g. `https://example.com`),
+- use `http` or `https`,
+- NOT include credentials, query, fragment, or a path other than `/`.
+
+Special cases:
+
+- `null` is allowed only if explicitly configured (or if `*` is configured).
 
 Dev escape hatch:
 
