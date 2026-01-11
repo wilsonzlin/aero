@@ -1219,8 +1219,9 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
             .write(alloc_table_gpa, &alloc_table_bytes)
             .expect("write alloc table");
 
+        let sentinel = [0xEEu8; 16];
         guest
-            .write(DST_GPA, &[0xEE; 16])
+            .write(DST_GPA, &sentinel)
             .expect("write dst sentinel");
 
         let payload = *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
@@ -1235,7 +1236,7 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
                 push_u64(out, 0); // reserved0
             });
 
-            // CREATE_BUFFER dst (handle=2) guest-backed.
+            // CREATE_BUFFER dst (handle=2) guest-backed (READONLY alloc).
             emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
                 push_u32(out, 2); // buffer_handle
                 push_u32(out, 0); // usage_flags
@@ -1276,22 +1277,22 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
             alloc_table_gpa,
             alloc_table_bytes.len() as u32,
         );
-        assert!(!report.is_ok(), "expected error report");
+        assert!(!report.is_ok(), "expected executor report to contain errors");
         assert!(
             report.events.iter().any(|e| matches!(
                 e,
-                ExecutorEvent::Error { message, .. }
-                    if message.contains("READONLY") || message.contains("read-only")
+                ExecutorEvent::Error { message, .. } if {
+                    let msg = message.to_ascii_lowercase();
+                    msg.contains("readonly") || msg.contains("read-only")
+                }
             )),
             "expected read-only validation error, got: {:#?}",
             report.events
         );
 
         let mut readback = [0u8; 16];
-        guest
-            .read(DST_GPA, &mut readback)
-            .expect("read dst sentinel");
-        assert_eq!(readback, [0xEE; 16]);
+        guest.read(DST_GPA, &mut readback).expect("read dst");
+        assert_eq!(readback, sentinel);
     });
 }
 

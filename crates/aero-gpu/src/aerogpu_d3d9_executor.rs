@@ -1141,6 +1141,9 @@ impl AerogpuD3d9Executor {
                             entry.size_bytes
                         )));
                     }
+                    let _base_gpa = entry.gpa.checked_add(backing_offset).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("buffer backing gpa overflow".into())
+                    })?;
                     Some(GuestBufferBacking {
                         alloc_id: backing_alloc_id,
                         alloc_offset_bytes: backing_offset,
@@ -1288,6 +1291,9 @@ impl AerogpuD3d9Executor {
                             entry.size_bytes
                         )));
                     }
+                    let _base_gpa = entry.gpa.checked_add(backing_offset).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("CREATE_TEXTURE2D: backing gpa overflow".into())
+                    })?;
                     Some(GuestTextureBacking {
                         alloc_id: backing_alloc_id,
                         alloc_offset_bytes: backing_offset,
