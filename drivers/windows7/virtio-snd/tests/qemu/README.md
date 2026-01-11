@@ -114,8 +114,7 @@ The recommended Aero INF (`inf/aero-virtio-snd.inf`) is intentionally strict:
 - It matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
   - An optional subsystem-qualified match (`...&SUBSYS_00191AF4&REV_01`) is present but commented out.
 
-Transitional `DEV_1018` devices are **out of scope** for `AERO-W7-VIRTIO` v1 and will not bind to the strict INF
-(use the `virtio-snd.inf` alias only if you explicitly need compatibility with transitional devices).
+Transitional `DEV_1018` devices are **out of scope** for `AERO-W7-VIRTIO` v1 and will not bind.
 
 If Windows shows `DEV_1018` or `REV_00`, configure QEMU to expose a modern-only device and the contract v1 revision
 (the command lines above already do this), for example:
