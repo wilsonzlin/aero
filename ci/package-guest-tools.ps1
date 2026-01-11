@@ -4,7 +4,8 @@
 #
 # Inputs:
 #   - Signed driver packages (typically `out/packages/**/<arch>/...`)
-#   - The signing certificate used for the driver catalogs (typically `out/certs/aero-test.cer`)
+#   - Optional signing certificate used for the driver catalogs (typically `out/certs/aero-test.cer`;
+#     required when `-SigningPolicy` is `testsigning`/`nointegritychecks`)
 #   - Guest Tools scripts/config (`guest-tools/`)
 #
 # Outputs (in -OutDir):
