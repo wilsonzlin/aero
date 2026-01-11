@@ -59,6 +59,13 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-drivers.ps1' -Version '${{ github.ref_name }}' -MakeFatImage -FatImageStrict
 
+      - name: Setup Rust toolchain (for aero_packager)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Package Guest Tools media (ci/package-guest-tools.ps1)
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' -Version '${{ github.ref_name }}'
+
       - name: Stage public certificate as release asset
         shell: pwsh
         run: |
@@ -120,6 +127,7 @@ jobs:
           files: |
             artifacts/*.zip
             artifacts/*.iso
+            artifacts/aero-guest-tools.manifest.json
             artifacts/*.cer
             artifacts/*.vhd
             artifacts/*.exe

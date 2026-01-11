@@ -51,7 +51,7 @@ The tool produces the following in the output directory:
 
 - `aero-guest-tools.iso`
 - `aero-guest-tools.zip`
-- `manifest.json`
+- `manifest.json` (renamed to `aero-guest-tools.manifest.json` by CI wrapper scripts)
 
 The packaged media also includes `THIRD_PARTY_NOTICES.md` at the ISO/zip root.
 
@@ -79,6 +79,42 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects (and may in
 ```
 
 ## Running locally
+
+### CI-style flow (signed drivers → Guest Tools ISO/zip)
+
+The repository ships a CI-friendly wrapper script that consumes the signed driver packages
+produced by the Win7 driver pipeline and emits Guest Tools media into `out/artifacts/`:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/install-wdk.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -RequireDrivers
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
+
+# Optional (also produces the standalone driver bundle ZIP/ISO/VHD artifacts):
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-drivers.ps1
+
+# Guest Tools media (ISO + zip) built from the signed packages in out/packages/:
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1
+```
+
+Notes:
+
+- `ci/package-guest-tools.ps1` stages drivers into the packager input layout (`x86/<driver>/...`, `amd64/<driver>/...`),
+  copies `guest-tools/`, and replaces any placeholder certs with `out/certs/aero-test.cer` so the resulting ISO matches
+  the signed driver catalogs.
+- `-InputRoot` defaults to `out/packages/`, but you can also point it at an extracted `*-bundle.zip` produced by
+  `ci/package-drivers.ps1` (it auto-detects the layout).
+- Determinism is controlled by `SOURCE_DATE_EPOCH` (or `-SourceDateEpoch`). When unset, the wrapper uses the HEAD commit
+  timestamp to keep outputs stable for a given commit.
+
+Outputs:
+
+- `out/artifacts/aero-guest-tools.iso`
+- `out/artifacts/aero-guest-tools.zip`
+- `out/artifacts/aero-guest-tools.manifest.json`
+
+### Direct packager invocation (advanced)
 
 ```bash
 cd tools/packaging/aero_packager
