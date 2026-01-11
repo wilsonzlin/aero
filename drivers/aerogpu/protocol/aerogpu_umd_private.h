@@ -83,7 +83,7 @@ typedef uint64_t aerogpu_umdpriv_u64;
  */
 #pragma pack(push, 1)
 typedef struct aerogpu_umd_private_v1 {
-  aerogpu_umdpriv_u32 size_bytes; /* sizeof(struct aerogpu_umd_private_v1) */
+  aerogpu_umdpriv_u32 size_bytes; /* >= sizeof(struct aerogpu_umd_private_v1) */
   aerogpu_umdpriv_u32 struct_version; /* AEROGPU_UMDPRIV_STRUCT_VERSION_V1 */
 
   aerogpu_umdpriv_u32 device_mmio_magic; /* raw BAR0[0] */

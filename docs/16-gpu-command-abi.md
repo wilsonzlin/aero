@@ -86,7 +86,7 @@ Feature bits (`FEATURES_LO/HI` combined as a 64-bit value):
 |---:|---|:--:|---|
 | `0x0100` | `AEROGPU_MMIO_REG_RING_GPA_LO` | RW | Guest physical address of the `aerogpu_ring_header` (low 32 bits) |
 | `0x0104` | `AEROGPU_MMIO_REG_RING_GPA_HI` | RW | Guest physical address of the `aerogpu_ring_header` (high 32 bits) |
-| `0x0108` | `AEROGPU_MMIO_REG_RING_SIZE_BYTES` | RW | Total bytes mapped at `RING_GPA` (must match `aerogpu_ring_header.size_bytes`) |
+| `0x0108` | `AEROGPU_MMIO_REG_RING_SIZE_BYTES` | RW | Total bytes mapped at `RING_GPA` (must be **>=** `aerogpu_ring_header.size_bytes`) |
 | `0x010C` | `AEROGPU_MMIO_REG_RING_CONTROL` | RW | Ring control bits |
 | `0x0200` | `AEROGPU_MMIO_REG_DOORBELL` | WO | Write any value to notify the device that new submissions are available |
 
