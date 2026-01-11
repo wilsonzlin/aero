@@ -177,7 +177,19 @@ components:
         etag:
           type: string
           nullable: true
+        chunked:
+          $ref: "#/components/schemas/ChunkedStream"
       required: [url, auth]
+
+    ChunkedStream:
+      type: object
+      properties:
+        delivery:
+          type: string
+          enum: ["chunked"]
+        manifestUrl:
+          type: string
+      required: [delivery, manifestUrl]
 
 paths:
   /health:
@@ -429,6 +441,106 @@ paths:
           required: true
           schema:
             type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /v1/images/{imageId}/chunked/manifest:
+    get:
+      summary: Chunked manifest proxy (streams manifest.json from S3)
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    head:
+      summary: Chunked manifest proxy metadata (HEAD)
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /v1/images/{imageId}/chunked/chunks/{chunkIndex}:
+    get:
+      summary: Chunked chunk proxy (streams a single chunks/<index>.bin object from S3)
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chunkIndex
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]+$"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    head:
+      summary: Chunked chunk proxy metadata (HEAD)
+      parameters:
+        - $ref: "#/components/parameters/XUserId"
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chunkIndex
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]+$"
       responses:
         "200":
           description: OK

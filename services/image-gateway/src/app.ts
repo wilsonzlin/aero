@@ -36,6 +36,7 @@ export interface BuildAppDeps {
 }
 
 const S3_MULTIPART_MAX_PARTS = 10_000;
+const CHUNK_INDEX_WIDTH = 8;
 
 function assertBodyObject(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +76,64 @@ function assertOwner(record: ImageRecord, callerUserId: string): void {
 
 function buildStableImagePath(config: Config, record: ImageRecord): string {
   return `${config.imageBasePath}/${record.ownerId}/${record.id}/${record.version}/disk.img`;
+}
+
+function normalizeS3Key(value: string): string {
+  return value.replace(/^\/+/, "");
+}
+
+function normalizeS3Prefix(value: string): string {
+  let prefix = normalizeS3Key(value);
+  if (prefix && !prefix.endsWith("/")) prefix = `${prefix}/`;
+  return prefix;
+}
+
+function getChunkedBasePrefix(record: ImageRecord): string | undefined {
+  if (record.chunkedPrefix) {
+    return normalizeS3Prefix(record.chunkedPrefix);
+  }
+  if (record.chunkedManifestKey) {
+    const key = normalizeS3Key(record.chunkedManifestKey);
+    const lastSlash = key.lastIndexOf("/");
+    return lastSlash === -1 ? "" : key.slice(0, lastSlash + 1);
+  }
+  return undefined;
+}
+
+function getChunkedManifestKey(record: ImageRecord): string | undefined {
+  if (record.chunkedManifestKey) {
+    return normalizeS3Key(record.chunkedManifestKey);
+  }
+  const prefix = getChunkedBasePrefix(record);
+  if (prefix === undefined) return undefined;
+  return `${prefix}manifest.json`;
+}
+
+function formatChunkObjectName(chunkIndex: number): string {
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+    throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
+  }
+  const maxIndex = 10 ** CHUNK_INDEX_WIDTH - 1;
+  if (chunkIndex > maxIndex) {
+    throw new ApiError(400, `chunkIndex must be <= ${maxIndex}`, "BAD_REQUEST");
+  }
+  return String(chunkIndex).padStart(CHUNK_INDEX_WIDTH, "0");
+}
+
+function getChunkObjectKey(record: ImageRecord, chunkIndex: number): string | undefined {
+  const prefix = getChunkedBasePrefix(record);
+  if (prefix === undefined) return undefined;
+  const name = formatChunkObjectName(chunkIndex);
+  return `${prefix}chunks/${name}.bin`;
+}
+
+function buildChunkedCacheControl(config: Config, kind: "manifest" | "chunk"): string {
+  const base =
+    config.authMode === "none"
+      ? "public, max-age=31536000, immutable"
+      : "no-store";
+  if (kind === "chunk") return `${base}, no-transform`;
+  return base;
 }
 
 function applyCorsHeaders(reply: FastifyReply, config: Config): void {
@@ -397,9 +456,23 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
     let url: string;
     let auth: StreamAuth;
+    let chunked:
+      | {
+          delivery: "chunked";
+          manifestUrl: string;
+        }
+      | undefined;
+
+    const chunkedManifestKey = getChunkedManifestKey(record);
 
     if (deps.config.cloudfrontDomain) {
       assertCloudFrontSigningConfiguredForConfig(deps.config);
+
+      const imagePrefixPath = `${deps.config.imageBasePath}/${record.ownerId}/${record.id}/${record.version}/*`;
+      const policyUrl = buildCloudFrontUrl({
+        cloudfrontDomain: deps.config.cloudfrontDomain,
+        path: imagePrefixPath,
+      });
 
       const stableUrl = buildCloudFrontUrl({
         cloudfrontDomain: deps.config.cloudfrontDomain,
@@ -410,7 +483,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
       if (deps.config.cloudfrontAuthMode === "cookie") {
         const cookies = createSignedCookies({
-          url: stableUrl,
+          url: policyUrl,
           keyPairId: deps.config.cloudfrontKeyPairId,
           privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
           expiresAt,
@@ -433,14 +506,39 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
           expiresAt,
         });
 
-        url = signedUrl;
-        auth = { type: "url", expiresAt: expiresAt.toISOString() };
+         url = signedUrl;
+         auth = { type: "url", expiresAt: expiresAt.toISOString() };
+       }
+
+      if (chunkedManifestKey) {
+        const manifestPath = `/${chunkedManifestKey}`;
+        const stableManifestUrl = buildCloudFrontUrl({
+          cloudfrontDomain: deps.config.cloudfrontDomain,
+          path: manifestPath,
+        });
+        const manifestUrl =
+          deps.config.cloudfrontAuthMode === "url"
+            ? createSignedUrl({
+                url: stableManifestUrl,
+                keyPairId: deps.config.cloudfrontKeyPairId,
+                privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
+                expiresAt,
+              })
+            : stableManifestUrl;
+        chunked = { delivery: "chunked", manifestUrl };
       }
     } else {
       // Local/dev fallback: stream via the range proxy endpoint on the same host.
       // This path is stable but does proxy bytes through the service.
       url = buildSelfUrl(req, `/v1/images/${imageId}/range`);
       auth = { type: "none" };
+
+      if (chunkedManifestKey) {
+        chunked = {
+          delivery: "chunked",
+          manifestUrl: buildSelfUrl(req, `/v1/images/${imageId}/chunked/manifest`),
+        };
+      }
     }
 
     reply.send({
@@ -448,7 +546,300 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       auth,
       size: record.size,
       etag: record.etag,
+      chunked,
     });
+  });
+
+  app.get("/v1/images/:imageId/chunked/manifest", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const imageId = (req.params as { imageId: string }).imageId;
+    const record = requireImage(deps.store, imageId);
+    assertOwner(record, callerUserId);
+
+    if (record.status !== "complete") {
+      throw new ApiError(409, "Image is not complete", "INVALID_STATE");
+    }
+
+    const key = getChunkedManifestKey(record);
+    if (!key) {
+      throw new ApiError(404, "Chunked manifest not available", "NOT_FOUND");
+    }
+
+    if (deps.config.cloudfrontDomain) {
+      assertCloudFrontSigningConfiguredForConfig(deps.config);
+      const stableUrl = buildCloudFrontUrl({
+        cloudfrontDomain: deps.config.cloudfrontDomain,
+        path: `/${key}`,
+      });
+      const expiresAt = new Date(Date.now() + deps.config.cloudfrontSignedTtlSeconds * 1000);
+      const url =
+        deps.config.cloudfrontAuthMode === "url"
+          ? createSignedUrl({
+              url: stableUrl,
+              keyPairId: deps.config.cloudfrontKeyPairId,
+              privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
+              expiresAt,
+            })
+          : stableUrl;
+      reply.redirect(307, url);
+      return;
+    }
+
+    let s3Res: GetObjectCommandOutput;
+    try {
+      s3Res = await deps.s3.send(
+        new GetObjectCommand({
+          Bucket: deps.config.s3Bucket,
+          Key: key,
+        })
+      );
+    } catch (err) {
+      const maybeStatus = (
+        err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+      ).$metadata?.httpStatusCode;
+      if (typeof maybeStatus === "number") {
+        if (maybeStatus === 404) {
+          throw new ApiError(404, "Chunked manifest not found", "NOT_FOUND");
+        }
+        if (maybeStatus >= 400 && maybeStatus < 500) {
+          throw new ApiError(maybeStatus, "S3 request rejected", "S3_ERROR");
+        }
+      }
+      throw err;
+    }
+
+    if (!s3Res.Body) {
+      throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
+    }
+
+    const headers: Record<string, string> = {
+      "cache-control": buildChunkedCacheControl(deps.config, "manifest"),
+    };
+    headers["content-type"] = s3Res.ContentType ?? "application/json";
+    if (typeof s3Res.ContentLength === "number") {
+      headers["content-length"] = String(s3Res.ContentLength);
+    }
+    if (s3Res.ETag) headers["etag"] = s3Res.ETag;
+    if (s3Res.LastModified) headers["last-modified"] = s3Res.LastModified.toUTCString();
+
+    reply.status(200).headers(headers);
+    return reply.send(s3Res.Body);
+  });
+
+  app.head("/v1/images/:imageId/chunked/manifest", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const imageId = (req.params as { imageId: string }).imageId;
+    const record = requireImage(deps.store, imageId);
+    assertOwner(record, callerUserId);
+
+    if (record.status !== "complete") {
+      throw new ApiError(409, "Image is not complete", "INVALID_STATE");
+    }
+
+    const key = getChunkedManifestKey(record);
+    if (!key) {
+      throw new ApiError(404, "Chunked manifest not available", "NOT_FOUND");
+    }
+
+    if (deps.config.cloudfrontDomain) {
+      assertCloudFrontSigningConfiguredForConfig(deps.config);
+      const stableUrl = buildCloudFrontUrl({
+        cloudfrontDomain: deps.config.cloudfrontDomain,
+        path: `/${key}`,
+      });
+      const expiresAt = new Date(Date.now() + deps.config.cloudfrontSignedTtlSeconds * 1000);
+      const url =
+        deps.config.cloudfrontAuthMode === "url"
+          ? createSignedUrl({
+              url: stableUrl,
+              keyPairId: deps.config.cloudfrontKeyPairId,
+              privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
+              expiresAt,
+            })
+          : stableUrl;
+      reply.redirect(307, url);
+      return;
+    }
+
+    let head: HeadObjectCommandOutput;
+    try {
+      head = await deps.s3.send(
+        new HeadObjectCommand({
+          Bucket: deps.config.s3Bucket,
+          Key: key,
+        })
+      );
+    } catch (err) {
+      const maybeStatus = (
+        err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+      ).$metadata?.httpStatusCode;
+      if (typeof maybeStatus === "number" && maybeStatus === 404) {
+        throw new ApiError(404, "Chunked manifest not found", "NOT_FOUND");
+      }
+      throw err;
+    }
+
+    const headers: Record<string, string> = {
+      "cache-control": buildChunkedCacheControl(deps.config, "manifest"),
+    };
+    headers["content-type"] = head.ContentType ?? "application/json";
+    if (typeof head.ContentLength === "number") headers["content-length"] = String(head.ContentLength);
+    if (head.ETag) headers["etag"] = head.ETag;
+    if (head.LastModified) headers["last-modified"] = head.LastModified.toUTCString();
+
+    reply.status(200).headers(headers).send();
+  });
+
+  app.get("/v1/images/:imageId/chunked/chunks/:chunkIndex", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const params = req.params as { imageId: string; chunkIndex: string };
+    const record = requireImage(deps.store, params.imageId);
+    assertOwner(record, callerUserId);
+
+    if (record.status !== "complete") {
+      throw new ApiError(409, "Image is not complete", "INVALID_STATE");
+    }
+
+    if (!/^\d+$/.test(params.chunkIndex)) {
+      throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
+    }
+    const chunkIndex = Number.parseInt(params.chunkIndex, 10);
+    const key = getChunkObjectKey(record, chunkIndex);
+    if (!key) {
+      throw new ApiError(404, "Chunked image not available", "NOT_FOUND");
+    }
+
+    if (deps.config.cloudfrontDomain) {
+      assertCloudFrontSigningConfiguredForConfig(deps.config);
+      const stableUrl = buildCloudFrontUrl({
+        cloudfrontDomain: deps.config.cloudfrontDomain,
+        path: `/${key}`,
+      });
+      const expiresAt = new Date(Date.now() + deps.config.cloudfrontSignedTtlSeconds * 1000);
+      const url =
+        deps.config.cloudfrontAuthMode === "url"
+          ? createSignedUrl({
+              url: stableUrl,
+              keyPairId: deps.config.cloudfrontKeyPairId,
+              privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
+              expiresAt,
+            })
+          : stableUrl;
+      reply.redirect(307, url);
+      return;
+    }
+
+    let s3Res: GetObjectCommandOutput;
+    try {
+      s3Res = await deps.s3.send(
+        new GetObjectCommand({
+          Bucket: deps.config.s3Bucket,
+          Key: key,
+        })
+      );
+    } catch (err) {
+      const maybeStatus = (
+        err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+      ).$metadata?.httpStatusCode;
+      if (typeof maybeStatus === "number") {
+        if (maybeStatus === 404) {
+          throw new ApiError(404, "Chunk object not found", "NOT_FOUND");
+        }
+        if (maybeStatus >= 400 && maybeStatus < 500) {
+          throw new ApiError(maybeStatus, "S3 request rejected", "S3_ERROR");
+        }
+      }
+      throw err;
+    }
+
+    if (!s3Res.Body) {
+      throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
+    }
+
+    const headers: Record<string, string> = {
+      "cache-control": buildChunkedCacheControl(deps.config, "chunk"),
+      "content-encoding": "identity",
+    };
+    headers["content-type"] = s3Res.ContentType ?? "application/octet-stream";
+    if (typeof s3Res.ContentLength === "number") {
+      headers["content-length"] = String(s3Res.ContentLength);
+    }
+    if (s3Res.ETag) headers["etag"] = s3Res.ETag;
+    if (s3Res.LastModified) headers["last-modified"] = s3Res.LastModified.toUTCString();
+
+    reply.status(200).headers(headers);
+    return reply.send(s3Res.Body);
+  });
+
+  app.head("/v1/images/:imageId/chunked/chunks/:chunkIndex", async (req, reply) => {
+    const callerUserId = getCallerUserId(req, deps.config);
+    const params = req.params as { imageId: string; chunkIndex: string };
+    const record = requireImage(deps.store, params.imageId);
+    assertOwner(record, callerUserId);
+
+    if (record.status !== "complete") {
+      throw new ApiError(409, "Image is not complete", "INVALID_STATE");
+    }
+
+    if (!/^\d+$/.test(params.chunkIndex)) {
+      throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
+    }
+    const chunkIndex = Number.parseInt(params.chunkIndex, 10);
+    const key = getChunkObjectKey(record, chunkIndex);
+    if (!key) {
+      throw new ApiError(404, "Chunked image not available", "NOT_FOUND");
+    }
+
+    if (deps.config.cloudfrontDomain) {
+      assertCloudFrontSigningConfiguredForConfig(deps.config);
+      const stableUrl = buildCloudFrontUrl({
+        cloudfrontDomain: deps.config.cloudfrontDomain,
+        path: `/${key}`,
+      });
+      const expiresAt = new Date(Date.now() + deps.config.cloudfrontSignedTtlSeconds * 1000);
+      const url =
+        deps.config.cloudfrontAuthMode === "url"
+          ? createSignedUrl({
+              url: stableUrl,
+              keyPairId: deps.config.cloudfrontKeyPairId,
+              privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
+              expiresAt,
+            })
+          : stableUrl;
+      reply.redirect(307, url);
+      return;
+    }
+
+    let head: HeadObjectCommandOutput;
+    try {
+      head = await deps.s3.send(
+        new HeadObjectCommand({
+          Bucket: deps.config.s3Bucket,
+          Key: key,
+        })
+      );
+    } catch (err) {
+      const maybeStatus = (
+        err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+      ).$metadata?.httpStatusCode;
+      if (typeof maybeStatus === "number" && maybeStatus === 404) {
+        throw new ApiError(404, "Chunk object not found", "NOT_FOUND");
+      }
+      throw err;
+    }
+
+    const headers: Record<string, string> = {
+      "cache-control": buildChunkedCacheControl(deps.config, "chunk"),
+      "content-encoding": "identity",
+    };
+    headers["content-type"] = head.ContentType ?? "application/octet-stream";
+    if (typeof head.ContentLength === "number") {
+      headers["content-length"] = String(head.ContentLength);
+    }
+    if (head.ETag) headers["etag"] = head.ETag;
+    if (head.LastModified) headers["last-modified"] = head.LastModified.toUTCString();
+
+    reply.status(200).headers(headers).send();
   });
 
   app.get("/v1/images/:imageId/range", async (req, reply) => {

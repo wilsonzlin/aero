@@ -7,6 +7,8 @@ export interface ImageRecord {
   version: string;
 
   s3Key: string;
+  chunkedPrefix?: string;
+  chunkedManifestKey?: string;
   uploadId: string;
   status: ImageStatus;
 
@@ -42,4 +44,3 @@ export class MemoryImageStore implements ImageStore {
     return updated;
   }
 }
-
