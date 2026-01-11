@@ -1194,6 +1194,13 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnBegin)
 AEROGPU_DEFINE_HAS_MEMBER(pfnEnd)
 AEROGPU_DEFINE_HAS_MEMBER(pfnReadFromSubresource)
 AEROGPU_DEFINE_HAS_MEMBER(pfnWriteToSubresource)
+AEROGPU_DEFINE_HAS_MEMBER(pfnStagingResourceMap)
+AEROGPU_DEFINE_HAS_MEMBER(pfnStagingResourceUnmap)
+AEROGPU_DEFINE_HAS_MEMBER(pfnDynamicIABufferMapDiscard)
+AEROGPU_DEFINE_HAS_MEMBER(pfnDynamicIABufferMapNoOverwrite)
+AEROGPU_DEFINE_HAS_MEMBER(pfnDynamicIABufferUnmap)
+AEROGPU_DEFINE_HAS_MEMBER(pfnDynamicConstantBufferMapDiscard)
+AEROGPU_DEFINE_HAS_MEMBER(pfnDynamicConstantBufferUnmap)
 AEROGPU_DEFINE_HAS_MEMBER(pfnCalcPrivateQuerySize)
 AEROGPU_DEFINE_HAS_MEMBER(pfnCreateQuery)
 AEROGPU_DEFINE_HAS_MEMBER(pfnDestroyQuery)
@@ -3962,6 +3969,27 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
   }
   if constexpr (has_pfnWriteToSubresource<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnWriteToSubresource = &NotImpl<decltype(funcs.pfnWriteToSubresource)>::Fn;
+  }
+  if constexpr (has_pfnStagingResourceMap<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnStagingResourceMap = &NotImpl<decltype(funcs.pfnStagingResourceMap)>::Fn;
+  }
+  if constexpr (has_pfnStagingResourceUnmap<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnStagingResourceUnmap = &Noop<decltype(funcs.pfnStagingResourceUnmap)>::Fn;
+  }
+  if constexpr (has_pfnDynamicIABufferMapDiscard<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnDynamicIABufferMapDiscard = &NotImpl<decltype(funcs.pfnDynamicIABufferMapDiscard)>::Fn;
+  }
+  if constexpr (has_pfnDynamicIABufferMapNoOverwrite<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnDynamicIABufferMapNoOverwrite = &NotImpl<decltype(funcs.pfnDynamicIABufferMapNoOverwrite)>::Fn;
+  }
+  if constexpr (has_pfnDynamicIABufferUnmap<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnDynamicIABufferUnmap = &Noop<decltype(funcs.pfnDynamicIABufferUnmap)>::Fn;
+  }
+  if constexpr (has_pfnDynamicConstantBufferMapDiscard<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnDynamicConstantBufferMapDiscard = &NotImpl<decltype(funcs.pfnDynamicConstantBufferMapDiscard)>::Fn;
+  }
+  if constexpr (has_pfnDynamicConstantBufferUnmap<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnDynamicConstantBufferUnmap = &Noop<decltype(funcs.pfnDynamicConstantBufferUnmap)>::Fn;
   }
   if constexpr (has_pfnCalcPrivateQuerySize<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnCalcPrivateQuerySize = &NotImpl<decltype(funcs.pfnCalcPrivateQuerySize)>::Fn;
