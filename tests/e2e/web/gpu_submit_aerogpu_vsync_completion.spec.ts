@@ -5,7 +5,13 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
 
   await page.setContent(`
     <script type="module">
-      import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "/web/src/ipc/gpu-protocol.ts";
+      import {
+        GPU_PROTOCOL_NAME,
+        GPU_PROTOCOL_VERSION,
+        FRAME_DIRTY,
+        FRAME_STATUS_INDEX,
+        isGpuWorkerMessageBase,
+      } from "/web/src/ipc/gpu-protocol.ts";
       import { AerogpuCmdWriter, AEROGPU_PRESENT_FLAG_VSYNC } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
 
       const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
@@ -48,6 +54,13 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
               entry.resolve(msg);
               return;
             }
+            if (msg.type === "screenshot") {
+              const entry = pending.get(msg.requestId);
+              if (!entry) return;
+              pending.delete(msg.requestId);
+              entry.resolve(msg);
+              return;
+            }
           };
           worker.addEventListener("message", onMessage);
           worker.addEventListener("error", (event) => {
@@ -55,6 +68,7 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
           });
 
           const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+          const frameState = new Int32Array(sharedFrameState);
           const sharedFramebuffer = new SharedArrayBuffer(8);
 
           worker.postMessage({
@@ -66,6 +80,10 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
           });
 
           await ready;
+
+          // Ensure `screenshot` triggers an internal `handleTick()` call without using
+          // an explicit GPU-protocol `tick` message.
+          frameState[FRAME_STATUS_INDEX] = FRAME_DIRTY;
 
           const writer = new AerogpuCmdWriter();
           writer.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
@@ -92,6 +110,32 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
           const receivedBeforeTick = early.kind === "submit";
 
           if (early.kind !== "submit") {
+            // Request a screenshot before ticking. This calls into the worker's internal
+            // `handleTick()` to ensure the completion gate is keyed to the explicit
+            // `tick` message (not internal present work).
+            const screenshotRequestId = nextRequestId++;
+            const screenshotPromise = new Promise((resolve, reject) =>
+              pending.set(screenshotRequestId, { resolve, reject }),
+            );
+            worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId: screenshotRequestId });
+            await screenshotPromise;
+
+            const afterScreenshot = await Promise.race([
+              submitPromise.then(() => ({ kind: "submit" })),
+              sleep(50).then(() => ({ kind: "timeout" })),
+            ]);
+            if (afterScreenshot.kind === "submit") {
+              // Expose the failure mode explicitly; the Playwright assertion will fail below.
+              window.__AERO_VSYNC_SUBMIT_RESULT__ = {
+                receivedBeforeTick: true,
+                completedFence: 1n,
+                presentCount: null,
+              };
+              worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
+              worker.terminate();
+              return;
+            }
+
             worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
           }
 
@@ -120,4 +164,3 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
   expect(result.completedFence).toBe(1n);
   expect(result.presentCount).toBe(1n);
 });
-
