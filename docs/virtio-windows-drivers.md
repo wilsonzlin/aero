@@ -411,11 +411,11 @@ This wrapper:
 
 1. Extracts a Win7 driver pack from `virtio-win.iso` (using `drivers/scripts/make-driver-pack.ps1`).
 2. Converts it into the input layout expected by the Rust Guest Tools packager.
-3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `minimal`):
-   - `-Profile minimal` (default): `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
-   - `-Profile full`: `tools/packaging/specs/win7-virtio-full.json`
+3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `full`):
+   - `-Profile full` (default): `tools/packaging/specs/win7-virtio-full.json`
       - required: `viostor` + `netkvm`
       - optional (included if present): `vioinput` + `viosnd`
+   - `-Profile minimal`: `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
 
 Advanced overrides:
 

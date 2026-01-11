@@ -135,8 +135,8 @@ On non-Windows hosts you have three options:
 
 Profiles:
 
-- `-Profile minimal` (default): storage + network only (`viostor`, `netkvm`)
-- `-Profile full`: includes optional virtio drivers when available (`vioinput`, `viosnd`)
+- `-Profile full` (default): includes optional virtio drivers when available (`vioinput`, `viosnd`)
+- `-Profile minimal`: storage + network only (`viostor`, `netkvm`)
 
 Signing policy:
 
