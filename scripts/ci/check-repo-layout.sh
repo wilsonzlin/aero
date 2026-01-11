@@ -170,6 +170,16 @@ for raw in manifest_path.read_text(encoding="utf-8").splitlines():
         continue
     manifest_tests.append(token)
 
+manifest_set = set(manifest_tests)
+if len(manifest_set) != len(manifest_tests):
+    duplicates = []
+    seen = set()
+    for t in manifest_tests:
+        if t in seen and t not in duplicates:
+            duplicates.append(t)
+        seen.add(t)
+    raise SystemExit(f"{manifest_path}: duplicate test entries: {', '.join(duplicates)}")
+
 for test in manifest_tests:
     test_dir = suite_dir / test
     if not test_dir.is_dir():
