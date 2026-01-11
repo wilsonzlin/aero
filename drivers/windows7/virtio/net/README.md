@@ -2,12 +2,12 @@
 
 This directory contains a clean-room, spec-based **virtio-net** driver for **Windows 7 SP1** implemented as an **NDIS 6.20** miniport.
 
-> **Important:** This directory contains the **legacy/transitional** virtio-net driver
-> package. It intentionally binds to `PCI\\VEN_1AF4&DEV_1000` and does **not** bind to
-> the contract-v1 modern virtio-net ID `PCI\\VEN_1AF4&DEV_1041`.
+> **AERO-W7-VIRTIO contract v1:** this driver binds to the virtio-net **modern-only**
+> PCI ID `PCI\\VEN_1AF4&DEV_1041` and validates `REV_01` at runtime.
 >
-> For the contract-v1 virtio-net driver, use `drivers/win7/virtio-net/` (see also
-> `docs/windows7-virtio-driver-contract.md`).
+> When using QEMU, pass:
+> - `disable-legacy=on` (ensures the device enumerates as `DEV_1041`)
+> - `x-pci-revision=0x01` (ensures the device enumerates as `REV_01`)
 
 ## What it provides
 
@@ -51,6 +51,6 @@ For local development you can use either:
 
 Hardware IDs matched by `aerovnet.inf`:
 
-- `PCI\\VEN_1AF4&DEV_1000` (transitional virtio-net)
+- `PCI\\VEN_1AF4&DEV_1041` (modern-only virtio-net; requires `disable-legacy=on`)
 
 Note: This driver uses the virtio-pci **modern MMIO** transport and does not implement the legacy I/O-port register map.

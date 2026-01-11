@@ -2,14 +2,11 @@
 
 This directory contains Windows 7 SP1 virtio driver packages.
 
-Some drivers here still use the **legacy/transitional** virtio PCI ID space
-(`DEV_100x`). Others have been migrated to Aero’s **virtio contract v1**, which
-requires the virtio-pci **modern** transport and the modern PCI Device ID space
+These drivers implement Aero’s **AERO-W7-VIRTIO contract v1**, which requires the
+virtio-pci **modern** transport and the modern PCI Device ID space
 (`DEV_104x`/`DEV_105x`).
 
 - Contract: `docs/windows7-virtio-driver-contract.md`
-- Contract-v1 drivers: `drivers/win7/virtio-blk/`, `drivers/win7/virtio-net/`, …
-- Modern transport core library: `drivers/win7/virtio/virtio-core/`
 
 ## Why this matters (INF hardware ID conflicts)
 
@@ -28,7 +25,4 @@ and `drivers/win7/virtio-blk/aerovblk.inf`).
 
 - `common/` – shared virtio helpers (legacy transport + split-virtqueue library).
 - `blk/` – `aerovblk` StorPort miniport (Aero contract v1; binds to `DEV_1042`).
-- `net/` – `aerovnet` NDIS 6.20 miniport (legacy/transitional; binds to `DEV_1000`).
-
-If you are implementing or packaging Aero’s contract-v1 drivers, do **not** use
-this directory; use the contract-v1 driver directories instead.
+- `net/` – `aerovnet` NDIS 6.20 miniport (Aero contract v1; binds to `DEV_1041`).
