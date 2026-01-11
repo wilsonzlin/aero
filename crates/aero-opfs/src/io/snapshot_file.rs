@@ -64,8 +64,14 @@ mod platform_handle {
         Ok(as_u64)
     }
 
-    fn disk_error_to_io(err: emulator::io::storage::disk::DiskError) -> io::Error {
-        io::Error::new(io::ErrorKind::Other, err.to_string())
+    pub(super) fn disk_error_to_io(err: emulator::io::storage::disk::DiskError) -> io::Error {
+        use emulator::io::storage::disk::DiskError;
+
+        match err {
+            DiskError::NotSupported(_) => io::Error::new(io::ErrorKind::Unsupported, err.to_string()),
+            DiskError::InUse => io::Error::new(io::ErrorKind::WouldBlock, err.to_string()),
+            _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
+        }
     }
 
     fn js_error_to_io(err: JsValue) -> io::Error {
@@ -223,7 +229,7 @@ where
 
         let file = opfs_platform::open_file(path, create)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(platform_handle::disk_error_to_io)?;
 
         if !opfs_platform::is_worker_scope() || !opfs_platform::file_handle_supports_sync_access_handle(&file) {
             return Err(io::Error::new(
@@ -234,7 +240,7 @@ where
 
         let handle = opfs_platform::create_sync_handle(&file)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(platform_handle::disk_error_to_io)?;
 
         let handle = platform_handle::WasmSyncHandle::new(handle)?;
         Ok(Self::from_handle(handle))
