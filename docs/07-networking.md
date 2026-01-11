@@ -756,7 +756,11 @@ impl UdpProxy {
         
         let pc = RtcPeerConnection::new(&config)?;
         
-        // Create data channel for UDP
+        // Create data channel for UDP.
+        //
+        // Note: this DataChannel config is for the UDP relay, where best-effort/lossy semantics are
+        // acceptable. If you carry the **L2 tunnel** over WebRTC, the channel MUST be reliable
+        // (unordered is OK). See ADR 0005 and `docs/l2-tunnel-protocol.md`.
         let dc = pc.create_data_channel("udp", &RtcDataChannelInit {
             ordered: false,
             max_retransmits: Some(0),

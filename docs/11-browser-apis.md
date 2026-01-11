@@ -1264,6 +1264,9 @@ async function setupUdpProxy(signalingUrl) {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
     
+    // Note: this DataChannel config is for the UDP relay, where best-effort/lossy semantics are
+    // acceptable. If you carry the **L2 tunnel** over WebRTC, the channel MUST be reliable
+    // (unordered is OK). See ADR 0005 and `docs/l2-tunnel-protocol.md`.
     const dc = pc.createDataChannel('udp', {
         ordered: false,
         maxRetransmits: 0
