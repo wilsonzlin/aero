@@ -23,6 +23,17 @@ pub struct AerogpuD3d9Executor {
     shader_cache: shader::ShaderCache,
 
     resources: HashMap<u32, Resource>,
+    /// Handle indirection table for shared resources.
+    ///
+    /// - Original resources are stored as `handle -> handle`.
+    /// - Imported shared resources are stored as `alias_handle -> underlying_handle`.
+    resource_handles: HashMap<u32, u32>,
+    /// Refcount table keyed by the underlying handle.
+    ///
+    /// Refcount includes the original handle entry plus all imported aliases.
+    resource_refcounts: HashMap<u32, u32>,
+    /// share_token -> underlying resource handle.
+    shared_surface_by_token: HashMap<u64, u32>,
     shaders: HashMap<u32, Shader>,
     input_layouts: HashMap<u32, InputLayout>,
 
@@ -91,6 +102,24 @@ pub enum AerogpuD3d9Error {
     CopyOutOfBounds { src: u32, dst: u32 },
     #[error("readback only supported for RGBA8/BGRA8 textures (handle {0})")]
     ReadbackUnsupported(u32),
+    #[error("unknown shared surface token 0x{0:016X}")]
+    UnknownShareToken(u64),
+    #[error(
+        "shared surface token 0x{share_token:016X} already exported (existing_handle={existing} new_handle={new})"
+    )]
+    ShareTokenAlreadyExported {
+        share_token: u64,
+        existing: u32,
+        new: u32,
+    },
+    #[error(
+        "shared surface alias handle {alias} already bound (existing_handle={existing} new_handle={new})"
+    )]
+    SharedSurfaceAliasAlreadyBound {
+        alias: u32,
+        existing: u32,
+        new: u32,
+    },
     #[error("missing alloc table entry for alloc_id={0}")]
     MissingAllocTable(u32),
     #[error("missing guest memory for dirty guest-backed resource {0}")]
@@ -366,6 +395,9 @@ impl AerogpuD3d9Executor {
             queue,
             shader_cache: shader::ShaderCache::default(),
             resources: HashMap::new(),
+            resource_handles: HashMap::new(),
+            resource_refcounts: HashMap::new(),
+            shared_surface_by_token: HashMap::new(),
             shaders: HashMap::new(),
             input_layouts: HashMap::new(),
             constants_buffer,
@@ -383,6 +415,9 @@ impl AerogpuD3d9Executor {
     pub fn reset(&mut self) {
         self.shader_cache = shader::ShaderCache::default();
         self.resources.clear();
+        self.resource_handles.clear();
+        self.resource_refcounts.clear();
+        self.shared_surface_by_token.clear();
         self.shaders.clear();
         self.input_layouts.clear();
         self.presented_scanouts.clear();
@@ -466,9 +501,10 @@ impl AerogpuD3d9Executor {
         &self,
         texture_handle: u32,
     ) -> Result<(u32, u32, Vec<u8>), AerogpuD3d9Error> {
+        let underlying = self.resolve_resource_handle(texture_handle)?;
         let res = self
             .resources
-            .get(&texture_handle)
+            .get(&underlying)
             .ok_or(AerogpuD3d9Error::UnknownResource(texture_handle))?;
         let (texture, format, width, height) = match res {
             Resource::Texture2d {
@@ -510,6 +546,49 @@ impl AerogpuD3d9Executor {
         };
 
         Ok((width, height, out))
+    }
+
+    fn resolve_resource_handle(&self, handle: u32) -> Result<u32, AerogpuD3d9Error> {
+        if handle == 0 {
+            return Ok(0);
+        }
+        self.resource_handles
+            .get(&handle)
+            .copied()
+            .ok_or(AerogpuD3d9Error::UnknownResource(handle))
+    }
+
+    fn register_resource_handle(&mut self, handle: u32) {
+        if handle == 0 {
+            return;
+        }
+        if self.resource_handles.contains_key(&handle) {
+            return;
+        }
+        self.resource_handles.insert(handle, handle);
+        *self.resource_refcounts.entry(handle).or_insert(0) += 1;
+    }
+
+    fn destroy_resource_handle(&mut self, handle: u32) {
+        if handle == 0 {
+            return;
+        }
+
+        let Some(underlying) = self.resource_handles.remove(&handle) else {
+            return;
+        };
+
+        let Some(count) = self.resource_refcounts.get_mut(&underlying) else {
+            return;
+        };
+        *count = count.saturating_sub(1);
+        if *count != 0 {
+            return;
+        }
+
+        self.resource_refcounts.remove(&underlying);
+        self.resources.remove(&underlying);
+        self.shared_surface_by_token.retain(|_, v| *v != underlying);
     }
 
     fn execute_cmd(
@@ -565,6 +644,7 @@ impl AerogpuD3d9Executor {
                         dirty_ranges: Vec::new(),
                     },
                 );
+                self.register_resource_handle(buffer_handle);
                 Ok(())
             }
             AeroGpuCmd::CreateTexture2d {
@@ -654,10 +734,11 @@ impl AerogpuD3d9Executor {
                         dirty_ranges: Vec::new(),
                     },
                 );
+                self.register_resource_handle(texture_handle);
                 Ok(())
             }
             AeroGpuCmd::DestroyResource { resource_handle } => {
-                self.resources.remove(&resource_handle);
+                self.destroy_resource_handle(resource_handle);
                 Ok(())
             }
             AeroGpuCmd::UploadResource {
@@ -666,7 +747,8 @@ impl AerogpuD3d9Executor {
                 size_bytes,
                 data,
             } => {
-                let Some(res) = self.resources.get(&resource_handle) else {
+                let underlying = self.resolve_resource_handle(resource_handle)?;
+                let Some(res) = self.resources.get(&underlying) else {
                     return Err(AerogpuD3d9Error::UnknownResource(resource_handle));
                 };
                 match res {
@@ -751,13 +833,15 @@ impl AerogpuD3d9Executor {
                 self.ensure_encoder();
                 let mut encoder = self.encoder.take().unwrap();
                 {
+                    let src_underlying = self.resolve_resource_handle(src_buffer)?;
+                    let dst_underlying = self.resolve_resource_handle(dst_buffer)?;
                     let src = self
                         .resources
-                        .get(&src_buffer)
+                        .get(&src_underlying)
                         .ok_or(AerogpuD3d9Error::UnknownResource(src_buffer))?;
                     let dst = self
                         .resources
-                        .get(&dst_buffer)
+                        .get(&dst_underlying)
                         .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?;
 
                     let (src_buf, src_size) = match src {
@@ -817,13 +901,15 @@ impl AerogpuD3d9Executor {
                 self.ensure_encoder();
                 let mut encoder = self.encoder.take().unwrap();
                 {
+                    let src_underlying = self.resolve_resource_handle(src_texture)?;
+                    let dst_underlying = self.resolve_resource_handle(dst_texture)?;
                     let src = self
                         .resources
-                        .get(&src_texture)
+                        .get(&src_underlying)
                         .ok_or(AerogpuD3d9Error::UnknownResource(src_texture))?;
                     let dst = self
                         .resources
-                        .get(&dst_texture)
+                        .get(&dst_underlying)
                         .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?;
 
                     let (src_tex, dst_tex) = match (src, dst) {
@@ -1162,8 +1248,48 @@ impl AerogpuD3d9Executor {
                 self.flush()
             }
             AeroGpuCmd::Flush => self.flush(),
-            AeroGpuCmd::ExportSharedSurface { .. } | AeroGpuCmd::ImportSharedSurface { .. } => {
-                // Sharing handled at higher layers for now.
+            AeroGpuCmd::ExportSharedSurface {
+                resource_handle,
+                share_token,
+            } => {
+                let underlying = self.resolve_resource_handle(resource_handle)?;
+                if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
+                    if existing != underlying {
+                        return Err(AerogpuD3d9Error::ShareTokenAlreadyExported {
+                            share_token,
+                            existing,
+                            new: underlying,
+                        });
+                    }
+                } else {
+                    self.shared_surface_by_token.insert(share_token, underlying);
+                }
+                Ok(())
+            }
+            AeroGpuCmd::ImportSharedSurface {
+                out_resource_handle,
+                share_token,
+            } => {
+                let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
+                    return Err(AerogpuD3d9Error::UnknownShareToken(share_token));
+                };
+                if !self.resource_refcounts.contains_key(&underlying) {
+                    return Err(AerogpuD3d9Error::UnknownShareToken(share_token));
+                }
+
+                if let Some(existing) = self.resource_handles.get(&out_resource_handle).copied() {
+                    if existing != underlying {
+                        return Err(AerogpuD3d9Error::SharedSurfaceAliasAlreadyBound {
+                            alias: out_resource_handle,
+                            existing,
+                            new: underlying,
+                        });
+                    }
+                } else {
+                    self.resource_handles.insert(out_resource_handle, underlying);
+                    *self.resource_refcounts.entry(underlying).or_insert(0) += 1;
+                }
+
                 Ok(())
             }
             AeroGpuCmd::ResourceDirtyRange {
@@ -1223,7 +1349,8 @@ impl AerogpuD3d9Executor {
             AerogpuD3d9Error::Validation("dirty range offset/size overflow".into())
         })?;
 
-        let Some(res) = self.resources.get_mut(&resource_handle) else {
+        let underlying = self.resolve_resource_handle(resource_handle)?;
+        let Some(res) = self.resources.get_mut(&underlying) else {
             return Err(AerogpuD3d9Error::UnknownResource(resource_handle));
         };
         match res {
@@ -1271,7 +1398,8 @@ impl AerogpuD3d9Executor {
         handle: u32,
         guest_memory: Option<&dyn GuestMemory>,
     ) -> Result<(), AerogpuD3d9Error> {
-        let Some(res) = self.resources.get_mut(&handle) else {
+        let underlying = self.resolve_resource_handle(handle)?;
+        let Some(res) = self.resources.get_mut(&underlying) else {
             return Err(AerogpuD3d9Error::UnknownResource(handle));
         };
         let Resource::Buffer {
@@ -1317,7 +1445,14 @@ impl AerogpuD3d9Executor {
         guest_memory: Option<&dyn GuestMemory>,
         strict: bool,
     ) -> Result<(), AerogpuD3d9Error> {
-        let Some(res) = self.resources.get_mut(&handle) else {
+        let underlying = match self.resolve_resource_handle(handle) {
+            Ok(h) => h,
+            Err(err) => {
+                return if strict { Err(err) } else { Ok(()) };
+            }
+        };
+
+        let Some(res) = self.resources.get_mut(&underlying) else {
             return if strict {
                 Err(AerogpuD3d9Error::UnknownResource(handle))
             } else {
@@ -1860,9 +1995,10 @@ impl AerogpuD3d9Executor {
             else {
                 continue;
             };
+            let underlying = self.resolve_resource_handle(binding.buffer)?;
             let res = self
                 .resources
-                .get(&binding.buffer)
+                .get(&underlying)
                 .ok_or(AerogpuD3d9Error::UnknownResource(binding.buffer))?;
             let Resource::Buffer { buffer, .. } = res else {
                 return Err(AerogpuD3d9Error::UnknownResource(binding.buffer));
@@ -1897,9 +2033,10 @@ impl AerogpuD3d9Executor {
                     .state
                     .index_buffer
                     .ok_or(AerogpuD3d9Error::MissingIndexBuffer)?;
+                let underlying = self.resolve_resource_handle(index_binding.buffer)?;
                 let res = self
                     .resources
-                    .get(&index_binding.buffer)
+                    .get(&underlying)
                     .ok_or(AerogpuD3d9Error::UnknownResource(index_binding.buffer))?;
                 let Resource::Buffer { buffer, .. } = res else {
                     return Err(AerogpuD3d9Error::UnknownResource(index_binding.buffer));
@@ -1942,7 +2079,8 @@ impl AerogpuD3d9Executor {
             let view: &wgpu::TextureView = if tex_handle == 0 {
                 &self.dummy_texture_view
             } else {
-                match self.resources.get(&tex_handle) {
+                let underlying = self.resolve_resource_handle(tex_handle).ok();
+                match underlying.and_then(|h| self.resources.get(&h)) {
                     Some(Resource::Texture2d { view, .. }) => view,
                     _ => &self.dummy_texture_view,
                 }
@@ -2048,9 +2186,10 @@ impl AerogpuD3d9Executor {
                 colors.push(None);
                 continue;
             }
+            let underlying = self.resolve_resource_handle(handle)?;
             let res = self
                 .resources
-                .get(&handle)
+                .get(&underlying)
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
                 Resource::Texture2d { view, .. } => colors.push(Some(view)),
@@ -2062,9 +2201,10 @@ impl AerogpuD3d9Executor {
             None
         } else {
             let handle = rt.depth_stencil;
+            let underlying = self.resolve_resource_handle(handle)?;
             let res = self
                 .resources
-                .get(&handle)
+                .get(&underlying)
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
                 Resource::Texture2d { view, .. } => Some(view),
@@ -2095,9 +2235,10 @@ impl AerogpuD3d9Executor {
                 colors.push(None);
                 continue;
             }
+            let underlying = self.resolve_resource_handle(handle)?;
             let res = self
                 .resources
-                .get(&handle)
+                .get(&underlying)
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
                 Resource::Texture2d { format, .. } => colors.push(Some(*format)),
@@ -2109,9 +2250,10 @@ impl AerogpuD3d9Executor {
             None
         } else {
             let handle = rt.depth_stencil;
+            let underlying = self.resolve_resource_handle(handle)?;
             let res = self
                 .resources
-                .get(&handle)
+                .get(&underlying)
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
                 Resource::Texture2d { format, .. } => Some(*format),
