@@ -1499,6 +1499,51 @@ mod tests {
     }
 
     #[test]
+    fn synth_rejects_total_report_bits_overflow() {
+        let item = HidReportItem {
+            is_array: false,
+            is_absolute: true,
+            is_buffered_bytes: false,
+            is_volatile: false,
+            is_constant: false,
+            is_wrapped: false,
+            is_linear: true,
+            has_preferred_state: true,
+            has_null: false,
+            is_range: false,
+            logical_minimum: 0,
+            logical_maximum: 1,
+            physical_minimum: 0,
+            physical_maximum: 0,
+            unit_exponent: 0,
+            unit: 0,
+            report_size: 255,
+            report_count: MAX_REPORT_COUNT,
+            usage_page: 0x01,
+            usages: vec![],
+        };
+
+        let items = vec![item; 258];
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo { report_id: 0, items }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].inputReports[0].items[257]");
+                assert!(message.contains("total report bit length overflows u32"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn buffered_bytes_uses_bit7_for_input_main_items() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
