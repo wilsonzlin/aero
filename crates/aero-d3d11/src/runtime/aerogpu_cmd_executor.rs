@@ -1509,6 +1509,8 @@ impl AerogpuD3d11Executor {
                 | OPCODE_SET_SCISSOR
                 | OPCODE_SET_TEXTURE
                 | OPCODE_SET_SAMPLER_STATE
+                | OPCODE_SET_SAMPLERS
+                | OPCODE_SET_CONSTANT_BUFFERS
                 | OPCODE_NOP
                 | OPCODE_DEBUG_MARKER => {}
                 _ => break, // leave the opcode for the outer loop
@@ -1545,6 +1547,61 @@ impl AerogpuD3d11Executor {
                             }
                         }
                     }
+                }
+            }
+
+            if opcode == OPCODE_SET_CONSTANT_BUFFERS {
+                // `struct aerogpu_cmd_set_constant_buffers` (24 bytes) + N bindings.
+                //
+                // Setting constant buffers inside a render pass is only safe when the newly bound
+                // buffers do not require any implicit guest->GPU uploads and do not need a scratch
+                // copy for unaligned uniform offsets.
+                if cmd_bytes.len() >= 24 {
+                    let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                    let buffer_count_u32 = read_u32_le(cmd_bytes, 16)?;
+                    let buffer_count: usize = buffer_count_u32
+                        .try_into()
+                        .map_err(|_| anyhow!("SET_CONSTANT_BUFFERS: buffer_count out of range"))?;
+                    let expected = 24usize
+                        .checked_add(
+                            buffer_count
+                                .checked_mul(16)
+                                .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: size overflow"))?,
+                        )
+                        .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: size overflow"))?;
+                    if cmd_bytes.len() >= expected {
+                        let uniform_align =
+                            self.device.limits().min_uniform_buffer_offset_alignment as u64;
+                        let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
+                            break;
+                        };
+                        let mut needs_break = false;
+                        for i in 0..buffer_count {
+                            let base = 24 + i * 16;
+                            let buffer = read_u32_le(cmd_bytes, base)?;
+                            let offset_bytes = read_u32_le(cmd_bytes, base + 4)? as u64;
+                            if offset_bytes != 0 && offset_bytes % uniform_align != 0 {
+                                needs_break = true;
+                                break;
+                            }
+                            if buffer == 0 || buffer == legacy_constants_buffer_id(stage) {
+                                continue;
+                            }
+                            if let Some(buf) = self.resources.buffers.get(&buffer) {
+                                if buf.backing.is_some() && buf.dirty.is_some() {
+                                    needs_break = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if needs_break {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
                 }
             }
 
@@ -1724,6 +1781,8 @@ impl AerogpuD3d11Executor {
                 }
                 OPCODE_SET_TEXTURE => self.exec_set_texture(cmd_bytes)?,
                 OPCODE_SET_SAMPLER_STATE => self.exec_set_sampler_state(cmd_bytes)?,
+                OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes)?,
+                OPCODE_SET_CONSTANT_BUFFERS => self.exec_set_constant_buffers(cmd_bytes)?,
                 OPCODE_NOP | OPCODE_DEBUG_MARKER => {}
                 _ => {}
             }
