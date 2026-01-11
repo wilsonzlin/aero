@@ -215,7 +215,7 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
                                            strlen(kTextureHlsl),
                                            "d3d11_texture_sampling_sanity.hlsl",
                                            "vs_main",
-                                           "vs_4_0_level_9_1",
+                                           "vs_4_0",
                                            &vs_bytes,
                                            &shader_err)) {
     return reporter.Fail("failed to compile vertex shader: %s", shader_err.c_str());
@@ -224,7 +224,7 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
                                            strlen(kTextureHlsl),
                                            "d3d11_texture_sampling_sanity.hlsl",
                                            "ps_main",
-                                           "ps_4_0_level_9_1",
+                                           "ps_4_0",
                                            &ps_bytes,
                                            &shader_err)) {
     return reporter.Fail("failed to compile pixel shader: %s", shader_err.c_str());
