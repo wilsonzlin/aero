@@ -213,6 +213,13 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
+Signing policy notes:
+
+- Default is `-SigningPolicy testsigning` (`signing_policy=test` in `manifest.json`).
+- Use `-SigningPolicy none` to omit `certs/*.{cer,crt,p7b}` from the packaged media (and avoid
+  Test Signing prompts) when shipping WHQL/production-signed drivers.
+- Use `-CertPath` to inject a different test root certificate into the staged `certs/` directory.
+
 This uses the modern-only validation spec:
 
 - `tools/packaging/specs/win7-aero-virtio.json`

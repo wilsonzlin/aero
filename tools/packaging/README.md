@@ -153,6 +153,13 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
+By default this wrapper packages media intended for **test-signed** drivers (`signing_policy=test`).
+To build Guest Tools for WHQL/production-signed drivers without shipping/installing any custom
+certificates, pass `-SigningPolicy none`.
+
+If your driver catalogs are signed with a different test root certificate, pass `-CertPath` to
+replace the staged `guest-tools/certs/*` contents.
+
 `-DriverOutDir` must contain driver packages for both architectures:
 
 ```

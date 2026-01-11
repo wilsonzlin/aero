@@ -19,7 +19,22 @@ param(
 
   [string]$Version = "0.0.0",
 
-  [string]$BuildId = "local"
+  [string]$BuildId = "local",
+
+  # Driver signing / boot policy embedded in Guest Tools manifest.json.
+  #
+  # - testsigning: media is intended for test-signed/custom-signed drivers (default)
+  # - nointegritychecks: media may prompt to disable signature enforcement (not recommended)
+  # - none: media is intended for WHQL/production-signed drivers (no cert injection)
+  [ValidateSet("none", "testsigning", "nointegritychecks")]
+  [string]$SigningPolicy = "testsigning",
+
+  # Public certificate to embed under Guest Tools `certs/` when SigningPolicy != none.
+  # If omitted, the script uses whatever certificate(s) already exist under GuestToolsDir\certs\.
+  [string]$CertPath,
+
+  # Override SOURCE_DATE_EPOCH for deterministic timestamps inside the ISO/zip.
+  [Nullable[long]]$SourceDateEpoch
 )
 
 Set-StrictMode -Version Latest
@@ -33,6 +48,32 @@ function Ensure-Directory {
   param([Parameter(Mandatory = $true)][string]$Path)
   if (-not (Test-Path -LiteralPath $Path)) {
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
+  }
+}
+
+function Ensure-EmptyDirectory {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  if (Test-Path -LiteralPath $Path) {
+    Remove-Item -LiteralPath $Path -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path $Path | Out-Null
+}
+
+function Copy-DirectoryContents {
+  param(
+    [Parameter(Mandatory = $true)][string]$SourceDir,
+    [Parameter(Mandatory = $true)][string]$DestDir
+  )
+
+  if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
+    throw "Expected directory not found: $SourceDir"
+  }
+
+  Ensure-Directory -Path $DestDir
+  $children = Get-ChildItem -LiteralPath $SourceDir | Sort-Object -Property Name
+  foreach ($c in $children) {
+    $dst = Join-Path $DestDir $c.Name
+    Copy-Item -LiteralPath $c.FullName -Destination $dst -Recurse -Force
   }
 }
 
@@ -108,6 +149,9 @@ if (-not (Test-Path -LiteralPath $specPath -PathType Leaf)) {
 }
 
 $driversRoot = (Resolve-Path -LiteralPath $DriverOutDir).Path
+if ($CertPath) {
+  $CertPath = (Resolve-Path -LiteralPath $CertPath).Path
+}
 
 # Preflight: ensure the required aero driver packages exist for both architectures.
 $driversX86Dir = Resolve-InputArchDir -DriversDir $driversRoot -ArchOut "x86"
@@ -121,6 +165,7 @@ foreach ($driver in @("aerovblk", "aerovnet")) {
 Write-Host "Driver artifacts validated:"
 Write-Host "  drivers: $driversRoot"
 Write-Host "  guest-tools: $GuestToolsDir"
+Write-Host "  signing policy: $SigningPolicy"
 
 # Build the actual Guest Tools ISO/zip using the in-repo packager.
 Require-Command -Name "cargo" | Out-Null
@@ -142,16 +187,65 @@ Write-Host "  spec : $specPath"
 Write-Host "  out  : $OutDir"
 Write-Host "  contract : $deviceContractPath"
 
-& cargo run --manifest-path $packagerManifest --release --locked -- `
-  --drivers-dir $driversRoot `
-  --guest-tools-dir $GuestToolsDir `
-  --spec $specPath `
-  --windows-device-contract $deviceContractPath `
-  --out-dir $OutDir `
-  --version $Version `
-  --build-id $BuildId
-if ($LASTEXITCODE -ne 0) {
-  throw "aero_packager failed (exit $LASTEXITCODE)."
+Write-Host "Staging Guest Tools input..."
+$stageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("aerogt_aero_virtio_" + [System.Guid]::NewGuid().ToString("N"))
+$stageGuestTools = Join-Path $stageRoot "guest-tools"
+$success = $false
+
+try {
+  Ensure-EmptyDirectory -Path $stageRoot
+  Ensure-EmptyDirectory -Path $stageGuestTools
+  Copy-DirectoryContents -SourceDir $GuestToolsDir -DestDir $stageGuestTools
+
+  # For WHQL/production-signed driver bundles, do not ship/install any custom root certificates
+  # by default.
+  if ($SigningPolicy -eq "none") {
+    $certsDir = Join-Path $stageGuestTools "certs"
+    if (Test-Path -LiteralPath $certsDir -PathType Container) {
+      Get-ChildItem -LiteralPath $certsDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in @(".cer", ".crt", ".p7b") } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+  } elseif ($CertPath) {
+    $certsDir = Join-Path $stageGuestTools "certs"
+    Ensure-Directory -Path $certsDir
+    # Replace any existing certificates so the packaged media matches the supplied CertPath.
+    Get-ChildItem -LiteralPath $certsDir -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Extension -in @(".cer", ".crt", ".p7b") } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
+    Copy-Item -LiteralPath $CertPath -Destination $certsDir -Force
+  }
+
+  $packagerArgs = @(
+    "run",
+    "--manifest-path", $packagerManifest,
+    "--release",
+    "--locked",
+    "--",
+    "--drivers-dir", $driversRoot,
+    "--guest-tools-dir", $stageGuestTools,
+    "--spec", $specPath,
+    "--windows-device-contract", $deviceContractPath,
+    "--out-dir", $OutDir,
+    "--version", $Version,
+    "--build-id", $BuildId,
+    "--signing-policy", $SigningPolicy
+  )
+  if ($null -ne $SourceDateEpoch) {
+    $packagerArgs += @("--source-date-epoch", $SourceDateEpoch)
+  }
+
+  & cargo @packagerArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "aero_packager failed (exit $LASTEXITCODE)."
+  }
+
+  $success = $true
+} finally {
+  if (Test-Path -LiteralPath $stageRoot) {
+    # Always clean up staging directories; Guest Tools outputs are written to -OutDir.
+    Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 
 Write-Host "Done."
