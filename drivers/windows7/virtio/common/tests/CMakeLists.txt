@@ -1,9 +1,16 @@
+cmake_minimum_required(VERSION 3.16)
+project(virtio_common_tests C)
+
+enable_testing()
+
 add_executable(virtio_common_tests
     test_main.c
     test_os.c
     fake_pci_device.c
+    fake_pci_device_modern.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtqueue_split.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_legacy.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_modern.c
 )
 
 target_include_directories(virtio_common_tests PRIVATE

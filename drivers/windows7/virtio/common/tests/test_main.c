@@ -7,9 +7,11 @@
 #include <string.h>
 
 #include "virtio_pci_legacy.h"
+#include "virtio_pci_modern.h"
 #include "virtqueue_split.h"
 
 #include "fake_pci_device.h"
+#include "fake_pci_device_modern.h"
 #include "test_os.h"
 
 /*
@@ -457,6 +459,7 @@ static void test_pci_legacy_integration(void)
     test_os_ctx_t os_ctx;
     virtio_os_ops_t os_ops;
     fake_pci_device_t fake;
+    test_io_region_t io_region;
     virtio_pci_legacy_device_t dev;
     virtio_dma_buffer_t ring;
     virtqueue_split_t vq;
@@ -470,7 +473,9 @@ static void test_pci_legacy_integration(void)
 
     fake_pci_device_init(&fake, &os_ctx, 8, 4096, VIRTIO_TRUE, 1);
 
-    virtio_pci_legacy_init(&dev, &os_ops, &os_ctx, (uintptr_t)&fake, VIRTIO_FALSE);
+    io_region.kind = TEST_IO_REGION_LEGACY_PIO;
+    io_region.dev = &fake;
+    virtio_pci_legacy_init(&dev, &os_ops, &os_ctx, (uintptr_t)&io_region, VIRTIO_FALSE);
     virtio_pci_legacy_reset(&dev);
     virtio_pci_legacy_add_status(&dev, VIRTIO_STATUS_ACKNOWLEDGE);
     virtio_pci_legacy_add_status(&dev, VIRTIO_STATUS_DRIVER);
@@ -534,12 +539,171 @@ static void test_pci_legacy_integration(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static uint64_t vq_ptr_to_paddr(const virtqueue_split_t *vq, const void *ptr)
+{
+    const uint8_t *base;
+    const uint8_t *p;
+
+    assert(vq != NULL);
+    assert(vq->ring_dma.vaddr != NULL);
+    assert(ptr != NULL);
+
+    base = (const uint8_t *)vq->ring_dma.vaddr;
+    p = (const uint8_t *)ptr;
+    assert(p >= base);
+    assert((size_t)(p - base) < vq->ring_dma.size);
+    return vq->ring_dma.paddr + (uint64_t)(p - base);
+}
+
+static void test_pci_modern_integration(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    fake_pci_device_modern_t fake;
+    test_io_region_t cfg_region;
+    test_io_region_t bar_region;
+    virtio_pci_modern_device_t dev;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    uint16_t qsz;
+    uint64_t negotiated;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    fake_pci_device_modern_init(&fake, &os_ctx, 8, 3, 4);
+
+    cfg_region.kind = TEST_IO_REGION_MODERN_PCI_CFG;
+    cfg_region.dev = &fake;
+    bar_region.kind = TEST_IO_REGION_MODERN_BAR0_MMIO;
+    bar_region.dev = &fake;
+
+    assert(virtio_pci_modern_init(&dev, &os_ops, &os_ctx, (uintptr_t)&cfg_region, (uintptr_t)&bar_region) == VIRTIO_OK);
+
+    /* a) Capability parsing + contract v1 fixed layout. */
+    assert(dev.common_cfg.offset == 0x0000u);
+    assert(dev.common_cfg.length == 0x0100u);
+    assert(dev.notify_cfg.offset == 0x1000u);
+    assert(dev.notify_cfg.length == 0x0100u);
+    assert(dev.isr_cfg.offset == 0x2000u);
+    assert(dev.isr_cfg.length == 0x0020u);
+    assert(dev.device_cfg.offset == 0x3000u);
+    assert(dev.device_cfg.length == 0x0100u);
+    assert(dev.notify_off_multiplier == 4u);
+
+    /* b) 64-bit feature negotiation, requires VIRTIO_F_VERSION_1. */
+    assert(virtio_pci_modern_negotiate_features(&dev, 0, (uint64_t)VIRTIO_RING_F_INDIRECT_DESC, &negotiated) == VIRTIO_OK);
+    assert((negotiated & VIRTIO_F_VERSION_1) != 0);
+
+    /* Negative: device without VERSION_1 must be rejected. */
+    {
+        fake_pci_device_modern_t no_v1;
+        test_io_region_t no_v1_cfg;
+        test_io_region_t no_v1_bar;
+        virtio_pci_modern_device_t no_v1_dev;
+
+        fake_pci_device_modern_init(&no_v1, &os_ctx, 8, 3, 4);
+        no_v1.host_features &= ~VIRTIO_F_VERSION_1;
+
+        no_v1_cfg.kind = TEST_IO_REGION_MODERN_PCI_CFG;
+        no_v1_cfg.dev = &no_v1;
+        no_v1_bar.kind = TEST_IO_REGION_MODERN_BAR0_MMIO;
+        no_v1_bar.dev = &no_v1;
+
+        assert(virtio_pci_modern_init(&no_v1_dev, &os_ops, &os_ctx, (uintptr_t)&no_v1_cfg, (uintptr_t)&no_v1_bar) == VIRTIO_OK);
+        assert(virtio_pci_modern_negotiate_features(&no_v1_dev, 0, 0, NULL) != VIRTIO_OK);
+        virtio_pci_modern_uninit(&no_v1_dev);
+    }
+
+    qsz = virtio_pci_modern_get_queue_size(&dev, 0);
+    assert(qsz == 8);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, qsz, 4096, VIRTIO_FALSE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                qsz,
+                                4096,
+                                &ring,
+                                VIRTIO_FALSE,
+                                (negotiated & (uint64_t)VIRTIO_RING_F_INDIRECT_DESC) ? VIRTIO_TRUE : VIRTIO_FALSE,
+                                32) == VIRTIO_OK);
+
+    /* c) Queue programming uses common_cfg queue_desc/avail/used and enables the queue. */
+    {
+        uint64_t desc_pa;
+        uint64_t avail_pa;
+        uint64_t used_pa;
+
+        desc_pa = vq_ptr_to_paddr(&vq, vq.desc);
+        avail_pa = vq_ptr_to_paddr(&vq, vq.avail);
+        used_pa = vq_ptr_to_paddr(&vq, vq.used);
+
+        assert(virtio_pci_modern_setup_queue(&dev, 0, desc_pa, avail_pa, used_pa) == VIRTIO_OK);
+
+        assert(fake.queues[0].queue_desc == desc_pa);
+        assert(fake.queues[0].queue_avail == avail_pa);
+        assert(fake.queues[0].queue_used == used_pa);
+        assert(fake.queues[0].queue_enable == 1);
+    }
+
+    /* d/e) Notify + ISR semantics, queue completion publishes used entry. */
+    {
+        virtio_sg_entry_t sg[2];
+        uint16_t head;
+        void *cookie_in;
+        void *cookie_out;
+        uint32_t used_len;
+        uint8_t isr;
+        uint8_t isr2;
+        uint32_t expected_len;
+        uint32_t expected_notify_off;
+
+        sg[0].addr = 0x500000u;
+        sg[0].len = 16;
+        sg[0].device_writes = VIRTIO_FALSE;
+        sg[1].addr = 0x600000u;
+        sg[1].len = 1;
+        sg[1].device_writes = VIRTIO_TRUE;
+
+        expected_len = sg[0].len + sg[1].len;
+        cookie_in = (void *)(uintptr_t)0x2222u;
+        assert(virtqueue_split_add_sg(&vq, sg, 2, cookie_in, VIRTIO_FALSE, &head) == VIRTIO_OK);
+
+        if (virtqueue_split_kick_prepare(&vq) != VIRTIO_FALSE) {
+            virtio_pci_modern_notify_queue(&dev, 0);
+        }
+
+        expected_notify_off = 0x1000u + ((uint32_t)fake.queues[0].queue_notify_off * fake.notify_off_multiplier);
+        assert(fake.last_notify_offset == expected_notify_off);
+
+        isr = virtio_pci_modern_read_isr_status(&dev);
+        assert((isr & 0x1u) != 0);
+        isr2 = virtio_pci_modern_read_isr_status(&dev);
+        assert(isr2 == 0);
+
+        assert(vq.used->idx == 1);
+        assert(vq.used->ring[0].id == head);
+        assert(vq.used->ring[0].len == expected_len);
+
+        assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
+        assert(cookie_out == cookie_in);
+        assert(used_len == expected_len);
+    }
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+    virtio_pci_modern_uninit(&dev);
+}
+
 int main(void)
 {
     test_wraparound();
     test_indirect_descriptors();
     test_fuzz();
     test_pci_legacy_integration();
+    test_pci_modern_integration();
     printf("virtio_common_tests: PASS\n");
     return 0;
 }

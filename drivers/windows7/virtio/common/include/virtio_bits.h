@@ -40,6 +40,10 @@
 #define VIRTIO_RING_F_EVENT_IDX (1u << 29)
 #endif
 
+// Virtio 1.0+ "modern" transport feature bit (bit 32).
+// Required by Aero's contract v1 modern virtio-pci devices.
+#define VIRTIO_F_VERSION_1 (1ull << 32)
+
 // Common "legacy" feature bits (lower 32 bits).
 #define VIRTIO_F_NOTIFY_ON_EMPTY (1u << 24)
 #define VIRTIO_F_ANY_LAYOUT      (1u << 27)
