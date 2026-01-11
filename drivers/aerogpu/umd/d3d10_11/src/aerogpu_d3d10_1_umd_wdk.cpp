@@ -1183,6 +1183,9 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
 
   auto deallocate_buffers = [&](const D3DDDICB_ALLOCATE& alloc, void* dma_priv_ptr, size_t dma_priv_size) {
     D3DDDICB_DEALLOCATE dealloc = {};
+    __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+      dealloc.hContext = UintPtrToD3dHandle<decltype(dealloc.hContext)>(wddm_context);
+    }
     __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
       __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
         dealloc.pDmaBuffer = alloc.pDmaBuffer;
