@@ -37,7 +37,7 @@ cargo run --locked -p aero-l2-proxy
 # - Authentication (recommended for any internet-exposed deployment):
 #   - Same-origin browser sessions (recommended): AERO_L2_AUTH_MODE=cookie.
 #     The proxy must share the gateway session signing secret (`SESSION_SECRET`) via
-#     AERO_L2_SESSION_SECRET so it can verify the `aero_session` cookie.
+#     AERO_L2_SESSION_SECRET (or `SESSION_SECRET`) so it can verify the `aero_session` cookie.
 #   - Token auth (non-browser clients, cross-origin, etc.):
 #     - API key: AERO_L2_AUTH_MODE=api_key AERO_L2_API_KEY=sekrit
 #       (Legacy alias: AERO_L2_TOKEN=sekrit with AERO_L2_AUTH_MODE unset.)
@@ -226,7 +226,7 @@ clients can omit or forge `Origin`.
 - Set `AERO_L2_AUTH_MODE=cookie`.
 - Ensure the proxy shares the gateway session signing secret:
   - `SESSION_SECRET` (gateway), and
-  - `AERO_L2_SESSION_SECRET` (L2 proxy) must match.
+  - `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET`) on the L2 proxy must match.
 
 Single-origin flow:
 

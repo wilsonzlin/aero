@@ -177,7 +177,7 @@ supports multiple auth modes via `AERO_L2_AUTH_MODE`:
 
 - `cookie` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
   by `POST /session`. The proxy must share the gateway session signing secret (`SESSION_SECRET`) via
-  `AERO_L2_SESSION_SECRET` so it can verify the cookie.
+  `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET`) so it can verify the cookie.
 - `api_key` / `jwt` / `cookie_or_jwt`: useful for cross-origin deployments and non-browser/internal
   clients. Credentials can be delivered via:
   - query param: `?token=...` (or `?apiKey=...` for API-key auth), or
