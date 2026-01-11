@@ -43,12 +43,19 @@ pub use rom::build_bios_rom;
 
 pub use aero_acpi::AcpiPlacement;
 
+/// Base address of the system BIOS ROM in the 20-bit real-mode memory window.
 pub const BIOS_BASE: u64 = 0x000F_0000;
+/// Reset-vector alias of the BIOS ROM at the top of the 32-bit physical address space.
 pub const BIOS_ALIAS_BASE: u64 = 0xFFFF_0000;
+/// Size of the system BIOS ROM mapping (64 KiB).
 pub const BIOS_SIZE: usize = 0x10000; // 64KiB
+/// Real-mode segment for the system BIOS ROM mapping.
 pub const BIOS_SEGMENT: u16 = 0xF000;
+/// Offset of the x86 reset vector within the BIOS ROM segment (`F000:FFF0`).
 pub const RESET_VECTOR_OFFSET: u64 = 0xFFF0;
+/// Conventional reset vector physical address when the BIOS is mapped at [`BIOS_BASE`].
 pub const RESET_VECTOR_PHYS: u64 = BIOS_BASE + RESET_VECTOR_OFFSET;
+/// Architectural reset vector physical address when the BIOS ROM is aliased at [`BIOS_ALIAS_BASE`].
 pub const RESET_VECTOR_ALIAS_PHYS: u64 = BIOS_ALIAS_BASE + RESET_VECTOR_OFFSET;
 
 pub const IVT_BASE: u64 = 0x0000_0000;

@@ -46,7 +46,7 @@ fn set_real_mode_seg(seg: &mut CoreSegment, selector: u16) {
 
 fn core_reset_state() -> CoreCpuState {
     let mut state = CoreCpuState::new(CoreCpuMode::Real);
-    // Hardware reset: CS.selector=0xF000, CS.base=0xFFFF_0000, IP=0xFFF0.
+    // Hardware reset: CS:IP = F000:FFF0 (physical 0xFFFF_FFF0 via the BIOS alias mapping).
     state.segments.cs.selector = BIOS_SEGMENT;
     state.segments.cs.base = BIOS_ALIAS_BASE;
     state.segments.cs.limit = 0xFFFF;

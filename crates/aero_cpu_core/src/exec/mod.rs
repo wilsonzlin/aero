@@ -289,9 +289,6 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     // Preserve basic-block behavior: treat this instruction as a block boundary.
                     break;
                 }
-                StepExit::BiosInterrupt(vector) => {
-                    panic!("unexpected tier0 BIOS interrupt: {vector:#x}");
-                }
                 StepExit::Assist(other) => panic!("unexpected tier0 assist: {other:?}"),
             }
         }
