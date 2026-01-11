@@ -26,7 +26,14 @@ describe("IdbRemoteChunkCache", () => {
   it("puts and gets chunks", async () => {
     const cache = await IdbRemoteChunkCache.open({
       cacheKey: "k",
-      signature: { imageId: "img", version: "v1", etag: "e1", sizeBytes: 4 * CHUNK_SIZE, chunkSize: CHUNK_SIZE },
+      signature: {
+        imageId: "img",
+        version: "v1",
+        etag: "e1",
+        lastModified: null,
+        sizeBytes: 4 * CHUNK_SIZE,
+        chunkSize: CHUNK_SIZE,
+      },
       cacheLimitBytes: null,
     });
 
@@ -48,7 +55,14 @@ describe("IdbRemoteChunkCache", () => {
     const limit = 2 * CHUNK_SIZE;
     const cache = await IdbRemoteChunkCache.open({
       cacheKey: "k",
-      signature: { imageId: "img", version: "v1", etag: "e1", sizeBytes: 16 * CHUNK_SIZE, chunkSize: CHUNK_SIZE },
+      signature: {
+        imageId: "img",
+        version: "v1",
+        etag: "e1",
+        lastModified: null,
+        sizeBytes: 16 * CHUNK_SIZE,
+        chunkSize: CHUNK_SIZE,
+      },
       cacheLimitBytes: limit,
     });
 
@@ -71,8 +85,22 @@ describe("IdbRemoteChunkCache", () => {
   });
 
   it("invalidates cached chunks when the signature changes", async () => {
-    const sig1 = { imageId: "img", version: "v1", etag: "e1", sizeBytes: 4 * CHUNK_SIZE, chunkSize: CHUNK_SIZE };
-    const sig2 = { imageId: "img", version: "v1", etag: "e2", sizeBytes: 4 * CHUNK_SIZE, chunkSize: CHUNK_SIZE };
+    const sig1 = {
+      imageId: "img",
+      version: "v1",
+      etag: "e1",
+      lastModified: null,
+      sizeBytes: 4 * CHUNK_SIZE,
+      chunkSize: CHUNK_SIZE,
+    };
+    const sig2 = {
+      imageId: "img",
+      version: "v1",
+      etag: "e2",
+      lastModified: null,
+      sizeBytes: 4 * CHUNK_SIZE,
+      chunkSize: CHUNK_SIZE,
+    };
 
     const cache1 = await IdbRemoteChunkCache.open({ cacheKey: "k", signature: sig1 });
     await cache1.put(0, makeChunk(0xaa));
@@ -85,4 +113,3 @@ describe("IdbRemoteChunkCache", () => {
     cache2.close();
   });
 });
-

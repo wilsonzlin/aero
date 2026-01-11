@@ -804,17 +804,18 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       );
     } else if (resolved.cacheBackend === "idb" && typeof indexedDB !== "undefined") {
       const cacheKey = await RemoteCacheManager.deriveCacheKey(cacheKeyParts);
-      const idbCache = await IdbRemoteChunkCache.open({
-        cacheKey,
-        signature: {
-          imageId: cacheKeyParts.imageId,
-          version: cacheKeyParts.version,
-          etag: resp.headers.get("etag"),
-          sizeBytes: manifest.totalSize,
-          chunkSize: manifest.chunkSize,
-        },
-        cacheLimitBytes: resolved.cacheLimitBytes,
-      });
+       const idbCache = await IdbRemoteChunkCache.open({
+         cacheKey,
+         signature: {
+           imageId: cacheKeyParts.imageId,
+           version: cacheKeyParts.version,
+           etag: resp.headers.get("etag"),
+           lastModified: resp.headers.get("last-modified"),
+           sizeBytes: manifest.totalSize,
+           chunkSize: manifest.chunkSize,
+         },
+         cacheLimitBytes: resolved.cacheLimitBytes,
+       });
       const status = await idbCache.getStatus();
       cache = new IdbChunkCache(idbCache, manifest, status);
     } else {

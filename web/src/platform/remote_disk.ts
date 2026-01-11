@@ -489,6 +489,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
           imageId: parts.imageId,
           version: parts.version,
           etag: resolvedEtag,
+          lastModified: probe.lastModified,
           sizeBytes: probe.size,
           chunkSize: resolved.blockSize,
         },

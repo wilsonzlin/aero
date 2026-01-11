@@ -4,6 +4,7 @@ export type RemoteChunkCacheSignature = {
   imageId: string;
   version: string;
   etag: string | null;
+  lastModified: string | null;
   sizeBytes: number;
   chunkSize: number;
 };
@@ -13,6 +14,7 @@ type RemoteChunkCacheMetaRecord = {
   imageId: string;
   version: string;
   etag: string | null;
+  lastModified: string | null;
   sizeBytes: number;
   chunkSize: number;
   bytesUsed: number;
@@ -55,6 +57,7 @@ function signatureMatches(
     meta.imageId === expected.imageId &&
     meta.version === expected.version &&
     meta.etag === expected.etag &&
+    (meta.lastModified ?? null) === expected.lastModified &&
     meta.sizeBytes === expected.sizeBytes &&
     meta.chunkSize === expected.chunkSize
   );
@@ -319,6 +322,7 @@ export class IdbRemoteChunkCache {
       imageId: this.signature.imageId,
       version: this.signature.version,
       etag: this.signature.etag,
+      lastModified: this.signature.lastModified,
       sizeBytes: this.signature.sizeBytes,
       chunkSize: this.signature.chunkSize,
       bytesUsed: 0,
@@ -338,6 +342,7 @@ export class IdbRemoteChunkCache {
       imageId: this.signature.imageId,
       version: this.signature.version,
       etag: this.signature.etag,
+      lastModified: this.signature.lastModified,
       sizeBytes: this.signature.sizeBytes,
       chunkSize: this.signature.chunkSize,
       bytesUsed: 0,
