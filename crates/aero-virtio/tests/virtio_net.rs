@@ -174,6 +174,15 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
             | VIRTIO_STATUS_DRIVER_OK,
     );
 
+    // Contract v1 config layout: mac + status + max_virtqueue_pairs.
+    let mut cfg = [0u8; 10];
+    dev.bar0_read(caps.device, &mut cfg);
+    assert_eq!(&cfg[0..6], &[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    let link_status = u16::from_le_bytes(cfg[6..8].try_into().unwrap());
+    assert_ne!(link_status & 1, 0);
+    let max_pairs = u16::from_le_bytes(cfg[8..10].try_into().unwrap());
+    assert_eq!(max_pairs, 1);
+
     // Configure RX queue 0.
     let rx_desc = 0x1000;
     let rx_avail = 0x2000;
@@ -297,5 +306,123 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     assert_eq!(
         mem.get_slice(rx_payload_addr, rx_packet.len()).unwrap(),
         rx_packet.as_slice()
+    );
+}
+
+#[test]
+fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
+    let backing = Rc::new(RefCell::new(LoopbackNet::default()));
+    let backend = SharedNet(backing.clone());
+
+    let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
+    let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure RX queue 0.
+    let rx_desc = 0x1000;
+    let rx_avail = 0x2000;
+    let rx_used = 0x3000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, rx_desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, rx_avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, rx_used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // Post an RX buffer that is large enough for small frames but not for a 60-byte frame.
+    let rx_hdr_addr = 0x4000;
+    let rx_payload_addr = 0x4100;
+    mem.write(rx_hdr_addr, &vec![0xaa; VirtioNetHdr::BASE_LEN])
+        .unwrap();
+    mem.write(rx_payload_addr, &vec![0xbb; 32]).unwrap();
+
+    write_desc(
+        &mut mem,
+        rx_desc,
+        0,
+        rx_hdr_addr,
+        VirtioNetHdr::BASE_LEN as u32,
+        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+        1,
+    );
+    write_desc(
+        &mut mem,
+        rx_desc,
+        1,
+        rx_payload_addr,
+        32,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    write_u16_le(&mut mem, rx_avail, 0).unwrap();
+    write_u16_le(&mut mem, rx_avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, rx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, rx_used, 0).unwrap();
+    write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + 0 * u64::from(caps.notify_mult),
+        &0u16.to_le_bytes(),
+        &mut mem,
+    );
+
+    // Provide a 60-byte frame. The device must drop it and must NOT consume the chain.
+    backing.borrow_mut().rx_packets.push(vec![0u8; 60]);
+    dev.poll(&mut mem);
+    assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 0);
+
+    // Provide a minimal 14-byte Ethernet frame; it should now be delivered using the same chain.
+    let small_frame = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x01\x02\x03\x04\x05\x08\x00".to_vec();
+    backing.borrow_mut().rx_packets.push(small_frame.clone());
+    dev.poll(&mut mem);
+    assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 1);
+    assert_eq!(
+        read_u32_le(&mem, rx_used + 8).unwrap(),
+        (VirtioNetHdr::BASE_LEN + small_frame.len()) as u32
+    );
+    assert_eq!(
+        mem.get_slice(rx_payload_addr, small_frame.len()).unwrap(),
+        small_frame.as_slice()
     );
 }
