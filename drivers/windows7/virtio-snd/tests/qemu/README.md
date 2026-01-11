@@ -12,7 +12,7 @@ What this test plan verifies:
 4. Audio playback works (audible on the host, or captured to a WAV file in headless runs)
 5. (Optional) The Windows audio stack enumerates a **capture** endpoint (Control Panel → Sound → Recording)
 6. (Optional) Audio capture works (records host input if available, otherwise records silence)
-7. The guest audio smoke test passes (selftest **Task 128**)
+7. The **virtio-snd** portion of the guest audio smoke test passes (selftest **Task 128**)
 
 References:
 
@@ -212,6 +212,10 @@ Task 128 added a **virtio-snd** render smoke test to the Windows 7 guest selftes
 
 - `drivers/windows7/tests/guest-selftest/` → `aero-virtio-selftest.exe`
 
+Important: `aero-virtio-selftest.exe` is a **multi-driver** selftest (virtio-blk/input/net/snd). If you run it
+in a VM that only has virtio-snd attached, you may see `FAIL` for the other drivers. For this virtio-snd test
+plan, focus on the `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|...` marker line.
+
 The selftest logs to:
 
 - stdout
@@ -227,17 +231,23 @@ The selftest logs to:
    ```
 2. Run it (elevated CMD recommended):
    ```bat
-   C:\AeroTests\aero-virtio-selftest.exe
+   C:\AeroTests\aero-virtio-selftest.exe --test-snd
    ```
 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
-   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...` (if the test was disabled via `--disable-snd`)
-   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=<...>|hr=0x........`
+   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`
+   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing` (virtio-snd PCI function not detected)
+   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` (you forgot `--test-snd`)
+   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` (the test was disabled via `--disable-snd`)
+
+If WASAPI fails, the tool logs a line like:
+
+`virtio-snd: WASAPI failed reason=<reason> hr=0x........`
 
 Common `reason=` values include:
 
-- `no_matching_endpoint` (Windows has no ACTIVE render endpoint that looks like virtio/Aero)
-- `initialize_shared_failed` / `unsupported_stream_format` (WASAPI init/format mismatch)
+- `no_default_endpoint` (no default render endpoint available)
+- `initialize_shared_failed` / `unsupported_stream_format`
 
 If QEMU is using the `wav` audiodev backend, successful playback should also produce a non-empty
 `.wav` file on the host.
