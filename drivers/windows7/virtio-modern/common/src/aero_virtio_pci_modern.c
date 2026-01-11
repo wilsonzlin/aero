@@ -494,6 +494,13 @@ void AeroVirtioNotifyQueue(AERO_VIRTIO_PCI_MODERN_DEVICE *device, USHORT queue_i
     }
 
     addr = device->NotifyBase + (ULONG)offset;
+
+    /*
+     * Ensure all prior ring writes (descriptor/ring index updates) are visible
+     * before ringing the doorbell. See docs/virtio/virtqueue-split-ring-win7.md
+     * (§5.1/§5.2) for the publish/notify ordering requirement.
+     */
+    AV_BARRIER();
     AV_WRITE16((volatile void *)addr, queue_index);
     AV_BARRIER();
 }
