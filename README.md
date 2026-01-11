@@ -304,6 +304,7 @@ The proxy exposes:
 
 - `GET /healthz`
 - `WS /tcp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — compatible with the gateway `/tcp` URL format.
+- `WS /tcp-mux` (subprotocol `aero-tcp-mux-v1`) — multiplexed TCP over a single WebSocket (framing spec in [`docs/backend/01-aero-gateway-api.md`](./docs/backend/01-aero-gateway-api.md)).
 - `WS /udp` — **multiplexed** UDP relay datagrams (v1/v2 framing per [`proxy/webrtc-udp-relay/PROTOCOL.md`](./proxy/webrtc-udp-relay/PROTOCOL.md)). This is the mode used by the browser `WebSocketUdpProxyClient`.
 - `WS /udp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — **legacy per-target** UDP relay (one destination per WebSocket; raw UDP payload bytes).
 
