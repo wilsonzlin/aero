@@ -197,6 +197,34 @@ Mitigations:
 
   Note: this intentionally overrides any existing `CARGO_HOME` so the isolation
   actually takes effect.
+### Cargo says "Blocking waiting for file lock on build directory"
+
+If `cargo` prints:
+
+```
+Blocking waiting for file lock on build directory
+```
+
+it means **another Cargo process is currently using this checkout's build output directory** (typically `target/`).
+This is different from the package cache lock above (which is about `CARGO_HOME` / registry state shared across
+agents).
+
+Common causes:
+
+- You started two `cargo` commands in parallel in the same checkout.
+- An IDE/background task is running `cargo check` continuously.
+- A previous `cargo` invocation is still running (or got stuck) in this repo.
+
+Mitigations:
+
+- **Wait** for the other build to finish (best default).
+- If you need to run multiple builds concurrently, use a **separate `CARGO_TARGET_DIR`** per command:
+
+  ```bash
+  CARGO_TARGET_DIR="$PWD/target-alt" cargo test --locked -p <crate>
+  ```
+
+  (This uses more disk space, but avoids the lock contention.)
 
 ### Build is very slow
 
