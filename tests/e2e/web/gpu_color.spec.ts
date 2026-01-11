@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { isWebGPURequired } from "../util/env";
+
 // GPU color management validation:
 // - WebGPU and raw WebGL2 presenter paths must produce identical output for the same policy.
 // - This catches accidental double-gamma, wrong alphaMode, and Y-flip mismatches.
@@ -15,10 +17,6 @@ async function renderHash(page: any, opts: any): Promise<string> {
     const mod = await import("/web/src/gpu/validation-scene.ts");
     return await mod.renderGpuColorTestCardAndHash(canvas, opts);
   }, opts);
-}
-
-function isWebGPURequired() {
-  return process.env.AERO_REQUIRE_WEBGPU === "1";
 }
 
 async function webGpuIsUsable(page: any): Promise<boolean> {

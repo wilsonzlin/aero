@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { test, type Page } from '@playwright/test';
 
+import { isWebGPURequired } from '../util/env';
 import { expectRgbaToMatchGolden, type RgbaImage } from './utils/image_diff';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -17,10 +18,6 @@ const GOLDEN_GPU_TRACE_TRIANGLE_RED = 'gpu_trace_triangle_red_64';
 
 function base64ToBuffer(base64: string): Buffer {
   return Buffer.from(base64, 'base64');
-}
-
-function isWebGPURequired() {
-  return process.env.AERO_REQUIRE_WEBGPU === '1';
 }
 
 function browserUint8ToBase64Source(): string {

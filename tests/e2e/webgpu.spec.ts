@@ -3,10 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 
 import { runWebGpuScenario } from '../../bench/scenarios/webgpu';
-
-function isWebGPURequired() {
-  return process.env.AERO_REQUIRE_WEBGPU === '1';
-}
+import { isWebGPURequired } from './util/env';
 
 async function ensureNavigatorGpu(page: Page) {
   const hasNavigatorGpu = await page.evaluate(() => !!navigator.gpu);

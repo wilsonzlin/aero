@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { isWebGPURequired } from '../util/env';
+
 type SampleResult = {
   backend: string;
   width: number;
@@ -36,10 +38,6 @@ function expectPattern(samples: SampleResult) {
   expect(samples.topRight).toEqual([0, 255, 0, 255]);
   expect(samples.bottomLeft).toEqual([0, 0, 255, 255]);
   expect(samples.bottomRight).toEqual([255, 255, 255, 255]);
-}
-
-function isWebGPURequired() {
-  return process.env.AERO_REQUIRE_WEBGPU === '1';
 }
 
 test('GPU worker: WebGPU path renders expected pattern when available @webgpu', async ({ page, browserName }) => {

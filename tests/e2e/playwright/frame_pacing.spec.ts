@@ -2,6 +2,8 @@ import { test, expect } from "@playwright/test";
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 
+import { isWebGPURequired } from "../util/env";
+
 let bundledApp = "";
 
 async function buildBrowserBundle(): Promise<string> {
@@ -29,10 +31,6 @@ async function getJsHeapUsedSizeBytes(cdp: any) {
   const metrics = Array.isArray(result?.metrics) ? result.metrics : [];
   const used = metrics.find((metric: { name: string }) => metric.name === "JSHeapUsedSize")?.value;
   return typeof used === "number" ? used : 0;
-}
-
-function isWebGPURequired() {
-  return process.env.AERO_REQUIRE_WEBGPU === "1";
 }
 
 test.beforeAll(async () => {

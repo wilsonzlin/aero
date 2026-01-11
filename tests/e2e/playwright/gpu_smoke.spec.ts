@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { isWebGPURequired } from '../util/env';
+
 const DEV_SERVER = 'http://127.0.0.1:5173';
 const GPU_SMOKE_URL = `${DEV_SERVER}/web/src/pages/gpu_smoke.html`;
 
@@ -9,10 +11,6 @@ const EXPECTED_TEST_PATTERN_SHA256 =
 async function waitForGpuSmokeResult(page) {
   await page.waitForFunction(() => (window as any).__gpuSmokeResult?.done === true);
   return page.evaluate(() => (window as any).__gpuSmokeResult);
-}
-
-function isWebGPURequired() {
-  return process.env.AERO_REQUIRE_WEBGPU === '1';
 }
 
 test('forced WebGL2 fallback renders expected test pattern', async ({ page }) => {
