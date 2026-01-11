@@ -1939,6 +1939,115 @@ bool TestPresentSplitsRenderAndPresentSubmissions() {
   return Check(present_fence == base_fence + 2, "present fence corresponds to second submission");
 }
 
+bool TestFlushNoopsOnEmptyCommandBuffer() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnFlush != nullptr, "Flush must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnClear != nullptr, "Clear must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
+  if (!Check(dev != nullptr && adapter != nullptr, "device/adapter pointers")) {
+    return false;
+  }
+
+  uint64_t base_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    base_fence = adapter->last_submitted_fence;
+  }
+
+  hr = cleanup.device_funcs.pfnFlush(create_dev.hDevice);
+  if (!Check(hr == S_OK, "Flush(empty)")) {
+    return false;
+  }
+
+  uint64_t after_empty_flush = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    after_empty_flush = adapter->last_submitted_fence;
+  }
+  if (!Check(after_empty_flush == base_fence, "Flush(empty) does not submit")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
+                                     /*flags=*/0,
+                                     /*color_rgba8=*/0,
+                                     /*depth=*/1.0f,
+                                     /*stencil=*/0);
+  if (!Check(hr == S_OK, "Clear")) {
+    return false;
+  }
+
+  bool has_pending_render = false;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    has_pending_render = !dev->cmd.empty();
+  }
+  if (!Check(has_pending_render, "Clear emits pending render work")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnFlush(create_dev.hDevice);
+  if (!Check(hr == S_OK, "Flush(non-empty)")) {
+    return false;
+  }
+
+  uint64_t after_flush = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    after_flush = adapter->last_submitted_fence;
+  }
+  return Check(after_flush == base_fence + 1, "Flush submits once when command buffer is non-empty");
+}
+
 bool TestGetDisplayModeExReturnsPrimaryMode() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -5004,6 +5113,7 @@ int main() {
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
   failures += !aerogpu::TestPresentExSplitsRenderAndPresentSubmissions();
   failures += !aerogpu::TestPresentSplitsRenderAndPresentSubmissions();
+  failures += !aerogpu::TestFlushNoopsOnEmptyCommandBuffer();
   failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
