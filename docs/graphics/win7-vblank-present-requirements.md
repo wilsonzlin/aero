@@ -284,6 +284,8 @@ These tests fail on “totally broken” pacing patterns such as:
 * **immediate returns** (avg < ~2 ms), suggesting the wait is not actually blocking on vblank, or
 * **multi-hundred-ms gaps/timeouts**, suggesting missing vblank interrupts or a stalled interrupt/DPC path.
 
+Tip: when debugging a suspected “missing vblank interrupt” hang, prefer a fail-fast timeout (e.g. `wait_vblank_pacing --wait-timeout-ms=2000`) so you get a clear failure rather than waiting for the suite-level process timeout.
+
 ### ETW/GPUView (deeper, for root-cause)
 
 If you need to distinguish “vblank not firing” vs “presents not completing” vs “scheduler stalls”, collect a GPUView-compatible ETW trace with at least:
