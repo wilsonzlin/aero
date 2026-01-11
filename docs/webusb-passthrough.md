@@ -18,13 +18,17 @@ Implementation references (current repo):
 - Rust wire contract + action/completion queue (`UsbPassthroughDevice`): `crates/aero-usb/src/passthrough.rs`
 - Rust guest-visible UHCI controller + TD handshake mapping: `crates/aero-usb/src/uhci.rs`
 - WASM export bridge (`UsbPassthroughBridge`): `crates/aero-wasm/src/lib.rs`
+- WASM UHCI enumeration harness (dev smoke; `WebUsbUhciPassthroughHarness`): `crates/aero-wasm/src/webusb_uhci_passthrough_harness.rs`
 - TS canonical wire types (`SetupPacket`/`UsbHostAction`/`UsbHostCompletion`): `web/src/usb/usb_passthrough_types.ts`
 - TS WebUSB backend/executor (`WebUsbBackend`): `web/src/usb/webusb_backend.ts` (+ `web/src/usb/webusb_executor.ts`)
 - TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`)
 - TS worker-side passthrough runtime (action/completion pump): `web/src/usb/webusb_passthrough_runtime.ts`
+- TS worker-side UHCI harness runner (dev smoke): `web/src/usb/webusb_harness_runtime.ts`
 - TS UI harness panels:
   - WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts`
   - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
+  - WebUSB UHCI harness panel (main thread): `web/src/usb/webusb_uhci_harness_panel.ts`
+  - WebUSB UHCI harness panel (I/O worker): `web/src/main.ts` (`renderWebUsbUhciHarnessWorkerPanel`)
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
 - (Repo-root WebUSB demo broker/client RPC; not the passthrough wire contract): `src/platform/webusb_{broker,client,protocol}.ts`
 
