@@ -172,13 +172,23 @@ def main() -> int:
         thread = Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
 
+        # Aero contract v1 encodes the major version in the PCI Revision ID (= 0x01).
+        #
+        # QEMU virtio devices historically report PCI Revision ID 0x00 ("REV_00") even when
+        # using modern-only virtio-pci (disable-legacy=on). Strict contract drivers will
+        # refuse to bind unless we override the revision ID.
+        #
+        # QEMU supports overriding PCI revision via the x-pci-revision property.
+        aero_pci_rev = "0x01"
         drive_id = "drive0"
         drive = f"file={disk_image},if=none,id={drive_id},cache=writeback"
         if args.snapshot:
             drive += ",snapshot=on"
 
-        virtio_net = "virtio-net-pci,netdev=net0,disable-legacy=on"
-        virtio_blk = f"virtio-blk-pci,drive={drive_id},disable-legacy=on"
+        virtio_net = f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}"
+        virtio_blk = f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}"
+        virtio_kbd = f"virtio-keyboard-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
+        virtio_mouse = f"virtio-mouse-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
 
         virtio_snd_args: list[str] = []
         if args.enable_virtio_snd:
@@ -222,9 +232,9 @@ def main() -> int:
             "-device",
             virtio_net,
             "-device",
-            "virtio-keyboard-pci",
+            virtio_kbd,
             "-device",
-            "virtio-mouse-pci",
+            virtio_mouse,
             "-drive",
             drive,
             "-device",
@@ -341,6 +351,13 @@ def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
     device = f"{device_name},audiodev=snd0"
     if "disable-legacy" in out:
         device += ",disable-legacy=on"
+    if "x-pci-revision" in out:
+        device += ",x-pci-revision=0x01"
+    else:
+        raise RuntimeError(
+            f"virtio-snd device '{device_name}' does not support x-pci-revision (required for Aero contract v1). "
+            "Upgrade QEMU or omit --with-virtio-snd/--enable-virtio-snd and pass custom QEMU args."
+        )
     return device
 
 

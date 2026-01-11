@@ -79,6 +79,8 @@ Write-Host "5) Reboot. Then run Invoke-AeroVirtioWin7Tests.ps1 on the host to ge
 Write-Host ""
 
 # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042) per AERO-W7-VIRTIO v1.
+# The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
+# drivers bind under QEMU.
 $diskDriveId = "drive0"
 $diskDrive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $diskDriveId
 $diskDevice = New-AeroWin7VirtioBlkDeviceArg -DriveId $diskDriveId

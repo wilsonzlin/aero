@@ -19,6 +19,7 @@ Hardware ID (HWID) references are documented in:
 ## Prerequisites
 
 - QEMU new enough to provide `virtio-keyboard-pci` and `virtio-mouse-pci` devices.
+  - For Aero contract v1 driver testing (Revision ID enforcement), QEMU must support `x-pci-revision=0x01`.
 - A Windows 7 SP1 VM disk image (x86 or x64).
 - The virtio-input HID driver package built for the target architecture, including an INF under:
   - `drivers/windows7/virtio-input/inf/`
@@ -74,6 +75,19 @@ QEMU’s virtio-input PCI devices currently enumerate as **modern/non-transition
 -device virtio-mouse-pci,disable-legacy=on
 ```
 
+### Aero contract v1: PCI Revision ID (`REV_01`)
+
+The Aero Windows 7 virtio device contract encodes the **contract major version** in the PCI
+Revision ID (contract v1 = `0x01`).
+
+Some QEMU virtio devices report `REV_00` by default. If you are testing drivers that enforce
+the Aero contract Revision ID, pass `x-pci-revision=0x01`:
+
+```bash
+-device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01 \
+-device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01
+```
+
 If you encounter `DEV_1011` in the field (e.g. a different hypervisor or a future
 QEMU variant that provides a transitional virtio-input PCI function), the INF is
 expected to match it.
@@ -108,7 +122,7 @@ Expected values include at least one of:
 
 The list will also include more specific forms, e.g.:
 
-- `PCI\VEN_1AF4&DEV_1052&SUBSYS_11001AF4&REV_00`
+- `PCI\VEN_1AF4&DEV_1052&SUBSYS_11001AF4&REV_01` (when using `x-pci-revision=0x01`)
 
 The INF should match the shorter `VEN/DEV` form.
 

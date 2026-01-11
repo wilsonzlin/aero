@@ -73,3 +73,6 @@ Keyboard: PCI device 1af4:1052
   `SUBSYS_...` and `REV_...`). The INF should match at least the short form
   `PCI\VEN_1AF4&DEV_1052` (and optionally `...DEV_1011` for transitional
   implementations).
+* Aero’s Win7 virtio contract encodes the contract major version in the PCI Revision
+  ID (contract v1 = `REV_01`). Some QEMU virtio devices report `REV_00` by default;
+  for contract testing, use `x-pci-revision=0x01` on the QEMU `-device ...` args.

@@ -5,6 +5,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
 ## Prerequisites
 
 - QEMU (`qemu-system-x86_64` and optionally `qemu-img`)
+  - Must support `disable-legacy=on` for modern-only virtio-pci devices
+  - Must support `x-pci-revision=0x01` so devices match the Aero contract v1 revision
 - PowerShell:
   - Windows PowerShell 5.1 or PowerShell 7+ should work
 - A **prepared Windows 7 image** that:
@@ -159,15 +161,23 @@ On completion, the workflow uploads the serial log and harness output as the `wi
   - QEMU slirp/user networking exposes host as `10.0.2.2` inside the guest, so the guest can HTTP GET `http://10.0.2.2:<HttpPort>/aero-virtio-selftest`.
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
-  - `virtio-net-pci,disable-legacy=on` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041`)
-  - `virtio-keyboard-pci` + `virtio-mouse-pci` (virtio-input)
-  - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042`)
-  - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set
+  - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041`)
+  - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input)
+  - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042`)
+  - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (adds `disable-legacy=on` and `x-pci-revision=0x01` when supported)
 - Watches the serial log for:
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS`
   - `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
 
-The harness sets `disable-legacy=on` for virtio-net/virtio-blk (and virtio-snd when supported) so QEMU does **not** expose
+### Why `x-pci-revision=0x01`?
+
+The Aero Windows 7 virtio device contract encodes the **contract major version** in the PCI
+Revision ID (contract v1 = `0x01`).
+
+Some QEMU virtio device types report `REV_00` by default. Once the Aero drivers enforce the
+contract Revision ID, they will refuse to bind unless QEMU is told to advertise `REV_01`.
+
+The harness also sets `disable-legacy=on` for virtio-net/virtio-blk (and virtio-snd when supported) so QEMU does **not** expose
 the legacy I/O-port transport (transitional devices enumerate as `DEV_1000/DEV_1001`). This matches
 [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO` v1),
 which is modern-only.

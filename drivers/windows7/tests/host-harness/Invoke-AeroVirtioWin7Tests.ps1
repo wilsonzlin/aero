@@ -246,6 +246,11 @@ function Get-AeroVirtioSoundDeviceArg {
   if ($helpText -match "disable-legacy") {
     $device += ",disable-legacy=on"
   }
+  if ($helpText -match "x-pci-revision") {
+    $device += ",x-pci-revision=0x01"
+  } else {
+    throw "virtio-snd device '$deviceName' does not support x-pci-revision (required for Aero contract v1). Upgrade QEMU or omit -WithVirtioSnd."
+  }
   return $device
 }
 
@@ -269,10 +274,15 @@ try {
   $serialChardev = "file,id=charserial0,path=$SerialLogPath"
   $netdev = "user,id=net0"
   # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042) per AERO-W7-VIRTIO v1.
+  # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
+  # drivers bind under QEMU.
   $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0"
   $driveId = "drive0"
   $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
   $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId
+
+  $kbd = "virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01"
+  $mouse = "virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01"
 
   $virtioSndArgs = @()
   if ($WithVirtioSnd) {
@@ -323,8 +333,8 @@ try {
     "-serial", "chardev:charserial0",
     "-netdev", $netdev,
     "-device", $nic,
-    "-device", "virtio-keyboard-pci",
-    "-device", "virtio-mouse-pci",
+    "-device", $kbd,
+    "-device", $mouse,
     "-drive", $drive,
     "-device", $blk
   ) + $virtioSndArgs + $QemuExtraArgs
