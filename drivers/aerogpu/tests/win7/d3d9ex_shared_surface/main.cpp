@@ -769,10 +769,12 @@ static int RunChild(int argc,
                                dev.get(),
                                surface.get());
     if (rc != 0) {
-      return rc;
+      // Still signal done_event so the parent can proceed to collect the child's exit code.
+      goto cleanup;
     }
   }
 
+cleanup:
   if (open_handle && open_handle != shared_handle && IsLikelyNtHandle(open_handle)) {
     CloseHandle(open_handle);
   }
@@ -790,8 +792,10 @@ static int RunChild(int argc,
     CloseHandle(ready_event);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  if (rc == 0) {
+    aerogpu_test::PrintfStdout("PASS: %s", kTestName);
+  }
+  return rc;
 }
 
 static int RunParent(int argc,

@@ -13,7 +13,7 @@ The suite also includes an optional `aerogpu_timeout_runner.exe` helper (built b
 Common flags:
 
   * `--dump` – write a `*.bmp` next to the executable.
-  * `--hidden` – for the windowed triangle tests: create the window but do not show it (useful for automation).
+  * `--hidden` – hide windows for tests that create windows (useful for automation).
   * `--show` – show the window for tests that support it (e.g. `d3d9ex_event_query`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`; overrides `--hidden`).
   * `--validate-sharing` – for `d3d9ex_shared_surface`: kept for backwards compatibility (pixel sharing is validated by default; `--dump` always validates).
   * `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
