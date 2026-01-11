@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 test("snapshot panel: Save → Load (OPFS streaming, demo VM worker)", async ({ page }) => {
-  await page.goto("/", { waitUntil: "load" });
+  // The snapshot demo panel lives on the `/web/` capabilities page (served under
+  // the repo-root Vite harness during Playwright runs).
+  await page.goto("/web/", { waitUntil: "load" });
 
   // The snapshot UI is part of the main capabilities page.
   const panel = page.locator(".panel", {
