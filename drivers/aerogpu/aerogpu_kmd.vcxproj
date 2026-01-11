@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{C6CFA8E8-9A28-4DB3-8F4D-5B7A5D9E4C18}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>aerogpu_kmd</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>WDM</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>WDM</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)kmd\include;$(ProjectDir)protocol;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>dxgkrnl.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <PropertyGroup>
+    <TargetName>aerogpu</TargetName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ClCompile Include="kmd\src\aerogpu_kmd.c" />
+    <ClInclude Include="kmd\include\aerogpu_kmd.h" />
+    <ClInclude Include="kmd\include\aerogpu_log.h" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Platform)'=='x64'">
+    <Wow64UmdProjects Include="$(ProjectDir)umd\d3d9\aerogpu_d3d9_umd.vcxproj" />
+    <Wow64UmdProjects Include="$(ProjectDir)umd\d3d10_11\aerogpu_d3d10_11.vcxproj" />
+  </ItemGroup>
+
+  <!--
+    Win7 x64 driver packages must include the 32-bit WoW64 UMD DLLs (SysWOW64) in addition to
+    the native 64-bit DLLs (System32). CI stages the x64 package from the x64 build output
+    directory only, so build the Win32 UMDs into $(OutDir) as part of the x64 solution build.
+  -->
+  <Target Name="BuildWow64Umd" AfterTargets="Build" Condition="'$(Platform)'=='x64'">
+    <MSBuild
+      Projects="@(Wow64UmdProjects)"
+      Targets="Build"
+      Properties="Configuration=$(Configuration);Platform=Win32;OutDir=$(OutDir);BaseIntermediateOutputPath=$(BaseIntermediateOutputPath)wow64\"
+      BuildInParallel="true" />
+  </Target>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
