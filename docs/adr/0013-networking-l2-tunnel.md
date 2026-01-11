@@ -67,8 +67,10 @@ This avoids coupling the gateway’s HTTP concerns to a high-throughput packet-f
 ### Transport choices (WS first; WebRTC optional)
 
 - **Baseline transport:** **WebSocket (WSS)** for the L2 tunnel (simplest to deploy and debug).
-- **Optional alternative:** **WebRTC DataChannel** may be added later as an optimization; it can
-  reduce head-of-line blocking and improve latency under loss.
+- **Optional alternative:** **WebRTC DataChannel** may be added later as an optimization.
+  - Note: DataChannels can be configured for unordered delivery to reduce head-of-line blocking, but
+    Aero’s current L2 tunnel requires an **ordered** reliable channel for correctness with the
+    proxy-side stack.
 
 ### Reliability requirement for WebRTC L2
 

@@ -141,11 +141,11 @@ Proxy implementation variants:
   TCP ACKs, retransmits, and broadcast traffic traverse the WAN.
 - **Transport choice matters**:
   - WebSocket is reliable but suffers head-of-line blocking (HOL).
-  - WebRTC DataChannel can reduce HOL and can be tuned for latency/throughput.
-  - For Aero’s current WebRTC DataChannel semantics for the L2 tunnel, see
+  - WebRTC DataChannel can be tuned (ordering + reliability). Unordered delivery can reduce HOL, but
+    Aero’s current L2 tunnel requires an **ordered** reliable DataChannel for correctness; see
     [`l2-tunnel-protocol.md`](./l2-tunnel-protocol.md).
-- If using TAP/bridge: requires CAP_NET_ADMIN and increases risk of exposing a VM to the proxy’s
-  L2 environment if misconfigured.
+  - If using TAP/bridge: requires CAP_NET_ADMIN and increases risk of exposing a VM to the proxy’s
+    L2 environment if misconfigured.
 
 ### Security implications
 
