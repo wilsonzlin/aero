@@ -8,6 +8,23 @@ pub trait AudioCaptureSource {
     ///
     /// Returns the number of samples written.
     fn read_mono_f32(&mut self, out: &mut [f32]) -> usize;
+
+    /// Return the number of mono samples dropped by the capture backend since the last call.
+    ///
+    /// Most capture sources do not track dropped samples; the default implementation reports 0.
+    fn take_dropped_samples(&mut self) -> u64 {
+        0
+    }
+}
+
+impl<T: AudioCaptureSource + ?Sized> AudioCaptureSource for Box<T> {
+    fn read_mono_f32(&mut self, out: &mut [f32]) -> usize {
+        (**self).read_mono_f32(out)
+    }
+
+    fn take_dropped_samples(&mut self) -> u64 {
+        (**self).take_dropped_samples()
+    }
 }
 
 /// Capture source that never produces samples (silence).

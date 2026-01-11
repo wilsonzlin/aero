@@ -1,6 +1,9 @@
 use aero_audio::pcm::LinearResampler;
 use aero_audio::sink::AudioSink;
 
+pub use aero_audio::capture::AudioCaptureSource;
+pub use aero_audio::capture::SilenceCaptureSource as NullCaptureSource;
+
 use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
@@ -51,55 +54,6 @@ const PLAYBACK_CHANNELS: u8 = 2;
 /// We expose a single channel because the Web mic capture path currently yields
 /// mono f32 samples.
 const CAPTURE_CHANNELS: u8 = 1;
-
-pub trait AudioCaptureSource {
-    /// Read up to `dst.len()` mono samples into `dst`, returning the number of
-    /// samples actually written.
-    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize;
-
-    /// Return the number of mono samples dropped by the capture backend since
-    /// the last call.
-    fn take_dropped_samples(&mut self) -> u64 {
-        0
-    }
-}
-
-impl<T: AudioCaptureSource + ?Sized> AudioCaptureSource for Box<T> {
-    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize {
-        (**self).read_mono_f32(dst)
-    }
-
-    fn take_dropped_samples(&mut self) -> u64 {
-        (**self).take_dropped_samples()
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NullCaptureSource;
-
-impl AudioCaptureSource for NullCaptureSource {
-    fn read_mono_f32(&mut self, _dst: &mut [f32]) -> usize {
-        0
-    }
-}
-
-impl AudioCaptureSource for aero_platform::audio::mic_bridge::MonoRingBuffer {
-    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize {
-        self.read(dst) as usize
-    }
-}
-
-impl AudioCaptureSource for aero_audio::capture::SilenceCaptureSource {
-    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize {
-        aero_audio::capture::AudioCaptureSource::read_mono_f32(self, dst)
-    }
-}
-
-impl AudioCaptureSource for aero_audio::capture::VecDequeCaptureSource {
-    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize {
-        aero_audio::capture::AudioCaptureSource::read_mono_f32(self, dst)
-    }
-}
 
 #[cfg(target_arch = "wasm32")]
 pub struct MicCaptureSource {
