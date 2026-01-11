@@ -341,8 +341,9 @@ pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 -VirtioWinRoot /tmp/vi
 
 Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio-win.sh`.
 
-Note: The virtio-win wrapper uses `docs/windows-device-contract-virtio-win.json` when calling the CI packager wrapper so
-the generated `config/devices.cmd` matches upstream virtio-win driver service names (`viostor`, `netkvm`, `vioinput`,
+Note: The virtio-win wrapper uses `docs/windows-device-contract-virtio-win.json` as the contract template and emits a
+temporary contract override (service names derived from the extracted driver INFs) when calling the CI packager wrapper,
+so the generated `config/devices.cmd` matches upstream virtio-win driver service names (`viostor`, `netkvm`, `vioinput`,
 `viosnd`). This keeps `setup.cmd` boot-critical storage pre-seeding aligned with the packaged drivers.
 
 `-Profile` controls both:
@@ -382,6 +383,8 @@ Notes:
 
 - `-SpecPath` overrides the profile’s default spec selection.
 - `-Drivers` overrides the profile’s default driver list.
+- The wrapper generates a device contract override (based on `docs/windows-device-contract-virtio-win.json`) so `setup.cmd`
+  boot-critical storage pre-seeding uses the correct virtio-win storage `AddService` name (typically `viostor`).
 - `-Profile full` does **not** enable `-StrictOptional` by default; missing `viosnd`/`vioinput` should remain best-effort unless strict mode is requested.
 
 ## Validation: required drivers + hardware IDs
