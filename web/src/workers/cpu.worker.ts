@@ -51,6 +51,20 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 void installWorkerPerfHandlers();
 
+type AudioOutputHdaDemoStartMessage = {
+  type: "audioOutputHdaDemo.start";
+  ringBuffer: SharedArrayBuffer;
+  capacityFrames: number;
+  channelCount: number;
+  sampleRate: number;
+  freqHz?: number;
+  gain?: number;
+};
+
+type AudioOutputHdaDemoStopMessage = {
+  type: "audioOutputHdaDemo.stop";
+};
+
 let role: "cpu" | "gpu" | "io" | "jit" = "cpu";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
@@ -70,6 +84,92 @@ let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
 type MicRingBufferView = MicRingBuffer & { sampleRate: number };
+let hdaDemoTimer: number | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let hdaDemoInstance: any | null = null;
+let hdaDemoHeader: Uint32Array | null = null;
+let hdaDemoCapacityFrames = 0;
+let hdaDemoSampleRate = 0;
+
+function ringBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
+  const read = Atomics.load(header, 0) >>> 0;
+  const write = Atomics.load(header, 1) >>> 0;
+  const available = (write - read) >>> 0;
+  return Math.min(available, capacityFrames);
+}
+
+function stopHdaDemo(): void {
+  if (hdaDemoTimer !== null) {
+    ctx.clearInterval(hdaDemoTimer);
+    hdaDemoTimer = null;
+  }
+  if (hdaDemoInstance && typeof hdaDemoInstance.free === "function") {
+    hdaDemoInstance.free();
+  }
+  hdaDemoInstance = null;
+  hdaDemoHeader = null;
+  hdaDemoCapacityFrames = 0;
+  hdaDemoSampleRate = 0;
+}
+
+async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> {
+  stopHdaDemo();
+
+  const Sab = globalThis.SharedArrayBuffer;
+  if (typeof Sab === "undefined" || !(msg.ringBuffer instanceof Sab)) {
+    throw new Error("audioOutputHdaDemo.start requires a SharedArrayBuffer ring buffer.");
+  }
+
+  const capacityFrames = msg.capacityFrames | 0;
+  const channelCount = msg.channelCount | 0;
+  const sampleRate = msg.sampleRate | 0;
+  if (capacityFrames <= 0) throw new Error("capacityFrames must be > 0");
+  if (channelCount !== 2) throw new Error("channelCount must be 2 for HDA demo output");
+  if (sampleRate <= 0) throw new Error("sampleRate must be > 0");
+
+  const { api } = await initWasmForContext();
+  if (typeof api.HdaPlaybackDemo !== "function") {
+    // Graceful degrade: nothing to do if the WASM build doesn't include the demo wrapper.
+    console.warn("HdaPlaybackDemo wasm export is unavailable; skipping HDA audio demo.");
+    return;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const DemoCtor = api.HdaPlaybackDemo as any;
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  const demo = new DemoCtor(msg.ringBuffer, capacityFrames, channelCount, sampleRate);
+
+  const freqHz = typeof msg.freqHz === "number" ? msg.freqHz : 440;
+  const gain = typeof msg.gain === "number" ? msg.gain : 0.1;
+  if (typeof demo.init_sine_dma === "function") {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    demo.init_sine_dma(freqHz, gain);
+  }
+
+  hdaDemoInstance = demo;
+  hdaDemoHeader = new Uint32Array(msg.ringBuffer, 0, 4);
+  hdaDemoCapacityFrames = capacityFrames;
+  hdaDemoSampleRate = sampleRate;
+
+  // Keep ~200ms buffered.
+  const targetFrames = Math.min(capacityFrames, Math.floor(sampleRate / 5));
+  // Prime the buffer immediately.
+  if (typeof demo.tick === "function") {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    demo.tick(targetFrames);
+  }
+
+  hdaDemoTimer = ctx.setInterval(() => {
+    if (!hdaDemoInstance || !hdaDemoHeader) return;
+    const level = ringBufferLevelFrames(hdaDemoHeader, hdaDemoCapacityFrames);
+    const target = Math.min(hdaDemoCapacityFrames, Math.floor(hdaDemoSampleRate / 5));
+    const need = Math.max(0, target - level);
+    if (need > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      hdaDemoInstance.tick(need);
+    }
+  }, 20);
+}
 
 type WasmMicBridgeHandle = {
   read_f32_into(out: Float32Array): number;
@@ -424,9 +524,28 @@ let diskDemoResponses = 0;
 let nextIoIpcId = 1;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const msg = ev.data as Partial<
-    WorkerInitMessage | ConfigUpdateMessage | SetAudioRingBufferMessage | SetMicrophoneRingBufferMessage
-  >;
+  const msg = ev.data as
+    | Partial<WorkerInitMessage>
+    | Partial<ConfigUpdateMessage>
+    | Partial<SetAudioRingBufferMessage>
+    | Partial<SetMicrophoneRingBufferMessage>
+    | Partial<AudioOutputHdaDemoStartMessage>
+    | Partial<AudioOutputHdaDemoStopMessage>
+    | undefined;
+  if (!msg) return;
+
+  if ((msg as Partial<AudioOutputHdaDemoStopMessage>).type === "audioOutputHdaDemo.stop") {
+    stopHdaDemo();
+    return;
+  }
+
+  if ((msg as Partial<AudioOutputHdaDemoStartMessage>).type === "audioOutputHdaDemo.start") {
+    void startHdaDemo(msg as AudioOutputHdaDemoStartMessage).catch((err) => {
+      console.error(err);
+      stopHdaDemo();
+    });
+    return;
+  }
   if (msg?.kind === "config.update") {
     currentConfig = (msg as ConfigUpdateMessage).config;
     currentConfigVersion = (msg as ConfigUpdateMessage).version;

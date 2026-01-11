@@ -21,6 +21,12 @@ use js_sys::{SharedArrayBuffer, Uint8Array};
 use aero_audio::pcm::{decode_pcm_to_stereo_f32_into, LinearResampler, StreamFormat};
 
 #[cfg(target_arch = "wasm32")]
+use aero_audio::hda::HdaController;
+
+#[cfg(target_arch = "wasm32")]
+use aero_audio::mem::{GuestMemory, MemoryAccess};
+
+#[cfg(target_arch = "wasm32")]
 use aero_usb::{
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     usb::{UsbDevice, UsbHandshake},
@@ -537,6 +543,119 @@ impl HdaPcmWriter {
         self.resampler
             .produce_interleaved_stereo_into(free_frames as usize, &mut self.resample_out_scratch);
         Ok(bridge.write_f32_interleaved(&self.resample_out_scratch))
+    }
+}
+
+/// End-to-end browser demo: drive the real HDA device model and stream its output
+/// directly into a Web Audio `AudioWorkletProcessor` ring buffer.
+///
+/// This wrapper exists purely for the web demo harness; it is not intended to be
+/// a stable public API.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct HdaPlaybackDemo {
+    hda: HdaController,
+    mem: GuestMemory,
+    bridge: WorkletBridge,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl HdaPlaybackDemo {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        ring_sab: SharedArrayBuffer,
+        capacity_frames: u32,
+        channel_count: u32,
+        host_sample_rate: u32,
+    ) -> Result<Self, JsValue> {
+        if capacity_frames == 0 {
+            return Err(JsValue::from_str("capacityFrames must be non-zero"));
+        }
+        if channel_count != 2 {
+            return Err(JsValue::from_str(
+                "channelCount must be 2 for HDA demo output (stereo)",
+            ));
+        }
+        if host_sample_rate == 0 {
+            return Err(JsValue::from_str("hostSampleRate must be non-zero"));
+        }
+
+        let bridge = WorkletBridge::from_shared_buffer(ring_sab, capacity_frames, channel_count)?;
+
+        let mut hda = HdaController::new();
+        hda.set_output_rate_hz(host_sample_rate);
+
+        // Allocate a small guest-physical memory backing store. The demo programs
+        // a short BDL + PCM buffer and loops it forever.
+        let mem = GuestMemory::new(0x20_000);
+
+        Ok(Self { hda, mem, bridge })
+    }
+
+    /// Program a looping DMA buffer containing a simple sine wave.
+    pub fn init_sine_dma(&mut self, freq_hz: f32, gain: f32) {
+        // Bring controller out of reset (GCTL.CRST).
+        self.hda.mmio_write(0x08, 4, 0x1);
+
+        // Configure the codec converter to listen on stream 1, channel 0.
+        // SET_STREAM_CHANNEL: verb 0x706, payload = stream<<4 | channel
+        let set_stream_ch = (0x706u32 << 8) | 0x10;
+        self.hda.codec_mut().execute_verb(2, set_stream_ch);
+
+        // Stream format: 48kHz, 16-bit, 2ch.
+        let fmt_raw: u16 = (1 << 4) | 0x1;
+        // SET_CONVERTER_FORMAT (4-bit verb group 0x2 encoded in low 16 bits)
+        let set_fmt = (0x200u32 << 8) | (fmt_raw as u8 as u32);
+        self.hda.codec_mut().execute_verb(2, set_fmt);
+
+        // Guest buffer layout.
+        let bdl_base = 0x1000u64;
+        let pcm_base = 0x2000u64;
+        let frames = 48_000usize / 5; // 200ms at 48kHz
+        let bytes_per_frame = 4usize; // 16-bit stereo
+        let pcm_len_bytes = frames * bytes_per_frame;
+
+        // Fill PCM buffer with a sine wave.
+        let sr_hz = 48_000.0f32;
+        for n in 0..frames {
+            let t = n as f32 / sr_hz;
+            let s = (2.0 * core::f32::consts::PI * freq_hz * t).sin() * gain;
+            let v = (s * i16::MAX as f32) as i16;
+            let off = pcm_base + (n * bytes_per_frame) as u64;
+            self.mem.write_u16(off, v as u16);
+            self.mem.write_u16(off + 2, v as u16);
+        }
+
+        // One BDL entry pointing at the PCM buffer, IOC=1.
+        self.mem.write_u64(bdl_base + 0, pcm_base);
+        self.mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
+        self.mem.write_u32(bdl_base + 12, 1);
+
+        // Configure stream descriptor 0.
+        {
+            let sd = self.hda.stream_mut(0);
+            sd.bdpl = bdl_base as u32;
+            sd.bdpu = 0;
+            sd.cbl = pcm_len_bytes as u32;
+            sd.lvi = 0;
+            sd.fmt = fmt_raw;
+            // RUN | IOCE | stream number 1.
+            sd.ctl = (1 << 1) | (1 << 2) | (1 << 20);
+        }
+
+        // Enable stream interrupts (best-effort; not currently surfaced to JS).
+        self.hda.mmio_write(0x20, 4, (1u64 << 31) | 1u64); // INTCTL.GIE + stream0 enable
+    }
+
+    /// Advance the HDA device by `frames` worth of host time and push any rendered
+    /// samples into the shared AudioWorklet ring buffer.
+    ///
+    /// Returns the current ring buffer fill level (frames).
+    pub fn tick(&mut self, frames: u32) -> u32 {
+        self.hda
+            .process_into(&mut self.mem, frames as usize, &mut self.bridge);
+        self.bridge.buffer_level_frames()
     }
 }
 

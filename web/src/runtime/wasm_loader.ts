@@ -110,6 +110,17 @@ export interface WasmApi {
         push_hda_pcm_bytes(bridge: unknown, hdaFormat: number, pcmBytes: Uint8Array): number;
         free(): void;
     };
+
+    HdaPlaybackDemo?: new (
+        ringSab: SharedArrayBuffer,
+        capacityFrames: number,
+        channelCount: number,
+        hostSampleRate: number,
+    ) => {
+        init_sine_dma(freqHz: number, gain: number): void;
+        tick(frames: number): number;
+        free(): void;
+    };
 }
 
 export interface WasmInitMemoryInfo {
@@ -227,6 +238,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         attach_mic_bridge: mod.attach_mic_bridge,
         SineTone: mod.SineTone,
         HdaPcmWriter: mod.HdaPcmWriter,
+        HdaPlaybackDemo: mod.HdaPlaybackDemo,
     };
 }
 

@@ -884,6 +884,37 @@ impl HdaController {
         }
     }
 
+    /// Return the host/output sample rate used by the controller when emitting audio.
+    ///
+    /// This is the "time base" for the `output_frames` argument passed to [`HdaController::process`]
+    /// and [`HdaController::process_into`].
+    pub fn output_rate_hz(&self) -> u32 {
+        self.output_rate_hz
+    }
+
+    /// Set the host/output sample rate used by the controller when emitting audio.
+    ///
+    /// The controller will resample guest PCM streams to this rate before pushing into the
+    /// output sink.
+    pub fn set_output_rate_hz(&mut self, output_rate_hz: u32) {
+        assert!(output_rate_hz != 0, "output_rate_hz must be non-zero");
+        if self.output_rate_hz == output_rate_hz {
+            return;
+        }
+
+        self.output_rate_hz = output_rate_hz;
+
+        // Reset stream runtime state so the next `process*` call will reconfigure resamplers
+        // based on the currently-programmed SDnFMT values.
+        for rt in self.stream_rt.iter_mut() {
+            rt.reset(self.output_rate_hz);
+        }
+
+        // Keep the internal ring buffer roughly ~100ms long, matching the default.
+        let frames = (self.output_rate_hz as usize / 10).max(1);
+        self.audio_out = AudioRingBuffer::new_stereo(frames);
+    }
+
     pub fn codec(&self) -> &HdaCodec {
         &self.codec
     }

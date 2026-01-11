@@ -1574,6 +1574,7 @@ function renderAudioPanel(): HTMLElement {
 
   let loopbackTimer: number | null = null;
   let syntheticMic: { stop(): void } | null = null;
+  let hdaDemoWorker: Worker | null = null;
 
   function stopTone() {
     toneGeneration += 1;
@@ -1612,8 +1613,16 @@ function renderAudioPanel(): HTMLElement {
     workerCoordinator.setAudioOutputRingBuffer(null, 0, 0, 0);
   }
 
+  function stopHdaDemo(): void {
+    if (!hdaDemoWorker) return;
+    hdaDemoWorker.postMessage({ type: "audioOutputHdaDemo.stop" });
+    hdaDemoWorker.terminate();
+    hdaDemoWorker = null;
+  }
+
   async function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
     stopTone();
+    stopHdaDemo();
 
     const freqHz = 440;
     const gain = 0.1;
@@ -1698,6 +1707,7 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       stopLoopback();
+      stopHdaDemo();
       const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
       // Expose for Playwright smoke tests.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1729,6 +1739,7 @@ function renderAudioPanel(): HTMLElement {
       status.textContent = "";
       stopTone();
       stopLoopback();
+      stopHdaDemo();
 
       try {
         // Ensure the static config (if any) has been loaded before starting the
@@ -1799,6 +1810,65 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
+  const hdaDemoButton = el("button", {
+    id: "init-audio-output-hda-demo",
+    text: "Init audio output (HDA demo)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+      stopLoopback();
+      stopHdaDemo();
+
+      // Best-effort: ensure this WASM build includes the HDA demo wrapper.
+      try {
+        const { api } = await wasmInitPromise;
+        if (typeof api.HdaPlaybackDemo !== "function") {
+          status.textContent = "HDA demo is unavailable in this WASM build (missing HdaPlaybackDemo export).";
+          return;
+        }
+      } catch {
+        status.textContent = "HDA demo is unavailable (WASM init failed).";
+        return;
+      }
+
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        // Give the worker + WASM init a bit more slack than the default (~200ms).
+        ringBufferFrames: 16_384, // ~340ms @ 48k
+      });
+      // Expose for Playwright smoke tests / e2e assertions.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioOutputHdaDemo = output;
+      if (!output.enabled) {
+        status.textContent = output.message;
+        return;
+      }
+
+      // Prefill the entire ring with silence so the worker has time to attach and
+      // start producing audio without incurring startup underruns.
+      output.writeInterleaved(
+        new Float32Array(output.ringBuffer.capacityFrames * output.ringBuffer.channelCount),
+        output.context.sampleRate,
+      );
+
+      // Start the CPU worker in a standalone "audio demo" mode.
+      hdaDemoWorker = new Worker(new URL("./workers/cpu.worker.ts", import.meta.url), { type: "module" });
+      hdaDemoWorker.postMessage({
+        type: "audioOutputHdaDemo.start",
+        ringBuffer: output.ringBuffer.buffer,
+        capacityFrames: output.ringBuffer.capacityFrames,
+        channelCount: output.ringBuffer.channelCount,
+        sampleRate: output.context.sampleRate,
+        freqHz: 440,
+        gain: 0.1,
+      });
+
+      await output.resume();
+      status.textContent = "Audio initialized and HDA playback demo started in CPU worker.";
+    },
+  });
+
   const loopbackButton = el("button", {
     id: "init-audio-loopback-synthetic",
     text: "Init audio loopback (synthetic mic)",
@@ -1806,6 +1876,7 @@ function renderAudioPanel(): HTMLElement {
       status.textContent = "";
       stopTone();
       stopLoopback();
+      stopHdaDemo();
 
       const output = await createAudioOutput({
         sampleRate: 48_000,
@@ -1815,7 +1886,6 @@ function renderAudioPanel(): HTMLElement {
       // Expose for Playwright.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (globalThis as any).__aeroAudioOutputLoopback = output;
-
       if (!output.enabled) {
         status.textContent = output.message;
         return;
@@ -1916,7 +1986,7 @@ function renderAudioPanel(): HTMLElement {
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
-    el("div", { class: "row" }, button, workerButton, loopbackButton),
+    el("div", { class: "row" }, button, workerButton, hdaDemoButton, loopbackButton),
     status,
   );
 }
