@@ -276,6 +276,34 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                     bad
                 );
             }
+
+            // virtio-input is a special case: Aero contract v1 exposes it as two PCI functions
+            // (keyboard + mouse) under the same Vendor/Device ID. For unambiguous driver binding
+            // and automation, the contract must include subsystem-qualified REV_01 patterns for
+            // both variants.
+            if dev.device == "virtio-input" {
+                let patterns: BTreeSet<_> = dev
+                    .hardware_id_patterns
+                    .iter()
+                    .map(|s| s.to_ascii_uppercase())
+                    .collect();
+                let expected_keyboard = format!(
+                    r"PCI\VEN_{vendor:04X}&DEV_{did:04X}&SUBSYS_0010{vendor:04X}&REV_01"
+                );
+                let expected_mouse = format!(
+                    r"PCI\VEN_{vendor:04X}&DEV_{did:04X}&SUBSYS_0011{vendor:04X}&REV_01"
+                );
+                let missing = [expected_keyboard, expected_mouse]
+                    .into_iter()
+                    .filter(|hwid| !patterns.contains(hwid))
+                    .collect::<Vec<_>>();
+                if !missing.is_empty() {
+                    bail!(
+                        "{name}: virtio-input hardware_id_patterns must include subsystem-qualified REV_01 HWIDs for both keyboard and mouse variants.\nmissing:\n{}",
+                        missing.into_iter().map(|hwid| format!("  - {hwid}")).collect::<Vec<_>>().join("\n")
+                    );
+                }
+            }
         } else if dev.device == "aero-gpu" {
             // AeroGPU's canonical Windows binding contract is A3A0 (versioned ABI).
             //
@@ -1717,12 +1745,21 @@ Signature="$Windows NT$"
     fn virtio_entry(name: &str, virtio_device_type: u32) -> DeviceEntry {
         let did = 0x1040u16 + u16::try_from(virtio_device_type).unwrap();
         let trans = 0x1000u16 + u16::try_from(virtio_device_type).unwrap() - 1;
+        let mut hardware_id_patterns = vec![format!("PCI\\VEN_1AF4&DEV_{did:04X}&REV_01")];
+        if name == "virtio-input" {
+            hardware_id_patterns.push(format!(
+                "PCI\\VEN_1AF4&DEV_{did:04X}&SUBSYS_00101AF4&REV_01"
+            ));
+            hardware_id_patterns.push(format!(
+                "PCI\\VEN_1AF4&DEV_{did:04X}&SUBSYS_00111AF4&REV_01"
+            ));
+        }
         DeviceEntry {
             device: name.to_string(),
             pci_vendor_id: "0x1AF4".to_string(),
             pci_device_id: format!("0x{did:04X}"),
             pci_device_id_transitional: Some(format!("0x{trans:04X}")),
-            hardware_id_patterns: vec![format!("PCI\\VEN_1AF4&DEV_{did:04X}&REV_01")],
+            hardware_id_patterns,
             driver_service_name: format!("{name}-svc"),
             inf_name: format!("{name}.inf"),
             virtio_device_type: Some(virtio_device_type),
