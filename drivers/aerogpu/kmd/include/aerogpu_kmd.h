@@ -117,8 +117,8 @@ typedef struct _AEROGPU_ADAPTER {
     BOOLEAN UsingNewAbi;
 
     /* VBlank / scanline estimation state (see DxgkDdiGetScanLine). */
-    volatile ULONGLONG LastVblankSeq;
-    volatile ULONGLONG LastVblankInterruptTime100ns;
+    DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankSeq;
+    DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankInterruptTime100ns;
     ULONG VblankPeriodNs;
 
     AEROGPU_SUBMISSION_LOG SubmissionLog;

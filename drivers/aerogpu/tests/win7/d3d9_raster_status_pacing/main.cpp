@@ -250,6 +250,7 @@ static int RunD3D9RasterStatusPacing(int argc, char** argv) {
     aerogpu_test::PrintfStdout("INFO: %s: insufficient vblank edge samples to estimate interval", kTestName);
   }
 
+  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
 }
 
