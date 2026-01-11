@@ -269,8 +269,13 @@ FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
 
 #if defined(_WIN32)
   // DWM and many D3D9Ex clients poll EVENT queries in tight loops. Querying the
-  // KMD fence counter requires a D3DKMTEscape call, so throttle it to at most
-  // once per millisecond tick to avoid burning CPU in the kernel.
+  // KMD fence counter (last completed) requires a D3DKMTEscape call, so throttle
+  // it to at most once per millisecond tick to avoid burning CPU in the kernel.
+  //
+  // Note: we intentionally do *not* use the escape's \"last submitted\" fence as
+  // a per-submission fence ID. Under multi-process workloads (DWM + apps) it is
+  // global and can be dominated by another process's submissions. Per-submission
+  // fence IDs must come from the runtime callbacks (SubmissionFenceId).
   const uint64_t now_ms = monotonic_ms();
   bool should_query_kmd = false;
   {
@@ -282,17 +287,14 @@ FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
   }
 
   if (should_query_kmd && adapter->kmd_query_available.load(std::memory_order_acquire)) {
-    uint64_t submitted = 0;
     uint64_t completed = 0;
-    if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+    if (adapter->kmd_query.QueryFence(/*last_submitted=*/nullptr, &completed)) {
       bool updated = false;
       {
         std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-        const uint64_t prev_submitted = adapter->last_submitted_fence;
         const uint64_t prev_completed = adapter->completed_fence;
-        adapter->last_submitted_fence = std::max<uint64_t>(adapter->last_submitted_fence, submitted);
         adapter->completed_fence = std::max<uint64_t>(adapter->completed_fence, completed);
-        updated = (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
+        updated = (adapter->completed_fence != prev_completed);
       }
       if (updated) {
         adapter->fence_cv.notify_all();
