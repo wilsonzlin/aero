@@ -126,6 +126,12 @@ from the contract passed to the packager (`ci/package-guest-tools.ps1 -WindowsDe
 - `docs/windows-device-contract.json` (canonical; Aero in-tree driver service names like `aerovblk` / `aerovnet`)
 - `docs/windows-device-contract-virtio-win.json` (virtio-win; upstream service names like `viostor` / `netkvm`)
 
+CI-style drift check (no rewrite):
+
+```bash
+python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
+```
+
 Virtio-win Guest Tools builds must use the virtio-win contract so `guest-tools/setup.cmd` can
 validate the boot-critical storage INF `AddService` name and pre-seed `CriticalDeviceDatabase`
 without requiring `/skipstorage` while keeping Aero’s modern-only PCI HWID patterns (`REV_01`).
