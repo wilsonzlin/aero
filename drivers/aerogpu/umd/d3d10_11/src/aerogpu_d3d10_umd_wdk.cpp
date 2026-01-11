@@ -196,6 +196,46 @@ struct AeroGpuAdapter {
   uint64_t completed_fence = 0;
 };
 
+static aerogpu_handle_t allocate_global_handle(AeroGpuAdapter* adapter) {
+  static std::mutex g_mutex;
+  static HANDLE g_mapping = nullptr;
+  static void* g_view = nullptr;
+
+  std::lock_guard<std::mutex> lock(g_mutex);
+
+  if (!g_view) {
+    const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    if (mapping) {
+      void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
+      if (view) {
+        g_mapping = mapping;
+        g_view = view;
+      } else {
+        CloseHandle(mapping);
+      }
+    }
+  }
+
+  if (g_view) {
+    auto* counter = reinterpret_cast<volatile LONG64*>(g_view);
+    LONG64 token = InterlockedIncrement64(counter);
+    if ((static_cast<uint64_t>(token) & 0x7FFFFFFFULL) == 0) {
+      token = InterlockedIncrement64(counter);
+    }
+    return static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
+  }
+
+  if (!adapter) {
+    return 0;
+  }
+  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  if (handle == 0) {
+    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  }
+  return handle;
+}
+
 static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {
   if (!out) {
     return false;
@@ -602,7 +642,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-  res->handle = dev->adapter->next_handle.fetch_add(1);
+  res->handle = allocate_global_handle(dev->adapter);
   res->bind_flags = pDesc->BindFlags;
   res->misc_flags = pDesc->MiscFlags;
 
@@ -1048,7 +1088,7 @@ HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
-  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = stage;
   try {
     sh->dxbc.resize(code_size);
@@ -1154,7 +1194,7 @@ HRESULT APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
-  layout->handle = dev->adapter->next_handle.fetch_add(1);
+  layout->handle = allocate_global_handle(dev->adapter);
 
   const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) +
                            static_cast<size_t>(pDesc->NumElements) * sizeof(aerogpu_input_layout_element_dxgi);

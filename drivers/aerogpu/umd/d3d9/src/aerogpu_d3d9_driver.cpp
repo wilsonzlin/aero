@@ -1153,7 +1153,7 @@ Shader* create_internal_shader_locked(
   }
 
   auto sh = std::make_unique<Shader>();
-  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = stage;
   try {
     sh->bytecode.resize(bytecode_size);
@@ -1174,7 +1174,7 @@ VertexDecl* create_internal_vertex_decl_locked(Device* dev, const void* pDecl, u
   }
 
   auto decl = std::make_unique<VertexDecl>();
-  decl->handle = dev->adapter->next_handle.fetch_add(1);
+  decl->handle = allocate_global_handle(dev->adapter);
   try {
     decl->blob.resize(decl_size);
   } catch (...) {
@@ -1259,7 +1259,7 @@ HRESULT ensure_up_vertex_buffer_locked(Device* dev, uint32_t required_size) {
   }
 
   auto vb = std::make_unique<Resource>();
-  vb->handle = dev->adapter->next_handle.fetch_add(1);
+  vb->handle = allocate_global_handle(dev->adapter);
   vb->kind = ResourceKind::Buffer;
   vb->size_bytes = new_size;
   try {
