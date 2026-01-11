@@ -519,7 +519,10 @@ fn control_in_error_completion_maps_to_timeout_and_sets_usberrint() {
     // Controller should stop processing within the QH on error, leaving the status TD active.
     assert_eq!(mem.read_u32(qh_addr + 4), status_td);
 
-    assert_ne!(ctrl.port_read(io_base + 0x02, 2) as u16 & USBSTS_USBERRINT, 0);
+    assert_ne!(
+        ctrl.port_read(io_base + 0x02, 2) as u16 & USBSTS_USBERRINT,
+        0
+    );
     assert!(irq.raised, "USBERRINT should assert IRQ when enabled");
 }
 
