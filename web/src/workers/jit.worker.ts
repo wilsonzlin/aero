@@ -136,9 +136,13 @@ async function waitForCommandRingDataNonBlocking(timeoutMs?: number): Promise<vo
 
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
-let perfLastFrameId = 0;
-let perfJitMs = 0;
-let perfBlocksCompiled = 0;
+
+function maybeWritePerfSample(jitMs: number): void {
+  if (!perfWriter || !perfFrameHeader) return;
+  const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+  if (frameId === 0) return;
+  perfWriter.frameSample(frameId, { durations: { jit_ms: jitMs } });
+}
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   if (isJitCompileRequest(ev.data)) {
@@ -185,9 +189,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           runStartEpochMs: init.perfChannel.runStartEpochMs,
         });
         perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
-        perfLastFrameId = 0;
-        perfJitMs = 0;
-        perfBlocksCompiled = 0;
       }
 
       setReadyFlag(status, role, true);
@@ -278,7 +279,7 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
     module = await promise;
   } catch (err) {
     const durationMs = performance.now() - startMs;
-    perfJitMs += durationMs;
+    maybeWritePerfSample(durationMs);
     const message = err instanceof Error ? err.message : String(err);
     const code = isCspBlockedError(err) ? "csp_blocked" : "compile_failed";
     if (code === "csp_blocked") {
@@ -293,8 +294,7 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
   }
 
   const durationMs = performance.now() - startMs;
-  perfJitMs += durationMs;
-  perfBlocksCompiled += 1;
+  maybeWritePerfSample(durationMs);
   if (perf.traceEnabled) perf.instant("jit:compile:end", "t", { key, durationMs });
 
   cacheSet(key, module);
@@ -319,8 +319,6 @@ function postJitResponse(msg: JitWorkerResponse): void {
 }
 
 async function runLoop(): Promise<void> {
-  const pollIntervalMs = 16;
-
   while (true) {
     while (true) {
       const bytes = commandRing.pop();
@@ -333,20 +331,7 @@ async function runLoop(): Promise<void> {
     }
 
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
-
-    if (perfWriter && perfFrameHeader) {
-      const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
-      if (frameId !== 0 && frameId !== perfLastFrameId) {
-        perfLastFrameId = frameId;
-        perfWriter.frameSample(frameId, {
-          durations: { jit_ms: perfJitMs },
-        });
-        perfJitMs = 0;
-        perfBlocksCompiled = 0;
-      }
-    }
-
-    await waitForCommandRingDataNonBlocking(perfWriter && perfFrameHeader ? pollIntervalMs : undefined);
+    await waitForCommandRingDataNonBlocking();
   }
 
   setReadyFlag(status, role, false);
