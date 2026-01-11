@@ -1,7 +1,7 @@
 import {
   isUsbCompletionMessage,
-  isUsbHostAction,
   isUsbSelectedMessage,
+  isUsbSetupPacket,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbHostAction,
@@ -28,6 +28,96 @@ export type WebUsbPassthroughRuntimeMetrics = {
   lastError: string | null;
 };
 
+type UsbHostActionKind = UsbHostAction["kind"];
+
+function normalizeActionId(value: unknown): number | null {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    return value;
+  }
+  if (typeof value === "bigint") {
+    if (value < 0n) return null;
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error(`USB action id is too large for JS number: ${value.toString()}`);
+    }
+    return Number(value);
+  }
+  return null;
+}
+
+function normalizeU8(value: unknown): number | null {
+  const asNum = typeof value === "number" ? value : typeof value === "bigint" ? Number(value) : null;
+  if (asNum === null) return null;
+  if (!Number.isFinite(asNum) || !Number.isInteger(asNum)) return null;
+  if (asNum < 0 || asNum > 0xff) return null;
+  return asNum;
+}
+
+function normalizeU32(value: unknown): number | null {
+  const asNum = typeof value === "number" ? value : typeof value === "bigint" ? Number(value) : null;
+  if (asNum === null) return null;
+  if (!Number.isFinite(asNum) || !Number.isInteger(asNum)) return null;
+  if (asNum < 0 || asNum > 0xffff_ffff) return null;
+  return asNum;
+}
+
+function normalizeBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  if (Array.isArray(value)) {
+    if (!value.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+    return Uint8Array.from(value as number[]);
+  }
+  return null;
+}
+
+function normalizeUsbHostActionKind(value: unknown): UsbHostActionKind | null {
+  if (value === "controlIn" || value === "controlOut" || value === "bulkIn" || value === "bulkOut") return value;
+  return null;
+}
+
+function normalizeUsbHostAction(raw: unknown): UsbHostAction | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const kind = normalizeUsbHostActionKind(obj.kind);
+  if (!kind) return null;
+  const id = normalizeActionId(obj.id);
+  if (id === null) return null;
+
+  switch (kind) {
+    case "controlIn": {
+      if (!isUsbSetupPacket(obj.setup)) return null;
+      return { kind: "controlIn", id, setup: obj.setup };
+    }
+    case "controlOut": {
+      if (!isUsbSetupPacket(obj.setup)) return null;
+      const data = normalizeBytes(obj.data);
+      if (!data) return null;
+      return { kind: "controlOut", id, setup: obj.setup, data };
+    }
+    case "bulkIn": {
+      const endpoint = normalizeU8(obj.endpoint);
+      const length = normalizeU32(obj.length);
+      if (endpoint === null || length === null) return null;
+      return { kind: "bulkIn", id, endpoint, length };
+    }
+    case "bulkOut": {
+      const endpoint = normalizeU8(obj.endpoint);
+      const data = normalizeBytes(obj.data);
+      if (endpoint === null || !data) return null;
+      return { kind: "bulkOut", id, endpoint, data };
+    }
+    default: {
+      const neverKind: never = kind;
+      void neverKind;
+      return null;
+    }
+  }
+}
+
 function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (err: unknown) => void } {
   let resolve!: (value: T) => void;
   let reject!: (err: unknown) => void;
@@ -41,30 +131,6 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
 function formatError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
-}
-
-function normalizeActionId(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "bigint") {
-    if (value < 0n) return null;
-    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new Error(`USB action id is too large for JS number: ${value.toString()}`);
-    }
-    return Number(value);
-  }
-  return null;
-}
-
-function normalizeActionKind(value: unknown): UsbHostAction["kind"] | null {
-  switch (value) {
-    case "controlIn":
-    case "controlOut":
-    case "bulkIn":
-    case "bulkOut":
-      return value;
-    default:
-      return null;
-  }
 }
 
 type PendingItem = {
@@ -190,11 +256,11 @@ export class WebUsbPassthroughRuntime {
 
       for (const raw of drained) {
         const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
-        let id: number | null = null;
-        let kind: UsbHostAction["kind"] | null = null;
+        let extractedId: number | null = null;
+        let extractedKind: UsbHostActionKind | null = null;
         try {
-          id = record ? normalizeActionId(record.id) : null;
-          kind = record ? normalizeActionKind(record.kind) : null;
+          extractedId = record ? normalizeActionId(record.id) : null;
+          extractedKind = record ? normalizeUsbHostActionKind(record.kind) : null;
         } catch (err) {
           // If WASM handed us an id too large to represent safely, reset the bridge to
           // avoid deadlocking the Rust-side queue on an action we can never complete.
@@ -207,21 +273,29 @@ export class WebUsbPassthroughRuntime {
           break;
         }
 
-        let candidate: unknown = raw;
-        if (record && typeof record.id === "bigint" && id !== null) {
-          candidate = { ...record, id };
+        let action: UsbHostAction | null = null;
+        try {
+          action = normalizeUsbHostAction(raw);
+        } catch (err) {
+          this.#lastError = formatError(err);
+          try {
+            this.#bridge.reset();
+          } catch (resetErr) {
+            this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
+          }
+          break;
         }
 
-        if (!isUsbHostAction(candidate)) {
-          // Avoid deadlocking the Rust-side queue: send an error completion back if we can find an id.
-          if (id !== null && kind !== null) {
+        if (!action) {
+          // Avoid deadlocking the Rust-side queue: send an error completion back if we can find an id/kind.
+          if (extractedId !== null && extractedKind !== null) {
             try {
-              this.#bridge.push_completion(usbErrorCompletion(kind, id, "Invalid UsbHostAction received from WASM."));
+              this.#bridge.push_completion(usbErrorCompletion(extractedKind, extractedId, "Invalid UsbHostAction received from WASM."));
               this.#completionsApplied++;
             } catch (err) {
               this.#lastError = formatError(err);
             }
-          } else if (id !== null) {
+          } else if (extractedId !== null) {
             this.#lastError = "Invalid UsbHostAction received from WASM (missing kind).";
           } else {
             this.#lastError = "Invalid UsbHostAction received from WASM (missing id/kind).";
@@ -229,7 +303,6 @@ export class WebUsbPassthroughRuntime {
           continue;
         }
 
-        const action = candidate;
         const { id: actionId } = action;
         if (this.#pending.has(actionId)) {
           this.#lastError = `Duplicate UsbHostAction id received from WASM: ${actionId}`;
@@ -252,7 +325,14 @@ export class WebUsbPassthroughRuntime {
           this.#port.postMessage(msg);
         } catch (err) {
           this.#pending.delete(actionId);
-          deferred.reject(err);
+          try {
+            this.#bridge.push_completion(
+              usbErrorCompletion(action.kind, actionId, `Failed to post usb.action to broker: ${formatError(err)}`),
+            );
+            this.#completionsApplied++;
+          } catch (pushErr) {
+            this.#lastError = formatError(pushErr);
+          }
           this.#lastError = formatError(err);
           continue;
         }

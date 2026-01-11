@@ -171,4 +171,59 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     await runtime.pollOnce();
     expect(drain_actions).toHaveBeenCalledTimes(1);
   });
+
+  it("normalizes BigInt ids emitted by WASM into Number ids for the broker protocol", async () => {
+    const port = new FakePort();
+
+    const rawAction = { kind: "bulkIn", id: 1n, endpoint: 0x81, length: 8 };
+
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [rawAction]),
+      push_completion: vi.fn(),
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+
+    const p = runtime.pollOnce();
+
+    expect(port.posted).toHaveLength(1);
+    const msg = port.posted[0] as { type: string; action: { id: unknown } };
+    expect(msg.type).toBe("usb.action");
+    expect(msg.action.id).toBe(1);
+    expect(typeof msg.action.id).toBe("number");
+
+    port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 1, status: "stall" } satisfies UsbHostCompletion });
+    await p;
+  });
+
+  it("pushes an error completion when forwarding an action to the broker throws", async () => {
+    class ThrowingPort extends FakePort {
+      override postMessage(_msg: unknown): void {
+        throw new Error("boom");
+      }
+    }
+
+    const port = new ThrowingPort();
+    const action: UsbHostAction = { kind: "bulkOut", id: 7, endpoint: 2, data: Uint8Array.of(1) };
+
+    const push_completion = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [action]),
+      push_completion,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    await runtime.pollOnce();
+
+    expect(push_completion).toHaveBeenCalledTimes(1);
+    const completion = push_completion.mock.calls[0]?.[0] as UsbHostCompletion;
+    expect(completion.kind).toBe("bulkOut");
+    expect(completion.id).toBe(7);
+    expect(completion.status).toBe("error");
+  });
 });
