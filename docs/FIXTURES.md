@@ -34,6 +34,7 @@ in-repo for packaging tests:
 
 - `tools/packaging/aero_packager/testdata/drivers/**/test.sys`
 - `tools/packaging/aero_packager/testdata/drivers/**/test.dll`
+- `tools/packaging/aero_packager/testdata/drivers/**/WdfCoInstaller*.dll` (KMDF coinstaller placeholder)
 
 These are **not real Windows binaries**; CI pins their blob hashes in `scripts/ci/check-repo-policy.sh` to prevent
 silent drift into proprietary artifacts.

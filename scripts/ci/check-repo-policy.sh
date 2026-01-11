@@ -85,6 +85,8 @@ declare -A ALLOWLIST_FORBIDDEN_BLOB_OIDS=(
   [tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.sys]=7d44972c5540378feef4752f2c47d658f1ad3236
   [tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/test.dll]=727f8a1c3b89565599bf9fa0ef6c8a902edf07e0
   [tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.dll]=c33eb7dce4ce37f644d00db459b5a0e90822e726
+  [tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/wdfcoinstaller01009.dll]=e680c29961f73cc955748f6156e5e42bbee62136
+  [tools/packaging/aero_packager/testdata/drivers/x86/testdrv/wdfcoinstaller01009.dll]=e680c29961f73cc955748f6156e5e42bbee62136
 )
 
 # Allowlist for large blobs (bash patterns). Keep this small and justified.
