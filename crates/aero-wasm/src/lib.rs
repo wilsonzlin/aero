@@ -1525,4 +1525,82 @@ impl Machine {
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         self.inner.inject_browser_key(code, pressed);
     }
+
+    // -------------------------------------------------------------------------
+    // Snapshots (canonical machine)
+    // -------------------------------------------------------------------------
+
+    /// Take a full snapshot of the canonical machine.
+    ///
+    /// The returned bytes can be persisted by the web runtime and later restored
+    /// via [`Machine::restore_snapshot`]. (See also the incremental dirty-page
+    /// snapshot APIs.)
+    pub fn snapshot_full(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.inner
+            .take_snapshot_full()
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Take an incremental dirty-page snapshot.
+    ///
+    /// This is only valid if restored onto a machine that has already applied
+    /// the parent snapshot chain (the snapshot format enforces parent IDs).
+    pub fn snapshot_dirty(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.inner
+            .take_snapshot_dirty()
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Restore a snapshot previously produced by [`Machine::snapshot_full`] or
+    /// [`Machine::snapshot_dirty`].
+    pub fn restore_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.inner
+            .restore_snapshot_bytes(bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn snapshot_full_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
+        let mut file = OpfsSyncFile::create(&path)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        self.inner
+            .save_snapshot_full_to(&mut file)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        file.close()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn snapshot_dirty_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
+        let mut file = OpfsSyncFile::create(&path)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        self.inner
+            .save_snapshot_dirty_to(&mut file)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        file.close()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn restore_snapshot_from_opfs(&mut self, path: String) -> Result<(), JsValue> {
+        let mut file = OpfsSyncFile::open(&path, false)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        self.inner
+            .restore_snapshot_from_checked(&mut file)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        file.close()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(())
+    }
 }

@@ -206,6 +206,15 @@ export interface WasmApi {
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
         serial_output(): Uint8Array;
         inject_browser_key(code: string, pressed: boolean): void;
+        /**
+         * Optional for older WASM builds; canonical machine snapshot support.
+         */
+        snapshot_full?(): Uint8Array;
+        snapshot_dirty?(): Uint8Array;
+        restore_snapshot?(bytes: Uint8Array): void;
+        snapshot_full_to_opfs?(path: string): Promise<void>;
+        snapshot_dirty_to_opfs?(path: string): Promise<void>;
+        restore_snapshot_from_opfs?(path: string): Promise<void>;
         free(): void;
     };
 
