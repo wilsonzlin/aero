@@ -10,8 +10,8 @@
 pub mod runtime;
 pub mod sm4;
 pub mod wgsl;
+pub mod input_layout;
 
 pub use aero_dxbc::{DxbcChunk, DxbcError, DxbcFile, FourCC};
 pub use sm4::{ShaderModel, ShaderStage, Sm4Error, Sm4Program};
 pub use wgsl::{translate_sm4_to_wgsl, WgslError, WgslTranslation};
-
