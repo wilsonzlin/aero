@@ -480,3 +480,41 @@ fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes
     let desc_hi = bar_read_u32(&mut dev, caps.common + 0x24);
     assert_eq!((u64::from(desc_hi) << 32) | u64::from(desc_lo), 0);
 }
+
+#[test]
+fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // Basic status transition.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    // Read offered features.
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+
+    // Write the offered features, plus one unsupported bit (EVENT_IDX = bit 29).
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0 | (1u32 << 29));
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    // Setting FEATURES_OK should trigger negotiation and the device should clear the bit.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    let status = bar_read_u8(&mut dev, caps.common + 0x14);
+    assert_eq!(status & VIRTIO_STATUS_FEATURES_OK, 0);
+}

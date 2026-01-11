@@ -787,7 +787,27 @@ impl VirtioPciDevice {
 
     fn negotiate_features(&mut self) {
         let offered = self.device_features();
-        self.negotiated_features = self.driver_features & offered;
+        let requested = self.driver_features;
+
+        // A driver that sets any feature bit the device did not offer has violated the virtio
+        // feature negotiation contract. Per the Aero Win7 contract, the device must clear
+        // FEATURES_OK so the driver can detect the failure and reset.
+        if (requested & !offered) != 0 {
+            self.negotiated_features = 0;
+            self.features_negotiated = false;
+            self.device_status &= !VIRTIO_STATUS_FEATURES_OK;
+            return;
+        }
+
+        // Contract v1 requires modern drivers to accept VIRTIO_F_VERSION_1.
+        if self.transport_mode == TransportMode::Modern && (requested & VIRTIO_F_VERSION_1) == 0 {
+            self.negotiated_features = 0;
+            self.features_negotiated = false;
+            self.device_status &= !VIRTIO_STATUS_FEATURES_OK;
+            return;
+        }
+
+        self.negotiated_features = requested & offered;
         self.device.set_features(self.negotiated_features);
         self.features_negotiated = true;
         let event_idx = self.negotiated_event_idx();
