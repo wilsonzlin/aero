@@ -8,8 +8,9 @@
 // keep this directory self-contained, this header contains a minimal subset of
 // the D3D10/11 DDI ABI required for the initial triangle milestone.
 //
-// When integrating with a real WDK build, define AEROGPU_UMD_USE_WDK_HEADERS=1
-// to include the official headers instead of the local ABI subset.
+// When integrating with a real WDK build, define `AEROGPU_UMD_USE_WDK_HEADERS=1`
+// (MSBuild: `/p:AeroGpuUseWdkHeaders=1`) to include the official headers instead
+// of the local ABI subset.
 
 #pragma once
 
