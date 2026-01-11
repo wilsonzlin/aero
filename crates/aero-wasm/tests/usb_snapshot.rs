@@ -142,7 +142,8 @@ fn usb_snapshot_restore_rejects_device_id_mismatch() {
     {
         let mut guest = vec![0u8; 0x8000];
         let guest_base = guest.as_mut_ptr() as u32;
-        let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
+        let mut runtime =
+            UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
 
         let mut snap = runtime.snapshot_state().to_vec();
         snap[8..12].copy_from_slice(b"NOPE");
