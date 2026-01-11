@@ -149,13 +149,29 @@ func (s *Session) closeLocked() func() {
 //
 // Guest-port binding limits are enforced by the relay engine (SessionRelay).
 func (s *Session) AllowClientDatagram(destKey string, payload []byte) bool {
+	allowed, _ := s.AllowClientDatagramWithReason(destKey, payload)
+	return allowed
+}
+
+// HandleClientDatagram applies rate limiting and quota enforcement to a client
+// request to send UDP to destKey.
+//
+// On soft failures the datagram is dropped and false is returned. In hard mode
+// the session may also be closed after repeated violations.
+func (s *Session) HandleClientDatagram(_ uint16, destKey string, payload []byte) bool {
+	return s.AllowClientDatagram(destKey, payload)
+}
+
+// AllowClientDatagramWithReason is like AllowClientDatagram but returns the
+// limiter's drop reason for callers that want to surface more granular metrics.
+func (s *Session) AllowClientDatagramWithReason(destKey string, payload []byte) (bool, ratelimit.DropReason) {
 	if s.Closed() {
-		return false
+		return false, ""
 	}
 
 	allowed, reason := s.limiter.AllowUDPSend(destKey, len(payload))
 	if allowed {
-		return true
+		return true, ""
 	}
 
 	switch reason {
@@ -167,16 +183,7 @@ func (s *Session) AllowClientDatagram(destKey string, payload []byte) bool {
 	}
 
 	s.recordViolation()
-	return false
-}
-
-// HandleClientDatagram applies rate limiting and quota enforcement to a client
-// request to send UDP to destKey.
-//
-// On soft failures the datagram is dropped and false is returned. In hard mode
-// the session may also be closed after repeated violations.
-func (s *Session) HandleClientDatagram(_ uint16, destKey string, payload []byte) bool {
-	return s.AllowClientDatagram(destKey, payload)
+	return false, reason
 }
 
 // HandleInboundToClient enforces the DataChannel (relay -> client) bytes/sec

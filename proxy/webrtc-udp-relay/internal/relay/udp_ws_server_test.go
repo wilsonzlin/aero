@@ -385,6 +385,73 @@ func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
 	t.Fatalf("expected %s metric increment", metrics.UDPWSDroppedRateLimited)
 }
 
+func TestUDPWebSocketServer_QuotaExceededIncrementsMetric(t *testing.T) {
+	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer echo.Close()
+
+	cfg := config.Config{
+		AuthMode:                        config.AuthModeNone,
+		SignalingAuthTimeout:            50 * time.Millisecond,
+		MaxSignalingMessageBytes:        64 * 1024,
+		MaxUniqueDestinationsPerSession: 1,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: echoPort,
+		Payload:    []byte("hello"),
+	}
+	pkt, err := udpproto.EncodeV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+
+	// First destination is allowed and should echo.
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage #1: %v", err)
+	}
+	_ = readWSBinary(t, c, 2*time.Second)
+
+	// Second unique destination should exceed MaxUniqueDestinationsPerSession and be dropped.
+	otherPort := echoPort + 1
+	if otherPort == 0 {
+		otherPort = echoPort - 1
+	}
+	in.RemotePort = otherPort
+	pkt2, err := udpproto.EncodeV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1 #2: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt2); err != nil {
+		t.Fatalf("WriteMessage #2: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Get(metrics.UDPWSDroppedQuotaExceeded) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %s metric increment", metrics.UDPWSDroppedQuotaExceeded)
+}
+
 func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()

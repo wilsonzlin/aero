@@ -19,6 +19,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
@@ -334,10 +335,15 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if sess != nil {
 			destKey := netip.AddrPortFrom(frame.RemoteIP, frame.RemotePort).String()
-			if !sess.HandleClientDatagram(frame.GuestPort, destKey, frame.Payload) {
+			allowed, reason := sess.AllowClientDatagramWithReason(destKey, frame.Payload)
+			if !allowed {
 				if metricsSink != nil {
 					metricsSink.Inc(metrics.UDPWSDropped)
-					metricsSink.Inc(metrics.UDPWSDroppedRateLimited)
+					if reason == ratelimit.DropReasonTooManyDestinations {
+						metricsSink.Inc(metrics.UDPWSDroppedQuotaExceeded)
+					} else {
+						metricsSink.Inc(metrics.UDPWSDroppedRateLimited)
+					}
 				}
 				continue
 			}
