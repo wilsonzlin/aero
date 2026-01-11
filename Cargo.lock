@@ -619,7 +619,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero_jit"
+name = "aero-jit"
 version = "0.1.0"
 dependencies = [
  "aero-jit-x86",
@@ -1550,7 +1550,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "device_contract_validator"
+name = "device-contract-validator"
 version = "0.1.0"
 dependencies = [
  "anyhow",

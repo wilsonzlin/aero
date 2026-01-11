@@ -48,4 +48,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p device_contract_validator
+          cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p device-contract-validator
