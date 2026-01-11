@@ -10841,6 +10841,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     return trace.ret(hr);
   }
 
+  // Some Win7-era header/runtime combinations may omit
+  // `DmaBufferPrivateDataSize` even when providing `pDmaBufferPrivateData`. The
+  // AeroGPU Win7 KMD expects the private-data blob to be present, and dxgkrnl
+  // only forwards it when the size is non-zero.
+  if (dev->wddm_context.pDmaBufferPrivateData && dev->wddm_context.DmaBufferPrivateDataSize == 0) {
+    dev->wddm_context.DmaBufferPrivateDataSize = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+  }
+
   // If the adapter wasn't opened through a path that initialized our KMD query
   // helper (e.g. missing HDC at OpenAdapter time), opportunistically initialize
   // it here. This enables fence polling when hSyncObject is absent/zero.
