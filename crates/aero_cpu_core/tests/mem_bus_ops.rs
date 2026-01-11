@@ -1,4 +1,5 @@
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
+use aero_cpu_core::Exception;
 
 #[derive(Debug, Clone)]
 struct ScalarOnlyBus {
@@ -203,4 +204,37 @@ fn bulk_ops_fallback_work_when_unsupported() {
     assert!(bus.bulk_set(0x40, &pattern, 4).unwrap());
     let expected: Vec<u8> = pattern.iter().copied().cycle().take(16).collect();
     assert_eq!(bus.slice(0x40, expected.len()), expected.as_slice());
+}
+
+#[test]
+fn read_write_bytes_roundtrip_flat_test_bus() -> Result<(), Exception> {
+    let mut bus = FlatTestBus::new(0x40);
+    let data: Vec<u8> = (0u8..16).collect();
+    bus.write_bytes(0x10, &data)?;
+
+    let mut out = vec![0u8; data.len()];
+    bus.read_bytes(0x10, &mut out)?;
+    assert_eq!(out, data);
+    Ok(())
+}
+
+#[test]
+fn read_write_bytes_oob_is_memory_fault() {
+    let mut bus = FlatTestBus::new(16);
+    let mut out = [0u8; 4];
+    assert_eq!(bus.read_bytes(13, &mut out), Err(Exception::MemoryFault));
+    assert_eq!(bus.write_bytes(13, &[1, 2, 3, 4]), Err(Exception::MemoryFault));
+}
+
+#[test]
+fn read_write_bytes_fallback_work_when_not_overridden() -> Result<(), Exception> {
+    let mut bus = ScalarOnlyBus::new(0x40);
+    let data = [0xDE, 0xAD, 0xBE, 0xEF];
+    bus.write_bytes(0x20, &data)?;
+    assert_eq!(bus.slice(0x20, data.len()), &data);
+
+    let mut out = [0u8; 4];
+    bus.read_bytes(0x20, &mut out)?;
+    assert_eq!(out, data);
+    Ok(())
 }
