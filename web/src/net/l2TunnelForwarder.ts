@@ -2,6 +2,14 @@ import { RECORD_ALIGN, alignUp } from "../ipc/layout";
 import type { RingBuffer } from "../ipc/ring_buffer";
 import type { L2TunnelClient, L2TunnelEvent, L2TunnelSink } from "./l2Tunnel";
 
+export type L2TunnelForwarderConnectionState = "open" | "closed" | "connecting" | "error";
+
+export type L2TunnelForwarderDropDeltas = Readonly<{
+  rxDroppedNetRxFull: number;
+  rxDroppedPendingOverflow: number;
+  txDroppedTunnelBackpressure: number;
+}>;
+
 export type L2TunnelForwarderOptions = Readonly<{
   /**
    * Maximum number of guest->host frames to drain from the NET_TX ring per `tick()`.
@@ -14,6 +22,9 @@ export type L2TunnelForwarderOptions = Readonly<{
    * (host->guest) when NET_RX is full.
    *
    * When exceeded, new inbound frames are dropped.
+   *
+   * Setting this to `0` disables buffering and instead drops frames immediately
+   * when NET_RX is full (counted as `rxDroppedNetRxFull`).
    *
    * Default: 8 MiB
    */
@@ -31,19 +42,36 @@ export type L2TunnelForwarderOptions = Readonly<{
 export type L2TunnelForwarderStats = Readonly<{
   running: boolean;
 
+  /** Frames successfully forwarded from NET_TX → tunnel. */
   txFrames: number;
+  /** Bytes successfully forwarded from NET_TX → tunnel. */
   txBytes: number;
+  /** Number of times `tick()` observed NET_TX empty. */
   txRingEmpty: number;
+  /** Frames dropped because the forwarder is stopped or has no active tunnel. */
   txDroppedNoTunnel: number;
+  /** Frames dropped because the tunnel transport refused/errored on send. */
   txDroppedSendError: number;
+  /** Alias for `txDroppedSendError` (kept for log/telemetry naming). */
+  txDroppedTunnelBackpressure: number;
 
+  /** Frames successfully forwarded from tunnel → NET_RX. */
   rxFrames: number;
+  /** Bytes successfully forwarded from tunnel → NET_RX. */
   rxBytes: number;
+  /** Number of times an inbound frame could not be pushed to NET_RX (ring full). */
   rxRingFull: number;
+  /** Pending tunnel→guest frames buffered in JS awaiting NET_RX space. */
   rxPendingFrames: number;
+  /** Pending tunnel→guest bytes buffered in JS awaiting NET_RX space. */
   rxPendingBytes: number;
+  /** Frames dropped because NET_RX is full and buffering is disabled (maxPendingRxBytes=0). */
+  rxDroppedNetRxFull: number;
+  /** Frames dropped because the pending RX buffer overflowed. */
   rxDroppedPendingOverflow: number;
+  /** Frames dropped because the NET_RX ring is too small to ever fit them. */
   rxDroppedRingTooSmall: number;
+  /** Frames dropped because the forwarder is stopped. */
   rxDroppedWhileStopped: number;
 }>;
 
@@ -53,6 +81,44 @@ function validateNonNegativeInt(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 0) {
     throw new RangeError(`${name} must be a non-negative integer (got ${value})`);
   }
+}
+
+function clampNonNegativeDelta(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return value > 0 ? value : 0;
+}
+
+export function computeL2TunnelForwarderDropDeltas(
+  prev: L2TunnelForwarderStats | null,
+  next: L2TunnelForwarderStats,
+): L2TunnelForwarderDropDeltas {
+  if (!prev) {
+    return {
+      rxDroppedNetRxFull: next.rxDroppedNetRxFull,
+      rxDroppedPendingOverflow: next.rxDroppedPendingOverflow,
+      txDroppedTunnelBackpressure: next.txDroppedTunnelBackpressure,
+    };
+  }
+  return {
+    rxDroppedNetRxFull: clampNonNegativeDelta(next.rxDroppedNetRxFull - prev.rxDroppedNetRxFull),
+    rxDroppedPendingOverflow: clampNonNegativeDelta(next.rxDroppedPendingOverflow - prev.rxDroppedPendingOverflow),
+    txDroppedTunnelBackpressure: clampNonNegativeDelta(next.txDroppedTunnelBackpressure - prev.txDroppedTunnelBackpressure),
+  };
+}
+
+export function formatL2TunnelForwarderLog(args: {
+  connection: L2TunnelForwarderConnectionState;
+  stats: L2TunnelForwarderStats;
+  dropsSinceLast: L2TunnelForwarderDropDeltas;
+}): string {
+  const { connection, stats, dropsSinceLast } = args;
+  return [
+    `l2: ${connection}`,
+    `tx=${stats.txFrames}f/${stats.txBytes}B`,
+    `rx=${stats.rxFrames}f/${stats.rxBytes}B`,
+    `drop+{rx_full=${dropsSinceLast.rxDroppedNetRxFull}, pending=${dropsSinceLast.rxDroppedPendingOverflow}, tx_bp=${dropsSinceLast.txDroppedTunnelBackpressure}}`,
+    `pending=${stats.rxPendingFrames}f/${stats.rxPendingBytes}B`,
+  ].join(" ");
 }
 
 export class L2TunnelForwarder {
@@ -76,6 +142,7 @@ export class L2TunnelForwarder {
   private rxFrames = 0;
   private rxBytes = 0;
   private rxRingFull = 0;
+  private rxDroppedNetRxFull = 0;
   private rxDroppedPendingOverflow = 0;
   private rxDroppedRingTooSmall = 0;
   private rxDroppedWhileStopped = 0;
@@ -153,6 +220,16 @@ export class L2TunnelForwarder {
     this.clearPendingRx();
   }
 
+  /**
+   * Pump both directions once.
+   *
+   * Alias for `tick()` so worker-side polling loops can call `pump()` without
+   * caring about the exact method name.
+   */
+  pump(): void {
+    this.tick();
+  }
+
   tick(): void {
     this.flushPendingRx();
     this.drainNetTx();
@@ -168,12 +245,14 @@ export class L2TunnelForwarder {
       txRingEmpty: this.txRingEmpty,
       txDroppedNoTunnel: this.txDroppedNoTunnel,
       txDroppedSendError: this.txDroppedSendError,
+      txDroppedTunnelBackpressure: this.txDroppedSendError,
 
       rxFrames: this.rxFrames,
       rxBytes: this.rxBytes,
       rxRingFull: this.rxRingFull,
       rxPendingFrames: pendingFrames,
       rxPendingBytes: this.pendingRxBytes,
+      rxDroppedNetRxFull: this.rxDroppedNetRxFull,
       rxDroppedPendingOverflow: this.rxDroppedPendingOverflow,
       rxDroppedRingTooSmall: this.rxDroppedRingTooSmall,
       rxDroppedWhileStopped: this.rxDroppedWhileStopped,
@@ -227,13 +306,23 @@ export class L2TunnelForwarder {
         continue;
       }
 
+      let ok = true;
       try {
-        tunnel.sendFrame(frame);
-        this.txFrames += 1;
-        this.txBytes += frame.byteLength;
+        const res = (tunnel.sendFrame as unknown as (frame: Uint8Array) => void | boolean)(frame);
+        if (res === false) ok = false;
       } catch {
-        this.txDroppedSendError += 1;
+        ok = false;
       }
+
+      if (!ok) {
+        this.txDroppedSendError += 1;
+        // Backpressure is usually correlated across subsequent frames; stop
+        // draining NET_TX so we don't convert an ephemeral stall into a burst of drops.
+        return;
+      }
+
+      this.txFrames += 1;
+      this.txBytes += frame.byteLength;
     }
   }
 
@@ -271,6 +360,13 @@ export class L2TunnelForwarder {
     }
 
     this.rxRingFull += 1;
+
+    // If buffering is disabled, treat ring-full as a hard drop.
+    if (this.maxPendingRxBytes === 0) {
+      this.rxDroppedNetRxFull += 1;
+      return;
+    }
+
     if (this.pendingRxBytes + frame.byteLength > this.maxPendingRxBytes) {
       this.rxDroppedPendingOverflow += 1;
       return;
@@ -280,3 +376,4 @@ export class L2TunnelForwarder {
     this.pendingRxBytes += frame.byteLength;
   }
 }
+

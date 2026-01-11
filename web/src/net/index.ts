@@ -13,3 +13,12 @@ export {
 } from "./l2Tunnel";
 export { connectL2Relay, connectL2RelaySignaling } from "./l2RelaySignalingClient";
 export { connectL2Tunnel } from "./connectL2Tunnel";
+export {
+  L2TunnelForwarder,
+  computeL2TunnelForwarderDropDeltas,
+  formatL2TunnelForwarderLog,
+  type L2TunnelForwarderConnectionState,
+  type L2TunnelForwarderDropDeltas,
+  type L2TunnelForwarderOptions,
+  type L2TunnelForwarderStats,
+} from "./l2TunnelForwarder";
