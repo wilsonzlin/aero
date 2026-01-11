@@ -30,4 +30,5 @@ KMDF_VERSION_MINOR=9
 TARGETLIBS=$(TARGETLIBS) \
     $(KMDF_LIB_PATH)\WdfDriverEntry.lib \
     $(DDK_LIB_PATH)\hidclass.lib \
-    $(DDK_LIB_PATH)\wdmguid.lib
+    $(DDK_LIB_PATH)\wdmguid.lib \
+    $(DDK_LIB_PATH)\ntstrsafe.lib

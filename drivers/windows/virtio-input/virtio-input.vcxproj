@@ -60,7 +60,7 @@
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>hidclass.lib;wdmguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>hidclass.lib;wdmguid.lib;ntstrsafe.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
@@ -74,7 +74,7 @@
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>hidclass.lib;wdmguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>hidclass.lib;wdmguid.lib;ntstrsafe.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
