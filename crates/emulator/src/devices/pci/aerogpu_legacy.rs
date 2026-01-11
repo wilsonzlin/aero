@@ -1,12 +1,14 @@
-//! Legacy AeroGPU PCI/MMIO device model.
+//! Legacy AeroGPU PCI/MMIO device model ("ARGP").
 //!
-//! The repository currently contains two distinct guest↔host ABI definitions:
-//! - `drivers/aerogpu/protocol/aerogpu_pci.h` + `aerogpu_ring.h` (new, versioned ABI)
-//! - `drivers/aerogpu/protocol/aerogpu_protocol.h` (legacy bring-up ABI)
+//! The repository currently contains two guest↔host ABI generations:
+//! - Versioned ABI ("AGPU"): `drivers/aerogpu/protocol/aerogpu_pci.h` + `aerogpu_ring.h` + `aerogpu_cmd.h`
+//!   implemented by `crates/emulator/src/devices/pci/aerogpu.rs`.
+//! - Legacy bring-up ABI ("ARGP"): `drivers/aerogpu/protocol/aerogpu_protocol.h`
+//!   implemented by this module.
 //!
-//! The WDDM 1.1 KMD in `drivers/aerogpu/kmd` still speaks the legacy ABI. This
-//! device model exists so the existing Win7 driver can load and submit work
-//! even before the guest stack migrates to the newer ABI.
+//! The Win7 KMD in `drivers/aerogpu/kmd` supports both ABIs and auto-detects the
+//! active one based on the BAR0 MMIO magic. This legacy device model is kept for
+//! compatibility/bring-up and is not the primary execution path.
 
 use memory::MemoryBus;
 use std::time::{Duration, Instant};

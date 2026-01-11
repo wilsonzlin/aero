@@ -2,10 +2,11 @@
  * AeroGPU Protocol (LEGACY bring-up ABI)
  *
  * This header defines the original guest<->emulator ABI for the AeroGPU virtual
- * device.
+ * device ("ARGP", PCI 1AED:0001).
  *
- * It is kept so the legacy Win7 KMD and the emulator's legacy AeroGPU device
- * model can continue to function during migration.
+ * It is kept so legacy bring-up tooling and the emulator's legacy AeroGPU
+ * device model can continue to function during migration. The in-tree Win7 KMD
+ * still supports this ABI for compatibility.
  *
  * New code should prefer the versioned ABI split across:
  *   - `aerogpu_pci.h`  (PCI/MMIO + versioning + features)
@@ -14,7 +15,8 @@
  *                       `backing_alloc_id`, plus shared surface export/import)
  *
  * It intentionally contains two layers:
- *   1) A command stream "wire format" used by Windows user-mode drivers (UMDs).
+ *   1) A legacy command stream "wire format" used by early Windows user-mode
+ *      drivers (UMDs). Current UMDs in this repo use `aerogpu_cmd.h` instead.
  *   2) A BAR0 MMIO + ring submission ABI used by the Windows WDDM KMD.
  *
  * The command stream is intentionally conservative:
