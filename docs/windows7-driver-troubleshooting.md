@@ -358,7 +358,7 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
 5. Verify the virtio-input PCI device matches the Aero Win7 virtio contract v1 identity:
    - In Device Manager → the virtio-input PCI device → Properties → Details → **Hardware Ids**
    - The list should include `PCI\VEN_1AF4&DEV_1052&REV_01` (and possibly `...&SUBSYS_...&REV_01`).
-   - If the device reports `REV_00`, the in-tree Aero `virtio-input.inf` will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
+   - If the device reports `REV_00`, the in-tree Aero `aero_virtio_input.inf` will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 6. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
 
 ## Issue: Device Manager Code 28 (drivers not installed)
