@@ -110,9 +110,10 @@ class AerogpuKmdQuery {
 
   // Best-effort scanline query using `D3DKMTGetScanLine`.
   //
-  // Returns false if the scanline query path is unavailable; otherwise fills
-  // `out_in_vblank` / `out_scanline` (when non-null) and returns true.
-  bool GetScanLine(uint32_t vid_pn_source_id, bool* out_in_vblank, uint32_t* out_scanline);
+  // Returns true and fills `out_in_vblank` / `out_scan_line` (when non-null) when
+  // the scanline query path is available. On failure, output pointers (when
+  // non-null) are set to `{false, 0}` and false is returned.
+  bool GetScanLine(uint32_t vid_pn_source_id, bool* out_in_vblank, uint32_t* out_scan_line);
 
  private:
   void ShutdownLocked();

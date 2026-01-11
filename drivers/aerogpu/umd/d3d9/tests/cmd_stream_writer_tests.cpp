@@ -11,6 +11,7 @@
 
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_d3d9_submit.h"
+#include "aerogpu_kmd_query.h"
 
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_pci.h"
@@ -5988,6 +5989,21 @@ bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
 #endif
 }
 
+bool TestKmdQueryGetScanLineClearsOutputsOnFailure() {
+  AerogpuKmdQuery query;
+  bool in_vblank = true;
+  uint32_t scan_line = 123;
+
+  const bool ok = query.GetScanLine(/*vid_pn_source_id=*/0, &in_vblank, &scan_line);
+  if (!Check(!ok, "GetScanLine returns false when adapter is not initialized")) {
+    return false;
+  }
+  if (!Check(in_vblank == false, "GetScanLine clears in_vblank on failure")) {
+    return false;
+  }
+  return Check(scan_line == 0, "GetScanLine clears scan_line on failure");
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -6037,5 +6053,6 @@ int main() {
   failures += !aerogpu::TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull();
   failures += !aerogpu::TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload();
   failures += !aerogpu::TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload();
+  failures += !aerogpu::TestKmdQueryGetScanLineClearsOutputsOnFailure();
   return failures ? 1 : 0;
 }

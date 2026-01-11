@@ -923,7 +923,13 @@ bool AerogpuKmdQuery::WaitForVBlank(uint32_t vid_pn_source_id, uint32_t timeout_
   }
 }
 
-bool AerogpuKmdQuery::GetScanLine(uint32_t vid_pn_source_id, bool* out_in_vblank, uint32_t* out_scanline) {
+bool AerogpuKmdQuery::GetScanLine(uint32_t vid_pn_source_id, bool* out_in_vblank, uint32_t* out_scan_line) {
+  if (out_in_vblank) {
+    *out_in_vblank = false;
+  }
+  if (out_scan_line) {
+    *out_scan_line = 0;
+  }
   D3DKMT_HANDLE adapter = 0;
   PFND3DKMTGetScanLine get_scanline = nullptr;
   {
@@ -947,8 +953,8 @@ bool AerogpuKmdQuery::GetScanLine(uint32_t vid_pn_source_id, bool* out_in_vblank
   if (out_in_vblank) {
     *out_in_vblank = (scan.InVerticalBlank != FALSE);
   }
-  if (out_scanline) {
-    *out_scanline = scan.ScanLine;
+  if (out_scan_line) {
+    *out_scan_line = scan.ScanLine;
   }
   return true;
 }
@@ -1012,7 +1018,13 @@ bool AerogpuKmdQuery::WaitForVBlank(uint32_t, uint32_t) {
   return false;
 }
 
-bool AerogpuKmdQuery::GetScanLine(uint32_t, bool*, uint32_t*) {
+bool AerogpuKmdQuery::GetScanLine(uint32_t, bool* out_in_vblank, uint32_t* out_scan_line) {
+  if (out_in_vblank) {
+    *out_in_vblank = false;
+  }
+  if (out_scan_line) {
+    *out_scan_line = 0;
+  }
   return false;
 }
 
