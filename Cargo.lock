@@ -358,6 +358,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-pc-platform"
+version = "0.1.0"
+dependencies = [
+ "aero-devices",
+ "aero-interrupts",
+ "aero-platform",
+ "memory",
+]
+
+[[package]]
 name = "aero-perf"
 version = "0.1.0"
 

@@ -1,9 +1,10 @@
 use super::pic::Pic8259;
 use crate::io::{IoPortBus, PortIoDevice};
 use aero_interrupts::apic::{IoApic, IoApicId, LapicInterruptSink, LocalApic};
+use aero_interrupts::clock::Clock;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,23 @@ pub trait InterruptController {
     fn get_pending(&self) -> Option<u8>;
     fn acknowledge(&mut self, vector: u8);
     fn eoi(&mut self, vector: u8);
+}
+
+#[derive(Debug, Default)]
+struct AtomicClock {
+    now_ns: AtomicU64,
+}
+
+impl AtomicClock {
+    fn advance_ns(&self, delta_ns: u64) {
+        self.now_ns.fetch_add(delta_ns, Ordering::SeqCst);
+    }
+}
+
+impl Clock for AtomicClock {
+    fn now_ns(&self) -> u64 {
+        self.now_ns.load(Ordering::SeqCst)
+    }
 }
 
 struct RoutedLapicSink {
@@ -54,6 +72,7 @@ pub struct PlatformInterrupts {
     pic: Pic8259,
     ioapic: Arc<Mutex<IoApic>>,
     lapic: Arc<LocalApic>,
+    lapic_clock: Arc<AtomicClock>,
     apic_enabled: Arc<AtomicBool>,
 
     imcr_select: u8,
@@ -126,7 +145,8 @@ impl PlatformInterrupts {
         // Windows and other ACPI/APIC OSes will program the IOAPIC expecting that mapping.
         isa_irq_to_gsi[0] = 2;
 
-        let lapic = Arc::new(LocalApic::new(0));
+        let lapic_clock = Arc::new(AtomicClock::default());
+        let lapic = Arc::new(LocalApic::with_clock(lapic_clock.clone(), 0));
         // Keep the LAPIC enabled for platform-level interrupt injection (tests and early bring-up).
         lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
 
@@ -154,6 +174,7 @@ impl PlatformInterrupts {
             pic: Pic8259::new(0x08, 0x70),
             ioapic,
             lapic,
+            lapic_clock,
             apic_enabled,
 
             imcr_select: 0,
@@ -272,6 +293,19 @@ impl PlatformInterrupts {
         if self.mode != PlatformInterruptMode::Apic {
             ioapic.clear_remote_irr();
         }
+    }
+
+    pub fn lapic_mmio_read(&self, offset: u64, data: &mut [u8]) {
+        self.lapic.mmio_read(offset, data);
+    }
+
+    pub fn lapic_mmio_write(&self, offset: u64, data: &[u8]) {
+        self.lapic.mmio_write(offset, data);
+    }
+
+    pub fn tick(&self, delta_ns: u64) {
+        self.lapic_clock.advance_ns(delta_ns);
+        self.lapic.poll();
     }
 
     /// Emulates the Interrupt Mode Configuration Register (IMCR).
@@ -519,4 +553,3 @@ mod tests {
         assert_eq!(ints.mode(), PlatformInterruptMode::LegacyPic);
     }
 }
-

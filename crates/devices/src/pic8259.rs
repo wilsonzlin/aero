@@ -4,6 +4,7 @@
 //! `PortIoDevice` wrapper so the PIC can be registered on an
 //! [`aero_platform::io::IoPortBus`].
 
+use aero_platform::interrupts::PlatformInterrupts;
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -87,6 +88,92 @@ pub fn register_pic8259(bus: &mut IoPortBus, pic: SharedPic8259) {
         Box::new(Pic8259Port::new(pic.clone(), SLAVE_CMD)),
     );
     bus.register(SLAVE_DATA, Box::new(Pic8259Port::new(pic, SLAVE_DATA)));
+}
+
+/// Registers the legacy PIC I/O ports on an [`IoPortBus`], backed by a [`PlatformInterrupts`].
+///
+/// This is the "machine wiring" helper used by the PC platform builder: it ensures that guest
+/// accesses to ports 0x20/0x21/0xA0/0xA1 update the same PIC state queried by
+/// [`PlatformInterrupts::get_pending`].
+pub fn register_pic8259_on_platform_interrupts(
+    bus: &mut IoPortBus,
+    interrupts: Rc<RefCell<PlatformInterrupts>>,
+) {
+    #[derive(Clone)]
+    struct PlatformPicPort {
+        interrupts: Rc<RefCell<PlatformInterrupts>>,
+        port: u16,
+    }
+
+    impl PlatformPicPort {
+        fn new(interrupts: Rc<RefCell<PlatformInterrupts>>, port: u16) -> Self {
+            Self { interrupts, port }
+        }
+    }
+
+    impl PortIoDevice for PlatformPicPort {
+        fn read(&mut self, port: u16, size: u8) -> u32 {
+            debug_assert_eq!(port, self.port);
+            let ints = self.interrupts.borrow();
+            let pic = ints.pic();
+            match size {
+                1 => u32::from(pic.port_read_u8(port)),
+                2 => {
+                    let lo = pic.port_read_u8(port) as u16;
+                    let hi = pic.port_read_u8(port.wrapping_add(1)) as u16;
+                    u32::from(lo | (hi << 8))
+                }
+                4 => {
+                    let b0 = pic.port_read_u8(port);
+                    let b1 = pic.port_read_u8(port.wrapping_add(1));
+                    let b2 = pic.port_read_u8(port.wrapping_add(2));
+                    let b3 = pic.port_read_u8(port.wrapping_add(3));
+                    u32::from_le_bytes([b0, b1, b2, b3])
+                }
+                _ => u32::from(pic.port_read_u8(port)),
+            }
+        }
+
+        fn write(&mut self, port: u16, size: u8, value: u32) {
+            debug_assert_eq!(port, self.port);
+            let mut ints = self.interrupts.borrow_mut();
+            let pic = ints.pic_mut();
+
+            match size {
+                1 => pic.port_write_u8(port, value as u8),
+                2 => {
+                    let [b0, b1] = (value as u16).to_le_bytes();
+                    pic.port_write_u8(port, b0);
+                    pic.port_write_u8(port.wrapping_add(1), b1);
+                }
+                4 => {
+                    let [b0, b1, b2, b3] = value.to_le_bytes();
+                    pic.port_write_u8(port, b0);
+                    pic.port_write_u8(port.wrapping_add(1), b1);
+                    pic.port_write_u8(port.wrapping_add(2), b2);
+                    pic.port_write_u8(port.wrapping_add(3), b3);
+                }
+                _ => pic.port_write_u8(port, value as u8),
+            }
+        }
+    }
+
+    bus.register(
+        MASTER_CMD,
+        Box::new(PlatformPicPort::new(interrupts.clone(), MASTER_CMD)),
+    );
+    bus.register(
+        MASTER_DATA,
+        Box::new(PlatformPicPort::new(interrupts.clone(), MASTER_DATA)),
+    );
+    bus.register(
+        SLAVE_CMD,
+        Box::new(PlatformPicPort::new(interrupts.clone(), SLAVE_CMD)),
+    );
+    bus.register(
+        SLAVE_DATA,
+        Box::new(PlatformPicPort::new(interrupts, SLAVE_DATA)),
+    );
 }
 
 #[cfg(test)]

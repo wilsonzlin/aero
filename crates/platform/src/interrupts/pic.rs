@@ -106,5 +106,12 @@ impl Pic8259 {
 
         None
     }
-}
 
+    pub fn port_read_u8(&self, port: u16) -> u8 {
+        self.inner.port_read_u8(port)
+    }
+
+    pub fn port_write_u8(&mut self, port: u16, value: u8) {
+        self.inner.port_write_u8(port, value);
+    }
+}
