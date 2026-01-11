@@ -13,4 +13,5 @@ TARGETPATH=obj
 INCLUDES=$(INCLUDES);..\include
 
 SOURCES= \
-    driver.c
+    driver.c \
+    virtio_snd_proto.c

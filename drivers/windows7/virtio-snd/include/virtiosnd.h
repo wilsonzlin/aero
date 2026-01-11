@@ -2,6 +2,8 @@
 
 #include <ntddk.h>
 
+#include "virtio_snd_proto.h"
+
 #define VIRTIOSND_POOL_TAG 'dnSV' // 'VSnd' (endianness depends on debugger display)
 
 #define VIRTIOSND_MAX_MMIO_RANGES 6
