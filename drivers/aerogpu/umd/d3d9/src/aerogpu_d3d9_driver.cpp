@@ -365,8 +365,14 @@ constexpr AerogpuNtStatus kStatusTimeout = 0x00000102L;
 
 struct AerogpuD3DKMTWaitForSynchronizationObject {
   UINT ObjectCount;
-  const WddmHandle* ObjectHandleArray;
-  const uint64_t* FenceValueArray;
+  union {
+    const WddmHandle* ObjectHandleArray;
+    WddmHandle hSyncObjects;
+  };
+  union {
+    const uint64_t* FenceValueArray;
+    uint64_t FenceValue;
+  };
   uint64_t Timeout;
 };
 
@@ -1651,6 +1657,17 @@ struct has_member_SubmissionFenceId : std::false_type {};
 template <typename T>
 struct has_member_SubmissionFenceId<T, std::void_t<decltype(std::declval<T>().SubmissionFenceId)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_pDmaBufferPrivateData : std::false_type {};
+template <typename T>
+struct has_member_pDmaBufferPrivateData<T, std::void_t<decltype(std::declval<T>().pDmaBufferPrivateData)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DmaBufferPrivateDataSize : std::false_type {};
+template <typename T>
+struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<T>().DmaBufferPrivateDataSize)>>
+    : std::true_type {};
+
 template <typename ArgsT>
 void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
   if constexpr (has_member_hContext<ArgsT>::value) {
@@ -1694,6 +1711,12 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
   }
   if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
     args.NumPatchLocations = dev->wddm_context.patch_location_entries_used;
+  }
+  if constexpr (has_member_pDmaBufferPrivateData<ArgsT>::value) {
+    args.pDmaBufferPrivateData = dev->wddm_context.pDmaBufferPrivateData;
+  }
+  if constexpr (has_member_DmaBufferPrivateDataSize<ArgsT>::value) {
+    args.DmaBufferPrivateDataSize = dev->wddm_context.DmaBufferPrivateDataSize;
   }
 }
 
@@ -1762,6 +1785,20 @@ void update_context_from_submit_args(Device* dev, const ArgsT& args) {
       if (args.PatchLocationListSize) {
         dev->wddm_context.PatchLocationListSize = args.PatchLocationListSize;
       }
+    }
+  }
+
+  // pDmaBufferPrivateData is required by the AeroGPU Win7 KMD (DxgkDdiRender /
+  // DxgkDdiPresent expect it to be non-null). The runtime may rotate it along
+  // with the command buffer, so treat it as an in/out field.
+  if constexpr (has_member_pDmaBufferPrivateData<ArgsT>::value) {
+    if (args.pDmaBufferPrivateData) {
+      dev->wddm_context.pDmaBufferPrivateData = args.pDmaBufferPrivateData;
+    }
+  }
+  if constexpr (has_member_DmaBufferPrivateDataSize<ArgsT>::value) {
+    if (args.DmaBufferPrivateDataSize) {
+      dev->wddm_context.DmaBufferPrivateDataSize = args.DmaBufferPrivateDataSize;
     }
   }
 }
@@ -5510,15 +5547,18 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
       dev->wddm_context.CommandBufferSize < min_cmd_buffer_size ||
       !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
       !dev->wddm_context.pPatchLocationList || dev->wddm_context.PatchLocationListSize == 0 ||
+      !dev->wddm_context.pDmaBufferPrivateData || dev->wddm_context.DmaBufferPrivateDataSize == 0 ||
       dev->wddm_context.hSyncObject == 0) {
     aerogpu::logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
-                  "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u sync=0x%08x\n",
+                  "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u dma_priv=%p bytes=%u sync=0x%08x\n",
                   dev->wddm_context.pCommandBuffer,
                   static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
                   dev->wddm_context.pAllocationList,
                   static_cast<unsigned>(dev->wddm_context.AllocationListSize),
                   dev->wddm_context.pPatchLocationList,
                   static_cast<unsigned>(dev->wddm_context.PatchLocationListSize),
+                  dev->wddm_context.pDmaBufferPrivateData,
+                  static_cast<unsigned>(dev->wddm_context.DmaBufferPrivateDataSize),
                   static_cast<unsigned>(dev->wddm_context.hSyncObject));
 
     dev->wddm_context.destroy(dev->wddm_callbacks);
@@ -5529,7 +5569,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
 
   aerogpu::logf("aerogpu-d3d9: CreateDevice wddm_device=0x%08x hContext=0x%08x hSyncObject=0x%08x "
-                "cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u\n",
+                "cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u dma_priv=%p bytes=%u\n",
                 static_cast<unsigned>(dev->wddm_device),
                 static_cast<unsigned>(dev->wddm_context.hContext),
                 static_cast<unsigned>(dev->wddm_context.hSyncObject),
@@ -5538,7 +5578,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                 dev->wddm_context.pAllocationList,
                 static_cast<unsigned>(dev->wddm_context.AllocationListSize),
                 dev->wddm_context.pPatchLocationList,
-                static_cast<unsigned>(dev->wddm_context.PatchLocationListSize));
+                static_cast<unsigned>(dev->wddm_context.PatchLocationListSize),
+                dev->wddm_context.pDmaBufferPrivateData,
+                static_cast<unsigned>(dev->wddm_context.DmaBufferPrivateDataSize));
 
   // Wire the command stream builder to the runtime-provided DMA buffer so all
   // command emission paths write directly into `pCommandBuffer` (no per-submit
@@ -5855,6 +5897,31 @@ aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
 
 uint64_t submit_locked(Device* dev, bool is_present) {
   return submit(dev, is_present);
+}
+
+aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
+  if (!adapter) {
+    return 0;
+  }
+
+#if defined(_WIN32)
+  // Protocol object handles must be stable and avoid collisions across guest
+  // processes. Prefer deriving them from the same cross-process counter used
+  // for shared alloc_id generation.
+  for (;;) {
+    const uint64_t token = allocate_shared_alloc_id_token(adapter);
+    const aerogpu_handle_t handle = static_cast<aerogpu_handle_t>(token & 0xFFFFFFFFu);
+    if (handle != 0) {
+      return handle;
+    }
+  }
+#else
+  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  if (handle == 0) {
+    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  }
+  return handle;
+#endif
 }
 
 } // namespace aerogpu

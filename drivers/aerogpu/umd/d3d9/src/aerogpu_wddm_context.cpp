@@ -61,6 +61,19 @@ struct has_pfnCreateContextCb : std::false_type {};
 template <typename T>
 struct has_pfnCreateContextCb<T, std::void_t<decltype(std::declval<T>().pfnCreateContextCb)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_pDmaBufferPrivateData : std::false_type {};
+
+template <typename T>
+struct has_member_pDmaBufferPrivateData<T, std::void_t<decltype(std::declval<T>().pDmaBufferPrivateData)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DmaBufferPrivateDataSize : std::false_type {};
+
+template <typename T>
+struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<T>().DmaBufferPrivateDataSize)>>
+    : std::true_type {};
+
 template <typename CallbacksT>
 void destroy_sync_object_if_present(const CallbacksT& callbacks, WddmHandle hSyncObject) {
   if constexpr (has_pfnDestroySynchronizationObjectCb<CallbacksT>::value) {
@@ -170,6 +183,12 @@ HRESULT create_context_common(const CallbacksT& callbacks, FnT fn, WddmHandle hD
   ctxOut->AllocationListSize = data.AllocationListSize;
   ctxOut->pPatchLocationList = data.pPatchLocationList;
   ctxOut->PatchLocationListSize = data.PatchLocationListSize;
+  if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+    ctxOut->pDmaBufferPrivateData = data.pDmaBufferPrivateData;
+  }
+  if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
+    ctxOut->DmaBufferPrivateDataSize = data.DmaBufferPrivateDataSize;
+  }
   ctxOut->reset_submission_buffers();
   return S_OK;
 }
@@ -230,6 +249,8 @@ void WddmContext::destroy(const WddmDeviceCallbacks& callbacks) {
   AllocationListSize = 0;
   pPatchLocationList = nullptr;
   PatchLocationListSize = 0;
+  pDmaBufferPrivateData = nullptr;
+  DmaBufferPrivateDataSize = 0;
   command_buffer_bytes_used = 0;
   allocation_list_entries_used = 0;
   patch_location_entries_used = 0;
