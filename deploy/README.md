@@ -229,6 +229,10 @@ Defaults in `deploy/docker-compose.yml`:
 - `WEBRTC_UDP_PORT_MAX=50100`
 - Host publishing: `50000-50100/udp`
 
+If `docker compose up` fails with a message like `port is already allocated`, pick a different range by
+overriding `WEBRTC_UDP_PORT_MIN/MAX` in `deploy/.env` (the compose file uses these vars for both the
+container env and the published UDP port range).
+
 If you change the ICE port range, you must update:
 
 1) The env vars (`WEBRTC_UDP_PORT_MIN/MAX`), and
