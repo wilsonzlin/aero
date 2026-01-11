@@ -767,7 +767,7 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page })
         const pendingCandidates = [];
         let remoteDescriptionSet = false;
         // L2 tunnel MUST be reliable (no partial reliability). Do not set maxRetransmits/maxPacketLifeTime.
-        const dc = pc.createDataChannel("l2", { ordered: false });
+        const dc = pc.createDataChannel("l2", { ordered: true });
         dc.binaryType = "arraybuffer";
 
         const answerPromise = new Promise((resolve, reject) => {
