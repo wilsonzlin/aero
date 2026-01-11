@@ -257,6 +257,8 @@ const char *VirtioPciModernTransportInitErrorStr(VIRTIO_PCI_MODERN_TRANSPORT_INI
 			return "UNSUPPORTED_REVISION";
 		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_MMIO:
 			return "BAR0_NOT_MMIO";
+		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO:
+			return "BAR0_NOT_64BIT_MMIO";
 		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_TOO_SMALL:
 			return "BAR0_TOO_SMALL";
 		case VIRTIO_PCI_MODERN_INIT_ERR_PCI_NO_CAP_LIST_STATUS:
@@ -334,6 +336,16 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	bar0_low = os->PciRead32(t->OsContext, PCI_CFG_BAR0_OFF);
 	if ((bar0_low & 0x01u) != 0) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_MMIO;
+		return STATUS_NOT_SUPPORTED;
+	}
+	/*
+	 * AERO-W7-VIRTIO v1 requires BAR0 to be a 64-bit MMIO BAR.
+	 *
+	 * PCI BAR memory type encoding:
+	 *   bits [2:1] == 0b10 => 64-bit address
+	 */
+	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (bar0_low & 0x06u) != 0x04u) {
+		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO;
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -705,6 +717,10 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 	VirtioPciModernMb(t);
 	notify_off = t->CommonCfg->queue_notify_off;
 	VirtioPciModernUnlock(t, state);
+
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && notify_off != q) {
+		return STATUS_NOT_SUPPORTED;
+	}
 
 	byte_off = (UINT64)notify_off * (UINT64)t->NotifyOffMultiplier;
 	if (byte_off + sizeof(UINT16) > (UINT64)t->NotifyLength) {

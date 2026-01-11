@@ -30,7 +30,7 @@ It is designed to be linked into:
 `VirtioPciModernTransportInit(..., STRICT, ...)` rejects devices that do not match the Aero Windows 7 virtio contract:
 
 - PCI Revision ID **MUST** be `0x01`
-- BAR0 **MUST** be a memory BAR (MMIO), not I/O space
+- BAR0 **MUST** be a 64-bit memory BAR (MMIO), not I/O space
 - PCI capability list **MUST** be present (Status bit 4 set)
 - Capability list pointers **MUST** be 4-byte aligned and acyclic
 - Required virtio vendor caps **MUST** exist and reference BAR0:
@@ -76,4 +76,3 @@ Typical init flow inside a driver:
 Interrupt handling (INTx):
 
 - On interrupt, call `VirtioPciModernTransportReadIsrStatus(&t)` to read-to-ack and determine cause.
-

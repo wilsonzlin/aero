@@ -255,6 +255,17 @@ static void TestRejectBar0IoSpace(void)
 	ExpectInitFail("bar0_not_mmio", &dev, VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_MMIO);
 }
 
+static void TestRejectBar0Not64BitMmio(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	/* Memory BAR, but 32-bit type (bits [2:1]=0b00). */
+	WriteLe32(&dev.Cfg[PCI_BAR0_OFF], 0x10000000u);
+
+	ExpectInitFail("bar0_not_64bit_mmio", &dev, VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO);
+}
+
 static void TestRejectMissingStatusCapList(void)
 {
 	FAKE_DEV dev;
@@ -333,11 +344,159 @@ static void TestRejectMissingDeviceCfgCap(void)
 	ExpectInitFail("missing_device_cfg_cap", &dev, VIRTIO_PCI_MODERN_INIT_ERR_CAP_PARSE_FAILED);
 }
 
+static void TestNegotiateFeaturesOk(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT64 negotiated;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	negotiated = 0;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, 0, &negotiated);
+	assert(st == STATUS_SUCCESS);
+	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
+	assert((negotiated & ((UINT64)1u << 29)) == 0);
+	assert((VirtioPciModernTransportGetStatus(&t) & (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK)) ==
+	       (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK));
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestNegotiateFeaturesRejectNoVersion1(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT64 negotiated;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	/* device_features must include VIRTIO_F_VERSION_1 (bit 32). */
+	((volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000))->device_feature = 0;
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	negotiated = 0;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, 0, &negotiated);
+	assert(st == STATUS_NOT_SUPPORTED);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestNegotiateFeaturesStrictRejectEventIdxOffered(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT64 negotiated;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	/* Contract v1 devices must not offer EVENT_IDX; STRICT rejects it. */
+	((volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000))->device_feature = (1u << 29) | 1u;
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	negotiated = 0;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, (UINT64)1u << 29, &negotiated);
+	assert(st == STATUS_NOT_SUPPORTED);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT64 negotiated;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	/* Device offers EVENT_IDX. COMPAT mode allows init + negotiation but must not accept it. */
+	((volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000))->device_feature = (1u << 29) | 1u;
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	negotiated = 0;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, (UINT64)1u << 29, &negotiated);
+	assert(st == STATUS_SUCCESS);
+	assert((negotiated & ((UINT64)1u << 29)) == 0);
+	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestQueueSetupAndNotify(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	volatile virtio_pci_common_cfg *common;
+	NTSTATUS st;
+	UINT16 qsz;
+	const UINT64 desc_pa = 0x1122334455667700ull;
+	const UINT64 avail_pa = 0x1122334455668800ull;
+	const UINT64 used_pa = 0x1122334455669900ull;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	common = (volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000);
+	common->queue_size = 8;
+	common->queue_notify_off = 0;
+
+	qsz = 0;
+	st = VirtioPciModernTransportGetQueueSize(&t, 0, &qsz);
+	assert(st == STATUS_SUCCESS);
+	assert(qsz == 8);
+
+	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa, avail_pa, used_pa);
+	assert(st == STATUS_SUCCESS);
+	assert(common->queue_desc_lo == (UINT32)desc_pa);
+	assert(common->queue_desc_hi == (UINT32)(desc_pa >> 32));
+	assert(common->queue_avail_lo == (UINT32)avail_pa);
+	assert(common->queue_avail_hi == (UINT32)(avail_pa >> 32));
+	assert(common->queue_used_lo == (UINT32)used_pa);
+	assert(common->queue_used_hi == (UINT32)(used_pa >> 32));
+	assert(common->queue_enable == 1);
+
+	/* Notify should write the queue index into BAR0+0x1000. */
+	*(UINT16 *)(dev.Bar0 + 0x1000) = 0xFFFFu;
+	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	assert(st == STATUS_SUCCESS);
+	assert(*(UINT16 *)(dev.Bar0 + 0x1000) == 0);
+
+	/* STRICT: reject queue_notify_off mismatch. */
+	common->queue_notify_off = 5;
+	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	assert(st == STATUS_NOT_SUPPORTED);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 int main(void)
 {
 	TestInitOk();
 	TestRejectBadRevision();
 	TestRejectBar0IoSpace();
+	TestRejectBar0Not64BitMmio();
 	TestRejectMissingStatusCapList();
 	TestRejectUnalignedCapPtr();
 	TestRejectWrongNotifyMultiplier();
@@ -345,6 +504,11 @@ int main(void)
 	TestRejectBar0TooSmall();
 	TestRejectUnalignedCapNext();
 	TestRejectMissingDeviceCfgCap();
+	TestNegotiateFeaturesOk();
+	TestNegotiateFeaturesRejectNoVersion1();
+	TestNegotiateFeaturesStrictRejectEventIdxOffered();
+	TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx();
+	TestQueueSetupAndNotify();
 	printf("virtio_pci_modern_transport_tests: PASS\n");
 	return 0;
 }
