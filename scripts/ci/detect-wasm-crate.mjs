@@ -25,7 +25,7 @@ function usageAndExit() {
             "Usage: detect-wasm-crate.mjs [options]",
             "",
             "Options:",
-            "  --wasm-crate-dir <path>  Override crate directory (same as AERO_WASM_CRATE_DIR).",
+            "  --wasm-crate-dir <path>  Override crate directory (same as AERO_WASM_CRATE_DIR; legacy: AERO_WASM_DIR).",
             "  --allow-missing          Exit 0 with empty outputs when no crate is found.",
             "  --github-output <path>   Append outputs to the given GitHub output file.",
             "  -h, --help               Show this help.",
@@ -84,7 +84,66 @@ function parsePackageNameFromCargoToml(manifestPath) {
     throw new Error("failed to parse [package].name from Cargo.toml");
 }
 
-function resolveCrateFromDir(repoRoot, dirArg, reason) {
+function crateLooksLikeCdylibPackage(manifestPath) {
+    const raw = readFileSync(manifestPath, "utf8");
+    let currentSection = "";
+    let collecting = false;
+    let crateTypeExpr = "";
+
+    for (const line of raw.split(/\r?\n/u)) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            continue;
+        }
+
+        const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/u);
+        if (sectionMatch) {
+            currentSection = sectionMatch[1] ?? "";
+            collecting = false;
+            crateTypeExpr = "";
+            continue;
+        }
+
+        if (currentSection !== "lib") {
+            continue;
+        }
+
+        const noComment = trimmed.split("#")[0]?.trim() ?? "";
+        if (!noComment) {
+            continue;
+        }
+
+        if (collecting) {
+            crateTypeExpr += ` ${noComment}`;
+            if (noComment.includes("]")) {
+                collecting = false;
+                break;
+            }
+            continue;
+        }
+
+        const match = noComment.match(/^crate-type\s*=\s*(.+)$/u);
+        if (!match) {
+            continue;
+        }
+
+        crateTypeExpr = match[1] ?? "";
+        if (crateTypeExpr.includes("[") && !crateTypeExpr.includes("]")) {
+            collecting = true;
+            continue;
+        }
+        break;
+    }
+
+    if (!crateTypeExpr) {
+        return false;
+    }
+
+    return /["']cdylib["']/u.test(crateTypeExpr);
+}
+
+function resolveCrateFromDir(repoRoot, dirArg, reason, options = {}) {
+    const requireCdylib = options.requireCdylib ?? false;
     const dirAbs = path.isAbsolute(dirArg) ? path.normalize(dirArg) : path.normalize(path.join(repoRoot, dirArg));
     const manifestAbs = path.join(dirAbs, "Cargo.toml");
     if (!existsSync(manifestAbs)) {
@@ -101,6 +160,13 @@ function resolveCrateFromDir(repoRoot, dirArg, reason) {
         die(
             `${reason} Cargo.toml at '${toRepoRelativePath(repoRoot, manifestAbs)}' does not look like a Rust crate manifest ` +
                 "(missing [package].name).",
+        );
+    }
+
+    if (requireCdylib && !crateLooksLikeCdylibPackage(manifestAbs)) {
+        die(
+            `${reason} crate '${toRepoRelativePath(repoRoot, dirAbs)}' does not declare a cdylib target. ` +
+                "Ensure its Cargo.toml has `[lib] crate-type = [\"cdylib\", ...]` or point AERO_WASM_CRATE_DIR to the correct wasm-pack crate.",
         );
     }
 
@@ -196,14 +262,14 @@ let resolved = null;
 let resolutionReason = "";
 
 if (overrideDir) {
-    resolved = resolveCrateFromDir(repoRoot, overrideDir, "override");
+    resolved = resolveCrateFromDir(repoRoot, overrideDir, "override", { requireCdylib: true });
     resolutionReason = "override";
 } else {
     for (const candidate of canonicalCandidates) {
         const abs = path.join(repoRoot, candidate);
         const manifestAbs = path.join(abs, "Cargo.toml");
         if (existsSync(manifestAbs)) {
-            resolved = resolveCrateFromDir(repoRoot, candidate, "canonical");
+            resolved = resolveCrateFromDir(repoRoot, candidate, "canonical", { requireCdylib: true });
             resolutionReason = `canonical (${candidate})`;
             break;
         }
