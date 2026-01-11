@@ -285,6 +285,12 @@ def main() -> int:
     if serial_log.exists():
         serial_log.unlink()
 
+    qemu_stderr_log = serial_log.with_name(serial_log.stem + ".qemu.stderr.log")
+    try:
+        qemu_stderr_log.unlink()
+    except FileNotFoundError:
+        pass
+
     handler = type("_Handler", (_QuietHandler,), {"expected_path": args.http_path})
 
     with _ReusableTcpServer(("127.0.0.1", args.http_port), handler) as httpd:
@@ -413,7 +419,8 @@ def main() -> int:
 
         print("Launching QEMU:")
         print("  " + " ".join(shlex.quote(str(a)) for a in qemu_args))
-        proc = subprocess.Popen(qemu_args)
+        stderr_f = qemu_stderr_log.open("wb")
+        proc = subprocess.Popen(qemu_args, stderr=stderr_f)
         result_code: Optional[int] = None
         try:
             pos = 0
@@ -660,6 +667,7 @@ def main() -> int:
 
                     print(f"FAIL: QEMU exited before selftest result marker (exit code: {proc.returncode})")
                     _print_tail(serial_log)
+                    _print_qemu_stderr_tail(qemu_stderr_log)
                     result_code = 3
                     break
 
@@ -672,6 +680,10 @@ def main() -> int:
         finally:
             _stop_process(proc)
             httpd.shutdown()
+            try:
+                stderr_f.close()
+            except Exception:
+                pass
 
         if args.virtio_snd_verify_wav:
             if wav_path is None:
@@ -702,6 +714,25 @@ def _print_tail(path: Path) -> None:
         sys.stdout.write(tail.decode("utf-8", errors="replace"))
     except Exception:
         # Fallback if stdout encoding is strict.
+        sys.stdout.buffer.write(tail)
+
+
+def _print_qemu_stderr_tail(path: Path) -> None:
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+    if not data:
+        return
+
+    tail = data[-8192:]
+    sys.stdout.write("\n--- QEMU stderr tail ---\n")
+    try:
+        sys.stdout.write(tail.decode("utf-8", errors="replace"))
+    except Exception:
         sys.stdout.buffer.write(tail)
 
 

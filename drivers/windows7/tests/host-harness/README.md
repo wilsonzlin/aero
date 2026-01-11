@@ -61,7 +61,7 @@ PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 On failure/timeout, it returns non-zero and prints the matching failure reason.
 If QEMU exits early (for example due to an unsupported device property like `disable-legacy` / `x-pci-revision`),
-the PowerShell harness also captures QEMU stderr to a sidecar log next to the serial log:
+the harness captures QEMU stderr to a sidecar log next to the serial log:
 
 - `<serial-base>.qemu.stderr.log`
 
