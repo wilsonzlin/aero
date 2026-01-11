@@ -19,11 +19,13 @@ drivers/
       *.inf
       *.sys
       *.cat
+      *.dll   (optional: e.g. AeroGPU UMDs or WdfCoInstaller*.dll)
   amd64/   (or `x64/` on input; the packaged output uses `amd64/`)
     <driver-name>/
       *.inf
       *.sys
       *.cat
+      *.dll   (optional: e.g. AeroGPU UMDs or WdfCoInstaller*.dll)
 ```
 
 ### Guest Tools scripts / certs
@@ -156,6 +158,8 @@ Before producing any output, the packager verifies that:
 - each **required** driver is present for both `x86` and `amd64` (missing required drivers are fatal),
 - each included driver (required + optional that are present) contains at least one `.inf`, `.sys`, and `.cat`,
 - each included driver's `.inf` files contain the expected hardware IDs (regex match, case-insensitive) if provided.
+
+Driver `.dll` files (if present) are included in the ISO/zip, but are not required by validation.
 
 These checks are driven by a small JSON spec passed via `--spec`.
 

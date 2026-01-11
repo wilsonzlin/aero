@@ -304,7 +304,8 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
                 let rel_str_lower = rel_str.to_ascii_lowercase();
                 if !(rel_str_lower.ends_with(".inf")
                     || rel_str_lower.ends_with(".sys")
-                    || rel_str_lower.ends_with(".cat"))
+                    || rel_str_lower.ends_with(".cat")
+                    || rel_str_lower.ends_with(".dll"))
                 {
                     continue;
                 }

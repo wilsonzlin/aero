@@ -112,9 +112,11 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         "drivers/x86/testdrv/test.inf",
         "drivers/x86/testdrv/test.sys",
         "drivers/x86/testdrv/test.cat",
+        "drivers/x86/testdrv/test.dll",
         "drivers/amd64/testdrv/test.inf",
         "drivers/amd64/testdrv/test.sys",
         "drivers/amd64/testdrv/test.cat",
+        "drivers/amd64/testdrv/test.dll",
     ] {
         assert!(
             tree.contains(required),
