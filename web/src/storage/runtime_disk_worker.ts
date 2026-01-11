@@ -668,11 +668,24 @@ async function handleRequest(msg: RequestMessage): Promise<void> {
       }
       disks.clear();
 
+      const opened = new Map<number, DiskEntry>();
       const maxHandle = snapshot.disks.reduce((max, d) => Math.max(max, d.handle), 0);
-      nextHandle = Math.max(snapshot.nextHandle, maxHandle + 1);
-      for (const diskEntry of snapshot.disks) {
-        const opened = await openDiskFromSnapshot(diskEntry);
-        disks.set(diskEntry.handle, opened);
+      const desiredNextHandle = Math.max(snapshot.nextHandle, maxHandle + 1);
+      try {
+        for (const diskEntry of snapshot.disks) {
+          const entry = await openDiskFromSnapshot(diskEntry);
+          opened.set(diskEntry.handle, entry);
+        }
+      } catch (err) {
+        for (const entry of opened.values()) {
+          await entry.disk.close?.();
+        }
+        throw err;
+      }
+
+      nextHandle = desiredNextHandle;
+      for (const [handle, entry] of opened.entries()) {
+        disks.set(handle, entry);
       }
       postOk(msg.requestId, { ok: true });
       return;
