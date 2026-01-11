@@ -6,3 +6,12 @@
 [alias]
 # `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
 xtask = "run --locked -p xtask --"
+
+[env]
+# Some sandbox environments ship with a broken `sccache` daemon (or a stale socket)
+# via global Cargo config, which can hang or fail all `cargo build/test` invocations.
+#
+# Setting `RUSTC_WRAPPER` to an empty string disables any inherited wrapper while
+# still allowing developers/CI to opt back in by explicitly exporting
+# `RUSTC_WRAPPER=sccache` in their environment.
+RUSTC_WRAPPER = ""
