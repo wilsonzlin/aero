@@ -325,11 +325,19 @@ export class WebSocketTcpMuxProxyClient {
   send(streamId: number, bytes: Uint8Array): void {
     const st = this.streams.get(streamId);
     if (!st || st.closed || st.localFin) return;
+    if (bytes.byteLength === 0) return;
 
     for (let off = 0; off < bytes.byteLength; off += this.maxDataChunkBytes) {
       const chunk = bytes.subarray(off, Math.min(bytes.byteLength, off + this.maxDataChunkBytes));
-      const frame = encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, chunk);
-      this.enqueue(TcpMuxMsgType.DATA, streamId, frame);
+      try {
+        const frame = encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, chunk);
+        this.enqueue(TcpMuxMsgType.DATA, streamId, frame);
+      } catch (err) {
+        this.maybeNotifyOpen(streamId);
+        this.onError?.(streamId, { code: 0, message: (err as Error).message });
+        this.closeStream(streamId);
+        return;
+      }
       if (st.closed) return;
     }
   }
@@ -339,8 +347,17 @@ export class WebSocketTcpMuxProxyClient {
     if (!st || st.closed) return;
 
     const flags = mode.rst ? TcpMuxCloseFlags.RST : TcpMuxCloseFlags.FIN;
-    const frame = encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, streamId, encodeTcpMuxClosePayload(flags));
-    this.enqueue(TcpMuxMsgType.CLOSE, streamId, frame);
+    if ((flags & TcpMuxCloseFlags.FIN) !== 0 && st.localFin) return;
+
+    try {
+      const frame = encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, streamId, encodeTcpMuxClosePayload(flags));
+      this.enqueue(TcpMuxMsgType.CLOSE, streamId, frame);
+    } catch (err) {
+      this.maybeNotifyOpen(streamId);
+      this.onError?.(streamId, { code: 0, message: (err as Error).message });
+      this.closeStream(streamId);
+      return;
+    }
 
     if ((flags & TcpMuxCloseFlags.RST) !== 0) {
       // The gateway does not send an explicit CLOSE ack for RST; treat as
@@ -403,7 +420,18 @@ export class WebSocketTcpMuxProxyClient {
 
       const entry = this.queued.shift()!;
       this.queuedBytes -= entry.frame.byteLength;
-      this.ws.send(entry.frame);
+      try {
+        this.ws.send(entry.frame);
+      } catch (err) {
+        this.onError?.(0, { code: 0, message: `WebSocket send failed: ${(err as Error).message}` });
+        // Trigger `onWsClose`, which tears down stream state.
+        try {
+          this.ws.close();
+        } catch {
+          // ignore
+        }
+        return;
+      }
     }
   }
 
