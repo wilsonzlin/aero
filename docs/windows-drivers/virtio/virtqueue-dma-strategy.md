@@ -400,10 +400,12 @@ direct mapping helper that walks an MDL chain and emits per-page segments, coale
 * `windows-drivers/virtio-kmdf/common/virtio_sg.c`
 * WDF-free (WDM-friendly) variant: `drivers/windows/virtio/common/virtio_sg_pfn.h/.c`
 
-Key API:
+Key API (both modules use the same function names):
 
 * `VirtioSgMaxElemsForMdl(...)` — worst-case upper bound on element count (pages spanned).
-* `VirtioSgBuildFromMdl(...)` — builds `VIRTIO_SG_ELEM[]` in caller-provided storage (no allocations; DISPATCH_LEVEL safe).
+* `VirtioSgBuildFromMdl(...)` — builds an SG array in caller-provided storage (no allocations; DISPATCH_LEVEL safe):
+  * KMDF module: `VIRTIO_SG_ELEM[]`
+  * WDF-free module: `VIRTQ_SG[]`
 
 ### 4.3 Mixed-direction chains: recommended pattern (virtio-blk, virtio-net)
 
