@@ -6,6 +6,12 @@ Win7 virtio functional tests host harness (QEMU).
 This is a Python alternative to Invoke-AeroVirtioWin7Tests.ps1 for environments where
 PowerShell is inconvenient (e.g. Linux CI).
 
+Note: This harness intentionally uses *modern-only* virtio-pci devices (`disable-legacy=on`).
+The Aero Windows 7 virtio driver contract (v1) ships INF files that match the modern PCI
+device IDs (e.g. DEV_1041/DEV_1042). If QEMU is launched with transitional/legacy virtio
+devices (`-drive if=virtio` / `virtio-*-pci` without `disable-legacy=on`), Windows will
+enumerate different PCI IDs and the drivers will not bind.
+
 It:
 - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
@@ -166,9 +172,13 @@ def main() -> int:
         thread = Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
 
-        drive = f"file={disk_image},if=virtio,cache=writeback"
+        drive_id = "drive0"
+        drive = f"file={disk_image},if=none,id={drive_id},cache=writeback"
         if args.snapshot:
             drive += ",snapshot=on"
+
+        virtio_net = "virtio-net-pci,netdev=net0,disable-legacy=on"
+        virtio_blk = f"virtio-blk-pci,drive={drive_id},disable-legacy=on"
 
         virtio_snd_args: list[str] = []
         if args.enable_virtio_snd:
@@ -210,13 +220,15 @@ def main() -> int:
             "-netdev",
             "user,id=net0",
             "-device",
-            "virtio-net-pci,netdev=net0",
+            virtio_net,
             "-device",
             "virtio-keyboard-pci",
             "-device",
             "virtio-mouse-pci",
             "-drive",
             drive,
+            "-device",
+            virtio_blk,
         ]
         qemu_args += virtio_snd_args + qemu_extra
 
