@@ -92,31 +92,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
-            dir="$AERO_NODE_DIR"
-          elif [[ -f package.json ]]; then
-            dir="."
-          elif [[ -f frontend/package.json ]]; then
-            dir="frontend"
-          elif [[ -f web/package.json ]]; then
-            dir="web"
-          else
-            echo "package.json not found. Set AERO_NODE_DIR to the directory containing package.json." >&2
-            exit 1
-          fi
-
-          lockfile=""
-          if [[ "$dir" == "." ]]; then
-            if [[ -f package-lock.json ]]; then
-              lockfile="package-lock.json"
-            fi
-          elif [[ -f "$dir/package-lock.json" ]]; then
-            lockfile="$dir/package-lock.json"
-          fi
-
-          echo "dir=$dir" >> "$GITHUB_OUTPUT"
-          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+          node scripts/ci/detect-node-dir.mjs --github-output "$GITHUB_OUTPUT"
 
       - name: Setup Node
         if: matrix.language == 'javascript-typescript' && steps.node-dir.outputs.lockfile == ''
