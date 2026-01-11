@@ -128,14 +128,13 @@
 | **Instruction Decoder** | x86-64 instruction parsing | `aero_x86::decode` (iced-x86 wrapper) |
 | **Registers / architectural state** | CPU register file + control state | `aero_cpu_core::state::CpuState` (JIT ABI) |
 | **MMU / paging** | Linear → physical address translation | `aero_cpu_core::PagingBus` (wraps `aero_mmu`) |
-| **Interrupts / exceptions** | Architectural delivery + bookkeeping | `aero_cpu_core::interrupts::{CpuCore, PendingEventState}` |
+| **Interrupts / exceptions** | Architectural delivery + bookkeeping | `aero_cpu_core::{CpuCore, interrupts::PendingEventState}` |
 
 #### Multi-vCPU execution
 
 To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 
-- Each vCPU has its own `aero_cpu_core::state::CpuState` and local interrupt bookkeeping
-  (`aero_cpu_core::interrupts::PendingEventState`).
+- Each vCPU has its own `aero_cpu_core::CpuCore` (owns `CpuState`, `interrupts::PendingEventState`, and deterministic time).
 - Guest physical memory and device models are shared.
 - Scheduling is either:
   - **Parallel vCPU workers** (one Web Worker per vCPU), or

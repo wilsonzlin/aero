@@ -12,7 +12,7 @@ The canonical CPU core lives in `crates/aero-cpu-core` (`aero_cpu_core`). The pu
   Source: [`crates/aero-cpu-core/src/interp/tier0/mod.rs`](../crates/aero-cpu-core/src/interp/tier0/mod.rs)
 - **Paging integration:** `aero_cpu_core::PagingBus` (adapter wrapping `aero_mmu`)  
   Source: [`crates/aero-cpu-core/src/paging_bus.rs`](../crates/aero-cpu-core/src/paging_bus.rs)
-- **Architectural interrupt/exception delivery:** `aero_cpu_core::interrupts` (`CpuCore` + `PendingEventState`)  
+- **Architectural interrupt/exception delivery:** `aero_cpu_core::CpuCore` (`CpuState` + `PendingEventState` + deterministic time)  
   Source: [`crates/aero-cpu-core/src/interrupts.rs`](../crates/aero-cpu-core/src/interrupts.rs)
 - **Tiered exec glue:** `aero_cpu_core::exec` (`Vcpu`, `Tier0Interpreter`, `ExecDispatcher`)  
   Source: [`crates/aero-cpu-core/src/exec/mod.rs`](../crates/aero-cpu-core/src/exec/mod.rs)
@@ -78,7 +78,7 @@ At a high level, the CPU runs in a loop that:
 In `aero_cpu_core`, this is modeled by:
 
 - `exec::ExecDispatcher` (chooses Tier-0 vs JIT per block)
-- `exec::Vcpu` (bundles `interrupts::CpuCore` + a bus and implements `ExecCpu`)
+- `exec::Vcpu` (bundles `CpuCore` + a bus and implements `ExecCpu`)
 
 `ExecDispatcher::step()` always gives interrupts a chance at *instruction boundaries* via `ExecCpu::maybe_deliver_interrupt()` before running the next block.
 
@@ -166,7 +166,7 @@ Architectural delivery (IVT/IDT, privilege stack switching, IST, IRET) lives in 
 
 Key types:
 
-- `interrupts::CpuCore` = `{ state: CpuState, pending: PendingEventState }`
+- `CpuCore` (re-exported as `aero_cpu_core::CpuCore`) = `{ state: CpuState, pending: PendingEventState, time: time::TimeSource }`
 - `interrupts::PendingEventState` tracks:
   - deferred pending faults/traps/interrupts
   - external interrupt FIFO
