@@ -256,6 +256,43 @@ fn uhci_ioc_error_sets_usbint_and_can_irq() {
 }
 
 #[test]
+fn uhci_usberrint_sets_even_when_interrupts_disabled() {
+    let mut mem = Bus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    // IN TD to a missing device (no IOC): should set USBERRINT but not USBINT.
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        TD_STATUS_ACTIVE,
+        td_token(PID_IN, 5, 1, 0, 8),
+        0,
+    );
+    write_qh(&mut mem, QH_ADDR, TD0);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.port_write(REG_USBINTR, 2, 0);
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
+
+    uhci.tick_1ms(&mut mem);
+
+    let sts = uhci.port_read(REG_USBSTS, 2) as u16;
+    assert_ne!(sts & USBSTS_USBERRINT, 0);
+    assert_eq!(sts & USBSTS_USBINT, 0);
+    assert!(!uhci.irq_level());
+
+    // Enabling error interrupts after the fact should raise IRQ (level-triggered).
+    uhci.port_write(REG_USBINTR, 2, USBINTR_TIMEOUT_CRC as u32);
+    assert!(uhci.irq_level());
+
+    // Clearing the status should drop IRQ again.
+    uhci.port_write(REG_USBSTS, 2, USBSTS_USBERRINT as u32);
+    assert!(!uhci.irq_level());
+}
+
+#[test]
 fn uhci_short_packet_does_not_irq_when_short_interrupt_disabled() {
     #[derive(Clone)]
     struct ShortInDevice;
