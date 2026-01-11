@@ -531,6 +531,14 @@ def main() -> None:
                 f"  expected to contain: &{expected_rev_fragment}\n"
                 f"  got: {entry.hardware_id_patterns}"
             )
+        expected_base_rev = f"PCI\\VEN_{entry.pci_vendor_id:04X}&DEV_{entry.pci_device_id:04X}&REV_{w7_revision:02X}"
+        if expected_base_rev.upper() not in patterns_upper:
+            fail(
+                f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()} entry {device_name!r}: "
+                "hardware_id_patterns is missing the canonical revision-gated Vendor/Device HWID:\n"
+                f"  expected: {expected_base_rev}\n"
+                f"  got: {entry.hardware_id_patterns}"
+            )
 
         # 5) Subsystem IDs: require patterns that include the contract-defined SUBSYS fragment.
         # Additionally require that each expected SUBSYS entry is revision-gated (SUBSYS + REV)
