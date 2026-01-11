@@ -51,14 +51,14 @@ impl Default for Tier2WasmOptions {
 
 #[derive(Clone, Copy)]
 struct ImportedFuncs {
-    mem_read_u8: u32,
-    mem_read_u16: u32,
-    mem_read_u32: u32,
-    mem_read_u64: u32,
-    mem_write_u8: u32,
-    mem_write_u16: u32,
-    mem_write_u32: u32,
-    mem_write_u64: u32,
+    mem_read_u8: Option<u32>,
+    mem_read_u16: Option<u32>,
+    mem_read_u32: Option<u32>,
+    mem_read_u64: Option<u32>,
+    mem_write_u8: Option<u32>,
+    mem_write_u16: Option<u32>,
+    mem_write_u32: Option<u32>,
+    mem_write_u64: Option<u32>,
     code_page_version: Option<u32>,
     mmu_translate: Option<u32>,
     count: u32,
@@ -73,14 +73,17 @@ impl Tier2WasmCodegen {
 
     /// Compile a Tier-2 trace into a standalone WASM module.
     ///
-    /// ABI:
-    /// - export `trace(cpu_ptr: i32, jit_ctx_ptr: i32) -> i64` (returns `next_rip`)
-    /// - import `env.memory`
-    /// - import memory helpers described by the `IMPORT_MEM_*` constants
-    /// - optionally import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64` when
-    ///   [`Tier2WasmOptions::code_version_guard_import`] is enabled.
-    ///
-    /// The trace spills cached registers + `CpuState.rflags` on every side exit.
+/// ABI:
+/// - export `trace(cpu_ptr: i32, jit_ctx_ptr: i32) -> i64` (returns `next_rip`)
+/// - import `env.memory`
+/// - when the trace performs memory operations, import memory helpers described by the
+///   `IMPORT_MEM_*` constants
+/// - optionally import `env.mmu_translate(cpu_ptr, jit_ctx_ptr, vaddr, access_code) -> i64` when
+///   inline-TLB is enabled
+/// - optionally import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64` when
+///   [`Tier2WasmOptions::code_version_guard_import`] is enabled.
+///
+/// The trace spills cached registers + `CpuState.rflags` on every side exit.
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
         self.compile_trace_with_options(trace, plan, Tier2WasmOptions::default())
     }
@@ -189,59 +192,61 @@ impl Tier2WasmCodegen {
         let func_base = 0u32;
         let mut next_func = func_base;
         let imported = ImportedFuncs {
-            mem_read_u8: next(&mut next_func),
-            mem_read_u16: next(&mut next_func),
-            mem_read_u32: next(&mut next_func),
-            mem_read_u64: next(&mut next_func),
-            mem_write_u8: next(&mut next_func),
-            mem_write_u16: next(&mut next_func),
-            mem_write_u32: next(&mut next_func),
-            mem_write_u64: next(&mut next_func),
+            mem_read_u8: has_mem_ops.then(|| next(&mut next_func)),
+            mem_read_u16: has_mem_ops.then(|| next(&mut next_func)),
+            mem_read_u32: has_mem_ops.then(|| next(&mut next_func)),
+            mem_read_u64: has_mem_ops.then(|| next(&mut next_func)),
+            mem_write_u8: has_mem_ops.then(|| next(&mut next_func)),
+            mem_write_u16: has_mem_ops.then(|| next(&mut next_func)),
+            mem_write_u32: has_mem_ops.then(|| next(&mut next_func)),
+            mem_write_u64: has_mem_ops.then(|| next(&mut next_func)),
             code_page_version: needs_code_page_version_import.then(|| next(&mut next_func)),
             mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
             count: next_func - func_base,
         };
 
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U8,
-            EntityType::Function(ty_mem_read_u8),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U16,
-            EntityType::Function(ty_mem_read_u16),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U32,
-            EntityType::Function(ty_mem_read_u32),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U64,
-            EntityType::Function(ty_mem_read_u64),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U8,
-            EntityType::Function(ty_mem_write_u8),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U16,
-            EntityType::Function(ty_mem_write_u16),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U32,
-            EntityType::Function(ty_mem_write_u32),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U64,
-            EntityType::Function(ty_mem_write_u64),
-        );
+        if has_mem_ops {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U8,
+                EntityType::Function(ty_mem_read_u8),
+            );
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U16,
+                EntityType::Function(ty_mem_read_u16),
+            );
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U32,
+                EntityType::Function(ty_mem_read_u32),
+            );
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U64,
+                EntityType::Function(ty_mem_read_u64),
+            );
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U8,
+                EntityType::Function(ty_mem_write_u8),
+            );
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U16,
+                EntityType::Function(ty_mem_write_u16),
+            );
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U32,
+                EntityType::Function(ty_mem_write_u32),
+            );
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U64,
+                EntityType::Function(ty_mem_write_u64),
+            );
+        }
         if needs_code_page_version_import {
             imports.import(
                 IMPORT_MODULE,
@@ -1037,22 +1042,38 @@ impl Emitter<'_> {
             match width {
                 Width::W8 => {
                     self.f
-                        .instruction(&Instruction::Call(self.imported.mem_read_u8));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .mem_read_u8
+                                .expect("mem_read_u8 import missing"),
+                        ));
                     self.f.instruction(&Instruction::I64ExtendI32U);
                 }
                 Width::W16 => {
                     self.f
-                        .instruction(&Instruction::Call(self.imported.mem_read_u16));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .mem_read_u16
+                                .expect("mem_read_u16 import missing"),
+                        ));
                     self.f.instruction(&Instruction::I64ExtendI32U);
                 }
                 Width::W32 => {
                     self.f
-                        .instruction(&Instruction::Call(self.imported.mem_read_u32));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .mem_read_u32
+                                .expect("mem_read_u32 import missing"),
+                        ));
                     self.f.instruction(&Instruction::I64ExtendI32U);
                 }
                 Width::W64 => {
                     self.f
-                        .instruction(&Instruction::Call(self.imported.mem_read_u64));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .mem_read_u64
+                                .expect("mem_read_u64 import missing"),
+                        ));
                 }
             }
 
@@ -1072,6 +1093,7 @@ impl Emitter<'_> {
             Width::W32 => (4u32, self.imported.mem_read_u32),
             Width::W64 => (8u32, self.imported.mem_read_u64),
         };
+        let slow_read = slow_read.expect("memory read helper import missing");
 
         // Cross-page accesses use the slow helper for correctness.
         let cross_limit =
@@ -1159,14 +1181,22 @@ impl Emitter<'_> {
                     self.f.instruction(&Instruction::I64And);
                     self.f.instruction(&Instruction::I32WrapI64);
                     self.f
-                        .instruction(&Instruction::Call(self.imported.mem_write_u8));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .mem_write_u8
+                                .expect("mem_write_u8 import missing"),
+                        ));
                 }
                 Width::W16 => {
                     self.f.instruction(&Instruction::I64Const(0xffff));
                     self.f.instruction(&Instruction::I64And);
                     self.f.instruction(&Instruction::I32WrapI64);
                     self.f
-                        .instruction(&Instruction::Call(self.imported.mem_write_u16));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .mem_write_u16
+                                .expect("mem_write_u16 import missing"),
+                        ));
                 }
                 Width::W32 => {
                     self.f
@@ -1174,11 +1204,19 @@ impl Emitter<'_> {
                     self.f.instruction(&Instruction::I64And);
                     self.f.instruction(&Instruction::I32WrapI64);
                     self.f
-                        .instruction(&Instruction::Call(self.imported.mem_write_u32));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .mem_write_u32
+                                .expect("mem_write_u32 import missing"),
+                        ));
                 }
                 Width::W64 => {
                     self.f
-                        .instruction(&Instruction::Call(self.imported.mem_write_u64));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .mem_write_u64
+                                .expect("mem_write_u64 import missing"),
+                        ));
                 }
             }
             return;
@@ -1194,6 +1232,7 @@ impl Emitter<'_> {
             Width::W32 => (4u32, self.imported.mem_write_u32),
             Width::W64 => (8u32, self.imported.mem_write_u64),
         };
+        let slow_write = slow_write.expect("memory write helper import missing");
 
         let cross_limit =
             (PAGE_OFFSET_MASK as u64).saturating_sub(size_bytes.saturating_sub(1) as u64);
