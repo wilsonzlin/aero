@@ -55,20 +55,18 @@ jobs:
           AERO_DRIVER_PFX_PASSWORD: ${{ secrets.AERO_DRIVER_PFX_PASSWORD }}
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/sign-drivers.ps1' -ToolchainJson 'out/toolchain.json' -AllowSha2CertFallback
 
+      - name: Upload signed packages (out/packages + aero-test.cer)
+        uses: actions/upload-artifact@v4
+        with:
+          name: win7-drivers-signed-packages
+          path: |
+            out/packages/**
+            out/certs/aero-test.cer
+          if-no-files-found: error
+
       - name: Package artifacts (ci/package-drivers.ps1)
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-drivers.ps1' -Version '${{ github.ref_name }}' -MakeFatImage -FatImageStrict
-
-      - name: Setup Rust (for aero_packager)
-        uses: ./.github/actions/setup-rust
-        with:
-          toolchain: stable
-          cache: false
-          locked: auto
-
-      - name: Package Guest Tools media (ci/package-guest-tools.ps1)
-        shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' -Version '${{ github.ref_name }}'
 
       - name: Stage public certificate as release asset
         shell: pwsh
@@ -119,11 +117,63 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-sign-package
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Needed for version stamping and deterministic version derivation inside CI scripts.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Rust (for aero_packager)
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          cache: false
+          locked: auto
+
+      - name: Download signed packages
+        uses: actions/download-artifact@v4
+        with:
+          name: win7-drivers-signed-packages
+          path: .
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: win7-drivers-release
           path: artifacts
+
+      - name: Package Guest Tools (ci/package-guest-tools.ps1)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (!(Test-Path -LiteralPath 'ci/package-guest-tools.ps1')) {
+            throw "Expected script ci/package-guest-tools.ps1 to exist."
+          }
+          if (!(Test-Path -LiteralPath 'out/packages')) {
+            throw "Expected signed driver packages at out/packages (download artifact step may have failed)."
+          }
+          if (!(Test-Path -LiteralPath 'out/certs/aero-test.cer')) {
+            throw "Expected signing cert at out/certs/aero-test.cer (download artifact step may have failed)."
+          }
+
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' `
+            -InputRoot 'out/packages' `
+            -CertPath 'out/certs/aero-test.cer' `
+            -OutDir 'artifacts' `
+            -Version '${{ github.ref_name }}' `
+            -BuildId '${{ github.run_id }}'
+
+          foreach ($path in @(
+            'artifacts/aero-guest-tools.iso',
+            'artifacts/aero-guest-tools.zip',
+            'artifacts/aero-guest-tools.manifest.json'
+          )) {
+            if (!(Test-Path -LiteralPath $path)) {
+              throw "Missing expected Guest Tools output: $path"
+            }
+          }
 
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2

@@ -5,6 +5,8 @@ on:
     paths:
       - "drivers/**"
       - "ci/**"
+      - "tools/packaging/**"
+      - "guest-tools/**"
       - ".github/workflows/drivers-win7.yml"
     paths-ignore:
       - "docs/**"
@@ -15,6 +17,8 @@ on:
     paths:
       - "drivers/**"
       - "ci/**"
+      - "tools/packaging/**"
+      - "guest-tools/**"
       - ".github/workflows/drivers-win7.yml"
     paths-ignore:
       - "docs/**"
@@ -24,6 +28,9 @@ on:
 jobs:
   drivers-win7:
     runs-on: windows-latest
+    outputs:
+      skip: ${{ steps.detect.outputs.skip }}
+      has_sys: ${{ steps.built.outputs.has_sys }}
     env:
       # Cache only the installer/downloads (not the installed WDK toolchain).
       WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
@@ -191,6 +198,16 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\sign-drivers.ps1' -ToolchainJson 'out\toolchain.json'
 
+      - name: Upload signed packages (out/packages + aero-test.cer)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: win7-drivers-signed-packages
+          path: |
+            out/packages/**
+            out/certs/aero-test.cer
+          if-no-files-found: error
+
       - name: Package artifacts (ci/package-drivers.ps1)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         shell: pwsh
@@ -201,28 +218,81 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-drivers.ps1' -MakeFatImage
 
-      - name: Setup Rust (for aero_packager)
-        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
-        uses: ./.github/actions/setup-rust
-        with:
-          toolchain: stable
-          cache: false
-          locked: auto
-
-      - name: Package Guest Tools media (ci/package-guest-tools.ps1)
-        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (!(Test-Path -LiteralPath 'ci\package-guest-tools.ps1')) {
-            throw "Expected script ci\package-guest-tools.ps1 to exist."
-          }
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-guest-tools.ps1'
-
       - name: Upload artifacts (out/artifacts/)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: win7-drivers
           path: out/artifacts/
+          if-no-files-found: error
+
+  guest-tools:
+    name: Guest Tools (ISO + zip)
+    runs-on: ubuntu-latest
+    needs: drivers-win7
+    if: needs.drivers-win7.outputs.skip != 'true' && needs.drivers-win7.outputs.has_sys == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Version stamping derives from git tags/commits; fetch full history + tags so
+          # `git describe` and commit-distance calculations are accurate.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Rust (for aero_packager)
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          cache: false
+          locked: auto
+
+      - name: Download signed packages
+        uses: actions/download-artifact@v4
+        with:
+          name: win7-drivers-signed-packages
+          path: .
+
+      - name: Package Guest Tools (ci/package-guest-tools.ps1)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (!(Test-Path -LiteralPath 'ci/package-guest-tools.ps1')) {
+            throw "Expected script ci/package-guest-tools.ps1 to exist."
+          }
+          if (!(Test-Path -LiteralPath 'out/packages')) {
+            throw "Expected signed driver packages at out/packages (download artifact step may have failed)."
+          }
+          if (!(Test-Path -LiteralPath 'out/certs/aero-test.cer')) {
+            throw "Expected signing cert at out/certs/aero-test.cer (download artifact step may have failed)."
+          }
+
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-guest-tools.ps1' `
+            -InputRoot 'out/packages' `
+            -CertPath 'out/certs/aero-test.cer' `
+            -OutDir 'out/guest-tools'
+
+      - name: Verify Guest Tools outputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @(
+            'out/guest-tools/aero-guest-tools.iso',
+            'out/guest-tools/aero-guest-tools.zip',
+            'out/guest-tools/aero-guest-tools.manifest.json'
+          )) {
+            if (!(Test-Path -LiteralPath $path)) {
+              throw "Missing expected Guest Tools output: $path"
+            }
+          }
+
+      - name: Upload Guest Tools artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aero-guest-tools
+          path: |
+            out/guest-tools/aero-guest-tools.iso
+            out/guest-tools/aero-guest-tools.zip
+            out/guest-tools/aero-guest-tools.manifest.json
           if-no-files-found: error
