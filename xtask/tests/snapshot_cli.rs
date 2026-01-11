@@ -9,6 +9,8 @@ use aero_snapshot::{
 use assert_cmd::Command;
 use predicates::prelude::*;
 
+const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
+
 struct DummySource {
     ram: Vec<u8>,
 }
@@ -242,6 +244,33 @@ fn corrupt_devices_section_len_to_two_and_insert_ram(snapshot: &mut Vec<u8>) {
     snapshot.truncate(ram_payload + 24);
 }
 
+fn write_sparse_snapshot_with_large_devices_section(original: &[u8], out: &std::path::Path) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(original)).unwrap();
+    let devices = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::DEVICES)
+        .expect("DEVICES section missing");
+
+    // Section header is immediately before `offset`.
+    let header_start = (devices.offset - 16) as usize;
+    let old_end = (devices.offset + devices.len) as usize;
+
+    let new_len = MAX_DEVICES_SECTION_LEN + 1;
+
+    let mut prefix = original[..old_end].to_vec();
+    prefix[header_start + 8..header_start + 16].copy_from_slice(&new_len.to_le_bytes());
+
+    let tail = &original[old_end..];
+
+    let mut file = fs::File::create(out).unwrap();
+    file.write_all(&prefix).unwrap();
+    file.seek(std::io::SeekFrom::Start(devices.offset + new_len))
+        .unwrap();
+    file.write_all(tail).unwrap();
+    file.flush().unwrap();
+}
+
 #[test]
 fn snapshot_inspect_prints_meta_and_ram_summary() {
     let tmp = tempfile::tempdir().unwrap();
@@ -366,6 +395,23 @@ fn snapshot_validate_rejects_truncated_devices_section() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("device count: truncated section"));
+}
+
+#[test]
+fn snapshot_validate_rejects_devices_section_too_large() {
+    let tmp = tempfile::tempdir().unwrap();
+    let orig_path = tmp.path().join("orig.aerosnap");
+    write_snapshot(&orig_path);
+    let bytes = fs::read(&orig_path).unwrap();
+
+    let snap = tmp.path().join("devices_too_large.aerosnap");
+    write_sparse_snapshot_with_large_devices_section(&bytes, &snap);
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("devices section too large"));
 }
 
 struct DiskSource;
