@@ -84,7 +84,7 @@ exit /b 0
 echo Usage: uninstall.cmd [options]
 echo.
 echo Options:
-echo   /force              Skip the "Continue with uninstall?" prompt (for automation)
+echo   /force              Non-interactive: skip confirmation and leave signature mode unchanged
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo.
 echo Logs are written to C:\AeroGuestTools\uninstall.log
