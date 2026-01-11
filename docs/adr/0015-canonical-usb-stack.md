@@ -11,7 +11,7 @@ The repository historically accumulated multiple overlapping USB/UHCI implementa
 - **Repo-root WebUSB demo RPC (parallel TypeScript surface):**
   - Generic main-thread broker + worker client: `src/platform/webusb_{broker,client,protocol}.ts`
 - **Legacy/native/test path (parallel):**
-  - Full USB stack (UHCI, hubs, HID, passthrough helpers): `crates/emulator/src/io/usb/*`
+  - Full USB stack (UHCI, hubs, HID, passthrough helpers): `crates/emulator` (`emulator::io::usb` module)
 - **Legacy prototype (duplicate wire contract; removed):**
   - Early WebUSB passthrough bridge/types previously lived in `crates/aero-wasm/src/usb_passthrough.rs`
     (now deleted; do not reintroduce).
@@ -57,9 +57,9 @@ The Rust↔TypeScript WebUSB passthrough “host action/completion” contract i
 Any change to the wire contract must update **all three** in a single change set and keep both the
 Rust and TS tests passing.
 
-### 3) Status of the legacy emulator USB stack (`crates/emulator/src/io/usb/*`)
+### 3) Status of the legacy emulator USB stack (`crates/emulator`, `emulator::io::usb`)
 
-The legacy `crates/emulator/src/io/usb/*` USB stack is considered **legacy/native-only**:
+The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **legacy/native-only**:
 
 - It may remain temporarily for native bring-up and as a reference implementation.
 - It is **not** the canonical implementation for the browser runtime.
@@ -113,8 +113,8 @@ The legacy `crates/emulator/src/io/usb/*` USB stack is considered **legacy/nativ
 
 1. **Docs**
    - Treat this ADR as the source of truth for USB stack selection.
-   - Update related docs to link to this ADR and avoid implying `crates/emulator/src/io/usb/*` is
-     the primary path for browser USB.
+   - Update related docs to link to this ADR and avoid implying the legacy `crates/emulator` USB stack
+     is the primary path for browser USB.
 
 2. **Keep the legacy `aero-wasm` prototype deleted**
    - Do not reintroduce `crates/aero-wasm/src/usb_passthrough.rs` (it duplicated the passthrough
@@ -130,9 +130,9 @@ The legacy `crates/emulator/src/io/usb/*` USB stack is considered **legacy/nativ
    - Deletion target (once demos migrate or become redundant): `src/platform/webusb_{broker,client,protocol}.ts`.
 
 4. **Converge native on shared code**
-    - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
-      device models/UHCI (or gate the legacy code behind a feature flag and stop extending it).
-    - Deletion target: legacy USB stack under `crates/emulator/src/io/usb/*` once unused.
+     - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
+       device models/UHCI (or gate the legacy code behind a feature flag and stop extending it).
+     - Deletion target: legacy USB stack in `crates/emulator` (`emulator::io::usb`) once unused.
 
 ### Testing strategy
 
