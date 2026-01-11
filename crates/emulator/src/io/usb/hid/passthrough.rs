@@ -128,6 +128,14 @@ impl UsbHidPassthroughHandle {
     pub fn pop_output_report(&self) -> Option<UsbHidPassthroughOutputReport> {
         self.inner.borrow_mut().pending_output_reports.pop_front()
     }
+
+    pub fn set_max_pending_input_reports(&self, max: usize) {
+        self.inner.borrow_mut().set_max_pending_input_reports(max);
+    }
+
+    pub fn set_max_pending_output_reports(&self, max: usize) {
+        self.inner.borrow_mut().set_max_pending_output_reports(max);
+    }
 }
 
 impl UsbDeviceModel for UsbHidPassthroughHandle {
@@ -294,6 +302,20 @@ impl UsbHidPassthrough {
             _ => {}
         }
         self.pending_output_reports.push_back(report);
+    }
+
+    fn set_max_pending_input_reports(&mut self, max: usize) {
+        self.max_pending_input_reports = max.max(1);
+        while self.pending_input_reports.len() > self.max_pending_input_reports {
+            self.pending_input_reports.pop_front();
+        }
+    }
+
+    fn set_max_pending_output_reports(&mut self, max: usize) {
+        self.max_pending_output_reports = max.max(1);
+        while self.pending_output_reports.len() > self.max_pending_output_reports {
+            self.pending_output_reports.pop_front();
+        }
     }
 
     fn report_length(&self, report_type: u8, report_id: u8) -> Option<usize> {
@@ -1325,6 +1347,59 @@ mod tests {
             panic!("expected data response, got {resp:?}");
         };
         assert_eq!(data, vec![2, 0x11, 0x22]);
+    }
+
+    #[test]
+    fn set_max_pending_report_limits_drop_oldest_entries() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".to_string(),
+            "Product".to_string(),
+            None,
+            report,
+            true,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        dev.set_max_pending_input_reports(2);
+        dev.push_input_report(1, &[0x00]);
+        dev.push_input_report(1, &[0x01]);
+        dev.push_input_report(1, &[0x02]);
+
+        assert_eq!(
+            dev.poll_interrupt_in(INTERRUPT_IN_EP).unwrap(),
+            vec![1, 0x01]
+        );
+        assert_eq!(
+            dev.poll_interrupt_in(INTERRUPT_IN_EP).unwrap(),
+            vec![1, 0x02]
+        );
+        assert_eq!(dev.poll_interrupt_in(INTERRUPT_IN_EP), None);
+
+        dev.set_max_pending_output_reports(1);
+        assert_eq!(
+            dev.handle_interrupt_out(0x01, &[1, 0x10]),
+            UsbOutResult::Ack
+        );
+        assert_eq!(
+            dev.handle_interrupt_out(0x01, &[1, 0x20]),
+            UsbOutResult::Ack
+        );
+
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 1,
+                data: vec![0x20]
+            })
+        );
+        assert_eq!(dev.pop_output_report(), None);
     }
 
     #[test]
