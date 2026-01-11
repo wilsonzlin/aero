@@ -241,8 +241,8 @@ def main() -> int:
         dest="enable_virtio_snd",
         action="store_true",
         help=(
-            "Attach a virtio-snd device (virtio-sound-pci). Required when the guest selftest runs "
-            "virtio-snd playback (guest must be configured with --test-snd/--require-snd)."
+            "Attach a virtio-snd device (virtio-sound-pci). When enabled, the harness requires the guest virtio-snd "
+            "selftest to PASS (not SKIP)."
         ),
     )
     parser.add_argument(
@@ -551,6 +551,11 @@ def main() -> int:
                                                 "FAIL: virtio-snd test was skipped (guest not configured with --test-snd) "
                                                 "but --with-virtio-snd was enabled"
                                             )
+                                        elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|device_missing" in tail:
+                                            msg = (
+                                                "FAIL: virtio-snd test was skipped (device missing) "
+                                                "but --with-virtio-snd was enabled"
+                                            )
                                         elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled" in tail:
                                             msg = (
                                                 "FAIL: virtio-snd test was skipped (--disable-snd) "
@@ -659,6 +664,13 @@ def main() -> int:
                                             if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set" in tail:
                                                 msg = (
                                                     "FAIL: virtio-snd test was skipped (guest not configured with --test-snd) "
+                                                    "but --with-virtio-snd was enabled"
+                                                )
+                                            elif (
+                                                b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|device_missing" in tail
+                                            ):
+                                                msg = (
+                                                    "FAIL: virtio-snd test was skipped (device missing) "
                                                     "but --with-virtio-snd was enabled"
                                                 )
                                             elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled" in tail:

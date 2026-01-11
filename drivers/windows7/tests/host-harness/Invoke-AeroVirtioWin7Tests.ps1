@@ -45,9 +45,8 @@ param(
   [string]$HttpPath = "/aero-virtio-selftest",
 
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
-  # Note: the guest selftest only runs the virtio-snd playback test when it was provisioned/configured with
-  # `--test-snd` / `--require-snd`. If you enable -WithVirtioSnd but the guest reports SKIP|flag_not_set, re-provision
-  # the scheduled task (for example via New-AeroWin7TestImage.ps1 -RequireSnd).
+  # Note: the guest selftest always emits a virtio-snd marker, but will report SKIP if the virtio-snd
+  # PCI device is missing. When -WithVirtioSnd is enabled, the harness requires virtio-snd to PASS.
   [Parameter(Mandatory = $false)]
   [Alias("EnableVirtioSnd")]
   [switch]$WithVirtioSnd,
@@ -777,6 +776,8 @@ try {
       $reason = "unknown"
       if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|SKIP\\|flag_not_set") {
         $reason = "guest_not_configured_with_--test-snd"
+      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|SKIP\\|device_missing") {
+        $reason = "device_missing"
       } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|SKIP\\|disabled") {
         $reason = "--disable-snd"
       }

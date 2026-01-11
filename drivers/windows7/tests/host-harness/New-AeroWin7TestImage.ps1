@@ -55,8 +55,8 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$AutoReboot,
 
-  # If set, enable virtio-snd testing in the guest selftest.
-  # This adds `--test-snd` (alias: `--require-snd`) to the scheduled task.
+  # If set, require virtio-snd in the guest selftest (adds `--require-snd` to the scheduled task).
+  # Kept for backwards compatibility with older automation that passed -RequireSnd.
   [Parameter(Mandatory = $false)]
   [switch]$RequireSnd,
 
@@ -303,9 +303,9 @@ if ($RequireSnd -and $DisableSnd) {
   throw "RequireSnd and DisableSnd cannot both be set."
 }
 
-$testSndArg = ""
+$requireSndArg = ""
 if ($RequireSnd) {
-  $testSndArg = " --test-snd"
+  $requireSndArg = " --require-snd"
 }
 
 $disableSndArg = ""
@@ -360,7 +360,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$testSndArg$disableSndArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg$disableSndArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -395,11 +395,9 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
 Notes:
 - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
   consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
-- By default, virtio-snd playback is skipped. To enable it, generate this media with `-RequireSnd`
-  (adds `--test-snd` to the scheduled task).
-  Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
-- To force virtio-snd to be skipped even if a device is present, generate this media with `-DisableSnd`
-  (adds `--disable-snd` to the scheduled task).
+ - By default, virtio-snd is optional (SKIP if missing). To require it, generate this media with `-RequireSnd` (adds `--require-snd`).
+ - To skip the virtio-snd test entirely, generate this media with `-DisableSnd`.
+   Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
 - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@
 

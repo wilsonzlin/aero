@@ -50,7 +50,7 @@ struct Options {
   std::wstring blk_root;
   // Skip the virtio-snd test (emits a SKIP marker).
   bool disable_snd = false;
-  // Enable the virtio-snd playback test. Missing device or playback failure causes overall FAIL.
+  // If set, missing virtio-snd device causes the overall selftest to fail (instead of SKIP).
   bool require_snd = false;
   // If set, missing virtio-snd capture endpoint causes the overall selftest to fail (instead of SKIP).
   bool require_snd_capture = false;
@@ -440,8 +440,7 @@ static std::optional<std::wstring> GetDeviceInstanceIdString(HDEVINFO devinfo, S
 
 static bool IsVirtioSndPciHardwareId(const std::vector<std::wstring>& hwids) {
   for (const auto& id : hwids) {
-    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true; // modern virtio-snd
-    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1018")) return true; // transitional virtio-snd
+    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
   }
   return false;
 }
@@ -1590,8 +1589,7 @@ static bool LooksLikeVirtioSndEndpoint(const std::wstring& friendly_name, const 
   for (const auto& m : match_names) {
     if (!m.empty() && ContainsInsensitive(friendly_name, m)) return true;
   }
-  if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059") ||
-      ContainsInsensitive(instance_id, L"DEV_1018") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1018")) {
+  if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
     return true;
   }
   if (IsVirtioSndPciHardwareId(hwids)) return true;
@@ -1820,8 +1818,7 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
       for (const auto& m : match_names) {
         if (!m.empty() && ContainsInsensitive(friendly, m)) score += 200;
       }
-      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059") ||
-          ContainsInsensitive(instance_id, L"DEV_1018") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1018")) {
+      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
         score += 150;
       }
       if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) {
@@ -2188,8 +2185,7 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
     if (inst_id.has_value()) {
       log.Logf("virtio-snd: waveOut[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
                WideToUtf8(*inst_id).c_str());
-      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059") ||
-          ContainsInsensitive(*inst_id, L"DEV_1018") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
+      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
         score += 500;
       }
       const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
@@ -2806,8 +2802,8 @@ static void PrintUsage() {
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
-      "  --test-snd                Run virtio-snd playback test (FAIL if missing/playback fails)\n"
-      "  --require-snd             Alias for --test-snd\n"
+      "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
+      "  --test-snd                Alias for --require-snd\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: no)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
@@ -2872,7 +2868,7 @@ int wmain(int argc, wchar_t** argv) {
       opt.log_file = v;
     } else if (arg == L"--disable-snd") {
       opt.disable_snd = true;
-    } else if (arg == L"--test-snd" || arg == L"--require-snd") {
+    } else if (arg == L"--require-snd" || arg == L"--test-snd") {
       opt.require_snd = true;
     } else if (arg == L"--require-snd-capture") {
       opt.require_snd_capture = true;
@@ -2938,54 +2934,47 @@ int wmain(int argc, wchar_t** argv) {
            input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
 
-  const bool want_snd_playback = opt.require_snd;
-  const bool want_snd_capture = opt.require_snd_capture || opt.test_snd_capture || want_snd_playback;
+  const bool want_snd_capture = opt.require_snd_capture || opt.test_snd_capture;
 
   if (opt.disable_snd) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-  } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture) {
-    log.LogLine("virtio-snd: skipped (enable with --test-snd)");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
   } else {
-    if (!want_snd_playback) {
-      log.LogLine("virtio-snd: skipped (enable with --test-snd)");
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
-    }
-
     const auto snd_pci = DetectVirtioSndPciDevices(log);
     if (snd_pci.empty()) {
-      log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 or PCI\\VEN_1AF4&DEV_1018 device not detected");
-      if (want_snd_playback) {
-        const HRESULT hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=device_missing|hr=0x%08lx",
-                 static_cast<unsigned long>(hr));
+      log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 device not detected");
+      if (opt.require_snd) {
+        log.LogLine("virtio-snd: --require-snd set; failing (device missing)");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing");
         all_ok = false;
+      } else {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|device_missing");
       }
 
       if (opt.require_snd_capture) {
         log.LogLine("virtio-snd: --require-snd-capture set; failing (device missing)");
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|device_missing");
         all_ok = false;
-      } else {
+      } else if (want_snd_capture) {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
+      } else {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
       }
     } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
       log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
 
-      if (want_snd_playback) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing");
-        all_ok = false;
-      }
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing");
+      all_ok = false;
 
       if (opt.require_snd_capture) {
         log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
         all_ok = false;
-      } else {
+      } else if (want_snd_capture) {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
+      } else {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
       }
     } else {
       std::vector<std::wstring> match_names;
@@ -2993,26 +2982,20 @@ int wmain(int argc, wchar_t** argv) {
         if (!d.description.empty()) match_names.push_back(d.description);
       }
 
-      if (want_snd_playback) {
-        const auto snd = VirtioSndTest(log, match_names);
-        if (!snd.ok) {
-          log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
-                   snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
-                   static_cast<unsigned long>(snd.hr));
-          log.LogLine("virtio-snd: trying waveOut fallback (debug only; does not affect PASS/FAIL)");
-          const bool wave_ok = WaveOutToneTest(log, match_names);
-          log.Logf("virtio-snd: waveOut fallback result=%s", wave_ok ? "PASS" : "FAIL");
-        }
-
-        if (snd.ok) {
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS");
-        } else {
-          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=%s|hr=0x%08lx",
-                   snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
-                   static_cast<unsigned long>(snd.hr));
-        }
-        all_ok = all_ok && snd.ok;
+      bool snd_ok = false;
+      const auto snd = VirtioSndTest(log, match_names);
+      if (snd.ok) {
+        snd_ok = true;
+      } else {
+        log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
+                 snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
+                 static_cast<unsigned long>(snd.hr));
+        log.LogLine("virtio-snd: trying waveOut fallback");
+        snd_ok = WaveOutToneTest(log, match_names);
       }
+
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
+      all_ok = all_ok && snd_ok;
 
       if (want_snd_capture) {
         const DWORD capture_wait_ms = (opt.require_snd_capture || opt.test_snd_capture) ? 20000 : 0;
