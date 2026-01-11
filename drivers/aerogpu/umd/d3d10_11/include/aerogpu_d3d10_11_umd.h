@@ -367,7 +367,6 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_ROTATERESOURCEIDENTITIES)(D3D10DDI
 // be validated without WDK headers.
 // NOTE: `AEROGPU_DDI_MAPPED_SUBRESOURCE` is declared above alongside other
 // resource-copy/update helpers.
-
 // D3D11_MAP numeric values from d3d11.h. D3D10 runtimes use a compatible subset.
 typedef enum AEROGPU_DDI_MAP_TYPE {
   AEROGPU_DDI_MAP_READ = 1,

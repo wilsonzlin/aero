@@ -314,6 +314,7 @@ struct AeroGpuResource {
   bool mapped = false;
   bool mapped_write = false;
   uint32_t mapped_subresource = 0;
+  uint32_t mapped_map_type = 0;
   uint64_t mapped_offset_bytes = 0;
   uint64_t mapped_size_bytes = 0;
 };
@@ -3966,6 +3967,7 @@ HRESULT map_resource_locked(AeroGpuResource* res,
   res->mapped = true;
   res->mapped_write = want_write;
   res->mapped_subresource = subresource;
+  res->mapped_map_type = map_type;
   res->mapped_offset_bytes = 0;
   res->mapped_size_bytes = total;
   (void)want_read;
@@ -4007,6 +4009,7 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
   res->mapped = false;
   res->mapped_write = false;
   res->mapped_subresource = 0;
+  res->mapped_map_type = 0;
   res->mapped_offset_bytes = 0;
   res->mapped_size_bytes = 0;
 }
@@ -4040,6 +4043,7 @@ HRESULT map_dynamic_buffer_locked(AeroGpuResource* res, bool discard, void** ppD
   res->mapped = true;
   res->mapped_write = true;
   res->mapped_subresource = 0;
+  res->mapped_map_type = discard ? AEROGPU_DDI_MAP_WRITE_DISCARD : AEROGPU_DDI_MAP_WRITE_NO_OVERWRITE;
   res->mapped_offset_bytes = 0;
   res->mapped_size_bytes = total;
 
