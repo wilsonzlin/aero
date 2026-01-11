@@ -461,6 +461,49 @@ fn iretq_long_mode_non_canonical_rsp_delivers_gp() -> Result<(), CpuExit> {
     Ok(())
 }
 
+#[test]
+fn iretq_long_mode_non_canonical_rip_delivers_gp() -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x40000);
+
+    let idt_base = 0x1000;
+    write_idt_gate64(&mut mem, idt_base, 0x80, 0x08, 0x5000, 0, 0xEE);
+    // #GP handler at 0x6000.
+    write_idt_gate64(&mut mem, idt_base, 13, 0x08, 0x6000, 0, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Long);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x0FFF;
+    cpu.state.segments.cs.selector = 0x33; // user code (CPL3)
+    cpu.state.segments.ss.selector = 0x2B; // user data
+    cpu.state.set_rip(0x4000_0000);
+    cpu.state.write_gpr64(gpr::RSP, 0x7000);
+    cpu.state.set_rflags(0x202);
+
+    let tss_base = 0x10000u64;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+    mem.write_u64(tss_base + 4, 0x9000).unwrap();
+
+    cpu.pending.raise_software_interrupt(0x80, 0x4000_0010);
+    cpu.deliver_pending_event(&mut mem)?;
+
+    // Corrupt the saved RIP so `IRETQ` would restore a non-canonical instruction pointer.
+    let frame_base = cpu.state.read_gpr64(gpr::RSP);
+    mem.write_u64(frame_base, 0x0001_0000_0000_0000).unwrap();
+
+    cpu.iret(&mut mem)?;
+
+    // The `IRETQ` should fault with #GP(0) before committing the non-canonical RIP.
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.rip(), 0x6000);
+    assert_eq!(cpu.state.segments.ss.selector, 0);
+    assert_ne!(cpu.state.rip(), 0x0001_0000_0000_0000);
+
+    Ok(())
+}
+
 struct OneShotController(Option<u8>);
 
 impl InterruptController for OneShotController {
