@@ -541,10 +541,10 @@ impl VirtioPciDevice {
 
         // Subsystem vendor/device.
         //
-        // For virtio-pci, the subsystem device ID encodes the virtio device type
-        // (e.g. 0x0002 for virtio-blk, 0x0019 for virtio-snd). This matches the
-        // conventional virtio ecosystem and Aero's Windows device contracts.
-        let subsystem_id = self.device.device_type();
+        // Subsystem device ID is used as a stable secondary identifier. By default
+        // it mirrors the virtio device type, but devices may override it to
+        // distinguish variants (see `VirtioDevice::subsystem_device_id()`).
+        let subsystem_id = self.device.subsystem_device_id();
         self.config_space[0x2c..0x2e].copy_from_slice(&PCI_VENDOR_ID_VIRTIO.to_le_bytes());
         self.config_space[0x2e..0x30].copy_from_slice(&subsystem_id.to_le_bytes());
 

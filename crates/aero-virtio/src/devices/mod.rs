@@ -25,6 +25,18 @@ pub trait VirtioDevice: Any {
     /// Virtio device type (e.g. 1 = net, 2 = block).
     fn device_type(&self) -> u16;
 
+    /// PCI subsystem device ID (`config[0x2e..0x30]`) for this device.
+    ///
+    /// Aero uses subsystem IDs as stable secondary identifiers, primarily for
+    /// debugging and optional Windows INF matching.
+    ///
+    /// By default this mirrors the virtio device type (e.g. 0x0002 for virtio-blk,
+    /// 0x0019 for virtio-snd), but some contracts may override it to distinguish
+    /// device variants (e.g. virtio-input keyboard vs mouse).
+    fn subsystem_device_id(&self) -> u16 {
+        self.device_type()
+    }
+
     /// Total set of device features offered to the guest driver.
     fn device_features(&self) -> u64;
 
