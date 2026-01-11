@@ -72,6 +72,7 @@ VirtioPciModernMiniportInit(_Out_ VIRTIO_PCI_DEVICE *Dev,
 VOID VirtioPciResetDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev);
 VOID VirtioPciAddStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Bits);
 UCHAR VirtioPciGetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev);
+VOID VirtioPciSetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Status);
 VOID VirtioPciFailDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev);
 
 /*
@@ -125,4 +126,3 @@ VOID VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex
  * Interrupt status (read-to-ack).
  */
 UCHAR VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev);
-

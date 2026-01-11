@@ -261,6 +261,18 @@ VirtioPciGetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev)
 }
 
 VOID
+VirtioPciSetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Status)
+{
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return;
+    }
+
+    KeMemoryBarrier();
+    VirtioPciWriteDeviceStatus(Dev, Status);
+    KeMemoryBarrier();
+}
+
+VOID
 VirtioPciFailDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev)
 {
     VirtioPciAddStatus(Dev, VIRTIO_STATUS_FAILED);

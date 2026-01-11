@@ -2044,7 +2044,7 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     NdisReleaseSpinLock(&Adapter->Lock);
 
     // Quiesce the device. Full cleanup happens in HaltEx (PASSIVE_LEVEL).
-    VirtioPciResetDevice(&Adapter->Vdev);
+    VirtioPciSetStatus(&Adapter->Vdev, 0);
   }
 }
 
