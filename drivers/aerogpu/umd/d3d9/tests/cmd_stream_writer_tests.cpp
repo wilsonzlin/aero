@@ -14,6 +14,7 @@
 
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_pci.h"
+#include "aerogpu_wddm_alloc.h"
 
 namespace aerogpu {
 
@@ -1088,6 +1089,239 @@ bool TestCreateResourceRejectsUnsupportedGpuFormat() {
     return false;
   }
   return Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle");
+}
+
+bool TestSharedResourceCreateAndOpenEmitsExportImport() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    AEROGPU_D3D9DDI_HRESOURCE hAlias{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+    bool has_alias = false;
+
+    ~Cleanup() {
+      if (has_alias && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hAlias);
+      }
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Use a span-backed buffer so we can inspect the exact packets emitted for
+  // shared-surface create/open. Note: CreateResource(shared) forces an immediate
+  // submission to make the EXPORT visible to other processes; that resets the
+  // stream header but leaves the packet bytes intact in the span buffer.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+
+  aerogpu_wddm_alloc_priv priv{};
+  std::memset(&priv, 0, sizeof(priv));
+  HANDLE shared_handle = nullptr;
+
+  AEROGPU_D3D9DDIARG_CREATERESOURCE create_shared{};
+  create_shared.type = 0;
+  create_shared.format = 22u; // D3DFMT_X8R8G8B8
+  create_shared.width = 32;
+  create_shared.height = 32;
+  create_shared.depth = 1;
+  create_shared.mip_levels = 1;
+  create_shared.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+  create_shared.pool = 0;
+  create_shared.size = 0;
+  create_shared.hResource.pDrvPrivate = nullptr;
+  create_shared.pSharedHandle = &shared_handle;
+  create_shared.pKmdAllocPrivateData = &priv;
+  create_shared.KmdAllocPrivateDataSize = sizeof(priv);
+  create_shared.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_shared);
+  if (!Check(hr == S_OK, "CreateResource(shared)")) {
+    return false;
+  }
+  cleanup.hResource = create_shared.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_shared.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "shared resource pointer")) {
+    return false;
+  }
+  if (!Check(res->is_shared, "resource is_shared")) {
+    return false;
+  }
+  if (!Check(!res->is_shared_alias, "shared create is not an alias")) {
+    return false;
+  }
+  if (!Check(res->share_token != 0, "shared resource share_token non-zero")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id != 0, "shared resource backing_alloc_id non-zero")) {
+    return false;
+  }
+
+  if (!Check(priv.magic == AEROGPU_WDDM_ALLOC_PRIV_MAGIC, "alloc priv magic")) {
+    return false;
+  }
+  if (!Check(priv.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION, "alloc priv version")) {
+    return false;
+  }
+  if (!Check((priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) != 0, "alloc priv shared flag")) {
+    return false;
+  }
+  if (!Check(priv.alloc_id == res->backing_alloc_id, "alloc priv alloc_id matches resource")) {
+    return false;
+  }
+  if (!Check(priv.share_token == res->share_token, "alloc priv share_token matches resource")) {
+    return false;
+  }
+  if (!Check(priv.size_bytes != 0, "alloc priv size_bytes non-zero")) {
+    return false;
+  }
+
+  // The shared create path should emit CREATE_TEXTURE2D + EXPORT_SHARED_SURFACE.
+  if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D) == 1, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_EXPORT_SHARED_SURFACE) == 1, "EXPORT_SHARED_SURFACE emitted")) {
+    return false;
+  }
+  const CmdLoc export_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_EXPORT_SHARED_SURFACE);
+  if (!Check(export_loc.hdr != nullptr, "EXPORT_SHARED_SURFACE packet present")) {
+    return false;
+  }
+  const auto* export_cmd = reinterpret_cast<const aerogpu_cmd_export_shared_surface*>(export_loc.hdr);
+  if (!Check(export_cmd->resource_handle == res->handle, "EXPORT_SHARED_SURFACE resource_handle matches")) {
+    return false;
+  }
+  if (!Check(export_cmd->share_token == res->share_token, "EXPORT_SHARED_SURFACE share_token matches")) {
+    return false;
+  }
+
+  // Now simulate opening the shared resource in another process: caller passes a
+  // non-null shared handle value plus the preserved allocation private data blob.
+  std::memset(dma.data(), 0, dma.size());
+  dev->cmd.set_span(dma.data(), dma.size());
+
+  aerogpu_wddm_alloc_priv priv_open = priv;
+  HANDLE open_handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(0x1));
+
+  AEROGPU_D3D9DDIARG_CREATERESOURCE open_shared{};
+  open_shared.type = create_shared.type;
+  open_shared.format = create_shared.format;
+  open_shared.width = create_shared.width;
+  open_shared.height = create_shared.height;
+  open_shared.depth = create_shared.depth;
+  open_shared.mip_levels = create_shared.mip_levels;
+  open_shared.usage = create_shared.usage;
+  open_shared.pool = create_shared.pool;
+  open_shared.size = 0;
+  open_shared.hResource.pDrvPrivate = nullptr;
+  open_shared.pSharedHandle = &open_handle;
+  open_shared.pKmdAllocPrivateData = &priv_open;
+  open_shared.KmdAllocPrivateDataSize = sizeof(priv_open);
+  open_shared.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &open_shared);
+  if (!Check(hr == S_OK, "CreateResource(open shared)")) {
+    return false;
+  }
+  cleanup.hAlias = open_shared.hResource;
+  cleanup.has_alias = true;
+
+  auto* alias = reinterpret_cast<Resource*>(open_shared.hResource.pDrvPrivate);
+  if (!Check(alias != nullptr, "alias resource pointer")) {
+    return false;
+  }
+  if (!Check(alias->is_shared, "alias is_shared")) {
+    return false;
+  }
+  if (!Check(alias->is_shared_alias, "alias is_shared_alias")) {
+    return false;
+  }
+  if (!Check(alias->share_token == res->share_token, "alias share_token matches original")) {
+    return false;
+  }
+  if (!Check(alias->backing_alloc_id == res->backing_alloc_id, "alias backing_alloc_id matches original")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "import stream validates")) {
+    return false;
+  }
+  if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_IMPORT_SHARED_SURFACE) == 1, "IMPORT_SHARED_SURFACE emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D) == 0, "open shared does not CREATE_TEXTURE2D")) {
+    return false;
+  }
+
+  const CmdLoc import_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_IMPORT_SHARED_SURFACE);
+  if (!Check(import_loc.hdr != nullptr, "IMPORT_SHARED_SURFACE packet present")) {
+    return false;
+  }
+  const auto* import_cmd = reinterpret_cast<const aerogpu_cmd_import_shared_surface*>(import_loc.hdr);
+  if (!Check(import_cmd->out_resource_handle == alias->handle, "IMPORT_SHARED_SURFACE out_resource_handle matches")) {
+    return false;
+  }
+  if (!Check(import_cmd->share_token == alias->share_token, "IMPORT_SHARED_SURFACE share_token matches")) {
+    return false;
+  }
+
+  // Make cleanup safe: switch back to vector mode so subsequent destroy calls
+  // can't fail due to span-buffer capacity constraints.
+  dev->cmd.set_vector();
+  return true;
 }
 
 bool TestPresentStatsAndFrameLatency() {
@@ -3154,6 +3388,7 @@ int main() {
   failures += !aerogpu::TestAdapterMultisampleQualityLevels();
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
+  failures += !aerogpu::TestSharedResourceCreateAndOpenEmitsExportImport();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
   failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
