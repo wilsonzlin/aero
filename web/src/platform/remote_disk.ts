@@ -583,7 +583,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       written += toCopy;
     }
 
-    await this.maybePrefetch(offset, length, onLog);
+    // Prefetch is best-effort and should not delay the caller's read completion.
+    void this.maybePrefetch(offset, length, onLog).catch(() => {});
   }
 
   async read(offset: number, length: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
