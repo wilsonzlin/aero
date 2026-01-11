@@ -7,14 +7,10 @@ on:
     paths:
       - net-proxy/**
       - .github/workflows/net-proxy.yml
-    paths-ignore:
-      - "**/*.md"
   pull_request:
     paths:
       - net-proxy/**
       - .github/workflows/net-proxy.yml
-    paths-ignore:
-      - "**/*.md"
   workflow_dispatch:
 
 concurrency:
