@@ -235,8 +235,14 @@ static const PCPIN_DESCRIPTOR g_TopologyPins[] = {
     },
 };
 
+static const PCNODE_DESCRIPTOR g_TopologyNodes[] = {
+    // Node 0: speaker endpoint.
+    {0, NULL, &KSNODETYPE_SPEAKER, NULL},
+};
+
 static const PCCONNECTION_DESCRIPTOR g_TopologyConnections[] = {
-    {KSFILTER_NODE, VIRTIO_SND_TOPOLOGY_PIN_WAVE_BRIDGE, KSFILTER_NODE, VIRTIO_SND_TOPOLOGY_PIN_SPEAKER},
+    {KSFILTER_NODE, VIRTIO_SND_TOPOLOGY_PIN_WAVE_BRIDGE, 0, 0},
+    {0, 0, KSFILTER_NODE, VIRTIO_SND_TOPOLOGY_PIN_SPEAKER},
 };
 
 static const GUID* g_TopologyCategories[] = {
@@ -250,9 +256,9 @@ static const PCFILTER_DESCRIPTOR g_TopologyFilterDescriptor = {
     sizeof(PCPIN_DESCRIPTOR),
     RTL_NUMBER_OF(g_TopologyPins),
     g_TopologyPins,
-    0,
-    0,
-    NULL,
+    sizeof(PCNODE_DESCRIPTOR),
+    RTL_NUMBER_OF(g_TopologyNodes),
+    g_TopologyNodes,
     sizeof(PCCONNECTION_DESCRIPTOR),
     RTL_NUMBER_OF(g_TopologyConnections),
     g_TopologyConnections,
