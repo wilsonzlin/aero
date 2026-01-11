@@ -129,7 +129,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `vblank_wait_pacing` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing and fails on immediate returns (avg ≤ 2ms) or stalls (avg ≥ 50ms / max ≥ 250ms). On a 60 Hz display it typically reports ~16.6ms.
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
-* `d3d9ex_shared_surface` creates a D3D9Ex shared render-target texture, duplicates the shared handle into a child process, and verifies the child can open it and read back the expected pixels
+* `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and verifies the child can open it and read back the expected pixels
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 
