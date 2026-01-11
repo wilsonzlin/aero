@@ -437,14 +437,20 @@ $guestToolsScript = Join-Path $repoRoot "drivers\scripts\make-guest-tools-from-v
 $guestToolsLog = Join-Path $logsDir "make-guest-tools-from-virtio-win.log"
 
 Write-Host "Running make-guest-tools-from-virtio-win.ps1..."
-& pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript `
-  -VirtioWinRoot $syntheticRoot `
-  -OutDir $guestToolsOutDir `
-  -Profile $resolvedGuestToolsProfile `
-  -SpecPath $GuestToolsSpecPath `
-  -Version "0.0.0" `
-  -BuildId "ci" `
-  -CleanStage *>&1 | Tee-Object -FilePath $guestToolsLog
+$guestToolsArgs = @(
+  "-OutDir", $guestToolsOutDir,
+  "-Profile", $resolvedGuestToolsProfile,
+  "-SpecPath", $GuestToolsSpecPath,
+  "-Version", "0.0.0",
+  "-BuildId", "ci",
+  "-CleanStage"
+)
+if ($TestIsoMode) {
+  $guestToolsArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
+} else {
+  $guestToolsArgs += @("-VirtioWinRoot", $syntheticRoot)
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsArgs *>&1 | Tee-Object -FilePath $guestToolsLog
 if ($LASTEXITCODE -ne 0) {
   throw "make-guest-tools-from-virtio-win.ps1 failed (exit $LASTEXITCODE). See $guestToolsLog"
 }
@@ -592,9 +598,15 @@ $driverIsoLog = Join-Path $logsDir "make-virtio-driver-iso.log"
 $verifyIsoLog = Join-Path $logsDir "verify-virtio-driver-iso.log"
 
 Write-Host "Running make-virtio-driver-iso.ps1..."
-& pwsh -NoProfile -ExecutionPolicy Bypass -File $isoScript `
-  -VirtioWinRoot $syntheticRoot `
-  -OutIso $driverIsoPath *>&1 | Tee-Object -FilePath $driverIsoLog
+$driverIsoArgs = @(
+  "-OutIso", $driverIsoPath
+)
+if ($TestIsoMode) {
+  $driverIsoArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
+} else {
+  $driverIsoArgs += @("-VirtioWinRoot", $syntheticRoot)
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $isoScript @driverIsoArgs *>&1 | Tee-Object -FilePath $driverIsoLog
 if ($LASTEXITCODE -ne 0) {
   throw "make-virtio-driver-iso.ps1 failed (exit $LASTEXITCODE). See $driverIsoLog"
 }
