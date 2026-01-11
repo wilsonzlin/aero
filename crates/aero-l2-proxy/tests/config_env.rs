@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use aero_l2_proxy::{AuthMode, SecurityConfig};
+use aero_l2_proxy::{AuthMode, ProxyConfig, SecurityConfig};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -48,6 +48,8 @@ fn reset_common_env() -> Vec<EnvVarGuard> {
         EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS"),
         EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST"),
         EnvVarGuard::unset("AERO_L2_OPEN"),
+        EnvVarGuard::unset("AERO_L2_TCP_SEND_BUFFER"),
+        EnvVarGuard::unset("AERO_L2_WS_SEND_BUFFER"),
     ]
 }
 
@@ -189,4 +191,26 @@ fn default_auth_mode_requires_explicit_escape_hatch_when_unconfigured() {
     let _insecure = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
     let cfg = SecurityConfig::from_env().expect("expected config to allow unauthenticated access");
     assert_eq!(cfg.auth_mode, AuthMode::None);
+}
+
+#[test]
+fn proxy_config_clamps_zero_send_buffer_sizes() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guards = reset_common_env();
+
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _insecure = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
+
+    let _tcp_send_buffer = EnvVarGuard::set("AERO_L2_TCP_SEND_BUFFER", "0");
+    let _ws_send_buffer = EnvVarGuard::set("AERO_L2_WS_SEND_BUFFER", "0");
+
+    let cfg = ProxyConfig::from_env().expect("expected config to accept zero send buffer sizes");
+    assert_eq!(
+        cfg.tcp_send_buffer, 32,
+        "tcp_send_buffer should fall back to default when zero"
+    );
+    assert_eq!(
+        cfg.ws_send_buffer, 64,
+        "ws_send_buffer should fall back to default when zero"
+    );
 }

@@ -470,11 +470,15 @@ impl ProxyConfig {
         let tcp_send_buffer = std::env::var("AERO_L2_TCP_SEND_BUFFER")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
+            // `tokio::sync::mpsc::channel` panics on capacity=0; treat zero as invalid.
+            .filter(|v| *v > 0)
             .unwrap_or(32);
 
         let ws_send_buffer = std::env::var("AERO_L2_WS_SEND_BUFFER")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
+            // `tokio::sync::mpsc::channel` panics on capacity=0; treat zero as invalid.
+            .filter(|v| *v > 0)
             .unwrap_or(64);
 
         let max_udp_flows_per_tunnel =
