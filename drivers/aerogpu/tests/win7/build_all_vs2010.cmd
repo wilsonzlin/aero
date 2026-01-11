@@ -15,6 +15,10 @@ echo.
 echo === Building timeout_runner ===
 call "%ROOT%timeout_runner\build_vs2010.cmd" || exit /b 1
 
+echo.
+echo === Building test_runner ===
+call "%ROOT%test_runner\build_vs2010.cmd" || exit /b 1
+
 for /f "usebackq tokens=1" %%A in ("%MANIFEST%") do (
   call :build_test "%%A" || exit /b 1
 )
