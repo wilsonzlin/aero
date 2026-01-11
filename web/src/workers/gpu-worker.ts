@@ -87,6 +87,11 @@ import {
   resetAerogpuCpuExecutorState,
   type AeroGpuCpuTexture,
 } from "./aerogpu-acmd-executor.ts";
+import {
+  AEROGPU_PRESENT_FLAG_VSYNC,
+  AerogpuCmdOpcode,
+  AerogpuCmdStreamIter,
+} from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
 
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 
@@ -182,6 +187,56 @@ const aerogpuState = createAerogpuCpuExecutorState();
 
 // Ensure submissions execute serially even though message handlers are async.
 let aerogpuSubmitChain: Promise<void> = Promise.resolve();
+
+type AerogpuSubmitCompletionKind = "immediate" | "vsync";
+
+type PendingAerogpuSubmitComplete = {
+  requestId: number;
+  completedFence: bigint;
+  presentCount?: bigint;
+  kind: AerogpuSubmitCompletionKind;
+};
+
+const aerogpuPendingSubmitComplete: PendingAerogpuSubmitComplete[] = [];
+
+const postAerogpuSubmitComplete = (entry: PendingAerogpuSubmitComplete): void => {
+  postToMain({
+    type: "submit_complete",
+    requestId: entry.requestId,
+    completedFence: entry.completedFence,
+    ...(entry.presentCount !== undefined ? { presentCount: entry.presentCount } : {}),
+  });
+};
+
+const enqueueAerogpuSubmitComplete = (entry: PendingAerogpuSubmitComplete): void => {
+  // Preserve the current immediate-completion behavior unless a vsync-paced present has
+  // introduced a completion barrier.
+  if (entry.kind === "immediate" && aerogpuPendingSubmitComplete.length === 0) {
+    postAerogpuSubmitComplete(entry);
+    return;
+  }
+  aerogpuPendingSubmitComplete.push(entry);
+};
+
+const flushAerogpuSubmitCompleteOnTick = (): void => {
+  if (aerogpuPendingSubmitComplete.length === 0) return;
+
+  const first = aerogpuPendingSubmitComplete[0]!;
+  if (first.kind === "vsync") {
+    // Complete at most one vsync-paced submission per tick, then release any immediate
+    // submissions queued behind it.
+    postAerogpuSubmitComplete(aerogpuPendingSubmitComplete.shift()!);
+    while (aerogpuPendingSubmitComplete[0]?.kind === "immediate") {
+      postAerogpuSubmitComplete(aerogpuPendingSubmitComplete.shift()!);
+    }
+    return;
+  }
+
+  // No vsync barrier at the head; flush any immediate completions.
+  while (aerogpuPendingSubmitComplete[0]?.kind === "immediate") {
+    postAerogpuSubmitComplete(aerogpuPendingSubmitComplete.shift()!);
+  }
+};
 
 let framesReceived = 0;
 let framesPresented = 0;
@@ -1195,10 +1250,30 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
   presenter.present(tex.data, tex.width * 4);
 };
 
+const cmdStreamHasVsyncPresent = (cmdStream: ArrayBuffer): boolean => {
+  try {
+    const iter = new AerogpuCmdStreamIter(cmdStream);
+    const dv = iter.view;
+    for (const packet of iter) {
+      const opcode = packet.hdr.opcode;
+      if (opcode !== AerogpuCmdOpcode.Present && opcode !== AerogpuCmdOpcode.PresentEx) continue;
+      // flags is always after the scanout_id field (hdr + scanout_id => offset + 12).
+      if (packet.offsetBytes + 16 > packet.endBytes) continue;
+      const flags = dv.getUint32(packet.offsetBytes + 12, true);
+      if ((flags & AEROGPU_PRESENT_FLAG_VSYNC) !== 0) return true;
+    }
+  } catch {
+    // Malformed streams should not gate completion on tick (avoid deadlocks).
+  }
+  return false;
+};
+
 const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise<void> => {
   const signalFence = typeof req.signalFence === "bigint" ? req.signalFence : BigInt(req.signalFence);
+  const vsyncPaced = cmdStreamHasVsyncPresent(req.cmdStream);
 
   let presentDelta = 0n;
+  let submitOk = false;
   try {
     await maybeSendReady();
     const allocTable = req.allocTable ? decodeAerogpuAllocTable(req.allocTable) : null;
@@ -1207,20 +1282,22 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
       guestU8,
       presentTexture: presentAerogpuTexture,
     });
+    submitOk = true;
   } catch (err) {
     sendError(err);
-  } finally {
-    postToMain({
-      type: "submit_complete",
-      requestId: req.requestId,
-      completedFence: signalFence,
-      ...(presentDelta > 0n ? { presentCount: aerogpuState.presentCount } : {}),
-    });
   }
+
+  enqueueAerogpuSubmitComplete({
+    requestId: req.requestId,
+    completedFence: signalFence,
+    ...(presentDelta > 0n ? { presentCount: aerogpuState.presentCount } : {}),
+    kind: submitOk && vsyncPaced ? "vsync" : "immediate",
+  });
 };
 
 const handleTick = async () => {
   syncPerfFrame();
+  flushAerogpuSubmitCompleteOnTick();
   const perfEnabled = !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
   refreshFramebufferViews();
   maybeUpdateFramesReceivedFromSeq();
@@ -1635,6 +1712,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
         resetAerogpuCpuExecutorState(aerogpuState);
         aerogpuSubmitChain = Promise.resolve();
+        aerogpuPendingSubmitComplete.length = 0;
         cursorImage = null;
         cursorWidth = 0;
         cursorHeight = 0;
@@ -2019,6 +2097,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       runtimeOptions = null;
       runtimeReadySent = false;
       resetAerogpuCpuExecutorState(aerogpuState);
+      aerogpuPendingSubmitComplete.length = 0;
       ctx.close();
       break;
     }
