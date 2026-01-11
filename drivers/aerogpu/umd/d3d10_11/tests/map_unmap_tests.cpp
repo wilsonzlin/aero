@@ -233,7 +233,9 @@ struct Harness {
     if (fence == 0 || h->completed_fence >= fence) {
       return S_OK;
     }
-    return DXGI_ERROR_WAS_STILL_DRAWING;
+    // `HRESULT_FROM_NT(STATUS_TIMEOUT)` is a SUCCEEDED() HRESULT on Win7-era
+    // stacks; the UMD should still treat it as "not ready yet" for DO_NOT_WAIT.
+    return static_cast<HRESULT>(0x10000102L);
   }
 
   static void AEROGPU_APIENTRY SetError(void* user, HRESULT hr) {

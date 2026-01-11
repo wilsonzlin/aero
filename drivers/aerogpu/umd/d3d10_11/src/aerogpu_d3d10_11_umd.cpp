@@ -132,6 +132,12 @@ void trace_create_resource_desc(const AEROGPU_DDIARG_CREATERESOURCE* pDesc) {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
+constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
+constexpr HRESULT kHrWaitTimeout = static_cast<HRESULT>(0x80070102u); // HRESULT_FROM_WIN32(WAIT_TIMEOUT)
+constexpr HRESULT kHrErrorTimeout = static_cast<HRESULT>(0x800705B4u); // HRESULT_FROM_WIN32(ERROR_TIMEOUT)
+constexpr HRESULT kHrNtStatusTimeout = static_cast<HRESULT>(0x10000102u); // HRESULT_FROM_NT(STATUS_TIMEOUT) (SUCCEEDED)
+constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
+    static_cast<HRESULT>(0xD01E0102u); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
 constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
 
@@ -895,7 +901,11 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
   if (dev->device_callbacks && dev->device_callbacks->pfnWaitForFence) {
     const auto* cb = dev->device_callbacks;
     const HRESULT hr = cb->pfnWaitForFence(cb->pUserContext, fence, timeout_ms);
-    if (hr == kDxgiErrorWasStillDrawing) {
+    // Mirror Win7/WDDM wait behavior: several "not ready" / timeout HRESULTs can
+    // be returned for DO_NOT_WAIT polling, including `HRESULT_FROM_NT(STATUS_TIMEOUT)`
+    // which is a SUCCEEDED() HRESULT.
+    if (hr == kDxgiErrorWasStillDrawing || hr == kHrWaitTimeout || hr == kHrErrorTimeout ||
+        hr == kHrNtStatusTimeout || hr == kHrNtStatusGraphicsGpuBusy || hr == kHrPending) {
       return kDxgiErrorWasStillDrawing;
     }
     if (FAILED(hr)) {

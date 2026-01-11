@@ -455,6 +455,10 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SUBMIT_CMD_STREAM)(
 // Semantics match `DXGI`/D3D11 expectations:
 // - `timeout_ms == 0`: poll (return DXGI_ERROR_WAS_STILL_DRAWING if not complete)
 // - `timeout_ms == ~0u`: "infinite"
+//
+// Note: Win7-era WDDM stacks sometimes report a poll miss using other HRESULTs
+// (e.g. `HRESULT_FROM_NT(STATUS_TIMEOUT)` which is SUCCEEDED). Callers should
+// normalize those to `DXGI_ERROR_WAS_STILL_DRAWING`.
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_WAIT_FOR_FENCE)(void *pUserContext,
                                                                 uint64_t fence,
                                                                 uint32_t timeout_ms);
