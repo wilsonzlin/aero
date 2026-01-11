@@ -18,17 +18,6 @@ static DRIVER_ADD_DEVICE VirtIoSndAddDevice;
 static DRIVER_DISPATCH VirtIoSndDispatchPnp;
 static NTSTATUS VirtIoSndStartDevice(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp, _In_ PRESOURCELIST ResourceList);
 
-/*
- * PortCls allocates the adapter FDO device extension. Store the virtio-snd WDM
- * per-device state at the front so legacy helper macros (VIRTIOSND_GET_DX) still
- * work, while keeping additional PortCls bookkeeping alongside it.
- */
-typedef struct _VIRTIOSND_ADAPTER_EXTENSION {
-    VIRTIOSND_DEVICE_EXTENSION Dx;
-    BOOLEAN TopologyRegistered;
-    BOOLEAN WaveRegistered;
-} VIRTIOSND_ADAPTER_EXTENSION, *PVIRTIOSND_ADAPTER_EXTENSION;
-
 _Use_decl_annotations_
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
@@ -59,7 +48,7 @@ static NTSTATUS VirtIoSndAddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT P
         PhysicalDeviceObject,
         VirtIoSndStartDevice,
         2, // max miniports/subdevices
-        sizeof(VIRTIOSND_ADAPTER_EXTENSION) // device extension size
+        sizeof(VIRTIOSND_DEVICE_EXTENSION) // device extension size
     );
 }
 
@@ -108,65 +97,73 @@ static NTSTATUS
 VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 {
     PIO_STACK_LOCATION stack;
-    PVIRTIOSND_ADAPTER_EXTENSION ext;
     PVIRTIOSND_DEVICE_EXTENSION dx;
     NTSTATUS status;
-    PUNKNOWN unknownAdapter;
 
     stack = IoGetCurrentIrpStackLocation(Irp);
-    ext = (PVIRTIOSND_ADAPTER_EXTENSION)DeviceObject->DeviceExtension;
-    dx = (ext != NULL) ? &ext->Dx : NULL;
-    unknownAdapter = NULL;
+    dx = (PVIRTIOSND_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
 
-    if (ext == NULL || dx == NULL || dx->Signature != VIRTIOSND_DX_SIGNATURE || dx->Self != DeviceObject) {
+    if (dx == NULL || dx->Signature != VIRTIOSND_DX_SIGNATURE || dx->Self != DeviceObject) {
         return PcDispatchIrp(DeviceObject, Irp);
     }
 
     switch (stack->MinorFunction) {
     case IRP_MN_STOP_DEVICE:
+    case IRP_MN_SURPRISE_REMOVAL:
+    case IRP_MN_REMOVE_DEVICE:
+    {
+        const BOOLEAN isSurpriseRemoval = (stack->MinorFunction == IRP_MN_SURPRISE_REMOVAL);
+        const BOOLEAN isRemoveDevice = (stack->MinorFunction == IRP_MN_REMOVE_DEVICE);
+        const BOOLEAN removing = (isSurpriseRemoval || isRemoveDevice);
+        PUNKNOWN unknownAdapter;
+
+        unknownAdapter = NULL;
+
         /*
          * Let PortCls quiesce/close pins first so the WaveRT period timer is
          * stopped before we tear down the virtio transport.
+         *
+         * On SURPRISE_REMOVAL, mark the device removed before PortCls interacts
+         * with the miniports to avoid touching BAR-mapped registers after the
+         * device is gone.
          */
+        if (isSurpriseRemoval) {
+            dx->Removed = TRUE;
+        }
+
         status = PcDispatchIrp(DeviceObject, Irp);
 
-        if (ext->WaveRegistered) {
-            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
-            ext->WaveRegistered = FALSE;
-        }
-        if (ext->TopologyRegistered) {
-            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
-            ext->TopologyRegistered = FALSE;
-        }
+        /*
+         * Best-effort unregistration allows clean STOP/START cycles and ensures
+         * subdevices are not left registered after REMOVE.
+         */
+        (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
+        (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
 
         if (NT_SUCCESS(PcGetAdapterCommon(DeviceObject, &unknownAdapter))) {
             VirtIoSndAdapterContext_Unregister(unknownAdapter);
             VirtIoSndSafeRelease(unknownAdapter);
         }
 
+        if (removing) {
+            dx->Removed = TRUE;
+        }
+
         VirtIoSndStopHardware(dx);
+
+        if (removing) {
+            if (dx->Pdo != NULL && dx->Pdo != dx->LowerDeviceObject) {
+                ObDereferenceObject(dx->Pdo);
+            }
+            if (dx->LowerDeviceObject != NULL) {
+                ObDereferenceObject(dx->LowerDeviceObject);
+            }
+            dx->Pdo = NULL;
+            dx->LowerDeviceObject = NULL;
+        }
+
         return status;
-
-    case IRP_MN_SURPRISE_REMOVAL:
-    case IRP_MN_REMOVE_DEVICE:
-        dx->Removed = TRUE;
-
-        if (ext->WaveRegistered) {
-            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
-            ext->WaveRegistered = FALSE;
-        }
-        if (ext->TopologyRegistered) {
-            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
-            ext->TopologyRegistered = FALSE;
-        }
-
-        if (NT_SUCCESS(PcGetAdapterCommon(DeviceObject, &unknownAdapter))) {
-            VirtIoSndAdapterContext_Unregister(unknownAdapter);
-            VirtIoSndSafeRelease(unknownAdapter);
-        }
-
-        VirtIoSndStopHardware(dx);
-        break;
+    }
 
     default:
         break;
@@ -175,56 +172,15 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
     return PcDispatchIrp(DeviceObject, Irp);
 }
 
-static NTSTATUS
-VirtIoSndCapturePdoAndLower(_In_ PDEVICE_OBJECT DeviceObject, _Out_ PDEVICE_OBJECT* PdoOut, _Out_ PDEVICE_OBJECT* LowerOut)
-{
-    PDEVICE_OBJECT base;
-    PDEVICE_OBJECT prev;
-    PDEVICE_OBJECT cur;
-
-    if (PdoOut == NULL || LowerOut == NULL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    *PdoOut = NULL;
-    *LowerOut = NULL;
-
-    base = IoGetDeviceAttachmentBaseRef(DeviceObject);
-    if (base == NULL) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    prev = base;
-    cur = base;
-    while (cur != NULL && cur != DeviceObject) {
-        prev = cur;
-        cur = cur->AttachedDevice;
-    }
-
-    if (cur != DeviceObject) {
-        ObDereferenceObject(base);
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    *PdoOut = base;
-    *LowerOut = prev;
-
-    /*
-     * We only need stable pointers to the PDO/lower object. The objects are
-     * owned by the device stack; avoid leaking references in the PortCls path.
-     */
-    ObDereferenceObject(base);
-    return STATUS_SUCCESS;
-}
-
 _Use_decl_annotations_
 static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRESOURCELIST ResourceList)
 {
     NTSTATUS status;
-    PVIRTIOSND_ADAPTER_EXTENSION ext;
     PVIRTIOSND_DEVICE_EXTENSION dx;
     BOOLEAN hwStarted;
     BOOLEAN adapterContextRegistered;
+    BOOLEAN topologyRegistered;
+    BOOLEAN waveRegistered;
     PUNKNOWN unknownAdapter;
     PUNKNOWN unknownWave;
     PUNKNOWN unknownWavePort;
@@ -238,9 +194,11 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
 
     VIRTIOSND_TRACE("StartDevice\n");
 
-    ext = (PVIRTIOSND_ADAPTER_EXTENSION)DeviceObject->DeviceExtension;
+    dx = (PVIRTIOSND_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
     hwStarted = FALSE;
     adapterContextRegistered = FALSE;
+    topologyRegistered = FALSE;
+    waveRegistered = FALSE;
     unknownAdapter = NULL;
     unknownWave = NULL;
     unknownWavePort = NULL;
@@ -264,34 +222,33 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         goto Exit;
     }
 
-    if (ext == NULL) {
+    if (dx == NULL) {
         status = STATUS_DEVICE_CONFIGURATION_ERROR;
         goto Exit;
     }
 
-    /*
-     * Best-effort restart safety: if the extension was previously initialized,
-     * stop any in-flight virtio transport before zeroing the bookkeeping fields.
-     */
-    dx = &ext->Dx;
-    if (dx->Signature == VIRTIOSND_DX_SIGNATURE && dx->Self == DeviceObject) {
-        VirtIoSndStopHardware(dx);
+    if (dx->Signature != VIRTIOSND_DX_SIGNATURE) {
+        RtlZeroMemory(dx, sizeof(*dx));
+        dx->Signature = VIRTIOSND_DX_SIGNATURE;
     }
 
-    RtlZeroMemory(ext, sizeof(*ext));
-    dx = &ext->Dx;
-
-    dx->Signature = VIRTIOSND_DX_SIGNATURE;
     dx->Self = DeviceObject;
     dx->Removed = FALSE;
 
-    status = VirtIoSndCapturePdoAndLower(DeviceObject, &dx->Pdo, &dx->LowerDeviceObject);
-    if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("failed to capture PDO/lower device object: 0x%08X\n", (UINT)status);
-        goto Exit;
-    }
-
+    /* Initialize INTx DPC state before any best-effort StopHardware calls. */
     VirtIoSndIntxInitialize(dx);
+
+    if (dx->LowerDeviceObject == NULL || dx->Pdo == NULL) {
+        PDEVICE_OBJECT base = IoGetDeviceAttachmentBaseRef(DeviceObject);
+        if (base == NULL) {
+            status = STATUS_NO_SUCH_DEVICE;
+            goto Exit;
+        }
+
+        /* For PortCls adapter drivers the base of the stack is the PDO. */
+        dx->Pdo = base;
+        dx->LowerDeviceObject = base;
+    }
 
     {
         static const USHORT allowedIds[] = {0x1059u};
@@ -367,7 +324,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         VIRTIOSND_TRACE_ERROR("PcRegisterSubdevice(topology) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
-    ext->TopologyRegistered = TRUE;
+    topologyRegistered = TRUE;
 
     status = VirtIoSndMiniportWaveRT_Create(&unknownWave);
     if (!NT_SUCCESS(status)) {
@@ -398,7 +355,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         VIRTIOSND_TRACE_ERROR("PcRegisterSubdevice(wave) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
-    ext->WaveRegistered = TRUE;
+    waveRegistered = TRUE;
 
     status = PcRegisterPhysicalConnection(
         DeviceObject,
@@ -428,15 +385,11 @@ Exit:
     VirtIoSndSafeRelease(unknownAdapter);
 
     if (!NT_SUCCESS(status) && hwStarted) {
-        if (ext != NULL) {
-            if (ext->WaveRegistered) {
-                (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
-                ext->WaveRegistered = FALSE;
-            }
-            if (ext->TopologyRegistered) {
-                (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
-                ext->TopologyRegistered = FALSE;
-            }
+        if (waveRegistered) {
+            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE);
+        }
+        if (topologyRegistered) {
+            (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
         }
         VirtIoSndStopHardware(dx);
     }
