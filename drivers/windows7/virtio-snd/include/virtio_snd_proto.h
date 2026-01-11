@@ -32,11 +32,13 @@
 #define VIRTIO_SND_S_NOT_SUPP 2u
 #define VIRTIO_SND_S_IO_ERR   3u
 
-/* Fixed playback stream format implemented by the emulator. */
+/* Fixed stream formats implemented by the emulator (Aero contract v1). */
 #define VIRTIO_SND_PCM_FMT_S16     0x05u
 #define VIRTIO_SND_PCM_RATE_48000  0x07u
 #define VIRTIO_SND_D_OUTPUT        0x00u
+#define VIRTIO_SND_D_INPUT         0x01u
 #define VIRTIO_SND_PLAYBACK_STREAM_ID 0u
+#define VIRTIO_SND_CAPTURE_STREAM_ID  1u
 
 /* PCM_INFO bitmask helpers (bits are indexed by the PCM_FMT/PCM_RATE values). */
 #define VIRTIO_SND_PCM_FMT_MASK_S16    (1ull << VIRTIO_SND_PCM_FMT_S16)
