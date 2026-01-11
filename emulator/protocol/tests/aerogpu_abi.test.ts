@@ -265,6 +265,34 @@ test("decodeSubmitDesc decodes the expected byte layout", () => {
   assert.equal(desc.signalFence, 0x0102030405060708n);
 });
 
+test("decodeSubmitDesc accepts extended submit descriptors", () => {
+  const buf = new ArrayBuffer(128);
+  const view = new DataView(buf);
+
+  view.setUint32(0, 128, true);
+  view.setUint32(4, AEROGPU_SUBMIT_FLAG_PRESENT, true);
+  view.setBigUint64(AEROGPU_SUBMIT_DESC_OFF_SIGNAL_FENCE, 123n, true);
+
+  const desc = decodeSubmitDesc(view, 0, 128);
+  assert.equal(desc.descSizeBytes, 128);
+  assert.equal(desc.flags, AEROGPU_SUBMIT_FLAG_PRESENT);
+  assert.equal(desc.signalFence, 123n);
+});
+
+test("decodeSubmitDesc rejects too-small submit descriptors", () => {
+  const buf = new ArrayBuffer(AEROGPU_SUBMIT_DESC_SIZE);
+  const view = new DataView(buf);
+  view.setUint32(0, 32, true);
+  assert.throws(() => decodeSubmitDesc(view, 0), /too small/);
+});
+
+test("decodeSubmitDesc rejects submit descriptors that exceed the provided max size", () => {
+  const buf = new ArrayBuffer(AEROGPU_SUBMIT_DESC_SIZE);
+  const view = new DataView(buf);
+  view.setUint32(0, 128, true);
+  assert.throws(() => decodeSubmitDesc(view, 0, AEROGPU_SUBMIT_DESC_SIZE), /exceeds max size/);
+});
+
 test("writeFencePageCompletedFence updates the expected bytes", () => {
   const buf = new ArrayBuffer(AEROGPU_FENCE_PAGE_SIZE);
   const view = new DataView(buf);

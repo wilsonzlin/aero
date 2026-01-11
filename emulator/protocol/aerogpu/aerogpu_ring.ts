@@ -98,14 +98,19 @@ export interface AerogpuSubmitDesc {
   signalFence: bigint;
 }
 
-export function decodeSubmitDesc(view: DataView, byteOffset = 0): AerogpuSubmitDesc {
+export function decodeSubmitDesc(view: DataView, byteOffset = 0, maxSizeBytes?: number): AerogpuSubmitDesc {
   if (view.byteLength < byteOffset + AEROGPU_SUBMIT_DESC_SIZE) {
     throw new AerogpuRingError("Buffer too small for aerogpu_submit_desc");
   }
 
   const descSizeBytes = view.getUint32(byteOffset + AEROGPU_SUBMIT_DESC_OFF_DESC_SIZE_BYTES, true);
-  if (descSizeBytes !== AEROGPU_SUBMIT_DESC_SIZE) {
-    throw new AerogpuRingError(`submit.desc_size_bytes mismatch: ${descSizeBytes}`);
+  if (descSizeBytes < AEROGPU_SUBMIT_DESC_SIZE) {
+    throw new AerogpuRingError(`submit.desc_size_bytes too small: ${descSizeBytes}`);
+  }
+  if (maxSizeBytes !== undefined && descSizeBytes > maxSizeBytes) {
+    throw new AerogpuRingError(
+      `submit.desc_size_bytes exceeds max size (${descSizeBytes} > ${maxSizeBytes})`,
+    );
   }
 
   return {
@@ -153,4 +158,3 @@ export function writeFencePageCompletedFence(
 
   view.setBigUint64(byteOffset + AEROGPU_FENCE_PAGE_OFF_COMPLETED_FENCE, completedFence, true);
 }
-
