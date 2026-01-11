@@ -158,7 +158,18 @@ VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
     // Cancel any DPC that is queued but not yet running.
     removed = KeRemoveQueueDpc(&Dx->InterruptDpc);
     if (removed) {
-        if (InterlockedDecrement(&Dx->DpcInFlight) == 0) {
+        /*
+         * The queued DPC was removed and will never run, so decrement the DPC
+         * in-flight counter here to keep teardown synchronization correct.
+         *
+         * Note: a DPC instance may still be *running* concurrently (a KDPC can be
+         * re-queued while executing). We still wait for DpcIdleEvent below.
+         */
+        LONG remaining = InterlockedDecrement(&Dx->DpcInFlight);
+        if (remaining <= 0) {
+            if (remaining < 0) {
+                (VOID)InterlockedExchange(&Dx->DpcInFlight, 0);
+            }
             KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
         }
     }
@@ -171,6 +182,8 @@ VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
     }
 
     (VOID)InterlockedExchange(&Dx->PendingIsrStatus, 0);
+    (VOID)InterlockedExchange(&Dx->DpcInFlight, 0);
+    KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
 }
 
 _Use_decl_annotations_
@@ -218,6 +231,7 @@ _Use_decl_annotations_
 VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2) {
     PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)DeferredContext;
     LONG isr;
+    LONG remaining;
 
     UNREFERENCED_PARAMETER(Dpc);
     UNREFERENCED_PARAMETER(SystemArgument1);
@@ -228,41 +242,45 @@ VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, P
     }
 
     isr = InterlockedExchange(&dx->PendingIsrStatus, 0);
+    if (!VirtIoSndIntxStopping(dx)) {
+        if ((isr & VIRTIOSND_ISR_CONFIG) != 0) {
+            VIRTIOSND_TRACE("INTx DPC: config interrupt (unhandled)\n");
+        }
 
-    if (VirtIoSndIntxStopping(dx)) {
-        goto Exit;
-    }
+        if ((isr & VIRTIOSND_ISR_QUEUE) != 0) {
+            /*
+             * Drain used rings. Route completions to protocol engines when
+             * initialized so cookies are not leaked.
+             */
+            VirtioSndCtrlProcessUsed(&dx->Control);
+            VirtioSndTxProcessCompletions(&dx->Tx);
 
-    if ((isr & VIRTIOSND_ISR_CONFIG) != 0) {
-        VIRTIOSND_TRACE("INTx DPC: config interrupt (unhandled)\n");
-    }
+            /*
+             * eventq is device->driver notifications; we do not submit receive
+             * buffers yet, so there should be no used entries. Drain defensively in
+             * case a future path does submit buffers.
+             */
+            if (dx->Queues[VIRTIOSND_QUEUE_EVENT].Ops != NULL) {
+                VOID* cookie;
+                UINT32 usedLen;
 
-    if ((isr & VIRTIOSND_ISR_QUEUE) != 0) {
-        /*
-         * Drain used rings. Route completions to protocol engines when
-         * initialized so cookies are not leaked.
-         */
-        VirtioSndCtrlProcessUsed(&dx->Control);
-        VirtioSndTxProcessCompletions(&dx->Tx);
-
-        /*
-         * eventq is device->driver notifications; we do not submit receive
-         * buffers yet, so there should be no used entries. Drain defensively in
-         * case a future path does submit buffers.
-         */
-        if (dx->Queues[VIRTIOSND_QUEUE_EVENT].Ops != NULL) {
-            VOID* cookie;
-            UINT32 usedLen;
-
-            while (VirtioSndQueuePopUsed(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &cookie, &usedLen)) {
-                UNREFERENCED_PARAMETER(cookie);
-                UNREFERENCED_PARAMETER(usedLen);
+                while (VirtioSndQueuePopUsed(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &cookie, &usedLen)) {
+                    UNREFERENCED_PARAMETER(cookie);
+                    UNREFERENCED_PARAMETER(usedLen);
+                }
             }
         }
     }
 
-Exit:
-    if (InterlockedDecrement(&dx->DpcInFlight) == 0) {
+    remaining = InterlockedDecrement(&dx->DpcInFlight);
+    if (remaining <= 0) {
+        /*
+         * Ensure the idle event is always signaled when no DPC instances remain,
+         * even if DpcInFlight gets out of sync due to unexpected callers.
+         */
+        if (remaining < 0) {
+            (VOID)InterlockedExchange(&dx->DpcInFlight, 0);
+        }
         KeSetEvent(&dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
     }
 }
