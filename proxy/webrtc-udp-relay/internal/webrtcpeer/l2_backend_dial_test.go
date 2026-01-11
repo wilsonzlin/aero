@@ -1,6 +1,7 @@
 package webrtcpeer
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +45,18 @@ func newTestL2Backend(t *testing.T, expectedOrigin string, expectedCredential st
 		default:
 		}
 
+		foundTunnelProto := false
+		for _, proto := range obs.Subprotocols {
+			if proto == l2TunnelSubprotocol {
+				foundTunnelProto = true
+				break
+			}
+		}
+		if !foundTunnelProto {
+			http.Error(w, "missing required subprotocol", http.StatusBadRequest)
+			return
+		}
+
 		if obs.Origin != expectedOrigin {
 			http.Error(w, "bad origin", http.StatusForbidden)
 			return
@@ -51,6 +64,10 @@ func newTestL2Backend(t *testing.T, expectedOrigin string, expectedCredential st
 
 		switch mode {
 		case config.L2BackendAuthForwardModeQuery:
+			if obs.Token != "" && obs.APIKey != "" && obs.Token != obs.APIKey {
+				http.Error(w, "conflicting query credentials", http.StatusBadRequest)
+				return
+			}
 			if obs.Token != expectedCredential || obs.APIKey != expectedCredential {
 				http.Error(w, "missing credential in query", http.StatusUnauthorized)
 				return
@@ -82,6 +99,16 @@ func newTestL2Backend(t *testing.T, expectedOrigin string, expectedCredential st
 		if got := c.Subprotocol(); got != l2TunnelSubprotocol {
 			_ = c.Close()
 			return
+		}
+
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		msgType, payload, err := c.ReadMessage()
+		if err != nil {
+			_ = c.Close()
+			return
+		}
+		if msgType == websocket.BinaryMessage {
+			_ = c.WriteMessage(websocket.BinaryMessage, payload)
 		}
 		_ = c.Close()
 	}))
@@ -125,6 +152,20 @@ func TestDialL2Backend_AuthQueryAndOrigin(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatalf("timed out waiting for backend handshake: %v", ctx.Err())
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	want := []byte("hello")
+	if err := conn.WriteMessage(websocket.BinaryMessage, want); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+	msgType, got, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	if msgType != websocket.BinaryMessage || !bytes.Equal(got, want) {
+		t.Fatalf("unexpected echo: type=%d payload=%q", msgType, got)
 	}
 }
 
@@ -178,6 +219,20 @@ func TestDialL2Backend_AuthSubprotocolAndOriginOverride(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatalf("timed out waiting for backend handshake: %v", ctx.Err())
 	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	want := []byte("hello")
+	if err := conn.WriteMessage(websocket.BinaryMessage, want); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+	msgType, got, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	if msgType != websocket.BinaryMessage || !bytes.Equal(got, want) {
+		t.Fatalf("unexpected echo: type=%d payload=%q", msgType, got)
+	}
 }
 
 func TestDialL2Backend_StrictSubprotocolNegotiation(t *testing.T) {
@@ -212,5 +267,89 @@ func TestDialL2Backend_StrictSubprotocolNegotiation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "did not negotiate required subprotocol") {
 		t.Fatalf("err=%v, want subprotocol negotiation error", err)
+	}
+}
+
+func TestDialL2Backend_FailsOnMissingOrigin(t *testing.T) {
+	const (
+		origin     = "https://example.com"
+		credential = "secret"
+	)
+
+	wsURL, _ := newTestL2Backend(t, origin, credential, config.L2BackendAuthForwardModeQuery)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := dialL2Backend(ctx, l2BackendDialConfig{
+		BackendWSURL:    wsURL,
+		ClientOrigin:    "",
+		Credential:      credential,
+		ForwardOrigin:   true,
+		AuthForwardMode: config.L2BackendAuthForwardModeQuery,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestDialL2Backend_FailsOnWrongOrigin(t *testing.T) {
+	const (
+		origin     = "https://example.com"
+		credential = "secret"
+	)
+
+	wsURL, _ := newTestL2Backend(t, origin, credential, config.L2BackendAuthForwardModeQuery)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := dialL2Backend(ctx, l2BackendDialConfig{
+		BackendWSURL:    wsURL,
+		ClientOrigin:    "https://wrong.example.com",
+		Credential:      credential,
+		ForwardOrigin:   true,
+		AuthForwardMode: config.L2BackendAuthForwardModeQuery,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestDialL2Backend_FailsOnMissingCredentialQuery(t *testing.T) {
+	const origin = "https://example.com"
+
+	wsURL, _ := newTestL2Backend(t, origin, "secret", config.L2BackendAuthForwardModeQuery)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := dialL2Backend(ctx, l2BackendDialConfig{
+		BackendWSURL:    wsURL,
+		ClientOrigin:    origin,
+		ForwardOrigin:   true,
+		AuthForwardMode: config.L2BackendAuthForwardModeQuery,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestDialL2Backend_FailsOnMissingCredentialSubprotocol(t *testing.T) {
+	const origin = "https://example.com"
+
+	wsURL, _ := newTestL2Backend(t, origin, "secret", config.L2BackendAuthForwardModeSubprotocol)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := dialL2Backend(ctx, l2BackendDialConfig{
+		BackendWSURL:    wsURL,
+		ClientOrigin:    origin,
+		ForwardOrigin:   true,
+		AuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
 	}
 }
