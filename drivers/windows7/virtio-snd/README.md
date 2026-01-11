@@ -182,7 +182,10 @@ This signs:
 4. Browse to `drivers/windows7/virtio-snd/inf/`
 5. Select `aero-virtio-snd.inf` (recommended for Aero contract v1)
 
-`virtio-snd.inf` is a legacy filename alias kept for compatibility with older workflows/tools (functionally equivalent to `aero-virtio-snd.inf` but with a different `CatalogFile` name).
+`virtio-snd.inf` is a legacy filename alias kept for compatibility with older workflows/tools.
+It installs the same driver/service as `aero-virtio-snd.inf`, but is less strict: it also matches
+`PCI\\VEN_1AF4&DEV_1059` without `REV_01` and the transitional virtio-snd ID (`DEV_1018`), and uses
+`CatalogFile = virtio-snd.cat`.
 
 ## Offline / slipstream installation (optional)
 

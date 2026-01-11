@@ -455,7 +455,10 @@ guest-tools\drivers\<arch>\virtio-snd\
 INF selection note:
 
 - `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `DEV_1059&REV_01` and installs service `aeroviosnd`).
-- `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows (functionally equivalent to `aero-virtio-snd.inf` but with a different `CatalogFile` name).
+- `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows.
+  It installs the same driver/service as `aero-virtio-snd.inf`, but is less strict: it also matches
+  `PCI\\VEN_1AF4&DEV_1059` without `REV_01` and the transitional virtio-snd ID (`DEV_1018`), and uses
+  `CatalogFile = virtio-snd.cat`.
 
 For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
 
