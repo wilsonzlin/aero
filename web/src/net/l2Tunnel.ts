@@ -10,6 +10,28 @@ import {
 } from "../shared/l2TunnelProtocol";
 
 export const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
+export const L2_TUNNEL_DATA_CHANNEL_LABEL = "l2";
+
+export function assertL2TunnelDataChannelSemantics(channel: RTCDataChannel): void {
+  if (channel.label !== L2_TUNNEL_DATA_CHANNEL_LABEL) {
+    throw new Error(`expected DataChannel label=${L2_TUNNEL_DATA_CHANNEL_LABEL} (got ${channel.label})`);
+  }
+  if (!channel.ordered) {
+    throw new Error(`l2 DataChannel must be ordered (ordered=false)`);
+  }
+  if (channel.maxRetransmits != null) {
+    throw new Error(`l2 DataChannel must be fully reliable (maxRetransmits must be unset)`);
+  }
+  if (channel.maxPacketLifeTime != null) {
+    throw new Error(`l2 DataChannel must be fully reliable (maxPacketLifeTime must be unset)`);
+  }
+}
+
+export function createL2TunnelDataChannel(pc: RTCPeerConnection): RTCDataChannel {
+  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, { ordered: true });
+  assertL2TunnelDataChannelSemantics(channel);
+  return channel;
+}
 
 const textDecoder = new TextDecoder();
 
@@ -25,7 +47,7 @@ export type L2TunnelSink = (ev: L2TunnelEvent) => void;
 export type L2TunnelClientOptions = {
   /**
    * Maximum number of bytes allowed to be queued in JS before outbound frames
-   * are dropped.
+   * cause the tunnel to be closed.
    */
   maxQueuedBytes?: number;
 
@@ -41,8 +63,8 @@ export type L2TunnelClientOptions = {
   maxFrameSize?: number;
 
   /**
-   * When dropping frames (queue overflow, oversize), emit at most one
-   * `{ type: "error" }` event per interval to avoid spamming.
+   * When emitting errors (queue overflow, oversize), emit at most one `{ type:
+   * "error" }` event per interval to avoid spamming.
    */
   errorIntervalMs?: number;
 
@@ -194,15 +216,6 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       return;
     }
 
-    if (this.isTransportOpen() && this.getTransportBufferedAmount() > this.opts.maxBufferedAmount) {
-      this.emitSessionErrorThrottled(
-        new Error(
-          `dropping outbound frame: transport backpressure (bufferedAmount ${this.getTransportBufferedAmount()} > maxBufferedAmount ${this.opts.maxBufferedAmount})`,
-        ),
-      );
-      return;
-    }
-
     this.enqueue(encodeL2Frame(frame, { maxPayload: this.opts.maxFrameSize }));
   }
 
@@ -303,11 +316,10 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
   private enqueue(msg: Uint8Array): void {
     if (this.sendQueueBytes + msg.byteLength > this.opts.maxQueuedBytes) {
-      this.emitSessionErrorThrottled(
-        new Error(
-          `dropping outbound frame: send queue overflow (${this.sendQueueBytes} + ${msg.byteLength} > ${this.opts.maxQueuedBytes})`,
-        ),
+      this.onTransportError(
+        new Error(`l2 tunnel send queue overflow (${this.sendQueueBytes} + ${msg.byteLength} > ${this.opts.maxQueuedBytes})`),
       );
+      this.close();
       return;
     }
 
@@ -553,11 +565,8 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
  * already-created data channel.
  *
  * Recommended channel options for low-latency forwarding:
- * - `ordered: false`
- * - `maxRetransmits: 0`
- *
- * Guest TCP already provides retransmission; unreliable/unordered delivery can
- * reduce head-of-line blocking across unrelated flows.
+ * - `ordered: true`
+ * - do NOT set `maxRetransmits` or `maxPacketLifeTime` (fully reliable)
  */
 export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
   constructor(
@@ -567,6 +576,7 @@ export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
   ) {
     super(sink, opts);
 
+    assertL2TunnelDataChannelSemantics(channel);
     channel.binaryType = "arraybuffer";
     channel.bufferedAmountLowThreshold = Math.floor(this.opts.maxBufferedAmount / 2);
     channel.onbufferedamountlow = () => this.onTransportWritable();

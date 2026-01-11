@@ -160,10 +160,6 @@ func (b *l2Bridge) HandleDataChannelMessage(msg []byte) {
 	case <-b.ctx.Done():
 		return
 	case b.toBackend <- msg:
-	default:
-		// Drop rather than block pion internals. Clients should use an unordered
-		// unreliable channel (ordered=false, maxRetransmits=0), so loss is
-		// expected under congestion anyway.
 	}
 }
 

@@ -12,7 +12,9 @@ The protocol has two parts:
 
 ---
 
-## WebRTC DataChannel
+## WebRTC DataChannels
+
+### Channel: `udp` (UDP relay)
 
 The relay supports multiple DataChannels. Each DataChannel message is treated as
 one independent datagram/message (no streaming).
@@ -34,9 +36,10 @@ DataChannel.
 ### L2 tunnel DataChannel
 
 - **Label:** `l2`
-- **Recommended client options:**
-  - `ordered = false`
-  - `maxRetransmits = 0`
+- **Required client options:**
+  - `ordered = true`
+  - `maxRetransmits` MUST be unset
+  - `maxPacketLifeTime` MUST be unset
 
 Unlike `udp`, the relay does **not** parse or frame messages on `l2`. Instead,
 it acts as a transport bridge:
@@ -55,6 +58,12 @@ browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
 - The relay enforces a per-message size limit (`L2_MAX_MESSAGE_BYTES`, default
   4096 bytes). Messages larger than this limit may cause the relay to tear down
   the `l2` bridge.
+
+Rationale: ordered reliable delivery is required because the current proxy-side
+TCP termination in `crates/aero-net-stack` intentionally does not implement full
+TCP reassembly; if guest TCP segments are delivered out-of-order frequently, it
+will cause spurious retransmits and throughput collapse. For more detail, see
+`docs/l2-tunnel-protocol.md`.
 
 ---
 

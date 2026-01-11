@@ -17,6 +17,10 @@ function microtask(): Promise<void> {
 }
 
 class FakeRtcDataChannel {
+  label = "l2";
+  ordered = true;
+  maxRetransmits: number | null = null;
+  maxPacketLifeTime: number | null = null;
   binaryType: BinaryType = "arraybuffer";
   bufferedAmount = 0;
   bufferedAmountLowThreshold = 0;
@@ -249,7 +253,7 @@ describe("net/l2Tunnel", () => {
     }
   });
 
-  it("drops outbound frames when bufferedAmount exceeds maxBufferedAmount", async () => {
+  it("queues outbound frames while bufferedAmount exceeds maxBufferedAmount", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -263,7 +267,6 @@ describe("net/l2Tunnel", () => {
       keepaliveMinMs: 60_000,
       keepaliveMaxMs: 60_000,
       maxBufferedAmount: 0,
-      errorIntervalMs: 0,
     });
 
     try {
@@ -276,9 +279,11 @@ describe("net/l2Tunnel", () => {
 
       expect(FakeWebSocket.last!.sent.length).toBe(0);
 
-      const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
-      expect(errEv?.error).toBeInstanceOf(Error);
-      expect((errEv?.error as Error | undefined)?.message ?? "").toContain("backpressure");
+      FakeWebSocket.last!.bufferedAmount = 0;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await microtask();
+
+      expect(FakeWebSocket.last!.sent.length).toBe(1);
     } finally {
       client.close();
       if (original === undefined) {

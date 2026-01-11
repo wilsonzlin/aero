@@ -44,8 +44,16 @@ Reliability/ordering are transport-level policy decisions; the protocol itself i
 
 For Aero production deployments (ADR 0005):
 
-- WebRTC DataChannels that carry the L2 tunnel MUST be **reliable** (no partial reliability),
-- unordered delivery is permitted.
+- WebRTC DataChannels that carry the L2 tunnel MUST be **reliable** (no partial reliability).
+  - `maxRetransmits` MUST be unset
+  - `maxPacketLifeTime` MUST be unset
+- WebRTC DataChannels that carry the L2 tunnel MUST be **ordered**.
+  - `ordered = true`
+
+Rationale: the current proxy-side network stack (`crates/aero-net-stack`) terminates guest TCP and
+intentionally does not implement full TCP segment reassembly. If guest TCP segments are delivered
+out-of-order frequently (e.g. due to a reliable unordered tunnel under loss), it causes spurious
+retransmits and throughput collapse.
 
 ---
 

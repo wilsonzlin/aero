@@ -54,7 +54,12 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 		switch dc.Label() {
-		case "udp":
+		case DataChannelLabelUDP:
+			if err := validateUDPDataChannel(dc); err != nil {
+				_ = dc.Close()
+				return
+			}
+
 			r := relay.NewSessionRelay(dc, relayCfg, destPolicy, quota)
 
 			s.mu.Lock()
@@ -73,7 +78,12 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			dc.OnClose(func() {
 				r.Close()
 			})
-		case "l2":
+		case DataChannelLabelL2:
+			if err := validateL2DataChannel(dc); err != nil {
+				_ = dc.Close()
+				return
+			}
+
 			cfg := relayCfg.WithDefaults()
 			if cfg.L2BackendWSURL == "" {
 				_ = dc.Close()
@@ -93,10 +103,16 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				if msg.IsString {
 					return
 				}
+				// Copy because pion reuses internal buffers.
 				data := append([]byte(nil), msg.Data...)
 				b.HandleDataChannelMessage(data)
 			})
 			dc.OnClose(func() {
+				s.mu.Lock()
+				if s.l2 == b {
+					s.l2 = nil
+				}
+				s.mu.Unlock()
 				b.Close()
 			})
 		default:
