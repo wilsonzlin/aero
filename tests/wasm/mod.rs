@@ -1,9 +1,9 @@
 #[cfg(target_arch = "wasm32")]
+mod aerogpu_cmd_writeback;
+#[cfg(target_arch = "wasm32")]
 mod aerogpu_d3d9_smoke;
 #[cfg(target_arch = "wasm32")]
 mod aerogpu_d3d9_writeback;
-#[cfg(target_arch = "wasm32")]
-mod aerogpu_cmd_writeback;
 mod d3d11_smoke;
 #[cfg(target_arch = "wasm32")]
 mod d3d9_blend_depth_stencil;

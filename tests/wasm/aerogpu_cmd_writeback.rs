@@ -69,10 +69,7 @@ async fn aerogpu_cmd_writeback_copy_buffer_and_texture() {
             .write(alloc.gpa + src_backing_offset as u64, &src_pattern)
             .expect("write src backing");
         guest_mem
-            .write(
-                alloc.gpa + dst_backing_offset as u64,
-                &[0xEEu8; 256][..],
-            )
+            .write(alloc.gpa + dst_backing_offset as u64, &[0xEEu8; 256][..])
             .expect("write dst backing");
 
         let mut stream = Vec::new();
