@@ -286,7 +286,7 @@ The selftest logs to:
     ```
     Notes:
     - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
-    - If your device enumerates as transitional (`PCI\\VEN_1AF4&DEV_1018`), pass `--allow-virtio-snd-transitional`
+    - If your device enumerates as transitional (`PCI\VEN_1AF4&DEV_1018`), pass `--allow-virtio-snd-transitional`
       so the selftest accepts the transitional ID (intended for QEMU bring-up/regression).
     - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`
       (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).
