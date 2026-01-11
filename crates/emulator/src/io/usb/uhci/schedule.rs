@@ -118,7 +118,20 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
     match process_single_td(ctx, td_addr) {
         TdProgress::NoProgress => link,
         TdProgress::Advanced { stop, .. } => {
-            if stop || link.terminated() || link.is_qh() {
+            if stop {
+                // Stop further TD processing within this chain for the current frame, but still
+                // continue walking the schedule at the first non-TD link (QH/terminate).
+                let mut skip = link;
+                let mut skip_depth = depth + 1;
+                while !skip.terminated() && !skip.is_qh() {
+                    if skip_depth > 1024 {
+                        return LinkPointer(LINK_PTR_TERMINATE);
+                    }
+                    skip = LinkPointer(ctx.mem.read_u32(skip.addr() as u64));
+                    skip_depth += 1;
+                }
+                skip
+            } else if link.terminated() || link.is_qh() {
                 link
             } else {
                 process_td_chain(ctx, link.addr(), depth + 1)
@@ -259,12 +272,13 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 if status & TD_CTRL_IOC != 0 && ctx.usbintr & USBINTR_IOC != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
                 }
-                if short && status & TD_CTRL_SPD != 0 && ctx.usbintr & USBINTR_SHORT_PACKET != 0 {
+                let stop = short && status & TD_CTRL_SPD != 0;
+                if stop && ctx.usbintr & USBINTR_SHORT_PACKET != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
                 }
                 TdProgress::Advanced {
                     next_link,
-                    stop: false,
+                    stop,
                 }
             }
             UsbInResult::Nak => {

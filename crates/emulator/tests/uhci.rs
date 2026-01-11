@@ -9,6 +9,7 @@ use emulator::io::usb::core::UsbOutResult;
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
+use emulator::io::usb::uhci::regs::{USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
 use emulator::io::PortIO;
 use memory::MemoryBus;
 
@@ -17,6 +18,13 @@ const QH_ADDR: u32 = 0x2000;
 const TD0: u32 = 0x3000;
 const TD1: u32 = 0x3020;
 const TD2: u32 = 0x3040;
+const TD3: u32 = 0x3060;
+const TD4: u32 = 0x3080;
+const TD5: u32 = 0x30a0;
+const TD6: u32 = 0x30c0;
+const TD7: u32 = 0x30e0;
+const TD8: u32 = 0x3100;
+const TD9: u32 = 0x3120;
 
 const BUF_SETUP: u32 = 0x4000;
 const BUF_DATA: u32 = 0x5000;
@@ -29,6 +37,7 @@ const PID_SETUP: u8 = 0x2d;
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
 const TD_STATUS_STALLED: u32 = 1 << 22;
 const TD_CTRL_IOC: u32 = 1 << 24;
+const TD_CTRL_SPD: u32 = 1 << 29;
 
 // UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
 const PORTSC_CCS: u16 = 0x0001;
@@ -325,6 +334,89 @@ fn uhci_control_get_descriptor_device() {
     assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
     assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
     assert_eq!(st2 & TD_STATUS_ACTIVE, 0);
+}
+
+#[test]
+fn uhci_control_short_packet_detect_stops_qh_for_frame() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let keyboard = UsbHidKeyboardHandle::new();
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x04, 2, USBINTR_SHORT_PACKET as u32);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // GET_DESCRIPTOR(Device) with wLength = 64. The HID keyboard only returns 18 bytes, so the
+    // third 8-byte IN TD will see a short packet (2 bytes).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 64, 0x00],
+    );
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+
+    // Chain 8 IN TDs for the full 64 bytes (8 * 8).
+    let in_tds = [TD1, TD2, TD3, TD4, TD5, TD6, TD7, TD8];
+    for (i, &td) in in_tds.iter().enumerate() {
+        let next = if i + 1 < in_tds.len() {
+            in_tds[i + 1]
+        } else {
+            TD9
+        };
+        write_td(
+            &mut mem,
+            td,
+            next,
+            td_status(true, false) | TD_CTRL_SPD,
+            td_token(PID_IN, 0, 0, (i as u8 + 1) & 1, 8),
+            BUF_DATA + (i as u32) * 8,
+        );
+    }
+
+    // Status stage (OUT ZLP). This should not be reached in the first frame due to SPD stopping
+    // at the short packet.
+    write_td(
+        &mut mem,
+        TD9,
+        1,
+        td_status(true, false),
+        td_token(PID_OUT, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    // Only the first three IN TDs should complete: 8 + 8 + 2 bytes = 18 total.
+    for td in [TD1, TD2, TD3] {
+        let st = mem.read_u32(td as u64 + 4);
+        assert_eq!(st & TD_STATUS_ACTIVE, 0, "TD {td:#x} should have completed");
+    }
+    for td in [TD4, TD5, TD6, TD7, TD8] {
+        let st = mem.read_u32(td as u64 + 4);
+        assert_ne!(st & TD_STATUS_ACTIVE, 0, "TD {td:#x} should remain active");
+    }
+
+    // Short-packet interrupt should be raised; no error interrupt.
+    let usbsts = uhci.controller.regs().usbsts;
+    assert_ne!(usbsts & USBSTS_USBINT, 0);
+    assert_eq!(usbsts & USBSTS_USBERRINT, 0);
+
+    // QH element pointer should point to the first unprocessed TD (4th IN TD).
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, TD4);
 }
 
 #[test]
