@@ -137,11 +137,13 @@ This mirrors how SM4/5 actually addresses constants and removes the need to prec
 
 In D3D11, the input layout defines how vertex buffer elements map to vertex shader inputs by **semantic name + index** (e.g. `POSITION0`, `TEXCOORD1`).
 
+In Aero, the Win7 D3D10/11 UMDs transmit input layouts over the AeroGPU command stream as an opaque blob with magic `"ILAY"` (`AEROGPU_INPUT_LAYOUT_BLOB_MAGIC`). For the D3D10/11 path, the blob encodes `D3D11_INPUT_ELEMENT_DESC`-like data, but with the **semantic name represented as a 32-bit FNV-1a hash of the ASCII-uppercase semantic name** (see `drivers/aerogpu/protocol/aerogpu_cmd.h`).
+
 ### Translation approach
 
 1. Parse the vertex shader input signature (`ISGN`) to get semantic list in order.
 2. When creating the input layout, build a mapping:
-   - `(semantic, index) -> location`
+    - `(semantic, index) -> location`
 3. Emit WGSL vertex inputs using those locations:
 
 ```wgsl
@@ -152,10 +154,23 @@ struct VsIn {
 ```
 
 4. Translate the D3D11 `D3D11_INPUT_ELEMENT_DESC` array into WebGPU `VertexBufferLayout`:
-   - `Format`: map `DXGI_FORMAT_*` to `VertexFormat`
-   - `AlignedByteOffset`: offset
-   - `InputSlot`: buffer slot
-   - `InputSlotClass/InstanceDataStepRate`: `stepMode = Vertex/Instance`
+    - `Format`: map `DXGI_FORMAT_*` to `VertexFormat`
+    - `AlignedByteOffset`: offset
+    - `InputSlot`: buffer slot
+    - `InputSlotClass/InstanceDataStepRate`: `stepMode = Vertex/Instance`
+
+### WebGPU limits: sparse slot compaction
+
+Unlike D3D11, WebGPU has baseline limits (minimum required by the spec) of:
+
+- **8** vertex buffers
+- **16** vertex attributes
+
+D3D11 input layouts can reference up to 32 IA slots (`D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT`), and in real workloads these slot indices can be **sparse** (e.g. slots 0 and 15). The translation layer must:
+
+1. Map each ILAY element’s `(semantic hash, semantic index)` to a WGSL `@location` using the **vertex shader input signature** (`ISGN`).
+2. **Compact** referenced D3D slot indices into a dense WebGPU slot range (0..N), and maintain a mapping so the correct buffers are bound at draw time.
+3. Reject layouts that exceed the WebGPU baseline limits early with clear errors (before pipeline creation).
 
 The input-layout hash must be part of `PipelineKey`, because WebGPU vertex attribute layouts are baked into the pipeline.
 
