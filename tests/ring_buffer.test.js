@@ -57,7 +57,10 @@ test("SpscRingBuffer wraparound preserves ordering", () => {
 });
 
 test("PerfAggregator merges per-frame samples and exports JSON without bigint", () => {
-  const channel = createPerfChannel({ capacity: 16, workerKinds: [WorkerKind.Main, WorkerKind.CPU, WorkerKind.GPU] });
+  const channel = createPerfChannel({
+    capacity: 16,
+    workerKinds: [WorkerKind.Main, WorkerKind.CPU, WorkerKind.GPU, WorkerKind.IO],
+  });
 
   const mainWriter = new PerfWriter(channel.buffers[WorkerKind.Main], {
     workerKind: WorkerKind.Main,
@@ -74,10 +77,16 @@ test("PerfAggregator merges per-frame samples and exports JSON without bigint", 
     runStartEpochMs: channel.runStartEpochMs,
   });
 
+  const ioWriter = new PerfWriter(channel.buffers[WorkerKind.IO], {
+    workerKind: WorkerKind.IO,
+    runStartEpochMs: channel.runStartEpochMs,
+  });
+
   const aggregator = new PerfAggregator(channel, { windowSize: 10, captureSize: 20 });
 
   mainWriter.frameSample(1, { durations: { frame_ms: 16 }, counters: { memory_bytes: 123n } });
   cpuWriter.frameSample(1, { durations: { cpu_ms: 10 }, counters: { instructions: 9_000_000n } });
+  ioWriter.frameSample(1, { durations: { io_ms: 1 }, counters: { io_read_bytes: 7, io_write_bytes: 11 } });
   gpuWriter.graphicsSample(1, {
     counters: { render_passes: 2, pipeline_switches: 3, bind_group_changes: 4, upload_bytes: 1024n },
     durations: { cpu_translate_ms: 1.5, cpu_encode_ms: 0.5, gpu_time_ms: 2 },
@@ -90,6 +99,8 @@ test("PerfAggregator merges per-frame samples and exports JSON without bigint", 
   assert.equal(stats.frames, 1);
   assert.ok(stats.avgFrameMs > 0);
   assert.ok(stats.avgFps > 0);
+  assert.ok(Math.abs(stats.avgMips - 562.5) < 0.001);
+  assert.ok(Math.abs(stats.p95Mips - 562.5) < 0.001);
 
   const exported = aggregator.export();
   const json = JSON.stringify(exported);
@@ -103,6 +114,8 @@ test("PerfAggregator merges per-frame samples and exports JSON without bigint", 
   assert.equal(frame0.graphics.pipeline_switches, 3);
   assert.equal(frame0.graphics.bind_group_changes, 4);
   assert.equal(frame0.graphics.upload_bytes, "1024");
+  assert.equal(frame0.counters.io_read_bytes, 7);
+  assert.equal(frame0.counters.io_write_bytes, 11);
   assert.equal(frame0.graphics.cpu_translate_ms, 1.5);
   assert.equal(frame0.graphics.cpu_encode_ms, 0.5);
   assert.equal(frame0.graphics.gpu_time_ms, 2);
