@@ -743,10 +743,10 @@ def main() -> int:
         },
         "backend": backend_used,
         "extracted": extracted,
-         "extracted_notice_files": sorted(set(extracted_notice_files), key=str.casefold),
-         "extracted_metadata_files": sorted(set(extracted_metadata_files), key=str.casefold),
-         "missing_optional": missing_optional,
-     }
+        "extracted_notice_files": sorted(set(extracted_notice_files), key=str.casefold),
+        "extracted_metadata_files": sorted(set(extracted_metadata_files), key=str.casefold),
+        "missing_optional": missing_optional,
+    }
     if backend_used == "pycdlib" and pycdlib_path_mode:
         provenance["pycdlib_path_mode"] = pycdlib_path_mode
 
