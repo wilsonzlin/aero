@@ -100,6 +100,7 @@ import {
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
 import * as aerogpuCmd from "../aerogpu/aerogpu_cmd.ts";
+import * as aerogpuPci from "../aerogpu/aerogpu_pci.ts";
 import {
   AEROGPU_ABI_MAJOR,
   AEROGPU_ABI_MINOR,
@@ -128,6 +129,7 @@ import {
   AerogpuAbiError,
   parseAndValidateAbiVersionU32,
 } from "../aerogpu/aerogpu_pci.ts";
+import * as aerogpuRing from "../aerogpu/aerogpu_ring.ts";
 import {
   AEROGPU_ALLOC_ENTRY_OFF_GPA,
   AEROGPU_ALLOC_ENTRY_OFF_SIZE_BYTES,
@@ -327,6 +329,113 @@ function upperSnakeToPascalCase(s: string): string {
     .split("_")
     .filter((part) => part.length > 0)
     .map((part) => part[0]!.toUpperCase() + part.slice(1).toLowerCase())
+    .join("");
+}
+
+function parseCDefineConstNames(headerPath: string): string[] {
+  const text = fs.readFileSync(headerPath, "utf8");
+  const names = new Set<string>();
+
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trimStart();
+    if (!line.startsWith("#define")) continue;
+    const rest = line.slice("#define".length).trimStart();
+    const name = rest.split(/\s+/, 1)[0];
+    if (!name) continue;
+
+    if (!name.startsWith("AEROGPU_")) continue;
+    if (name.startsWith("AEROGPU_PROTOCOL_")) continue;
+    // Function-like macros are not ABI surface area.
+    if (name.includes("(")) continue;
+    // Internal preprocessor helpers used only by the C headers.
+    if (name.startsWith("AEROGPU_CONCAT") || name === "AEROGPU_STATIC_ASSERT") continue;
+
+    names.add(name);
+  }
+
+  return [...names].sort();
+}
+
+function parseCEnumConstNames(headerPath: string, enumName: string, prefix: string): string[] {
+  const text = fs.readFileSync(headerPath, "utf8");
+
+  const start = text.indexOf(enumName);
+  assert.notEqual(start, -1, `missing ${enumName} in ${headerPath}`);
+  const afterStart = text.slice(start);
+
+  const open = afterStart.indexOf("{");
+  assert.notEqual(open, -1, `missing '{' for ${enumName}`);
+  const afterOpen = afterStart.slice(open + 1);
+
+  const close = afterOpen.indexOf("};");
+  assert.notEqual(close, -1, `missing '};' for ${enumName}`);
+  const body = afterOpen.slice(0, close);
+
+  const names = new Set<string>();
+  let idx = 0;
+  for (;;) {
+    const pos = body.indexOf(prefix, idx);
+    if (pos === -1) break;
+    let end = pos;
+    while (end < body.length) {
+      const ch = body.charCodeAt(end);
+      const isAlphaNum =
+        (ch >= 0x30 && ch <= 0x39) || // 0-9
+        (ch >= 0x41 && ch <= 0x5a) || // A-Z
+        (ch >= 0x61 && ch <= 0x7a); // a-z (just in case)
+      if (!isAlphaNum && ch !== 0x5f) break;
+      end++;
+    }
+    names.add(body.slice(pos, end));
+    idx = end;
+  }
+
+  return [...names].sort();
+}
+
+function assertNameSetEq(seen: string[], expected: string[], what: string): void {
+  const seenSet = new Set(seen);
+  const expectedSet = new Set(expected);
+
+  const missing = [...expectedSet].filter((v) => !seenSet.has(v)).sort();
+  const extra = [...seenSet].filter((v) => !expectedSet.has(v)).sort();
+
+  assert.deepEqual(missing, [], `${what}: missing`);
+  assert.deepEqual(extra, [], `${what}: extra`);
+}
+
+function valueToBigInt(v: unknown, name: string): bigint {
+  if (typeof v === "number") return BigInt(v);
+  if (typeof v === "bigint") return v;
+  throw new Error(`expected ${name} to be a number|bigint export, got ${typeof v}`);
+}
+
+function topologyCNameToTsKey(cName: string): string {
+  const suffix = cName.replace(/^AEROGPU_TOPOLOGY_/, "");
+  switch (suffix) {
+    case "POINTLIST":
+      return "PointList";
+    case "LINELIST":
+      return "LineList";
+    case "LINESTRIP":
+      return "LineStrip";
+    case "TRIANGLELIST":
+      return "TriangleList";
+    case "TRIANGLESTRIP":
+      return "TriangleStrip";
+    case "TRIANGLEFAN":
+      return "TriangleFan";
+    default:
+      throw new Error(`unknown topology enum name: ${cName}`);
+  }
+}
+
+function formatCNameToTsKey(cName: string): string {
+  const suffix = cName.replace(/^AEROGPU_FORMAT_/, "");
+  return suffix
+    .split("_")
+    .filter((part) => part.length > 0)
+    .map((part) => (/\d/.test(part) ? part : part[0]!.toUpperCase() + part.slice(1).toLowerCase()))
     .join("");
 }
 
@@ -883,6 +992,155 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID"), 2n);
+
+  // -------------------------- Exhaustive ABI constant coverage --------------------------
+  //
+  // These checks are header-driven: any addition/removal/change to the canonical headers in
+  // `drivers/aerogpu/protocol/` must be reflected in the TS mirrors in `emulator/protocol/aerogpu/`.
+  const pciHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_pci.h");
+  const ringHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_ring.h");
+  const cmdHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_cmd.h");
+
+  const expectedPciConsts = [
+    ...parseCDefineConstNames(pciHeader),
+    ...parseCEnumConstNames(pciHeader, "enum aerogpu_format", "AEROGPU_FORMAT_"),
+  ].sort();
+  const expectedRingConsts = [
+    ...parseCDefineConstNames(ringHeader),
+    ...parseCEnumConstNames(ringHeader, "enum aerogpu_submit_flags", "AEROGPU_SUBMIT_FLAG_"),
+    ...parseCEnumConstNames(ringHeader, "enum aerogpu_engine_id", "AEROGPU_ENGINE_"),
+    ...parseCEnumConstNames(ringHeader, "enum aerogpu_alloc_flags", "AEROGPU_ALLOC_FLAG_"),
+  ].sort();
+  const expectedCmdConsts = [
+    ...parseCDefineConstNames(cmdHeader),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_cmd_stream_flags", "AEROGPU_CMD_STREAM_FLAG_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_cmd_opcode", "AEROGPU_CMD_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_shader_stage", "AEROGPU_SHADER_STAGE_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_index_format", "AEROGPU_INDEX_FORMAT_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_primitive_topology", "AEROGPU_TOPOLOGY_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_resource_usage_flags", "AEROGPU_RESOURCE_USAGE_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_copy_flags", "AEROGPU_COPY_FLAG_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_blend_factor", "AEROGPU_BLEND_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_blend_op", "AEROGPU_BLEND_OP_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_compare_func", "AEROGPU_COMPARE_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_fill_mode", "AEROGPU_FILL_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_cull_mode", "AEROGPU_CULL_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_clear_flags", "AEROGPU_CLEAR_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_present_flags", "AEROGPU_PRESENT_FLAG_"),
+  ].sort();
+
+  // aerogpu_pci.h constants
+  const pciSeen: string[] = [];
+  for (const name of expectedPciConsts) {
+    const expected = konst(name);
+    const direct = (aerogpuPci as unknown as Record<string, unknown>)[name];
+    if (direct !== undefined) {
+      pciSeen.push(name);
+      assert.equal(valueToBigInt(direct, name), expected, `constant value for ${name}`);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_FORMAT_")) {
+      const key = formatCNameToTsKey(name);
+      const actual = (aerogpuPci.AerogpuFormat as unknown as Record<string, number>)[key];
+      assert.ok(actual !== undefined, `missing TS AerogpuFormat binding for ${name} (${key})`);
+      pciSeen.push(name);
+      assert.equal(BigInt(actual), expected, `format value for ${name}`);
+      continue;
+    }
+    throw new Error(`unhandled aerogpu_pci.h constant: ${name}`);
+  }
+  assertNameSetEq(pciSeen, expectedPciConsts, "aerogpu_pci.h constants");
+
+  // aerogpu_ring.h constants
+  const ringAny = aerogpuRing as unknown as Record<string, unknown>;
+  const ringSeen: string[] = [];
+  for (const name of expectedRingConsts) {
+    const expected = konst(name);
+    const actual = ringAny[name];
+    assert.notEqual(actual, undefined, `missing TS export for ${name}`);
+    ringSeen.push(name);
+    assert.equal(valueToBigInt(actual, name), expected, `constant value for ${name}`);
+  }
+  assertNameSetEq(ringSeen, expectedRingConsts, "aerogpu_ring.h constants");
+
+  // aerogpu_cmd.h constants
+  const cmdExports = aerogpuCmd as unknown as Record<string, unknown>;
+  const cmdSeen: string[] = [];
+  for (const name of expectedCmdConsts) {
+    const expected = konst(name);
+
+    const direct = cmdExports[name];
+    if (direct !== undefined) {
+      cmdSeen.push(name);
+      assert.equal(valueToBigInt(direct, name), expected, `constant value for ${name}`);
+      continue;
+    }
+
+    if (name.startsWith("AEROGPU_CMD_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_CMD_/, ""));
+      const actual = (AerogpuCmdOpcode as unknown as Record<string, number>)[key];
+      assert.ok(actual !== undefined, `missing TS opcode binding for ${name} (${key})`);
+      cmdSeen.push(name);
+      assert.equal(BigInt(actual), expected, `opcode value for ${name}`);
+      continue;
+    }
+
+    if (name.startsWith("AEROGPU_SHADER_STAGE_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_SHADER_STAGE_/, ""));
+      cmdSeen.push(name);
+      assert.equal(BigInt((AerogpuShaderStage as unknown as Record<string, number>)[key]!), expected);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_INDEX_FORMAT_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_INDEX_FORMAT_/, ""));
+      cmdSeen.push(name);
+      assert.equal(BigInt((AerogpuIndexFormat as unknown as Record<string, number>)[key]!), expected);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_TOPOLOGY_")) {
+      const key = topologyCNameToTsKey(name);
+      cmdSeen.push(name);
+      assert.equal(
+        BigInt((AerogpuPrimitiveTopology as unknown as Record<string, number>)[key]!),
+        expected,
+        `topology value for ${name}`,
+      );
+      continue;
+    }
+    if (name.startsWith("AEROGPU_BLEND_OP_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_BLEND_OP_/, ""));
+      cmdSeen.push(name);
+      assert.equal(BigInt((AerogpuBlendOp as unknown as Record<string, number>)[key]!), expected);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_BLEND_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_BLEND_/, ""));
+      cmdSeen.push(name);
+      assert.equal(BigInt((AerogpuBlendFactor as unknown as Record<string, number>)[key]!), expected);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_COMPARE_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_COMPARE_/, ""));
+      cmdSeen.push(name);
+      assert.equal(BigInt((AerogpuCompareFunc as unknown as Record<string, number>)[key]!), expected);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_FILL_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_FILL_/, ""));
+      cmdSeen.push(name);
+      assert.equal(BigInt((AerogpuFillMode as unknown as Record<string, number>)[key]!), expected);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_CULL_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_CULL_/, ""));
+      cmdSeen.push(name);
+      assert.equal(BigInt((AerogpuCullMode as unknown as Record<string, number>)[key]!), expected);
+      continue;
+    }
+
+    throw new Error(`unhandled aerogpu_cmd.h constant: ${name}`);
+  }
+  assertNameSetEq(cmdSeen, expectedCmdConsts, "aerogpu_cmd.h constants");
 });
 
 test("decodeAllocTableHeader accepts unknown minor versions and extended strides", () => {

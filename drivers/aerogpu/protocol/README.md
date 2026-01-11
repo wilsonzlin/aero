@@ -38,6 +38,32 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 - `legacy/aerogpu_protocol_legacy.h` – legacy bring-up ABI (monolithic header; PCI `1AED:0001`). Deprecated and kept for backwards compatibility/testing.
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
 
+## Source of truth, mirrors, and conformance tests
+
+The **normative A3A0 protocol contract** is defined by these headers:
+
+- `drivers/aerogpu/protocol/aerogpu_pci.h`
+- `drivers/aerogpu/protocol/aerogpu_ring.h`
+- `drivers/aerogpu/protocol/aerogpu_cmd.h`
+
+The emulator maintains **Rust + TypeScript mirrors** of the same ABI for host-side parsing and tooling:
+
+- Rust: `emulator/protocol/aerogpu/*.rs` (crate `aero-protocol`)
+- TypeScript: `emulator/protocol/aerogpu/*.ts`
+
+When any of the normative headers change, the mirrors **must** be updated in lock-step. CI enforces this via conformance tests that compile and run a small C “ABI dump” helper (`emulator/protocol/tests/aerogpu_abi_dump.c`) and compare:
+
+- constant values (MMIO offsets, flags, enum values),
+- struct sizes and field offsets, and
+- opcode/packet coverage.
+
+### Running the conformance tests locally
+
+```bash
+cargo test -p aero-protocol --locked
+npm run test:protocol
+```
+
 ## ABI variants and PCI IDs
 
 This directory currently contains two PCI/MMIO ABIs:

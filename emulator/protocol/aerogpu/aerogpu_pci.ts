@@ -90,7 +90,8 @@ export const AEROGPU_MMIO_REG_IRQ_ACK = 0x0308;
 
 export const AEROGPU_IRQ_FENCE = 1 << 0;
 export const AEROGPU_IRQ_SCANOUT_VBLANK = 1 << 1;
-export const AEROGPU_IRQ_ERROR = 1 << 31;
+// NOTE: avoid `1 << 31` (signed 32-bit) which yields a negative number in JS.
+export const AEROGPU_IRQ_ERROR = 0x8000_0000;
 
 export const AEROGPU_MMIO_REG_SCANOUT0_ENABLE = 0x0400;
 export const AEROGPU_MMIO_REG_SCANOUT0_WIDTH = 0x0404;

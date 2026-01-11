@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
+use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState,
     AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
@@ -30,8 +31,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR,
-    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_CURSOR, AEROGPU_FEATURE_FENCE_PAGE,
-    AEROGPU_FEATURE_SCANOUT, AEROGPU_FEATURE_TRANSFER, AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE,
+    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE, AEROGPU_FEATURE_TRANSFER,
+    AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE,
     AEROGPU_MMIO_MAGIC, AEROGPU_MMIO_REG_DOORBELL, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS,
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
     AEROGPU_PCI_BAR0_INDEX, AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
@@ -42,9 +43,8 @@ use aero_protocol::aerogpu::aerogpu_pci::{
 use aero_protocol::aerogpu::aerogpu_ring::{
     write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader,
     AerogpuFencePage, AerogpuRingDecodeError, AerogpuRingHeader, AerogpuSubmitDesc,
-    AEROGPU_ALLOC_FLAG_NONE, AEROGPU_ALLOC_FLAG_READONLY, AEROGPU_ALLOC_TABLE_MAGIC,
-    AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, AEROGPU_SUBMIT_FLAG_NONE,
-    AEROGPU_SUBMIT_FLAG_NO_IRQ, AEROGPU_SUBMIT_FLAG_PRESENT,
+    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, AEROGPU_SUBMIT_FLAG_NO_IRQ,
+    AEROGPU_SUBMIT_FLAG_PRESENT,
 };
 use aero_protocol::aerogpu::aerogpu_umd_private::{
     AerogpuUmdPrivateV1, AEROGPU_UMDPRIV_FEATURE_CURSOR, AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE,
@@ -168,6 +168,156 @@ fn abi_dump() -> &'static AbiDump {
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn parse_c_define_const_names(header_path: &PathBuf) -> Vec<String> {
+    let text = std::fs::read_to_string(header_path).unwrap_or_else(|err| {
+        panic!("failed to read {}: {err}", header_path.display());
+    });
+
+    let mut names = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim_start();
+        if !line.starts_with("#define") {
+            continue;
+        }
+        let rest = line.trim_start_matches("#define").trim_start();
+        let Some(name) = rest.split_whitespace().next() else {
+            continue;
+        };
+
+        if !name.starts_with("AEROGPU_") {
+            continue;
+        }
+        if name.starts_with("AEROGPU_PROTOCOL_") {
+            continue;
+        }
+        // Function-like macros are not ABI surface area.
+        if name.contains('(') {
+            continue;
+        }
+        // Internal preprocessor helpers used only by the C headers.
+        if name.starts_with("AEROGPU_CONCAT") || name == "AEROGPU_STATIC_ASSERT" {
+            continue;
+        }
+
+        names.push(name.to_string());
+    }
+
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn parse_c_enum_const_names(header_path: &PathBuf, enum_name: &str, prefix: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(header_path).unwrap_or_else(|err| {
+        panic!("failed to read {}: {err}", header_path.display());
+    });
+
+    let enum_start = text
+        .find(enum_name)
+        .unwrap_or_else(|| panic!("missing {enum_name} in {}", header_path.display()));
+    let after_start = &text[enum_start..];
+
+    let open_brace = after_start
+        .find('{')
+        .unwrap_or_else(|| panic!("missing '{{' for {enum_name}"));
+    let after_open = &after_start[open_brace + 1..];
+
+    let close = after_open
+        .find("};")
+        .unwrap_or_else(|| panic!("missing '}};' for {enum_name}"));
+    let body = &after_open[..close];
+
+    let mut names = Vec::new();
+    let mut idx = 0;
+    while let Some(pos) = body[idx..].find(prefix) {
+        let start = idx + pos;
+        let mut end = start;
+        while end < body.len() {
+            let b = body.as_bytes()[end];
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        names.push(body[start..end].to_string());
+        idx = end;
+    }
+
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn parse_c_struct_def_names(header_path: &PathBuf) -> Vec<String> {
+    let text = std::fs::read_to_string(header_path).unwrap_or_else(|err| {
+        panic!("failed to read {}: {err}", header_path.display());
+    });
+
+    let mut names = Vec::new();
+    let mut idx = 0;
+    while let Some(pos) = text[idx..].find("struct ") {
+        let start = idx + pos + "struct ".len();
+        let after = &text[start..];
+
+        // Parse the identifier.
+        let mut end = 0;
+        for b in after.as_bytes() {
+            if b.is_ascii_alphanumeric() || *b == b'_' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        if end == 0 {
+            idx = start;
+            continue;
+        }
+
+        let name = &after[..end];
+        // Only consider ABI structs, not arbitrary "struct foo" usages in comments.
+        if !name.starts_with("aerogpu_") {
+            idx = start + end;
+            continue;
+        }
+
+        // Skip forward over whitespace and check for a definition (`{`), not a field usage.
+        let mut j = start + end;
+        while j < text.len() && text.as_bytes()[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j < text.len() && text.as_bytes()[j] == b'{' {
+            names.push(name.to_string());
+        }
+        idx = j;
+    }
+
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn assert_name_set_eq(mut seen: Vec<String>, mut expected: Vec<String>, what: &str) {
+    seen.sort();
+    seen.dedup();
+    expected.sort();
+    expected.dedup();
+
+    if seen == expected {
+        return;
+    }
+
+    let seen_set: std::collections::BTreeSet<_> = seen.iter().cloned().collect();
+    let expected_set: std::collections::BTreeSet<_> = expected.iter().cloned().collect();
+
+    let missing: Vec<String> = expected_set.difference(&seen_set).cloned().collect();
+    let extra: Vec<String> = seen_set.difference(&expected_set).cloned().collect();
+
+    panic!(
+        "{what} coverage mismatch.\nmissing: {missing:#?}\nextra: {extra:#?}"
+    );
 }
 
 fn parse_c_cmd_opcode_const_names() -> Vec<String> {
@@ -533,6 +683,45 @@ fn rust_layout_matches_c_headers() {
     assert!(
         missing.is_empty(),
         "command stream struct size coverage: missing {missing:?}"
+    );
+
+    // Coverage guard: every `struct aerogpu_*` defined in `aerogpu_cmd.h` must have its size
+    // checked against the C headers (not just the packet structs tied to opcodes).
+    let expected_cmd_struct_defs = parse_c_struct_def_names(
+        &repo_root().join("drivers/aerogpu/protocol/aerogpu_cmd.h"),
+    );
+    let mut cmd_struct_defs_seen = vec![
+        "aerogpu_cmd_stream_header".to_string(),
+        "aerogpu_cmd_hdr".to_string(),
+        "aerogpu_input_layout_blob_header".to_string(),
+        "aerogpu_input_layout_element_dxgi".to_string(),
+        "aerogpu_blend_state".to_string(),
+        "aerogpu_depth_stencil_state".to_string(),
+        "aerogpu_rasterizer_state".to_string(),
+        "aerogpu_vertex_buffer_binding".to_string(),
+    ];
+    cmd_struct_defs_seen.extend(cmd_structs_seen.clone());
+    assert_name_set_eq(
+        cmd_struct_defs_seen,
+        expected_cmd_struct_defs,
+        "aerogpu_cmd.h struct definitions",
+    );
+
+    // Coverage guard: same for `aerogpu_ring.h`.
+    let expected_ring_struct_defs = parse_c_struct_def_names(
+        &repo_root().join("drivers/aerogpu/protocol/aerogpu_ring.h"),
+    );
+    let ring_struct_defs_seen = vec![
+        "aerogpu_alloc_table_header".to_string(),
+        "aerogpu_alloc_entry".to_string(),
+        "aerogpu_submit_desc".to_string(),
+        "aerogpu_ring_header".to_string(),
+        "aerogpu_fence_page".to_string(),
+    ];
+    assert_name_set_eq(
+        ring_struct_defs_seen,
+        expected_ring_struct_defs,
+        "aerogpu_ring.h struct definitions",
     );
 
     // Ring structs.
@@ -2023,142 +2212,620 @@ fn rust_layout_matches_c_headers() {
     );
 
     // Constants / enum numeric values.
-    assert_eq!(abi.konst("AEROGPU_ABI_MAJOR"), AEROGPU_ABI_MAJOR as u64);
-    assert_eq!(abi.konst("AEROGPU_ABI_MINOR"), AEROGPU_ABI_MINOR as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_ABI_VERSION_U32"),
-        AEROGPU_ABI_VERSION_U32 as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_PCI_VENDOR_ID"),
-        AEROGPU_PCI_VENDOR_ID as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_PCI_DEVICE_ID"),
-        AEROGPU_PCI_DEVICE_ID as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_PCI_SUBSYSTEM_VENDOR_ID"),
-        AEROGPU_PCI_SUBSYSTEM_VENDOR_ID as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_PCI_SUBSYSTEM_ID"),
-        AEROGPU_PCI_SUBSYSTEM_ID as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER"),
-        AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE"),
-        AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE as u64
-    );
-    assert_eq!(abi.konst("AEROGPU_PCI_PROG_IF"), AEROGPU_PCI_PROG_IF as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_PCI_BAR0_INDEX"),
-        AEROGPU_PCI_BAR0_INDEX as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_PCI_BAR0_SIZE_BYTES"),
-        AEROGPU_PCI_BAR0_SIZE_BYTES as u64
+    //
+    // Coverage is header-driven: if a constant or enum member is added/removed in the C headers,
+    // this test must fail until the Rust mirror is updated accordingly.
+    let pci_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_pci.h");
+    let ring_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_ring.h");
+    let cmd_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_cmd.h");
+
+    let expected_pci_consts = {
+        let mut names = parse_c_define_const_names(&pci_header_path);
+        names.extend(parse_c_enum_const_names(
+            &pci_header_path,
+            "enum aerogpu_format",
+            "AEROGPU_FORMAT_",
+        ));
+        names
+    };
+
+    let expected_ring_consts = {
+        let mut names = parse_c_define_const_names(&ring_header_path);
+        names.extend(parse_c_enum_const_names(
+            &ring_header_path,
+            "enum aerogpu_submit_flags",
+            "AEROGPU_SUBMIT_FLAG_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &ring_header_path,
+            "enum aerogpu_engine_id",
+            "AEROGPU_ENGINE_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &ring_header_path,
+            "enum aerogpu_alloc_flags",
+            "AEROGPU_ALLOC_FLAG_",
+        ));
+        names
+    };
+
+    let expected_cmd_consts = {
+        let mut names = parse_c_define_const_names(&cmd_header_path);
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_cmd_stream_flags",
+            "AEROGPU_CMD_STREAM_FLAG_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_cmd_opcode",
+            "AEROGPU_CMD_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_shader_stage",
+            "AEROGPU_SHADER_STAGE_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_index_format",
+            "AEROGPU_INDEX_FORMAT_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_primitive_topology",
+            "AEROGPU_TOPOLOGY_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_resource_usage_flags",
+            "AEROGPU_RESOURCE_USAGE_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_copy_flags",
+            "AEROGPU_COPY_FLAG_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_blend_factor",
+            "AEROGPU_BLEND_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_blend_op",
+            "AEROGPU_BLEND_OP_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_compare_func",
+            "AEROGPU_COMPARE_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_fill_mode",
+            "AEROGPU_FILL_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_cull_mode",
+            "AEROGPU_CULL_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_clear_flags",
+            "AEROGPU_CLEAR_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
+            "enum aerogpu_present_flags",
+            "AEROGPU_PRESENT_FLAG_",
+        ));
+        names
+    };
+
+    let mut pci_consts_seen: Vec<String> = Vec::new();
+    let mut ring_consts_seen: Vec<String> = Vec::new();
+    let mut cmd_consts_seen: Vec<String> = Vec::new();
+
+    let check_const = |seen: &mut Vec<String>, name: &'static str, value: u64| {
+        seen.push(name.to_string());
+        assert_eq!(abi.konst(name), value, "constant value for {name}");
+    };
+
+    // aerogpu_pci.h
+    check_const(&mut pci_consts_seen, "AEROGPU_ABI_MAJOR", AEROGPU_ABI_MAJOR as u64);
+    check_const(&mut pci_consts_seen, "AEROGPU_ABI_MINOR", AEROGPU_ABI_MINOR as u64);
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_ABI_VERSION_U32",
+        AEROGPU_ABI_VERSION_U32 as u64,
     );
 
-    assert_eq!(abi.konst("AEROGPU_MMIO_MAGIC"), AEROGPU_MMIO_MAGIC as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_MMIO_REG_DOORBELL"),
-        AEROGPU_MMIO_REG_DOORBELL as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_VENDOR_ID",
+        AEROGPU_PCI_VENDOR_ID as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_FEATURE_FENCE_PAGE"),
-        AEROGPU_FEATURE_FENCE_PAGE
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_DEVICE_ID",
+        AEROGPU_PCI_DEVICE_ID as u64,
     );
-    assert_eq!(abi.konst("AEROGPU_FEATURE_CURSOR"), AEROGPU_FEATURE_CURSOR);
-    assert_eq!(abi.konst("AEROGPU_FEATURE_SCANOUT"), AEROGPU_FEATURE_SCANOUT);
-    assert_eq!(abi.konst("AEROGPU_FEATURE_VBLANK"), AEROGPU_FEATURE_VBLANK);
-    assert_eq!(
-        abi.konst("AEROGPU_FEATURE_TRANSFER"),
-        AEROGPU_FEATURE_TRANSFER
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_SUBSYSTEM_VENDOR_ID",
+        AEROGPU_PCI_SUBSYSTEM_VENDOR_ID as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_RING_CONTROL_ENABLE"),
-        AEROGPU_RING_CONTROL_ENABLE as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_SUBSYSTEM_ID",
+        AEROGPU_PCI_SUBSYSTEM_ID as u64,
     );
-    assert_eq!(abi.konst("AEROGPU_IRQ_FENCE"), AEROGPU_IRQ_FENCE as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO"),
-        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER",
+        AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO"),
-        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE",
+        AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS"),
-        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_PROG_IF",
+        AEROGPU_PCI_PROG_IF as u64,
     );
-
-    assert_eq!(abi.konst("AEROGPU_CMD_STREAM_MAGIC"), AEROGPU_CMD_STREAM_MAGIC as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_STREAM_FLAG_NONE"),
-        AerogpuCmdStreamFlags::None as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_BAR0_INDEX",
+        AEROGPU_PCI_BAR0_INDEX as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_ALLOC_TABLE_MAGIC"),
-        AEROGPU_ALLOC_TABLE_MAGIC as u64
-    );
-    assert_eq!(abi.konst("AEROGPU_RING_MAGIC"), AEROGPU_RING_MAGIC as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_FENCE_PAGE_MAGIC"),
-        AEROGPU_FENCE_PAGE_MAGIC as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_PCI_BAR0_SIZE_BYTES",
+        AEROGPU_PCI_BAR0_SIZE_BYTES as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_RESOURCE_USAGE_NONE"),
-        AEROGPU_RESOURCE_USAGE_NONE as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_MAGIC",
+        pci::AEROGPU_MMIO_REG_MAGIC as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER"),
-        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ABI_VERSION",
+        pci::AEROGPU_MMIO_REG_ABI_VERSION as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_RESOURCE_USAGE_INDEX_BUFFER"),
-        AEROGPU_RESOURCE_USAGE_INDEX_BUFFER as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_FEATURES_LO",
+        pci::AEROGPU_MMIO_REG_FEATURES_LO as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER"),
-        AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_RESOURCE_USAGE_TEXTURE"),
-        AEROGPU_RESOURCE_USAGE_TEXTURE as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_RESOURCE_USAGE_RENDER_TARGET"),
-        AEROGPU_RESOURCE_USAGE_RENDER_TARGET as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL"),
-        AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_RESOURCE_USAGE_SCANOUT"),
-        AEROGPU_RESOURCE_USAGE_SCANOUT as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_FEATURES_HI",
+        pci::AEROGPU_MMIO_REG_FEATURES_HI as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_COPY_FLAG_NONE"),
-        AEROGPU_COPY_FLAG_NONE as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_COPY_FLAG_WRITEBACK_DST"),
-        AEROGPU_COPY_FLAG_WRITEBACK_DST as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_MAGIC",
+        AEROGPU_MMIO_MAGIC as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_MAX_RENDER_TARGETS"),
-        AEROGPU_MAX_RENDER_TARGETS as u64
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FEATURE_FENCE_PAGE",
+        AEROGPU_FEATURE_FENCE_PAGE,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FEATURE_CURSOR",
+        pci::AEROGPU_FEATURE_CURSOR,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FEATURE_SCANOUT",
+        pci::AEROGPU_FEATURE_SCANOUT,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FEATURE_VBLANK",
+        AEROGPU_FEATURE_VBLANK,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FEATURE_TRANSFER",
+        AEROGPU_FEATURE_TRANSFER,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_RING_GPA_LO",
+        pci::AEROGPU_MMIO_REG_RING_GPA_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_RING_GPA_HI",
+        pci::AEROGPU_MMIO_REG_RING_GPA_HI as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_RING_SIZE_BYTES",
+        pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_RING_CONTROL",
+        pci::AEROGPU_MMIO_REG_RING_CONTROL as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_RING_CONTROL_ENABLE",
+        AEROGPU_RING_CONTROL_ENABLE as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_RING_CONTROL_RESET",
+        pci::AEROGPU_RING_CONTROL_RESET as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_FENCE_GPA_LO",
+        pci::AEROGPU_MMIO_REG_FENCE_GPA_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_FENCE_GPA_HI",
+        pci::AEROGPU_MMIO_REG_FENCE_GPA_HI as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_COMPLETED_FENCE_LO",
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_COMPLETED_FENCE_HI",
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_DOORBELL",
+        AEROGPU_MMIO_REG_DOORBELL as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_IRQ_STATUS",
+        pci::AEROGPU_MMIO_REG_IRQ_STATUS as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_IRQ_ENABLE",
+        pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_IRQ_ACK",
+        pci::AEROGPU_MMIO_REG_IRQ_ACK as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_IRQ_FENCE",
+        AEROGPU_IRQ_FENCE as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_IRQ_SCANOUT_VBLANK",
+        pci::AEROGPU_IRQ_SCANOUT_VBLANK as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_IRQ_ERROR",
+        pci::AEROGPU_IRQ_ERROR as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_ENABLE",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_WIDTH",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_HEIGHT",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_FORMAT",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO",
+        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO",
+        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI",
+        pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS",
+        AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_ENABLE",
+        pci::AEROGPU_MMIO_REG_CURSOR_ENABLE as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_X",
+        pci::AEROGPU_MMIO_REG_CURSOR_X as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_Y",
+        pci::AEROGPU_MMIO_REG_CURSOR_Y as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_HOT_X",
+        pci::AEROGPU_MMIO_REG_CURSOR_HOT_X as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_HOT_Y",
+        pci::AEROGPU_MMIO_REG_CURSOR_HOT_Y as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_WIDTH",
+        pci::AEROGPU_MMIO_REG_CURSOR_WIDTH as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_HEIGHT",
+        pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_FORMAT",
+        pci::AEROGPU_MMIO_REG_CURSOR_FORMAT as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO",
+        pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI",
+        pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES",
+        pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_INVALID",
+        AerogpuFormat::Invalid as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_B8G8R8A8_UNORM",
+        AerogpuFormat::B8G8R8A8Unorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_B8G8R8X8_UNORM",
+        AerogpuFormat::B8G8R8X8Unorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_R8G8B8A8_UNORM",
+        AerogpuFormat::R8G8B8A8Unorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_R8G8B8X8_UNORM",
+        AerogpuFormat::R8G8B8X8Unorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_B5G6R5_UNORM",
+        AerogpuFormat::B5G6R5Unorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_B5G5R5A1_UNORM",
+        AerogpuFormat::B5G5R5A1Unorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_D24_UNORM_S8_UINT",
+        AerogpuFormat::D24UnormS8Uint as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_D32_FLOAT",
+        AerogpuFormat::D32Float as u64,
+    );
+
+    assert_name_set_eq(pci_consts_seen, expected_pci_consts, "aerogpu_pci.h constants");
+
+    // aerogpu_ring.h
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_ALLOC_TABLE_MAGIC",
+        AEROGPU_ALLOC_TABLE_MAGIC as u64,
+    );
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_RING_MAGIC",
+        AEROGPU_RING_MAGIC as u64,
+    );
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_FENCE_PAGE_MAGIC",
+        AEROGPU_FENCE_PAGE_MAGIC as u64,
+    );
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_SUBMIT_FLAG_NONE",
+        ring::AEROGPU_SUBMIT_FLAG_NONE as u64,
+    );
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_SUBMIT_FLAG_PRESENT",
+        AEROGPU_SUBMIT_FLAG_PRESENT as u64,
+    );
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_SUBMIT_FLAG_NO_IRQ",
+        AEROGPU_SUBMIT_FLAG_NO_IRQ as u64,
+    );
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_ENGINE_0",
+        ring::AEROGPU_ENGINE_0 as u64,
+    );
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_ALLOC_FLAG_NONE",
+        ring::AEROGPU_ALLOC_FLAG_NONE as u64,
+    );
+    check_const(
+        &mut ring_consts_seen,
+        "AEROGPU_ALLOC_FLAG_READONLY",
+        ring::AEROGPU_ALLOC_FLAG_READONLY as u64,
+    );
+
+    assert_name_set_eq(ring_consts_seen, expected_ring_consts, "aerogpu_ring.h constants");
+
+    // aerogpu_cmd.h
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_CMD_STREAM_MAGIC",
+        AEROGPU_CMD_STREAM_MAGIC as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_INPUT_LAYOUT_BLOB_MAGIC",
+        AEROGPU_INPUT_LAYOUT_BLOB_MAGIC as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_INPUT_LAYOUT_BLOB_VERSION",
+        AEROGPU_INPUT_LAYOUT_BLOB_VERSION as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_MAX_RENDER_TARGETS",
+        AEROGPU_MAX_RENDER_TARGETS as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_CMD_STREAM_FLAG_NONE",
+        AerogpuCmdStreamFlags::None as u64,
+    );
+
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_NONE",
+        AEROGPU_RESOURCE_USAGE_NONE as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER",
+        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_INDEX_BUFFER",
+        AEROGPU_RESOURCE_USAGE_INDEX_BUFFER as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER",
+        AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_TEXTURE",
+        AEROGPU_RESOURCE_USAGE_TEXTURE as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_RENDER_TARGET",
+        AEROGPU_RESOURCE_USAGE_RENDER_TARGET as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL",
+        AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_SCANOUT",
+        AEROGPU_RESOURCE_USAGE_SCANOUT as u64,
+    );
+
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COPY_FLAG_NONE",
+        AEROGPU_COPY_FLAG_NONE as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COPY_FLAG_WRITEBACK_DST",
+        AEROGPU_COPY_FLAG_WRITEBACK_DST as u64,
     );
     for c_name in parse_c_cmd_opcode_const_names() {
+        cmd_consts_seen.push(c_name.clone());
+
         let expected_rust = upper_snake_to_pascal_case(
             c_name
                 .strip_prefix("AEROGPU_CMD_")
@@ -2179,203 +2846,197 @@ fn rust_layout_matches_c_headers() {
         assert_eq!(opcode as u32, value_u32, "opcode value for {c_name}");
     }
 
-    assert_eq!(abi.konst("AEROGPU_CLEAR_COLOR"), AEROGPU_CLEAR_COLOR as u64);
-    assert_eq!(abi.konst("AEROGPU_CLEAR_DEPTH"), AEROGPU_CLEAR_DEPTH as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_CLEAR_STENCIL"),
-        AEROGPU_CLEAR_STENCIL as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_CLEAR_COLOR",
+        AEROGPU_CLEAR_COLOR as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_CLEAR_DEPTH",
+        AEROGPU_CLEAR_DEPTH as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_CLEAR_STENCIL",
+        AEROGPU_CLEAR_STENCIL as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_PRESENT_FLAG_NONE"),
-        AEROGPU_PRESENT_FLAG_NONE as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_PRESENT_FLAG_NONE",
+        AEROGPU_PRESENT_FLAG_NONE as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_PRESENT_FLAG_VSYNC"),
-        AEROGPU_PRESENT_FLAG_VSYNC as u64
-    );
-
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_ZERO"),
-        AerogpuBlendFactor::Zero as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_ONE"),
-        AerogpuBlendFactor::One as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_SRC_ALPHA"),
-        AerogpuBlendFactor::SrcAlpha as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_INV_SRC_ALPHA"),
-        AerogpuBlendFactor::InvSrcAlpha as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_DEST_ALPHA"),
-        AerogpuBlendFactor::DestAlpha as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_INV_DEST_ALPHA"),
-        AerogpuBlendFactor::InvDestAlpha as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_PRESENT_FLAG_VSYNC",
+        AEROGPU_PRESENT_FLAG_VSYNC as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_OP_ADD"),
-        AerogpuBlendOp::Add as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_ZERO",
+        AerogpuBlendFactor::Zero as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_OP_SUBTRACT"),
-        AerogpuBlendOp::Subtract as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_ONE",
+        AerogpuBlendFactor::One as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_OP_REV_SUBTRACT"),
-        AerogpuBlendOp::RevSubtract as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_SRC_ALPHA",
+        AerogpuBlendFactor::SrcAlpha as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_OP_MIN"),
-        AerogpuBlendOp::Min as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_INV_SRC_ALPHA",
+        AerogpuBlendFactor::InvSrcAlpha as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_OP_MAX"),
-        AerogpuBlendOp::Max as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_DEST_ALPHA",
+        AerogpuBlendFactor::DestAlpha as u64,
     );
-
-    assert_eq!(
-        abi.konst("AEROGPU_COMPARE_NEVER"),
-        AerogpuCompareFunc::Never as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_COMPARE_LESS"),
-        AerogpuCompareFunc::Less as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_COMPARE_EQUAL"),
-        AerogpuCompareFunc::Equal as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_COMPARE_LESS_EQUAL"),
-        AerogpuCompareFunc::LessEqual as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_COMPARE_GREATER"),
-        AerogpuCompareFunc::Greater as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_COMPARE_NOT_EQUAL"),
-        AerogpuCompareFunc::NotEqual as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_COMPARE_GREATER_EQUAL"),
-        AerogpuCompareFunc::GreaterEqual as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_COMPARE_ALWAYS"),
-        AerogpuCompareFunc::Always as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_INV_DEST_ALPHA",
+        AerogpuBlendFactor::InvDestAlpha as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_FILL_SOLID"),
-        AerogpuFillMode::Solid as u64
+    check_const(&mut cmd_consts_seen, "AEROGPU_BLEND_OP_ADD", AerogpuBlendOp::Add as u64);
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_OP_SUBTRACT",
+        AerogpuBlendOp::Subtract as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_FILL_WIREFRAME"),
-        AerogpuFillMode::Wireframe as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_OP_REV_SUBTRACT",
+        AerogpuBlendOp::RevSubtract as u64,
+    );
+    check_const(&mut cmd_consts_seen, "AEROGPU_BLEND_OP_MIN", AerogpuBlendOp::Min as u64);
+    check_const(&mut cmd_consts_seen, "AEROGPU_BLEND_OP_MAX", AerogpuBlendOp::Max as u64);
+
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COMPARE_NEVER",
+        AerogpuCompareFunc::Never as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COMPARE_LESS",
+        AerogpuCompareFunc::Less as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COMPARE_EQUAL",
+        AerogpuCompareFunc::Equal as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COMPARE_LESS_EQUAL",
+        AerogpuCompareFunc::LessEqual as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COMPARE_GREATER",
+        AerogpuCompareFunc::Greater as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COMPARE_NOT_EQUAL",
+        AerogpuCompareFunc::NotEqual as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COMPARE_GREATER_EQUAL",
+        AerogpuCompareFunc::GreaterEqual as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_COMPARE_ALWAYS",
+        AerogpuCompareFunc::Always as u64,
     );
 
-    assert_eq!(abi.konst("AEROGPU_CULL_NONE"), AerogpuCullMode::None as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_CULL_FRONT"),
-        AerogpuCullMode::Front as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_FILL_SOLID",
+        AerogpuFillMode::Solid as u64,
     );
-    assert_eq!(abi.konst("AEROGPU_CULL_BACK"), AerogpuCullMode::Back as u64);
-
-    assert_eq!(
-        abi.konst("AEROGPU_INPUT_LAYOUT_BLOB_MAGIC"),
-        AEROGPU_INPUT_LAYOUT_BLOB_MAGIC as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_INPUT_LAYOUT_BLOB_VERSION"),
-        AEROGPU_INPUT_LAYOUT_BLOB_VERSION as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_FILL_WIREFRAME",
+        AerogpuFillMode::Wireframe as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_SHADER_STAGE_VERTEX"),
-        AerogpuShaderStage::Vertex as u64
+    check_const(&mut cmd_consts_seen, "AEROGPU_CULL_NONE", AerogpuCullMode::None as u64);
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_CULL_FRONT",
+        AerogpuCullMode::Front as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_SHADER_STAGE_PIXEL"),
-        AerogpuShaderStage::Pixel as u64
+    check_const(&mut cmd_consts_seen, "AEROGPU_CULL_BACK", AerogpuCullMode::Back as u64);
+
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_VERTEX",
+        AerogpuShaderStage::Vertex as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_SHADER_STAGE_COMPUTE"),
-        AerogpuShaderStage::Compute as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_PIXEL",
+        AerogpuShaderStage::Pixel as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_COMPUTE",
+        AerogpuShaderStage::Compute as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_INDEX_FORMAT_UINT16"),
-        AerogpuIndexFormat::Uint16 as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_INDEX_FORMAT_UINT16",
+        AerogpuIndexFormat::Uint16 as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_INDEX_FORMAT_UINT32"),
-        AerogpuIndexFormat::Uint32 as u64
-    );
-
-    assert_eq!(
-        abi.konst("AEROGPU_TOPOLOGY_POINTLIST"),
-        AerogpuPrimitiveTopology::PointList as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_TOPOLOGY_LINELIST"),
-        AerogpuPrimitiveTopology::LineList as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_TOPOLOGY_LINESTRIP"),
-        AerogpuPrimitiveTopology::LineStrip as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_TOPOLOGY_TRIANGLELIST"),
-        AerogpuPrimitiveTopology::TriangleList as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_TOPOLOGY_TRIANGLESTRIP"),
-        AerogpuPrimitiveTopology::TriangleStrip as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_TOPOLOGY_TRIANGLEFAN"),
-        AerogpuPrimitiveTopology::TriangleFan as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_INDEX_FORMAT_UINT32",
+        AerogpuIndexFormat::Uint32 as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_FORMAT_B8G8R8A8_UNORM"),
-        AerogpuFormat::B8G8R8A8Unorm as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_POINTLIST",
+        AerogpuPrimitiveTopology::PointList as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_FORMAT_D32_FLOAT"),
-        AerogpuFormat::D32Float as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_LINELIST",
+        AerogpuPrimitiveTopology::LineList as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_LINESTRIP",
+        AerogpuPrimitiveTopology::LineStrip as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_TRIANGLELIST",
+        AerogpuPrimitiveTopology::TriangleList as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_TRIANGLESTRIP",
+        AerogpuPrimitiveTopology::TriangleStrip as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_TRIANGLEFAN",
+        AerogpuPrimitiveTopology::TriangleFan as u64,
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_ALLOC_FLAG_NONE"),
-        AEROGPU_ALLOC_FLAG_NONE as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_ALLOC_FLAG_READONLY"),
-        AEROGPU_ALLOC_FLAG_READONLY as u64
-    );
-
-    assert_eq!(
-        abi.konst("AEROGPU_SUBMIT_FLAG_NONE"),
-        AEROGPU_SUBMIT_FLAG_NONE as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_SUBMIT_FLAG_PRESENT"),
-        AEROGPU_SUBMIT_FLAG_PRESENT as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_SUBMIT_FLAG_NO_IRQ"),
-        AEROGPU_SUBMIT_FLAG_NO_IRQ as u64
-    );
+    assert_name_set_eq(cmd_consts_seen, expected_cmd_consts, "aerogpu_cmd.h constants");
 
     assert_eq!(
         abi.konst("AEROGPU_UMDPRIV_STRUCT_VERSION_V1"),
