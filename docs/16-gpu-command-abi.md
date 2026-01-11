@@ -21,10 +21,13 @@ headers under:
   - `aerogpu_cmd.h` (command stream packets)
 - [`emulator/protocol`](../emulator/protocol) (Rust/TypeScript mirror of the headers)
 
-The canonical device model uses project-specific (non-PCI-SIG) vendor IDs:
+The canonical WDDM AeroGPU device models use project-specific (non-PCI-SIG) PCI IDs.
+For the full rationale (why there are two) and the mapping to ABIs/device models, see:
 
-- `0xA3A0` – current AeroGPU PCI vendor ID (`AEROGPU_PCI_VENDOR_ID`)
-- `0x1AED` – legacy compatibility vendor ID accepted by the Win7 INF
+- [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)
+
+- `0xA3A0:0x0001` – new, versioned ABI (`drivers/aerogpu/protocol/aerogpu_pci.h`)
+- `0x1AED:0x0001` – legacy bring-up ABI (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
 
 ## Source of truth (this experimental ABI)
 
