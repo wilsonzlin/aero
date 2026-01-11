@@ -626,6 +626,8 @@ Use the Web UI:
 
 These panels cover: device selection (`requestDevice`), open/claim failures, protected interface
 behavior, and basic `GET_DESCRIPTOR` control transfer smoke tests (including via `usb.demo.run`).
+For configuration descriptors, the demo panel can optionally rerun the transfer using the
+descriptor’s `wTotalLength` field to request the full blob.
 
 ### Rust/TypeScript unit tests (automated)
 
