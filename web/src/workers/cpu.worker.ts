@@ -30,6 +30,13 @@ import {
   setReadyFlag,
 } from "../runtime/shared_layout";
 import {
+  CAPACITY_SAMPLES_INDEX,
+  HEADER_BYTES as MIC_HEADER_BYTES,
+  HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+  micRingBufferReadInto,
+} from "../audio/mic_ring.js";
+import type { MicRingBuffer } from "../audio/mic_ring.js";
+import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
   MessageType,
@@ -62,13 +69,7 @@ let perfInstructions = 0n;
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
-type MicRingBufferView = {
-  sab: SharedArrayBuffer;
-  header: Uint32Array;
-  data: Float32Array;
-  capacity: number;
-  sampleRate: number;
-};
+type MicRingBufferView = MicRingBuffer & { sampleRate: number };
 
 type WasmMicBridgeHandle = {
   read_f32_into(out: Float32Array): number;
@@ -97,46 +98,12 @@ let sineTone: { write: (...args: unknown[]) => number; free?: () => void } | nul
 
 let nextAudioFillDeadlineMs = 0;
 
-const MIC_HEADER_U32_LEN = 4;
-const MIC_HEADER_BYTES = MIC_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
-const MIC_WRITE_POS_INDEX = 0;
-const MIC_READ_POS_INDEX = 1;
-const MIC_DROPPED_SAMPLES_INDEX = 2;
-const MIC_CAPACITY_SAMPLES_INDEX = 3;
-
 const AUDIO_HEADER_U32_LEN = 4;
 const AUDIO_HEADER_BYTES = AUDIO_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
 const AUDIO_READ_FRAME_INDEX = 0;
 const AUDIO_WRITE_FRAME_INDEX = 1;
 const AUDIO_UNDERRUN_COUNT_INDEX = 2;
 const AUDIO_OVERRUN_COUNT_INDEX = 3;
-
-function micSamplesAvailable(readPos: number, writePos: number): number {
-  return (writePos - readPos) >>> 0;
-}
-
-function micSamplesAvailableClamped(readPos: number, writePos: number, capacitySamples: number): number {
-  return Math.min(micSamplesAvailable(readPos, writePos), capacitySamples >>> 0);
-}
-
-function micRingBufferReadInto(rb: MicRingBufferView, out: Float32Array): number {
-  const readPos = Atomics.load(rb.header, MIC_READ_POS_INDEX) >>> 0;
-  const writePos = Atomics.load(rb.header, MIC_WRITE_POS_INDEX) >>> 0;
-  const available = micSamplesAvailableClamped(readPos, writePos, rb.capacity);
-  const toRead = Math.min(out.length, available);
-  if (toRead === 0) return 0;
-
-  const start = readPos % rb.capacity;
-  const firstPart = Math.min(toRead, rb.capacity - start);
-  out.set(rb.data.subarray(start, start + firstPart), 0);
-  const remaining = toRead - firstPart;
-  if (remaining) {
-    out.set(rb.data.subarray(0, remaining), firstPart);
-  }
-
-  Atomics.store(rb.header, MIC_READ_POS_INDEX, (readPos + toRead) >>> 0);
-  return toRead;
-}
 
 function detachMicBridge(): void {
   if (wasmMicBridge && typeof wasmMicBridge.free === "function") {
@@ -189,7 +156,7 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
   if (!ringBuffer) return;
 
   const header = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
-  const capacity = header[MIC_CAPACITY_SAMPLES_INDEX] >>> 0;
+  const capacity = header[CAPACITY_SAMPLES_INDEX] >>> 0;
   if (capacity === 0) {
     throw new Error("mic ring buffer capacity must be non-zero");
   }
