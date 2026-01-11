@@ -168,20 +168,23 @@ set "EXE=%BIN%\\%NAME%.exe"
 shift
 echo.
 echo === Running %NAME% ===
-if /I "%NAME%"=="d3d9ex_shared_surface_wow64" if not defined PROCESSOR_ARCHITEW6432 if not defined ProgramFiles(x86) (
-  echo SKIP: %NAME% ^(requires x64 OS^)
-  exit /b 0
-)
 if /I "%NAME%"=="d3d9ex_shared_surface_wow64" (
-  set "CONSUMER_EXE=%BIN%\\d3d9ex_shared_surface_wow64_consumer_x64.exe"
-  if not exist "!CONSUMER_EXE!" (
-    if exist "%ROOT%%NAME%\" (
-      echo FAIL: %NAME% ^(missing binary: !CONSUMER_EXE!^)
-      set /a FAILURES+=1
-    ) else (
-      echo INFO: skipping %NAME% ^(not present in this checkout^)
+  set "IS_X64_OS="
+  if defined PROCESSOR_ARCHITEW6432 set "IS_X64_OS=1"
+  if defined ProgramFiles(x86) set "IS_X64_OS=1"
+  rem Only require the x64 consumer binary when running on a 64-bit OS; on a 32-bit OS the test
+  rem skips itself (and can still emit a JSON skip report when --json is passed).
+  if defined IS_X64_OS (
+    set "CONSUMER_EXE=%BIN%\\d3d9ex_shared_surface_wow64_consumer_x64.exe"
+    if not exist "!CONSUMER_EXE!" (
+      if exist "%ROOT%%NAME%\" (
+        echo FAIL: %NAME% ^(missing binary: !CONSUMER_EXE!^)
+        set /a FAILURES+=1
+      ) else (
+        echo INFO: skipping %NAME% ^(not present in this checkout^)
+      )
+      exit /b 0
     )
-    exit /b 0
   )
 )
 if not exist "%EXE%" (
