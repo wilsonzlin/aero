@@ -318,10 +318,12 @@ reports):
 
 - `reportSize` MUST be in `1..=255` (HID `REPORT_SIZE` is an 8-bit global item).
 - `reportCount` MUST be in `0..=65535` (policy cap).
-- `reportSize * reportCount` MUST fit in `u32`.
-- The total bit length of a given `(kind, reportId)` across the descriptor MUST fit in `u32`.
-- The synthesized report descriptor byte length MUST fit in `u16` (`<= 65535`) because USB HID
-  encodes it as a 16-bit `wDescriptorLength` field in the HID descriptor.
+ - `reportSize * reportCount` MUST fit in `u32`.
+ - The total bit length of a given `(kind, reportId)` across the descriptor MUST fit in `u32`.
+ - Input/output reports MUST fit within a single USB full-speed interrupt transfer:
+   - `ceil(totalBits/8) + (hasReportIds ? 1 : 0) <= 64`
+ - The synthesized report descriptor byte length MUST fit in `u16` (`<= 65535`) because USB HID
+   encodes it as a 16-bit `wDescriptorLength` field in the HID descriptor.
 
 ### Min/max ordering
 

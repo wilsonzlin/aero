@@ -96,6 +96,7 @@ const MAX_REPORT_SIZE_BITS: u32 = 255;
 /// payload sizes within a sane bound.
 const MAX_REPORT_COUNT: u32 = 65_535;
 const MAX_HID_USAGE_U16: u32 = u16::MAX as u32;
+const MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES: u32 = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValidationSummary {
@@ -350,9 +351,32 @@ fn validate_report_list(
                 .report_bits
                 .entry((kind, report.report_id))
                 .or_insert(0);
-            *entry = entry.checked_add(bits).ok_or_else(|| {
+            let total_bits = entry.checked_add(bits).ok_or_else(|| {
                 HidDescriptorError::at(&item_path, "total report bit length overflows u32")
             })?;
+            *entry = total_bits;
+
+            if kind != HidReportKind::Feature {
+                let data_bytes = total_bits.checked_add(7).ok_or_else(|| {
+                    HidDescriptorError::at(&item_path, "report bit length too large to round to bytes")
+                })? / 8;
+                let report_bytes = data_bytes
+                    .checked_add(if report.report_id != 0 { 1 } else { 0 })
+                    .ok_or_else(|| HidDescriptorError::at(&item_path, "report byte length overflows u32"))?;
+                if report_bytes > MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES {
+                    let kind_str = match kind {
+                        HidReportKind::Input => "input",
+                        HidReportKind::Output => "output",
+                        HidReportKind::Feature => unreachable!(),
+                    };
+                    return Err(HidDescriptorError::at(
+                        &item_path,
+                        format!(
+                            "{kind_str} report length {report_bytes} bytes exceeds max USB full-speed interrupt packet size {MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES}",
+                        ),
+                    ));
+                }
+            }
             path.pop();
         }
 
@@ -1653,9 +1677,51 @@ mod tests {
             usage_page: 0x01,
             usage: 0x02,
             collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![],
+            feature_reports: vec![HidReportInfo { report_id: 0, items }],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].featureReports[0].items[257]");
+                assert!(message.contains("total report bit length overflows u32"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_input_report_larger_than_full_speed_interrupt_packet() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
             input_reports: vec![HidReportInfo {
                 report_id: 0,
-                items,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 65,
+                    usage_page: 0x01,
+                    usages: vec![],
+                }],
             }],
             output_reports: vec![],
             feature_reports: vec![],
@@ -1664,8 +1730,53 @@ mod tests {
 
         match synthesize_report_descriptor(&collections) {
             Err(HidDescriptorError::Validation { path, message }) => {
-                assert_eq!(path, "collections[0].inputReports[0].items[257]");
-                assert!(message.contains("total report bit length overflows u32"));
+                assert_eq!(path, "collections[0].inputReports[0].items[0]");
+                assert!(message.contains("interrupt"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_report_id_prefix_overflowing_interrupt_packet() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 64,
+                    usage_page: 0x01,
+                    usages: vec![],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].inputReports[0].items[0]");
+                assert!(message.contains("interrupt"));
             }
             other => panic!("expected validation error, got {other:?}"),
         }

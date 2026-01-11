@@ -113,6 +113,7 @@ const MAX_REPORT_COUNT = 65_535;
 const MAX_U32 = 0xffff_ffffn;
 const MAX_U32_NUM = 0xffff_ffff;
 const MAX_U16_NUM = 0xffff;
+const MAX_INTERRUPT_REPORT_BYTES = 64n;
 const MIN_I32 = -0x8000_0000;
 const MAX_I32 = 0x7fff_ffff;
 
@@ -530,6 +531,18 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
           totalBits += bits;
           if (totalBits > MAX_U32) {
             throw err(itemPath, "total report bit length overflows u32");
+          }
+
+          if (listName !== "featureReports") {
+            const dataBytes = (totalBits + 7n) / 8n;
+            const reportBytes = dataBytes + (report.reportId !== 0 ? 1n : 0n);
+            if (reportBytes > MAX_INTERRUPT_REPORT_BYTES) {
+              const kind = listName === "inputReports" ? "input" : "output";
+              throw err(
+                itemPath,
+                `${kind} report length ${reportBytes} bytes exceeds max interrupt packet size ${MAX_INTERRUPT_REPORT_BYTES}`,
+              );
+            }
           }
 
           if (item.reportCount > MAX_REPORT_COUNT) {

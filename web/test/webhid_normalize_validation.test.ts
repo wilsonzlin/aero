@@ -210,12 +210,40 @@ test("normalizeCollections(validate): rejects total report bit length overflow w
   const collections: HidCollectionInfo[] = [
     {
       ...baseCollection(),
-      inputReports: [{ reportId: 0, items }],
+      featureReports: [{ reportId: 0, items }],
     },
   ];
 
   assert.throws(() => normalizeCollections(collections, { validate: true }), {
-    message: /total report bit length overflows u32.*collections\[0\]\.inputReports\[0\]\.items\[257\]/,
+    message: /total report bit length overflows u32.*collections\[0\]\.featureReports\[0\]\.items\[257\]/,
+  });
+});
+
+test("normalizeCollections(validate): rejects input reports longer than a full-speed interrupt packet", () => {
+  const bigItem: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 65 };
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 0, items: [bigItem] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /collections\[0\]\.inputReports\[0\]\.items\[0\]/,
+  });
+});
+
+test("normalizeCollections(validate): rejects reportId prefixes that push input reports over 64 bytes", () => {
+  const bigItem: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 64 };
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 1, items: [bigItem] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /collections\[0\]\.inputReports\[0\]\.items\[0\]/,
   });
 });
 
