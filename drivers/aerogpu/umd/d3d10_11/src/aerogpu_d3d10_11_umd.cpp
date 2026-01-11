@@ -1055,13 +1055,26 @@ static void InitUmdPrivate(AeroGpuAdapter* adapter) {
   adapter->umd_private_valid = true;
 }
 
+template <typename Fn, typename HandleA, typename HandleB, typename... Args>
+decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args);
+
 void SetError(AeroGpuDevice* dev, HRESULT hr) {
   if (!dev || !dev->callbacks) {
     return;
   }
   // Win7 D3D11 runtime expects pfnSetErrorCb for void-returning DDI failures.
+  // Some WDK revisions disagree on whether `pfnSetErrorCb` takes a runtime device
+  // handle (HRTDEVICE) or a driver device handle (HDEVICE). Support both.
   if (dev->callbacks->pfnSetErrorCb) {
-    dev->callbacks->pfnSetErrorCb(dev->hrt_device, hr);
+    if constexpr (std::is_invocable_v<decltype(dev->callbacks->pfnSetErrorCb), D3D11DDI_HDEVICE, HRESULT>) {
+      dev->callbacks->pfnSetErrorCb(dev->hDevice, hr);
+    } else if constexpr (std::is_invocable_v<decltype(dev->callbacks->pfnSetErrorCb), D3D10DDI_HDEVICE, HRESULT>) {
+      D3D10DDI_HDEVICE h10 = {};
+      h10.pDrvPrivate = dev->hDevice.pDrvPrivate;
+      dev->callbacks->pfnSetErrorCb(h10, hr);
+    } else {
+      CallCbMaybeHandle(dev->callbacks->pfnSetErrorCb, dev->hrt_device, dev->hrt_device10, hr);
+    }
   }
 }
 
