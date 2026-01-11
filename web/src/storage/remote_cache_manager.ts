@@ -24,6 +24,20 @@ export type RemoteCacheKeyParts = {
   deliveryType: string;
 };
 
+export function remoteRangeDeliveryType(blockSizeBytes: number): string {
+  if (!Number.isSafeInteger(blockSizeBytes) || blockSizeBytes <= 0) {
+    throw new Error(`blockSizeBytes must be a positive safe integer (got ${blockSizeBytes})`);
+  }
+  return `range:${blockSizeBytes}`;
+}
+
+export function remoteChunkedDeliveryType(chunkSizeBytes: number): string {
+  if (!Number.isSafeInteger(chunkSizeBytes) || chunkSizeBytes <= 0) {
+    throw new Error(`chunkSizeBytes must be a positive safe integer (got ${chunkSizeBytes})`);
+  }
+  return `chunked:${chunkSizeBytes}`;
+}
+
 export type RemoteCacheValidators = {
   /**
    * Total expected size of the remote image in bytes.

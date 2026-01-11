@@ -3,7 +3,7 @@ import { RANGE_STREAM_CHUNK_SIZE } from "../storage/chunk_sizes.ts";
 import { IdbRemoteChunkCache } from "../storage/idb_remote_chunk_cache.ts";
 import { pickDefaultBackend, type DiskBackend } from "../storage/metadata.ts";
 import { OpfsLruChunkCache } from "../storage/remote/opfs_lru_chunk_cache.ts";
-import { RemoteCacheManager, type RemoteCacheKeyParts } from "../storage/remote_cache_manager.ts";
+import { RemoteCacheManager, remoteRangeDeliveryType, type RemoteCacheKeyParts } from "../storage/remote_cache_manager.ts";
 import {
   DEFAULT_LEASE_REFRESH_MARGIN_MS,
   DiskAccessLeaseRefresher,
@@ -350,7 +350,7 @@ function cacheKeyPartsFromUrl(url: string, options: RemoteDiskOptions, blockSize
     version: normalizeCacheVersion(options.cacheVersion),
     // Include block size in the key material so different cache chunking strategies don't fight
     // (and so we never store delivery secrets like signed URLs in the key).
-    deliveryType: `range:${blockSize}`,
+    deliveryType: remoteRangeDeliveryType(blockSize),
   };
 }
 

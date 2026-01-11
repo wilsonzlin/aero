@@ -2,7 +2,7 @@ import { openFileHandle, removeOpfsEntry } from "../platform/opfs.ts";
 import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";
-import { RemoteCacheManager, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
+import { RemoteCacheManager, remoteChunkedDeliveryType, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
 import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR, pickDefaultBackend, type DiskBackend } from "./metadata";
 import {
   DEFAULT_LEASE_REFRESH_MARGIN_MS,
@@ -920,7 +920,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const cacheKeyParts: RemoteCacheKeyParts = {
       imageId: cacheImageId,
       version: cacheVersion,
-      deliveryType: `chunked:${manifest.chunkSize}`,
+      deliveryType: remoteChunkedDeliveryType(manifest.chunkSize),
     };
     const validators = {
       sizeBytes: manifest.totalSize,

@@ -32,7 +32,7 @@ import {
   type ImportProgress,
 } from "./import_export";
 import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
-import { RemoteCacheManager } from "./remote_cache_manager";
+import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
 
@@ -684,13 +684,21 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           // Remote delivery caches bytes under the RemoteCacheManager directory (derived key).
           // Best-effort cleanup when deleting the disk.
           try {
-            const cacheKey = await RemoteCacheManager.deriveCacheKey({
-              imageId: meta.remote.imageId,
-              version: meta.remote.version,
-              deliveryType: meta.remote.delivery,
-            });
             const manager = await RemoteCacheManager.openOpfs();
-            await manager.clearCache(cacheKey);
+            const deliveryTypes =
+              meta.remote.delivery === "range"
+                ? [remoteRangeDeliveryType(meta.cache.chunkSizeBytes), "range"]
+                : meta.remote.delivery === "chunked"
+                  ? [remoteChunkedDeliveryType(meta.cache.chunkSizeBytes), "chunked"]
+                : [meta.remote.delivery];
+            for (const deliveryType of deliveryTypes) {
+              const cacheKey = await RemoteCacheManager.deriveCacheKey({
+                imageId: meta.remote.imageId,
+                version: meta.remote.version,
+                deliveryType,
+              });
+              await manager.clearCache(cacheKey);
+            }
           } catch {
             // best-effort cleanup
           }
@@ -717,12 +725,20 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             // Remote disk caches may be stored in the dedicated `remote_chunks` store (LRU cache)
             // and/or in the legacy `chunks` store (disk-style sparse chunks).
             // Best-effort cleanup: try both.
-            const derivedCacheKey = await RemoteCacheManager.deriveCacheKey({
-              imageId: meta.remote.imageId,
-              version: meta.remote.version,
-              deliveryType: meta.remote.delivery,
-            });
-            await idbDeleteRemoteChunkCache(db, derivedCacheKey);
+            const deliveryTypes =
+              meta.remote.delivery === "range"
+                ? [remoteRangeDeliveryType(meta.cache.chunkSizeBytes), "range"]
+                : meta.remote.delivery === "chunked"
+                  ? [remoteChunkedDeliveryType(meta.cache.chunkSizeBytes), "chunked"]
+                : [meta.remote.delivery];
+            for (const deliveryType of deliveryTypes) {
+              const derivedCacheKey = await RemoteCacheManager.deriveCacheKey({
+                imageId: meta.remote.imageId,
+                version: meta.remote.version,
+                deliveryType,
+              });
+              await idbDeleteRemoteChunkCache(db, derivedCacheKey);
+            }
             await idbDeleteRemoteChunkCache(db, meta.cache.fileName);
             await idbDeleteRemoteChunkCache(db, meta.cache.overlayFileName);
             await idbDeleteRemoteChunkCache(db, idbOverlayBindingKey(meta.cache.overlayFileName));

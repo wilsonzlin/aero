@@ -225,8 +225,6 @@ describe("Perf HUD Trace JSON export", () => {
       }
     }
 
-    // JSDOM's `Blob` implementation is intentionally minimal; override it so we
-    // can assert on the payload passed into `new Blob([...])`.
     globalThis.Blob = FakeBlob as unknown as typeof Blob;
 
     const ctx = {
@@ -272,9 +270,9 @@ describe("Perf HUD Trace JSON export", () => {
 
     installHud(perf);
 
-    const traceButton = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
-      (btn) => btn.textContent === "Trace JSON",
-    );
+    const traceButton = Array.from(
+      (globalThis.document as unknown as { querySelectorAll: (sel: string) => HTMLButtonElement[] }).querySelectorAll("button"),
+    ).find((btn) => btn.textContent === "Trace JSON");
     expect(traceButton).toBeTruthy();
 
     traceButton!.click();
@@ -300,3 +298,4 @@ describe("Perf HUD Trace JSON export", () => {
     expect(traceButton!.disabled).toBe(false);
   });
 });
+

@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 
 import { RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
 import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR } from "./metadata";
-import { RemoteCacheManager } from "./remote_cache_manager";
+import { remoteChunkedDeliveryType, RemoteCacheManager } from "./remote_cache_manager";
 
 class TestMemoryStore implements BinaryStore {
   readonly files = new Map<string, Uint8Array<ArrayBuffer>>();
@@ -428,7 +428,7 @@ describe("RemoteChunkedDisk", () => {
     const cacheKey = await RemoteCacheManager.deriveCacheKey({
       imageId: common.cacheImageId,
       version: common.cacheVersion,
-      deliveryType: `chunked:${chunkSize}`,
+      deliveryType: remoteChunkedDeliveryType(chunkSize),
     });
     const cacheRoot = `${OPFS_AERO_DIR}/${OPFS_DISKS_DIR}/${OPFS_REMOTE_CACHE_DIR}`;
     await store.remove(`${cacheRoot}/${cacheKey}/chunks/0.bin`);
