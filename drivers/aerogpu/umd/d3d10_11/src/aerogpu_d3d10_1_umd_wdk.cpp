@@ -25,6 +25,7 @@
 #include <condition_variable>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -390,6 +391,24 @@ decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
   }
 }
 
+template <typename T>
+std::uintptr_t D3dHandleToUintPtr(T value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<std::uintptr_t>(value);
+  } else {
+    return static_cast<std::uintptr_t>(value);
+  }
+}
+
+template <typename T>
+T UintPtrToD3dHandle(std::uintptr_t value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<T>(value);
+  } else {
+    return static_cast<T>(value);
+  }
+}
+
 struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTOpenAdapterFromHdc) pfn_open_adapter_from_hdc = nullptr;
   decltype(&D3DKMTCloseAdapter) pfn_close_adapter = nullptr;
@@ -696,6 +715,16 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   }
 
   uint64_t last_fence = 0;
+  std::uintptr_t wddm_context = 0;
+  auto log_missing_context_once = [&] {
+    static std::atomic<bool> logged = false;
+    bool expected = false;
+    if (logged.compare_exchange_strong(expected, true)) {
+      AEROGPU_D3D10_11_LOG(
+          "wddm_submit: D3DDDICB_* exposes hContext but the callback returned hContext=0; "
+          "this may require creating a WDDM context via pfnCreateContextCb2");
+    }
+  };
 
   // Chunk at packet boundaries if the runtime returns a smaller-than-requested DMA buffer.
   size_t cur = sizeof(aerogpu_cmd_stream_header);
@@ -745,6 +774,15 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
       dma_priv_size = static_cast<size_t>(alloc.DmaBufferPrivateDataSize);
       dma_priv_size_present = true;
+    }
+
+    __if_exists(D3DDDICB_ALLOCATE::hContext) {
+      const std::uintptr_t ctx = D3dHandleToUintPtr(alloc.hContext);
+      if (ctx) {
+        wddm_context = ctx;
+      } else {
+        log_missing_context_once();
+      }
     }
 
     if (FAILED(alloc_hr) || !dma_ptr || dma_cap == 0) {
@@ -925,9 +963,15 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     }
 
     HRESULT submit_hr = S_OK;
-    UINT submission_fence = 0;
+    uint64_t submission_fence = 0;
     if (do_present) {
       D3DDDICB_PRESENT present = {};
+      __if_exists(D3DDDICB_PRESENT::hContext) {
+        present.hContext = UintPtrToD3dHandle<decltype(present.hContext)>(wddm_context);
+        if (!wddm_context) {
+          log_missing_context_once();
+        }
+      }
       __if_exists(D3DDDICB_PRESENT::pDmaBuffer) {
         present.pDmaBuffer = alloc.pDmaBuffer;
       }
@@ -960,11 +1004,22 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
 
       submit_hr = CallCbMaybeHandle(cb->pfnPresentCb, dev->hrt_device, &present);
+      __if_exists(D3DDDICB_PRESENT::NewFenceValue) {
+        submission_fence = static_cast<uint64_t>(present.NewFenceValue);
+      }
       __if_exists(D3DDDICB_PRESENT::SubmissionFenceId) {
-        submission_fence = present.SubmissionFenceId;
+        if (submission_fence == 0) {
+          submission_fence = static_cast<uint64_t>(present.SubmissionFenceId);
+        }
       }
     } else {
       D3DDDICB_RENDER render = {};
+      __if_exists(D3DDDICB_RENDER::hContext) {
+        render.hContext = UintPtrToD3dHandle<decltype(render.hContext)>(wddm_context);
+        if (!wddm_context) {
+          log_missing_context_once();
+        }
+      }
       __if_exists(D3DDDICB_RENDER::pDmaBuffer) {
         render.pDmaBuffer = alloc.pDmaBuffer;
       }
@@ -997,8 +1052,13 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
 
       submit_hr = CallCbMaybeHandle(cb->pfnRenderCb, dev->hrt_device, &render);
+      __if_exists(D3DDDICB_RENDER::NewFenceValue) {
+        submission_fence = static_cast<uint64_t>(render.NewFenceValue);
+      }
       __if_exists(D3DDDICB_RENDER::SubmissionFenceId) {
-        submission_fence = render.SubmissionFenceId;
+        if (submission_fence == 0) {
+          submission_fence = static_cast<uint64_t>(render.SubmissionFenceId);
+        }
       }
     }
 
