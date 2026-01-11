@@ -169,6 +169,12 @@ impl VirtioNetDevice {
             should_interrupt = true;
         }
 
+        // Flush any already-queued frames before draining the backend so we don't
+        // drop older packets unnecessarily when `pending_rx` hits its limit.
+        if self.process_pending_rx(mem)? {
+            should_interrupt = true;
+        }
+
         while let Some(frame) = backend.poll_receive() {
             self.enqueue_rx_frame(frame);
             if self.process_pending_rx(mem)? {
@@ -1603,6 +1609,79 @@ mod tests {
         let mut payload = vec![0u8; expected.len()];
         mem.read_into(payload_addr, &mut payload).unwrap();
         assert_eq!(payload, expected);
+    }
+
+    #[test]
+    fn poll_flushes_pending_before_draining_backend_to_avoid_dropping_old_frames() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x400;
+        let payload_addr = 0x500;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        for idx in 0..MAX_PENDING_RX_FRAMES {
+            let mut frame = vec![0u8; MIN_FRAME_LEN];
+            frame[0] = (idx & 0xff) as u8;
+            frame[1] = ((idx >> 8) & 0xff) as u8;
+            dev.enqueue_rx_frame(frame);
+        }
+
+        let mut backend_frame = vec![0u8; MIN_FRAME_LEN];
+        backend_frame[0] = (MAX_PENDING_RX_FRAMES & 0xff) as u8;
+        backend_frame[1] = ((MAX_PENDING_RX_FRAMES >> 8) & 0xff) as u8;
+
+        let mut backend = TestBackend::default();
+        backend.rx_frames.push_back(backend_frame);
+
+        let irq = dev.poll(&mut mem, &mut backend).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+        assert!(backend.rx_frames.is_empty());
+
+        let mut payload = vec![0u8; MIN_FRAME_LEN];
+        mem.read_into(payload_addr, &mut payload).unwrap();
+        assert_eq!(payload[0], 0);
+        assert_eq!(payload[1], 0);
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 1);
     }
 
     #[test]
