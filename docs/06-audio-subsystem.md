@@ -733,6 +733,15 @@ Audio output uses a separate `SharedArrayBuffer` ring buffer consumed by an `Aud
 Unlike the microphone ring, this ring buffer uses **frame indices** (not sample indices); each frame
 contains `channelCount` interleaved `f32` samples.
 
+**Important: sample rate mismatches**
+
+Browsers may ignore the requested `AudioContext` sample rate (Safari/iOS commonly runs at 44.1kHz).
+The AudioWorklet consumes frames at `AudioContext.sampleRate`, so the device models must be configured
+to produce audio at that *actual* rate:
+
+- HDA (`aero_audio::hda::HdaController`): set `output_rate_hz` to `AudioContext.sampleRate`.
+- virtio-snd (`aero_virtio::devices::snd::VirtioSnd`): set `host_sample_rate_hz` to `AudioContext.sampleRate`.
+
 | Offset | Type | Meaning |
 |--------|------|---------|
 | 0      | u32  | `readFrameIndex` (monotonic frame counter, consumer-owned) |

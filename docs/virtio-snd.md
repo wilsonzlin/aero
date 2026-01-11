@@ -136,7 +136,16 @@ Layout (little-endian):
 
 ## Audio Output Path
 
-In the canonical Rust device model (`aero_virtio::devices::snd::VirtioSnd`), TX PCM samples are converted from interleaved S16_LE to interleaved `f32` and pushed into an `aero_audio::sink::AudioSink` (typically an AudioWorklet ring buffer producer).
+In the canonical Rust device model (`aero_virtio::devices::snd::VirtioSnd`), TX PCM samples are:
+
+1. decoded from interleaved S16_LE to interleaved `f32`
+2. resampled from the guest contract rate (**48kHz**) to the host/output sample rate (typically `AudioContext.sampleRate`)
+3. pushed into an `aero_audio::sink::AudioSink` (usually an AudioWorklet ring buffer producer).
+
+The host/output rate defaults to 48kHz, but can be configured via:
+
+- `VirtioSnd::new_with_host_sample_rate(...)`
+- `VirtioSnd::set_host_sample_rate_hz(...)`
 
 ## Windows 7 Driver Strategy
 
@@ -164,7 +173,9 @@ This option requires a licensing review (see `docs/13-legal-considerations.md`) 
 
 ## Browser Smoke Test (AudioWorklet)
 
-A standalone smoke test is provided under `web/` to validate AudioWorklet playback of interleaved S16_LE stereo data at 48kHz.
+A standalone smoke test is provided under `web/` to validate AudioWorklet playback and sample-rate handling.
+
+It generates a 48kHz stereo tone and (if needed) linearly resamples it to the *actual* `AudioContext.sampleRate` before writing into the shared ring buffer. This prevents pitch-shift on browsers that ignore the requested sample rate (Safari/iOS commonly uses 44.1kHz).
 
 Because it uses `SharedArrayBuffer`, it must be served with cross-origin isolation headers (COOP/COEP). A minimal local server is included:
 
