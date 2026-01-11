@@ -19,6 +19,7 @@ const DEFAULT_ICE_GATHER_TIMEOUT_MS = 10_000;
 const DEFAULT_DATA_CHANNEL_OPEN_TIMEOUT_MS = 30_000;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
+const DEFAULT_SIGNALING_ANSWER_TIMEOUT_MS = 10_000;
 
 export async function connectRelaySignaling(
   opts: ConnectRelaySignalingOptions,
@@ -454,6 +455,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
 
     let resolveAnswer!: () => void;
     let rejectAnswer!: (err: unknown) => void;
+    let answerTimer: ReturnType<typeof setTimeout> | null = null;
     const answerPromise = new Promise<void>((resolve, reject) => {
       resolveAnswer = resolve;
       rejectAnswer = reject;
@@ -462,12 +464,17 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     const settleAnswer = (err?: unknown) => {
       if (answerSettled) return;
       answerSettled = true;
+      if (answerTimer) clearTimeout(answerTimer);
+      answerTimer = null;
       if (err) {
         rejectAnswer(err);
       } else {
         resolveAnswer();
       }
     };
+    answerTimer = setTimeout(() => {
+      settleAnswer(new Error("signaling answer timed out"));
+    }, DEFAULT_SIGNALING_ANSWER_TIMEOUT_MS);
 
     const onMessage = async (evt: MessageEvent) => {
       if (currentAttempt !== attemptId) return;
@@ -608,6 +615,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
 
     let resolveAnswer!: () => void;
     let rejectAnswer!: (err: unknown) => void;
+    let answerTimer: ReturnType<typeof setTimeout> | null = null;
     const answerPromise = new Promise<void>((resolve, reject) => {
       resolveAnswer = resolve;
       rejectAnswer = reject;
@@ -616,12 +624,17 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     const settleAnswer = (err?: unknown) => {
       if (answerSettled) return;
       answerSettled = true;
+      if (answerTimer) clearTimeout(answerTimer);
+      answerTimer = null;
       if (err) {
         rejectAnswer(err);
       } else {
         resolveAnswer();
       }
     };
+    answerTimer = setTimeout(() => {
+      settleAnswer(new Error("signaling answer timed out"));
+    }, DEFAULT_SIGNALING_ANSWER_TIMEOUT_MS);
 
     const onMessage = async (evt: MessageEvent) => {
       if (currentAttempt !== attemptId) return;
