@@ -4,6 +4,8 @@ import {
   FramebufferFormat,
   SharedFramebufferHeaderIndex,
   SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
 } from "./src/ipc/shared-layout";
 import { FRAME_DIRTY, FRAME_STATUS_INDEX } from "./src/shared/frameProtocol";
 
@@ -76,6 +78,25 @@ async function main() {
   const header = new Int32Array(shared, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
   const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
   const frameState = new Int32Array(sharedFrameState);
+
+  // Initialize the shared framebuffer header up-front so the GPU worker can
+  // send its `ready` message even if the CPU mock is slow to start.
+  Atomics.store(header, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
+  Atomics.store(header, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
+  Atomics.store(header, SharedFramebufferHeaderIndex.WIDTH, width);
+  Atomics.store(header, SharedFramebufferHeaderIndex.HEIGHT, height);
+  Atomics.store(header, SharedFramebufferHeaderIndex.STRIDE_BYTES, strideBytes);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FORMAT, FramebufferFormat.RGBA8);
+  Atomics.store(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILE_SIZE, tileSize);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILES_X, layout.tilesX);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILES_Y, layout.tilesY);
+  Atomics.store(header, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, layout.dirtyWordsPerBuffer);
+  Atomics.store(header, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FLAGS, 0);
 
   const cpu = new Worker(new URL("./src/workers/cpu-worker-mock.ts", import.meta.url), { type: "module" });
   cpu.postMessage({
