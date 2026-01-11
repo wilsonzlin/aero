@@ -44,7 +44,7 @@ To integrate the relay with the gateway (recommended for production):
   - (optional) `coturn` TURN server via compose profile
 - `deploy/caddy/Caddyfile` – TLS termination, COOP/COEP headers, reverse proxy rules
 - `deploy/scripts/smoke.sh` – builds + boots the compose stack and asserts key headers
-- `deploy/static/index.html` – a small **smoke test page** to validate `window.crossOriginIsolated`
+- `deploy/static/index.html` – a small **smoke test page** to validate `window.crossOriginIsolated` and basic networking wiring (`/session`, `/tcp`, `/l2`)
 - `deploy/k8s/` – Kubernetes/Helm deployment for `aero-gateway` with Ingress TLS + COOP/COEP/CSP headers
 
 For CSP details and tradeoffs (including why Aero needs `'wasm-unsafe-eval'` for WASM-based JIT),
