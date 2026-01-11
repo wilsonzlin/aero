@@ -262,7 +262,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d10_caps_smoke` validates `ID3D10Device::CheckFormatSupport` bits for a few core RT/DS + index/vertex formats used by common apps
 * `d3d11_triangle` uses `D3D11CreateDeviceAndSwapChain` (hardware), verifies the D3D11 runtime path (`d3d11.dll`) and the AeroGPU `OpenAdapter11` export, and confirms **corner red + center green** via readback
 * `d3d11_caps_smoke` validates the expected D3D11 feature level and common format support bits used by the runtime
-* `d3d11_rs_om_state_sanity` validates D3D11 rasterizer + blend state correctness (scissor enable/disable + `RSSetState(NULL)`, cull mode/front-face, depth clip enable/disable, alpha blending + write mask + blend factor + sample mask) via readback
+* `d3d11_rs_om_state_sanity` validates D3D11 rasterizer + blend state correctness (scissor enable/disable + `RSSetState(NULL)`, cull mode/front-face, depth clip enable/disable, alpha blending + write mask + blend factor + sample mask) via readback (requires feature level >= 10_0)
 * `d3d11_geometry_shader_smoke` renders a triangle through the Geometry Shader stage (requires feature level >= 10_0) and confirms **corner red + center green** via readback
 * `dxgi_swapchain_probe` creates a 2-buffer windowed DXGI swapchain and presents a few vsync-paced frames (useful for swapchain/backbuffer tracing; use `--api=d3d11|d3d10|d3d10_1` to select the runtime path)
 * `d3d11_swapchain_rotate_sanity` creates a 2-buffer swapchain, clears buffer0 red + buffer1 green, presents, then validates that DXGI rotated buffer identities (expects **buffer0 green + buffer1 red**)
