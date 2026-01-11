@@ -106,6 +106,115 @@ static double QpcToMs(LONGLONG qpc_delta, LONGLONG qpc_freq) {
   return (double)qpc_delta * 1000.0 / (double)qpc_freq;
 }
 
+typedef struct WaitThreadCtx {
+  const D3DKMT_FUNCS* f;
+  D3DKMT_HANDLE hAdapter;
+  UINT vid_pn_source_id;
+  HANDLE request_event;
+  HANDLE done_event;
+  HANDLE thread;
+  volatile LONG stop;
+  volatile LONG last_status;
+} WaitThreadCtx;
+
+static DWORD WINAPI WaitThreadProc(LPVOID param) {
+  WaitThreadCtx* ctx = (WaitThreadCtx*)param;
+  for (;;) {
+    DWORD w = WaitForSingleObject(ctx->request_event, INFINITE);
+    if (w != WAIT_OBJECT_0) {
+      InterlockedExchange(&ctx->last_status, (LONG)0xC0000001L /* STATUS_UNSUCCESSFUL */);
+      SetEvent(ctx->done_event);
+      continue;
+    }
+
+    if (InterlockedCompareExchange(&ctx->stop, 0, 0) != 0) {
+      break;
+    }
+
+    D3DKMT_WAITFORVERTICALBLANKEVENT e;
+    ZeroMemory(&e, sizeof(e));
+    e.hAdapter = ctx->hAdapter;
+    e.hDevice = 0;
+    e.VidPnSourceId = ctx->vid_pn_source_id;
+    NTSTATUS st = ctx->f->WaitForVerticalBlankEvent(&e);
+    InterlockedExchange(&ctx->last_status, st);
+    SetEvent(ctx->done_event);
+  }
+  return 0;
+}
+
+static bool StartWaitThread(WaitThreadCtx* out,
+                            const D3DKMT_FUNCS* f,
+                            D3DKMT_HANDLE hAdapter,
+                            UINT vid_pn_source_id,
+                            std::string* err) {
+  if (!out || !f) {
+    if (err) {
+      *err = "invalid args";
+    }
+    return false;
+  }
+
+  ZeroMemory(out, sizeof(*out));
+  out->f = f;
+  out->hAdapter = hAdapter;
+  out->vid_pn_source_id = vid_pn_source_id;
+  out->stop = 0;
+  out->last_status = 0;
+  out->request_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+  out->done_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+  if (!out->request_event || !out->done_event) {
+    if (err) {
+      *err = "CreateEventW failed";
+    }
+    if (out->request_event) {
+      CloseHandle(out->request_event);
+      out->request_event = NULL;
+    }
+    if (out->done_event) {
+      CloseHandle(out->done_event);
+      out->done_event = NULL;
+    }
+    return false;
+  }
+
+  out->thread = CreateThread(NULL, 0, WaitThreadProc, out, 0, NULL);
+  if (!out->thread) {
+    if (err) {
+      *err = "CreateThread failed";
+    }
+    CloseHandle(out->request_event);
+    out->request_event = NULL;
+    CloseHandle(out->done_event);
+    out->done_event = NULL;
+    return false;
+  }
+  return true;
+}
+
+static void StopWaitThread(WaitThreadCtx* ctx) {
+  if (!ctx) {
+    return;
+  }
+
+  if (ctx->thread) {
+    InterlockedExchange(&ctx->stop, 1);
+    SetEvent(ctx->request_event);
+    WaitForSingleObject(ctx->thread, 5000);
+    CloseHandle(ctx->thread);
+    ctx->thread = NULL;
+  }
+
+  if (ctx->request_event) {
+    CloseHandle(ctx->request_event);
+    ctx->request_event = NULL;
+  }
+  if (ctx->done_event) {
+    CloseHandle(ctx->done_event);
+    ctx->done_event = NULL;
+  }
+}
+
 static int RunWaitVblankPacing(int argc, char** argv) {
   const char* kTestName = "wait_vblank_pacing";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -183,16 +292,44 @@ static int RunWaitVblankPacing(int argc, char** argv) {
         (unsigned)open.VidPnSourceId);
   }
 
-  // Target VidPn source 0 as required by the AeroGPU MVP contract.
-  D3DKMT_WAITFORVERTICALBLANKEVENT wait;
-  ZeroMemory(&wait, sizeof(wait));
-  wait.hAdapter = h_adapter;
-  wait.hDevice = 0;
-  wait.VidPnSourceId = 0;
+  // Run the vblank wait on a dedicated thread so we can bound the wall time of each wait.
+  // If vblank interrupts are missing/broken, D3DKMTWaitForVerticalBlankEvent can block indefinitely.
+  const DWORD wait_timeout_ms = 2000;
+  WaitThreadCtx waiter;
+  std::string waiter_err;
+  if (!StartWaitThread(&waiter, &f, h_adapter, 0 /* VidPnSourceId */, &waiter_err)) {
+    D3DKMT_CLOSEADAPTER close;
+    ZeroMemory(&close, sizeof(close));
+    close.hAdapter = h_adapter;
+    f.CloseAdapter(&close);
+    FreeLibrary(f.gdi32);
+    return aerogpu_test::Fail(kTestName, "failed to start wait thread: %s", waiter_err.c_str());
+  }
 
   // Warm up once to avoid counting first-time initialization.
-  st = f.WaitForVerticalBlankEvent(&wait);
+  SetEvent(waiter.request_event);
+  DWORD w = WaitForSingleObject(waiter.done_event, wait_timeout_ms);
+  if (w == WAIT_TIMEOUT) {
+    // Avoid trying to clean up the wait thread: it may be blocked in the kernel thunk. Exiting the
+    // process is sufficient for test automation, and avoids deadlock-prone teardown paths.
+    return aerogpu_test::Fail(kTestName,
+                              "vblank wait timed out after %lu ms (warmup)",
+                              (unsigned long)wait_timeout_ms);
+  }
+  if (w != WAIT_OBJECT_0) {
+    StopWaitThread(&waiter);
+    D3DKMT_CLOSEADAPTER close;
+    ZeroMemory(&close, sizeof(close));
+    close.hAdapter = h_adapter;
+    f.CloseAdapter(&close);
+    FreeLibrary(f.gdi32);
+    return aerogpu_test::Fail(kTestName,
+                              "WaitForSingleObject failed (rc=%lu)",
+                              (unsigned long)w);
+  }
+  st = (NTSTATUS)InterlockedCompareExchange(&waiter.last_status, 0, 0);
   if (!NT_SUCCESS(st)) {
+    StopWaitThread(&waiter);
     D3DKMT_CLOSEADAPTER close;
     ZeroMemory(&close, sizeof(close));
     close.hAdapter = h_adapter;
@@ -211,17 +348,30 @@ static int RunWaitVblankPacing(int argc, char** argv) {
   LARGE_INTEGER last;
   QueryPerformanceCounter(&last);
 
+  int rc = 0;
   for (uint32_t i = 0; i < samples; ++i) {
-    st = f.WaitForVerticalBlankEvent(&wait);
-    if (!NT_SUCCESS(st)) {
-      D3DKMT_CLOSEADAPTER close;
-      ZeroMemory(&close, sizeof(close));
-      close.hAdapter = h_adapter;
-      f.CloseAdapter(&close);
-      FreeLibrary(f.gdi32);
+    SetEvent(waiter.request_event);
+    w = WaitForSingleObject(waiter.done_event, wait_timeout_ms);
+    if (w == WAIT_TIMEOUT) {
+      // Avoid trying to clean up the wait thread: it may be blocked in the kernel thunk.
       return aerogpu_test::Fail(kTestName,
-                                "D3DKMTWaitForVerticalBlankEvent failed with %s",
-                                NtStatusToString(&f, st).c_str());
+                                "vblank wait timed out after %lu ms (sample %lu/%lu)",
+                                (unsigned long)wait_timeout_ms,
+                                (unsigned long)(i + 1),
+                                (unsigned long)samples);
+    }
+    if (w != WAIT_OBJECT_0) {
+      rc = aerogpu_test::Fail(kTestName,
+                              "WaitForSingleObject failed (rc=%lu)",
+                              (unsigned long)w);
+      break;
+    }
+    st = (NTSTATUS)InterlockedCompareExchange(&waiter.last_status, 0, 0);
+    if (!NT_SUCCESS(st)) {
+      rc = aerogpu_test::Fail(kTestName,
+                              "D3DKMTWaitForVerticalBlankEvent failed with %s",
+                              NtStatusToString(&f, st).c_str());
+      break;
     }
 
     LARGE_INTEGER now;
@@ -239,6 +389,8 @@ static int RunWaitVblankPacing(int argc, char** argv) {
     }
   }
 
+  StopWaitThread(&waiter);
+
   D3DKMT_CLOSEADAPTER close;
   ZeroMemory(&close, sizeof(close));
   close.hAdapter = h_adapter;
@@ -250,6 +402,10 @@ static int RunWaitVblankPacing(int argc, char** argv) {
   }
 
   FreeLibrary(f.gdi32);
+
+  if (rc != 0) {
+    return rc;
+  }
 
   if (collected == 0) {
     return aerogpu_test::Fail(kTestName, "no samples collected");
