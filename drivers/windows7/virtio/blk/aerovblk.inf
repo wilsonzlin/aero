@@ -19,10 +19,10 @@ aerovblk.sys = 1
 %Aero% = Aero,NTx86,NTamd64
 
 [Aero.NTx86]
-%Aerovblk.DeviceDesc% = Aerovblk_Inst, PCI\VEN_1AF4&DEV_1001
+%Aerovblk.DeviceDesc% = Aerovblk_Inst, PCI\VEN_1AF4&DEV_1042
 
 [Aero.NTamd64]
-%Aerovblk.DeviceDesc% = Aerovblk_Inst, PCI\VEN_1AF4&DEV_1001
+%Aerovblk.DeviceDesc% = Aerovblk_Inst, PCI\VEN_1AF4&DEV_1042
 
 [Aerovblk_Inst]
 CopyFiles = Aerovblk_CopyFiles
