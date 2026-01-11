@@ -176,6 +176,12 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
         ControlResponse::Ack
     );
 
+    // Power the port so it becomes "connected" and raises a change bit.
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+
     let bitmap = hub
         .poll_interrupt_in(HUB_INTERRUPT_IN_EP)
         .expect("expected port-change bitmap");
@@ -289,17 +295,17 @@ fn usb_hub_port_enable_set_and_clear_feature() {
         ControlResponse::Ack
     );
 
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+
     // Clear initial connect-change so only enable-change is observed.
     assert_eq!(
         hub.handle_control_request(
             hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_CONNECTION),
             None
         ),
-        ControlResponse::Ack
-    );
-
-    assert_eq!(
-        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_POWER), None),
         ControlResponse::Ack
     );
 

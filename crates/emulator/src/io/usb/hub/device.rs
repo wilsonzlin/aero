@@ -76,14 +76,9 @@ impl HubPort {
 
     fn attach(&mut self, model: Box<dyn UsbDeviceModel>) {
         self.device = Some(AttachedUsbDevice::new(model));
-        if !self.connected {
-            self.connected = true;
-        }
+        self.connected = true;
         self.connect_change = true;
-        if self.enabled {
-            self.enabled = false;
-            self.enable_change = true;
-        }
+        self.set_enabled(false);
     }
 
     fn detach(&mut self) {
@@ -92,10 +87,7 @@ impl HubPort {
             self.connected = false;
             self.connect_change = true;
         }
-        if self.enabled {
-            self.enabled = false;
-            self.enable_change = true;
-        }
+        self.set_enabled(false);
     }
 
     fn set_powered(&mut self, powered: bool) {
@@ -104,6 +96,10 @@ impl HubPort {
         }
         self.powered = powered;
         if !self.powered {
+            // Losing VBUS effectively power-cycles the downstream device.
+            if let Some(dev) = self.device.as_mut() {
+                dev.reset();
+            }
             self.set_enabled(false);
         }
     }
@@ -328,7 +324,6 @@ impl UsbDeviceModel for UsbHubDevice {
             port.reset = false;
             port.reset_countdown_ms = 0;
             port.reset_change = false;
-
             if let Some(dev) = port.device.as_mut() {
                 dev.reset();
             }
