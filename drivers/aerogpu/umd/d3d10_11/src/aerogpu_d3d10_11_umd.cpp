@@ -264,10 +264,6 @@ struct AeroGpuResource {
   uint32_t usage = 0;
   uint32_t cpu_access_flags = 0;
 
-  bool mapped = false;
-  uint32_t mapped_subresource = 0;
-  uint32_t mapped_map_type = 0;
-
   // Buffer fields.
   uint64_t size_bytes = 0;
 

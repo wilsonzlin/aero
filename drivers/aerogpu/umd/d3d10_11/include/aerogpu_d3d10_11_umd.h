@@ -362,11 +362,8 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_ROTATERESOURCEIDENTITIES)(D3D10DDI
 // entrypoints for staging resources and dynamic buffers. Keep this surface area
 // available even in the "minimal ABI subset" build so the translation layer can
 // be validated without WDK headers.
-typedef struct AEROGPU_DDI_MAPPED_SUBRESOURCE {
-  void* pData;
-  uint32_t RowPitch;
-  uint32_t DepthPitch;
-} AEROGPU_DDI_MAPPED_SUBRESOURCE;
+// NOTE: `AEROGPU_DDI_MAPPED_SUBRESOURCE` is declared above alongside other
+// resource-copy/update helpers.
 
 // D3D11_MAP numeric values from d3d11.h. D3D10 runtimes use a compatible subset.
 typedef enum AEROGPU_DDI_MAP_TYPE {
