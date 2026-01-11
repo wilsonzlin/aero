@@ -849,6 +849,9 @@ async function runLoopInner(): Promise<void> {
 
     if (running) {
       const now = performance.now();
+      // Drain asynchronous device events (IRQs, A20, etc.) even when the CPU is
+      // not actively waiting on an I/O roundtrip.
+      io?.poll(64);
 
       if (workletBridge && audioDstSampleRate > 0 && audioCapacityFrames > 0) {
         if (nextAudioFillDeadlineMs === 0) nextAudioFillDeadlineMs = now;

@@ -112,6 +112,33 @@ export class AeroIpcIoClient {
     return this.#waitForResponse(id, "diskWriteResp", timeoutMs);
   }
 
+  /**
+   * Drain pending events from the ioIpc event queue without blocking.
+   *
+   * This is useful for handling asynchronous device events (IRQs, A20 changes,
+   * reset requests) even when the CPU is not currently performing a port/mmio
+   * request.
+   *
+   * Any response events (`*Resp`) encountered are buffered internally so
+   * subsequent synchronous calls can still retrieve them by id.
+   */
+  poll(maxEvents?: number): number {
+    let drained = 0;
+    while (maxEvents == null || drained < (maxEvents >>> 0)) {
+      const bytes = this.#evtQ.tryPop();
+      if (!bytes) break;
+      let evt: Event;
+      try {
+        evt = decodeEvent(bytes);
+      } catch {
+        continue;
+      }
+      this.#handleIncomingEvent(evt);
+      drained++;
+    }
+    return drained;
+  }
+
   #allocId(): number {
     // IDs are u32 in the wire format; keep them non-zero.
     const id = this.#nextId >>> 0;
@@ -130,19 +157,26 @@ export class AeroIpcIoClient {
     kind: TKind,
     timeoutMs?: number,
   ): Extract<Event, { kind: TKind }> {
-    const existing = this.#responsesById.get(requestId);
-    if (existing) {
+    const take = (): Extract<Event, { kind: TKind }> | null => {
+      const existing = this.#responsesById.get(requestId);
+      if (!existing) return null;
       if (existing.kind !== kind) {
         throw new Error(`unexpected response kind ${existing.kind} for id ${requestId}, expected ${kind}`);
       }
       this.#responsesById.delete(requestId);
       return existing as Extract<Event, { kind: TKind }>;
-    }
+    };
+
+    const cached = take();
+    if (cached) return cached;
 
     const startMs = timeoutMs == null ? 0 : this.#nowMs();
     const deadlineMs = timeoutMs == null ? 0 : startMs + timeoutMs;
 
     for (;;) {
+      const maybeReady = take();
+      if (maybeReady) return maybeReady;
+
       const remaining = timeoutMs == null ? undefined : Math.max(0, deadlineMs - this.#nowMs());
       let bytes: Uint8Array;
       try {
@@ -154,45 +188,42 @@ export class AeroIpcIoClient {
       }
       const evt = decodeEvent(bytes);
 
-      if (evt.kind === "irqRaise" || evt.kind === "irqLower") {
-        this.#onIrq?.(evt.irq, evt.kind === "irqRaise");
-        continue;
-      }
+      this.#handleIncomingEvent(evt);
+    }
+  }
 
-      if (evt.kind === "a20Set") {
-        this.#onA20?.(evt.enabled);
-        continue;
-      }
+  #handleIncomingEvent(evt: Event): void {
+    if (evt.kind === "irqRaise" || evt.kind === "irqLower") {
+      this.#onIrq?.(evt.irq, evt.kind === "irqRaise");
+      return;
+    }
 
-      if (evt.kind === "resetRequest") {
-        this.#onReset?.();
-        continue;
-      }
+    if (evt.kind === "a20Set") {
+      this.#onA20?.(evt.enabled);
+      return;
+    }
 
-      if (evt.kind === "serialOutput") {
-        this.#onSerialOutput?.(evt.port, evt.data);
-        continue;
-      }
+    if (evt.kind === "resetRequest") {
+      this.#onReset?.();
+      return;
+    }
 
-      switch (evt.kind) {
-        case "mmioReadResp":
-        case "mmioWriteResp":
-        case "portReadResp":
-        case "portWriteResp":
-        case "diskReadResp":
-        case "diskWriteResp": {
-          const id = evt.id >>> 0;
-          if (evt.kind === kind && id === (requestId >>> 0)) {
-            return evt as Extract<Event, { kind: TKind }>;
-          }
-          this.#responsesById.set(id, evt);
-          continue;
-        }
-        default:
-          // Ignore unrelated events (logs, frames, etc.) while waiting. Response
-          // events are buffered above so other in-flight calls aren't starved.
-          continue;
-      }
+    if (evt.kind === "serialOutput") {
+      this.#onSerialOutput?.(evt.port, evt.data);
+      return;
+    }
+
+    switch (evt.kind) {
+      case "mmioReadResp":
+      case "mmioWriteResp":
+      case "portReadResp":
+      case "portWriteResp":
+      case "diskReadResp":
+      case "diskWriteResp":
+        this.#responsesById.set(evt.id >>> 0, evt);
+        return;
+      default:
+        return;
     }
   }
 
