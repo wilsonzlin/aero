@@ -258,9 +258,16 @@ struct AerogpuD3d11State {
     // mapped onto sensible defaults.
     blend: Option<wgpu::BlendState>,
     color_write_mask: wgpu::ColorWrites,
+    depth_enable: bool,
+    depth_write_enable: bool,
+    depth_compare: wgpu::CompareFunction,
+    stencil_enable: bool,
+    stencil_read_mask: u8,
+    stencil_write_mask: u8,
     cull_mode: Option<wgpu::Face>,
     front_face: wgpu::FrontFace,
     scissor_enable: bool,
+    depth_bias: i32,
 }
 
 impl Default for AerogpuD3d11State {
@@ -282,9 +289,16 @@ impl Default for AerogpuD3d11State {
             textures_cs: Vec::new(),
             blend: None,
             color_write_mask: wgpu::ColorWrites::ALL,
+            depth_enable: true,
+            depth_write_enable: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil_enable: false,
+            stencil_read_mask: 0xFF,
+            stencil_write_mask: 0xFF,
             cull_mode: None,
             front_face: wgpu::FrontFace::Ccw,
             scissor_enable: false,
+            depth_bias: 0,
         }
     }
 }
@@ -672,7 +686,7 @@ impl AerogpuD3d11Executor {
             OPCODE_FLUSH => self.exec_flush(encoder),
             // Known-but-ignored state that should not crash bring-up.
             OPCODE_SET_BLEND_STATE => self.exec_set_blend_state(cmd_bytes),
-            OPCODE_SET_DEPTH_STENCIL_STATE => Ok(()),
+            OPCODE_SET_DEPTH_STENCIL_STATE => self.exec_set_depth_stencil_state(cmd_bytes),
             OPCODE_SET_RASTERIZER_STATE => self.exec_set_rasterizer_state(cmd_bytes),
             _ => {
                 report.unknown_opcodes = report.unknown_opcodes.saturating_add(1);
@@ -806,39 +820,8 @@ impl AerogpuD3d11Executor {
         let state = &self.state;
         let resources = &self.resources;
 
-        let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> =
-            Vec::with_capacity(state.render_targets.len());
-        for &tex_id in &state.render_targets {
-            let tex = resources
-                .textures
-                .get(&tex_id)
-                .ok_or_else(|| anyhow!("unknown render target texture {tex_id}"))?;
-            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                view: &tex.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            }));
-        }
-
-        let depth_stencil_attachment = state.depth_stencil.and_then(|ds_id| {
-            resources
-                .textures
-                .get(&ds_id)
-                .map(|tex| wgpu::RenderPassDepthStencilAttachment {
-                    view: &tex.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                })
-        });
+        let (color_attachments, depth_stencil_attachment) =
+            build_render_pass_attachments(resources, state, wgpu::LoadOp::Load)?;
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("aerogpu_cmd render pass"),
@@ -938,50 +921,6 @@ impl AerogpuD3d11Executor {
 
         drop(pass);
         Ok(())
-    }
-
-    fn build_render_pass_attachments(
-        &self,
-        color_load: wgpu::LoadOp<wgpu::Color>,
-    ) -> Result<(
-        Vec<Option<wgpu::RenderPassColorAttachment<'_>>>,
-        Option<wgpu::RenderPassDepthStencilAttachment<'_>>,
-    )> {
-        let mut color_attachments = Vec::with_capacity(self.state.render_targets.len());
-        for &tex_id in &self.state.render_targets {
-            let tex = self
-                .resources
-                .textures
-                .get(&tex_id)
-                .ok_or_else(|| anyhow!("unknown render target texture {tex_id}"))?;
-            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                view: &tex.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: color_load,
-                    store: wgpu::StoreOp::Store,
-                },
-            }));
-        }
-
-        let depth_stencil_attachment = self.state.depth_stencil.and_then(|ds_id| {
-            self.resources
-                .textures
-                .get(&ds_id)
-                .map(|tex| wgpu::RenderPassDepthStencilAttachment {
-                    view: &tex.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                })
-        });
-
-        Ok((color_attachments, depth_stencil_attachment))
     }
 
     fn exec_create_buffer(&mut self, cmd_bytes: &[u8], allocs: &AllocTable) -> Result<()> {
@@ -1889,17 +1828,54 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
-    fn exec_set_rasterizer_state(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_set_rasterizer_state (32 bytes)
-        if cmd_bytes.len() != 32 {
+    fn exec_set_depth_stencil_state(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+        use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdSetDepthStencilState;
+
+        // struct aerogpu_cmd_set_depth_stencil_state (28 bytes)
+        if cmd_bytes.len() != std::mem::size_of::<AerogpuCmdSetDepthStencilState>() {
             bail!(
-                "SET_RASTERIZER_STATE: expected 32 bytes, got {}",
+                "SET_DEPTH_STENCIL_STATE: expected {} bytes, got {}",
+                std::mem::size_of::<AerogpuCmdSetDepthStencilState>(),
                 cmd_bytes.len()
             );
         }
-        let cull_mode = read_u32_le(cmd_bytes, 16)?;
-        let front_ccw = read_u32_le(cmd_bytes, 20)? != 0;
-        let scissor_enable = read_u32_le(cmd_bytes, 24)? != 0;
+
+        let cmd: AerogpuCmdSetDepthStencilState = read_packed_unaligned(cmd_bytes)?;
+        let state = cmd.state;
+
+        let depth_enable = u32::from_le(state.depth_enable) != 0;
+        let depth_write_enable = u32::from_le(state.depth_write_enable) != 0;
+        let depth_func = u32::from_le(state.depth_func);
+        let stencil_enable = u32::from_le(state.stencil_enable) != 0;
+
+        self.state.depth_enable = depth_enable;
+        self.state.depth_write_enable = depth_write_enable;
+        self.state.depth_compare =
+            map_compare_func(depth_func).unwrap_or(wgpu::CompareFunction::Always);
+        self.state.stencil_enable = stencil_enable;
+        self.state.stencil_read_mask = state.stencil_read_mask;
+        self.state.stencil_write_mask = state.stencil_write_mask;
+        Ok(())
+    }
+
+    fn exec_set_rasterizer_state(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+        use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdSetRasterizerState;
+
+        // struct aerogpu_cmd_set_rasterizer_state (32 bytes)
+        if cmd_bytes.len() != std::mem::size_of::<AerogpuCmdSetRasterizerState>() {
+            bail!(
+                "SET_RASTERIZER_STATE: expected {} bytes, got {}",
+                std::mem::size_of::<AerogpuCmdSetRasterizerState>(),
+                cmd_bytes.len()
+            );
+        }
+        let cmd: AerogpuCmdSetRasterizerState = read_packed_unaligned(cmd_bytes)?;
+        let state = cmd.state;
+
+        let cull_mode = u32::from_le(state.cull_mode);
+        let front_ccw = u32::from_le(state.front_ccw) != 0;
+        let scissor_enable = u32::from_le(state.scissor_enable) != 0;
+        let depth_bias = i32::from_le(state.depth_bias);
 
         self.state.cull_mode = match cull_mode {
             0 => None,
@@ -1913,6 +1889,7 @@ impl AerogpuD3d11Executor {
             wgpu::FrontFace::Cw
         };
         self.state.scissor_enable = scissor_enable;
+        self.state.depth_bias = depth_bias;
         Ok(())
     }
 
@@ -1968,7 +1945,7 @@ impl AerogpuD3d11Executor {
         }
 
         let (mut color_attachments, mut depth_stencil_attachment) =
-            self.build_render_pass_attachments(wgpu::LoadOp::Load)?;
+            build_render_pass_attachments(&self.resources, &self.state, wgpu::LoadOp::Load)?;
 
         if flags & AEROGPU_CLEAR_COLOR != 0 {
             for att in &mut color_attachments {
@@ -2224,6 +2201,50 @@ struct PreparedPipelineBindings {
     pipeline_layout: Arc<wgpu::PipelineLayout>,
 }
 
+fn build_render_pass_attachments<'a>(
+    resources: &'a AerogpuD3d11Resources,
+    state: &'a AerogpuD3d11State,
+    color_load: wgpu::LoadOp<wgpu::Color>,
+) -> Result<(
+    Vec<Option<wgpu::RenderPassColorAttachment<'a>>>,
+    Option<wgpu::RenderPassDepthStencilAttachment<'a>>,
+)> {
+    let mut color_attachments = Vec::with_capacity(state.render_targets.len());
+    for &tex_id in &state.render_targets {
+        let tex = resources
+            .textures
+            .get(&tex_id)
+            .ok_or_else(|| anyhow!("unknown render target texture {tex_id}"))?;
+        color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+            view: &tex.view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: color_load,
+                store: wgpu::StoreOp::Store,
+            },
+        }));
+    }
+
+    let depth_stencil_attachment = state.depth_stencil.and_then(|ds_id| {
+        resources.textures.get(&ds_id).map(|tex| {
+            let format = tex.desc.format;
+            wgpu::RenderPassDepthStencilAttachment {
+                view: &tex.view,
+                depth_ops: texture_format_has_depth(format).then_some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: texture_format_has_stencil(format).then_some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+            }
+        })
+    });
+
+    Ok((color_attachments, depth_stencil_attachment))
+}
+
 #[derive(Debug, Clone)]
 struct BuiltVertexState {
     vertex_buffers: Vec<VertexBufferLayoutOwned>,
@@ -2462,11 +2483,51 @@ fn get_or_create_render_pipeline_for_state<'a>(
         color_target_states.push(Some(ct));
     }
 
+    let depth_stencil_state = if let Some(ds_id) = state.depth_stencil {
+        let tex = resources
+            .textures
+            .get(&ds_id)
+            .ok_or_else(|| anyhow!("unknown depth-stencil texture {ds_id}"))?;
+
+        let depth_compare = if state.depth_enable {
+            state.depth_compare
+        } else {
+            wgpu::CompareFunction::Always
+        };
+        let depth_write_enabled = state.depth_enable && state.depth_write_enable;
+
+        let (read_mask, write_mask) = if state.stencil_enable {
+            (state.stencil_read_mask as u32, state.stencil_write_mask as u32)
+        } else {
+            (0, 0)
+        };
+
+        Some(wgpu::DepthStencilState {
+            format: tex.desc.format,
+            depth_write_enabled,
+            depth_compare,
+            stencil: wgpu::StencilState {
+                front: wgpu::StencilFaceState::IGNORE,
+                back: wgpu::StencilFaceState::IGNORE,
+                read_mask,
+                write_mask,
+            },
+            bias: wgpu::DepthBiasState {
+                constant: state.depth_bias,
+                slope_scale: 0.0,
+                clamp: 0.0,
+            },
+        })
+    } else {
+        None
+    };
+    let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
+
     let key = RenderPipelineKey {
         vertex_shader: vs_wgsl_hash,
         fragment_shader: ps_wgsl_hash,
         color_targets,
-        depth_stencil: None,
+        depth_stencil: depth_stencil_key,
         primitive_topology: state.primitive_topology,
         cull_mode: state.cull_mode,
         front_face: state.front_face,
@@ -2479,6 +2540,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let topology = state.primitive_topology;
     let cull_mode = state.cull_mode;
     let front_face = state.front_face;
+    let depth_stencil_state_for_pipeline = depth_stencil_state.clone();
 
     let pipeline = pipeline_cache
         .get_or_create_render_pipeline(device, key.clone(), move |device, vs, fs| {
@@ -2511,7 +2573,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
                     unclipped_depth: false,
                     conservative: false,
                 },
-                depth_stencil: None,
+                depth_stencil: depth_stencil_state_for_pipeline,
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             })
@@ -2869,6 +2931,33 @@ fn read_u64_le(buf: &[u8], offset: usize) -> Result<u64> {
     Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
 }
 
+fn read_packed_unaligned<T: Copy>(bytes: &[u8]) -> Result<T> {
+    let size = std::mem::size_of::<T>();
+    if bytes.len() < size {
+        bail!("truncated packet: expected {size} bytes, got {}", bytes.len());
+    }
+
+    // SAFETY: Bounds checked above and `read_unaligned` avoids alignment requirements.
+    Ok(unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const T) })
+}
+
+fn texture_format_has_depth(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Depth16Unorm
+            | wgpu::TextureFormat::Depth24Plus
+            | wgpu::TextureFormat::Depth24PlusStencil8
+            | wgpu::TextureFormat::Depth32Float
+            | wgpu::TextureFormat::Depth32FloatStencil8
+    )
+}
+
+fn texture_format_has_stencil(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Depth24PlusStencil8 | wgpu::TextureFormat::Depth32FloatStencil8
+    )
+}
 fn map_color_write_mask(mask: u8) -> wgpu::ColorWrites {
     let mut out = wgpu::ColorWrites::empty();
     if mask & 0x1 != 0 {
@@ -2894,6 +2983,20 @@ fn map_blend_factor(v: u32) -> Option<wgpu::BlendFactor> {
         3 => wgpu::BlendFactor::OneMinusSrcAlpha,
         4 => wgpu::BlendFactor::DstAlpha,
         5 => wgpu::BlendFactor::OneMinusDstAlpha,
+        _ => return None,
+    })
+}
+
+fn map_compare_func(v: u32) -> Option<wgpu::CompareFunction> {
+    Some(match v {
+        0 => wgpu::CompareFunction::Never,
+        1 => wgpu::CompareFunction::Less,
+        2 => wgpu::CompareFunction::Equal,
+        3 => wgpu::CompareFunction::LessEqual,
+        4 => wgpu::CompareFunction::Greater,
+        5 => wgpu::CompareFunction::NotEqual,
+        6 => wgpu::CompareFunction::GreaterEqual,
+        7 => wgpu::CompareFunction::Always,
         _ => return None,
     })
 }
