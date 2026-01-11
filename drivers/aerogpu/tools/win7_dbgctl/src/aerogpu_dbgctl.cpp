@@ -399,6 +399,79 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long long)qf.last_completed_fence);
   };
 
+  const auto DumpRingSummary = [&]() {
+    aerogpu_escape_dump_ring_v2_inout q2;
+    ZeroMemory(&q2, sizeof(q2));
+    q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q2.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+    q2.hdr.size = sizeof(q2);
+    q2.hdr.reserved0 = 0;
+    q2.ring_id = 0;
+    q2.desc_capacity = 1;
+
+    NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
+    if (NT_SUCCESS(st)) {
+      wprintf(L"Ring0:\n");
+      wprintf(L"  format=%lu ring_size_bytes=%lu head=%lu tail=%lu desc_count=%lu\n",
+              (unsigned long)q2.ring_format,
+              (unsigned long)q2.ring_size_bytes,
+              (unsigned long)q2.head,
+              (unsigned long)q2.tail,
+              (unsigned long)q2.desc_count);
+      if (q2.desc_count > 0) {
+        const aerogpu_dbgctl_ring_desc_v2 &d = q2.desc[q2.desc_count - 1];
+        wprintf(L"  last: fence=0x%I64x cmd_gpa=0x%I64x cmd_size=%lu flags=0x%08lx alloc_table_gpa=0x%I64x alloc_table_size=%lu\n",
+                (unsigned long long)d.fence,
+                (unsigned long long)d.cmd_gpa,
+                (unsigned long)d.cmd_size_bytes,
+                (unsigned long)d.flags,
+                (unsigned long long)d.alloc_table_gpa,
+                (unsigned long)d.alloc_table_size_bytes);
+      }
+      return;
+    }
+
+    if (st == STATUS_NOT_SUPPORTED) {
+      // Fall back to the legacy dump-ring packet for older drivers.
+      aerogpu_escape_dump_ring_inout q1;
+      ZeroMemory(&q1, sizeof(q1));
+      q1.hdr.version = AEROGPU_ESCAPE_VERSION;
+      q1.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+      q1.hdr.size = sizeof(q1);
+      q1.hdr.reserved0 = 0;
+      q1.ring_id = 0;
+      q1.desc_capacity = 1;
+
+      NTSTATUS st1 = SendAerogpuEscape(f, hAdapter, &q1, sizeof(q1));
+      if (!NT_SUCCESS(st1)) {
+        if (st1 == STATUS_NOT_SUPPORTED) {
+          wprintf(L"Ring0: (not supported)\n");
+        } else {
+          PrintNtStatus(L"D3DKMTEscape(dump-ring) failed", f, st1);
+        }
+        return;
+      }
+
+      wprintf(L"Ring0:\n");
+      wprintf(L"  ring_size_bytes=%lu head=%lu tail=%lu desc_count=%lu\n",
+              (unsigned long)q1.ring_size_bytes,
+              (unsigned long)q1.head,
+              (unsigned long)q1.tail,
+              (unsigned long)q1.desc_count);
+      if (q1.desc_count > 0) {
+        const aerogpu_dbgctl_ring_desc &d = q1.desc[q1.desc_count - 1];
+        wprintf(L"  last: fence=0x%I64x cmd_gpa=0x%I64x cmd_size=%lu flags=0x%08lx\n",
+                (unsigned long long)d.signal_fence,
+                (unsigned long long)d.cmd_gpa,
+                (unsigned long)d.cmd_size_bytes,
+                (unsigned long)d.flags);
+      }
+      return;
+    }
+
+    PrintNtStatus(L"D3DKMTEscape(dump-ring-v2) failed", f, st);
+  };
+
   const auto DumpScanoutSnapshot = [&]() {
     aerogpu_escape_query_scanout_out qs;
     ZeroMemory(&qs, sizeof(qs));
@@ -542,6 +615,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)minor);
 
     DumpFenceSnapshot();
+    DumpRingSummary();
     DumpScanoutSnapshot();
     DumpVblankSnapshot();
     DumpCreateAllocationSummary();
@@ -601,6 +675,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   }
 
   DumpFenceSnapshot();
+  DumpRingSummary();
   DumpScanoutSnapshot();
   DumpVblankSnapshot();
   DumpCreateAllocationSummary();
