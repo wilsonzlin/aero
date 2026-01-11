@@ -55,12 +55,24 @@ typedef uint64_t UINT64;
 #endif
 
 /* Common device status bits (virtio spec "Device Status Field"). */
-#define VIRTIO_STATUS_ACKNOWLEDGE        0x01
-#define VIRTIO_STATUS_DRIVER             0x02
-#define VIRTIO_STATUS_DRIVER_OK          0x04
-#define VIRTIO_STATUS_FEATURES_OK        0x08
+#ifndef VIRTIO_STATUS_ACKNOWLEDGE
+#define VIRTIO_STATUS_ACKNOWLEDGE 0x01
+#endif
+#ifndef VIRTIO_STATUS_DRIVER
+#define VIRTIO_STATUS_DRIVER 0x02
+#endif
+#ifndef VIRTIO_STATUS_DRIVER_OK
+#define VIRTIO_STATUS_DRIVER_OK 0x04
+#endif
+#ifndef VIRTIO_STATUS_FEATURES_OK
+#define VIRTIO_STATUS_FEATURES_OK 0x08
+#endif
+#ifndef VIRTIO_STATUS_DEVICE_NEEDS_RESET
 #define VIRTIO_STATUS_DEVICE_NEEDS_RESET 0x40
-#define VIRTIO_STATUS_FAILED             0x80
+#endif
+#ifndef VIRTIO_STATUS_FAILED
+#define VIRTIO_STATUS_FAILED 0x80
+#endif
 
 /*
  * Compatibility aliases.

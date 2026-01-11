@@ -10,7 +10,7 @@ static ULONG VirtioQueueRingSizeBytes(_In_ USHORT QueueSize) {
   // vring_avail without EVENT_IDX: flags(u16) + idx(u16) + ring[QueueSize](u16 each)
   ULONG AvailBytes = sizeof(USHORT) * 2 + sizeof(USHORT) * (ULONG)QueueSize;
 
-  ULONG UsedOffset = VirtioAlignUp(DescBytes + AvailBytes, VIRTIO_VRING_ALIGN);
+  ULONG UsedOffset = VirtioAlignUp(DescBytes + AvailBytes, VIRTIO_VRING_USED_ALIGN);
 
   // vring_used without EVENT_IDX: flags(u16) + idx(u16) + ring[QueueSize](vring_used_elem)
   ULONG UsedBytes = sizeof(USHORT) * 2 + sizeof(VRING_USED_ELEM) * (ULONG)QueueSize;
@@ -25,7 +25,7 @@ static VOID VirtioQueueInitLayout(_Inout_ VIRTIO_QUEUE* Queue) {
   Queue->Desc = (VRING_DESC*)Queue->RingVa;
   Queue->Avail = (VRING_AVAIL*)((PUCHAR)Queue->RingVa + DescBytes);
 
-  Queue->UsedOffset = VirtioAlignUp(DescBytes + AvailBytes, VIRTIO_VRING_ALIGN);
+  Queue->UsedOffset = VirtioAlignUp(DescBytes + AvailBytes, VIRTIO_VRING_USED_ALIGN);
   Queue->Used = (VRING_USED*)((PUCHAR)Queue->RingVa + Queue->UsedOffset);
 }
 
@@ -60,18 +60,22 @@ VOID VirtioQueueResetState(_Inout_ VIRTIO_QUEUE* Queue) {
   }
 }
 
-NTSTATUS VirtioQueueCreate(_In_ const VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE* Queue, _In_ USHORT QueueIndex) {
+NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE* Queue, _In_ USHORT QueueIndex) {
   PHYSICAL_ADDRESS Low = {0};
   PHYSICAL_ADDRESS High;
   PHYSICAL_ADDRESS Skip = {0};
+  ULONG DescBytes;
+  UINT64 DescPa;
+  UINT64 AvailPa;
+  UINT64 UsedPa;
+  NTSTATUS Status;
 
   RtlZeroMemory(Queue, sizeof(*Queue));
   Queue->QueueIndex = QueueIndex;
 
   High.QuadPart = ~0ull;
 
-  VirtioPciSelectQueue(Device, QueueIndex);
-  Queue->QueueSize = VirtioPciReadQueueSize(Device);
+  Queue->QueueSize = VirtioPciGetQueueSize(Device, QueueIndex);
   if (Queue->QueueSize == 0) {
     return STATUS_NOT_SUPPORTED;
   }
@@ -83,7 +87,7 @@ NTSTATUS VirtioQueueCreate(_In_ const VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QU
   }
 
   Queue->RingPa = MmGetPhysicalAddress(Queue->RingVa);
-  if ((Queue->RingPa.QuadPart & (VIRTIO_VRING_ALIGN - 1)) != 0) {
+  if ((Queue->RingPa.QuadPart & (VIRTIO_VRING_DESC_ALIGN - 1)) != 0) {
     MmFreeContiguousMemory(Queue->RingVa);
     Queue->RingVa = NULL;
     return STATUS_DATATYPE_MISALIGNMENT;
@@ -100,25 +104,36 @@ NTSTATUS VirtioQueueCreate(_In_ const VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QU
   VirtioQueueInitLayout(Queue);
   VirtioQueueResetState(Queue);
 
-  // Share the queue with the device. PFN is 4k pages.
-  VirtioPciSelectQueue(Device, QueueIndex);
-  VirtioPciWriteQueuePfn(Device, (ULONG)(Queue->RingPa.QuadPart >> PAGE_SHIFT));
+  DescBytes = sizeof(VRING_DESC) * (ULONG)Queue->QueueSize;
+
+  DescPa = (UINT64)Queue->RingPa.QuadPart;
+  AvailPa = DescPa + (UINT64)DescBytes;
+  UsedPa = DescPa + (UINT64)Queue->UsedOffset;
+
+  Status = VirtioPciSetupQueue(Device, QueueIndex, DescPa, AvailPa, UsedPa);
+  if (!NT_SUCCESS(Status)) {
+    VirtioQueueDelete(Device, Queue);
+    return Status;
+  }
+
+  Status = VirtioPciGetQueueNotifyAddress(Device, QueueIndex, &Queue->NotifyAddr);
+  if (!NT_SUCCESS(Status)) {
+    VirtioQueueDelete(Device, Queue);
+    return Status;
+  }
 
   return STATUS_SUCCESS;
 }
 
-VOID VirtioQueueDelete(_In_ const VIRTIO_PCI_DEVICE* Device, _Inout_ VIRTIO_QUEUE* Queue) {
-  UNREFERENCED_PARAMETER(Device);
-
+VOID VirtioQueueDelete(_Inout_ VIRTIO_PCI_DEVICE* Device, _Inout_ VIRTIO_QUEUE* Queue) {
   if (Queue->RingVa) {
-    // Per spec, writing 0 unconfigures the queue. The caller is expected to
-    // have reset the device already; this is a best-effort cleanup.
-    VirtioPciSelectQueue(Device, Queue->QueueIndex);
-    VirtioPciWriteQueuePfn(Device, 0);
+    VirtioPciDisableQueue(Device, Queue->QueueIndex);
 
     MmFreeContiguousMemory(Queue->RingVa);
     Queue->RingVa = NULL;
   }
+
+  Queue->NotifyAddr = NULL;
 
   if (Queue->Context) {
     ExFreePoolWithTag(Queue->Context, VQ_TAG_CTX);
@@ -283,4 +298,16 @@ BOOLEAN VirtioQueuePopUsed(_Inout_ VIRTIO_QUEUE* Queue, _Out_ USHORT* HeadId, _O
   return TRUE;
 }
 
-VOID VirtioQueueNotify(_In_ const VIRTIO_PCI_DEVICE* Device, _In_ const VIRTIO_QUEUE* Queue) { VirtioPciNotifyQueue(Device, Queue->QueueIndex); }
+VOID VirtioQueueNotify(_Inout_ VIRTIO_PCI_DEVICE* Device, _In_ const VIRTIO_QUEUE* Queue) {
+  if (Queue == NULL) {
+    return;
+  }
+
+  if (Queue->NotifyAddr != NULL) {
+    WRITE_REGISTER_USHORT((volatile USHORT*)Queue->NotifyAddr, Queue->QueueIndex);
+    KeMemoryBarrier();
+    return;
+  }
+
+  VirtioPciNotifyQueue(Device, Queue->QueueIndex);
+}

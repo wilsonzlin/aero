@@ -2,20 +2,23 @@
 
 #include <ntddk.h>
 
-#include "virtio_pci_legacy.h"
+#include "virtio_pci_modern_miniport.h"
 
 /*
  * Split virtqueue implementation ("vring") per virtio specification.
  *
  * The queue memory is allocated as a single physically-contiguous region and
- * shared with the device via VIRTIO_PCI_QUEUE_PFN (legacy transport).
+ * shared with the device via the virtio-pci modern common_cfg queue address
+ * registers (queue_desc/queue_avail/queue_used).
  *
  * This implementation does not negotiate or require:
  *  - VIRTIO_RING_F_INDIRECT_DESC
  *  - VIRTIO_RING_F_EVENT_IDX
  */
 
-#define VIRTIO_VRING_ALIGN 4096u
+/* Split ring alignment requirements (virtio 1.0). */
+#define VIRTIO_VRING_DESC_ALIGN 16u
+#define VIRTIO_VRING_USED_ALIGN 4u
 
 #define VRING_DESC_F_NEXT  0x0001
 #define VRING_DESC_F_WRITE 0x0002
@@ -57,6 +60,8 @@ typedef struct _VIRTIO_QUEUE {
   USHORT QueueIndex;
   USHORT QueueSize;
 
+  volatile UINT16* NotifyAddr;
+
   PVOID RingVa;
   PHYSICAL_ADDRESS RingPa;
   ULONG RingBytes;
@@ -75,9 +80,9 @@ typedef struct _VIRTIO_QUEUE {
   PVOID* Context;
 } VIRTIO_QUEUE;
 
-_Must_inspect_result_ NTSTATUS VirtioQueueCreate(_In_ const VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE* Queue,
-                                                 _In_ USHORT QueueIndex);
-VOID VirtioQueueDelete(_In_ const VIRTIO_PCI_DEVICE* Device, _Inout_ VIRTIO_QUEUE* Queue);
+_Must_inspect_result_ NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE* Queue,
+                                                  _In_ USHORT QueueIndex);
+VOID VirtioQueueDelete(_Inout_ VIRTIO_PCI_DEVICE* Device, _Inout_ VIRTIO_QUEUE* Queue);
 
 VOID VirtioQueueResetState(_Inout_ VIRTIO_QUEUE* Queue);
 
@@ -90,4 +95,4 @@ _Must_inspect_result_ NTSTATUS VirtioQueueAddIndirectTable(_Inout_ VIRTIO_QUEUE*
 
 BOOLEAN VirtioQueuePopUsed(_Inout_ VIRTIO_QUEUE* Queue, _Out_ USHORT* HeadId, _Out_ ULONG* Len, _Out_opt_ PVOID* Context);
 
-VOID VirtioQueueNotify(_In_ const VIRTIO_PCI_DEVICE* Device, _In_ const VIRTIO_QUEUE* Queue);
+VOID VirtioQueueNotify(_Inout_ VIRTIO_PCI_DEVICE* Device, _In_ const VIRTIO_QUEUE* Queue);
