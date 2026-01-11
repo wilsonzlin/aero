@@ -185,6 +185,9 @@ def _emit_header(x86: ProbeData, x64: ProbeData, *, emit_all: bool) -> str:
         ("D3DDDI_DEVICECALLBACKS", "pfnDeallocateCb"),
         ("D3DDDI_DEVICECALLBACKS", "pfnSubmitCommandCb"),
         ("D3DDDI_DEVICECALLBACKS", "pfnRenderCb"),
+        ("D3DDDI_DEVICECALLBACKS", "pfnPresentCb"),
+        ("D3DDDI_DEVICECALLBACKS", "pfnCreateContextCb2"),
+        ("D3DDDI_DEVICECALLBACKS", "pfnCreateContextCb"),
     ]
     createcontext_fields = [
         ("D3DDDIARG_CREATECONTEXT", "hDevice"),

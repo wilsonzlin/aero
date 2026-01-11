@@ -632,6 +632,15 @@ static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnSubmitCommandCb) ==
 static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnRenderCb) ==
                   sizeof(decltype(D3DDDI_DEVICECALLBACKS{}.pfnAllocateCb)) * 3,
               "D3DDDI_DEVICECALLBACKS ABI mismatch: pfnRenderCb offset drift");
+static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnPresentCb) ==
+                  sizeof(decltype(D3DDDI_DEVICECALLBACKS{}.pfnAllocateCb)) * 4,
+              "D3DDDI_DEVICECALLBACKS ABI mismatch: pfnPresentCb offset drift");
+static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnCreateContextCb2) ==
+                  sizeof(decltype(D3DDDI_DEVICECALLBACKS{}.pfnAllocateCb)) * 11,
+              "D3DDDI_DEVICECALLBACKS ABI mismatch: pfnCreateContextCb2 offset drift");
+static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnCreateContextCb) ==
+                  sizeof(decltype(D3DDDI_DEVICECALLBACKS{}.pfnAllocateCb)) * 12,
+              "D3DDDI_DEVICECALLBACKS ABI mismatch: pfnCreateContextCb offset drift");
 
 static_assert(offsetof(D3DDDIARG_CREATECONTEXT, pPrivateDriverData) == 16,
               "D3DDDIARG_CREATECONTEXT ABI mismatch: pPrivateDriverData offset drift");
