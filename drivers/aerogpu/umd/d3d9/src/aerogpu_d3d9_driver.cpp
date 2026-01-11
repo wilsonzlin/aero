@@ -6362,6 +6362,24 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     return trace.ret(hr);
   }
 
+  // If the adapter wasn't opened through a path that initialized our KMD query
+  // helper (e.g. missing HDC at OpenAdapter time), opportunistically initialize
+  // it here. This enables fence polling when hSyncObject is absent/zero.
+  if (!adapter->kmd_query_available.load(std::memory_order_acquire)) {
+    bool kmd_ok = false;
+    if (adapter->luid.LowPart != 0 || adapter->luid.HighPart != 0) {
+      kmd_ok = adapter->kmd_query.InitFromLuid(adapter->luid);
+    }
+    if (!kmd_ok) {
+      HDC hdc = GetDC(nullptr);
+      if (hdc) {
+        kmd_ok = adapter->kmd_query.InitFromHdc(hdc);
+        ReleaseDC(nullptr, hdc);
+      }
+    }
+    adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+  }
+
   // Validate the runtime-provided submission buffers. These must be present for
   // DMA buffer construction.
   const uint32_t min_cmd_buffer_size = static_cast<uint32_t>(
