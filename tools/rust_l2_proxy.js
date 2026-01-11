@@ -109,12 +109,9 @@ async function ensureProxyBuilt() {
 
       const targetDir = await getCargoTargetDir();
       const env = { CARGO_TARGET_DIR: targetDir };
-      // Allow running Node tests with a per-checkout Cargo home without having to
-      // source `scripts/agent-env.sh` first.
-      if (process.env.AERO_ISOLATE_CARGO_HOME && !process.env.CARGO_HOME) {
-        env.CARGO_HOME = path.join(REPO_ROOT, ".cargo-home");
-        await mkdir(env.CARGO_HOME, { recursive: true });
-      }
+      // Avoid global Cargo package cache locks when running concurrent CI jobs / agents.
+      env.CARGO_HOME = process.env.AERO_L2_PROXY_TEST_CARGO_HOME ?? path.join(targetDir, "node-test-cargo-home");
+      await mkdir(env.CARGO_HOME, { recursive: true });
       await runCommand("cargo", ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"], {
         cwd: REPO_ROOT,
         env,

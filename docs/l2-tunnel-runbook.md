@@ -54,7 +54,7 @@ cargo run --locked -p aero-l2-proxy
 
 Expected behavior:
 
-- Proxy listens on `AERO_L2_PROXY_LISTEN_ADDR` (default: `0.0.0.0:8090`).
+- The proxy listens on `AERO_L2_PROXY_LISTEN_ADDR` (default: `0.0.0.0:8090`).
 - Operational endpoints:
   - `GET /healthz` – liveness
   - `GET /readyz` – readiness
@@ -104,6 +104,7 @@ the runtime event ring to help debug L2 tunnel bring-up/backpressure:
 - Connection transitions (`l2: connecting/open/closed/error`) are logged immediately.
 - When drop deltas are non-zero, the periodic stats log is emitted at `WARN` so it also appears in
   the coordinator's nonfatal stream.
+
 
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
 

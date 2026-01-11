@@ -67,6 +67,23 @@ async function waitForClose(ws, timeoutMs = 2_000) {
   });
 }
 
+test("l2 proxy requires Sec-WebSocket-Protocol: aero-l2-tunnel-v1", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
+  const proxy = await startRustL2Proxy({
+    AERO_L2_OPEN: "1",
+    AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_TOKEN: "",
+    AERO_L2_MAX_CONNECTIONS: "0",
+  });
+
+  try {
+    const res = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, { protocols: [] });
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 400);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("l2 proxy requires Origin by default", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "0",
@@ -79,6 +96,12 @@ test("l2 proxy requires Origin by default", { timeout: L2_PROXY_TEST_TIMEOUT_MS 
     const denied = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
     assert.equal(denied.ok, false);
     assert.equal(denied.status, 403);
+
+    const disallowed = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { origin: "https://evil.example.com" },
+    });
+    assert.equal(disallowed.ok, false);
+    assert.equal(disallowed.status, 403);
 
     const allowed = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
       headers: { origin: "https://app.example.com" },
