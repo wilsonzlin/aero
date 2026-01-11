@@ -12,6 +12,23 @@
 #include "fake_pci_device.h"
 #include "test_os.h"
 
+/*
+ * This test harness relies heavily on assert() for both validation and to
+ * execute side-effectful setup calls. CMake Release builds define NDEBUG, which
+ * would compile out all assert() expressions and skip those setup calls,
+ * causing undefined behaviour and crashes.
+ *
+ * Override assert() so it remains active in all build configurations.
+ */
+#undef assert
+#define assert(expr)                                                                                                   \
+    do {                                                                                                               \
+        if (!(expr)) {                                                                                                 \
+            fprintf(stderr, "ASSERT failed at %s:%d: %s\n", __FILE__, __LINE__, #expr);                                \
+            abort();                                                                                                   \
+        }                                                                                                              \
+    } while (0)
+
 typedef struct vring_device_sim {
     virtqueue_split_t *vq;
     uint16_t last_avail_idx;

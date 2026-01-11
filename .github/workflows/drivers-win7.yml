@@ -67,7 +67,8 @@ jobs:
             exit 0
           fi
 
-          cmake -S . -B build-virtio-host-tests-linux -DAERO_VIRTIO_BUILD_TESTS=ON
+          # Use Release to keep runtimes low and to exercise optimized builds.
+          cmake -S . -B build-virtio-host-tests-linux -DAERO_VIRTIO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build-virtio-host-tests-linux
           ctest --test-dir build-virtio-host-tests-linux --output-on-failure
 
