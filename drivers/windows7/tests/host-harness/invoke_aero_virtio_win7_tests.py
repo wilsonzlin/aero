@@ -1286,18 +1286,23 @@ def _get_qemu_virtio_sound_device_arg(
     """
     device_name = _detect_virtio_snd_device(qemu_system)
     help_text = _qemu_device_help_text(qemu_system, device_name)
-    if "disable-legacy" not in help_text:
+    if disable_legacy and "disable-legacy" not in help_text:
         raise RuntimeError(
             f"QEMU device '{device_name}' does not expose 'disable-legacy'. "
             "Aero virtio-snd requires modern-only virtio-pci enumeration (DEV_1059). Upgrade QEMU."
         )
-    if "x-pci-revision" not in help_text:
+    if pci_revision is not None and "x-pci-revision" not in help_text:
         raise RuntimeError(
             f"QEMU device '{device_name}' does not expose 'x-pci-revision'. "
             "Aero virtio-snd contract v1 requires PCI Revision ID 0x01 (REV_01). Upgrade QEMU."
         )
 
-    return f"{device_name},audiodev=snd0,disable-legacy=on,x-pci-revision=0x01"
+    parts = [device_name, "audiodev=snd0"]
+    if disable_legacy:
+        parts.append("disable-legacy=on")
+    if pci_revision is not None:
+        parts.append(f"x-pci-revision={pci_revision}")
+    return ",".join(parts)
 
 
 def _looks_like_chunk_id(chunk_id: bytes) -> bool:
