@@ -73,4 +73,7 @@ time. That is both fragile and easy to get wrong in DWM / multi-frame apps.
     `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h`).
 * Win7 allocation-ID persistence for shared resources: `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
   (`aerogpu_wddm_alloc_priv`)
-* Host-side command stream state machine: `crates/aero-gpu/src/command_processor.rs`
+* Host-side command stream state machine (validation/rebind semantics): `crates/aero-gpu/src/command_processor.rs`
+* Host-side executor (wgpu, guest-memory-backed uploads): `crates/aero-gpu/src/aerogpu_executor.rs`
+* Browser GPU worker executor (JS, SharedArrayBuffer-backed guest RAM uploads): `web/src/workers/gpu-worker.ts`
+* WASM wrapper for the command processor (decodes alloc_table bytes for validation): `crates/aero-gpu-wasm/src/lib.rs`
