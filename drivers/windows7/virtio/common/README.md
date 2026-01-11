@@ -23,7 +23,7 @@ And additional shared helpers:
 - **INTx helper:** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
 - **Split virtqueues:** `virtqueue_split.*` (portable split ring implementation)
-- **Windows queue helper:** `virtio_queue.*` (alloc + `common_cfg` queue programming + notify)
+- **Windows queue helper (legacy):** `virtio_queue.*` (alloc + PFN programming + notify)
 
 For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
 [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md).
@@ -144,10 +144,10 @@ There are two modern transport helpers in-tree:
   - Portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
 
 - `include/virtio_queue.h` + `src/virtio_queue.c`
-  - Windows kernel convenience wrapper around split rings:
-    - allocates ring memory and maintains a descriptor free list
-    - programs queues via `common_cfg` (`queue_desc/queue_avail/queue_used`) and sets `queue_enable`
-    - kicks the device via the modern notify region (`NOTIFY_CFG`)
+  - Legacy Windows kernel convenience wrapper around split rings:
+    - allocates physically-contiguous ring memory and maintains a descriptor free list
+    - shares the ring with the device via legacy `QUEUE_PFN = (ring_pa >> 12)` programming
+    - kicks the device via the legacy `QUEUE_NOTIFY` register
 
 - `include/virtio_os.h` + `os_shim/`
   - OS abstraction used by the portable code and host-side unit tests.
