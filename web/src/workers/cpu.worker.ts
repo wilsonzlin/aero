@@ -685,89 +685,16 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         },
       });
 
-      try {
-        const { api, variant } = await perf.spanAsync("wasm:init", () =>
-          initWasmForContext({
-            variant: init.wasmVariant,
-            memory: segments.guestMemory,
-            module: init.wasmModule,
-          }),
-        );
-
-        // Sanity-check that the provided `guestMemory` is actually wired up as
-        // the WASM module's linear memory (imported+exported memory build).
-        //
-        // This enables shared-memory integration where JS + WASM + other workers
-        // all observe the same guest RAM.
-        //
-        // Probe within guest RAM (not the runtime-reserved low region of the wasm
-        // linear memory) so we don't risk clobbering the Rust/WASM runtime.
-        const memProbeGuestOffset = 0x100;
-        const memProbeLinearOffset = guestU8.byteOffset + memProbeGuestOffset;
-        const memView = new DataView(segments.guestMemory.buffer);
-        const prev = memView.getUint32(memProbeLinearOffset, true);
-
-        const a = 0x11223344;
-        memView.setUint32(memProbeLinearOffset, a, true);
-        const gotA = api.mem_load_u32(memProbeLinearOffset);
-        if (gotA !== a) {
-          throw new Error(
-            `WASM guestMemory wiring failed: JS wrote 0x${a.toString(16)}, WASM read 0x${gotA.toString(16)}.`,
-          );
-        }
-
-        const b = 0x55667788;
-        api.mem_store_u32(memProbeLinearOffset, b);
-        const gotB = memView.getUint32(memProbeLinearOffset, true);
-        if (gotB !== b) {
-          throw new Error(
-            `WASM guestMemory wiring failed: WASM wrote 0x${b.toString(16)}, JS read 0x${gotB.toString(16)}.`,
-          );
-        }
-
-        // Restore the previous value so we don't permanently dirty guest RAM.
-        memView.setUint32(memProbeLinearOffset, prev, true);
-
-        wasmApi = api;
-        cpuDemo = null;
-        const CpuWorkerDemo = api.CpuWorkerDemo;
-        if (CpuWorkerDemo) {
-          try {
-            const ramSizeBytes = segments.guestMemory.buffer.byteLength >>> 0;
-            const framebufferLinearOffset = (guestU8.byteOffset + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES) >>> 0;
-            const guestCounterLinearOffset = (guestU8.byteOffset + CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES) >>> 0;
-            cpuDemo = new CpuWorkerDemo(
-              ramSizeBytes,
-              framebufferLinearOffset,
-              CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
-              CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
-              CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
-              guestCounterLinearOffset,
-            );
-          } catch (err) {
-            console.warn("Failed to init CpuWorkerDemo wasm export:", err);
-            cpuDemo = null;
-          }
-        }
-        maybeInitAudioOutput();
-        maybeInitMicBridge();
-        const value = api.add(20, 22);
-        ctx.postMessage({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        // WASM init is best-effort: keep the CPU worker alive so non-WASM demos
-        // (including AudioWorklet ring-buffer smoke tests) can run in environments
-        // where the generated wasm-pack output is absent.
-        console.error("WASM init failed in CPU worker:", err);
-        pushEvent({ kind: "log", level: "error", message: `WASM init failed: ${message}` });
-        wasmApi = null;
-        cpuDemo = null;
-        maybeInitAudioOutput();
-      }
-
       setReadyFlag(status, role, true);
       ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
       if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
+
+      // WASM is optional in this repo (CI runs with `--skip-wasm`), but worker init
+      // should be fast enough to start pumping AudioWorklet ring buffers.
+      //
+      // Kick off WASM init in the background so the worker can enter its main loop
+      // immediately (JS fallbacks will be used until WASM is ready).
+      void initWasmInBackground(init, segments.guestMemory);
     } finally {
       perf.spanEnd("worker:init");
     }
@@ -776,6 +703,88 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
   }
 
   void runLoop();
+}
+
+async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAssembly.Memory): Promise<void> {
+  try {
+    const { api, variant } = await perf.spanAsync("wasm:init", () =>
+      initWasmForContext({
+        variant: init.wasmVariant,
+        memory: guestMemory,
+        module: init.wasmModule,
+      }),
+    );
+
+    // Sanity-check that the provided `guestMemory` is actually wired up as
+    // the WASM module's linear memory (imported+exported memory build).
+    //
+    // This enables shared-memory integration where JS + WASM + other workers
+    // all observe the same guest RAM.
+    //
+    // Probe within guest RAM (not the runtime-reserved low region of the wasm
+    // linear memory) so we don't risk clobbering the Rust/WASM runtime.
+    const memProbeGuestOffset = 0x100;
+    const memProbeLinearOffset = guestU8.byteOffset + memProbeGuestOffset;
+    const memView = new DataView(guestMemory.buffer);
+    const prev = memView.getUint32(memProbeLinearOffset, true);
+
+    const a = 0x11223344;
+    memView.setUint32(memProbeLinearOffset, a, true);
+    const gotA = api.mem_load_u32(memProbeLinearOffset);
+    if (gotA !== a) {
+      throw new Error(`WASM guestMemory wiring failed: JS wrote 0x${a.toString(16)}, WASM read 0x${gotA.toString(16)}.`);
+    }
+
+    const b = 0x55667788;
+    api.mem_store_u32(memProbeLinearOffset, b);
+    const gotB = memView.getUint32(memProbeLinearOffset, true);
+    if (gotB !== b) {
+      throw new Error(`WASM guestMemory wiring failed: WASM wrote 0x${b.toString(16)}, JS read 0x${gotB.toString(16)}.`);
+    }
+
+    // Restore the previous value so we don't permanently dirty guest RAM.
+    memView.setUint32(memProbeLinearOffset, prev, true);
+
+    wasmApi = api;
+    cpuDemo = null;
+    const CpuWorkerDemo = api.CpuWorkerDemo;
+    if (CpuWorkerDemo) {
+      try {
+        const ramSizeBytes = guestMemory.buffer.byteLength >>> 0;
+        const framebufferLinearOffset = (guestU8.byteOffset + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES) >>> 0;
+        const guestCounterLinearOffset = (guestU8.byteOffset + CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES) >>> 0;
+        cpuDemo = new CpuWorkerDemo(
+          ramSizeBytes,
+          framebufferLinearOffset,
+          CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
+          CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
+          CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
+          guestCounterLinearOffset,
+        );
+      } catch (err) {
+        console.warn("Failed to init CpuWorkerDemo wasm export:", err);
+        cpuDemo = null;
+      }
+    }
+
+    maybeInitAudioOutput();
+    maybeInitMicBridge();
+
+    if (Atomics.load(status, StatusIndex.StopRequested) !== 1) {
+      const value = api.add(20, 22);
+      ctx.postMessage({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // WASM init is best-effort: keep the CPU worker alive so non-WASM demos
+    // (including AudioWorklet ring-buffer smoke tests) can run in environments
+    // where the generated wasm-pack output is absent.
+    console.error("WASM init failed in CPU worker:", err);
+    pushEvent({ kind: "log", level: "error", message: `WASM init failed: ${message}` });
+    wasmApi = null;
+    cpuDemo = null;
+    maybeInitAudioOutput();
+  }
 }
 
 async function runLoop(): Promise<void> {
@@ -1087,13 +1096,13 @@ function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
 
 function initSharedFramebufferViews(shared: SharedArrayBuffer, offsetBytes: number): void {
   const header = new Int32Array(shared, offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
-  const magic = Atomics.load(header, SharedFramebufferHeaderIndex.MAGIC) >>> 0;
-  const version = Atomics.load(header, SharedFramebufferHeaderIndex.VERSION) >>> 0;
+  // Stored in an Int32Array header (Atomics requires a signed typed array), so
+  // compare against the signed i32 constants from `ipc/shared-layout.ts`.
+  const magic = Atomics.load(header, SharedFramebufferHeaderIndex.MAGIC) | 0;
+  const version = Atomics.load(header, SharedFramebufferHeaderIndex.VERSION) | 0;
   if (magic !== SHARED_FRAMEBUFFER_MAGIC || version !== SHARED_FRAMEBUFFER_VERSION) {
     throw new Error(
-      `shared framebuffer header mismatch: magic=0x${magic.toString(16)} version=${version} expected magic=0x${SHARED_FRAMEBUFFER_MAGIC.toString(
-        16,
-      )} version=${SHARED_FRAMEBUFFER_VERSION}`,
+      `shared framebuffer header mismatch: magic=0x${(magic >>> 0).toString(16)} version=${version} expected magic=0x${(SHARED_FRAMEBUFFER_MAGIC >>> 0).toString(16)} version=${SHARED_FRAMEBUFFER_VERSION}`,
     );
   }
 

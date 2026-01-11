@@ -3116,11 +3116,15 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       frameLine.textContent = `frame: status=${Atomics.load(frameState, FRAME_STATUS_INDEX)} seq=${Atomics.load(frameState, FRAME_SEQ_INDEX)}`;
     }
 
-    const sharedFramebuffer = workerCoordinator.getSharedFramebuffer();
-    if (!sharedFramebuffer) {
+    const sharedFramebufferInfo = workerCoordinator.getSharedFramebuffer();
+    if (!sharedFramebufferInfo) {
       sharedFramebufferLine.textContent = "shared framebuffer: (uninitialized)";
     } else {
-      const header = new Int32Array(sharedFramebuffer.sab, sharedFramebuffer.offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+      const header = new Int32Array(
+        sharedFramebufferInfo.sab,
+        sharedFramebufferInfo.offsetBytes,
+        SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+      );
       const seq = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
       const active = Atomics.load(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
       sharedFramebufferLine.textContent = `shared framebuffer: seq=${seq} active=${active}`;
