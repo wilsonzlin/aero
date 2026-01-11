@@ -14,6 +14,7 @@ Implementation references (current repo):
 - Rust wire contract + action/completion queue (`UsbPassthroughDevice`): `crates/aero-usb/src/passthrough.rs`
 - Rust guest-visible UHCI controller + TD handshake mapping: `crates/aero-usb/src/uhci.rs`
 - WASM export bridge (`UsbPassthroughBridge`): `crates/aero-wasm/src/lib.rs`
+- TS canonical wire types (`SetupPacket`/`UsbHostAction`/`UsbHostCompletion`): `web/src/usb/usb_passthrough_types.ts`
 - TS WebUSB backend/executor (`WebUsbBackend`): `web/src/usb/webusb_backend.ts` (+ `web/src/usb/webusb_executor.ts`)
 - TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`)
 - TS worker-side passthrough runtime (action/completion pump): `web/src/usb/webusb_passthrough_runtime.ts`
