@@ -569,6 +569,8 @@ Special note for Win7 bring-up:
 * The tests call `Map(..., D3D11_MAP_READ, 0, ...)` (no `DO_NOT_WAIT`). It is acceptable for Map to block waiting for the copy to complete, but it must be bounded and backed by a real fence (avoid TDRs).
 * If you implement a “submit-on-Flush” backend, make sure `CopyResource + Flush + Map(READ)` results in completed readback data.
 * Some D3D11 DDI interface versions expose additional map-style entrypoints (for example, staging-specific map helpers). If your chosen `D3D11DDI_DEVICECONTEXTFUNCS` struct has them, wire them to the same underlying map/unmap implementation and keep them non-null.
+* For the Win7/WDDM 1.1 callback-level contract (how a UMD blocks/polls on fences for `Map(READ)`), see:
+  * `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md`
 
 ### 5.7 Flush / submission
 
