@@ -25,7 +25,7 @@ test("compare.mjs includes perf_export + trace status lines in compare.md", () =
         gitSha: "base",
         aeroPerf: {
           exportAvailable: true,
-          exportApiTimedOut: false,
+          exportApiTimedOut: true,
           trace: { requested: false, available: false, captured: false, timedOut: false, durationMs: null },
         },
       },
@@ -67,12 +67,11 @@ test("compare.mjs includes perf_export + trace status lines in compare.md", () =
     assert.equal(res.status, 0, `expected compare.mjs success, got ${res.status}\n${res.stderr || res.stdout}`);
 
     const compareMd = fs.readFileSync(path.join(outDir, "compare.md"), "utf8");
-    assert.match(compareMd, /Baseline perf export: available/u);
-    assert.match(compareMd, /Candidate perf export: timed out/u);
-    assert.match(compareMd, /Baseline trace:/u);
-    assert.match(compareMd, /Candidate trace:/u);
+    assert.ok(compareMd.includes("Baseline perf export: available (late)"), "expected baseline perf export status line");
+    assert.ok(compareMd.includes("Candidate perf export: timed out"), "expected candidate perf export status line");
+    assert.ok(compareMd.includes("Baseline trace:"), "expected baseline trace status line");
+    assert.ok(compareMd.includes("Candidate trace:"), "expected candidate trace status line");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
-
