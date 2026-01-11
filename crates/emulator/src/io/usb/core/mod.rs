@@ -21,10 +21,12 @@ pub enum UsbInResult {
 #[derive(Debug, Clone)]
 enum ControlStage {
     InData { data: Vec<u8>, offset: usize },
+    InDataPending,
     OutData { expected: usize, received: Vec<u8> },
-    OutDataPending { data: Vec<u8> },
     StatusIn,
+    StatusInPending { data: Option<Vec<u8>> },
     StatusOut,
+    StatusOutPending,
 }
 
 #[derive(Debug, Clone)]
@@ -108,7 +110,13 @@ impl AttachedUsbDevice {
                         }
                     }
                     ControlResponse::Ack => ControlStage::StatusOut,
-                    ControlResponse::Nak => return UsbOutResult::Nak,
+                    ControlResponse::Nak => {
+                        if setup.w_length == 0 {
+                            ControlStage::StatusOutPending
+                        } else {
+                            ControlStage::InDataPending
+                        }
+                    }
                     ControlResponse::Stall => return UsbOutResult::Stall,
                 }
             }
@@ -124,7 +132,7 @@ impl AttachedUsbDevice {
                 } else if setup.w_length == 0 {
                     match self.model.handle_control_request(setup, None) {
                         ControlResponse::Ack => ControlStage::StatusIn,
-                        ControlResponse::Nak => return UsbOutResult::Nak,
+                        ControlResponse::Nak => ControlStage::StatusInPending { data: None },
                         ControlResponse::Stall => return UsbOutResult::Stall,
                         ControlResponse::Data(_) => return UsbOutResult::Stall,
                     }
@@ -152,7 +160,6 @@ impl AttachedUsbDevice {
 
         match &mut state.stage {
             ControlStage::OutData { expected, received } => {
-                // Avoid appending duplicate bytes if the host retries the final TD due to NAK.
                 let remaining = expected.saturating_sub(received.len());
                 let chunk_len = remaining.min(data.len());
                 received.extend_from_slice(&data[..chunk_len]);
@@ -167,10 +174,13 @@ impl AttachedUsbDevice {
                             return UsbOutResult::Ack;
                         }
                         ControlResponse::Nak => {
-                            state.stage = ControlStage::OutDataPending {
-                                data: received.clone(),
+                            // Control OUT transfers carry their payload in the DATA stage; once we
+                            // have buffered all bytes we can ACK the final DATA TD and represent
+                            // "still waiting for the host-side transfer" by NAKing the STATUS stage.
+                            state.stage = ControlStage::StatusInPending {
+                                data: Some(received.clone()),
                             };
-                            return UsbOutResult::Nak;
+                            return UsbOutResult::Ack;
                         }
                         ControlResponse::Stall => return UsbOutResult::Stall,
                         ControlResponse::Data(_) => return UsbOutResult::Stall,
@@ -178,24 +188,28 @@ impl AttachedUsbDevice {
                 }
                 UsbOutResult::Ack
             }
-            ControlStage::OutDataPending { data } => {
-                let setup = state.setup;
-                match self.model.handle_control_request(setup, Some(data.as_slice())) {
-                    ControlResponse::Ack => {
-                        state.stage = ControlStage::StatusIn;
-                        UsbOutResult::Ack
-                    }
-                    ControlResponse::Nak => UsbOutResult::Nak,
-                    ControlResponse::Stall => UsbOutResult::Stall,
-                    ControlResponse::Data(_) => UsbOutResult::Stall,
-                }
-            }
             ControlStage::StatusOut => {
                 if !data.is_empty() {
                     return UsbOutResult::Stall;
                 }
                 self.control = None;
                 UsbOutResult::Ack
+            }
+            ControlStage::StatusOutPending => {
+                if !data.is_empty() {
+                    return UsbOutResult::Stall;
+                }
+                let setup = state.setup;
+                match self.model.handle_control_request(setup, None) {
+                    ControlResponse::Nak => UsbOutResult::Nak,
+                    ControlResponse::Stall => UsbOutResult::Stall,
+                    // Whether the model reports `Ack` or `Data([])`, we treat this as the
+                    // completion point for the whole control transfer (status stage).
+                    ControlResponse::Ack | ControlResponse::Data(_) => {
+                        self.control = None;
+                        UsbOutResult::Ack
+                    }
+                }
             }
             _ => UsbOutResult::Stall,
         }
@@ -234,6 +248,39 @@ impl AttachedUsbDevice {
                 }
                 UsbInResult::Data(chunk)
             }
+            ControlStage::InDataPending => {
+                let setup = state.setup;
+                match self.model.handle_control_request(setup, None) {
+                    ControlResponse::Nak => UsbInResult::Nak,
+                    ControlResponse::Stall => UsbInResult::Stall,
+                    ControlResponse::Ack => {
+                        state.stage = ControlStage::StatusOut;
+                        UsbInResult::Data(Vec::new())
+                    }
+                    ControlResponse::Data(mut data) => {
+                        let requested = setup.w_length as usize;
+                        if data.len() > requested {
+                            data.truncate(requested);
+                        }
+                        if requested == 0 || data.is_empty() {
+                            state.stage = ControlStage::StatusOut;
+                            return UsbInResult::Data(Vec::new());
+                        }
+
+                        let chunk_len = data.len().min(max_len);
+                        let chunk = data[..chunk_len].to_vec();
+                        if chunk_len >= data.len() {
+                            state.stage = ControlStage::StatusOut;
+                        } else {
+                            state.stage = ControlStage::InData {
+                                data,
+                                offset: chunk_len,
+                            };
+                        }
+                        UsbInResult::Data(chunk)
+                    }
+                }
+            }
             ControlStage::StatusIn => {
                 if max_len != 0 {
                     return UsbInResult::Stall;
@@ -243,6 +290,23 @@ impl AttachedUsbDevice {
                 }
                 self.control = None;
                 UsbInResult::Data(Vec::new())
+            }
+            ControlStage::StatusInPending { data } => {
+                if max_len != 0 {
+                    return UsbInResult::Stall;
+                }
+                let setup = state.setup;
+                match self.model.handle_control_request(setup, data.as_deref()) {
+                    ControlResponse::Nak => UsbInResult::Nak,
+                    ControlResponse::Ack => {
+                        if let Some(addr) = self.pending_address.take() {
+                            self.address = addr;
+                        }
+                        self.control = None;
+                        UsbInResult::Data(Vec::new())
+                    }
+                    ControlResponse::Stall | ControlResponse::Data(_) => UsbInResult::Stall,
+                }
             }
             _ => UsbInResult::Stall,
         }
