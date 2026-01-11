@@ -173,6 +173,7 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI`), the UMD populates every *known* func
 - Stubs log once (`aerogpu-d3d9: stub <name>`)
 - Stubs emit a `D3d9TraceCall` record so trace dumps show which missing DDI was exercised
 - Stubs return a stable HRESULT so callers fail cleanly instead of AV'ing
+- The UMD validates at runtime that the returned `D3D9DDI_DEVICEFUNCS` / `D3D9DDI_ADAPTERFUNCS` tables contain no NULL entries; if any are found, `OpenAdapter*` / `CreateDevice` fails cleanly instead of handing the runtime a partially-populated vtable.
 
 ### Currently stubbed DDIs
 

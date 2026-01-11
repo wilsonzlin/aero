@@ -112,6 +112,27 @@ namespace {
     });                                              \
   } while (0)
 
+template <typename FuncTable>
+bool d3d9_validate_nonnull_vtable(const FuncTable* table, const char* table_name) {
+  if (!table || !table_name) {
+    return false;
+  }
+
+  static_assert(sizeof(FuncTable) % sizeof(void*) == 0, "D3D9 DDI function tables must be pointer arrays");
+  const void* const* ptrs = reinterpret_cast<const void* const*>(table);
+  const size_t count = sizeof(FuncTable) / sizeof(void*);
+  for (size_t i = 0; i < count; ++i) {
+    if (!ptrs[i]) {
+      aerogpu::logf("aerogpu-d3d9: %s missing entry index=%llu (bytes=%llu)\n",
+                    table_name,
+                    static_cast<unsigned long long>(i),
+                    static_cast<unsigned long long>(i * sizeof(void*)));
+      return false;
+    }
+  }
+  return true;
+}
+
 constexpr int32_t kMinGpuThreadPriority = -7;
 constexpr int32_t kMaxGpuThreadPriority = 7;
 
@@ -8342,6 +8363,18 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
 #undef AEROGPU_SET_D3D9DDI_FN
 
+  if (!d3d9_validate_nonnull_vtable(pDeviceFuncs, "D3D9DDI_DEVICEFUNCS")) {
+    // Be defensive: if we ever miss wiring a function table entry (new WDK
+    // members, missed stubs), fail device creation cleanly rather than returning
+    // a partially-populated vtable that would crash the runtime on first call.
+    aerogpu::logf("aerogpu-d3d9: CreateDevice: device vtable contains NULL entrypoints; failing\n");
+    dev->wddm_context.destroy(dev->wddm_callbacks);
+    wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
+    dev->wddm_device = 0;
+    pCreateDevice->hDevice.pDrvPrivate = nullptr;
+    return trace.ret(E_FAIL);
+  }
+
   dev.release();
   return trace.ret(S_OK);
 #else
@@ -8499,6 +8532,13 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
   pAdapterFuncs->pfnGetCaps = adapter_get_caps;
   pAdapterFuncs->pfnCreateDevice = adapter_create_device;
   pAdapterFuncs->pfnQueryAdapterInfo = adapter_query_adapter_info;
+
+  if (!d3d9_validate_nonnull_vtable(pAdapterFuncs, "D3D9DDI_ADAPTERFUNCS")) {
+    aerogpu::logf("aerogpu-d3d9: %s: adapter vtable contains NULL entrypoints; failing\n", entrypoint);
+    phAdapter->pDrvPrivate = nullptr;
+    release_adapter(adapter);
+    return E_FAIL;
+  }
 
   aerogpu::logf("aerogpu-d3d9: %s Interface=%u Version=%u LUID=%08x:%08x\n",
                 entrypoint,
