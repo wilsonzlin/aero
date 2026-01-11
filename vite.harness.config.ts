@@ -159,6 +159,7 @@ export default defineConfig({
         legacy_webusb_diagnostics: fileURLToPath(new URL('./web/webusb_diagnostics.html', import.meta.url)),
         webgl2_fallback_demo: fileURLToPath(new URL('./web/webgl2_fallback_demo.html', import.meta.url)),
         ipc_demo: fileURLToPath(new URL('./web/demo/ipc_demo.html', import.meta.url)),
+        vm_boot_vga_serial_smoke: fileURLToPath(new URL('./web/vm-boot-vga-serial-smoke.html', import.meta.url)),
       },
     },
   },
