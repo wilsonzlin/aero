@@ -215,7 +215,7 @@ pub fn demo_render_rgba8888(
 ) -> u32 {
     #[cfg(target_arch = "wasm32")]
     {
-        if dst_offset == 0 {
+        if dst_offset == 0 || width == 0 || height == 0 {
             return 0;
         }
 
@@ -228,9 +228,31 @@ pub fn demo_render_rgba8888(
             return 0;
         }
 
-        let max_len = (mem_bytes - dst_offset_u64).min(usize::MAX as u64) as usize;
+        // Bound the mutable slice to *only* the region we may write to, rather than
+        // aliasing the rest of linear memory.
+        let mem_len = (mem_bytes - dst_offset_u64).min(usize::MAX as u64) as usize;
+        let row_bytes = match (width as usize).checked_mul(4) {
+            Some(v) => v,
+            None => return 0,
+        };
+
+        let mut stride = stride_bytes as usize;
+        if stride < row_bytes {
+            stride = row_bytes;
+        }
+        if stride == 0 {
+            return 0;
+        }
+
+        let max_height = mem_len / stride;
+        let draw_height = (height as usize).min(max_height);
+        if draw_height == 0 {
+            return 0;
+        }
+
+        let slice_len = stride * draw_height;
         unsafe {
-            let dst = core::slice::from_raw_parts_mut(dst_offset as *mut u8, max_len);
+            let dst = core::slice::from_raw_parts_mut(dst_offset as *mut u8, slice_len);
             demo_renderer::render_rgba8888(dst, width, height, stride_bytes, now_ms)
         }
     }
