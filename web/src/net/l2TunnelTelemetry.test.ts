@@ -115,6 +115,25 @@ describe("net/l2TunnelTelemetry", () => {
     expect(logs).toEqual([{ level: "error", message: "l2: error: boom" }]);
   });
 
+  it("does not permanently transition to error state on non-fatal tunnel errors", () => {
+    const logs: Array<{ level: string; message: string }> = [];
+    const stats = makeStats();
+
+    const telemetry = new L2TunnelTelemetry({
+      intervalMs: 1000,
+      getStats: () => stats,
+      emitLog: (level, message) => logs.push({ level, message }),
+    });
+
+    telemetry.onConnectInitiated();
+    telemetry.onTunnelEvent({ type: "open" });
+    expect(telemetry.connectionState).toBe("open");
+
+    telemetry.onTunnelEvent({ type: "error", error: new Error("boom") });
+    expect(telemetry.connectionState).toBe("open");
+    expect(logs.some((l) => l.level === "error" && l.message.includes("boom"))).toBe(true);
+  });
+
   it("clamps negative/NaN drop deltas in emitted logs", () => {
     const logs: Array<{ level: string; message: string }> = [];
     let stats = makeStats({

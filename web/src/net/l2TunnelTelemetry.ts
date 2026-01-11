@@ -47,7 +47,15 @@ export class L2TunnelTelemetry {
     }
     if (ev.type === "error") {
       const message = ev.error instanceof Error ? ev.error.message : String(ev.error);
-      this.setConnectionState("error", { detail: message, level: "error" });
+      // Errors can be non-fatal (e.g. malformed control messages) and the tunnel
+      // may remain open. Surface the error without permanently switching the
+      // connection state away from "open"/"connecting".
+      this.nextLogDeadlineMs = 0;
+      try {
+        this.opts.emitLog("error", `l2: error: ${message}`);
+      } catch {
+        // Best-effort; never throw from the IO worker tick loop.
+      }
       return;
     }
     // Ignore keepalive pongs; they're too noisy to surface in logs.
