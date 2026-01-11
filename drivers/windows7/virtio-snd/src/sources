@@ -28,6 +28,7 @@ SOURCES= \
     virtiosnd_intx.c \
     virtiosnd_sg.c \
     virtiosnd_sg_core.c \
+    virtiosnd_sg_tx.c \
     ..\..\..\windows\virtio\common\virtqueue_split.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
     ..\..\virtio\common\src\virtio_pci_contract.c \
