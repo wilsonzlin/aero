@@ -197,12 +197,13 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--producers=N] [--samples=N] [--iterations=N] [--stress-iterations=N] [--wait-timeout-ms=N] [--display \\.\DISPLAYn] [--timeout-ms=NNNN] [--timeout-ms NNNN] [--no-timeout] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--producers=N] [--samples=N] [--iterations=N] [--stress-iterations=N] [--wait-timeout-ms=N] [--display \\.\DISPLAYn] [--timeout-ms=NNNN] [--timeout-ms NNNN] [--no-timeout] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--require-agpu] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
 echo   Rendering tests validate that the expected AeroGPU UMD DLL is loaded unless --allow-microsoft/--allow-non-aerogpu is set; use --require-umd to force the UMD check.
+echo   --require-agpu forces AGPU-only validation paths (e.g. ring descriptor PRESENT/alloc table checks) to fail instead of skipping on legacy device/ring formats.
 echo   --samples affects pacing/sampling tests ^(dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing^).
 echo   --iterations affects d3d9ex_event_query and d3d9ex_submit_fence_stress: number of iterations/submissions to run.
 echo   --producers affects d3d9ex_shared_surface_many_producers: number of producer processes (default 8).
