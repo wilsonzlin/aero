@@ -9,7 +9,7 @@ const writeJson = async (filePath, value) => {
   await writeFile(filePath, JSON.stringify(value, null, 2));
 };
 
-const runCompare = ({ baseline, candidate, thresholdsFile, profile = "pr-smoke" }) =>
+const runCompare = ({ baseline, candidate, thresholdsFile, profile = "pr-smoke", env = {} }) =>
   spawnSync(
     process.execPath,
     [
@@ -25,7 +25,7 @@ const runCompare = ({ baseline, candidate, thresholdsFile, profile = "pr-smoke" 
       "--profile",
       profile,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: { ...process.env, ...env } },
   );
 
 test("tools/perf/compare.mjs fails on regression above threshold", async () => {
