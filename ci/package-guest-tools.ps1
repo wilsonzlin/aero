@@ -211,6 +211,233 @@ function Assert-ContainsFileExtension {
   }
 }
 
+function Get-DevicesCmdVariable {
+  param(
+    [Parameter(Mandatory = $true)][string] $DevicesCmdPath,
+    [Parameter(Mandatory = $true)][string] $VarName
+  )
+
+  $lines = Get-Content -LiteralPath $DevicesCmdPath -ErrorAction Stop
+  foreach ($rawLine in $lines) {
+    if ($null -eq $rawLine) { continue }
+    $trim = ([string]$rawLine).Trim()
+    if ($trim.Length -eq 0) { continue }
+    $lower = $trim.ToLowerInvariant()
+    if ($lower.StartsWith("rem") -or $lower.StartsWith("::") -or $lower.StartsWith("@echo")) {
+      continue
+    }
+
+    $m = [regex]::Match($rawLine, "(?i)^\\s*set\\s+(.+?)\\s*$")
+    if (-not $m.Success) { continue }
+
+    $rest = $m.Groups[1].Value.Trim()
+    if ($rest.StartsWith('"') -and $rest.EndsWith('"') -and $rest.Length -ge 2) {
+      $rest = $rest.Substring(1, $rest.Length - 2)
+    }
+
+    $eq = $rest.IndexOf("=")
+    if ($eq -lt 0) { continue }
+
+    $name = $rest.Substring(0, $eq).Trim()
+    $value = $rest.Substring($eq + 1).Trim()
+
+    if ($name -ieq $VarName) {
+      return $value
+    }
+  }
+
+  return $null
+}
+
+function Parse-CmdQuotedList {
+  param([Parameter(Mandatory = $true)][string] $Value)
+
+  $matches = [regex]::Matches($Value, '"([^"]+)"')
+  if ($matches.Count -gt 0) {
+    $out = @()
+    foreach ($m in $matches) {
+      $out += $m.Groups[1].Value
+    }
+    return ,$out
+  }
+
+  $t = $Value.Trim()
+  if ($t.Length -eq 0) {
+    return @()
+  }
+  return @($t)
+}
+
+function Get-InfAddServiceNames {
+  param([Parameter(Mandatory = $true)][string] $InfPath)
+
+  $content = $null
+  try {
+    $content = Get-Content -LiteralPath $InfPath -Raw -ErrorAction Stop
+  } catch {
+    return @()
+  }
+
+  $names = @{}
+  foreach ($line in ($content -split "`r?`n")) {
+    $m = [regex]::Match($line, "(?i)^\\s*AddService\\s*=\\s*(.+)$")
+    if (-not $m.Success) { continue }
+
+    $rest = $m.Groups[1].Value.Trim()
+    if ($rest.Length -eq 0) { continue }
+    $rest = $rest.Replace('"', '')
+
+    $svc = $null
+    $m2 = [regex]::Match($rest, "^([^,\\s]+)")
+    if ($m2.Success) {
+      $svc = $m2.Groups[1].Value.Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($svc)) { continue }
+
+    $key = $svc.ToLowerInvariant()
+    if (-not $names.ContainsKey($key)) {
+      $names[$key] = $svc
+    }
+  }
+
+  return ,($names.Values | Sort-Object)
+}
+
+function Update-DevicesCmdStorageServiceFromDrivers {
+  param(
+    [Parameter(Mandatory = $true)][string] $StageDriversRoot,
+    [Parameter(Mandatory = $true)][string] $DevicesCmdPath
+  )
+
+  if (-not (Test-Path -LiteralPath $DevicesCmdPath -PathType Leaf)) {
+    throw "devices.cmd not found: $DevicesCmdPath"
+  }
+
+  $currentService = Get-DevicesCmdVariable -DevicesCmdPath $DevicesCmdPath -VarName "AERO_VIRTIO_BLK_SERVICE"
+  $hwidsRaw = Get-DevicesCmdVariable -DevicesCmdPath $DevicesCmdPath -VarName "AERO_VIRTIO_BLK_HWIDS"
+  if ([string]::IsNullOrWhiteSpace($hwidsRaw)) {
+    Write-Warning "AERO_VIRTIO_BLK_HWIDS is not set in devices.cmd; skipping virtio-blk service auto-detection."
+    return
+  }
+  $hwids = Parse-CmdQuotedList -Value $hwidsRaw
+  if (-not $hwids -or $hwids.Count -eq 0) {
+    Write-Warning "AERO_VIRTIO_BLK_HWIDS is empty in devices.cmd; skipping virtio-blk service auto-detection."
+    return
+  }
+
+  $infFiles = @(Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue)
+  if (-not $infFiles -or $infFiles.Count -eq 0) {
+    Write-Warning "No .inf files found under staged drivers root ($StageDriversRoot); skipping virtio-blk service auto-detection."
+    return
+  }
+
+  $candidateInfs = @()
+  $serviceToInfs = @{}
+  foreach ($inf in $infFiles) {
+    $text = $null
+    try {
+      $text = Get-Content -LiteralPath $inf.FullName -Raw -ErrorAction Stop
+    } catch {
+      continue
+    }
+    $lower = $text.ToLowerInvariant()
+
+    $matchesHwid = $false
+    foreach ($hwid in $hwids) {
+      if ([string]::IsNullOrWhiteSpace($hwid)) { continue }
+      if ($lower.Contains($hwid.ToLowerInvariant())) {
+        $matchesHwid = $true
+        break
+      }
+    }
+    if (-not $matchesHwid) { continue }
+
+    $candidateInfs += $inf.FullName
+    foreach ($svc in (Get-InfAddServiceNames -InfPath $inf.FullName)) {
+      $k = $svc.ToLowerInvariant()
+      if (-not $serviceToInfs.ContainsKey($k)) {
+        $serviceToInfs[$k] = New-Object System.Collections.Generic.List[string]
+      }
+      [void]$serviceToInfs[$k].Add($inf.FullName)
+    }
+  }
+
+  if ($serviceToInfs.Count -eq 0) {
+    if ($candidateInfs.Count -gt 0) {
+      Write-Warning "Found virtio-blk-matching INF(s) but no AddService lines were detected; leaving AERO_VIRTIO_BLK_SERVICE unchanged."
+    }
+    return
+  }
+
+  $serviceCandidates = @($serviceToInfs.Keys | Sort-Object)
+
+  $selected = $null
+  if (-not [string]::IsNullOrWhiteSpace($currentService)) {
+    $k = $currentService.ToLowerInvariant()
+    if ($serviceToInfs.ContainsKey($k)) {
+      $selected = $currentService
+    }
+  }
+
+  if (-not $selected) {
+    if ($serviceCandidates.Count -eq 1) {
+      $selected = $serviceCandidates[0]
+    } else {
+      # Disambiguate using the presence of <service>.sys in the staged driver tree.
+      $matching = @()
+      foreach ($k in $serviceCandidates) {
+        $sysName = "$k.sys"
+        $hit = Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -Filter $sysName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($hit) { $matching += $k }
+      }
+      if ($matching.Count -eq 1) {
+        $selected = $matching[0]
+      } else {
+        $details = @()
+        foreach ($k in $serviceCandidates) {
+          $infs = $serviceToInfs[$k] | Sort-Object -Unique
+          $details += ("- {0}: {1}" -f $k, ($infs -join ", "))
+        }
+        throw "Unable to determine a unique virtio-blk storage service name from staged driver INFs. Candidates: $($serviceCandidates -join ', ').`nINF matches:`n$($details -join \"`n\")"
+      }
+    }
+  }
+
+  if ($selected -and $currentService -and ($selected.ToLowerInvariant() -eq $currentService.ToLowerInvariant())) {
+    Write-Host "  AERO_VIRTIO_BLK_SERVICE already matches staged storage driver: $currentService"
+    return
+  }
+
+  if (-not $selected) {
+    return
+  }
+
+  Write-Host "  Updating staged Guest Tools config: AERO_VIRTIO_BLK_SERVICE=$selected"
+
+  $lines = Get-Content -LiteralPath $DevicesCmdPath -ErrorAction Stop
+  $updated = @()
+  $replaced = $false
+  foreach ($line in $lines) {
+    if ($line -match '(?i)^\\s*set\\s+\"AERO_VIRTIO_BLK_SERVICE=') {
+      $updated += ('set "AERO_VIRTIO_BLK_SERVICE={0}"' -f $selected)
+      $replaced = $true
+      continue
+    }
+    if ($line -match '(?i)^\\s*set\\s+AERO_VIRTIO_BLK_SERVICE=') {
+      $updated += ('set "AERO_VIRTIO_BLK_SERVICE={0}"' -f $selected)
+      $replaced = $true
+      continue
+    }
+    $updated += $line
+  }
+  if (-not $replaced) {
+    $updated += ('set "AERO_VIRTIO_BLK_SERVICE={0}"' -f $selected)
+  }
+
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllLines($DevicesCmdPath, $updated, $utf8NoBom)
+}
+
 function Copy-GuestToolsWithCert {
   param(
     [Parameter(Mandatory = $true)][string] $SourceDir,
@@ -627,6 +854,13 @@ try {
   } else {
     Write-Host "  Detected input layout: CI packages (out/packages/<driver>/<arch>/...)"
     Stage-DriversFromPackagesLayout -PackagesRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
+  }
+
+  # Ensure the staged Guest Tools config matches the staged storage driver packages.
+  # (setup.cmd validates AERO_VIRTIO_BLK_SERVICE against INF AddService names.)
+  $devicesCmdStage = Join-Path (Join-Path $stageGuestTools "config") "devices.cmd"
+  if (Test-Path -LiteralPath $devicesCmdStage -PathType Leaf) {
+    Update-DevicesCmdStorageServiceFromDrivers -StageDriversRoot $stageDriversRoot -DevicesCmdPath $devicesCmdStage
   }
 
   Write-Host "Generating packager spec..."

@@ -121,6 +121,9 @@ Notes:
 - `ci/package-guest-tools.ps1` stages drivers into the packager input layout (`x86/<driver>/...`, `amd64/<driver>/...`),
   copies `guest-tools/`, and (when `-SigningPolicy` is not `none`) replaces any placeholder certs with `out/certs/aero-test.cer`
   so the resulting ISO matches the signed driver catalogs.
+- The wrapper also updates the staged `config/devices.cmd` **storage service name** (`AERO_VIRTIO_BLK_SERVICE`) to match
+  the packaged virtio-blk driver's `AddService` name (when it can be inferred from staged `.inf` files). This keeps
+  `setup.cmd` boot-critical pre-seeding aligned with the drivers that were actually packaged.
 - `-InputRoot` defaults to `out/packages/`, but you can also point it at an extracted `*-bundle.zip` produced by
   `ci/package-drivers.ps1` (or the `*-bundle.zip` file itself; the wrapper can auto-extract and auto-detect the layout).
 - Determinism is controlled by `SOURCE_DATE_EPOCH` (or `-SourceDateEpoch`). When unset, the wrapper uses the HEAD commit
