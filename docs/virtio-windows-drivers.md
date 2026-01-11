@@ -94,12 +94,13 @@ Guest Tools uses:
 - `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect (include `&REV_01` if your INFs match on revision).
 
 Note: `guest-tools/config/devices.cmd` is generated from `docs/windows-device-contract.json`
-(see `scripts/generate-guest-tools-devices-cmd.py`) and may be regenerated during Guest Tools packaging.
+(see `scripts/generate-guest-tools-devices-cmd.py`) and is regenerated during Guest Tools packaging from
+the device contract passed to the packager (`ci/package-guest-tools.ps1 -WindowsDeviceContractPath`).
 
-When packaging Guest Tools from **virtio-win** drivers, `aero_packager` overrides the
-`AERO_VIRTIO_*_SERVICE` values in the packaged `config/devices.cmd` so `setup.cmd` validates and
-pre-seeds against virtio-win INF `AddService` names (e.g. `viostor`, `netkvm`). The PCI HWID list
-still follows the Aero contract (modern-only + `REV_01`).
+When packaging Guest Tools from **virtio-win** drivers, use the dedicated contract override
+`docs/windows-device-contract-virtio-win.json` so the packaged `config/devices.cmd` uses virtio-win
+INF `AddService` names (e.g. `viostor`, `netkvm`) while keeping Aero’s modern-only PCI HWID patterns
+(`REV_01`) for boot-critical `CriticalDeviceDatabase` seeding.
 
 ### Licensing policy (project requirement)
 
