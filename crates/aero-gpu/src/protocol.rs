@@ -168,6 +168,29 @@ pub enum AeroGpuCmd<'a> {
         size_bytes: u64,
         data: &'a [u8],
     },
+    CopyBuffer {
+        dst_buffer: u32,
+        src_buffer: u32,
+        dst_offset_bytes: u64,
+        src_offset_bytes: u64,
+        size_bytes: u64,
+        flags: u32,
+    },
+    CopyTexture2d {
+        dst_texture: u32,
+        src_texture: u32,
+        dst_mip_level: u32,
+        dst_array_layer: u32,
+        src_mip_level: u32,
+        src_array_layer: u32,
+        dst_x: u32,
+        dst_y: u32,
+        src_x: u32,
+        src_y: u32,
+        width: u32,
+        height: u32,
+        flags: u32,
+    },
 
     // Shaders
     CreateShaderDxbc {
@@ -377,19 +400,26 @@ fn read_u32_le(bytes: &[u8]) -> u32 {
     u32::from_le_bytes(bytes.try_into().unwrap())
 }
 
-fn map_cmd_stream_header_error(bytes: &[u8], err: AerogpuCmdDecodeError) -> AeroGpuCmdStreamParseError {
+fn map_cmd_stream_header_error(
+    bytes: &[u8],
+    err: AerogpuCmdDecodeError,
+) -> AeroGpuCmdStreamParseError {
     match err {
         AerogpuCmdDecodeError::BufferTooSmall => AeroGpuCmdStreamParseError::BufferTooSmall,
-        AerogpuCmdDecodeError::BadMagic { found } => AeroGpuCmdStreamParseError::InvalidMagic(found),
+        AerogpuCmdDecodeError::BadMagic { found } => {
+            AeroGpuCmdStreamParseError::InvalidMagic(found)
+        }
         AerogpuCmdDecodeError::Abi(err) => match err {
             AerogpuAbiError::UnsupportedMajor { found } => {
                 AeroGpuCmdStreamParseError::UnsupportedAbiMajor { found }
             }
         },
-        AerogpuCmdDecodeError::BadSizeBytes { found } => AeroGpuCmdStreamParseError::InvalidSizeBytes {
-            size_bytes: found,
-            buffer_len: bytes.len(),
-        },
+        AerogpuCmdDecodeError::BadSizeBytes { found } => {
+            AeroGpuCmdStreamParseError::InvalidSizeBytes {
+                size_bytes: found,
+                buffer_len: bytes.len(),
+            }
+        }
         _ => AeroGpuCmdStreamParseError::BufferTooSmall,
     }
 }
@@ -397,8 +427,12 @@ fn map_cmd_stream_header_error(bytes: &[u8], err: AerogpuCmdDecodeError) -> Aero
 fn map_cmd_hdr_error(err: AerogpuCmdDecodeError) -> AeroGpuCmdStreamParseError {
     match err {
         AerogpuCmdDecodeError::BufferTooSmall => AeroGpuCmdStreamParseError::BufferTooSmall,
-        AerogpuCmdDecodeError::BadSizeBytes { found } => AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(found),
-        AerogpuCmdDecodeError::SizeNotAligned { found } => AeroGpuCmdStreamParseError::MisalignedCmdSizeBytes(found),
+        AerogpuCmdDecodeError::BadSizeBytes { found } => {
+            AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(found)
+        }
+        AerogpuCmdDecodeError::SizeNotAligned { found } => {
+            AeroGpuCmdStreamParseError::MisalignedCmdSizeBytes(found)
+        }
         _ => AeroGpuCmdStreamParseError::BufferTooSmall,
     }
 }
@@ -433,11 +467,12 @@ pub fn parse_cmd_stream(
     let mut cmds = Vec::new();
     let mut offset = AeroGpuCmdStreamHeader::SIZE_BYTES;
     while offset < size_bytes_usize {
-        let cmd_hdr = decode_cmd_hdr_le(&bytes[offset..size_bytes_usize]).map_err(map_cmd_hdr_error)?;
+        let cmd_hdr =
+            decode_cmd_hdr_le(&bytes[offset..size_bytes_usize]).map_err(map_cmd_hdr_error)?;
         let cmd_size_usize = cmd_hdr.size_bytes as usize;
-        let end = offset
-            .checked_add(cmd_size_usize)
-            .ok_or(AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(cmd_hdr.size_bytes))?;
+        let end = offset.checked_add(cmd_size_usize).ok_or(
+            AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(cmd_hdr.size_bytes),
+        )?;
         if end > size_bytes_usize {
             return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
         }
@@ -496,6 +531,35 @@ pub fn parse_cmd_stream(
                     offset_bytes: cmd.offset_bytes,
                     size_bytes: cmd.size_bytes,
                     data,
+                }
+            }
+            Some(AeroGpuOpcode::CopyBuffer) => {
+                let cmd: protocol::AerogpuCmdCopyBuffer = read_packed_prefix(packet)?;
+                AeroGpuCmd::CopyBuffer {
+                    dst_buffer: u32::from_le(cmd.dst_buffer),
+                    src_buffer: u32::from_le(cmd.src_buffer),
+                    dst_offset_bytes: u64::from_le(cmd.dst_offset_bytes),
+                    src_offset_bytes: u64::from_le(cmd.src_offset_bytes),
+                    size_bytes: u64::from_le(cmd.size_bytes),
+                    flags: u32::from_le(cmd.flags),
+                }
+            }
+            Some(AeroGpuOpcode::CopyTexture2d) => {
+                let cmd: protocol::AerogpuCmdCopyTexture2d = read_packed_prefix(packet)?;
+                AeroGpuCmd::CopyTexture2d {
+                    dst_texture: u32::from_le(cmd.dst_texture),
+                    src_texture: u32::from_le(cmd.src_texture),
+                    dst_mip_level: u32::from_le(cmd.dst_mip_level),
+                    dst_array_layer: u32::from_le(cmd.dst_array_layer),
+                    src_mip_level: u32::from_le(cmd.src_mip_level),
+                    src_array_layer: u32::from_le(cmd.src_array_layer),
+                    dst_x: u32::from_le(cmd.dst_x),
+                    dst_y: u32::from_le(cmd.dst_y),
+                    src_x: u32::from_le(cmd.src_x),
+                    src_y: u32::from_le(cmd.src_y),
+                    width: u32::from_le(cmd.width),
+                    height: u32::from_le(cmd.height),
+                    flags: u32::from_le(cmd.flags),
                 }
             }
 

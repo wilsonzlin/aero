@@ -63,11 +63,17 @@ fn parses_ilay_pos3_color_fixture_and_maps_to_vs_signature() {
 
     assert_eq!(mapped[0].attributes[0].shader_location, 0);
     assert_eq!(mapped[0].attributes[0].offset, 0);
-    assert_eq!(mapped[0].attributes[0].format, wgpu::VertexFormat::Float32x3);
+    assert_eq!(
+        mapped[0].attributes[0].format,
+        wgpu::VertexFormat::Float32x3
+    );
 
     assert_eq!(mapped[0].attributes[1].shader_location, 1);
     assert_eq!(mapped[0].attributes[1].offset, 12);
-    assert_eq!(mapped[0].attributes[1].format, wgpu::VertexFormat::Float32x4);
+    assert_eq!(
+        mapped[0].attributes[1].format,
+        wgpu::VertexFormat::Float32x4
+    );
 }
 
 #[test]
@@ -112,9 +118,15 @@ fn parses_ilay_pos3_tex2_fixture() {
     assert_eq!(mapped[0].array_stride, 20);
     assert_eq!(mapped[0].attributes.len(), 2);
     assert_eq!(mapped[0].attributes[0].shader_location, 0);
-    assert_eq!(mapped[0].attributes[0].format, wgpu::VertexFormat::Float32x3);
+    assert_eq!(
+        mapped[0].attributes[0].format,
+        wgpu::VertexFormat::Float32x3
+    );
     assert_eq!(mapped[0].attributes[1].shader_location, 1);
-    assert_eq!(mapped[0].attributes[1].format, wgpu::VertexFormat::Float32x2);
+    assert_eq!(
+        mapped[0].attributes[1].format,
+        wgpu::VertexFormat::Float32x2
+    );
 }
 
 #[test]
@@ -122,8 +134,10 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
     let stream_bytes = load_fixture("cmd_triangle_sm4.bin");
     let parsed = parse_cmd_stream(&stream_bytes).expect("cmd_triangle_sm4 should parse");
 
-    assert_eq!(parsed.header.magic, AEROGPU_CMD_STREAM_MAGIC);
-    assert_eq!(parsed.header.size_bytes as usize, stream_bytes.len());
+    let header_magic = parsed.header.magic;
+    let header_size_bytes = parsed.header.size_bytes;
+    assert_eq!(header_magic, AEROGPU_CMD_STREAM_MAGIC);
+    assert_eq!(header_size_bytes as usize, stream_bytes.len());
 
     // This fixture is intentionally tiny and stable; assert a fixed command count.
     assert_eq!(parsed.cmds.len(), 18);

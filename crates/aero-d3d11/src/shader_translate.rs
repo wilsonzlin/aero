@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    OperandModifier, RegFile, RegisterRef, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
+    OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
 };
 use crate::DxbcFile;
 
@@ -676,6 +676,14 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
     let mut cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
     let mut textures = BTreeSet::new();
     let mut samplers = BTreeSet::new();
+    let mut declared_cbuffer_sizes: BTreeMap<u32, u32> = BTreeMap::new();
+
+    for decl in &module.decls {
+        if let Sm4Decl::ConstantBuffer { slot, reg_count } = decl {
+            let entry = declared_cbuffer_sizes.entry(*slot).or_insert(0);
+            *entry = (*entry).max(*reg_count);
+        }
+    }
 
     for inst in &module.instructions {
         let mut scan_src = |src: &crate::sm4_ir::SrcOperand| {
@@ -725,6 +733,14 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
             }
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Ret => {}
+        }
+    }
+
+    // If we know the declared register count for a constant buffer and it is referenced by the
+    // instruction stream, ensure the emitted WGSL struct is large enough.
+    for (slot, reg_count) in declared_cbuffer_sizes {
+        if let Some(entry) = cbuffers.get_mut(&slot) {
+            *entry = (*entry).max(reg_count);
         }
     }
 
@@ -845,9 +861,7 @@ fn emit_instructions(
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         let maybe_saturate = |dst: &crate::sm4_ir::DstOperand, expr: String| {
             if dst.saturate {
-                format!(
-                    "clamp(({expr}), vec4<f32>(0.0), vec4<f32>(1.0))"
-                )
+                format!("clamp(({expr}), vec4<f32>(0.0), vec4<f32>(1.0))")
             } else {
                 expr
             }

@@ -85,6 +85,10 @@ pub enum AerogpuD3d9Error {
     UploadNotSupported(u32),
     #[error("upload_resource out of bounds for resource {0}")]
     UploadOutOfBounds(u32),
+    #[error("copy operation not supported for src={src} dst={dst}")]
+    CopyNotSupported { src: u32, dst: u32 },
+    #[error("copy operation out of bounds for src={src} dst={dst}")]
+    CopyOutOfBounds { src: u32, dst: u32 },
     #[error("readback only supported for RGBA8/BGRA8 textures (handle {0})")]
     ReadbackUnsupported(u32),
     #[error("missing alloc table entry for alloc_id={0}")]
@@ -735,6 +739,140 @@ impl AerogpuD3d9Executor {
                         Ok(())
                     }
                 }
+            }
+            AeroGpuCmd::CopyBuffer {
+                dst_buffer,
+                src_buffer,
+                dst_offset_bytes,
+                src_offset_bytes,
+                size_bytes,
+                ..
+            } => {
+                self.ensure_encoder();
+                let mut encoder = self.encoder.take().unwrap();
+                {
+                    let src = self
+                        .resources
+                        .get(&src_buffer)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(src_buffer))?;
+                    let dst = self
+                        .resources
+                        .get(&dst_buffer)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?;
+
+                    let (src_buf, src_size) = match src {
+                        Resource::Buffer { buffer, size } => (buffer, *size),
+                        _ => {
+                            return Err(AerogpuD3d9Error::CopyNotSupported {
+                                src: src_buffer,
+                                dst: dst_buffer,
+                            })
+                        }
+                    };
+                    let (dst_buf, dst_size) = match dst {
+                        Resource::Buffer { buffer, size } => (buffer, *size),
+                        _ => {
+                            return Err(AerogpuD3d9Error::CopyNotSupported {
+                                src: src_buffer,
+                                dst: dst_buffer,
+                            })
+                        }
+                    };
+
+                    let src_end = src_offset_bytes.saturating_add(size_bytes);
+                    let dst_end = dst_offset_bytes.saturating_add(size_bytes);
+                    if src_end > src_size || dst_end > dst_size {
+                        return Err(AerogpuD3d9Error::CopyOutOfBounds {
+                            src: src_buffer,
+                            dst: dst_buffer,
+                        });
+                    }
+
+                    encoder.copy_buffer_to_buffer(
+                        src_buf,
+                        src_offset_bytes,
+                        dst_buf,
+                        dst_offset_bytes,
+                        size_bytes,
+                    );
+                }
+                self.encoder = Some(encoder);
+                Ok(())
+            }
+            AeroGpuCmd::CopyTexture2d {
+                dst_texture,
+                src_texture,
+                dst_mip_level,
+                dst_array_layer,
+                src_mip_level,
+                src_array_layer,
+                dst_x,
+                dst_y,
+                src_x,
+                src_y,
+                width,
+                height,
+                ..
+            } => {
+                self.ensure_encoder();
+                let mut encoder = self.encoder.take().unwrap();
+                {
+                    let src = self
+                        .resources
+                        .get(&src_texture)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(src_texture))?;
+                    let dst = self
+                        .resources
+                        .get(&dst_texture)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?;
+
+                    let (src_tex, dst_tex) = match (src, dst) {
+                        (
+                            Resource::Texture2d {
+                                texture: src_tex, ..
+                            },
+                            Resource::Texture2d {
+                                texture: dst_tex, ..
+                            },
+                        ) => (src_tex, dst_tex),
+                        _ => {
+                            return Err(AerogpuD3d9Error::CopyNotSupported {
+                                src: src_texture,
+                                dst: dst_texture,
+                            })
+                        }
+                    };
+
+                    encoder.copy_texture_to_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: src_tex,
+                            mip_level: src_mip_level,
+                            origin: wgpu::Origin3d {
+                                x: src_x,
+                                y: src_y,
+                                z: src_array_layer,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::ImageCopyTexture {
+                            texture: dst_tex,
+                            mip_level: dst_mip_level,
+                            origin: wgpu::Origin3d {
+                                x: dst_x,
+                                y: dst_y,
+                                z: dst_array_layer,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+                self.encoder = Some(encoder);
+                Ok(())
             }
             AeroGpuCmd::CreateShaderDxbc {
                 shader_handle,

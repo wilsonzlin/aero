@@ -144,6 +144,33 @@ fn protocol_parses_all_opcodes() {
             out.extend_from_slice(&upload_data);
         });
 
+        emit_packet(out, AeroGpuOpcode::CopyBuffer as u32, |out| {
+            push_u32(out, 0x20); // dst_buffer
+            push_u32(out, 0x21); // src_buffer
+            push_u64(out, 0x1000); // dst_offset_bytes
+            push_u64(out, 0x2000); // src_offset_bytes
+            push_u64(out, 0x80); // size_bytes
+            push_u32(out, 0x1); // flags
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, AeroGpuOpcode::CopyTexture2d as u32, |out| {
+            push_u32(out, 0x30); // dst_texture
+            push_u32(out, 0x31); // src_texture
+            push_u32(out, 1); // dst_mip_level
+            push_u32(out, 2); // dst_array_layer
+            push_u32(out, 3); // src_mip_level
+            push_u32(out, 4); // src_array_layer
+            push_u32(out, 5); // dst_x
+            push_u32(out, 6); // dst_y
+            push_u32(out, 7); // src_x
+            push_u32(out, 8); // src_y
+            push_u32(out, 9); // width
+            push_u32(out, 10); // height
+            push_u32(out, 0x2); // flags
+            push_u32(out, 0); // reserved0
+        });
+
         emit_packet(out, AeroGpuOpcode::CreateShaderDxbc as u32, |out| {
             push_u32(out, 0x33); // shader_handle
             push_u32(out, 1); // stage
@@ -337,7 +364,7 @@ fn protocol_parses_all_opcodes() {
     });
 
     let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
-    assert_eq!(parsed.cmds.len(), 34);
+    assert_eq!(parsed.cmds.len(), 36);
 
     let mut cmds = parsed.cmds.into_iter();
 
@@ -420,6 +447,58 @@ fn protocol_parses_all_opcodes() {
             assert_eq!(offset_bytes, 0x20);
             assert_eq!(size_bytes, upload_data.len() as u64);
             assert_eq!(data, upload_data);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match cmds.next().unwrap() {
+        AeroGpuCmd::CopyBuffer {
+            dst_buffer,
+            src_buffer,
+            dst_offset_bytes,
+            src_offset_bytes,
+            size_bytes,
+            flags,
+        } => {
+            assert_eq!(dst_buffer, 0x20);
+            assert_eq!(src_buffer, 0x21);
+            assert_eq!(dst_offset_bytes, 0x1000);
+            assert_eq!(src_offset_bytes, 0x2000);
+            assert_eq!(size_bytes, 0x80);
+            assert_eq!(flags, 0x1);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match cmds.next().unwrap() {
+        AeroGpuCmd::CopyTexture2d {
+            dst_texture,
+            src_texture,
+            dst_mip_level,
+            dst_array_layer,
+            src_mip_level,
+            src_array_layer,
+            dst_x,
+            dst_y,
+            src_x,
+            src_y,
+            width,
+            height,
+            flags,
+        } => {
+            assert_eq!(dst_texture, 0x30);
+            assert_eq!(src_texture, 0x31);
+            assert_eq!(dst_mip_level, 1);
+            assert_eq!(dst_array_layer, 2);
+            assert_eq!(src_mip_level, 3);
+            assert_eq!(src_array_layer, 4);
+            assert_eq!(dst_x, 5);
+            assert_eq!(dst_y, 6);
+            assert_eq!(src_x, 7);
+            assert_eq!(src_y, 8);
+            assert_eq!(width, 9);
+            assert_eq!(height, 10);
+            assert_eq!(flags, 0x2);
         }
         other => panic!("unexpected cmd: {other:?}"),
     }
