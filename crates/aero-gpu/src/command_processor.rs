@@ -11,15 +11,24 @@
 //! translate the rest of the command stream to WebGPU, but Ex clients still need
 //! stable synchronization and sharing primitives even if rendering is minimal.
 
-use crate::protocol::{AeroGpuCmd, AeroGpuCmdStreamParseError, parse_cmd_stream};
+use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandProcessorError {
     Parse(AeroGpuCmdStreamParseError),
     UnknownShareToken(u64),
-    ShareTokenAlreadyExported { share_token: u64, existing: u32, new: u32 },
-    SharedSurfaceAliasAlreadyBound { alias: u32, existing: u32, new: u32 },
+    UnknownSharedSurfaceHandle(u32),
+    ShareTokenAlreadyExported {
+        share_token: u64,
+        existing: u32,
+        new: u32,
+    },
+    SharedSurfaceAliasAlreadyBound {
+        alias: u32,
+        existing: u32,
+        new: u32,
+    },
 }
 
 impl std::fmt::Display for CommandProcessorError {
@@ -28,6 +37,9 @@ impl std::fmt::Display for CommandProcessorError {
             CommandProcessorError::Parse(err) => write!(f, "failed to parse command stream: {err}"),
             CommandProcessorError::UnknownShareToken(token) => {
                 write!(f, "unknown shared surface token 0x{token:016X}")
+            }
+            CommandProcessorError::UnknownSharedSurfaceHandle(handle) => {
+                write!(f, "unknown shared surface handle 0x{handle:08X}")
             }
             CommandProcessorError::ShareTokenAlreadyExported {
                 share_token,
@@ -67,10 +79,19 @@ pub struct AeroGpuCommandProcessor {
     completed_fence: u64,
     present_count: u64,
 
-    /// share_token -> original resource handle.
+    /// share_token -> underlying resource handle.
     shared_surface_by_token: HashMap<u64, u32>,
-    /// alias resource handle -> original resource handle.
-    shared_surface_aliases: HashMap<u32, u32>,
+
+    /// Handle indirection table for shared surfaces.
+    ///
+    /// - Original surfaces are stored as `handle -> handle`
+    /// - Imported surfaces are stored as `alias_handle -> underlying_handle`
+    shared_surface_handles: HashMap<u32, u32>,
+
+    /// Refcount table keyed by the underlying handle.
+    ///
+    /// Refcount includes the original handle entry plus all imported aliases.
+    shared_surface_refcounts: HashMap<u32, u32>,
 }
 
 impl AeroGpuCommandProcessor {
@@ -86,17 +107,45 @@ impl AeroGpuCommandProcessor {
         self.present_count
     }
 
-    /// Returns the original resource handle for a (possibly aliased) handle.
+    /// Returns the underlying resource handle for a (possibly aliased) handle.
+    ///
+    /// Note: destroyed handles are treated as unknown and return `handle` unchanged.
     pub fn resolve_shared_surface(&self, handle: u32) -> u32 {
-        self.shared_surface_aliases
-            .get(&handle)
-            .copied()
-            .unwrap_or(handle)
+        self.shared_surface_handles.get(&handle).copied().unwrap_or(handle)
     }
 
     /// Returns the exported handle for `share_token` if known.
     pub fn lookup_shared_surface_token(&self, share_token: u64) -> Option<u32> {
         self.shared_surface_by_token.get(&share_token).copied()
+    }
+
+    fn register_shared_surface(&mut self, handle: u32) {
+        if self.shared_surface_handles.contains_key(&handle) {
+            return;
+        }
+        self.shared_surface_handles.insert(handle, handle);
+        *self.shared_surface_refcounts.entry(handle).or_insert(0) += 1;
+    }
+
+    fn resolve_shared_surface_handle(&self, handle: u32) -> Option<u32> {
+        self.shared_surface_handles.get(&handle).copied()
+    }
+
+    fn destroy_shared_surface_handle(&mut self, handle: u32) {
+        let Some(underlying) = self.shared_surface_handles.remove(&handle) else {
+            return;
+        };
+        let Some(count) = self.shared_surface_refcounts.get_mut(&underlying) else {
+            return;
+        };
+        *count = count.saturating_sub(1);
+        if *count != 0 {
+            return;
+        }
+
+        self.shared_surface_refcounts.remove(&underlying);
+        self.shared_surface_by_token
+            .retain(|_, v| *v != underlying);
     }
 
     /// Process a single command buffer submission and update state.
@@ -115,6 +164,12 @@ impl AeroGpuCommandProcessor {
 
         for cmd in stream.cmds {
             match cmd {
+                AeroGpuCmd::CreateTexture2d { texture_handle, .. } => {
+                    self.register_shared_surface(texture_handle);
+                }
+                AeroGpuCmd::DestroyResource { resource_handle } => {
+                    self.destroy_shared_surface_handle(resource_handle);
+                }
                 AeroGpuCmd::Present { scanout_id, .. }
                 | AeroGpuCmd::PresentEx { scanout_id, .. } => {
                     self.present_count = self.present_count.wrapping_add(1);
@@ -127,42 +182,56 @@ impl AeroGpuCommandProcessor {
                     resource_handle,
                     share_token,
                 } => {
-                    // If the handle is itself an alias, normalize to the original.
-                    let original = self.resolve_shared_surface(resource_handle);
+                    // If the handle is itself an alias, normalize to the underlying surface.
+                    let Some(underlying) = self.resolve_shared_surface_handle(resource_handle) else {
+                        return Err(CommandProcessorError::UnknownSharedSurfaceHandle(
+                            resource_handle,
+                        ));
+                    };
+
                     if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
                         // Treat re-export of the same token as idempotent, but reject attempts to
                         // retarget a token to a different resource (would corrupt sharing tables).
-                        if existing != original {
+                        if existing != underlying {
                             return Err(CommandProcessorError::ShareTokenAlreadyExported {
                                 share_token,
                                 existing,
-                                new: original,
+                                new: underlying,
                             });
                         }
                     } else {
-                        self.shared_surface_by_token.insert(share_token, original);
+                        self.shared_surface_by_token.insert(share_token, underlying);
                     }
                 }
                 AeroGpuCmd::ImportSharedSurface {
                     out_resource_handle,
                     share_token,
                 } => {
-                    let Some(original) = self.shared_surface_by_token.get(&share_token).copied()
-                    else {
+                    let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
                         return Err(CommandProcessorError::UnknownShareToken(share_token));
                     };
-                    if let Some(existing) = self.shared_surface_aliases.get(&out_resource_handle).copied() {
+
+                    // If the underlying surface has already been destroyed, treat the token as
+                    // invalid.
+                    if !self.shared_surface_refcounts.contains_key(&underlying) {
+                        return Err(CommandProcessorError::UnknownShareToken(share_token));
+                    }
+
+                    if let Some(existing) =
+                        self.shared_surface_handles.get(&out_resource_handle).copied()
+                    {
                         // Idempotent re-import is allowed if it targets the same original.
-                        if existing != original {
+                        if existing != underlying {
                             return Err(CommandProcessorError::SharedSurfaceAliasAlreadyBound {
                                 alias: out_resource_handle,
                                 existing,
-                                new: original,
+                                new: underlying,
                             });
                         }
                     } else {
-                        self.shared_surface_aliases
-                            .insert(out_resource_handle, original);
+                        self.shared_surface_handles
+                            .insert(out_resource_handle, underlying);
+                        *self.shared_surface_refcounts.entry(underlying).or_insert(0) += 1;
                     }
                 }
                 _ => {

@@ -38,6 +38,22 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
     out[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
 }
 
+fn emit_create_texture_rgba8(out: &mut Vec<u8>, texture_handle: u32) {
+    emit_packet(out, 0x101, |out| {
+        push_u32(out, texture_handle); // texture_handle
+        push_u32(out, 0x0); // usage_flags
+        push_u32(out, 3); // format (AEROGPU_FORMAT_R8G8B8A8_UNORM)
+        push_u32(out, 1); // width
+        push_u32(out, 1); // height
+        push_u32(out, 1); // mip_levels
+        push_u32(out, 1); // array_layers
+        push_u32(out, 4); // row_pitch_bytes
+        push_u32(out, 0); // backing_alloc_id
+        push_u32(out, 0); // backing_offset_bytes
+        push_u64(out, 0); // reserved0
+    });
+}
+
 #[test]
 fn present_ex_and_shared_surfaces_update_state_and_emit_events() {
     const TOKEN: u64 = 0x1122_3344_5566_7788;
@@ -47,6 +63,9 @@ fn present_ex_and_shared_surfaces_update_state_and_emit_events() {
         emit_packet(out, 0xDEAD_BEEF, |out| {
             push_u32(out, 0xAABB_CCDD);
         });
+
+        // Create a texture so the command processor can track its lifetime.
+        emit_create_texture_rgba8(out, 0x10);
 
         // Export an existing surface handle.
         emit_packet(out, 0x710, |out| {
@@ -72,7 +91,7 @@ fn present_ex_and_shared_surfaces_update_state_and_emit_events() {
     });
 
     let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
-    assert_eq!(parsed.cmds.len(), 4);
+    assert_eq!(parsed.cmds.len(), 5);
 
     let mut processor = AeroGpuCommandProcessor::new();
     let events = processor
@@ -117,6 +136,8 @@ fn exporting_the_same_token_twice_is_idempotent() {
     const TOKEN: u64 = 0x1111_2222_3333_4444;
 
     let stream = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+
         emit_packet(out, 0x710, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
@@ -141,6 +162,9 @@ fn exporting_same_token_for_different_resources_is_an_error() {
     const TOKEN: u64 = 0x9999_AAAA_BBBB_CCCC;
 
     let stream = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+        emit_create_texture_rgba8(out, 0x11);
+
         emit_packet(out, 0x710, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
@@ -163,6 +187,8 @@ fn importing_into_an_existing_alias_is_idempotent_for_the_same_original() {
     const TOKEN: u64 = 0xABC0_DEF0_0000_0001;
 
     let stream = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+
         emit_packet(out, 0x710, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
@@ -193,6 +219,9 @@ fn importing_into_an_existing_alias_for_different_original_is_an_error() {
     const TOKEN_B: u64 = 0xABC0_DEF0_0000_0003;
 
     let stream = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+        emit_create_texture_rgba8(out, 0x11);
+
         emit_packet(out, 0x710, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
@@ -218,4 +247,77 @@ fn importing_into_an_existing_alias_for_different_original_is_an_error() {
     let mut processor = AeroGpuCommandProcessor::new();
     let err = processor.process_submission(&stream, 1).unwrap_err();
     assert!(err.to_string().contains("already bound"));
+}
+
+#[test]
+fn shared_surface_aliases_keep_resources_alive_until_last_handle_is_destroyed() {
+    const TOKEN: u64 = 0xAABB_CCDD_EEFF_0001;
+
+    // Submission 1: create, export, import alias, then destroy original.
+    let submit1 = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+
+        emit_packet(out, 0x710, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, 0x711, |out| {
+            push_u32(out, 0x20); // out_resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, 0x102, |out| {
+            push_u32(out, 0x10); // DestroyResource(original)
+            push_u32(out, 0);
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&submit1, 1)
+        .expect("submission 1 should succeed");
+
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), Some(0x10));
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x10);
+
+    // Submission 2: import another alias (should still work), then destroy both aliases.
+    let submit2 = build_stream(|out| {
+        emit_packet(out, 0x711, |out| {
+            push_u32(out, 0x21); // out_resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, 0x102, |out| {
+            push_u32(out, 0x20); // DestroyResource(alias)
+            push_u32(out, 0);
+        });
+
+        emit_packet(out, 0x102, |out| {
+            push_u32(out, 0x21); // DestroyResource(alias)
+            push_u32(out, 0);
+        });
+    });
+
+    processor
+        .process_submission(&submit2, 2)
+        .expect("submission 2 should succeed");
+
+    // Underlying surface is now fully destroyed; token mapping should be removed.
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), None);
+
+    // Submission 3: importing the token again should fail validation.
+    let submit3 = build_stream(|out| {
+        emit_packet(out, 0x711, |out| {
+            push_u32(out, 0x22); // out_resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let err = processor.process_submission(&submit3, 3).unwrap_err();
+    assert!(err.to_string().contains("unknown shared surface token"));
 }
