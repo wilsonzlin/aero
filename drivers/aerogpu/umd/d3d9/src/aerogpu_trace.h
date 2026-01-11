@@ -170,6 +170,7 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceGetShaderConstF,
   DeviceGetShaderConstI,
   DeviceGetShaderConstB,
+  DeviceSetConvolutionMonoKernel,
 
   kCount,
 };

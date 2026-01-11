@@ -404,6 +404,8 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetShaderConstI (stub)";
     case D3d9TraceFunc::DeviceGetShaderConstB:
       return "Device::GetShaderConstB (stub)";
+    case D3d9TraceFunc::DeviceSetConvolutionMonoKernel:
+      return "Device::SetConvolutionMonoKernel (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

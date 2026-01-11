@@ -249,6 +249,7 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnCheckResourceResidency);
 AEROGPU_DEFINE_HAS_MEMBER(pfnQueryResourceResidency);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetDisplayModeEx);
 AEROGPU_DEFINE_HAS_MEMBER(pfnComposeRects);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetConvolutionMonoKernel);
 AEROGPU_DEFINE_HAS_MEMBER(pfnDrawPrimitiveUP);
 
 // Fixed function / legacy state paths (commonly hit by DWM + simple D3D9 apps).
@@ -423,6 +424,10 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeleteStateBlock, D3d9TraceFunc::DeviceDeleteSta
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnCaptureStateBlock, D3d9TraceFunc::DeviceCaptureStateBlock, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnApplyStateBlock, D3d9TraceFunc::DeviceApplyStateBlock, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnValidateDevice, D3d9TraceFunc::DeviceValidateDevice, D3DERR_NOTAVAILABLE);
+
+// D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
+// fully implemented (DWM should not rely on it).
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
 
 // Cursor, palette, and clip-status management is not implemented yet, but these
 // can be treated as benign no-ops for bring-up.
@@ -9091,6 +9096,12 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   if constexpr (aerogpu_has_member_pfnComposeRects<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnComposeRects, device_compose_rects);
+  }
+  if constexpr (aerogpu_has_member_pfnSetConvolutionMonoKernel<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetConvolutionMonoKernel,
+        aerogpu_d3d9_stub_pfnSetConvolutionMonoKernel<decltype(
+            pDeviceFuncs->pfnSetConvolutionMonoKernel)>::pfnSetConvolutionMonoKernel);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnRotateResourceIdentities, device_rotate_resource_identities);
