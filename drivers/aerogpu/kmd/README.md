@@ -41,15 +41,17 @@ See:
 
 ## Stable `alloc_id` / `share_token` (WDDM allocation private data)
 
-To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, the KMD exposes a stable identifier for every WDDM allocation:
+To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on a stable identifier per WDDM allocation:
 
 - `alloc_id` (32-bit, nonzero, stable across opens)
 - `share_token` (64-bit, stable across guest processes; `0` for non-shared allocations)
 
-These are returned to UMDs via **WDDM allocation private driver data**:
+These values live in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv`):
 
-- The KMD writes the struct in `DxgkDdiCreateAllocation`.
-- When an allocation is opened via a shared handle in another process, dxgkrnl passes the same private blob back to the KMD in `DxgkDdiOpenAllocation`, allowing the KMD to reconstruct the same IDs.
+- The blob is treated as **UMD → KMD input**: the UMD generates `alloc_id` and `share_token` and attaches them to each allocation.
+- For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe identical IDs.
+- The KMD validates and stores the IDs in its allocation bookkeeping and uses `alloc_id` when building the per-submit allocation table for the emulator.
+- For standard allocations where the runtime does not provide an AeroGPU private-data blob, the KMD synthesizes an `alloc_id` from a reserved namespace (high bit set) and sets `share_token = 0`.
 
 The shared layout is defined in:
 

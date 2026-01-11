@@ -14,7 +14,10 @@ The in-tree Win7 KMD supports both the **versioned** ring/MMIO transport (`drive
 The command stream does **not** reference resources by “allocation-list index”; instead it uses two separate ID spaces:
 
 - **Protocol resource handles** (`aerogpu_handle_t`, exposed in packets as `resource_handle` / `buffer_handle` / `texture_handle`, etc): these are 32-bit, UMD-chosen handles that identify logical GPU objects in the command stream.
-- **Backing allocation IDs** (`alloc_id`): a stable, KMD-owned ID for a WDDM allocation (not a process-local handle and not a per-submit index). When a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero `alloc_id`. Resolving `alloc_id → {gpa, size_bytes, flags}` requires sideband information from the KMD (planned via the optional per-submission `aerogpu_alloc_table` in the versioned ring ABI; the current bring-up UMD uses host-allocated resources and sets `backing_alloc_id = 0`).
+- **Backing allocation IDs** (`alloc_id`): a stable 32-bit ID for a WDDM allocation (not a process-local handle and not a per-submit index). When a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero `alloc_id`.
+  - `alloc_id` is **UMD-owned** and is stored in WDDM allocation private driver data (`aerogpu_wddm_alloc_priv`).
+  - The KMD validates it and uses it to build the per-submit `aerogpu_alloc_table` mapping `alloc_id → {gpa, size_bytes, flags}` for the emulator.
+  - The current bring-up UMD uses host-allocated resources and typically sets `backing_alloc_id = 0`.
 
 ### Shared surfaces (D3D9Ex / DWM)
 
@@ -23,7 +26,7 @@ Cross-process shared resources are expressed explicitly in the command stream:
 - `AEROGPU_CMD_EXPORT_SHARED_SURFACE` associates an existing `resource_handle` with a stable 64-bit `share_token`.
 - `AEROGPU_CMD_IMPORT_SHARED_SURFACE` creates a new `resource_handle` aliasing the exported resource by `share_token`.
 
-`share_token` must be stable across guest processes. The KMD provides it via allocation private driver data (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`); the recommended scheme is `share_token = (uint64_t)alloc_id`. It is **not** a process-local `HANDLE` value.
+`share_token` must be stable across guest processes. On Win7/WDDM 1.1 this is achieved by the UMD storing `share_token` in WDDM allocation private driver data (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`), and dxgkrnl preserving and returning it verbatim on `OpenResource`. The recommended scheme is `share_token = (uint64_t)alloc_id`. It is **not** a process-local `HANDLE` value.
 
 ## Build
 
