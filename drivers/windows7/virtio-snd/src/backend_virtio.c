@@ -231,7 +231,10 @@ VirtIoSndBackendVirtio_Write(_In_ PVOID Context, _In_reads_bytes_(Bytes) const V
     }
 
     maxPeriod = ctx->PeriodBytes;
-    if (maxPeriod != 0 && pcmBytes > maxPeriod) {
+    if (maxPeriod == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (pcmBytes > maxPeriod) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
@@ -297,4 +300,3 @@ VirtIoSndBackendVirtio_Create(PVIRTIOSND_DEVICE_EXTENSION Dx, PVIRTIOSND_BACKEND
     *OutBackend = &backend->Backend;
     return STATUS_SUCCESS;
 }
-
