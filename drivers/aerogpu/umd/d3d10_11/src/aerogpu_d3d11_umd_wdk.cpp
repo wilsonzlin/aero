@@ -1356,6 +1356,7 @@ void AEROGPU_APIENTRY DestroyDepthStencilView11(D3D11DDI_HDEVICE, D3D11DDI_HDEPT
 
 struct ShaderResourceView {
   aerogpu_handle_t texture = 0;
+  Resource* resource = nullptr;
 };
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateShaderResourceViewSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATESHADERRESOURCEVIEW*) {
@@ -1372,6 +1373,7 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
   auto* res = pDesc->hResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pDesc->hResource) : nullptr;
   auto* srv = new (hView.pDrvPrivate) ShaderResourceView();
   srv->texture = res ? res->handle : 0;
+  srv->resource = res;
   return S_OK;
 }
 
@@ -1869,7 +1871,10 @@ void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
   for (UINT i = 0; i < NumViews; i++) {
     aerogpu_handle_t tex = 0;
     if (phViews[i].pDrvPrivate) {
-      tex = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[i])->texture;
+      auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[i]);
+      if (view) {
+        tex = view->resource ? view->resource->handle : view->texture;
+      }
     }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
     cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
@@ -1892,7 +1897,10 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
   for (UINT i = 0; i < NumViews; i++) {
     aerogpu_handle_t tex = 0;
     if (phViews[i].pDrvPrivate) {
-      tex = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[i])->texture;
+      auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[i]);
+      if (view) {
+        tex = view->resource ? view->resource->handle : view->texture;
+      }
     }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
     cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
@@ -3056,7 +3064,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   resources.reserve(numResources);
   for (UINT i = 0; i < numResources; ++i) {
     auto* res = pResources[i].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[i]) : nullptr;
-    if (!res) {
+    if (!res || res->mapped) {
       return;
     }
     resources.push_back(res);
@@ -3077,12 +3085,15 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
 
   const aerogpu_handle_t saved_handle = resources[0]->handle;
   auto saved_wddm = std::move(resources[0]->wddm);
+  auto saved_storage = std::move(resources[0]->storage);
   for (UINT i = 0; i + 1 < numResources; i++) {
     resources[i]->handle = resources[i + 1]->handle;
     resources[i]->wddm = std::move(resources[i + 1]->wddm);
+    resources[i]->storage = std::move(resources[i + 1]->storage);
   }
   resources[numResources - 1]->handle = saved_handle;
   resources[numResources - 1]->wddm = std::move(saved_wddm);
+  resources[numResources - 1]->storage = std::move(saved_storage);
 
   if (dev->current_rtv_resource) {
     for (Resource* r : resources) {
