@@ -729,7 +729,9 @@ fn no_legacy_aerogpu_protocol_header_references_outside_archived_prototype_tree(
     // Avoid embedding the full legacy header name token in this source file.
     let legacy_header_stem = format!("{}{}", "aerogpu_", "protocol");
     let legacy_header_name = format!("{legacy_header_stem}.{}", "h");
-    let needle = legacy_header_name.as_bytes();
+    // Match case-insensitively by uppercasing the file bytes before scanning.
+    let needle = legacy_header_name.to_ascii_uppercase();
+    let needle = needle.as_bytes();
 
     let mut hits: Vec<String> = Vec::new();
     for rel in files.split(|b| *b == 0) {
@@ -742,9 +744,10 @@ fn no_legacy_aerogpu_protocol_header_references_outside_archived_prototype_tree(
 
         let rel_str = String::from_utf8_lossy(rel);
         let path = root.join(rel_str.as_ref());
-        let Ok(buf) = std::fs::read(&path) else {
+        let Ok(mut buf) = std::fs::read(&path) else {
             continue;
         };
+        buf.make_ascii_uppercase();
 
         if buf.windows(needle.len()).any(|w| w == needle) {
             hits.push(rel_str.into_owned());
