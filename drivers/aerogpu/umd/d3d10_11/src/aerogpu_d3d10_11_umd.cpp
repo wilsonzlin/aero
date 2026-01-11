@@ -22,6 +22,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1877,6 +1878,819 @@ void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCoun
   cmd->first_instance = 0;
 }
 
+// -------------------------------------------------------------------------------------------------
+// Resource update/copy/map DDIs (Win7 WDK D3D11 immediate context)
+// -------------------------------------------------------------------------------------------------
+
+template <typename T>
+uint32_t to_u32(T v) {
+  if constexpr (std::is_enum_v<T>) {
+    return static_cast<uint32_t>(v);
+  } else {
+    return static_cast<uint32_t>(v);
+  }
+}
+
+uint64_t resource_total_bytes(const AeroGpuResource* res) {
+  if (!res) {
+    return 0;
+  }
+  if (res->kind == ResourceKind::Buffer) {
+    return res->size_bytes;
+  }
+  if (res->kind == ResourceKind::Texture2D) {
+    return static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+  }
+  return 0;
+}
+
+HRESULT ensure_resource_storage(AeroGpuResource* res, uint64_t size_bytes) {
+  if (!res) {
+    return E_INVALIDARG;
+  }
+  if (size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+    return E_OUTOFMEMORY;
+  }
+  try {
+    if (res->storage.size() < static_cast<size_t>(size_bytes)) {
+      res->storage.resize(static_cast<size_t>(size_bytes));
+    }
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+  return S_OK;
+}
+
+template <typename TMappedSubresource>
+HRESULT map_resource_locked(AeroGpuResource* res,
+                            uint32_t subresource,
+                            uint32_t map_type,
+                            uint32_t map_flags,
+                            TMappedSubresource* pMapped) {
+  (void)map_flags;
+  if (!res || !pMapped) {
+    return E_INVALIDARG;
+  }
+  if (res->mapped) {
+    return E_FAIL;
+  }
+  if (subresource != 0) {
+    return E_INVALIDARG;
+  }
+
+  bool want_read = false;
+  bool want_write = false;
+  switch (map_type) {
+    case kD3D11MapRead:
+      want_read = true;
+      break;
+    case kD3D11MapWrite:
+    case kD3D11MapWriteDiscard:
+    case kD3D11MapWriteNoOverwrite:
+      want_write = true;
+      break;
+    case kD3D11MapReadWrite:
+      want_read = true;
+      want_write = true;
+      break;
+    default:
+      return E_INVALIDARG;
+  }
+
+  const uint64_t total = resource_total_bytes(res);
+  if (!total) {
+    return E_INVALIDARG;
+  }
+
+  HRESULT hr = ensure_resource_storage(res, total);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  pMapped->pData = res->storage.data();
+  if (res->kind == ResourceKind::Texture2D) {
+    pMapped->RowPitch = res->row_pitch_bytes;
+    pMapped->DepthPitch = res->row_pitch_bytes * res->height;
+  } else {
+    pMapped->RowPitch = 0;
+    pMapped->DepthPitch = 0;
+  }
+
+  res->mapped = true;
+  res->mapped_write = want_write;
+  res->mapped_subresource = subresource;
+  res->mapped_offset_bytes = 0;
+  res->mapped_size_bytes = total;
+  (void)want_read;
+  return S_OK;
+}
+
+void unmap_resource_locked(AeroGpuImmediateContext* ctx, AeroGpuResource* res, uint32_t subresource) {
+  if (!ctx || !res) {
+    return;
+  }
+  if (!res->mapped) {
+    return;
+  }
+  if (subresource != res->mapped_subresource) {
+    return;
+  }
+
+  if (res->mapped_write && res->handle != kInvalidHandle) {
+    // Inline updated bytes into the DMA buffer so the host does not have to
+    // dereference guest pointers.
+    if (res->mapped_offset_bytes + res->mapped_size_bytes <= static_cast<uint64_t>(res->storage.size())) {
+      const auto offset = static_cast<size_t>(res->mapped_offset_bytes);
+      const auto size = static_cast<size_t>(res->mapped_size_bytes);
+      auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = res->mapped_offset_bytes;
+      upload->size_bytes = res->mapped_size_bytes;
+    }
+
+    auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    dirty->resource_handle = res->handle;
+    dirty->reserved0 = 0;
+    dirty->offset_bytes = res->mapped_offset_bytes;
+    dirty->size_bytes = res->mapped_size_bytes;
+  }
+
+  res->mapped = false;
+  res->mapped_write = false;
+  res->mapped_subresource = 0;
+  res->mapped_offset_bytes = 0;
+  res->mapped_size_bytes = 0;
+}
+
+HRESULT map_dynamic_buffer_locked(AeroGpuResource* res, bool discard, void** ppData) {
+  if (!res || !ppData) {
+    return E_INVALIDARG;
+  }
+  if (res->kind != ResourceKind::Buffer) {
+    return E_INVALIDARG;
+  }
+  if (res->mapped) {
+    return E_FAIL;
+  }
+
+  const uint64_t total = res->size_bytes;
+  HRESULT hr = ensure_resource_storage(res, total);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  if (discard) {
+    // Approximate DISCARD renaming by allocating a fresh CPU backing store.
+    try {
+      res->storage.assign(static_cast<size_t>(total), 0);
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  res->mapped = true;
+  res->mapped_write = true;
+  res->mapped_subresource = 0;
+  res->mapped_offset_bytes = 0;
+  res->mapped_size_bytes = total;
+
+  *ppData = res->storage.data();
+  return S_OK;
+}
+
+template <typename TMappedSubresource>
+HRESULT MapImpl(AeroGpuImmediateContext* ctx,
+                AeroGpuResource* res,
+                uint32_t subresource,
+                uint32_t map_type,
+                uint32_t map_flags,
+                TMappedSubresource* pMapped) {
+  if (!ctx || !ctx->device || !res) {
+    return E_INVALIDARG;
+  }
+
+  if (!pMapped) {
+    return E_INVALIDARG;
+  }
+
+  if (map_type == kD3D11MapWriteDiscard) {
+    if (subresource != 0) {
+      return E_INVALIDARG;
+    }
+
+    if (res->kind == ResourceKind::Buffer) {
+      void* data = nullptr;
+      HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/true, &data);
+      if (FAILED(hr)) {
+        return hr;
+      }
+      pMapped->pData = data;
+      pMapped->RowPitch = 0;
+      pMapped->DepthPitch = 0;
+      return S_OK;
+    }
+  } else if (map_type == kD3D11MapWriteNoOverwrite) {
+    if (subresource != 0) {
+      return E_INVALIDARG;
+    }
+
+    if (res->kind == ResourceKind::Buffer) {
+      void* data = nullptr;
+      HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/false, &data);
+      if (FAILED(hr)) {
+        return hr;
+      }
+      pMapped->pData = data;
+      pMapped->RowPitch = 0;
+      pMapped->DepthPitch = 0;
+      return S_OK;
+    }
+  }
+
+  // Conservative: only support generic map on buffers and staging textures.
+  if (res->kind == ResourceKind::Texture2D && res->bind_flags == 0) {
+    return map_resource_locked(res, subresource, map_type, map_flags, pMapped);
+  }
+  if (res->kind == ResourceKind::Buffer) {
+    return map_resource_locked(res, subresource, map_type, map_flags, pMapped);
+  }
+  return E_NOTIMPL;
+}
+
+HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
+                                AeroGpuResource* res,
+                                uint32_t dst_subresource,
+                                const void* pDstBox,
+                                const void* pSysMem,
+                                uint32_t SysMemPitch,
+                                uint32_t SysMemSlicePitch) {
+  (void)SysMemSlicePitch;
+  if (!ctx || !ctx->device || !res || !pSysMem) {
+    return E_INVALIDARG;
+  }
+  if (dst_subresource != 0 || pDstBox) {
+    return E_NOTIMPL;
+  }
+
+  if (res->handle == kInvalidHandle) {
+    return E_FAIL;
+  }
+
+  if (res->kind == ResourceKind::Buffer) {
+    if (res->storage.size() != static_cast<size_t>(res->size_bytes)) {
+      return E_FAIL;
+    }
+    std::memcpy(res->storage.data(), pSysMem, static_cast<size_t>(res->size_bytes));
+  } else if (res->kind == ResourceKind::Texture2D) {
+    if (res->storage.empty()) {
+      return E_FAIL;
+    }
+    const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(res->row_pitch_bytes);
+    const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
+    for (uint32_t y = 0; y < res->height; y++) {
+      std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
+                  src + static_cast<size_t>(y) * src_pitch,
+                  res->row_pitch_bytes);
+    }
+  } else {
+    return E_NOTIMPL;
+  }
+
+  auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+      AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+  upload->resource_handle = res->handle;
+  upload->reserved0 = 0;
+  upload->offset_bytes = 0;
+  upload->size_bytes = res->storage.size();
+
+  auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  dirty->resource_handle = res->handle;
+  dirty->reserved0 = 0;
+  dirty->offset_bytes = 0;
+  dirty->size_bytes = res->storage.size();
+  return S_OK;
+}
+
+HRESULT CopyResourceImpl(AeroGpuImmediateContext* ctx, AeroGpuResource* dst, AeroGpuResource* src) {
+  if (!ctx || !ctx->device || !dst || !src) {
+    return E_INVALIDARG;
+  }
+  if (dst->kind != src->kind) {
+    return E_INVALIDARG;
+  }
+
+  if (dst->kind == ResourceKind::Buffer) {
+    auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    cmd->dst_buffer = dst->handle;
+    cmd->src_buffer = src->handle;
+    cmd->dst_offset_bytes = 0;
+    cmd->src_offset_bytes = 0;
+    cmd->size_bytes = std::min(dst->size_bytes, src->size_bytes);
+    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->reserved0 = 0;
+
+    const size_t copy_bytes = static_cast<size_t>(cmd->size_bytes);
+    if (copy_bytes && src->storage.size() >= copy_bytes) {
+      if (dst->storage.size() < copy_bytes) {
+        dst->storage.resize(copy_bytes);
+      }
+      std::memcpy(dst->storage.data(), src->storage.data(), copy_bytes);
+    }
+    return S_OK;
+  }
+
+  if (dst->kind == ResourceKind::Texture2D) {
+    if (dst->dxgi_format != src->dxgi_format || dst->width == 0 || dst->height == 0) {
+      return E_INVALIDARG;
+    }
+
+    auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    cmd->dst_texture = dst->handle;
+    cmd->src_texture = src->handle;
+    cmd->dst_mip_level = 0;
+    cmd->dst_array_layer = 0;
+    cmd->src_mip_level = 0;
+    cmd->src_array_layer = 0;
+    cmd->dst_x = 0;
+    cmd->dst_y = 0;
+    cmd->src_x = 0;
+    cmd->src_y = 0;
+    cmd->width = std::min(dst->width, src->width);
+    cmd->height = std::min(dst->height, src->height);
+    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->reserved0 = 0;
+
+    const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
+    const size_t row_bytes = static_cast<size_t>(cmd->width) * bpp;
+    const size_t copy_rows = static_cast<size_t>(cmd->height);
+    if (!row_bytes || !copy_rows) {
+      return S_OK;
+    }
+
+    const size_t dst_required = copy_rows * static_cast<size_t>(dst->row_pitch_bytes);
+    const size_t src_required = copy_rows * static_cast<size_t>(src->row_pitch_bytes);
+    if (src->storage.size() < src_required) {
+      return S_OK;
+    }
+    if (dst->storage.size() < dst_required) {
+      dst->storage.resize(dst_required);
+    }
+    if (row_bytes > dst->row_pitch_bytes || row_bytes > src->row_pitch_bytes) {
+      return S_OK;
+    }
+
+    for (size_t y = 0; y < copy_rows; y++) {
+      std::memcpy(dst->storage.data() + y * dst->row_pitch_bytes,
+                  src->storage.data() + y * src->row_pitch_bytes,
+                  row_bytes);
+    }
+    return S_OK;
+  }
+
+  return E_NOTIMPL;
+}
+
+HRESULT CopySubresourceRegionImpl(AeroGpuImmediateContext* ctx,
+                                  AeroGpuResource* dst,
+                                  uint32_t dst_subresource,
+                                  uint32_t dst_x,
+                                  uint32_t dst_y,
+                                  uint32_t dst_z,
+                                  AeroGpuResource* src,
+                                  uint32_t src_subresource,
+                                  const void* pSrcBox) {
+  if (!ctx || !ctx->device || !dst || !src) {
+    return E_INVALIDARG;
+  }
+  if (dst_subresource != 0 || src_subresource != 0 || dst_x != 0 || dst_y != 0 || dst_z != 0 || pSrcBox) {
+    return E_NOTIMPL;
+  }
+  return CopyResourceImpl(ctx, dst, src);
+}
+
+template <typename FnPtr>
+struct Thunk;
+
+template <typename Ret, typename... Args>
+struct Thunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  using Return = Ret;
+  static constexpr size_t Arity = sizeof...(Args);
+};
+
+template <typename FnPtr>
+struct MapThunk;
+
+template <typename Ret, typename... Args>
+struct MapThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 6) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+      const uint32_t subresource = to_u32(std::get<2>(tup));
+      const uint32_t map_type = to_u32(std::get<3>(tup));
+      const uint32_t map_flags = to_u32(std::get<4>(tup));
+      auto* pMapped = std::get<5>(tup);
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return E_INVALIDARG;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return E_INVALIDARG;
+      }
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      return MapImpl(ctx, res, subresource, map_type, map_flags, pMapped);
+    } else {
+      (void)tup;
+      return E_NOTIMPL;
+    }
+  }
+};
+
+template <typename FnPtr>
+struct UnmapThunk;
+
+template <typename Ret, typename... Args>
+struct UnmapThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 3) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+      const uint32_t subresource = to_u32(std::get<2>(tup));
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      unmap_resource_locked(ctx, res, subresource);
+    }
+  }
+};
+
+template <typename FnPtr>
+struct StagingResourceMapThunk;
+
+template <typename Ret, typename... Args>
+struct StagingResourceMapThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 6) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+      const uint32_t subresource = to_u32(std::get<2>(tup));
+      const uint32_t map_type = to_u32(std::get<3>(tup));
+      const uint32_t map_flags = to_u32(std::get<4>(tup));
+      auto* pMapped = std::get<5>(tup);
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return E_INVALIDARG;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return E_INVALIDARG;
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      if (res->kind != ResourceKind::Texture2D) {
+        return E_INVALIDARG;
+      }
+      return map_resource_locked(res, subresource, map_type, map_flags, pMapped);
+    } else {
+      (void)tup;
+      return E_NOTIMPL;
+    }
+  }
+};
+
+template <typename FnPtr>
+struct StagingResourceUnmapThunk;
+
+template <typename Ret, typename... Args>
+struct StagingResourceUnmapThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 3) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+      const uint32_t subresource = to_u32(std::get<2>(tup));
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      unmap_resource_locked(ctx, res, subresource);
+    }
+  }
+};
+
+template <typename FnPtr>
+struct DynamicIABufferMapDiscardThunk;
+
+template <typename Ret, typename... Args>
+struct DynamicIABufferMapDiscardThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 3) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+      auto* ppData = std::get<2>(tup);
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return E_INVALIDARG;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return E_INVALIDARG;
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      return map_dynamic_buffer_locked(res, /*discard=*/true, ppData);
+    } else {
+      (void)tup;
+      return E_NOTIMPL;
+    }
+  }
+};
+
+template <typename FnPtr>
+struct DynamicIABufferMapNoOverwriteThunk;
+
+template <typename Ret, typename... Args>
+struct DynamicIABufferMapNoOverwriteThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 3) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+      auto* ppData = std::get<2>(tup);
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return E_INVALIDARG;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return E_INVALIDARG;
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      return map_dynamic_buffer_locked(res, /*discard=*/false, ppData);
+    } else {
+      (void)tup;
+      return E_NOTIMPL;
+    }
+  }
+};
+
+template <typename FnPtr>
+struct DynamicIABufferUnmapThunk;
+
+template <typename Ret, typename... Args>
+struct DynamicIABufferUnmapThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 2) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return;
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      unmap_resource_locked(ctx, res, /*subresource=*/0);
+    }
+  }
+};
+
+template <typename FnPtr>
+struct DynamicConstantBufferMapDiscardThunk;
+
+template <typename Ret, typename... Args>
+struct DynamicConstantBufferMapDiscardThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 3) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+      auto* ppData = std::get<2>(tup);
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return E_INVALIDARG;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return E_INVALIDARG;
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      return map_dynamic_buffer_locked(res, /*discard=*/true, ppData);
+    } else {
+      (void)tup;
+      return E_NOTIMPL;
+    }
+  }
+};
+
+template <typename FnPtr>
+struct DynamicConstantBufferUnmapThunk;
+
+template <typename Ret, typename... Args>
+struct DynamicConstantBufferUnmapThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 2) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+
+      if (!hCtx.pDrvPrivate || !hRes.pDrvPrivate) {
+        return;
+      }
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !res) {
+        return;
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      unmap_resource_locked(ctx, res, /*subresource=*/0);
+    }
+  }
+};
+
+template <typename FnPtr>
+struct UpdateSubresourceUPThunk;
+
+template <typename Ret, typename... Args>
+struct UpdateSubresourceUPThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 7) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hRes = std::get<1>(tup);
+      const uint32_t dst_subresource = to_u32(std::get<2>(tup));
+      const void* pDstBox = std::get<3>(tup);
+      const void* pSysMem = std::get<4>(tup);
+      const uint32_t sys_pitch = to_u32(std::get<5>(tup));
+      const uint32_t sys_slice_pitch = to_u32(std::get<6>(tup));
+
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* res = FromHandle<decltype(hRes), AeroGpuResource>(hRes);
+      if (!ctx || !ctx->device || !res || !pSysMem) {
+        if (ctx && ctx->device) {
+          SetError(ctx->device, E_INVALIDARG);
+        }
+        return;
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      HRESULT hr = UpdateSubresourceUPImpl(ctx, res, dst_subresource, pDstBox, pSysMem, sys_pitch, sys_slice_pitch);
+      if (FAILED(hr)) {
+        SetError(ctx->device, hr);
+      }
+    } else {
+      (void)tup;
+      // If the signature does not match what we expect, fail cleanly.
+    }
+  }
+};
+
+template <typename FnPtr>
+struct CopyResourceThunk;
+
+template <typename Ret, typename... Args>
+struct CopyResourceThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 3) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hDst = std::get<1>(tup);
+      const auto hSrc = std::get<2>(tup);
+
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* dst = FromHandle<decltype(hDst), AeroGpuResource>(hDst);
+      auto* src = FromHandle<decltype(hSrc), AeroGpuResource>(hSrc);
+      if (!ctx || !ctx->device || !dst || !src) {
+        if (ctx && ctx->device) {
+          SetError(ctx->device, E_INVALIDARG);
+        }
+        if constexpr (!std::is_void_v<Ret>) {
+          return E_INVALIDARG;
+        } else {
+          return;
+        }
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      HRESULT hr = CopyResourceImpl(ctx, dst, src);
+      if constexpr (std::is_void_v<Ret>) {
+        if (FAILED(hr)) {
+          SetError(ctx->device, hr);
+        }
+      } else {
+        return hr;
+      }
+    } else {
+      if constexpr (!std::is_void_v<Ret>) {
+        return E_NOTIMPL;
+      } else {
+        return;
+      }
+    }
+  }
+};
+
+template <typename FnPtr>
+struct CopySubresourceRegionThunk;
+
+template <typename Ret, typename... Args>
+struct CopySubresourceRegionThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    auto tup = std::forward_as_tuple(args...);
+    if constexpr (sizeof...(Args) == 9) {
+      const auto hCtx = std::get<0>(tup);
+      const auto hDst = std::get<1>(tup);
+      const uint32_t dst_subresource = to_u32(std::get<2>(tup));
+      const uint32_t dst_x = to_u32(std::get<3>(tup));
+      const uint32_t dst_y = to_u32(std::get<4>(tup));
+      const uint32_t dst_z = to_u32(std::get<5>(tup));
+      const auto hSrc = std::get<6>(tup);
+      const uint32_t src_subresource = to_u32(std::get<7>(tup));
+      const void* pSrcBox = std::get<8>(tup);
+
+      if (!hCtx.pDrvPrivate || !hDst.pDrvPrivate || !hSrc.pDrvPrivate) {
+        if constexpr (std::is_void_v<Ret>) {
+          if (hCtx.pDrvPrivate) {
+            auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+            if (ctx && ctx->device) {
+              SetError(ctx->device, E_INVALIDARG);
+            }
+          }
+        }
+        if constexpr (!std::is_void_v<Ret>) {
+          return E_INVALIDARG;
+        } else {
+          return;
+        }
+      }
+
+      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
+      auto* dst = FromHandle<decltype(hDst), AeroGpuResource>(hDst);
+      auto* src = FromHandle<decltype(hSrc), AeroGpuResource>(hSrc);
+      if (!ctx || !dst || !src) {
+        if constexpr (std::is_void_v<Ret>) {
+          if (ctx && ctx->device) {
+            SetError(ctx->device, E_INVALIDARG);
+          }
+        }
+        if constexpr (!std::is_void_v<Ret>) {
+          return E_INVALIDARG;
+        } else {
+          return;
+        }
+      }
+
+      std::lock_guard<std::mutex> lock(ctx->mutex);
+      HRESULT hr = CopySubresourceRegionImpl(ctx, dst, dst_subresource, dst_x, dst_y, dst_z, src, src_subresource, pSrcBox);
+      if constexpr (std::is_void_v<Ret>) {
+        if (FAILED(hr)) {
+          SetError(ctx->device, hr);
+        }
+      } else {
+        return hr;
+      }
+    } else {
+      if constexpr (!std::is_void_v<Ret>) {
+        return E_NOTIMPL;
+      }
+    }
+  }
+};
+
 void AEROGPU_APIENTRY Flush11(D3D11DDI_HDEVICECONTEXT hCtx) {
   if (!hCtx.pDrvPrivate) {
     return;
@@ -2213,6 +3027,58 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs.pfnClearDepthStencilView = &ClearDepthStencilView11;
   ctx_funcs.pfnDraw = &Draw11;
   ctx_funcs.pfnDrawIndexed = &DrawIndexed11;
+
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnUpdateSubresourceUP) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnUpdateSubresourceUP);
+    ctx_funcs.pfnUpdateSubresourceUP = &UpdateSubresourceUPThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCopyResource) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnCopyResource);
+    ctx_funcs.pfnCopyResource = &CopyResourceThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCopySubresourceRegion) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnCopySubresourceRegion);
+    ctx_funcs.pfnCopySubresourceRegion = &CopySubresourceRegionThunk<Fn>::Impl;
+  }
+
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnStagingResourceMap) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnStagingResourceMap);
+    ctx_funcs.pfnStagingResourceMap = &StagingResourceMapThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnStagingResourceUnmap) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnStagingResourceUnmap);
+    ctx_funcs.pfnStagingResourceUnmap = &StagingResourceUnmapThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferMapDiscard) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnDynamicIABufferMapDiscard);
+    ctx_funcs.pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscardThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferMapNoOverwrite) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnDynamicIABufferMapNoOverwrite);
+    ctx_funcs.pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwriteThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferUnmap) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnDynamicIABufferUnmap);
+    ctx_funcs.pfnDynamicIABufferUnmap = &DynamicIABufferUnmapThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicConstantBufferMapDiscard) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnDynamicConstantBufferMapDiscard);
+    ctx_funcs.pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscardThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicConstantBufferUnmap) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnDynamicConstantBufferUnmap);
+    ctx_funcs.pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmapThunk<Fn>::Impl;
+  }
+
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnMap) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnMap);
+    ctx_funcs.pfnMap = &MapThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnUnmap) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnUnmap);
+    ctx_funcs.pfnUnmap = &UnmapThunk<Fn>::Impl;
+  }
+
   ctx_funcs.pfnFlush = &Flush11;
 
   BindPresentAndRotate(&ctx_funcs);
