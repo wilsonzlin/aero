@@ -505,6 +505,13 @@ uint64_t submit(Device* dev) {
 }
 
 HRESULT flush_locked(Device* dev) {
+  // Flushing an empty command buffer should be a no-op. This matters for
+  // D3DGETDATA_FLUSH polling loops (e.g. DWM EVENT queries): if we submit an
+  // empty buffer every poll we can flood the KMD/emulator with redundant
+  // submissions and increase CPU usage.
+  if (!dev || dev->cmd.empty()) {
+    return S_OK;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
   cmd->reserved0 = 0;
   cmd->reserved1 = 0;
