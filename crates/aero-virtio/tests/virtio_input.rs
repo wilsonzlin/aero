@@ -814,3 +814,30 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
     }
     assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
 }
+
+#[test]
+fn virtio_pci_device_cfg_writes_do_not_raise_config_interrupt() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let (irq, irq_state) = SharedLegacyIrq::new();
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(irq));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // Device config writes are used by virtio-input selector probing. They must not
+    // trigger CONFIG interrupts; config IRQs are reserved for device-side changes.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_ID_NAME,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+
+    let state = irq_state.borrow();
+    assert_eq!(state.raised, 0);
+    assert_eq!(state.lowered, 0);
+    assert!(!state.asserted);
+
+    drop(state);
+    assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
+}
