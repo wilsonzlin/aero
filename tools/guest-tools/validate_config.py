@@ -354,7 +354,8 @@ def load_devices_cmd(path: Path) -> DevicesConfig:
     if not virtio_blk_service:
         raise ValidationError(
             "devices.cmd AERO_VIRTIO_BLK_SERVICE is empty.\n"
-            "Remediation: update docs/windows-device-contract.json (virtio-blk.driver_service_name) and regenerate Guest Tools.\n"
+            "Remediation: update the Windows device contract JSON used to generate this devices.cmd "
+            "(virtio-blk.driver_service_name) and regenerate Guest Tools.\n"
             f"File: {path}"
         )
 
@@ -612,7 +613,8 @@ def _validate_hwid_contract(
     if not hwids:
         raise ValidationError(
             f"{devices_var} is empty.\n"
-            f"Remediation: update docs/windows-device-contract.json (hardware_id_patterns for {driver_kind}) and regenerate Guest Tools."
+            "Remediation: update the Windows device contract JSON used to generate devices.cmd "
+            f"(hardware_id_patterns for {driver_kind}) and regenerate Guest Tools."
         )
 
     if not patterns:
@@ -676,7 +678,7 @@ def _validate_hwid_contract(
             "\n"
             "Remediation:\n"
             f"- Update {spec_path} ({driver_name}.expected_hardware_ids) so it matches the HWIDs in {devices_var}.\n"
-            "- If the underlying device contract changed, update docs/windows-device-contract.json and regenerate Guest Tools.\n"
+            "- If the underlying device contract changed, update the Windows device contract JSON used to generate devices.cmd and regenerate Guest Tools.\n"
         )
 
     uncovered = _find_uncovered_hwids(patterns, hwids)
@@ -690,7 +692,7 @@ def _validate_hwid_contract(
             "\n"
             "Remediation:\n"
             f"- If the emulator/device contract changed, expand {driver_name}.expected_hardware_ids in the spec to cover the new IDs.\n"
-            f"- If {devices_var} is wrong/out-of-date, update docs/windows-device-contract.json and regenerate Guest Tools.\n"
+            f"- If {devices_var} is wrong/out-of-date, update the Windows device contract JSON used to generate devices.cmd and regenerate Guest Tools.\n"
         )
 
     # Enforce that every "base" PCI HWID pattern in the spec is represented by at
@@ -724,7 +726,7 @@ def _validate_hwid_contract(
             f"devices.cmd {devices_var}:\n{_format_bullets(hwids)}\n"
             "\n"
             "Remediation:\n"
-            f"- If the emulator/device contract supports multiple HWID families, ensure {devices_var} includes each supported HWID (via docs/windows-device-contract.json) and regenerate Guest Tools.\n"
+            f"- If the emulator/device contract supports multiple HWID families, ensure {devices_var} includes each supported HWID (via the Windows device contract JSON) and regenerate Guest Tools.\n"
             f"- Otherwise, remove/adjust the extra pattern(s) in {spec_path.name}.\n"
         )
 
