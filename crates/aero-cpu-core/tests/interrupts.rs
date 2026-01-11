@@ -661,6 +661,99 @@ fn iretq_long_mode_non_canonical_rsp_delivers_gp() -> Result<(), CpuExit> {
 }
 
 #[test]
+fn iret_protected_mode_cannot_return_to_more_privileged_cpl() -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x40000);
+
+    let idt_base = 0x1000;
+    // INT 0x80 stays at CPL3 so we can exercise an attempted privilege escalation via IRET.
+    write_idt_gate32(&mut mem, idt_base, 0x80, 0x1B, 0x5000, 0xEE);
+    // #GP handler at 0x6000 (CPL0).
+    write_idt_gate32(&mut mem, idt_base, 13, 0x08, 0x6000, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.state.segments.cs.selector = 0x1B; // CPL3
+    cpu.state.segments.ss.selector = 0x23;
+    cpu.state.set_rip(0x4000_0000);
+    cpu.state.write_gpr32(gpr::RSP, 0x7000);
+    cpu.state.set_rflags(0x202);
+
+    // Provide a ring-0 stack for #GP delivery.
+    let tss_base = 0x10000u64;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+    mem.write_u32(tss_base + 4, 0x9000).unwrap();
+    mem.write_u16(tss_base + 8, 0x10).unwrap();
+
+    cpu.pending.raise_software_interrupt(0x80, 0x4000_0010);
+    cpu.deliver_pending_event(&mut mem)?;
+
+    assert_eq!(cpu.state.segments.cs.selector, 0x1B);
+    assert_eq!(cpu.state.rip(), 0x5000);
+
+    // Corrupt the saved CS so IRET would attempt to return from CPL3 to CPL0.
+    let frame_base = cpu.state.read_gpr32(gpr::RSP) as u64;
+    mem.write_u32(frame_base + 4, 0x08).unwrap();
+
+    cpu.iret(&mut mem)?;
+
+    // The IRET should fault with #GP(0) instead of returning to CPL0.
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.rip(), 0x6000);
+
+    Ok(())
+}
+
+#[test]
+fn iretq_long_mode_cannot_return_to_more_privileged_cpl() -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x40000);
+
+    let idt_base = 0x1000;
+    // INT 0x80 stays at CPL3 so we can exercise an attempted privilege escalation via IRETQ.
+    write_idt_gate64(&mut mem, idt_base, 0x80, 0x33, 0x5000, 0, 0xEE);
+    // #GP handler at 0x6000 (CPL0).
+    write_idt_gate64(&mut mem, idt_base, 13, 0x08, 0x6000, 0, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Long);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x0FFF;
+    cpu.state.segments.cs.selector = 0x33; // user code (CPL3)
+    cpu.state.segments.ss.selector = 0x2B; // user data
+    cpu.state.set_rip(0x4000_0000);
+    cpu.state.write_gpr64(gpr::RSP, 0x7000);
+    cpu.state.set_rflags(0x202);
+
+    // Provide a ring-0 stack for #GP delivery.
+    let tss_base = 0x10000u64;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+    mem.write_u64(tss_base + 4, 0x9000).unwrap();
+
+    cpu.pending.raise_software_interrupt(0x80, 0x4000_0010);
+    cpu.deliver_pending_event(&mut mem)?;
+
+    assert_eq!(cpu.state.segments.cs.selector, 0x33);
+    assert_eq!(cpu.state.rip(), 0x5000);
+
+    // Corrupt the saved CS so IRETQ would attempt to return from CPL3 to CPL0.
+    let frame_base = cpu.state.read_gpr64(gpr::RSP);
+    mem.write_u64(frame_base + 8, 0x08).unwrap();
+
+    cpu.iret(&mut mem)?;
+
+    // The IRETQ should fault with #GP(0) instead of returning to CPL0.
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.rip(), 0x6000);
+
+    Ok(())
+}
+
+#[test]
 fn iretq_long_mode_non_canonical_rip_delivers_gp() -> Result<(), CpuExit> {
     let mut mem = FlatTestBus::new(0x40000);
 

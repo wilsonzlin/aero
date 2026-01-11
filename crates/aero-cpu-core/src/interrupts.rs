@@ -352,7 +352,7 @@ pub fn iret<B: CpuBus>(
     match frame {
         InterruptFrame::Real16 => iret_real(state, bus),
         InterruptFrame::Protected32 { stack_switched } => {
-            iret_protected(state, bus, stack_switched)
+            iret_protected(state, bus, pending, stack_switched)
         }
         InterruptFrame::Long64 { stack_switched } => iret_long(state, bus, pending, stack_switched),
     }
@@ -882,6 +882,7 @@ fn iret_real<B: CpuBus>(state: &mut state::CpuState, bus: &mut B) -> Result<(), 
 fn iret_protected<B: CpuBus>(
     state: &mut state::CpuState,
     bus: &mut B,
+    pending: &mut PendingEventState,
     stack_switched: bool,
 ) -> Result<(), CpuExit> {
     let new_eip = pop32(bus, state)? as u64;
@@ -890,6 +891,18 @@ fn iret_protected<B: CpuBus>(
 
     let current_cpl = state.cpl();
     let return_cpl = (new_cs & 0x3) as u8;
+
+    if return_cpl < current_cpl {
+        // IRET cannot transfer control to a more privileged CPL.
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            state.rip(),
+            Some(0),
+        );
+    }
 
     let (new_esp, new_ss) = if stack_switched || return_cpl > current_cpl {
         let esp = pop32(bus, state)? as u64;
@@ -937,6 +950,18 @@ fn iret_long<B: CpuBus>(
 
     let current_cpl = state.cpl();
     let return_cpl = (new_cs & 0x3) as u8;
+
+    if return_cpl < current_cpl {
+        // IRETQ cannot transfer control to a more privileged CPL.
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            state.rip(),
+            Some(0),
+        );
+    }
 
     let (new_rsp, new_ss) = if stack_switched || return_cpl > current_cpl {
         let rsp = pop64(bus, state)?;
