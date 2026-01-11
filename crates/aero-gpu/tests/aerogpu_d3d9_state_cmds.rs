@@ -215,6 +215,8 @@ fn fullscreen_strip_vb(uv: [[f32; 2]; 4]) -> Vec<u8> {
     //   float4 position
     //   float2 texcoord
     const STRIDE: usize = 24;
+    // Note: D3D9 defaults to clockwise front faces; order the strip vertices so both triangles
+    // have clockwise winding and aren't culled by the default rasterizer state.
     let verts: [[f32; 6]; 4] = [
         [-1.0, -1.0, 0.0, 1.0, uv[0][0], uv[0][1]],
         [-1.0, 1.0, 0.0, 1.0, uv[1][0], uv[1][1]],

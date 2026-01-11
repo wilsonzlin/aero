@@ -210,6 +210,8 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
     // Vertex buffer: two fullscreen quads (12 vertices total). Each vertex is:
     //   float4 position, float4 texcoord
     let mut vb_data = Vec::new();
+    // Note: D3D9 defaults to clockwise front faces; order both quad triangles with clockwise
+    // winding so they are not culled by the default rasterizer state.
     let quad_pos = [
         [-1.0f32, -1.0, 0.0, 1.0],
         [-1.0, 1.0, 0.0, 1.0],
