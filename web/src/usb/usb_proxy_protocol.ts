@@ -1,56 +1,11 @@
-export interface UsbSetupPacket {
-  bmRequestType: number;
-  bRequest: number;
-  wValue: number;
-  wIndex: number;
-  wLength: number;
-}
+import type {
+  SetupPacket as UsbSetupPacket,
+  UsbHostAction,
+  UsbHostCompletion,
+  UsbHostCompletion as WebUsbHostCompletion,
+} from "./webusb_backend";
 
-export type UsbHostAction =
-  | {
-      kind: "controlIn";
-      id: number;
-      setup: UsbSetupPacket;
-    }
-  | {
-      kind: "controlOut";
-      id: number;
-      setup: UsbSetupPacket;
-      data: Uint8Array;
-    }
-  | {
-      kind: "bulkIn";
-      id: number;
-      ep: number;
-      length: number;
-    }
-  | {
-      kind: "bulkOut";
-      id: number;
-      ep: number;
-      data: Uint8Array;
-    };
-
-export type UsbHostCompletion =
-  | {
-      kind: "okIn";
-      id: number;
-      data: Uint8Array;
-    }
-  | {
-      kind: "okOut";
-      id: number;
-      bytesWritten: number;
-    }
-  | {
-      kind: "stall";
-      id: number;
-    }
-  | {
-      kind: "error";
-      id: number;
-      error: string;
-    };
+export type { UsbHostAction, UsbHostCompletion, UsbSetupPacket };
 
 export type UsbActionMessage = { type: "usb.action"; action: UsbHostAction };
 export type UsbCompletionMessage = { type: "usb.completion"; completion: UsbHostCompletion };
@@ -93,9 +48,9 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
     case "controlOut":
       return isUsbSetupPacket(value.setup) && value.data instanceof Uint8Array;
     case "bulkIn":
-      return isFiniteNumber(value.ep) && isFiniteNumber(value.length);
+      return isFiniteNumber(value.endpoint) && isFiniteNumber(value.length);
     case "bulkOut":
-      return isFiniteNumber(value.ep) && value.data instanceof Uint8Array;
+      return isFiniteNumber(value.endpoint) && value.data instanceof Uint8Array;
     default:
       return false;
   }
@@ -103,19 +58,26 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
 
 export function isUsbHostCompletion(value: unknown): value is UsbHostCompletion {
   if (!isRecord(value)) return false;
-  if (!isFiniteNumber(value.id) || typeof value.kind !== "string") return false;
+  if (!isFiniteNumber(value.id) || typeof value.kind !== "string" || typeof value.status !== "string") return false;
 
   switch (value.kind) {
-    case "okIn":
-      return value.data instanceof Uint8Array;
-    case "okOut":
-      return isFiniteNumber(value.bytesWritten);
-    case "stall":
-      return true;
-    case "error":
-      return typeof value.error === "string";
-    default:
+    case "controlIn":
+    case "bulkIn":
+      if (value.status === "success") return value.data instanceof Uint8Array;
+      if (value.status === "stall") return true;
+      if (value.status === "error") return typeof value.message === "string";
       return false;
+    case "controlOut":
+    case "bulkOut":
+      if (value.status === "success") return isFiniteNumber(value.bytesWritten);
+      if (value.status === "stall") return true;
+      if (value.status === "error") return typeof value.message === "string";
+      return false;
+    default: {
+      const neverCompletion: never = value;
+      void neverCompletion;
+      return false;
+    }
   }
 }
 
@@ -153,7 +115,19 @@ export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
   );
 }
 
-export function usbErrorCompletion(id: number, error: string): UsbHostCompletion {
-  return { kind: "error", id, error };
+export function usbErrorCompletion(kind: UsbHostAction["kind"], id: number, message: string): UsbHostCompletion {
+  // Keep this helper here (instead of in webusb_backend.ts) so message senders can
+  // construct protocol-compliant completions even when WebUSB is unavailable.
+  switch (kind) {
+    case "controlIn":
+    case "bulkIn":
+      return { kind, id, status: "error", message } satisfies WebUsbHostCompletion;
+    case "controlOut":
+    case "bulkOut":
+      return { kind, id, status: "error", message } satisfies WebUsbHostCompletion;
+    default: {
+      const neverKind: never = kind;
+      throw new Error(`Unknown USB action kind: ${String(neverKind)}`);
+    }
+  }
 }
-

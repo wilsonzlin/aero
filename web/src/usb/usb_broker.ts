@@ -9,11 +9,7 @@ import {
   type UsbSelectDeviceMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
-import {
-  WebUsbBackend,
-  type UsbHostAction as BackendUsbHostAction,
-  type UsbHostCompletion as BackendUsbHostCompletion,
-} from "./webusb_backend";
+import { WebUsbBackend } from "./webusb_backend";
 import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 
 type UsbDeviceInfo = { vendorId: number; productId: number; productName?: string };
@@ -44,49 +40,6 @@ function getNavigatorUsb(): USB | null {
   // Keep the access tolerant so unit tests (node environment) can stub navigator.
   const nav = (globalThis as unknown as { navigator?: unknown }).navigator as (Navigator & { usb?: USB }) | undefined;
   return nav?.usb ?? null;
-}
-
-function proxyActionToBackendAction(action: UsbHostAction): BackendUsbHostAction {
-  switch (action.kind) {
-    case "controlIn":
-      return { kind: "controlIn", id: action.id, setup: action.setup };
-    case "controlOut":
-      return { kind: "controlOut", id: action.id, setup: action.setup, data: action.data };
-    case "bulkIn":
-      return { kind: "bulkIn", id: action.id, endpoint: action.ep, length: action.length };
-    case "bulkOut":
-      return { kind: "bulkOut", id: action.id, endpoint: action.ep, data: action.data };
-    default: {
-      const neverAction: never = action;
-      throw new Error(`Unknown USB action kind: ${String((neverAction as { kind?: unknown }).kind)}`);
-    }
-  }
-}
-
-function backendCompletionToProxyCompletion(completion: BackendUsbHostCompletion): UsbHostCompletion {
-  const id = completion.id;
-  switch (completion.kind) {
-    case "controlIn":
-    case "bulkIn": {
-      if (completion.status === "success") {
-        return { kind: "okIn", id, data: completion.data };
-      }
-      if (completion.status === "stall") return { kind: "stall", id };
-      return usbErrorCompletion(id, completion.message);
-    }
-    case "controlOut":
-    case "bulkOut": {
-      if (completion.status === "success") {
-        return { kind: "okOut", id, bytesWritten: completion.bytesWritten };
-      }
-      if (completion.status === "stall") return { kind: "stall", id };
-      return usbErrorCompletion(id, completion.message);
-    }
-    default: {
-      const neverCompletion: never = completion;
-      return usbErrorCompletion(id, `Unknown USB completion kind: ${String((neverCompletion as { kind?: unknown }).kind)}`);
-    }
-  }
 }
 
 export class UsbBroker {
@@ -293,8 +246,8 @@ export class UsbBroker {
   }
 
   async execute(action: UsbHostAction): Promise<UsbHostCompletion> {
-    if (this.disconnectError) return usbErrorCompletion(action.id, this.disconnectError);
-    if (!this.backend || !this.device) return usbErrorCompletion(action.id, "WebUSB device not selected.");
+    if (this.disconnectError) return usbErrorCompletion(action.kind, action.id, this.disconnectError);
+    if (!this.backend || !this.device) return usbErrorCompletion(action.kind, action.id, "WebUSB device not selected.");
 
     return await new Promise<UsbHostCompletion>((resolve) => {
       this.queue.push({ action, resolve });
@@ -367,19 +320,17 @@ export class UsbBroker {
       const item = this.queue.shift()!;
 
       if (this.disconnectError) {
-        item.resolve(usbErrorCompletion(item.action.id, this.disconnectError));
+        item.resolve(usbErrorCompletion(item.action.kind, item.action.id, this.disconnectError));
         continue;
       }
 
       const backend = this.backend;
       if (!backend || !this.device) {
-        item.resolve(usbErrorCompletion(item.action.id, "WebUSB device not selected."));
+        item.resolve(usbErrorCompletion(item.action.kind, item.action.id, "WebUSB device not selected."));
         continue;
       }
 
-      const backendPromise = backend
-        .execute(proxyActionToBackendAction(item.action))
-        .then(backendCompletionToProxyCompletion);
+      const backendPromise = backend.execute(item.action);
       // If the device disconnects, the race below resolves and we drop the backend promise.
       // Avoid unhandled rejections if the backend rejects after disconnect.
       backendPromise.catch(() => undefined);
@@ -388,10 +339,10 @@ export class UsbBroker {
       try {
         completion = await Promise.race([
           backendPromise,
-          this.disconnectSignal.promise.then((reason) => usbErrorCompletion(item.action.id, reason)),
+          this.disconnectSignal.promise.then((reason) => usbErrorCompletion(item.action.kind, item.action.id, reason)),
         ]);
       } catch (err) {
-        completion = usbErrorCompletion(item.action.id, formatWebUsbError(err));
+        completion = usbErrorCompletion(item.action.kind, item.action.id, formatWebUsbError(err));
       }
 
       item.resolve(completion);
@@ -424,7 +375,7 @@ export class UsbBroker {
     // Fail any queued actions immediately.
     while (this.queue.length) {
       const item = this.queue.shift()!;
-      item.resolve(usbErrorCompletion(item.action.id, reason));
+      item.resolve(usbErrorCompletion(item.action.kind, item.action.id, reason));
     }
   }
 

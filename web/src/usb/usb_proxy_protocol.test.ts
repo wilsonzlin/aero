@@ -20,8 +20,8 @@ describe("usb/usb_proxy_protocol", () => {
     const actions: UsbHostAction[] = [
       { kind: "controlIn", id: 1, setup },
       { kind: "controlOut", id: 2, setup, data: Uint8Array.of(1, 2, 3) },
-      { kind: "bulkIn", id: 3, ep: 1, length: 64 },
-      { kind: "bulkOut", id: 4, ep: 2, data: Uint8Array.of(9, 8, 7) },
+      { kind: "bulkIn", id: 3, endpoint: 1, length: 64 },
+      { kind: "bulkOut", id: 4, endpoint: 2, data: Uint8Array.of(9, 8, 7) },
     ];
 
     for (const action of actions) {
@@ -34,31 +34,31 @@ describe("usb/usb_proxy_protocol", () => {
 
   it("accepts the supported completion shapes", () => {
     const completions: UsbHostCompletion[] = [
-      { kind: "okIn", id: 1, data: Uint8Array.of(1) },
-      { kind: "okOut", id: 2, bytesWritten: 3 },
-      { kind: "stall", id: 3 },
-      usbErrorCompletion(4, "nope"),
+      { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) },
+      { kind: "bulkOut", id: 2, status: "success", bytesWritten: 3 },
+      { kind: "controlIn", id: 3, status: "stall" },
+      usbErrorCompletion("controlOut", 4, "nope"),
     ];
 
     for (const completion of completions) {
       expect(isUsbHostCompletion(completion)).toBe(true);
     }
 
-    expect(isUsbHostCompletion({ kind: "okOut", id: 1, bytesWritten: "bad" })).toBe(false);
+    expect(isUsbHostCompletion({ kind: "bulkOut", id: 1, status: "success", bytesWritten: "bad" })).toBe(false);
     expect(isUsbHostCompletion({ kind: "unknown", id: 1 })).toBe(false);
   });
 
   it("validates usb.* envelope messages", () => {
     const actionMsg: UsbActionMessage = {
       type: "usb.action",
-      action: { kind: "bulkIn", id: 1, ep: 1, length: 8 },
+      action: { kind: "bulkIn", id: 1, endpoint: 1, length: 8 },
     };
     expect(isUsbActionMessage(actionMsg)).toBe(true);
     expect(isUsbProxyMessage(actionMsg)).toBe(true);
 
     const completionMsg: UsbCompletionMessage = {
       type: "usb.completion",
-      completion: { kind: "okIn", id: 1, data: Uint8Array.of(1, 2) },
+      completion: { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1, 2) },
     };
     expect(isUsbCompletionMessage(completionMsg)).toBe(true);
     expect(isUsbProxyMessage(completionMsg)).toBe(true);
@@ -83,7 +83,7 @@ describe("usb/usb_proxy_protocol", () => {
 
     const completion: UsbCompletionMessage = {
       type: "usb.completion",
-      completion: { kind: "okIn", id: 123, data: Uint8Array.of(9, 8, 7) },
+      completion: { kind: "bulkIn", id: 123, status: "success", data: Uint8Array.of(9, 8, 7) },
     };
     const clonedCompletion = structuredClone(completion) as unknown;
     expect(isUsbProxyMessage(clonedCompletion)).toBe(true);

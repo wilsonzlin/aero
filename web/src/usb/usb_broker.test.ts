@@ -191,8 +191,8 @@ describe("usb/UsbBroker", () => {
     const broker = new UsbBroker();
     await broker.requestDevice();
 
-    const a1: ProxyUsbHostAction = { kind: "bulkIn", id: 1, ep: 1, length: 8 };
-    const a2: ProxyUsbHostAction = { kind: "bulkIn", id: 2, ep: 1, length: 8 };
+    const a1: ProxyUsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
+    const a2: ProxyUsbHostAction = { kind: "bulkIn", id: 2, endpoint: 1, length: 8 };
 
     const p1 = broker.execute(a1);
     const p2 = broker.execute(a2);
@@ -203,7 +203,7 @@ describe("usb/UsbBroker", () => {
 
     const c1: BackendUsbHostCompletion = { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) };
     resolvers[0](c1);
-    await expect(p1).resolves.toEqual({ kind: "okIn", id: 1, data: Uint8Array.of(1) } satisfies ProxyUsbHostCompletion);
+    await expect(p1).resolves.toEqual(c1 satisfies ProxyUsbHostCompletion);
 
     await Promise.resolve();
     expect(callOrder).toEqual([1, 2]);
@@ -211,7 +211,7 @@ describe("usb/UsbBroker", () => {
 
     const c2: BackendUsbHostCompletion = { kind: "bulkIn", id: 2, status: "success", data: Uint8Array.of(2) };
     resolvers[1](c2);
-    await expect(p2).resolves.toEqual({ kind: "okIn", id: 2, data: Uint8Array.of(2) } satisfies ProxyUsbHostCompletion);
+    await expect(p2).resolves.toEqual(c2 satisfies ProxyUsbHostCompletion);
   }, 15000);
 
   it("flushes pending actions when the selected device disconnects", async () => {
@@ -236,16 +236,16 @@ describe("usb/UsbBroker", () => {
     const broker = new UsbBroker();
     await broker.requestDevice();
 
-    const p1 = broker.execute({ kind: "bulkIn", id: 1, ep: 1, length: 8 });
-    const p2 = broker.execute({ kind: "bulkIn", id: 2, ep: 1, length: 8 });
+    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 });
+    const p2 = broker.execute({ kind: "bulkIn", id: 2, endpoint: 1, length: 8 });
 
     await Promise.resolve();
     expect(resolvers).toHaveLength(1);
 
     usb.dispatchDisconnect(device);
 
-    await expect(p1).resolves.toEqual({ kind: "error", id: 1, error: "WebUSB device disconnected." });
-    await expect(p2).resolves.toEqual({ kind: "error", id: 2, error: "WebUSB device disconnected." });
+    await expect(p1).resolves.toEqual({ kind: "bulkIn", id: 1, status: "error", message: "WebUSB device disconnected." });
+    await expect(p2).resolves.toEqual({ kind: "bulkIn", id: 2, status: "error", message: "WebUSB device disconnected." });
   }, 15000);
 
   it("routes usb.action requests to usb.completion responses", async () => {
@@ -274,8 +274,8 @@ describe("usb/UsbBroker", () => {
     // Ignore the initial usb.selected broadcast during attachment.
     port.posted.length = 0;
 
-    port.emit({ type: "usb.action", action: { kind: "bulkOut", id: 1, ep: 1, data: Uint8Array.of(1) } });
-    port.emit({ type: "usb.action", action: { kind: "bulkOut", id: 2, ep: 1, data: Uint8Array.of(2) } });
+    port.emit({ type: "usb.action", action: { kind: "bulkOut", id: 1, endpoint: 1, data: Uint8Array.of(1) } });
+    port.emit({ type: "usb.action", action: { kind: "bulkOut", id: 2, endpoint: 1, data: Uint8Array.of(2) } });
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -285,8 +285,8 @@ describe("usb/UsbBroker", () => {
     }>;
 
     expect(completions).toEqual([
-      { type: "usb.completion", completion: { kind: "okOut", id: 1, bytesWritten: 2 } },
-      { type: "usb.completion", completion: { kind: "okOut", id: 2, bytesWritten: 4 } },
+      { type: "usb.completion", completion: { kind: "bulkOut", id: 1, status: "success", bytesWritten: 2 } },
+      { type: "usb.completion", completion: { kind: "bulkOut", id: 2, status: "success", bytesWritten: 4 } },
     ]);
   });
 
@@ -376,13 +376,13 @@ describe("usb/UsbBroker", () => {
     const broker = new UsbBroker();
     await broker.requestDevice([{ vendorId: 1 }]);
 
-    const p1 = broker.execute({ kind: "bulkIn", id: 1, ep: 1, length: 8 });
+    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 });
     await Promise.resolve();
     expect(resolvers).toHaveLength(1);
 
     await broker.requestDevice([{ vendorId: 2 }]);
 
-    await expect(p1).resolves.toEqual({ kind: "error", id: 1, error: "WebUSB device replaced." });
+    await expect(p1).resolves.toEqual({ kind: "bulkIn", id: 1, status: "error", message: "WebUSB device replaced." });
   });
 
   it("detachSelectedDevice() broadcasts usb.selected and blocks further actions until a new selection", async () => {

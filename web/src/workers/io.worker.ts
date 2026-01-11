@@ -618,8 +618,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if ((data as Partial<UsbCompletionMessage>).type === "usb.completion") {
       const msg = data as UsbCompletionMessage;
       if (import.meta.env.DEV) {
-        if (msg.completion.kind === "okIn") {
-          console.log("[io.worker] WebUSB completion okIn", msg.completion.id, Array.from(msg.completion.data));
+        if (msg.completion.status === "success" && "data" in msg.completion) {
+          console.log("[io.worker] WebUSB completion success", msg.completion.kind, msg.completion.id, Array.from(msg.completion.data));
         } else {
           console.log("[io.worker] WebUSB completion", msg.completion);
         }
