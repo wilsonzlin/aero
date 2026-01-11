@@ -41,6 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/win7-virtio-harness
+          : > out/win7-virtio-harness/harness-output.txt
 
       - name: Prepare output directory (Windows)
         if: runner.os == 'Windows'
@@ -48,6 +49,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'out/win7-virtio-harness' | Out-Null
+          New-Item -ItemType File -Force -Path 'out/win7-virtio-harness\harness-output.txt' | Out-Null
 
       - name: Validate prerequisites (Linux)
         if: runner.os == 'Linux'
