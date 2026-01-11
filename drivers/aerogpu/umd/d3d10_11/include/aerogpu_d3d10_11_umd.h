@@ -304,10 +304,10 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEDEPTHSTENCILSTATE)(D3D10D
                                                                           D3D10DDI_HDEPTHSTENCILSTATE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYDEPTHSTENCILSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE);
 
-typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETRENDERTARGETS)(D3D10DDI_HDEVICE,
-                                                               D3D10DDI_HRENDERTARGETVIEW,
-                                                               D3D10DDI_HDEPTHSTENCILVIEW);
-typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CLEARRTV)(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW, const float[4]);
+  typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETRENDERTARGETS)(D3D10DDI_HDEVICE,
+                                                                D3D10DDI_HRENDERTARGETVIEW,
+                                                                D3D10DDI_HDEPTHSTENCILVIEW);
+  typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CLEARRTV)(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW, const float[4]);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CLEARDSV)(D3D10DDI_HDEVICE,
                                                        D3D10DDI_HDEPTHSTENCILVIEW,
                                                        uint32_t clear_flags,
@@ -327,11 +327,63 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETPRIMITIVETOPOLOGY)(D3D10DDI_HDE
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAW)(D3D10DDI_HDEVICE, uint32_t vertex_count, uint32_t start_vertex);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAWINDEXED)(D3D10DDI_HDEVICE, uint32_t index_count, uint32_t start_index,
                                                           int32_t base_vertex);
-typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_PRESENT)(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_PRESENT *);
-typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_FLUSH)(D3D10DDI_HDEVICE);
-typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_ROTATERESOURCEIDENTITIES)(D3D10DDI_HDEVICE,
-                                                                       D3D10DDI_HRESOURCE *pResources,
-                                                                       uint32_t numResources);
+  typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_PRESENT)(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_PRESENT *);
+  typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_FLUSH)(D3D10DDI_HDEVICE);
+  typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_ROTATERESOURCEIDENTITIES)(D3D10DDI_HDEVICE,
+                                                                        D3D10DDI_HRESOURCE *pResources,
+                                                                        uint32_t numResources);
+
+// Map/Unmap (D3D10/11-style resource updates).
+//
+// Win7 D3D11 runtimes may bypass the generic `pfnMap` and use specialized map
+// entrypoints for staging resources and dynamic buffers. Keep this surface area
+// available even in the "minimal ABI subset" build so the translation layer can
+// be validated without WDK headers.
+typedef struct AEROGPU_DDI_MAPPED_SUBRESOURCE {
+  void* pData;
+  uint32_t RowPitch;
+  uint32_t DepthPitch;
+} AEROGPU_DDI_MAPPED_SUBRESOURCE;
+
+// D3D11_MAP numeric values from d3d11.h. D3D10 runtimes use a compatible subset.
+typedef enum AEROGPU_DDI_MAP_TYPE {
+  AEROGPU_DDI_MAP_READ = 1,
+  AEROGPU_DDI_MAP_WRITE = 2,
+  AEROGPU_DDI_MAP_READ_WRITE = 3,
+  AEROGPU_DDI_MAP_WRITE_DISCARD = 4,
+  AEROGPU_DDI_MAP_WRITE_NO_OVERWRITE = 5,
+} AEROGPU_DDI_MAP_TYPE;
+
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_MAP)(D3D10DDI_HDEVICE,
+                                                      D3D10DDI_HRESOURCE,
+                                                      uint32_t subresource,
+                                                      uint32_t map_type,
+                                                      uint32_t map_flags,
+                                                      AEROGPU_DDI_MAPPED_SUBRESOURCE* pMapped);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_UNMAP)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE, uint32_t subresource);
+
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_STAGINGRESOURCEMAP)(D3D10DDI_HDEVICE,
+                                                                     D3D10DDI_HRESOURCE,
+                                                                     uint32_t subresource,
+                                                                     uint32_t map_type,
+                                                                     uint32_t map_flags,
+                                                                     AEROGPU_DDI_MAPPED_SUBRESOURCE* pMapped);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_STAGINGRESOURCEUNMAP)(D3D10DDI_HDEVICE,
+                                                                    D3D10DDI_HRESOURCE,
+                                                                    uint32_t subresource);
+
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DYNAMICIABUFFERMAPDISCARD)(D3D10DDI_HDEVICE,
+                                                                           D3D10DDI_HRESOURCE,
+                                                                           void** ppData);
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DYNAMICIABUFFERMAPNOOVERWRITE)(D3D10DDI_HDEVICE,
+                                                                                D3D10DDI_HRESOURCE,
+                                                                                void** ppData);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DYNAMICIABUFFERUNMAP)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE);
+
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DYNAMICCONSTANTBUFFERMAPDISCARD)(D3D10DDI_HDEVICE,
+                                                                                  D3D10DDI_HRESOURCE,
+                                                                                  void** ppData);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DYNAMICCONSTANTBUFFERUNMAP)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE);
 
 struct AEROGPU_D3D10_11_DEVICEFUNCS {
   PFNAEROGPU_DDI_DESTROYDEVICE pfnDestroyDevice;
@@ -388,6 +440,24 @@ struct AEROGPU_D3D10_11_DEVICEFUNCS {
   PFNAEROGPU_DDI_PRESENT pfnPresent;
   PFNAEROGPU_DDI_FLUSH pfnFlush;
   PFNAEROGPU_DDI_ROTATERESOURCEIDENTITIES pfnRotateResourceIdentities;
+
+  // Map/Unmap-style entrypoints.
+  //
+  // Note: Win7 D3D11 runtimes are known to use specialized entrypoints instead
+  // of calling the generic `pfnMap`/`pfnUnmap` directly.
+  PFNAEROGPU_DDI_STAGINGRESOURCEMAP pfnStagingResourceMap;
+  PFNAEROGPU_DDI_STAGINGRESOURCEUNMAP pfnStagingResourceUnmap;
+
+  PFNAEROGPU_DDI_DYNAMICIABUFFERMAPDISCARD pfnDynamicIABufferMapDiscard;
+  PFNAEROGPU_DDI_DYNAMICIABUFFERMAPNOOVERWRITE pfnDynamicIABufferMapNoOverwrite;
+  PFNAEROGPU_DDI_DYNAMICIABUFFERUNMAP pfnDynamicIABufferUnmap;
+
+  PFNAEROGPU_DDI_DYNAMICCONSTANTBUFFERMAPDISCARD pfnDynamicConstantBufferMapDiscard;
+  PFNAEROGPU_DDI_DYNAMICCONSTANTBUFFERUNMAP pfnDynamicConstantBufferUnmap;
+
+  // Generic map/unmap wrappers.
+  PFNAEROGPU_DDI_MAP pfnMap;
+  PFNAEROGPU_DDI_UNMAP pfnUnmap;
 };
 
 // D3D10 and D3D11 runtimes look for these entrypoints in the UMD DLL.
