@@ -553,4 +553,31 @@ mod tests {
         ints.imcr_port_write(IMCR_DATA_PORT, 0x00);
         assert_eq!(ints.mode(), PlatformInterruptMode::LegacyPic);
     }
+
+    #[test]
+    fn lapic_timer_one_shot_delivers_after_tick() {
+        let mut ints = PlatformInterrupts::new();
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // Program LAPIC timer:
+        // - Divide config = 0xB => divisor 1 (our model treats it as 1ns per tick).
+        // - LVT timer = vector 0x40, unmasked, one-shot (default).
+        // - Initial count = 10 ticks.
+        ints.lapic_mmio_write(0x3E0, &0xBu32.to_le_bytes()); // Divide config
+        ints.lapic_mmio_write(0x320, &0x40u32.to_le_bytes()); // LVT Timer
+        ints.lapic_mmio_write(0x380, &10u32.to_le_bytes()); // Initial count
+
+        ints.tick(9);
+        assert_eq!(ints.get_pending(), None);
+
+        ints.tick(1);
+        assert_eq!(ints.get_pending(), Some(0x40));
+
+        ints.acknowledge(0x40);
+        ints.eoi(0x40);
+
+        // One-shot timer should not re-fire.
+        ints.tick(100);
+        assert_eq!(ints.get_pending(), None);
+    }
 }
