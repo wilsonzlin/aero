@@ -1605,6 +1605,10 @@ function renderAudioPanel(): HTMLElement {
         );
 
         await output.resume();
+        if (window.aero?.perf) {
+          stopPerfSampling?.();
+          stopPerfSampling = startAudioPerfSampling(output, perf);
+        }
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
