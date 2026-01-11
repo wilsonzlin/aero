@@ -134,6 +134,21 @@ def _is_metadata_file(name: str) -> bool:
 
 
 def _ensure_empty_dir(path: Path, *, clean: bool) -> None:
+    resolved = path.resolve()
+    # Safety rails: refuse to delete obviously dangerous directories.
+    #
+    # This tool is often invoked with `--clean` inside temp directories, but it's easy to
+    # make a catastrophic mistake (e.g. `--out-root / --clean`). We intentionally refuse
+    # to delete:
+    # - filesystem roots ("/", "C:\\", etc)
+    # - directories that look like the root of a git checkout (contain ".git/")
+    if clean:
+        root = Path(resolved.anchor)
+        if resolved == root:
+            raise SystemExit(f"refusing to delete filesystem root: {resolved}")
+        if (resolved / ".git").is_dir():
+            raise SystemExit(f"refusing to delete a git checkout root: {resolved}")
+
     if path.exists():
         if not path.is_dir():
             raise SystemExit(f"out-root exists but is not a directory: {path}")

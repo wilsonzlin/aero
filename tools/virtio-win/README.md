@@ -15,6 +15,9 @@ python3 tools/virtio-win/extract.py \
   --out-root /tmp/virtio-win-root
 ```
 
+Tip: pass a dedicated output directory. If you use `--clean`, the extractor refuses to
+delete the filesystem root (e.g. `/`) or a git checkout root (directories containing `.git/`).
+
 Then pass the extracted directory to the existing packaging scripts:
 
 ```bash
