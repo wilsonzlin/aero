@@ -194,6 +194,7 @@
     <ClInclude Include="src\aerogpu_cmd_writer.h" />
     <ClInclude Include="src\aerogpu_d3d10_11_internal.h" />
     <ClInclude Include="..\common\aerogpu_cmd_stream_writer.h" />
+    <ClInclude Include="src\aerogpu_d3d10_trace.h" />
     <ClInclude Include="src\aerogpu_d3d10_11_log.h" />
     <ClInclude Include="..\..\protocol\aerogpu_cmd.h" />
     <ClInclude Include="..\..\protocol\aerogpu_wddm_alloc.h" />

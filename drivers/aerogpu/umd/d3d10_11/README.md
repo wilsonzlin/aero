@@ -25,6 +25,17 @@ For a full “bring-up spec” (Win7 driver model overview, minimal D3D10DDI/D3D
 - `docs/graphics/win7-d3d10-11-umd-minimal.md`
 - `docs/graphics/win7-d3d11ddi-function-tables.md` (DDI function-table checklist: REQUIRED vs stub for FL10_0)
 
+## Bring-up tracing (Win7)
+
+For early Win7 bring-up it is often useful to trace:
+
+* which `pfnGetCaps` query types the runtime is requesting, and
+* which D3D10DDI entrypoints are being called unexpectedly (NULL-vtable avoidance).
+
+See:
+
+* `docs/graphics/win7-d3d10-caps-tracing.md`
+
 ## Feature level strategy
 
 The initial feature claim is **D3D_FEATURE_LEVEL_10_0**:

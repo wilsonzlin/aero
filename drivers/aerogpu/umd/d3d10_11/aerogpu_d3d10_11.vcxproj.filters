@@ -37,6 +37,9 @@
     <ClInclude Include="..\common\aerogpu_cmd_stream_writer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\aerogpu_d3d10_trace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\aerogpu_d3d10_11_log.h">
       <Filter>Header Files</Filter>
     </ClInclude>

@@ -21,6 +21,7 @@ This document is an implementation-oriented checklist/spec for bringing up **Dir
 * `docs/graphics/win7-wddm11-aerogpu-driver.md` — KMD+UMD architecture, memory model, fence/vblank requirements, and the guest↔emulator command transport.
 * `docs/graphics/win7-aerogpu-validation.md` — bring-up/stability checklist (TDR avoidance, vblank pacing, debug playbook).
 * `docs/graphics/win7-d3d11ddi-function-tables.md` — D3D11 `d3d11umddi.h` function-table checklist (which entries must be non-null vs safely stubbed for FL10_0 bring-up).
+* `docs/graphics/win7-d3d10-caps-tracing.md` — how to enable `GetCaps` + entrypoint tracing in the D3D10/11 UMD during Win7 bring-up.
 
 > Header references: the names in this doc match the WDK user-mode DDI headers:
 > `d3d10umddi.h`, `d3d10_1umddi.h` (optional), `d3d11umddi.h`, and for swapchain/present: `dxgiddi.h`.
