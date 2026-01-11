@@ -11,7 +11,9 @@ use std::{
 };
 
 use crate::range_set::{ByteRange, RangeSet};
-use reqwest::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE};
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -135,6 +137,11 @@ impl Default for StreamingCacheBackend {
 pub struct StreamingDiskConfig {
     pub url: Url,
     pub cache_dir: PathBuf,
+    /// Additional headers applied to all HTTP requests (`HEAD` + `GET Range`).
+    ///
+    /// This is intended for auth (`Authorization`, `Cookie`, etc). The URL is intentionally
+    /// excluded from the persistent cache identity, and these headers are *not* persisted.
+    pub request_headers: Vec<(String, String)>,
     /// Optional stable validator for the image (e.g. ETag).
     ///
     /// When unset, `StreamingDisk` will attempt to use the server-provided `ETag`
@@ -149,6 +156,7 @@ impl StreamingDiskConfig {
         Self {
             url,
             cache_dir: cache_dir.into(),
+            request_headers: Vec::new(),
             validator: None,
             cache_backend: StreamingCacheBackend::default(),
             options: StreamingDiskOptions::default(),
@@ -468,6 +476,7 @@ pub struct StreamingDisk {
 struct StreamingDiskInner {
     client: reqwest::Client,
     url: Url,
+    request_headers: HeaderMap,
     total_size: u64,
     validator: Option<String>,
     cache: Arc<dyn ChunkStore>,
@@ -507,7 +516,9 @@ impl StreamingDisk {
         fs::create_dir_all(&config.cache_dir)?;
 
         let client = reqwest::Client::new();
-        let (total_size, probed_validator) = probe_remote_size_and_validator(&client, &config.url).await?;
+        let request_headers = build_header_map(&config.request_headers)?;
+        let (total_size, probed_validator) =
+            probe_remote_size_and_validator(&client, &config.url, &request_headers).await?;
         let validator = config.validator.or(probed_validator);
 
         if let Some(manifest) = &config.options.manifest {
@@ -572,6 +583,7 @@ impl StreamingDisk {
             inner: Arc::new(StreamingDiskInner {
                 client,
                 url: config.url,
+                request_headers,
                 total_size,
                 validator,
                 cache,
@@ -941,10 +953,24 @@ impl StreamingDisk {
             .range_requests
             .fetch_add(1, Ordering::Relaxed);
 
-        let mut req = self.inner.client.get(self.inner.url.clone()).header(RANGE, range_header);
+        let mut headers = self.inner.request_headers.clone();
+        headers.insert(
+            RANGE,
+            HeaderValue::from_str(&range_header)
+                .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
+        );
         if let Some(validator) = &self.inner.validator {
-            req = req.header(IF_RANGE, validator);
+            headers.insert(
+                IF_RANGE,
+                HeaderValue::from_str(validator)
+                    .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
+            );
         }
+        let req = self
+            .inner
+            .client
+            .get(self.inner.url.clone())
+            .headers(headers);
 
         let resp = tokio::select! {
             _ = token.cancelled() => return Err(StreamingDiskError::Cancelled),
@@ -1006,11 +1032,12 @@ impl Clone for StreamingDisk {
 async fn probe_remote_size_and_validator(
     client: &reqwest::Client,
     url: &Url,
+    request_headers: &HeaderMap,
 ) -> Result<(u64, Option<String>), StreamingDiskError> {
     let mut head_total_size: Option<u64> = None;
     let mut head_validator: Option<String> = None;
 
-    let head = client.head(url.clone()).send().await;
+    let head = client.head(url.clone()).headers(request_headers.clone()).send().await;
     if let Ok(resp) = head {
         if resp.status().is_success() {
             head_total_size = resp
@@ -1040,6 +1067,7 @@ async fn probe_remote_size_and_validator(
 
     let resp = client
         .get(url.clone())
+        .headers(request_headers.clone())
         .header(RANGE, "bytes=0-0")
         .send()
         .await
@@ -1070,6 +1098,18 @@ async fn probe_remote_size_and_validator(
         }
     }
     Ok((total, validator.or(head_validator)))
+}
+
+fn build_header_map(headers: &[(String, String)]) -> Result<HeaderMap, StreamingDiskError> {
+    let mut out = HeaderMap::new();
+    for (name, value) in headers {
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?;
+        let value =
+            HeaderValue::from_str(value).map_err(|e| StreamingDiskError::Protocol(e.to_string()))?;
+        out.insert(name, value);
+    }
+    Ok(out)
 }
 
 fn parse_total_size_from_content_range(content_range: &str) -> Result<u64, StreamingDiskError> {
