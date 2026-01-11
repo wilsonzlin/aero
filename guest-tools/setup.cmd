@@ -94,7 +94,13 @@ call :detect_arch || goto :fail
 call :load_signing_policy
 call :apply_force_defaults || goto :fail
 call :load_config || goto :fail
-call :validate_storage_service_infs || goto :fail
+if "%ARG_SKIP_STORAGE%"=="1" (
+  call :log ""
+  call :log "Skipping virtio-blk storage INF validation (/skipstorage)."
+  call :log "WARNING: Boot-critical virtio-blk pre-seeding is disabled; do NOT switch the boot disk to virtio-blk."
+) else (
+  call :validate_storage_service_infs || goto :fail
+)
 call :check_kb3033929
 
 call :install_certs || goto :fail
