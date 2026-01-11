@@ -1977,8 +1977,10 @@ uint64_t submit(Device* dev, bool is_present) {
   }
 
   // Light logging so we can confirm command flow during integration.
-  logf("aerogpu-d3d9: submit cmd_bytes=%llu fence=%llu\n",
+  logf("aerogpu-d3d9: submit %s cmd_bytes=%llu allocs=%u fence=%llu\n",
+       is_present ? "present" : "render",
        static_cast<unsigned long long>(cmd_bytes),
+       static_cast<unsigned>(dev->alloc_list_tracker.list_len()),
        static_cast<unsigned long long>(fence));
 
   dev->last_submission_fence = fence;
