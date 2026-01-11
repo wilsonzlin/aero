@@ -38,6 +38,47 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 }
 
 describe("chunked delivery", () => {
+  it("enforces owner authorization for manifest and chunk endpoints", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      chunkedPrefix: "images/user-1/image-1/v1/",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called for forbidden requests");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const manifestRes = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/chunked/manifest`,
+      headers: { "x-user-id": "user-2" },
+    });
+    expect(manifestRes.statusCode).toBe(403);
+
+    const chunkRes = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/chunked/chunks/0`,
+      headers: { "x-user-id": "user-2" },
+    });
+    expect(chunkRes.statusCode).toBe(403);
+  });
+
   it("proxies the chunked manifest from S3 with cache headers", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
