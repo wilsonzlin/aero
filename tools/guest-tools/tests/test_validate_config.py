@@ -156,8 +156,8 @@ class ValidateConfigTests(unittest.TestCase):
     def test_regex_matching_is_case_insensitive(self) -> None:
         # Spec regexes should match HWIDs regardless of case.
         match = validate_config._find_first_match(
-            patterns=[r"pci\\ven_1af4&dev_1000"],
-            hwids=["PCI\\VEN_1AF4&DEV_1000"],
+            patterns=[r"pci\\ven_1af4&dev_1041"],
+            hwids=["PCI\\VEN_1AF4&DEV_1041"],
         )
         self.assertIsNotNone(match)
 
