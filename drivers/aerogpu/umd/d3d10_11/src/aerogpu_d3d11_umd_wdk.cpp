@@ -24,6 +24,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -4648,7 +4649,11 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
 
 // D3D11 exposes OMSetRenderTargetsAndUnorderedAccessViews which may map to
 // interface-version-specific DDIs. For bring-up, wire any such entrypoints back
-// to our simple RTV/DSV binder and ignore UAV bindings.
+// to our simple RTV/DSV binder.
+//
+// UAV binding is unsupported at FL10_0. Treat unbinding (all-null UAVs) as
+// benign (ClearState-friendly), but report E_NOTIMPL when an app attempts to
+// bind real UAV state.
 template <typename FnPtr>
 struct SetRenderTargetsAndUavsThunk;
 
@@ -4671,8 +4676,25 @@ struct SetRenderTargetsAndUavsThunk<
                                     const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
                                     D3D11DDI_HDEPTHSTENCILVIEW hDsv,
                                     Tail... tail) {
-    ((void)tail, ...);
     SetRenderTargets11(hCtx, NumViews, phRtvs, hDsv);
+
+    if constexpr (sizeof...(Tail) >= 3) {
+      using TailTuple = std::tuple<Tail...>;
+      using CountT = std::tuple_element_t<1, TailTuple>;
+      using UavPtrT = std::tuple_element_t<2, TailTuple>;
+      if constexpr ((std::is_integral_v<std::decay_t<CountT>> || std::is_enum_v<std::decay_t<CountT>>) &&
+                    std::is_pointer_v<std::decay_t<UavPtrT>> &&
+                    std::is_same_v<std::remove_cv_t<std::remove_pointer_t<std::decay_t<UavPtrT>>>, D3D11DDI_HUNORDEREDACCESSVIEW>) {
+        auto tail_tup = std::forward_as_tuple(tail...);
+        const UINT num_uavs = static_cast<UINT>(std::get<1>(tail_tup));
+        const auto* ph_uavs = std::get<2>(tail_tup);
+        if (AnyNonNullHandles(ph_uavs, num_uavs)) {
+          SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+        }
+      }
+    }
+
+    ((void)tail, ...);
   }
 };
 
@@ -4688,8 +4710,25 @@ struct SetRenderTargetsAndUavsThunk<
                                     D3D11DDI_HRENDERTARGETVIEW* phRtvs,
                                     D3D11DDI_HDEPTHSTENCILVIEW hDsv,
                                     Tail... tail) {
-    ((void)tail, ...);
     SetRenderTargets11(hCtx, NumViews, phRtvs, hDsv);
+
+    if constexpr (sizeof...(Tail) >= 3) {
+      using TailTuple = std::tuple<Tail...>;
+      using CountT = std::tuple_element_t<1, TailTuple>;
+      using UavPtrT = std::tuple_element_t<2, TailTuple>;
+      if constexpr ((std::is_integral_v<std::decay_t<CountT>> || std::is_enum_v<std::decay_t<CountT>>) &&
+                    std::is_pointer_v<std::decay_t<UavPtrT>> &&
+                    std::is_same_v<std::remove_cv_t<std::remove_pointer_t<std::decay_t<UavPtrT>>>, D3D11DDI_HUNORDEREDACCESSVIEW>) {
+        auto tail_tup = std::forward_as_tuple(tail...);
+        const UINT num_uavs = static_cast<UINT>(std::get<1>(tail_tup));
+        const auto* ph_uavs = std::get<2>(tail_tup);
+        if (AnyNonNullHandles(ph_uavs, num_uavs)) {
+          SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+        }
+      }
+    }
+
+    ((void)tail, ...);
   }
 };
 
