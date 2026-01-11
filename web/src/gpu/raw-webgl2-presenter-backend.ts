@@ -80,6 +80,8 @@ export class RawWebGl2Presenter implements Presenter {
   private uFrameLoc: WebGLUniformLocation | null = null;
 
   private isContextLost = false;
+  private onContextLost: ((ev: Event) => void) | null = null;
+  private onContextRestored: (() => void) | null = null;
 
   public init(canvas: OffscreenCanvas, width: number, height: number, dpr: number, opts?: PresenterInitOptions): void {
     this.canvas = canvas;
@@ -111,17 +113,13 @@ export class RawWebGl2Presenter implements Presenter {
     this.gl = gl;
 
     // Events are dispatched on the canvas.
-    (canvas as any).addEventListener(
-      'webglcontextlost',
-      (ev: Event) => {
-        // A context loss is recoverable only if we preventDefault.
-        (ev as any).preventDefault?.();
-        this.isContextLost = true;
-        this.opts.onError?.(new PresenterError('webgl_context_lost', 'WebGL context lost'));
-      },
-      { passive: false } as any,
-    );
-    (canvas as any).addEventListener('webglcontextrestored', () => {
+    this.onContextLost = (ev: Event) => {
+      // A context loss is recoverable only if we preventDefault.
+      (ev as any).preventDefault?.();
+      this.isContextLost = true;
+      this.opts.onError?.(new PresenterError('webgl_context_lost', 'WebGL context lost'));
+    };
+    this.onContextRestored = () => {
       this.isContextLost = false;
       try {
         this.recreateResources();
@@ -130,7 +128,14 @@ export class RawWebGl2Presenter implements Presenter {
           new PresenterError('webgl_context_restore_failed', 'WebGL context restored but presenter re-init failed', err),
         );
       }
-    });
+    };
+
+    try {
+      (canvas as any).addEventListener('webglcontextlost', this.onContextLost, { passive: false } as any);
+      (canvas as any).addEventListener('webglcontextrestored', this.onContextRestored);
+    } catch {
+      // Some OffscreenCanvas implementations do not expose these events; ignore.
+    }
 
     this.recreateResources();
   }
@@ -214,11 +219,23 @@ export class RawWebGl2Presenter implements Presenter {
 
   public destroy(): void {
     const gl = this.gl;
-    if (!gl) return;
+    const canvas = this.canvas;
+    if (canvas) {
+      try {
+        if (this.onContextLost) (canvas as any).removeEventListener('webglcontextlost', this.onContextLost);
+        if (this.onContextRestored) (canvas as any).removeEventListener('webglcontextrestored', this.onContextRestored);
+      } catch {
+        // Ignore.
+      }
+    }
+    this.onContextLost = null;
+    this.onContextRestored = null;
 
-    if (this.program) gl.deleteProgram(this.program);
-    if (this.vao) gl.deleteVertexArray(this.vao);
-    if (this.frameTexture) gl.deleteTexture(this.frameTexture);
+    if (gl) {
+      if (this.program) gl.deleteProgram(this.program);
+      if (this.vao) gl.deleteVertexArray(this.vao);
+      if (this.frameTexture) gl.deleteTexture(this.frameTexture);
+    }
 
     this.program = null;
     this.vao = null;

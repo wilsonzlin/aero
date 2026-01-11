@@ -1,4 +1,10 @@
-import type { GpuRuntimeInitOptions as WorkerGpuInitOptions, GpuRuntimeReadyMessage, GpuRuntimeOutMessage } from "../workers/gpu_runtime_protocol";
+import type {
+  GpuRuntimeEventsMessage,
+  GpuRuntimeInitOptions as WorkerGpuInitOptions,
+  GpuRuntimeOutMessage,
+  GpuRuntimeReadyMessage,
+  GpuRuntimeStatsMessage,
+} from "../workers/gpu_runtime_protocol";
 import { createGpuWorker, type GpuWorkerHandle } from "../main/createGpuWorker";
 import { RawWebGL2Presenter } from './raw-webgl2-presenter';
 
@@ -27,6 +33,16 @@ export interface GpuRuntimeInitOptions {
    * Worker-side errors (presenter init failures, WebGL context loss, etc).
    */
   onError?: (msg: Extract<GpuRuntimeOutMessage, { type: "error" }>) => void;
+
+  /**
+   * Periodic low-rate stats from the GPU worker (best-effort).
+   */
+  onStats?: (msg: GpuRuntimeStatsMessage) => void;
+
+  /**
+   * Structured error/event stream from the GPU worker (best-effort).
+   */
+  onEvents?: (msg: GpuRuntimeEventsMessage) => void;
 }
 
 export function supportsWorkerOffscreenCanvas(canvas: HTMLCanvasElement): boolean {
@@ -225,6 +241,8 @@ export class GpuRuntime {
         devicePixelRatio: dpr,
         gpuOptions: opts.gpuOptions,
         onError: opts.onError,
+        onStats: opts.onStats,
+        onEvents: opts.onEvents,
       });
 
       const ready = await handle.ready;

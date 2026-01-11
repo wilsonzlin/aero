@@ -67,13 +67,17 @@ import type { Presenter, PresenterBackendKind, PresenterInitOptions } from "../g
 import { PresenterError } from "../gpu/presenter";
 import { RawWebGl2Presenter } from "../gpu/raw-webgl2-presenter-backend";
 import type {
+  GpuRuntimeErrorEvent,
   GpuRuntimeInMessage,
   GpuRuntimeFallbackInfo,
+  GpuRuntimeEventsMessage,
   GpuRuntimeInitMessage,
   GpuRuntimeInitOptions,
   GpuRuntimeOutMessage,
   GpuRuntimeScreenshotRequestMessage,
   GpuRuntimeSubmitAerogpuMessage,
+  GpuRuntimeStatsCountersV1,
+  GpuRuntimeStatsMessage,
 } from "./gpu_runtime_protocol";
 
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
@@ -108,12 +112,31 @@ let runtimePollTimer: number | null = null;
 // Optional `present()` entrypoint supplied by a dynamically imported module.
 // When unset, the worker uses the built-in presenter backends.
 let presentFn: PresentFn | null = null;
+let presentModule: Record<string, unknown> | null = null;
+let wasmInitPromise: Promise<void> | null = null;
 let presenting = false;
 
 let runtimeInit: GpuRuntimeInitMessage | null = null;
 let runtimeCanvas: OffscreenCanvas | null = null;
 let runtimeOptions: GpuRuntimeInitOptions | null = null;
 let runtimeReadySent = false;
+
+let telemetryPollTimer: number | null = null;
+const TELEMETRY_POLL_INTERVAL_MS = 1000 / 3;
+let telemetryTickInFlight = false;
+
+let isDeviceLost = false;
+let recoveryPromise: Promise<void> | null = null;
+
+let presentsAttempted = 0;
+let presentsSucceeded = 0;
+let recoveriesAttempted = 0;
+let recoveriesSucceeded = 0;
+let surfaceReconfigures = 0;
+
+let canvasWithContextLossHandlers: OffscreenCanvas | null = null;
+let onWebglContextLost: ((ev: Event) => void) | null = null;
+let onWebglContextRestored: ((ev: Event) => void) | null = null;
 
 let outputWidthCss: number | null = null;
 let outputHeightCss: number | null = null;
@@ -124,6 +147,7 @@ let presenterInitOptions: PresenterInitOptions | null = null;
 let presenterUserOnError: ((error: PresenterError) => void) | undefined = undefined;
 let presenterFallback: GpuRuntimeFallbackInfo | undefined = undefined;
 let presenterInitPromise: Promise<void> | null = null;
+let presenterErrorGeneration = 0;
 let presenterSrcWidth = 0;
 let presenterSrcHeight = 0;
 
@@ -389,7 +413,376 @@ const maybePostMetrics = () => {
   });
 };
 
-const sendError = (err: unknown) => {
+function backendKindForEvent(): string {
+  if (presenter) return presenter.backend;
+  if (runtimeCanvas) return "unknown";
+  return "headless";
+}
+
+function postGpuEvents(events: GpuRuntimeErrorEvent[]): void {
+  if (events.length === 0) return;
+  postToMain({ type: "events", version: 1, events } satisfies GpuRuntimeEventsMessage);
+}
+
+function emitGpuEvent(event: GpuRuntimeErrorEvent): void {
+  postGpuEvents([event]);
+}
+
+function normalizeSeverity(value: unknown): GpuRuntimeErrorEvent["severity"] {
+  switch (typeof value === "string" ? value.toLowerCase() : "") {
+    case "info":
+      return "info";
+    case "warn":
+    case "warning":
+      return "warn";
+    case "error":
+      return "error";
+    case "fatal":
+      return "fatal";
+    default:
+      return "error";
+  }
+}
+
+function normalizeGpuEvent(raw: unknown): GpuRuntimeErrorEvent | null {
+  const now = performance.now();
+  const defaultBackend = backendKindForEvent();
+
+  const parsed = typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return raw; } })() : raw;
+  if (parsed == null) return null;
+
+  if (typeof parsed !== "object") {
+    return {
+      time_ms: now,
+      backend_kind: defaultBackend,
+      severity: "error",
+      category: "Unknown",
+      message: String(parsed),
+    };
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const timeVal = obj.time_ms ?? obj.timeMs ?? obj.time ?? obj.ts_ms ?? obj.ts;
+  const time_ms = typeof timeVal === "number" ? timeVal : now;
+
+  const backendVal = obj.backend_kind ?? obj.backendKind ?? obj.backend;
+  const backend_kind = typeof backendVal === "string" ? backendVal : defaultBackend;
+
+  const messageVal = obj.message ?? obj.msg ?? obj.error ?? obj.text;
+  const message = typeof messageVal === "string" ? messageVal : String(messageVal ?? "gpu event");
+
+  const categoryVal = obj.category ?? obj.cat;
+  const category = typeof categoryVal === "string" ? categoryVal : "Unknown";
+
+  const severityVal = obj.severity ?? obj.level ?? obj.sev;
+  const severity = normalizeSeverity(severityVal);
+
+  const details = "details" in obj ? obj.details : "data" in obj ? obj.data : undefined;
+  return {
+    time_ms,
+    backend_kind,
+    severity,
+    category,
+    message,
+    ...(details === undefined ? {} : { details }),
+  };
+}
+
+function normalizeGpuEventBatch(raw: unknown): GpuRuntimeErrorEvent[] {
+  const parsed = typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return raw; } })() : raw;
+  if (parsed == null) return [];
+
+  let items: unknown[] = [];
+  if (Array.isArray(parsed)) {
+    items = parsed;
+  } else if (typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    const events = obj.events ?? obj.error_events ?? obj.gpu_events;
+    if (Array.isArray(events)) {
+      items = events;
+    } else {
+      items = [parsed];
+    }
+  } else {
+    items = [parsed];
+  }
+
+  const out: GpuRuntimeErrorEvent[] = [];
+  for (const item of items) {
+    const ev = normalizeGpuEvent(item);
+    if (ev) out.push(ev);
+  }
+  return out;
+}
+
+function getStatsCounters(): GpuRuntimeStatsCountersV1 {
+  return {
+    presents_attempted: presentsAttempted,
+    presents_succeeded: presentsSucceeded,
+    recoveries_attempted: recoveriesAttempted,
+    recoveries_succeeded: recoveriesSucceeded,
+    surface_reconfigures: surfaceReconfigures,
+  };
+}
+
+function postStatsMessage(wasmStats?: unknown): void {
+  const backendKind = presenter?.backend ?? (runtimeCanvas ? undefined : "headless");
+  postToMain({
+    type: "stats",
+    version: 1,
+    timeMs: performance.now(),
+    ...(backendKind ? { backendKind } : {}),
+    counters: getStatsCounters(),
+    ...(wasmStats === undefined ? {} : { wasm: wasmStats }),
+  } satisfies GpuRuntimeStatsMessage);
+}
+
+function getModuleExportFn<T extends (...args: any[]) => any>(names: readonly string[]): T | null {
+  const mod = presentModule as Record<string, unknown> | null;
+  if (!mod) return null;
+  for (const name of names) {
+    const fn = mod[name];
+    if (typeof fn === "function") return fn as T;
+  }
+  return null;
+}
+
+async function tryGetWasmStats(): Promise<unknown | undefined> {
+  const fn = getModuleExportFn<() => unknown | Promise<unknown>>(["get_gpu_stats", "getGpuStats"]);
+  if (!fn) return undefined;
+  try {
+    const value = await fn();
+    if (typeof value === "string") {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  } catch {
+    return undefined;
+  }
+}
+
+async function tryDrainWasmEvents(): Promise<GpuRuntimeErrorEvent[]> {
+  const fn = getModuleExportFn<() => unknown | Promise<unknown>>([
+    "drain_gpu_events",
+    "drain_gpu_error_events",
+    "take_gpu_events",
+    "take_gpu_error_events",
+    "drainGpuEvents",
+  ]);
+  if (!fn) return [];
+  try {
+    const value = await fn();
+    return normalizeGpuEventBatch(value);
+  } catch {
+    return [];
+  }
+}
+
+async function telemetryTick(): Promise<void> {
+  if (telemetryTickInFlight) return;
+  if (!runtimeInit) return;
+  if (isDeviceLost) return;
+
+  telemetryTickInFlight = true;
+  try {
+    const events = await tryDrainWasmEvents();
+    if (events.length > 0) {
+      postGpuEvents(events);
+      // Infer device loss from runtime-reported events.
+      for (const ev of events) {
+        if (isDeviceLost) break;
+        if (ev.category.toLowerCase() === "devicelost" && (ev.severity === "error" || ev.severity === "fatal")) {
+          handleDeviceLost(ev.message, { source: "wasm", event: ev }, true);
+          break;
+        }
+      }
+    }
+
+    if (isDeviceLost) return;
+
+    const wasmStats = await tryGetWasmStats();
+    postStatsMessage(wasmStats);
+  } finally {
+    telemetryTickInFlight = false;
+  }
+}
+
+function startTelemetryPolling(): void {
+  if (telemetryPollTimer !== null) return;
+  telemetryPollTimer = setInterval(() => void telemetryTick(), TELEMETRY_POLL_INTERVAL_MS) as unknown as number;
+  void telemetryTick();
+}
+
+function stopTelemetryPolling(): void {
+  if (telemetryPollTimer === null) return;
+  clearInterval(telemetryPollTimer);
+  telemetryPollTimer = null;
+}
+
+function installContextLossHandlers(canvas: OffscreenCanvas): void {
+  if (canvasWithContextLossHandlers === canvas) return;
+  uninstallContextLossHandlers();
+
+  canvasWithContextLossHandlers = canvas;
+  onWebglContextLost = (ev: Event) => {
+    // Allow restoration when supported.
+    (ev as any).preventDefault?.();
+    handleDeviceLost("WebGL context lost", { source: "webglcontextlost" }, false);
+  };
+  onWebglContextRestored = () => {
+    if (!isDeviceLost) return;
+    void attemptRecovery("webglcontextrestored");
+  };
+
+  try {
+    (canvas as any).addEventListener("webglcontextlost", onWebglContextLost, { passive: false } as any);
+    (canvas as any).addEventListener("webglcontextrestored", onWebglContextRestored);
+  } catch {
+    // Best-effort: some OffscreenCanvas implementations do not expose these events.
+  }
+}
+
+function uninstallContextLossHandlers(): void {
+  const canvas = canvasWithContextLossHandlers;
+  if (!canvas) return;
+  try {
+    if (onWebglContextLost) (canvas as any).removeEventListener("webglcontextlost", onWebglContextLost);
+    if (onWebglContextRestored) (canvas as any).removeEventListener("webglcontextrestored", onWebglContextRestored);
+  } catch {
+    // Ignore.
+  }
+  canvasWithContextLossHandlers = null;
+  onWebglContextLost = null;
+  onWebglContextRestored = null;
+}
+
+function getDeviceLostCode(
+  err: unknown,
+): "webgl_context_lost" | "webgl_context_restore_failed" | "webgpu_device_lost" | null {
+  if (!(err instanceof PresenterError)) return null;
+  switch (err.code) {
+    case "webgl_context_lost":
+    case "webgl_context_restore_failed":
+    case "webgpu_device_lost":
+      return err.code;
+    default:
+      return null;
+  }
+}
+
+function handleDeviceLost(message: string, details?: unknown, startRecovery?: boolean): void {
+  if (isDeviceLost) return;
+  if (!runtimeInit) return;
+
+  isDeviceLost = true;
+  runtimeReadySent = false;
+  stopTelemetryPolling();
+
+  const backend = backendKindForEvent();
+  emitGpuEvent({
+    time_ms: performance.now(),
+    backend_kind: backend,
+    severity: "error",
+    category: "DeviceLost",
+    message,
+    ...(details === undefined ? {} : { details }),
+  });
+
+  presenter?.destroy?.();
+  presenter = null;
+  presenterFallback = undefined;
+  presenterSrcWidth = 0;
+  presenterSrcHeight = 0;
+
+  if (startRecovery) {
+    void attemptRecovery("device_lost");
+  }
+}
+
+async function attemptRecovery(reason: string): Promise<void> {
+  if (!runtimeInit) return;
+  if (recoveryPromise) return recoveryPromise;
+
+  recoveriesAttempted += 1;
+  emitGpuEvent({
+    time_ms: performance.now(),
+    backend_kind: backendKindForEvent(),
+    severity: "info",
+    category: "DeviceLost",
+    message: `Attempting GPU recovery (${reason})`,
+  });
+
+  recoveryPromise = (async () => {
+    if (presenterInitPromise) {
+      try {
+        await presenterInitPromise;
+      } catch {
+        // Ignore; init failure is reported through the existing error channel.
+      }
+    }
+
+    if (wasmInitPromise) {
+      try {
+        await wasmInitPromise;
+      } catch {
+        // Ignore; wasm init failure is reported through the existing error channel.
+      }
+    }
+
+    // Re-init present() module if configured.
+    if (runtimeOptions?.wasmModuleUrl) {
+      presentFn = null;
+      presentModule = null;
+      await loadPresentFnFromModuleUrl(runtimeOptions.wasmModuleUrl);
+    }
+
+    // Re-init presenter backend (if we are using the built-in presenter path).
+    if (runtimeCanvas && !presentFn) {
+      const frame = getCurrentFrameInfo();
+      if (!frame) {
+        throw new PresenterError("not_initialized", "GPU recovery requested before framebuffer init");
+      }
+      await initPresenterForRuntime(runtimeCanvas, frame.width, frame.height);
+    }
+
+    isDeviceLost = false;
+    recoveriesSucceeded += 1;
+    startTelemetryPolling();
+
+    // Re-emit READY for consumers that treat recovery like a re-init.
+    await maybeSendReady();
+
+    emitGpuEvent({
+      time_ms: performance.now(),
+      backend_kind: backendKindForEvent(),
+      severity: "info",
+      category: "DeviceLost",
+      message: "GPU recovery succeeded",
+    });
+  })()
+    .catch((err) => {
+      emitGpuEvent({
+        time_ms: performance.now(),
+        backend_kind: backendKindForEvent(),
+        severity: "fatal",
+        category: "DeviceLost",
+        message: "GPU recovery failed",
+        details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+      });
+      postFatalError(err);
+    })
+    .finally(() => {
+      recoveryPromise = null;
+    });
+
+  return recoveryPromise;
+}
+
+function postFatalError(err: unknown): void {
   if (err instanceof PresenterError) {
     postToMain({ type: "error", message: err.message, code: err.code, backend: presenter?.backend });
     postRuntimeError(err.message);
@@ -399,17 +792,32 @@ const sendError = (err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
   postToMain({ type: "error", message, backend: presenter?.backend });
   postRuntimeError(message);
+}
+
+const sendError = (err: unknown) => {
+  const deviceLostCode = getDeviceLostCode(err);
+  if (deviceLostCode) {
+    const startRecovery = deviceLostCode !== "webgl_context_lost";
+    handleDeviceLost(
+      err instanceof Error ? err.message : String(err),
+      { source: "exception", code: deviceLostCode, error: err },
+      startRecovery,
+    );
+    return;
+  }
+  postFatalError(err);
 };
 
-const loadPresentFnFromModuleUrl = async (wasmModuleUrl: string) => {
+async function loadPresentFnFromModuleUrl(wasmModuleUrl: string): Promise<void> {
   const mod: unknown = await import(/* @vite-ignore */ wasmModuleUrl);
+  presentModule = mod as Record<string, unknown>;
 
-  const maybePresent = (mod as { present?: unknown }).present;
-  if (typeof maybePresent !== 'function') {
+  const maybePresent = (presentModule as { present?: unknown } | null)?.present;
+  if (typeof maybePresent !== "function") {
     throw new Error(`Module ${wasmModuleUrl} did not export a present() function`);
   }
   presentFn = maybePresent as PresentFn;
-};
+}
 
 const maybeUpdateFramesReceivedFromSeq = () => {
   if (!frameState) return;
@@ -507,6 +915,7 @@ const presentOnce = async (): Promise<boolean> => {
   try {
     const frame = getCurrentFrameInfo();
     const dirtyRects = frame?.dirtyRects ?? null;
+    if (isDeviceLost) return false;
 
     if (presentFn) {
       const result = await presentFn(dirtyRects);
@@ -519,6 +928,7 @@ const presentOnce = async (): Promise<boolean> => {
       if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
         presenterSrcWidth = frame.width;
         presenterSrcHeight = frame.height;
+        if (presenter.backend === "webgpu") surfaceReconfigures += 1;
         presenter.resize(frame.width, frame.height, outputDpr);
       }
 
@@ -777,11 +1187,13 @@ const handleTick = async () => {
 
   presenting = true;
   try {
+    presentsAttempted += 1;
     const presentStartMs = performance.now();
-        const didPresent = await presentOnce();
-        perfGpuMs += performance.now() - presentStartMs;
-        if (didPresent) {
-          framesPresented += 1;
+    const didPresent = await presentOnce();
+    perfGpuMs += performance.now() - presentStartMs;
+    if (didPresent) {
+      presentsSucceeded += 1;
+      framesPresented += 1;
 
       const now = performance.now();
       if (lastFrameStartMs !== null) {
@@ -793,14 +1205,16 @@ const handleTick = async () => {
           : frame
             ? estimateFullFrameUploadBytes(frame.width, frame.height)
             : 0;
-          telemetry.recordTextureUploadBytes(textureUploadBytes);
-          perf.counter("textureUploadBytes", textureUploadBytes);
-          perfUploadBytes += textureUploadBytes;
-          telemetry.endFrame(now);
-        }
-        lastFrameStartMs = now;
+        telemetry.recordTextureUploadBytes(textureUploadBytes);
+        perf.counter("textureUploadBytes", textureUploadBytes);
+        perfUploadBytes += textureUploadBytes;
+        telemetry.endFrame(now);
       }
-    } catch (err) {
+      lastFrameStartMs = now;
+    } else {
+      framesDropped += 1;
+    }
+  } catch (err) {
     sendError(err);
   } finally {
     presenting = false;
@@ -814,6 +1228,17 @@ const handleTick = async () => {
 // -----------------------------------------------------------------------------
 
 function postPresenterError(err: unknown, backend?: PresenterBackendKind): void {
+  const deviceLostCode = getDeviceLostCode(err);
+  if (deviceLostCode) {
+    const startRecovery = deviceLostCode !== "webgl_context_lost";
+    handleDeviceLost(
+      err instanceof Error ? err.message : String(err),
+      { source: "presenter", backend, code: deviceLostCode, error: err },
+      startRecovery,
+    );
+    return;
+  }
+
   if (err instanceof PresenterError) {
     postToMain({ type: "error", message: err.message, code: err.code, backend: backend ?? presenter?.backend });
     postRuntimeError(err.message);
@@ -832,6 +1257,7 @@ async function tryInitBackend(
   height: number,
   dpr: number,
   opts: PresenterInitOptions,
+  generation: number,
 ): Promise<Presenter> {
   if (backend === "webgpu" && runtimeOptions?.disableWebGpu === true) {
     throw new PresenterError("webgpu_disabled", "WebGPU backend was disabled by init options");
@@ -839,6 +1265,7 @@ async function tryInitBackend(
 
   // Ensure backend errors are surfaced even if the caller didn't pass an onError.
   opts.onError = (e) => {
+    if (generation !== presenterErrorGeneration) return;
     postPresenterError(e, backend);
     presenterUserOnError?.(e);
   };
@@ -872,6 +1299,8 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
   presenter?.destroy?.();
   presenter = null;
   presenterFallback = undefined;
+  presenterErrorGeneration += 1;
+  const generation = presenterErrorGeneration;
 
   const dpr = outputDpr || 1;
 
@@ -902,9 +1331,10 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
 
   for (const backend of backends) {
     try {
-      presenter = await tryInitBackend(backend, canvas, width, height, dpr, opts);
+      presenter = await tryInitBackend(backend, canvas, width, height, dpr, opts, generation);
       presenterSrcWidth = width;
       presenterSrcHeight = height;
+      if (presenter.backend === "webgpu") surfaceReconfigures += 1;
 
       if (backend !== firstBackend && firstError) {
         const reason = firstError instanceof Error ? firstError.message : String(firstError);
@@ -929,6 +1359,7 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
 async function maybeSendReady(): Promise<void> {
   if (runtimeReadySent) return;
   if (!runtimeInit) return;
+  if (isDeviceLost) return;
 
   // Headless mode: still run frame pacing/metrics.
   if (!runtimeCanvas) {
@@ -1071,10 +1502,17 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
       perf.spanBegin("worker:init");
       try {
+        stopTelemetryPolling();
+        uninstallContextLossHandlers();
+        isDeviceLost = false;
+        recoveryPromise = null;
+
         runtimeInit = init;
         runtimeCanvas = init.canvas ?? null;
         runtimeOptions = init.options ?? null;
         runtimeReadySent = false;
+
+        if (runtimeCanvas) installContextLossHandlers(runtimeCanvas);
 
         outputWidthCss = runtimeOptions?.outputWidth ?? null;
         outputHeightCss = runtimeOptions?.outputHeight ?? null;
@@ -1087,6 +1525,12 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         framesDropped = 0;
         lastSeenSeq = Atomics.load(frameState, FRAME_SEQ_INDEX);
         lastPresentedSeq = lastSeenSeq;
+
+        presentsAttempted = 0;
+        presentsSucceeded = 0;
+        recoveriesAttempted = 0;
+        recoveriesSucceeded = 0;
+        surfaceReconfigures = 0;
 
         telemetry.reset();
         lastFrameStartMs = null;
@@ -1116,12 +1560,22 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presenterInitOptions.onError = undefined;
 
         presentFn = null;
+        presentModule = null;
+        wasmInitPromise = null;
         if (runtimeOptions?.wasmModuleUrl) {
-          void perf.spanAsync("wasm:init", () => loadPresentFnFromModuleUrl(runtimeOptions.wasmModuleUrl!)).catch(sendError);
+          wasmInitPromise = perf
+            .spanAsync("wasm:init", () => loadPresentFnFromModuleUrl(runtimeOptions.wasmModuleUrl!))
+            .catch((err) => {
+              sendError(err);
+            })
+            .finally(() => {
+              wasmInitPromise = null;
+            });
         }
 
         refreshFramebufferViews();
         void maybeSendReady();
+        startTelemetryPolling();
       } catch (err) {
         sendError(err);
       } finally {
@@ -1145,6 +1599,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         await maybeSendReady();
         if (!presenter) return;
         try {
+          if (presenter.backend === "webgpu") surfaceReconfigures += 1;
           presenter.resize(presenterSrcWidth, presenterSrcHeight, outputDpr);
         } catch (err) {
           postPresenterError(err, presenter.backend);
@@ -1172,6 +1627,30 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     case "screenshot": {
       const req = msg as GpuRuntimeScreenshotRequestMessage;
       void (async () => {
+        const postStub = (seq?: number) => {
+          const rgba8 = new Uint8Array([0, 0, 0, 255]).buffer;
+          postToMain(
+            {
+              type: "screenshot",
+              requestId: req.requestId,
+              width: 1,
+              height: 1,
+              rgba8,
+              origin: "top-left",
+              ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+            },
+            [rgba8],
+          );
+        };
+
+        const waitForNotPresenting = async (timeoutMs: number): Promise<boolean> => {
+          const deadline = performance.now() + timeoutMs;
+          while (presenting && performance.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+          return !presenting;
+        };
+
         try {
           await maybeSendReady();
 
@@ -1180,22 +1659,26 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           // so relying on the header sequence alone can lead to mismatched
           // (seq, pixels) pairs in smoke tests and automation.
           if (frameState) {
-            while (presenting) {
-              await new Promise((resolve) => setTimeout(resolve, 0));
+            if (!(await waitForNotPresenting(200))) {
+              const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+              postStub(typeof seqNow === "number" ? seqNow : undefined);
+              return;
             }
 
-            if (shouldPresentWithSharedState()) {
+            if (!isDeviceLost && shouldPresentWithSharedState()) {
               await handleTick();
             }
 
-            while (presenting) {
-              await new Promise((resolve) => setTimeout(resolve, 0));
+            if (!(await waitForNotPresenting(200))) {
+              const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+              postStub(typeof seqNow === "number" ? seqNow : undefined);
+              return;
             }
           }
 
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
 
-          if (presenter) {
+          if (presenter && !isDeviceLost) {
             const shot = await presenter.screenshot();
             postToMain(
               {
@@ -1230,37 +1713,68 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             return;
           }
 
-          // Headless fallback: copy the source buffer directly.
-          const frame = getCurrentFrameInfo();
-          if (!frame) throw new PresenterError("not_initialized", "screenshot before framebuffer init");
-          const rowBytes = frame.width * BYTES_PER_PIXEL_RGBA8;
-          const out = new Uint8Array(rowBytes * frame.height);
-          for (let y = 0; y < frame.height; y += 1) {
-            const srcStart = y * frame.strideBytes;
-            const dstStart = y * rowBytes;
-            out.set(frame.pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
+          // Headless mode: copy the source buffer directly.
+          if (!runtimeCanvas) {
+            const frame = getCurrentFrameInfo();
+            if (!frame) {
+              postStub(typeof seq === "number" ? seq : undefined);
+              return;
+            }
+
+            const rowBytes = frame.width * BYTES_PER_PIXEL_RGBA8;
+            const out = new Uint8Array(rowBytes * frame.height);
+            for (let y = 0; y < frame.height; y += 1) {
+              const srcStart = y * frame.strideBytes;
+              const dstStart = y * rowBytes;
+              out.set(frame.pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
+            }
+
+            postToMain(
+              {
+                type: "screenshot",
+                requestId: req.requestId,
+                width: frame.width,
+                height: frame.height,
+                rgba8: out.buffer,
+                origin: "top-left",
+                frameSeq: frame.frameSeq,
+              },
+              [out.buffer],
+            );
+            return;
           }
 
-          postToMain(
-            {
-              type: "screenshot",
-              requestId: req.requestId,
-              width: frame.width,
-              height: frame.height,
-              rgba8: out.buffer,
-              origin: "top-left",
-              frameSeq: frame.frameSeq,
-            },
-            [out.buffer],
-          );
+          // Presenter not ready (or device lost): return a minimal stub instead of hanging.
+          postStub(typeof seq === "number" ? seq : undefined);
         } catch (err) {
-          postPresenterError(err, presenter?.backend);
+          const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+          const deviceLostCode = getDeviceLostCode(err);
+          if (deviceLostCode) {
+            const startRecovery = deviceLostCode !== "webgl_context_lost";
+            handleDeviceLost(
+              err instanceof Error ? err.message : String(err),
+              { source: "screenshot", code: deviceLostCode, error: err },
+              startRecovery,
+            );
+          } else {
+            emitGpuEvent({
+              time_ms: performance.now(),
+              backend_kind: backendKindForEvent(),
+              severity: "error",
+              category: "Screenshot",
+              message: err instanceof Error ? err.message : String(err),
+              details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+            });
+          }
+          postStub(typeof seqNow === "number" ? seqNow : undefined);
         }
       })();
       break;
     }
 
     case "shutdown": {
+      stopTelemetryPolling();
+      uninstallContextLossHandlers();
       presenter?.destroy?.();
       presenter = null;
       runtimeInit = null;

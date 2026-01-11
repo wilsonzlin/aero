@@ -162,9 +162,60 @@ export type GpuRuntimeSubmitCompleteMessage = {
   presentCount?: bigint;
 };
 
+export type GpuRuntimeStatsCountersV1 = {
+  presents_attempted: number;
+  presents_succeeded: number;
+  recoveries_attempted: number;
+  recoveries_succeeded: number;
+  surface_reconfigures: number;
+};
+
+export type GpuRuntimeStatsMessage = {
+  type: "stats";
+  /**
+   * Version tag for forward-compatible telemetry parsing.
+   */
+  version: 1;
+  /**
+   * `performance.now()` timestamp captured in the worker.
+   */
+  timeMs: number;
+  backendKind?: PresenterBackendKind | "headless";
+  /**
+   * Always-present cheap counters maintained by the worker.
+   */
+  counters: GpuRuntimeStatsCountersV1;
+  /**
+   * Optional richer stats returned by the WASM runtime (best-effort).
+   */
+  wasm?: unknown;
+};
+
+export type GpuRuntimeErrorEventSeverity = "info" | "warn" | "error" | "fatal";
+
+export type GpuRuntimeErrorEvent = {
+  time_ms: number;
+  backend_kind: string;
+  severity: GpuRuntimeErrorEventSeverity;
+  category: string;
+  message: string;
+  details?: unknown;
+};
+
+export type GpuRuntimeEventsMessage = {
+  type: "events";
+  /**
+   * Version tag for forward-compatible event parsing.
+   */
+  version: 1;
+  events: GpuRuntimeErrorEvent[];
+};
+
 export type GpuRuntimeOutMessage =
   | GpuRuntimeReadyMessage
   | GpuRuntimeMetricsMessage
   | GpuRuntimeErrorMessage
   | GpuRuntimeScreenshotResponseMessage
-  | GpuRuntimeSubmitCompleteMessage;
+  | GpuRuntimeSubmitCompleteMessage
+  | GpuRuntimeStatsMessage
+  | GpuRuntimeEventsMessage;

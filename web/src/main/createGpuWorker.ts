@@ -10,10 +10,12 @@ import { FRAME_DIRTY, FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } fro
 import { perf } from "../perf/perf";
 import type {
   GpuRuntimeInitOptions,
+  GpuRuntimeEventsMessage,
   GpuRuntimeOutMessage,
   GpuRuntimeReadyMessage,
   GpuRuntimeScreenshotResponseMessage,
   GpuRuntimeSubmitCompleteMessage,
+  GpuRuntimeStatsMessage,
 } from "../workers/gpu_runtime_protocol";
 
 export interface CreateGpuWorkerParams {
@@ -23,6 +25,8 @@ export interface CreateGpuWorkerParams {
   devicePixelRatio: number;
   gpuOptions?: GpuRuntimeInitOptions;
   onError?: (msg: Extract<GpuRuntimeOutMessage, { type: "error" }>) => void;
+  onStats?: (msg: GpuRuntimeStatsMessage) => void;
+  onEvents?: (msg: GpuRuntimeEventsMessage) => void;
 }
 
 export interface GpuWorkerHandle {
@@ -209,6 +213,12 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         rejectAllPending(err);
         break;
       }
+      case "stats":
+        params.onStats?.(msg);
+        break;
+      case "events":
+        params.onEvents?.(msg);
+        break;
       default:
         break;
     }
