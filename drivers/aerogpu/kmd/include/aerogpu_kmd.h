@@ -139,7 +139,7 @@ typedef struct _AEROGPU_ADAPTER {
     KSPIN_LOCK RingLock;
 
     KSPIN_LOCK IrqEnableLock;
-    ULONG IrqEnableMask; /* Cached AEROGPU_MMIO_REG_IRQ_ENABLE value (AbiKind == AEROGPU_ABI_KIND_V1). */
+    ULONG IrqEnableMask; /* Cached AEROGPU_MMIO_REG_IRQ_ENABLE value (when present). */
 
     LIST_ENTRY PendingSubmissions;
     KSPIN_LOCK PendingLock;

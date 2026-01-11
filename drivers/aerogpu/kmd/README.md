@@ -48,6 +48,11 @@ During `DxgkDdiStartDevice`, the KMD reads BAR0 `AEROGPU_MMIO_REG_MAGIC`:
 * Otherwise: fall back to the legacy register map/ring format (the driver may log if the value is
   not the expected legacy `"ARGP"` magic).
 
+Some legacy device models (including the in-tree emulator legacy device) also expose the versioned
+`FEATURES_*`, `IRQ_*`, and `SCANOUT0_VBLANK_*` registers. The KMD will opportunistically use these
+when present (and the reported feature bits contain no unknown values) so Win7 can receive vblank
+interrupts and query scanline state even on `PCI\\VEN_1AED&DEV_0001`.
+
 See:
 * `drivers/aerogpu/protocol/README.md` for ABI details.
 * `docs/abi/aerogpu-pci-identity.md` for the canonical PCI IDs and the matching emulator device models.
@@ -78,10 +83,9 @@ When running against the **versioned** AGPU device, treat BAR0 as the canonical 
 
 ## Scanline / raster status (`DxgkDdiGetScanLine`)
 
-The KMD implements `DxgkDdiGetScanLine` for devices that advertise
-`AEROGPU_FEATURE_VBLANK` and expose the scanout0 vblank timing registers.
-This includes legacy (`"ARGP"`) devices if the device model also mirrors the
-`aerogpu_pci.h` vblank register block (`FEATURES_LO/HI` + `SCANOUT0_VBLANK_*`).
+The KMD implements `DxgkDdiGetScanLine` when the device advertises `AEROGPU_FEATURE_VBLANK` and
+exposes the `SCANOUT0_VBLANK_*` timing registers (this includes both the primary versioned ABI
+device and the legacy device model when it exposes the newer vblank registers).
 
 This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` callers):
 
