@@ -435,7 +435,7 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
   const status = new Int32Array(segments.control, CONTROL_LAYOUT.statusOffset, STATUS_INTS);
   const guestLayout = readGuestRamLayoutFromStatus(status);
 
-  const memBytes = segments.guestMemory.buffer.byteLength;
+  const memBytes = (segments.guestMemory.buffer as unknown as SharedArrayBuffer).byteLength;
   if (guestLayout.guest_base + guestLayout.guest_size > memBytes) {
     throw new Error(
       `Guest RAM layout (${guestLayout.guest_base}+${guestLayout.guest_size}) exceeds wasm memory size (${memBytes}).`,

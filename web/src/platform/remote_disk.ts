@@ -338,7 +338,7 @@ function stableImageIdFromUrl(url: string): string {
   }
 }
 
-function cacheKeyPartsFromUrl(url: string, options: RemoteDiskOptions): RemoteCacheKeyParts {
+function cacheKeyPartsFromUrl(url: string, options: RemoteDiskOptions, blockSize: number): RemoteCacheKeyParts {
   const imageId = (options.cacheImageId ?? stableImageIdFromUrl(url)).trim();
   if (!imageId) {
     throw new Error("cacheImageId must not be empty");
@@ -348,7 +348,9 @@ function cacheKeyPartsFromUrl(url: string, options: RemoteDiskOptions): RemoteCa
     // Without an explicit control-plane version, treat this as a single logical stream
     // and rely on validators (ETag/Last-Modified/size) for safe invalidation.
     version: normalizeCacheVersion(options.cacheVersion),
-    deliveryType: "range",
+    // Include block size in the key material so different cache chunking strategies don't fight
+    // (and so we never store delivery secrets like signed URLs in the key).
+    deliveryType: `range:${blockSize}`,
   };
 }
 
@@ -466,14 +468,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       }
     }
 
-    const parts = cacheKeyPartsFromUrl(params.sourceId, options);
+    const parts = cacheKeyPartsFromUrl(params.sourceId, options, resolved.blockSize);
     // Cache disabled: do not touch OPFS / IndexedDB at all (use direct Range fetches only).
     if (resolved.cacheLimitBytes === 0) {
       const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
       disk.leaseRefresher.start();
       return disk;
     }
-
     const cacheKey = await RemoteCacheManager.deriveCacheKey(parts);
     const resolvedEtag = options.cacheEtag !== undefined ? options.cacheEtag : params.etag ?? probe.etag;
     const validators = { sizeBytes: probe.size, etag: resolvedEtag, lastModified: probe.lastModified };
@@ -599,6 +600,14 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
     const startBlock = Math.floor(offset / this.blockSize);
     const endBlock = Math.floor((offset + length - 1) / this.blockSize);
+
+    // Batch-load cached blocks when using IndexedDB. This reduces IDB roundtrips when a read spans
+    // multiple blocks (e.g. large sequential reads).
+    if (this.cacheBackend === "idb" && this.idbCache && endBlock > startBlock) {
+      const indices: number[] = [];
+      for (let block = startBlock; block <= endBlock; block += 1) indices.push(block);
+      await this.idbCache.getMany(indices);
+    }
 
     let written = 0;
     for (let block = startBlock; block <= endBlock; block++) {

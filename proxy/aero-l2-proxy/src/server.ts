@@ -189,6 +189,9 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
     config,
     listenAddress,
     close: async () => {
+      for (const client of wss.clients) {
+        client.terminate();
+      }
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     },

@@ -91,9 +91,10 @@ async function enforceCacheLimitInTx(opts: {
   meta: RemoteChunkCacheMetaRecord;
   cacheLimitBytes: number;
   protectedChunkIndex?: number;
-}): Promise<void> {
+}): Promise<number[]> {
   const { cacheKey, chunksStore, metaStore, meta, cacheLimitBytes, protectedChunkIndex } = opts;
-  if (meta.bytesUsed <= cacheLimitBytes) return;
+  const evicted: number[] = [];
+  if (meta.bytesUsed <= cacheLimitBytes) return evicted;
 
   const index = chunksStore.index("by_cacheKey_lastAccess");
   const range = IDBKeyRange.bound([cacheKey, -Infinity], [cacheKey, Infinity]);
@@ -116,6 +117,7 @@ async function enforceCacheLimitInTx(opts: {
       }
 
       cursor.delete();
+      evicted.push(rec.chunkIndex);
       meta.bytesUsed = Math.max(0, meta.bytesUsed - (rec.byteLength ?? rec.data.byteLength));
 
       if (meta.bytesUsed <= cacheLimitBytes) {
@@ -128,6 +130,7 @@ async function enforceCacheLimitInTx(opts: {
   });
 
   metaStore.put(meta);
+  return evicted;
 }
 
 /**
@@ -142,23 +145,35 @@ export class IdbRemoteChunkCache {
   private readonly cacheKey: string;
   private readonly signature: RemoteChunkCacheSignature;
   private readonly cacheLimitBytes: number | null;
+  private readonly maxCachedChunks: number;
+  private readonly cache = new Map<number, Uint8Array>();
+  private readonly pendingAccess = new Set<number>();
 
   private constructor(
     db: IDBDatabase,
     cacheKey: string,
     signature: RemoteChunkCacheSignature,
     cacheLimitBytes: number | null,
+    maxCachedChunks: number,
   ) {
     this.db = db;
     this.cacheKey = cacheKey;
     this.signature = signature;
     this.cacheLimitBytes = cacheLimitBytes;
+    this.maxCachedChunks = maxCachedChunks;
   }
 
   static async open(opts: {
     cacheKey: string;
     signature: RemoteChunkCacheSignature;
     cacheLimitBytes?: number | null;
+    /**
+     * Maximum number of chunks to keep in memory (LRU).
+     *
+     * This reduces IndexedDB roundtrips, especially for sequential reads that revisit the same
+     * chunk(s) (e.g. small reads within a 1 MiB block).
+     */
+    maxCachedChunks?: number;
   }): Promise<IdbRemoteChunkCache> {
     if (!opts.cacheKey) throw new Error("cacheKey must not be empty");
     validateChunkSize(opts.signature.chunkSize);
@@ -171,13 +186,20 @@ export class IdbRemoteChunkCache {
       }
     }
 
+    const maxCachedChunks = opts.maxCachedChunks ?? 64;
+    if (!Number.isSafeInteger(maxCachedChunks) || maxCachedChunks < 0) {
+      throw new Error(`maxCachedChunks must be a non-negative safe integer (got ${maxCachedChunks})`);
+    }
+
     const db = await openDiskManagerDb();
-    const cache = new IdbRemoteChunkCache(db, opts.cacheKey, opts.signature, opts.cacheLimitBytes ?? null);
+    const cache = new IdbRemoteChunkCache(db, opts.cacheKey, opts.signature, opts.cacheLimitBytes ?? null, maxCachedChunks);
     await cache.ensureCompatible();
     return cache;
   }
 
   close(): void {
+    this.pendingAccess.clear();
+    this.cache.clear();
     this.db.close();
   }
 
@@ -188,6 +210,8 @@ export class IdbRemoteChunkCache {
     await deleteAllChunksForCacheKey(chunksStore, this.cacheKey);
     metaStore.delete(this.cacheKey);
     await idbTxDone(tx);
+    this.pendingAccess.clear();
+    this.cache.clear();
   }
 
   async getStatus(): Promise<{ bytesUsed: number; cacheLimitBytes: number | null }> {
@@ -198,29 +222,125 @@ export class IdbRemoteChunkCache {
     return { bytesUsed: meta?.bytesUsed ?? 0, cacheLimitBytes: this.cacheLimitBytes };
   }
 
-  async get(chunkIndex: number): Promise<Uint8Array | null> {
-    if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0) {
-      throw new Error(`chunkIndex must be a non-negative integer (got ${chunkIndex})`);
+  private touchCacheKey(chunkIndex: number, bytes: Uint8Array): void {
+    if (this.maxCachedChunks <= 0) return;
+    this.cache.delete(chunkIndex);
+    this.cache.set(chunkIndex, bytes);
+  }
+
+  private evictMemoryIfNeeded(): void {
+    if (this.maxCachedChunks <= 0) {
+      this.cache.clear();
+      return;
     }
+    while (this.cache.size > this.maxCachedChunks) {
+      const lruKey = this.cache.keys().next().value as number | undefined;
+      if (lruKey === undefined) break;
+      this.cache.delete(lruKey);
+    }
+  }
+
+  private async applyPendingAccessInTx(meta: RemoteChunkCacheMetaRecord, chunksStore: IDBObjectStore): Promise<void> {
+    if (this.pendingAccess.size === 0) return;
+
+    const indices = Array.from(this.pendingAccess);
+    this.pendingAccess.clear();
+
+    const reqs = indices.map(async (idx) => {
+      const rec = (await idbReq(chunksStore.get([this.cacheKey, idx]))) as RemoteChunkRecord | undefined;
+      return { idx, rec };
+    });
+    const records = await Promise.all(reqs);
+
+    for (const { rec } of records) {
+      if (!rec) continue;
+      meta.accessCounter += 1;
+      rec.lastAccess = meta.accessCounter;
+      rec.byteLength = rec.byteLength ?? rec.data.byteLength;
+      chunksStore.put(rec);
+    }
+  }
+
+  /**
+   * Batch-fetch cached chunks.
+   *
+   * Returns a map of `chunkIndex -> bytes` for chunks that exist in the cache.
+   * Missing chunks are omitted from the map.
+   */
+  async getMany(chunkIndices: number[]): Promise<Map<number, Uint8Array>> {
+    const out = new Map<number, Uint8Array>();
+    const missing: number[] = [];
+
+    // De-dupe indices (keep first occurrence order).
+    const seen = new Set<number>();
+    for (const idx of chunkIndices) {
+      if (!Number.isSafeInteger(idx) || idx < 0) {
+        throw new Error(`chunkIndex must be a non-negative integer (got ${idx})`);
+      }
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+
+      const hit = this.cache.get(idx);
+      if (hit) {
+        this.touchCacheKey(idx, hit);
+        this.pendingAccess.add(idx);
+        out.set(idx, hit);
+      } else {
+        missing.push(idx);
+      }
+    }
+
+    if (missing.length === 0) return out;
 
     const tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
     const chunksStore = tx.objectStore("remote_chunks");
     const metaStore = tx.objectStore("remote_chunk_meta");
 
-    const meta = await this.getOrInitMetaInTx(metaStore);
-    const rec = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
-    if (!rec) {
-      await idbTxDone(tx);
-      return null;
+    const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
+
+    const reqs = missing.map(async (idx) => {
+      const rec = (await idbReq(chunksStore.get([this.cacheKey, idx]))) as RemoteChunkRecord | undefined;
+      return { idx, rec };
+    });
+    const records = await Promise.all(reqs);
+
+    for (const { idx, rec } of records) {
+      if (!rec) continue;
+      meta.accessCounter += 1;
+      rec.lastAccess = meta.accessCounter;
+      // Heal: older versions might not have `byteLength` populated.
+      rec.byteLength = rec.byteLength ?? rec.data.byteLength;
+      chunksStore.put(rec);
+      out.set(idx, new Uint8Array(rec.data));
     }
 
-    meta.accessCounter += 1;
-    rec.lastAccess = meta.accessCounter;
-    chunksStore.put(rec);
     metaStore.put(meta);
-
     await idbTxDone(tx);
-    return new Uint8Array(rec.data);
+
+    for (const [idx, bytes] of out) {
+      if (!this.cache.has(idx)) {
+        this.cache.set(idx, bytes);
+      }
+      this.touchCacheKey(idx, bytes);
+    }
+    this.evictMemoryIfNeeded();
+    return out;
+  }
+
+  async get(chunkIndex: number): Promise<Uint8Array | null> {
+    if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0) {
+      throw new Error(`chunkIndex must be a non-negative integer (got ${chunkIndex})`);
+    }
+
+    const hit = this.cache.get(chunkIndex);
+    if (hit) {
+      this.touchCacheKey(chunkIndex, hit);
+      this.pendingAccess.add(chunkIndex);
+      return hit;
+    }
+
+    const res = await this.getMany([chunkIndex]);
+    return res.get(chunkIndex) ?? null;
   }
 
   async put(chunkIndex: number, bytes: Uint8Array): Promise<void> {
@@ -235,7 +355,8 @@ export class IdbRemoteChunkCache {
     const chunksStore = tx.objectStore("remote_chunks");
     const metaStore = tx.objectStore("remote_chunk_meta");
 
-    const meta = await this.getOrInitMetaInTx(metaStore);
+    const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
+    await this.applyPendingAccessInTx(meta, chunksStore);
 
     const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
     const oldBytes = existing?.byteLength ?? existing?.data?.byteLength ?? 0;
@@ -255,8 +376,9 @@ export class IdbRemoteChunkCache {
     meta.bytesUsed = Math.max(0, meta.bytesUsed - oldBytes) + data.byteLength;
     metaStore.put(meta);
 
+    let evicted: number[] = [];
     if (this.cacheLimitBytes !== null && meta.bytesUsed > this.cacheLimitBytes) {
-      await enforceCacheLimitInTx({
+      evicted = await enforceCacheLimitInTx({
         cacheKey: this.cacheKey,
         chunksStore,
         metaStore,
@@ -267,6 +389,14 @@ export class IdbRemoteChunkCache {
     }
 
     await idbTxDone(tx);
+
+    if (this.maxCachedChunks > 0) {
+      const cached = new Uint8Array(data);
+      this.cache.set(chunkIndex, cached);
+      this.touchCacheKey(chunkIndex, cached);
+      for (const idx of evicted) this.cache.delete(idx);
+      this.evictMemoryIfNeeded();
+    }
   }
 
   async delete(chunkIndex: number): Promise<void> {
@@ -278,7 +408,7 @@ export class IdbRemoteChunkCache {
     const chunksStore = tx.objectStore("remote_chunks");
     const metaStore = tx.objectStore("remote_chunk_meta");
 
-    const meta = await this.getOrInitMetaInTx(metaStore);
+    const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
     const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
     if (existing) {
       chunksStore.delete([this.cacheKey, chunkIndex]);
@@ -287,6 +417,8 @@ export class IdbRemoteChunkCache {
     }
 
     await idbTxDone(tx);
+    this.cache.delete(chunkIndex);
+    this.pendingAccess.delete(chunkIndex);
   }
 
   async listChunkIndices(): Promise<number[]> {
@@ -326,6 +458,8 @@ export class IdbRemoteChunkCache {
 
     // Invalidate: signature mismatch or missing meta.
     await deleteAllChunksForCacheKey(chunksStore, this.cacheKey);
+    this.pendingAccess.clear();
+    this.cache.clear();
 
     const fresh: RemoteChunkCacheMetaRecord = {
       cacheKey: this.cacheKey,
@@ -342,11 +476,17 @@ export class IdbRemoteChunkCache {
     await idbTxDone(tx);
   }
 
-  private async getOrInitMetaInTx(metaStore: IDBObjectStore): Promise<RemoteChunkCacheMetaRecord> {
+  private async getOrInitMetaAndMaybeClearInTx(
+    metaStore: IDBObjectStore,
+    chunksStore: IDBObjectStore,
+  ): Promise<RemoteChunkCacheMetaRecord> {
     const meta = (await idbReq(metaStore.get(this.cacheKey))) as RemoteChunkCacheMetaRecord | undefined;
     if (meta && signatureMatches(meta, this.signature)) return meta;
 
     // Either missing, or mismatched (should be rare here); treat as invalidation.
+    await deleteAllChunksForCacheKey(chunksStore, this.cacheKey);
+    this.pendingAccess.clear();
+    this.cache.clear();
     const fresh: RemoteChunkCacheMetaRecord = {
       cacheKey: this.cacheKey,
       imageId: this.signature.imageId,

@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
 
 class TestMemoryStore implements BinaryStore {
-  private readonly files = new Map<string, Uint8Array>();
+  readonly files = new Map<string, Uint8Array>();
 
   async read(path: string): Promise<Uint8Array | null> {
     const data = this.files.get(path);
@@ -127,9 +127,10 @@ describe("RemoteChunkedDisk", () => {
     closeServer = close;
 
     const store = new TestMemoryStore();
-    const manifestUrl = `${baseUrl}/manifest.json`;
+    const manifestUrl1 = `${baseUrl}/manifest.json?sig=aaa`;
+    const manifestUrl2 = `${baseUrl}/manifest.json?sig=bbb`;
 
-    const disk = await RemoteChunkedDisk.open(manifestUrl, {
+    const disk = await RemoteChunkedDisk.open(manifestUrl1, {
       store,
       prefetchSequentialChunks: 0,
       retryBaseDelayMs: 0,
@@ -168,10 +169,22 @@ describe("RemoteChunkedDisk", () => {
     expect(t2.requests).toBe(2);
     expect(t2.bytesDownloaded).toBe(2048);
 
+    // Cache metadata should not store the signed manifest URL (querystring secrets).
+    const metaKey = Array.from(store.files.keys()).find((k) => k.endsWith("/meta.json"));
+    expect(metaKey).toBeTruthy();
+    const metaRaw = await store.read(metaKey!);
+    expect(metaRaw).toBeTruthy();
+    const meta = JSON.parse(new TextDecoder().decode(metaRaw!)) as Record<string, unknown>;
+    expect(meta.version).toBe(1);
+    expect(meta.imageId).toBe("test");
+    expect(meta.imageVersion).toBe("v1");
+    expect(meta.manifestUrl).toBeUndefined();
+    expect(JSON.stringify(meta)).not.toContain("sig=aaa");
+
     await disk.close();
 
     // Re-open with the same store: should still hit cache (no extra chunk GETs).
-    const disk2 = await RemoteChunkedDisk.open(manifestUrl, {
+    const disk2 = await RemoteChunkedDisk.open(manifestUrl2, {
       store,
       prefetchSequentialChunks: 0,
       retryBaseDelayMs: 0,

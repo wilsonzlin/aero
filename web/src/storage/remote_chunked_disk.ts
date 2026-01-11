@@ -272,6 +272,12 @@ class StoreDirHandle implements RemoteCacheDirectoryHandle {
 type ChunkCache = {
   getChunk(chunkIndex: number): Promise<Uint8Array<ArrayBuffer> | null>;
   putChunk(chunkIndex: number, bytes: Uint8Array<ArrayBuffer>): Promise<void>;
+  /**
+   * Best-effort batched cache read to reduce IndexedDB roundtrips.
+   *
+   * Callers should treat this as an optimization; cache misses are expected.
+   */
+  prefetchChunks?(chunkIndices: number[]): Promise<void>;
   getCachedBytes(): number;
   getCacheLimitBytes(): number | null;
   flush(): Promise<void>;
@@ -318,6 +324,10 @@ class IdbChunkCache implements ChunkCache {
     }
     // Stored in IndexedDB as an ArrayBuffer, so this is safe.
     return bytes as Uint8Array<ArrayBuffer>;
+  }
+
+  async prefetchChunks(chunkIndices: number[]): Promise<void> {
+    await this.cache.getMany(chunkIndices);
   }
 
   async putChunk(chunkIndex: number, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
@@ -794,7 +804,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const manifestV1 = json as ChunkedDiskManifestV1;
     const derivedImageId =
       typeof manifestV1.imageId === "string" && manifestV1.imageId.trim().length > 0
-        ? manifestV1.imageId
+        ? manifestV1.imageId.trim()
         : stableImageIdFromUrl(params.sourceId);
 
     const cacheImageId = (resolved.cacheImageId ?? derivedImageId).trim();
@@ -806,7 +816,11 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       throw new Error("cacheVersion must not be empty");
     }
 
-    const cacheKeyParts: RemoteCacheKeyParts = { imageId: cacheImageId, version: cacheVersion, deliveryType: "chunked" };
+    const cacheKeyParts: RemoteCacheKeyParts = {
+      imageId: cacheImageId,
+      version: cacheVersion,
+      deliveryType: `chunked:${manifest.chunkSize}`,
+    };
     const validators = {
       sizeBytes: manifest.totalSize,
       etag: resp.headers.get("etag"),
@@ -908,6 +922,14 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
     const startChunk = Math.floor(offset / this.manifest.chunkSize);
     const endChunk = Math.floor((offset + buffer.byteLength - 1) / this.manifest.chunkSize);
+
+    // Batch-load cached chunks when using IndexedDB. This reduces IDB roundtrips when a read spans
+    // multiple chunks (e.g. large sequential reads).
+    if (this.chunkCache.prefetchChunks && endChunk > startChunk) {
+      const indices: number[] = [];
+      for (let chunk = startChunk; chunk <= endChunk; chunk += 1) indices.push(chunk);
+      await this.chunkCache.prefetchChunks(indices);
+    }
 
     const promises: Promise<Uint8Array<ArrayBuffer>>[] = [];
     for (let chunk = startChunk; chunk <= endChunk; chunk += 1) {
