@@ -1,6 +1,11 @@
 use crate::memory::GuestMemory;
 use crate::usb::{SetupPacket, UsbBus, UsbHandshake, UsbPid, UsbSpeed};
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
 const REG_USBCMD: u16 = 0x00;
 const REG_USBSTS: u16 = 0x02;
 const REG_USBINTR: u16 = 0x04;
@@ -662,6 +667,128 @@ impl UhciController {
         };
         ctrl = (ctrl & !TD_CTRL_ACTLEN_MASK) | (actlen & TD_CTRL_ACTLEN_MASK);
         UhciTd::write_status(mem, td_addr, ctrl);
+    }
+}
+
+impl IoSnapshot for UhciController {
+    const DEVICE_ID: [u8; 4] = *b"UHCI";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_IO_BASE: u16 = 1;
+        const TAG_IRQ_LINE: u16 = 2;
+        const TAG_USBCMD: u16 = 3;
+        const TAG_USBSTS: u16 = 4;
+        const TAG_USBINTR: u16 = 5;
+        const TAG_USBINT_CAUSES: u16 = 6;
+        const TAG_FRNUM: u16 = 7;
+        const TAG_FRBASEADD: u16 = 8;
+        const TAG_SOFMOD: u16 = 9;
+        const TAG_PORTS: u16 = 10;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u16(TAG_IO_BASE, self.io_base);
+        w.field_u8(TAG_IRQ_LINE, self.irq_line);
+        w.field_u16(TAG_USBCMD, self.usbcmd);
+        w.field_u16(TAG_USBSTS, self.usbsts);
+        w.field_u16(TAG_USBINTR, self.usbintr);
+        w.field_u16(TAG_USBINT_CAUSES, self.usbint_causes);
+        w.field_u16(TAG_FRNUM, self.frnum);
+        w.field_u32(TAG_FRBASEADD, self.frbaseadd);
+        w.field_u8(TAG_SOFMOD, self.sofmod);
+
+        let mut port_records = Vec::with_capacity(self.ports.len());
+        for (idx, port) in self.ports.iter().enumerate() {
+            let bus_port = self.bus.port(idx);
+            let connected = bus_port.is_some_and(|p| p.connected);
+            let enabled = bus_port.is_some_and(|p| p.enabled);
+            port_records.push(
+                Encoder::new()
+                    .u16(port.reg)
+                    .u8(port.reset_timer_ms)
+                    .bool(connected)
+                    .bool(enabled)
+                    .finish(),
+            );
+        }
+        w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_IO_BASE: u16 = 1;
+        const TAG_IRQ_LINE: u16 = 2;
+        const TAG_USBCMD: u16 = 3;
+        const TAG_USBSTS: u16 = 4;
+        const TAG_USBINTR: u16 = 5;
+        const TAG_USBINT_CAUSES: u16 = 6;
+        const TAG_FRNUM: u16 = 7;
+        const TAG_FRBASEADD: u16 = 8;
+        const TAG_SOFMOD: u16 = 9;
+        const TAG_PORTS: u16 = 10;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(io_base) = r.u16(TAG_IO_BASE)? {
+            self.io_base = io_base;
+        }
+        if let Some(irq_line) = r.u8(TAG_IRQ_LINE)? {
+            self.irq_line = irq_line;
+        }
+        if let Some(usbcmd) = r.u16(TAG_USBCMD)? {
+            self.usbcmd = usbcmd;
+        }
+        if let Some(usbsts) = r.u16(TAG_USBSTS)? {
+            self.usbsts = usbsts;
+        }
+        if let Some(usbintr) = r.u16(TAG_USBINTR)? {
+            self.usbintr = usbintr;
+        }
+        if let Some(causes) = r.u16(TAG_USBINT_CAUSES)? {
+            self.usbint_causes = causes;
+        }
+        if let Some(frnum) = r.u16(TAG_FRNUM)? {
+            self.frnum = frnum;
+        }
+        if let Some(frbaseadd) = r.u32(TAG_FRBASEADD)? {
+            self.frbaseadd = frbaseadd;
+        }
+        if let Some(sofmod) = r.u8(TAG_SOFMOD)? {
+            self.sofmod = sofmod;
+        }
+
+        if let Some(buf) = r.bytes(TAG_PORTS) {
+            let mut d = Decoder::new(buf);
+            let port_records = d.vec_bytes()?;
+            d.finish()?;
+            if port_records.len() != self.ports.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("uhci ports"));
+            }
+
+            for (idx, (port, rec)) in self
+                .ports
+                .iter_mut()
+                .zip(port_records.into_iter())
+                .enumerate()
+            {
+                let mut pd = Decoder::new(&rec);
+                port.reg = pd.u16()?;
+                port.reset_timer_ms = pd.u8()?;
+                let connected = pd.bool()?;
+                let enabled = pd.bool()?;
+                pd.finish()?;
+
+                let Some(bus_port) = self.bus.port_mut(idx) else {
+                    return Err(SnapshotError::InvalidFieldEncoding("uhci bus port"));
+                };
+                bus_port.connected = connected;
+                bus_port.enabled = enabled;
+            }
+        }
+
+        Ok(())
     }
 }
 

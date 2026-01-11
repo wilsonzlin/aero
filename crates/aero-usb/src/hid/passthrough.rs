@@ -1,6 +1,11 @@
 use core::any::Any;
 use std::collections::{BTreeMap, VecDeque};
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
 use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
 
 use super::report_descriptor;
@@ -748,6 +753,207 @@ impl UsbDevice for UsbHidPassthrough {
             }
             _ => UsbHandshake::Nak,
         }
+    }
+}
+
+impl IoSnapshot for UsbHidPassthrough {
+    const DEVICE_ID: [u8; 4] = *b"HIDP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_INTERRUPT_OUT_HALTED: u16 = 7;
+        const TAG_PROTOCOL: u16 = 8;
+        const TAG_IDLE_RATE: u16 = 9;
+        const TAG_EP0: u16 = 10;
+        const TAG_PENDING_INPUT_REPORTS: u16 = 11;
+        const TAG_LAST_INPUT_REPORTS: u16 = 12;
+        const TAG_LAST_OUTPUT_REPORTS: u16 = 13;
+        const TAG_LAST_FEATURE_REPORTS: u16 = 14;
+
+        fn encode_report_map(map: &BTreeMap<u8, Vec<u8>>) -> Vec<u8> {
+            let mut enc = Encoder::new().u32(map.len() as u32);
+            for (&report_id, data) in map {
+                enc = enc.u8(report_id).u32(data.len() as u32).bytes(data);
+            }
+            enc.finish()
+        }
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        if let Some(cfg) = self.pending_configuration {
+            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
+        }
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_INTERRUPT_IN_HALTED, self.interrupt_in_halted);
+        w.field_bool(TAG_INTERRUPT_OUT_HALTED, self.interrupt_out_halted);
+        w.field_u8(TAG_PROTOCOL, self.protocol);
+        w.field_u8(TAG_IDLE_RATE, self.idle_rate);
+
+        let stage = match self.ep0.stage {
+            Ep0Stage::Idle => 0u8,
+            Ep0Stage::DataIn => 1,
+            Ep0Stage::DataOut => 2,
+            Ep0Stage::StatusIn => 3,
+            Ep0Stage::StatusOut => 4,
+        };
+        let mut ep0 = Encoder::new().u8(stage).bool(self.ep0.setup.is_some());
+        if let Some(setup) = self.ep0.setup {
+            ep0 = ep0
+                .u8(setup.request_type)
+                .u8(setup.request)
+                .u16(setup.value)
+                .u16(setup.index)
+                .u16(setup.length);
+        }
+        ep0 = ep0
+            .vec_u8(&self.ep0.in_data)
+            .u32(self.ep0.in_offset as u32)
+            .u32(self.ep0.out_expected as u32)
+            .vec_u8(&self.ep0.out_data)
+            .bool(self.ep0.stalled);
+        w.field_bytes(TAG_EP0, ep0.finish());
+
+        let pending: Vec<Vec<u8>> = self.pending_input_reports.iter().cloned().collect();
+        w.field_bytes(
+            TAG_PENDING_INPUT_REPORTS,
+            Encoder::new().vec_bytes(&pending).finish(),
+        );
+
+        w.field_bytes(TAG_LAST_INPUT_REPORTS, encode_report_map(&self.last_input_reports));
+        w.field_bytes(TAG_LAST_OUTPUT_REPORTS, encode_report_map(&self.last_output_reports));
+        w.field_bytes(
+            TAG_LAST_FEATURE_REPORTS,
+            encode_report_map(&self.last_feature_reports),
+        );
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_INTERRUPT_OUT_HALTED: u16 = 7;
+        const TAG_PROTOCOL: u16 = 8;
+        const TAG_IDLE_RATE: u16 = 9;
+        const TAG_EP0: u16 = 10;
+        const TAG_PENDING_INPUT_REPORTS: u16 = 11;
+        const TAG_LAST_INPUT_REPORTS: u16 = 12;
+        const TAG_LAST_OUTPUT_REPORTS: u16 = 13;
+        const TAG_LAST_FEATURE_REPORTS: u16 = 14;
+
+        fn decode_report_map(map: &mut BTreeMap<u8, Vec<u8>>, buf: &[u8]) -> SnapshotResult<()> {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            map.clear();
+            for _ in 0..count {
+                let report_id = d.u8()?;
+                let len = d.u32()? as usize;
+                let data = d.bytes(len)?.to_vec();
+                map.insert(report_id, data);
+            }
+            d.finish()?;
+            Ok(())
+        }
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Start from a clean runtime state; descriptor/static configuration is left intact.
+        <Self as UsbDevice>::reset(self);
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.pending_configuration = r.u8(TAG_PENDING_CONFIGURATION)?;
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
+        self.interrupt_out_halted = r.bool(TAG_INTERRUPT_OUT_HALTED)?.unwrap_or(false);
+        self.protocol = r.u8(TAG_PROTOCOL)?.unwrap_or(1);
+        self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+
+        if let Some(buf) = r.bytes(TAG_EP0) {
+            let mut d = Decoder::new(buf);
+            let stage = match d.u8()? {
+                0 => Ep0Stage::Idle,
+                1 => Ep0Stage::DataIn,
+                2 => Ep0Stage::DataOut,
+                3 => Ep0Stage::StatusIn,
+                4 => Ep0Stage::StatusOut,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("ep0 stage")),
+            };
+            let has_setup = d.bool()?;
+            let setup = if has_setup {
+                Some(SetupPacket {
+                    request_type: d.u8()?,
+                    request: d.u8()?,
+                    value: d.u16()?,
+                    index: d.u16()?,
+                    length: d.u16()?,
+                })
+            } else {
+                None
+            };
+            let in_data = d.vec_u8()?;
+            let in_offset = d.u32()? as usize;
+            if in_offset > in_data.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 in_offset"));
+            }
+            if stage != Ep0Stage::Idle && setup.is_none() {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 setup"));
+            }
+            let out_expected = d.u32()? as usize;
+            let out_data = d.vec_u8()?;
+            let stalled = d.bool()?;
+            d.finish()?;
+
+            self.ep0.stage = stage;
+            self.ep0.setup = setup;
+            self.ep0.in_data = in_data;
+            self.ep0.in_offset = in_offset;
+            self.ep0.out_expected = out_expected;
+            self.ep0.out_data = out_data;
+            self.ep0.stalled = stalled;
+        }
+
+        self.pending_input_reports.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_INPUT_REPORTS) {
+            let mut d = Decoder::new(buf);
+            for report in d.vec_bytes()? {
+                self.pending_input_reports.push_back(report);
+            }
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_LAST_INPUT_REPORTS) {
+            decode_report_map(&mut self.last_input_reports, buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_LAST_OUTPUT_REPORTS) {
+            decode_report_map(&mut self.last_output_reports, buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_LAST_FEATURE_REPORTS) {
+            decode_report_map(&mut self.last_feature_reports, buf)?;
+        }
+
+        // Output/feature reports may have host-visible side effects. To avoid replaying side
+        // effects on restore, do not preserve the pending output queue across snapshots.
+        self.pending_output_reports.clear();
+
+        Ok(())
     }
 }
 

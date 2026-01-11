@@ -562,6 +562,7 @@ version = "0.1.0"
 name = "aero-usb"
 version = "0.1.0"
 dependencies = [
+ "aero-io-snapshot",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

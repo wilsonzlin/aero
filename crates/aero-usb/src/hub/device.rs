@@ -1,5 +1,10 @@
 use core::any::Any;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
 use crate::hub::UsbHub;
 use crate::usb::{SetupPacket, UsbDevice, UsbHandshake};
 
@@ -929,6 +934,187 @@ impl UsbHub for UsbHubDevice {
 
     fn num_ports(&self) -> usize {
         self.ports.len()
+    }
+}
+
+impl IoSnapshot for UsbHubDevice {
+    const DEVICE_ID: [u8; 4] = *b"UHUB";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_HALTED: u16 = 6;
+        const TAG_NUM_PORTS: u16 = 7;
+        const TAG_PORTS: u16 = 8;
+        const TAG_EP0: u16 = 9;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        if let Some(cfg) = self.pending_configuration {
+            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
+        }
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_INTERRUPT_HALTED, self.interrupt_ep_halted);
+        w.field_u32(TAG_NUM_PORTS, self.ports.len() as u32);
+
+        let mut port_records = Vec::with_capacity(self.ports.len());
+        for port in &self.ports {
+            let rec = Encoder::new()
+                .bool(port.connected)
+                .bool(port.connect_change)
+                .bool(port.enabled)
+                .bool(port.enable_change)
+                .bool(port.suspended)
+                .bool(port.suspend_change)
+                .bool(port.powered)
+                .bool(port.reset)
+                .u8(port.reset_countdown_ms)
+                .bool(port.reset_change)
+                .finish();
+            port_records.push(rec);
+        }
+        w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
+
+        let stage = match self.ep0.stage {
+            Ep0Stage::Idle => 0u8,
+            Ep0Stage::DataIn => 1,
+            Ep0Stage::DataOut => 2,
+            Ep0Stage::StatusIn => 3,
+            Ep0Stage::StatusOut => 4,
+        };
+        let mut ep0 = Encoder::new().u8(stage).bool(self.ep0.setup.is_some());
+        if let Some(setup) = self.ep0.setup {
+            ep0 = ep0
+                .u8(setup.request_type)
+                .u8(setup.request)
+                .u16(setup.value)
+                .u16(setup.index)
+                .u16(setup.length);
+        }
+        ep0 = ep0
+            .vec_u8(&self.ep0.in_data)
+            .u32(self.ep0.in_offset as u32)
+            .u32(self.ep0.out_expected as u32)
+            .vec_u8(&self.ep0.out_data)
+            .bool(self.ep0.stalled);
+        w.field_bytes(TAG_EP0, ep0.finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_HALTED: u16 = 6;
+        const TAG_NUM_PORTS: u16 = 7;
+        const TAG_PORTS: u16 = 8;
+        const TAG_EP0: u16 = 9;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset hub-local control state, but preserve any attached downstream devices.
+        self.address = 0;
+        self.pending_address = None;
+        self.configuration = 0;
+        self.pending_configuration = None;
+        self.remote_wakeup_enabled = false;
+        self.interrupt_ep_halted = false;
+        self.ep0 = Ep0Control::new();
+
+        if let Some(num_ports) = r.u32(TAG_NUM_PORTS)? {
+            if num_ports as usize != self.ports.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("hub port count"));
+            }
+        }
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.pending_configuration = r.u8(TAG_PENDING_CONFIGURATION)?;
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.interrupt_ep_halted = r.bool(TAG_INTERRUPT_HALTED)?.unwrap_or(false);
+
+        if let Some(buf) = r.bytes(TAG_PORTS) {
+            let mut d = Decoder::new(buf);
+            let port_records = d.vec_bytes()?;
+            d.finish()?;
+            if port_records.len() != self.ports.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("hub ports"));
+            }
+            for (port, rec) in self.ports.iter_mut().zip(port_records) {
+                let mut pd = Decoder::new(&rec);
+                port.connected = pd.bool()?;
+                port.connect_change = pd.bool()?;
+                port.enabled = pd.bool()?;
+                port.enable_change = pd.bool()?;
+                port.suspended = pd.bool()?;
+                port.suspend_change = pd.bool()?;
+                port.powered = pd.bool()?;
+                port.reset = pd.bool()?;
+                port.reset_countdown_ms = pd.u8()?;
+                port.reset_change = pd.bool()?;
+                pd.finish()?;
+            }
+        }
+
+        if let Some(buf) = r.bytes(TAG_EP0) {
+            let mut d = Decoder::new(buf);
+            let stage = match d.u8()? {
+                0 => Ep0Stage::Idle,
+                1 => Ep0Stage::DataIn,
+                2 => Ep0Stage::DataOut,
+                3 => Ep0Stage::StatusIn,
+                4 => Ep0Stage::StatusOut,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("ep0 stage")),
+            };
+            let has_setup = d.bool()?;
+            let setup = if has_setup {
+                Some(SetupPacket {
+                    request_type: d.u8()?,
+                    request: d.u8()?,
+                    value: d.u16()?,
+                    index: d.u16()?,
+                    length: d.u16()?,
+                })
+            } else {
+                None
+            };
+            let in_data = d.vec_u8()?;
+            let in_offset = d.u32()? as usize;
+            if in_offset > in_data.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 in_offset"));
+            }
+            if stage != Ep0Stage::Idle && setup.is_none() {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 setup"));
+            }
+            let out_expected = d.u32()? as usize;
+            let out_data = d.vec_u8()?;
+            let stalled = d.bool()?;
+            d.finish()?;
+
+            self.ep0.stage = stage;
+            self.ep0.setup = setup;
+            self.ep0.in_data = in_data;
+            self.ep0.in_offset = in_offset;
+            self.ep0.out_expected = out_expected;
+            self.ep0.out_data = out_data;
+            self.ep0.stalled = stalled;
+        }
+
+        Ok(())
     }
 }
 
