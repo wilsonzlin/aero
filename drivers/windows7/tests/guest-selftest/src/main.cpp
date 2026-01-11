@@ -46,6 +46,10 @@ struct Options {
   // This must be a directory on a virtio-backed volume (e.g. "D:\\aero-test\\").
   // If empty, the selftest will attempt to auto-detect a mounted virtio volume.
   std::wstring blk_root;
+  // Skip the virtio-snd test even if an audio device is present.
+  bool disable_snd = false;
+  // Deprecated (no-op): kept for compatibility with older automation that passed --require-snd.
+  bool require_snd = false;
 
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
@@ -1939,6 +1943,8 @@ static void PrintUsage() {
       "  --http-url <url>          HTTP URL for TCP connectivity test\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
+      "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
+      "  --require-snd             Deprecated (no-op)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -1999,6 +2005,10 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
       }
       opt.log_file = v;
+    } else if (arg == L"--disable-snd") {
+      opt.disable_snd = true;
+    } else if (arg == L"--require-snd") {
+      opt.require_snd = true;
     } else if (arg == L"--net-timeout-sec") {
       const wchar_t* v = next();
       const auto parsed = ParseU32(v);
@@ -2030,6 +2040,12 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
+  if (opt.disable_snd && opt.require_snd) {
+    printf("--disable-snd and --require-snd cannot both be set\n");
+    PrintUsage();
+    return 2;
+  }
+
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
@@ -2050,15 +2066,20 @@ int wmain(int argc, wchar_t** argv) {
            input.mouse_collections, input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
 
-  const auto snd = VirtioSndTest(log);
-  if (snd.ok) {
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS");
+  if (opt.disable_snd) {
+    log.LogLine("virtio-snd: disabled by --disable-snd");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
   } else {
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=%s|hr=0x%08lx",
-             snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
-             static_cast<unsigned long>(snd.hr));
+    const auto snd = VirtioSndTest(log);
+    if (snd.ok) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS");
+    } else {
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=%s|hr=0x%08lx",
+               snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
+               static_cast<unsigned long>(snd.hr));
+    }
+    all_ok = all_ok && snd.ok;
   }
-  all_ok = all_ok && snd.ok;
 
   // Network tests require Winsock initialized for getaddrinfo.
   WSADATA wsa{};

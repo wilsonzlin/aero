@@ -190,14 +190,9 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
 
-To require the guest selftest's virtio-snd section to run and pass (depends on guest support for `--require-snd`):
-
-```powershell
-pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
-  -SelftestExePath ./aero-virtio-selftest.exe `
-  -DriversDir ./drivers-out `
-  -RequireSnd
-```
+By default the guest selftest runs the virtio-snd section. To exercise it, make sure you:
+- include the virtio-snd driver in the drivers directory you provision into the guest, and
+- attach a virtio-snd device when running the harness (`-WithVirtioSnd` / `--with-virtio-snd`).
 
 To disable the guest selftest's virtio-snd section even if a device is present (depends on guest support for `--disable-snd`):
 

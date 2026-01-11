@@ -40,8 +40,8 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$AutoReboot,
 
-  # If set, the scheduled selftest will require the virtio-snd section to run and pass.
-  # This depends on guest selftest support for `--require-snd` (see Task 128).
+  # Deprecated (no-op): virtio-snd is always tested by the guest selftest.
+  # Kept for backwards compatibility with older automation that passed -RequireSnd.
   [Parameter(Mandatory = $false)]
   [switch]$RequireSnd,
 
@@ -92,9 +92,8 @@ if (-not [string]::IsNullOrEmpty($BlkRoot)) {
   $blkArg = " --blk-root " + '\"' + $BlkRoot + '\"'
 }
 
-$requireSndArg = ""
 if ($RequireSnd) {
-  $requireSndArg = " --require-snd"
+  Write-Warning "-RequireSnd is deprecated; virtio-snd is always tested by aero-virtio-selftest.exe."
 }
 
 $disableSndArg = ""
@@ -158,7 +157,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg$disableSndArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$disableSndArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
