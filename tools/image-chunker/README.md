@@ -20,7 +20,7 @@ Binary path:
 
 Credentials are resolved via the standard AWS SDK chain (env vars, `~/.aws/config`, profiles, IAM role, etc.).
 
-Note: `--chunk-size` must be a multiple of **512 bytes** (ATA sector size).
+Note: `--chunk-size` must be a multiple of **512 bytes** (ATA sector size). The default is **4 MiB** (`4194304`).
 
 Example:
 
@@ -31,7 +31,7 @@ Example:
   --prefix images/<imageId>/<version>/ \
   --image-id <imageId> \
   --image-version <version> \
-  --chunk-size 8388608 \
+  --chunk-size 4194304 \
   --region us-east-1 \
   --concurrency 8
 ```
@@ -67,7 +67,7 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
   --prefix images/<imageId>/<version>/ \
   --image-id <imageId> \
   --image-version <version> \
-  --chunk-size 8388608 \
+  --chunk-size 4194304 \
   --endpoint http://localhost:9000 \
   --force-path-style \
   --region us-east-1 \
@@ -118,14 +118,14 @@ Example (abridged):
   "version": "sha256-...",
   "mimeType": "application/octet-stream",
   "totalSize": 123456789,
-  "chunkSize": 8388608,
-  "chunkCount": 15,
+  "chunkSize": 4194304,
+  "chunkCount": 30,
   "chunkIndexWidth": 8,
   "chunks": [
     {
-      "size": 8388608,
+      "size": 4194304,
       "sha256": "…"
     }
   ]
 }
-```
+``` 

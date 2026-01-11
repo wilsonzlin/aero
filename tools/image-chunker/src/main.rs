@@ -19,7 +19,7 @@ use tokio::io::AsyncReadExt;
 
 const MANIFEST_SCHEMA: &str = "aero.chunked-disk-image.v1";
 const CHUNK_MIME_TYPE: &str = "application/octet-stream";
-const DEFAULT_CHUNK_SIZE_BYTES: u64 = 8 * 1024 * 1024;
+const DEFAULT_CHUNK_SIZE_BYTES: u64 = 4 * 1024 * 1024;
 const DEFAULT_CONCURRENCY: usize = 8;
 const DEFAULT_RETRIES: usize = 5;
 const CHUNK_INDEX_WIDTH: usize = 8;
@@ -627,5 +627,58 @@ mod tests {
         assert_eq!(chunk_count(1, 8), 1);
         assert_eq!(chunk_count(8, 8), 1);
         assert_eq!(chunk_count(9, 8), 2);
+    }
+
+    #[test]
+    fn cli_default_chunk_size_is_4_mib() {
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(args) = cli.command;
+        assert_eq!(args.chunk_size, DEFAULT_CHUNK_SIZE_BYTES);
+        assert_eq!(args.chunk_size, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn publish_help_mentions_default_chunk_size() {
+        use clap::CommandFactory;
+
+        let mut cmd = Cli::command();
+        let publish = cmd
+            .find_subcommand_mut("publish")
+            .expect("publish subcommand");
+        let help = publish.render_long_help().to_string();
+        assert!(
+            help.contains(&format!("[default: {}]", DEFAULT_CHUNK_SIZE_BYTES)),
+            "publish help did not mention default chunk size; help was:\n{help}"
+        );
+    }
+
+    #[test]
+    fn build_manifest_v1_sets_chunk_count_and_last_chunk_size() -> Result<()> {
+        let manifest = build_manifest_v1(
+            10,
+            4,
+            "win7",
+            "sha256-abc",
+            ChecksumAlgorithm::None,
+            &[],
+        )?;
+        assert_eq!(manifest.total_size, 10);
+        assert_eq!(manifest.chunk_size, 4);
+        assert_eq!(manifest.chunk_count, 3);
+        assert_eq!(manifest.chunks.len(), 3);
+        assert_eq!(manifest.chunks[0].size, 4);
+        assert_eq!(manifest.chunks[1].size, 4);
+        assert_eq!(manifest.chunks[2].size, 2);
+        assert_eq!(manifest.chunks[0].sha256, None);
+        Ok(())
     }
 }

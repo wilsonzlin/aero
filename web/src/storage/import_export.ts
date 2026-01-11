@@ -9,6 +9,21 @@
 import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32";
 import { idbReq, idbTxDone, openDiskManagerDb, opfsGetDisksDir } from "./metadata";
 
+/**
+ * Chunk sizing notes (different subsystems use different units):
+ *
+ * - **Remote Range streaming** (`RemoteStreamingDisk`) defaults to **1 MiB** blocks.
+ * - **Chunked disk-image delivery** (manifest + chunk objects; see `docs/18-chunked-disk-image-format.md`)
+ *   defaults to **4 MiB** chunks.
+ *
+ * This file's constants are browser-local implementation details:
+ *
+ * - `IDB_CHUNK_SIZE` controls the record size in the IndexedDB `chunks` store (runtime fallback when
+ *   OPFS is unavailable). Keeping this at 4 MiB balances transaction overhead vs. per-record size,
+ *   and aligns with the default chunked-delivery chunk size to avoid unnecessary re-chunking.
+ * - `EXPORT_CHUNK_SIZE` controls the streaming unit used for CRC32/checksum and message passing
+ *   during import/export flows; smaller chunks keep memory bounded and provide smoother progress.
+ */
 export const IDB_CHUNK_SIZE = 4 * 1024 * 1024;
 export const EXPORT_CHUNK_SIZE = 1024 * 1024;
 const MAX_IMPORT_CHECKSUM_BYTES = 32 * 1024 * 1024;
