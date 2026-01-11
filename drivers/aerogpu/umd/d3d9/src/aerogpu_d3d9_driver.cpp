@@ -2641,13 +2641,118 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     D3D9DDIARG_CREATEDEVICE* pCreateDevice,
     D3D9DDI_DEVICEFUNCS* pDeviceFuncs) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  // WDK mode: the real D3D9DDI_DEVICEFUNCS surface is large and not yet wired
-  // up by the translation layer. Return a clean failure instead of crashing due
-  // to missing device DDIs.
-  (void)pCreateDevice;
-  (void)pDeviceFuncs;
-  aerogpu::logf("aerogpu-d3d9: CreateDevice not implemented (WDK mode)\n");
-  return E_NOTIMPL;
+  if (!pCreateDevice || !pDeviceFuncs) {
+    return E_INVALIDARG;
+  }
+
+  auto* adapter = as_adapter(pCreateDevice->hAdapter);
+  if (!adapter) {
+    return E_INVALIDARG;
+  }
+
+  std::unique_ptr<Device> dev;
+  try {
+    dev = std::make_unique<Device>(adapter);
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  // Publish the device handle early so the runtime has a valid cookie for any
+  // follow-up DDIs (including error paths).
+  pCreateDevice->hDevice.pDrvPrivate = dev.get();
+
+  if (!pCreateDevice->pCallbacks) {
+    aerogpu::logf("aerogpu-d3d9: CreateDevice missing device callbacks\n");
+    pCreateDevice->hDevice.pDrvPrivate = nullptr;
+    return E_INVALIDARG;
+  }
+
+  dev->wddm_callbacks = *pCreateDevice->pCallbacks;
+
+  HRESULT hr = wddm_create_device(dev->wddm_callbacks, adapter, &dev->wddm_device);
+  if (FAILED(hr)) {
+    aerogpu::logf("aerogpu-d3d9: CreateDeviceCb failed hr=0x%08x\n", static_cast<unsigned>(hr));
+    pCreateDevice->hDevice.pDrvPrivate = nullptr;
+    return hr;
+  }
+
+  hr = wddm_create_context(dev->wddm_callbacks, dev->wddm_device, &dev->wddm_context);
+  if (FAILED(hr)) {
+    aerogpu::logf("aerogpu-d3d9: CreateContextCb failed hr=0x%08x\n", static_cast<unsigned>(hr));
+    wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
+    dev->wddm_device = 0;
+    pCreateDevice->hDevice.pDrvPrivate = nullptr;
+    return hr;
+  }
+
+  aerogpu::logf("aerogpu-d3d9: CreateDevice wddm_device=0x%08x hContext=0x%08x cmd_buf=%u alloc_list=%u patch_list=%u\n",
+                static_cast<unsigned>(dev->wddm_device),
+                static_cast<unsigned>(dev->wddm_context.hContext),
+                static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
+                static_cast<unsigned>(dev->wddm_context.AllocationListSize),
+                static_cast<unsigned>(dev->wddm_context.PatchLocationListSize));
+
+  std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
+  pDeviceFuncs->pfnDestroyDevice = device_destroy;
+  pDeviceFuncs->pfnCreateResource = device_create_resource;
+  pDeviceFuncs->pfnDestroyResource = device_destroy_resource;
+  pDeviceFuncs->pfnLock = device_lock;
+  pDeviceFuncs->pfnUnlock = device_unlock;
+
+  pDeviceFuncs->pfnSetRenderTarget = device_set_render_target;
+  pDeviceFuncs->pfnSetDepthStencil = device_set_depth_stencil;
+  pDeviceFuncs->pfnSetViewport = device_set_viewport;
+  pDeviceFuncs->pfnSetScissorRect = device_set_scissor;
+  pDeviceFuncs->pfnSetTexture = device_set_texture;
+  pDeviceFuncs->pfnSetSamplerState = device_set_sampler_state;
+  pDeviceFuncs->pfnSetRenderState = device_set_render_state;
+
+  pDeviceFuncs->pfnCreateVertexDecl = device_create_vertex_decl;
+  pDeviceFuncs->pfnSetVertexDecl = device_set_vertex_decl;
+  pDeviceFuncs->pfnDestroyVertexDecl = device_destroy_vertex_decl;
+
+  pDeviceFuncs->pfnCreateShader = device_create_shader;
+  pDeviceFuncs->pfnSetShader = device_set_shader;
+  pDeviceFuncs->pfnDestroyShader = device_destroy_shader;
+  pDeviceFuncs->pfnSetShaderConstF = device_set_shader_const_f;
+
+  pDeviceFuncs->pfnSetStreamSource = device_set_stream_source;
+  pDeviceFuncs->pfnSetIndices = device_set_indices;
+
+  pDeviceFuncs->pfnClear = device_clear;
+  pDeviceFuncs->pfnDrawPrimitive = device_draw_primitive;
+  pDeviceFuncs->pfnDrawIndexedPrimitive = device_draw_indexed_primitive;
+  pDeviceFuncs->pfnCreateSwapChain = device_create_swap_chain;
+  pDeviceFuncs->pfnDestroySwapChain = device_destroy_swap_chain;
+  pDeviceFuncs->pfnGetSwapChain = device_get_swap_chain;
+  pDeviceFuncs->pfnSetSwapChain = device_set_swap_chain;
+  pDeviceFuncs->pfnReset = device_reset;
+  pDeviceFuncs->pfnResetEx = device_reset_ex;
+  pDeviceFuncs->pfnCheckDeviceState = device_check_device_state;
+  pDeviceFuncs->pfnRotateResourceIdentities = device_rotate_resource_identities;
+  pDeviceFuncs->pfnPresent = device_present;
+  pDeviceFuncs->pfnPresentEx = device_present_ex;
+  pDeviceFuncs->pfnFlush = device_flush;
+  pDeviceFuncs->pfnSetMaximumFrameLatency = device_set_maximum_frame_latency;
+  pDeviceFuncs->pfnGetMaximumFrameLatency = device_get_maximum_frame_latency;
+  pDeviceFuncs->pfnGetPresentStats = device_get_present_stats;
+  pDeviceFuncs->pfnGetLastPresentCount = device_get_last_present_count;
+
+  pDeviceFuncs->pfnCreateQuery = device_create_query;
+  pDeviceFuncs->pfnDestroyQuery = device_destroy_query;
+  pDeviceFuncs->pfnIssueQuery = device_issue_query;
+  pDeviceFuncs->pfnGetQueryData = device_get_query_data;
+  pDeviceFuncs->pfnGetRenderTargetData = device_get_render_target_data;
+  pDeviceFuncs->pfnCopyRects = device_copy_rects;
+  pDeviceFuncs->pfnWaitForIdle = device_wait_for_idle;
+
+  pDeviceFuncs->pfnBlt = device_blt;
+  pDeviceFuncs->pfnColorFill = device_color_fill;
+  pDeviceFuncs->pfnUpdateSurface = device_update_surface;
+  pDeviceFuncs->pfnUpdateTexture = device_update_texture;
+
+  dev.release();
+  return S_OK;
 #else
   if (!pCreateDevice || !pDeviceFuncs) {
     return E_INVALIDARG;

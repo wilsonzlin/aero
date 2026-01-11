@@ -75,8 +75,8 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <PreprocessorDefinitions>_WINDLL;_USRDLL;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>include;..\..\protocol;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_WINDLL;_USRDLL;_WIN32_WINNT=0x0601;AEROGPU_D3D9_USE_WDK_DDI;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>include;..\..\protocol;$(WDKROOT)\inc\api;$(WDKROOT)\inc\ddk;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
 
