@@ -259,12 +259,30 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
         mem: &mut dyn MemoryBus,
         submission: AeroGpuBackendSubmission,
     ) -> Result<(), String> {
+        if submission.cmd_stream.is_empty() {
+            self.completed.push_back(AeroGpuBackendCompletion {
+                fence: submission.signal_fence,
+                error: None,
+            });
+            return Ok(());
+        }
+
         let guest_mem = MemoryBusGuestMemory::new(mem);
-        let alloc_table = submission
+        let alloc_table = match submission
             .alloc_table
             .as_deref()
             .map(decode_alloc_table)
-            .transpose()?;
+            .transpose()
+        {
+            Ok(table) => table,
+            Err(err) => {
+                self.completed.push_back(AeroGpuBackendCompletion {
+                    fence: submission.signal_fence,
+                    error: Some(err.clone()),
+                });
+                return Err(err);
+            }
+        };
 
         let result = self.exec.execute_cmd_stream_with_guest_memory(
             &submission.cmd_stream,
