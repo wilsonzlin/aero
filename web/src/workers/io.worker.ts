@@ -30,7 +30,7 @@ import {
 import { DeviceManager, type IrqSink } from "../io/device_manager";
 import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
-import { UhciPciDevice } from "../io/devices/uhci";
+import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { UhciWebUsbPciDevice } from "../io/devices/uhci_webusb";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
@@ -133,6 +133,10 @@ let uhciDevice: UhciPciDevice | null = null;
 type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
 let uhciControllerBridge: UhciControllerBridge | null = null;
 
+let uhciIrqAsserted = false;
+let webUsbUhciIrqAsserted = false;
+let usbIrqLineAsserted = false;
+
 type WebUsbUhciBridge = InstanceType<NonNullable<WasmApi["WebUsbUhciBridge"]>>;
 let webUsbUhciBridge: WebUsbUhciBridge | null = null;
 let webUsbUhciDevice: UhciWebUsbPciDevice | null = null;
@@ -140,6 +144,8 @@ let lastUsbSelected: UsbSelectedMessage | null = null;
 let usbRingAttach: UsbRingAttachMessage | null = null;
 
 const WEBUSB_GUEST_ROOT_PORT = 0;
+// IRQ11 is used by the guest-visible UHCI controllers (both the generic UHCI and the WebUSB passthrough UHCI).
+const WEBUSB_UHCI_IRQ_LINE = 0x0b;
 
 let webUsbGuestAttached = false;
 let webUsbGuestLastError: string | null = null;
@@ -178,6 +184,64 @@ function emitWebUsbGuestStatus(): void {
 
 const uhciHidTopology = new UhciHidTopologyManager();
 
+function syncUsbIrqLine(mgr: DeviceManager): void {
+  const level = webUsbUhciIrqAsserted || uhciIrqAsserted;
+  if (level === usbIrqLineAsserted) return;
+  usbIrqLineAsserted = level;
+  if (level) mgr.irqSink.raiseIrq(WEBUSB_UHCI_IRQ_LINE);
+  else mgr.irqSink.lowerIrq(WEBUSB_UHCI_IRQ_LINE);
+}
+
+function uhciSharedIrqSink(mgr: DeviceManager): IrqSink {
+  return {
+    raiseIrq: (irq) => {
+      if ((irq & 0xff) === WEBUSB_UHCI_IRQ_LINE) {
+        if (!uhciIrqAsserted) {
+          uhciIrqAsserted = true;
+          syncUsbIrqLine(mgr);
+        }
+        return;
+      }
+      mgr.irqSink.raiseIrq(irq);
+    },
+    lowerIrq: (irq) => {
+      if ((irq & 0xff) === WEBUSB_UHCI_IRQ_LINE) {
+        if (uhciIrqAsserted) {
+          uhciIrqAsserted = false;
+          syncUsbIrqLine(mgr);
+        }
+        return;
+      }
+      mgr.irqSink.lowerIrq(irq);
+    },
+  };
+}
+
+function webUsbSharedIrqSink(mgr: DeviceManager): IrqSink {
+  return {
+    raiseIrq: (irq) => {
+      if ((irq & 0xff) === WEBUSB_UHCI_IRQ_LINE) {
+        if (!webUsbUhciIrqAsserted) {
+          webUsbUhciIrqAsserted = true;
+          syncUsbIrqLine(mgr);
+        }
+        return;
+      }
+      mgr.irqSink.raiseIrq(irq);
+    },
+    lowerIrq: (irq) => {
+      if ((irq & 0xff) === WEBUSB_UHCI_IRQ_LINE) {
+        if (webUsbUhciIrqAsserted) {
+          webUsbUhciIrqAsserted = false;
+          syncUsbIrqLine(mgr);
+        }
+        return;
+      }
+      mgr.irqSink.lowerIrq(irq);
+    },
+  };
+}
+
 function maybeInitUhciDevice(): void {
   const api = wasmApi;
   const mgr = deviceManager;
@@ -203,16 +267,17 @@ function maybeInitUhciDevice(): void {
         let bridge: any;
         try {
           bridge = Ctor.length >= 2 ? new Ctor(base, size) : new Ctor(base);
-        } catch (err) {
+        } catch {
           // Retry with the opposite arity to support older/newer wasm-bindgen outputs.
           bridge = Ctor.length >= 2 ? new Ctor(base) : new Ctor(base, size);
         }
-        const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
+        const dev = new UhciPciDevice({ bridge, irqSink: uhciSharedIrqSink(mgr) });
         uhciControllerBridge = bridge;
         uhciDevice = dev;
         mgr.registerPciDevice(dev);
         mgr.addTickable(dev);
         uhciHidTopology.setUhciBridge(bridge as unknown as any);
+        syncUsbIrqLine(mgr);
       } catch (err) {
         console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
       }
@@ -225,7 +290,7 @@ function maybeInitUhciDevice(): void {
       try {
         webUsbUhciBridge = new WebBridge(guestBase >>> 0);
 
-        const dev = new UhciWebUsbPciDevice({ bridge: webUsbUhciBridge, irqSink: mgr.irqSink });
+        const dev = new UhciWebUsbPciDevice({ bridge: webUsbUhciBridge, irqSink: webUsbSharedIrqSink(mgr) });
         webUsbUhciDevice = dev;
         mgr.registerPciDevice(dev);
         mgr.addTickable(dev);
@@ -274,6 +339,8 @@ function maybeInitUhciDevice(): void {
           // ignore
         }
         webUsbUhciBridge = null;
+        webUsbUhciIrqAsserted = false;
+        syncUsbIrqLine(mgr);
         webUsbGuestAttached = false;
         webUsbGuestLastError = `Failed to initialize WebUsbUhciBridge: ${formatWebUsbGuestError(err)}`;
       }
@@ -593,8 +660,6 @@ let wasmHidGuest: HidGuestBridge | null = null;
 // -----------------------------------------------------------------------------
 
 const hidPassthroughPathsByDeviceId = new Map<string, GuestUsbPath>();
-type HidPassthroughHubInfo = { guestPath: GuestUsbPath; portCount?: number };
-let hidPassthroughHub: HidPassthroughHubInfo | null = null;
 
 type HidPassthroughInputReportDebugEntry = {
   reportId: number;
@@ -649,7 +714,6 @@ function findFirstSendableReport(
 }
 
 function handleHidPassthroughAttachHub(msg: Extract<HidPassthroughMessage, { type: "hid:attachHub" }>): void {
-  hidPassthroughHub = { guestPath: msg.guestPath, ...(msg.portCount !== undefined ? { portCount: msg.portCount } : {}) };
   uhciHidTopology.setHubConfig(msg.guestPath, msg.portCount);
   maybeInitUhciDevice();
   if (import.meta.env.DEV) {
