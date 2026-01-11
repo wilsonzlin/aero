@@ -130,7 +130,7 @@ fn windows_device_contract_virtio_input_matches_pci_profile() {
     assert_eq!(VIRTIO_INPUT_KEYBOARD.vendor_id, PCI_VENDOR_ID_VIRTIO);
     assert_eq!(
         input.get("driver_service_name").and_then(|v| v.as_str()),
-        Some("aero_virtio_input")
+        Some("virtioinput")
     );
     assert_eq!(
         input.get("inf_name").and_then(|v| v.as_str()),
