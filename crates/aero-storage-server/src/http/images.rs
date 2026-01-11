@@ -1,13 +1,15 @@
 use crate::{
-    metrics::Metrics,
     http::{
         cache,
-        range::{parse_range_header, resolve_ranges, ByteRange, RangeOptions, RangeResolveError},
+        range::{
+            parse_range_header, resolve_range, ByteRange, RangeOptions, RangeParseError,
+            RangeResolveError,
+        },
     },
+    metrics::Metrics,
     store::{ImageStore, StoreError},
 };
 
-use async_stream::try_stream;
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -19,11 +21,8 @@ use axum::{
     routing::get,
     Router,
 };
-use bytes::Bytes;
-use futures::{Stream, StreamExt};
-use rand::{distributions::Alphanumeric, Rng};
+use futures::Stream;
 use std::{
-    io,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -32,7 +31,6 @@ use std::{
 use tokio_util::io::ReaderStream;
 use tracing::Instrument;
 
-const DEFAULT_MAX_RANGES: usize = 16;
 const DEFAULT_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 const DEFAULT_PUBLIC_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
@@ -51,7 +49,6 @@ impl ImagesState {
             store,
             metrics,
             range_options: RangeOptions {
-                max_ranges: DEFAULT_MAX_RANGES,
                 max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             },
             cors_allow_origin: HeaderValue::from_static("*"),
@@ -160,31 +157,38 @@ async fn serve_image(
 
     let range_header = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok());
     if let Some(range_header) = range_header {
-        let specs = match parse_range_header(range_header) {
-            Ok(Some(v)) => v,
-            Ok(None) => {
-                return full_response(&state, &image_id, meta, want_body, cache_control).await
-            }
-            Err(_) => {
-                state.metrics.inc_range_request_invalid();
-                return range_not_satisfiable(&state, len);
-            }
-        };
-
         // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
         if !cache::if_range_allows_range(&req_headers, meta.etag.as_deref(), meta.last_modified) {
             return full_response(&state, &image_id, meta, want_body, cache_control).await;
         }
 
-        let ranges = match resolve_ranges(&specs, len, state.range_options) {
-            Ok(r) => r,
-            // Abuse guard: large multi-range requests can be used for amplification. We return
-            // 413 rather than attempting to serve it.
-            Err(RangeResolveError::TooManyRanges | RangeResolveError::TooManyBytes) => {
+        let specs = match parse_range_header(range_header) {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                return full_response(&state, &image_id, meta, want_body, cache_control).await
+            }
+            Err(RangeParseError::HeaderTooLarge { .. } | RangeParseError::TooManyRanges { .. }) => {
                 state.metrics.inc_range_request_invalid();
                 return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state);
             }
-            Err(RangeResolveError::NoSatisfiableRanges) => {
+            Err(_) => {
+                // For syntactically invalid ranges, follow our public contract and return `416`.
+                // (See `docs/16-disk-image-streaming-auth.md`.)
+                state.metrics.inc_range_request_invalid();
+                return range_not_satisfiable(&state, len);
+            }
+        };
+
+        let range = match resolve_range(&specs, len, state.range_options) {
+            Ok(r) => r,
+            // Abuse guard: we cap the maximum single-range response size to avoid clients forcing
+            // huge reads (amplification / resource exhaustion).
+            Err(RangeResolveError::TooManyBytes) => {
+                state.metrics.inc_range_request_invalid();
+                return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state);
+            }
+            // Disk streaming only supports a single range per request.
+            Err(RangeResolveError::MultiRangeNotSupported | RangeResolveError::Unsatisfiable) => {
                 state.metrics.inc_range_request_invalid();
                 return range_not_satisfiable(&state, len);
             }
@@ -192,26 +196,8 @@ async fn serve_image(
 
         state.metrics.inc_range_request_valid();
 
-        if ranges.len() == 1 {
-            return single_range_response(
-                &state,
-                &image_id,
-                meta,
-                ranges[0],
-                want_body,
-                cache_control,
-            )
+        return single_range_response(&state, &image_id, meta, range, want_body, cache_control)
             .await;
-        }
-        return multipart_range_response(
-            &state,
-            &image_id,
-            meta,
-            ranges,
-            want_body,
-            cache_control,
-        )
-        .await;
     }
 
     full_response(&state, &image_id, meta, want_body, cache_control).await
@@ -225,11 +211,14 @@ async fn full_response(
     cache_control: HeaderValue,
 ) -> Response {
     if want_body {
-        state.metrics.observe_image_bytes_served(image_id, meta.size);
+        state
+            .metrics
+            .observe_image_bytes_served(image_id, meta.size);
     }
 
     let mut response = Response::new(if want_body {
-        let span = tracing::info_span!("store_read", image_id = %image_id, start = 0_u64, len = meta.size);
+        let span =
+            tracing::info_span!("store_read", image_id = %image_id, start = 0_u64, len = meta.size);
         match state
             .store
             .open_range(image_id, 0, meta.size)
@@ -271,7 +260,9 @@ async fn single_range_response(
 ) -> Response {
     let range_len = range.len();
     if want_body {
-        state.metrics.observe_image_bytes_served(image_id, range_len);
+        state
+            .metrics
+            .observe_image_bytes_served(image_id, range_len);
     }
 
     let mut response = Response::new(if want_body {
@@ -318,119 +309,6 @@ async fn single_range_response(
     );
     insert_data_cache_headers(headers, &meta, cache_control);
     response
-}
-
-async fn multipart_range_response(
-    state: &ImagesState,
-    image_id: &str,
-    meta: crate::store::ImageMeta,
-    ranges: Vec<ByteRange>,
-    want_body: bool,
-    cache_control: HeaderValue,
-) -> Response {
-    if want_body {
-        let total = ranges.iter().map(|r| r.len()).sum();
-        state.metrics.observe_image_bytes_served(image_id, total);
-    }
-
-    let boundary: String = rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(32)
-        .map(char::from)
-        .collect();
-
-    let content_type =
-        HeaderValue::from_str(&format!("multipart/byteranges; boundary={boundary}")).unwrap();
-
-    let content_length = multipart_content_length(&boundary, &ranges, meta.content_type, meta.size);
-
-    let mut response = Response::new(if want_body {
-        let store = Arc::clone(&state.store);
-        let metrics = Arc::clone(&state.metrics);
-        let image_id = image_id.to_string();
-        let boundary = boundary.clone();
-        let content_type_part = meta.content_type;
-        let total_size = meta.size;
-
-        let stream = try_stream! {
-            for range in ranges {
-                let part_headers = format!(
-                    "--{boundary}\r\nContent-Type: {content_type_part}\r\nContent-Range: bytes {start}-{end}/{total_size}\r\n\r\n",
-                    start = range.start,
-                    end = range.end,
-                );
-                yield Bytes::from(part_headers);
-
-                let span = tracing::info_span!(
-                    "store_read",
-                    image_id = %image_id,
-                    start = range.start,
-                    len = range.len(),
-                );
-
-                let reader = store
-                    .open_range(&image_id, range.start, range.len())
-                    .instrument(span.clone())
-                    .await
-                    .map_err(|err| {
-                        match err {
-                            StoreError::Io(_) => metrics.inc_store_error("open_range"),
-                            StoreError::Manifest(_) => metrics.inc_store_error("manifest"),
-                            _ => {}
-                        };
-                        io::Error::new(io::ErrorKind::Other, err)
-                    })?;
-
-                let mut reader_stream = InstrumentedStream::new(ReaderStream::new(reader), span);
-                while let Some(chunk) = reader_stream.next().await {
-                    yield chunk?;
-                }
-                yield Bytes::from_static(b"\r\n");
-            }
-            yield Bytes::from(format!("--{boundary}--\r\n"));
-        };
-
-        let stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes, io::Error>> + Send>> =
-            Box::pin(stream);
-
-        Body::from_stream(stream)
-    } else {
-        Body::empty()
-    });
-
-    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-    let headers = response.headers_mut();
-    insert_cors_headers(headers, state);
-    headers.insert(header::CONTENT_TYPE, content_type);
-    headers.insert(
-        header::CONTENT_LENGTH,
-        HeaderValue::from_str(&content_length.to_string()).unwrap(),
-    );
-    insert_data_cache_headers(headers, &meta, cache_control);
-    response
-}
-
-fn multipart_content_length(
-    boundary: &str,
-    ranges: &[ByteRange],
-    content_type_part: &str,
-    total_size: u64,
-) -> u64 {
-    let mut total = 0u64;
-
-    for range in ranges {
-        let part_headers = format!(
-            "--{boundary}\r\nContent-Type: {content_type_part}\r\nContent-Range: bytes {start}-{end}/{total_size}\r\n\r\n",
-            start = range.start,
-            end = range.end,
-        );
-        total += part_headers.len() as u64;
-        total += range.len();
-        total += 2; // trailing CRLF after each range body
-    }
-
-    total += format!("--{boundary}--\r\n").len() as u64;
-    total
 }
 
 fn range_not_satisfiable(state: &ImagesState, len: u64) -> Response {
@@ -505,7 +383,9 @@ pub(crate) fn insert_cors_preflight_headers(headers: &mut HeaderMap, state: &Ima
     );
     headers.insert(
         header::VARY,
-        HeaderValue::from_static("Origin, Access-Control-Request-Method, Access-Control-Request-Headers"),
+        HeaderValue::from_static(
+            "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+        ),
     );
     headers.insert(
         HeaderName::from_static("access-control-allow-methods"),

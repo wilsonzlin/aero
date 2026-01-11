@@ -40,13 +40,17 @@ async fn http_range_supports_offsets_beyond_4gib_and_suffix_ranges() {
     file.seek(SeekFrom::Start(HIGH_OFFSET))
         .await
         .expect("seek high");
-    file.write_all(SENTINEL_HIGH).await.expect("write high sentinel");
+    file.write_all(SENTINEL_HIGH)
+        .await
+        .expect("write high sentinel");
 
     let end_offset = FILE_SIZE - SENTINEL_END.len() as u64;
     file.seek(SeekFrom::Start(end_offset))
         .await
         .expect("seek end");
-    file.write_all(SENTINEL_END).await.expect("write end sentinel");
+    file.write_all(SENTINEL_END)
+        .await
+        .expect("write end sentinel");
     file.flush().await.expect("flush");
     drop(file);
 
@@ -54,7 +58,6 @@ async fn http_range_supports_offsets_beyond_4gib_and_suffix_ranges() {
     let metrics = Arc::new(Metrics::new());
     let state = ImagesState::new(store, metrics).with_range_options(RangeOptions {
         // Keep abuse guards low; the test only requests a few bytes.
-        max_ranges: 4,
         max_total_bytes: 1024,
     });
     let app = router_with_state(state);

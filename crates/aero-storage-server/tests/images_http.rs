@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use tower::ServiceExt;
 
-async fn setup_app(max_ranges: usize, max_total_bytes: u64) -> (axum::Router, tempfile::TempDir) {
+async fn setup_app(max_total_bytes: u64) -> (axum::Router, tempfile::TempDir) {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
         .await
@@ -23,16 +23,14 @@ async fn setup_app(max_ranges: usize, max_total_bytes: u64) -> (axum::Router, te
 
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
     let metrics = Arc::new(Metrics::new());
-    let state = ImagesState::new(store, metrics).with_range_options(RangeOptions {
-        max_ranges,
-        max_total_bytes,
-    });
+    let state =
+        ImagesState::new(store, metrics).with_range_options(RangeOptions { max_total_bytes });
     (router_with_state(state), dir)
 }
 
 #[tokio::test]
 async fn get_without_range_returns_full_body() {
-    let (app, _dir) = setup_app(16, 1024).await;
+    let (app, _dir) = setup_app(1024).await;
 
     let res = app
         .oneshot(
@@ -65,7 +63,7 @@ async fn get_without_range_returns_full_body() {
 
 #[tokio::test]
 async fn head_without_range_returns_headers_only() {
-    let (app, _dir) = setup_app(16, 1024).await;
+    let (app, _dir) = setup_app(1024).await;
 
     let res = app
         .oneshot(
@@ -90,7 +88,7 @@ async fn head_without_range_returns_headers_only() {
 
 #[tokio::test]
 async fn range_single_byte_returns_206() {
-    let (app, _dir) = setup_app(16, 1024).await;
+    let (app, _dir) = setup_app(1024).await;
 
     let res = app
         .oneshot(
@@ -117,7 +115,7 @@ async fn range_single_byte_returns_206() {
 
 #[tokio::test]
 async fn range_unsatisfiable_returns_416_with_content_range_star() {
-    let (app, _dir) = setup_app(16, 1024).await;
+    let (app, _dir) = setup_app(1024).await;
 
     let res = app
         .oneshot(
@@ -139,8 +137,8 @@ async fn range_unsatisfiable_returns_416_with_content_range_star() {
 }
 
 #[tokio::test]
-async fn range_multiple_returns_multipart_body() {
-    let (app, _dir) = setup_app(16, 1024).await;
+async fn range_multiple_is_rejected_with_416() {
+    let (app, _dir) = setup_app(1024).await;
 
     let res = app
         .oneshot(
@@ -154,39 +152,70 @@ async fn range_multiple_returns_multipart_body() {
         .await
         .unwrap();
 
-    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
-
-    let content_type = res.headers()[header::CONTENT_TYPE]
-        .to_str()
-        .unwrap()
-        .to_string();
-    assert!(content_type.starts_with("multipart/byteranges; boundary="));
-    let boundary = content_type
-        .split("boundary=")
-        .nth(1)
-        .expect("boundary token")
-        .to_string();
-
-    let body = res.into_body().collect().await.unwrap().to_bytes();
-    let body_str = String::from_utf8(body.to_vec()).unwrap();
-
-    let expected = format!(
-        "--{b}\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 0-0/13\r\n\r\nH\r\n--{b}\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 2-2/13\r\n\r\nl\r\n--{b}--\r\n",
-        b = boundary
+    assert_eq!(res.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        res.headers()[header::CONTENT_RANGE].to_str().unwrap(),
+        "bytes */13"
     );
-    assert_eq!(body_str, expected);
 }
 
 #[tokio::test]
 async fn range_abuse_guard_returns_413() {
-    let (app, _dir) = setup_app(1, 1).await;
+    let (app, _dir) = setup_app(1).await;
 
     let res = app
         .oneshot(
             Request::builder()
                 .method(Method::GET)
                 .uri("/v1/images/test.img")
-                .header(header::RANGE, "bytes=0-0,2-2")
+                .header(header::RANGE, "bytes=0-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn range_header_too_large_returns_413() {
+    let (app, _dir) = setup_app(1024).await;
+
+    let mut range = String::from("bytes=0-0");
+    range.push_str(&"0".repeat(aero_http_range::MAX_RANGE_HEADER_LEN));
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img")
+                .header(header::RANGE, range)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn range_header_too_many_ranges_returns_413() {
+    let (app, _dir) = setup_app(1024).await;
+
+    let mut parts = Vec::with_capacity(aero_http_range::MAX_RANGE_SPECS + 1);
+    for _ in 0..(aero_http_range::MAX_RANGE_SPECS + 1) {
+        parts.push("0-0");
+    }
+    let range = format!("bytes={}", parts.join(","));
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img")
+                .header(header::RANGE, range)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -198,7 +227,7 @@ async fn range_abuse_guard_returns_413() {
 
 #[tokio::test]
 async fn cors_preflight_allows_range() {
-    let (app, _dir) = setup_app(16, 1024).await;
+    let (app, _dir) = setup_app(1024).await;
 
     let res = app
         .oneshot(

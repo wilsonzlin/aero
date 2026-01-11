@@ -11,7 +11,7 @@ use axum::{
     http::{header, Method, Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use std::{str, sync::Arc};
+use std::sync::Arc;
 use tempfile::tempdir;
 use tower::ServiceExt;
 
@@ -31,7 +31,6 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir, Vec<u8>) {
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
     let metrics = Arc::new(Metrics::new());
     let state = ImagesState::new(store, metrics).with_range_options(RangeOptions {
-        max_ranges: 16,
         max_total_bytes: 1024 * 1024,
     });
 
@@ -187,6 +186,16 @@ async fn range_matrix_no_range_single_suffix_unsatisfiable() {
             expected_body: vec![],
         },
         Case {
+            name: "multi-range requests are rejected",
+            method: Method::GET,
+            range: Some("bytes=0-0,2-2"),
+            accept_encoding: None,
+            expected_status: StatusCode::RANGE_NOT_SATISFIABLE,
+            expected_content_length: None,
+            expected_content_range: Some(format!("bytes */{total_len}")),
+            expected_body: vec![],
+        },
+        Case {
             name: "Accept-Encoding must not trigger Content-Encoding",
             method: Method::GET,
             range: None,
@@ -249,143 +258,6 @@ async fn range_matrix_no_range_single_suffix_unsatisfiable() {
         let body = res.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(&body[..], &case.expected_body[..], "{}: body", case.name);
     }
-}
-
-fn parse_boundary(content_type: &str) -> &str {
-    content_type
-        .split(';')
-        .find_map(|part| part.trim().strip_prefix("boundary="))
-        .map(|b| b.trim_matches('"'))
-        .expect("boundary present")
-}
-
-fn parse_multipart(body: &[u8], boundary: &str) -> Vec<(String, Vec<u8>)> {
-    let marker = format!("--{boundary}").into_bytes();
-
-    assert!(
-        body.starts_with(&marker),
-        "multipart body must start with boundary"
-    );
-
-    let mut pos = 0usize;
-    let mut parts = Vec::new();
-
-    loop {
-        assert!(body[pos..].starts_with(&marker));
-        pos += marker.len();
-
-        if body[pos..].starts_with(b"--") {
-            pos += 2;
-            if body.get(pos..pos + 2) == Some(b"\r\n") {
-                pos += 2;
-            }
-            break;
-        }
-
-        assert_eq!(&body[pos..pos + 2], b"\r\n");
-        pos += 2;
-
-        let headers_end = body[pos..]
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .expect("header terminator");
-        let headers_bytes = &body[pos..pos + headers_end];
-        pos += headers_end + 4;
-
-        let headers_text = str::from_utf8(headers_bytes).expect("ascii headers");
-        let mut content_range = None;
-        for line in headers_text.split("\r\n") {
-            if let Some(v) = line.strip_prefix("Content-Range:") {
-                content_range = Some(v.trim().to_string());
-            }
-        }
-        let content_range = content_range.expect("Content-Range header");
-
-        let (start, end) = content_range
-            .strip_prefix("bytes ")
-            .and_then(|v| v.split_once('/'))
-            .and_then(|(range, _total)| range.split_once('-'))
-            .map(|(s, e)| (s.parse::<usize>().unwrap(), e.parse::<usize>().unwrap()))
-            .expect("Content-Range parse");
-        let len = end - start + 1;
-
-        let payload = body[pos..pos + len].to_vec();
-        pos += len;
-
-        assert_eq!(&body[pos..pos + 2], b"\r\n");
-        pos += 2;
-
-        parts.push((content_range, payload));
-    }
-
-    assert_eq!(pos, body.len(), "multipart parser must consume entire body");
-    parts
-}
-
-#[tokio::test]
-async fn range_matrix_multi_range_multipart() {
-    let (app, _dir, fixture) = setup_app().await;
-    let total_len = fixture.len() as u64;
-
-    let res = app
-        .oneshot(
-            Request::builder()
-                .method(Method::GET)
-                .uri(format!("/v1/images/{IMAGE_ID}"))
-                .header(header::RANGE, "bytes=0-0,2-2")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
-    assert_common_headers(res.headers());
-
-    let content_type = res.headers()[header::CONTENT_TYPE].to_str().unwrap();
-    assert!(
-        content_type.starts_with("multipart/byteranges"),
-        "expected multipart/byteranges, got {content_type}"
-    );
-    let boundary = parse_boundary(content_type).to_string();
-
-    let body = res.into_body().collect().await.unwrap().to_bytes();
-    let parts = parse_multipart(&body, &boundary);
-
-    assert_eq!(parts.len(), 2);
-    assert_eq!(parts[0].0, format!("bytes 0-0/{total_len}"));
-    assert_eq!(parts[0].1, vec![fixture[0]]);
-    assert_eq!(parts[1].0, format!("bytes 2-2/{total_len}"));
-    assert_eq!(parts[1].1, vec![fixture[2]]);
-}
-
-#[tokio::test]
-async fn range_matrix_multi_range_partial_satisfaction_collapses_to_single_range() {
-    let (app, _dir, fixture) = setup_app().await;
-    let total_len = fixture.len() as u64;
-
-    let res = app
-        .oneshot(
-            Request::builder()
-                .method(Method::GET)
-                .uri(format!("/v1/images/{IMAGE_ID}"))
-                .header(header::RANGE, "bytes=0-0,256-266")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    // Policy: drop unsatisfiable ranges and collapse to a single-range 206 when only one remains.
-    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
-    assert_common_headers(res.headers());
-    assert_eq!(
-        res.headers()[header::CONTENT_RANGE].to_str().unwrap(),
-        format!("bytes 0-0/{total_len}")
-    );
-
-    let body = res.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(&body[..], &[fixture[0]]);
 }
 
 #[tokio::test]
