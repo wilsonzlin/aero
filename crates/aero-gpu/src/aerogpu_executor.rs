@@ -1342,16 +1342,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ExecutorError::Validation(format!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))
             })?;
             let dst_backing = if writeback {
-                dst.backing.ok_or_else(|| {
+                Some(dst.backing.ok_or_else(|| {
                     ExecutorError::Validation(format!(
                         "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
                     ))
-                })?
+                })?)
             } else {
-                GuestBufferBacking {
-                    alloc_id: 0,
-                    alloc_offset_bytes: 0,
-                }
+                None
             };
             (src.size_bytes, dst.size_bytes, dst_backing)
         };
@@ -1418,6 +1415,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_BUFFER: internal writeback size mismatch".into(),
                 ));
             }
+            let dst_backing = dst_backing.ok_or_else(|| {
+                ExecutorError::Validation(
+                    "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed".into(),
+                )
+            })?;
             let table = alloc_table.ok_or_else(|| {
                 ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
             })?;
@@ -1504,18 +1506,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ))
             })?;
             let dst_backing = if writeback {
-                dst.backing.ok_or_else(|| {
+                Some(dst.backing.ok_or_else(|| {
                     ExecutorError::Validation(format!(
                         "COPY_TEXTURE2D: WRITEBACK_DST requires dst texture to be guest-backed (handle={dst_texture})"
                     ))
-                })?
+                })?)
             } else {
-                GuestTextureBacking {
-                    alloc_id: 0,
-                    alloc_offset_bytes: 0,
-                    row_pitch_bytes: 0,
-                    size_bytes: 0,
-                }
+                None
             };
 
             (
@@ -1685,6 +1682,29 @@ fn fs_main() -> @location(0) vec4<f32> {
                 .ok_or_else(|| {
                     ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into())
                 })?;
+
+            let dst_backing = dst_backing.ok_or_else(|| {
+                ExecutorError::Validation(
+                    "COPY_TEXTURE2D: WRITEBACK_DST requires dst texture to be guest-backed".into(),
+                )
+            })?;
+            let table = alloc_table.ok_or_else(|| {
+                ExecutorError::Validation(
+                    "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
+                )
+            })?;
+            let alloc = table.get(dst_backing.alloc_id).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: missing alloc table entry for alloc_id={}",
+                    dst_backing.alloc_id
+                ))
+            })?;
+            if (alloc.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
+                return Err(ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: WRITEBACK_DST to READONLY alloc_id={}",
+                    dst_backing.alloc_id
+                )));
+            }
 
             let row_pitch = u64::from(dst_backing.row_pitch_bytes);
             if row_pitch == 0 {
