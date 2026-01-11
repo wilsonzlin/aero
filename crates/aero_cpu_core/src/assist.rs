@@ -775,7 +775,10 @@ fn instr_int<B: CpuBus>(
     };
 
     match state.mode {
-        CpuMode::Real | CpuMode::Vm86 => return instr_int_real(state, bus, vector, return_ip),
+        CpuMode::Real | CpuMode::Vm86 => {
+            state.set_pending_bios_int(vector);
+            return instr_int_real(state, bus, vector, return_ip);
+        }
         CpuMode::Protected => return instr_int_protected(state, bus, vector, return_ip),
         CpuMode::Long => return Err(Exception::Unimplemented("INT in long mode")),
     }
@@ -826,6 +829,7 @@ fn instr_iret_real<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<(), E
     // IRET restores FLAGS (16-bit in real mode).
     let new_flags = (state.rflags() & !0xFFFF) | (flags as u64);
     state.set_rflags(new_flags);
+    state.clear_pending_bios_int();
     Ok(())
 }
 
