@@ -162,6 +162,32 @@ Retry with:
 ./scripts/mem-limit.sh 12G cargo build --locked
 ```
 
+### Cargo says "Blocking waiting for file lock on package cache"
+
+If `cargo` appears stuck and repeatedly prints:
+
+```
+Blocking waiting for file lock on package cache
+```
+
+it usually means another `cargo` process on the shared host is currently
+updating/using the global Cargo registry cache (common when many agents run
+builds concurrently). This is typically transient: once the other `cargo`
+finishes its download/unpack step, the lock is released and your command
+continues.
+
+Mitigations:
+
+- **Wait** (best default). The lock should clear on its own.
+- **Stagger heavy Cargo runs** across agents (avoid everyone starting a fresh
+  build at once).
+- If you need full isolation, run with a **per-checkout `CARGO_HOME`** (at the
+  cost of duplicating cache data / doing your own downloads):
+
+  ```bash
+  CARGO_HOME="$PWD/.cargo-home" cargo build --locked
+  ```
+
 ### Build is very slow
 
 You might be over-constrained. Check if you're accidentally running with `-j1`:
