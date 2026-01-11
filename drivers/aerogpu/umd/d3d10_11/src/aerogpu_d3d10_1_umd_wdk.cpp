@@ -1675,6 +1675,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     sample_quality = static_cast<uint32_t>(pDesc ? pDesc->SampleDesc.Quality : 0);
   }
 
+  uint64_t resource_flags_bits = 0;
+  uint32_t resource_flags_size = 0;
+  __if_exists(D3D10DDIARG_CREATERESOURCE::ResourceFlags) {
+    resource_flags_size = static_cast<uint32_t>(sizeof(pDesc->ResourceFlags));
+    const size_t n = std::min(sizeof(resource_flags_bits), sizeof(pDesc->ResourceFlags));
+    std::memcpy(&resource_flags_bits, &pDesc->ResourceFlags, n);
+  }
+
   const uint32_t tex_w =
       (pDesc && pDesc->pMipInfoList) ? static_cast<uint32_t>(pDesc->pMipInfoList[0].TexelWidth) : 0;
   const uint32_t tex_h =
@@ -1682,7 +1690,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
   AEROGPU_D3D10_11_LOG(
       "trace_resources: D3D10.1 CreateResource dim=%u bind=0x%08X usage=%u cpu=0x%08X misc=0x%08X fmt=%u "
-      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) mipInfoList=%p initUP=%p",
+      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u mipInfoList=%p initUP=%p",
       pDesc ? static_cast<unsigned>(pDesc->ResourceDimension) : 0u,
       pDesc ? static_cast<unsigned>(pDesc->BindFlags) : 0u,
       static_cast<unsigned>(usage),
@@ -1696,6 +1704,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       pDesc ? static_cast<unsigned>(pDesc->ArraySize) : 0u,
       static_cast<unsigned>(sample_count),
       static_cast<unsigned>(sample_quality),
+      static_cast<unsigned long long>(resource_flags_bits),
+      static_cast<unsigned>(resource_flags_size),
       pDesc ? pDesc->pMipInfoList : nullptr,
       pDesc ? pDesc->pInitialDataUP : nullptr);
 #endif

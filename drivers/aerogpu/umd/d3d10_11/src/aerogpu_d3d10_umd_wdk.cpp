@@ -95,6 +95,14 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
     sample_quality = static_cast<uint32_t>(pDesc->SampleDesc.Quality);
   }
 
+  uint64_t resource_flags_bits = 0;
+  uint32_t resource_flags_size = 0;
+  __if_exists(D3D10DDIARG_CREATERESOURCE::ResourceFlags) {
+    resource_flags_size = static_cast<uint32_t>(sizeof(pDesc->ResourceFlags));
+    const size_t n = std::min(sizeof(resource_flags_bits), sizeof(pDesc->ResourceFlags));
+    std::memcpy(&resource_flags_bits, &pDesc->ResourceFlags, n);
+  }
+
   const void* init_ptr = nullptr;
   __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
     init_ptr = pDesc->pInitialDataUP;
@@ -102,7 +110,7 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
 
   AEROGPU_D3D10_11_LOG(
       "trace_resources: D3D10 CreateResource dim=%u bind=0x%08X usage=%u cpu=0x%08X misc=0x%08X fmt=%u "
-      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) initUP=%p",
+      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u initUP=%p",
       static_cast<unsigned>(pDesc->ResourceDimension),
       static_cast<unsigned>(pDesc->BindFlags),
       static_cast<unsigned>(usage),
@@ -116,6 +124,8 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
       static_cast<unsigned>(pDesc->ArraySize),
       static_cast<unsigned>(sample_count),
       static_cast<unsigned>(sample_quality),
+      static_cast<unsigned long long>(resource_flags_bits),
+      static_cast<unsigned>(resource_flags_size),
       init_ptr);
 }
 #endif  // AEROGPU_UMD_TRACE_RESOURCES
