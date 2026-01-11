@@ -37,6 +37,10 @@ The virtio specification also defines a **transitional** virtio-snd PCI device I
 
 However, Aero’s Windows 7 virtio contract v1 is **modern-only** and does not rely on transitional IDs for driver binding.
 
+The clean-room Win7 INF (`aero-virtio-snd.inf`) matches only `DEV_1059` (typically revision-gated as `&REV_01`), so if
+Windows shows `DEV_1018` you must configure the hypervisor to expose a modern-only device (for example QEMU
+`disable-legacy=on`).
+
 The authoritative Windows driver-binding values are tracked in
 [`docs/windows-device-contract.md`](./windows-device-contract.md).
 
