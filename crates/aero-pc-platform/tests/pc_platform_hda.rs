@@ -159,7 +159,8 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_intx() {
     pc.memory.write_u16(bar0_base + 0x4a, 0x00ff); // CORBRP
     pc.memory.write_u16(bar0_base + 0x58, 0x00ff); // RIRBWP
 
-    pc.memory.write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL
+    pc.memory
+        .write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL
     pc.memory.write_u8(bar0_base + 0x5c, 0x03); // RIRBCTL
     pc.memory.write_u8(bar0_base + 0x4c, 0x02); // CORBCTL
     pc.memory.write_u16(bar0_base + 0x48, 0x0000); // CORBWP
