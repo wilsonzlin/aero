@@ -30,6 +30,7 @@ import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs";
+import { RemoteStreamingDisk, type RemoteDiskCacheStatus } from "../platform/remote_disk";
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
 import type { WorkerOpenToken } from "../storage/disk_image_store";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
@@ -56,6 +57,9 @@ const DISK_ERROR_NO_ACTIVE_DISK = 1;
 const DISK_ERROR_GUEST_OOB = 2;
 const DISK_ERROR_DISK_OFFSET_TOO_LARGE = 3;
 const DISK_ERROR_IO_FAILURE = 4;
+const DISK_ERROR_READ_ONLY = 5;
+const DISK_ERROR_DISK_OOB = 6;
+
 let deviceManager: DeviceManager | null = null;
 let i8042: I8042Controller | null = null;
 
@@ -74,6 +78,24 @@ let started = false;
 let pollTimer: number | undefined;
 
 type OpenActiveDiskRequest = { id: number; type: "openActiveDisk"; token: WorkerOpenToken };
+type OpenRemoteDiskRequest = {
+  id: number;
+  type: "openRemoteDisk";
+  url: string;
+  options?: {
+    blockSize?: number;
+    cacheLimitMiB?: number | null;
+    credentials?: RequestCredentials;
+    prefetchSequentialBlocks?: number;
+    cacheBackend?: "opfs" | "idb";
+    cacheImageId?: string;
+    cacheVersion?: string;
+  };
+};
+type GetRemoteDiskCacheStatusRequest = { id: number; type: "getRemoteDiskCacheStatus" };
+type ClearRemoteDiskCacheRequest = { id: number; type: "clearRemoteDiskCache" };
+type FlushRemoteDiskCacheRequest = { id: number; type: "flushRemoteDiskCache" };
+type CloseRemoteDiskRequest = { id: number; type: "closeRemoteDisk" };
 type SetMicrophoneRingBufferMessage = {
   type: "setMicrophoneRingBuffer";
   ringBuffer: SharedArrayBuffer | null;
@@ -96,7 +118,30 @@ type OpenActiveDiskResult =
       error: string;
     };
 
+type OpenRemoteDiskResult =
+  | { id: number; type: "openRemoteDiskResult"; ok: true; size: number }
+  | { id: number; type: "openRemoteDiskResult"; ok: false; error: string };
+
+type GetRemoteDiskCacheStatusResult =
+  | { id: number; type: "getRemoteDiskCacheStatusResult"; ok: true; status: RemoteDiskCacheStatus }
+  | { id: number; type: "getRemoteDiskCacheStatusResult"; ok: false; error: string };
+
+type ClearRemoteDiskCacheResult =
+  | { id: number; type: "clearRemoteDiskCacheResult"; ok: true }
+  | { id: number; type: "clearRemoteDiskCacheResult"; ok: false; error: string };
+
+type FlushRemoteDiskCacheResult =
+  | { id: number; type: "flushRemoteDiskCacheResult"; ok: true }
+  | { id: number; type: "flushRemoteDiskCacheResult"; ok: false; error: string };
+
+type CloseRemoteDiskResult =
+  | { id: number; type: "closeRemoteDiskResult"; ok: true }
+  | { id: number; type: "closeRemoteDiskResult"; ok: false; error: string };
+
 let activeAccessHandle: FileSystemSyncAccessHandle | null = null;
+let activeDiskCapacityBytes: number | null = null;
+let activeRemoteDisk: RemoteStreamingDisk | null = null;
+let remoteDiskReadChain: Promise<void> = Promise.resolve();
 
 let micRingBuffer: SharedArrayBuffer | null = null;
 let micSampleRate = 0;
@@ -149,9 +194,25 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
 async function openOpfsDisk(directory: string, name: string): Promise<{ size: number }> {
   const dirToUse = directory || DEFAULT_OPFS_DISK_IMAGES_DIRECTORY;
   const path = `${dirToUse}/${name}`;
+  await closeActiveRemoteDisk();
   activeAccessHandle?.close();
+  activeDiskCapacityBytes = null;
   activeAccessHandle = await openSyncAccessHandleInDedicatedWorker(path, { create: false });
-  return { size: activeAccessHandle.getSize() };
+  activeDiskCapacityBytes = activeAccessHandle.getSize();
+  return { size: activeDiskCapacityBytes };
+}
+
+async function closeActiveRemoteDisk(): Promise<void> {
+  const disk = activeRemoteDisk;
+  if (!disk) return;
+  activeRemoteDisk = null;
+  activeDiskCapacityBytes = null;
+  remoteDiskReadChain = Promise.resolve();
+  try {
+    await disk.close();
+  } catch {
+    // Best-effort cleanup; ignore errors.
+  }
 }
 
 async function handleOpenActiveDisk(msg: OpenActiveDiskRequest): Promise<void> {
@@ -191,6 +252,134 @@ async function handleOpenActiveDisk(msg: OpenActiveDiskRequest): Promise<void> {
   }
 }
 
+async function handleOpenRemoteDisk(msg: OpenRemoteDiskRequest): Promise<void> {
+  const t0 = performance.now();
+  try {
+    const url = msg.url.trim();
+    if (!url) throw new Error("openRemoteDisk: url is required");
+
+    const blockSize = msg.options?.blockSize;
+    const cacheLimitMiB = msg.options?.cacheLimitMiB;
+    const cacheLimitBytes =
+      cacheLimitMiB === null || (typeof cacheLimitMiB === "number" && cacheLimitMiB <= 0)
+        ? null
+        : typeof cacheLimitMiB === "number"
+          ? cacheLimitMiB * 1024 * 1024
+          : undefined;
+
+    await closeActiveRemoteDisk();
+    activeAccessHandle?.close();
+    activeAccessHandle = null;
+    activeDiskCapacityBytes = null;
+
+    const disk = await RemoteStreamingDisk.open(url, {
+      blockSize,
+      cacheLimitBytes,
+      credentials: msg.options?.credentials,
+      prefetchSequentialBlocks: msg.options?.prefetchSequentialBlocks,
+      cacheBackend: msg.options?.cacheBackend,
+      cacheImageId: msg.options?.cacheImageId,
+      cacheVersion: msg.options?.cacheVersion,
+    });
+    activeRemoteDisk = disk;
+    activeDiskCapacityBytes = disk.capacityBytes;
+    remoteDiskReadChain = Promise.resolve();
+
+    const res: OpenRemoteDiskResult = { id: msg.id, type: "openRemoteDiskResult", ok: true, size: disk.capacityBytes };
+    ctx.postMessage(res);
+  } catch (err) {
+    const res: OpenRemoteDiskResult = {
+      id: msg.id,
+      type: "openRemoteDiskResult",
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    ctx.postMessage(res);
+  } finally {
+    perfIoMs += performance.now() - t0;
+  }
+}
+
+async function handleGetRemoteDiskCacheStatus(msg: GetRemoteDiskCacheStatusRequest): Promise<void> {
+  const t0 = performance.now();
+  try {
+    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
+    const status = await activeRemoteDisk.getCacheStatus();
+    const res: GetRemoteDiskCacheStatusResult = { id: msg.id, type: "getRemoteDiskCacheStatusResult", ok: true, status };
+    ctx.postMessage(res);
+  } catch (err) {
+    const res: GetRemoteDiskCacheStatusResult = {
+      id: msg.id,
+      type: "getRemoteDiskCacheStatusResult",
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    ctx.postMessage(res);
+  } finally {
+    perfIoMs += performance.now() - t0;
+  }
+}
+
+async function handleClearRemoteDiskCache(msg: ClearRemoteDiskCacheRequest): Promise<void> {
+  const t0 = performance.now();
+  try {
+    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
+    await activeRemoteDisk.clearCache();
+    const res: ClearRemoteDiskCacheResult = { id: msg.id, type: "clearRemoteDiskCacheResult", ok: true };
+    ctx.postMessage(res);
+  } catch (err) {
+    const res: ClearRemoteDiskCacheResult = {
+      id: msg.id,
+      type: "clearRemoteDiskCacheResult",
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    ctx.postMessage(res);
+  } finally {
+    perfIoMs += performance.now() - t0;
+  }
+}
+
+async function handleFlushRemoteDiskCache(msg: FlushRemoteDiskCacheRequest): Promise<void> {
+  const t0 = performance.now();
+  try {
+    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
+    await activeRemoteDisk.flushCache();
+    const res: FlushRemoteDiskCacheResult = { id: msg.id, type: "flushRemoteDiskCacheResult", ok: true };
+    ctx.postMessage(res);
+  } catch (err) {
+    const res: FlushRemoteDiskCacheResult = {
+      id: msg.id,
+      type: "flushRemoteDiskCacheResult",
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    ctx.postMessage(res);
+  } finally {
+    perfIoMs += performance.now() - t0;
+  }
+}
+
+async function handleCloseRemoteDisk(msg: CloseRemoteDiskRequest): Promise<void> {
+  const t0 = performance.now();
+  try {
+    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
+    await closeActiveRemoteDisk();
+    const res: CloseRemoteDiskResult = { id: msg.id, type: "closeRemoteDiskResult", ok: true };
+    ctx.postMessage(res);
+  } catch (err) {
+    const res: CloseRemoteDiskResult = {
+      id: msg.id,
+      type: "closeRemoteDiskResult",
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    ctx.postMessage(res);
+  } finally {
+    perfIoMs += performance.now() - t0;
+  }
+}
+
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   try {
     const data = ev.data as
@@ -198,6 +387,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<ConfigUpdateMessage>
       | Partial<InputBatchMessage>
       | Partial<OpenActiveDiskRequest>
+      | Partial<OpenRemoteDiskRequest>
+      | Partial<GetRemoteDiskCacheStatusRequest>
+      | Partial<ClearRemoteDiskCacheRequest>
+      | Partial<FlushRemoteDiskCacheRequest>
+      | Partial<CloseRemoteDiskRequest>
       | Partial<SetMicrophoneRingBufferMessage>
       | Partial<UsbSelectedMessage>
       | Partial<UsbCompletionMessage>
@@ -214,6 +408,31 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<OpenActiveDiskRequest>).type === "openActiveDisk") {
       void handleOpenActiveDisk(data as OpenActiveDiskRequest);
+      return;
+    }
+
+    if ((data as Partial<OpenRemoteDiskRequest>).type === "openRemoteDisk") {
+      void handleOpenRemoteDisk(data as OpenRemoteDiskRequest);
+      return;
+    }
+
+    if ((data as Partial<GetRemoteDiskCacheStatusRequest>).type === "getRemoteDiskCacheStatus") {
+      void handleGetRemoteDiskCacheStatus(data as GetRemoteDiskCacheStatusRequest);
+      return;
+    }
+
+    if ((data as Partial<ClearRemoteDiskCacheRequest>).type === "clearRemoteDiskCache") {
+      void handleClearRemoteDiskCache(data as ClearRemoteDiskCacheRequest);
+      return;
+    }
+
+    if ((data as Partial<FlushRemoteDiskCacheRequest>).type === "flushRemoteDiskCache") {
+      void handleFlushRemoteDiskCache(data as FlushRemoteDiskCacheRequest);
+      return;
+    }
+
+    if ((data as Partial<CloseRemoteDiskRequest>).type === "closeRemoteDisk") {
+      void handleCloseRemoteDisk(data as CloseRemoteDiskRequest);
       return;
     }
 
@@ -578,11 +797,6 @@ function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
 function handleDiskRead(cmd: Extract<Command, { kind: "diskRead" }>): void {
   const id = cmd.id >>> 0;
   const len = cmd.len >>> 0;
-  const handle = activeAccessHandle;
-  if (!handle) {
-    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK }));
-    return;
-  }
 
   const view = guestRangeView(cmd.guestOffset, len);
   if (!view) {
@@ -598,6 +812,43 @@ function handleDiskRead(cmd: Extract<Command, { kind: "diskRead" }>): void {
     return;
   }
 
+  const remote = activeRemoteDisk;
+  if (remote) {
+    if (at + len > remote.capacityBytes) {
+      enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB }));
+      return;
+    }
+    // Preserve request ordering. Some callers treat disk I/O as synchronous and
+    // assume responses arrive in the same order as commands.
+    remoteDiskReadChain = remoteDiskReadChain
+      .catch(() => {
+        // Keep queue alive after unexpected errors.
+      })
+      .then(async () => {
+        try {
+          await remote.readInto(at, view);
+          perfIoReadBytes += len >>> 0;
+          enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: true, bytes: len >>> 0 }));
+        } catch {
+          enqueueIoEvent(
+            encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE }),
+          );
+        }
+      });
+    return;
+  }
+
+  const handle = activeAccessHandle;
+  if (!handle) {
+    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK }));
+    return;
+  }
+  const capacityBytes = activeDiskCapacityBytes;
+  if (capacityBytes !== null && at + len > capacityBytes) {
+    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB }));
+    return;
+  }
+
   try {
     const bytes = handle.read(view, { at });
     perfIoReadBytes += bytes >>> 0;
@@ -610,6 +861,12 @@ function handleDiskRead(cmd: Extract<Command, { kind: "diskRead" }>): void {
 function handleDiskWrite(cmd: Extract<Command, { kind: "diskWrite" }>): void {
   const id = cmd.id >>> 0;
   const len = cmd.len >>> 0;
+
+  if (activeRemoteDisk) {
+    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_READ_ONLY }));
+    return;
+  }
+
   const handle = activeAccessHandle;
   if (!handle) {
     enqueueIoEvent(
@@ -629,6 +886,11 @@ function handleDiskWrite(cmd: Extract<Command, { kind: "diskWrite" }>): void {
     enqueueIoEvent(
       encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE }),
     );
+    return;
+  }
+  const capacityBytes = activeDiskCapacityBytes;
+  if (capacityBytes !== null && at + len > capacityBytes) {
+    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB }));
     return;
   }
 
@@ -714,6 +976,8 @@ function shutdown(): void {
   }
 
   activeAccessHandle?.close();
+  activeDiskCapacityBytes = null;
+  void closeActiveRemoteDisk();
   usbHid?.free();
   usbHid = null;
   deviceManager = null;

@@ -1383,8 +1383,12 @@ function renderRemoteDiskPanel(): HTMLElement {
   const closeButton = el("button", { text: "Close" }) as HTMLButtonElement;
   const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
 
+  const ioWorker = new IoWorkerClient();
   const client = new RuntimeDiskClient();
   let handle: number | null = null;
+  let rangeOpened = false;
+  let rangeSize: number | null = null;
+  let guestMemory: WebAssembly.Memory | null = null;
   let statsPollPending = false;
   let statsBaseline: Awaited<ReturnType<RuntimeDiskClient["stats"]>> | null = null;
   let statsBaselineAtMs: number | null = null;
@@ -1432,14 +1436,18 @@ function renderRemoteDiskPanel(): HTMLElement {
     }
   };
 
+  function hasOpenDisk(): boolean {
+    return modeSelect.value === "chunked" ? handle !== null : rangeOpened;
+  }
+
   function updateButtons(): void {
     const enabled = enabledInput.checked;
     probeButton.disabled = !enabled;
     readButton.disabled = !enabled;
-    flushButton.disabled = !enabled || handle === null;
-    clearButton.disabled = !enabled || handle === null;
+    flushButton.disabled = !enabled || !hasOpenDisk();
+    clearButton.disabled = !enabled || !hasOpenDisk();
     resetStatsButton.disabled = !enabled || handle === null;
-    closeButton.disabled = !enabled || handle === null;
+    closeButton.disabled = !enabled || !hasOpenDisk();
   }
 
   function updateModeUi(): void {
@@ -1489,20 +1497,39 @@ function renderRemoteDiskPanel(): HTMLElement {
   updateButtons();
 
   async function closeHandle(): Promise<void> {
-    if (handle === null) return;
     const cur = handle;
     handle = null;
     statsBaseline = null;
     statsBaselineAtMs = null;
+
+    if (cur !== null) {
+      try {
+        await client.closeDisk(cur);
+      } catch (err) {
+        output.textContent = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (!rangeOpened) return;
+    rangeOpened = false;
+    rangeSize = null;
     try {
-      await client.closeDisk(cur);
+      await ioWorker.closeRemoteDisk();
     } catch (err) {
       output.textContent = err instanceof Error ? err.message : String(err);
     }
   }
 
-  async function ensureOpen(): Promise<number> {
-    if (handle !== null) return handle;
+  async function ensureOpen():
+    Promise<
+      | { mode: "range"; size: number }
+      | { mode: "chunked"; handle: number }
+    > {
+    if (modeSelect.value === "chunked") {
+      if (handle !== null) return { mode: "chunked", handle };
+    } else {
+      if (rangeOpened && rangeSize !== null) return { mode: "range", size: rangeSize };
+    }
     const url = urlInput.value.trim();
     if (!url) throw new Error("Enter a URL first.");
     statsBaseline = null;
@@ -1514,83 +1541,108 @@ function renderRemoteDiskPanel(): HTMLElement {
     const prefetchSequential = Math.max(0, Number(prefetchInput.value) | 0);
     const cacheImageId = cacheImageIdInput.value.trim();
     const cacheVersion = cacheVersionInput.value.trim();
-    const opened =
-      modeSelect.value === "chunked"
-        ? await client.openChunked(url, {
-            cacheLimitBytes,
-            credentials: credentialsSelect.value as RequestCredentials,
-          prefetchSequentialChunks: prefetchSequential,
-          maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
-            cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
-          })
-        : await client.openRemote(url, {
-            blockSize: Number(blockSizeInput.value) * 1024,
-            cacheLimitBytes,
-            credentials: credentialsSelect.value as RequestCredentials,
-            prefetchSequentialBlocks: prefetchSequential,
-            cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
-            ...(cacheImageId ? { cacheImageId } : {}),
-            ...(cacheVersion ? { cacheVersion } : {}),
-          });
-    handle = opened.handle;
+    const cacheBackend =
+      cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb");
+    const credentials = credentialsSelect.value as RequestCredentials;
+
+    if (modeSelect.value === "chunked") {
+      const opened = await client.openChunked(url, {
+        cacheLimitBytes,
+        credentials,
+        prefetchSequentialChunks: prefetchSequential,
+        maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
+        cacheBackend,
+      });
+      handle = opened.handle;
+      updateButtons();
+      return { mode: "chunked", handle: opened.handle };
+    }
+
+    const openRes = await ioWorker.openRemoteDisk(url, {
+      blockSize: Number(blockSizeInput.value) * 1024,
+      cacheLimitMiB: cacheLimitMiB <= 0 ? null : cacheLimitMiB,
+      credentials,
+      prefetchSequentialBlocks: prefetchSequential,
+      cacheBackend,
+      ...(cacheImageId ? { cacheImageId } : {}),
+      ...(cacheVersion ? { cacheVersion } : {}),
+    });
+    rangeOpened = true;
+    rangeSize = openRes.size;
     updateButtons();
-    return opened.handle;
+    return { mode: "range", size: openRes.size };
   }
 
   async function refreshStats(): Promise<void> {
-    if (!enabledInput.checked || handle === null) {
+    if (!enabledInput.checked || !hasOpenDisk()) {
       stats.textContent = "";
       return;
     }
     if (statsPollPending) return;
     statsPollPending = true;
-    const cur = handle;
     try {
-      const res = await client.stats(cur);
-      if (handle !== cur) return;
+      if (modeSelect.value === "chunked") {
+        const cur = handle;
+        if (cur === null) return;
+        const res = await client.stats(cur);
+        if (handle !== cur) return;
 
-      const remote = res.remote;
-      if (!remote) {
-        stats.textContent = `diskSize=${formatBytes(res.capacityBytes)} reads=${res.io.reads} writes=${res.io.writes}`;
+        const remote = res.remote;
+        if (!remote) {
+          stats.textContent = `diskSize=${formatBytes(res.capacityBytes)} reads=${res.io.reads} writes=${res.io.writes}`;
+          return;
+        }
+
+        const baselineRemote = statsBaseline?.remote;
+        const baselineIo = statsBaseline?.io;
+        const baseBlockRequests = baselineRemote?.blockRequests ?? 0;
+        const baseCacheHits = baselineRemote?.cacheHits ?? 0;
+        const baseCacheMisses = baselineRemote?.cacheMisses ?? 0;
+        const baseInflightJoins = baselineRemote?.inflightJoins ?? 0;
+        const baseRequests = baselineRemote?.requests ?? 0;
+        const baseBytesDownloaded = baselineRemote?.bytesDownloaded ?? 0;
+        const baseIoReads = baselineIo?.reads ?? 0;
+        const baseIoBytesRead = baselineIo?.bytesRead ?? 0;
+
+        const deltaCacheHits = remote.cacheHits - baseCacheHits;
+        const deltaCacheMisses = remote.cacheMisses - baseCacheMisses;
+        const hitRateDenom = deltaCacheHits + deltaCacheMisses;
+        const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
+        const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
+        const cacheLimitText = remote.cacheLimitBytes === null ? "off" : formatBytes(remote.cacheLimitBytes);
+        const deltaIoBytesRead = res.io.bytesRead - baseIoBytesRead;
+        const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
+        const downloadAmplification = deltaIoBytesRead > 0 ? deltaBytesDownloaded / deltaIoBytesRead : 0;
+        const lastFetchRangeText = remote.lastFetchRange
+          ? `${formatBytes(remote.lastFetchRange.start)}-${formatBytes(remote.lastFetchRange.end - 1)}`
+          : "—";
+        const lastFetchAtText = remote.lastFetchAtMs === null ? "—" : new Date(remote.lastFetchAtMs).toLocaleTimeString();
+        const sinceText = statsBaselineAtMs === null ? "—" : new Date(statsBaselineAtMs).toLocaleTimeString();
+
+        stats.textContent =
+          `imageSize=${formatBytes(remote.totalSize)}\n` +
+          `cache=${formatBytes(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${cacheLimitText}\n` +
+          `blockSize=${formatBytes(remote.blockSize)}\n` +
+          `since=${sinceText}\n` +
+          `ioReads=${res.io.reads - baseIoReads} inflightReads=${res.io.inflightReads} lastReadMs=${res.io.lastReadMs === null ? "—" : res.io.lastReadMs.toFixed(1)}\n` +
+          `ioBytesRead=${formatBytes(deltaIoBytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
+          `requests=${remote.requests - baseRequests} bytesDownloaded=${formatBytes(deltaBytesDownloaded)}\n` +
+          `blockRequests=${remote.blockRequests - baseBlockRequests} hits=${deltaCacheHits} misses=${deltaCacheMisses} inflightJoins=${remote.inflightJoins - baseInflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
+          `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? "—" : remote.lastFetchMs.toFixed(1)}ms)`;
         return;
       }
 
-      const baselineRemote = statsBaseline?.remote;
-      const baselineIo = statsBaseline?.io;
-      const baseBlockRequests = baselineRemote?.blockRequests ?? 0;
-      const baseCacheHits = baselineRemote?.cacheHits ?? 0;
-      const baseCacheMisses = baselineRemote?.cacheMisses ?? 0;
-      const baseInflightJoins = baselineRemote?.inflightJoins ?? 0;
-      const baseRequests = baselineRemote?.requests ?? 0;
-      const baseBytesDownloaded = baselineRemote?.bytesDownloaded ?? 0;
-      const baseIoReads = baselineIo?.reads ?? 0;
-      const baseIoBytesRead = baselineIo?.bytesRead ?? 0;
-
-      const deltaCacheHits = remote.cacheHits - baseCacheHits;
-      const deltaCacheMisses = remote.cacheMisses - baseCacheMisses;
-      const hitRateDenom = deltaCacheHits + deltaCacheMisses;
-      const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
+      if (!rangeOpened) return;
+      const res = await ioWorker.getRemoteDiskCacheStatus();
+      if (!rangeOpened) return;
+      const remote = res.status;
       const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
       const cacheLimitText = remote.cacheLimitBytes === null ? "off" : formatBytes(remote.cacheLimitBytes);
-      const deltaIoBytesRead = res.io.bytesRead - baseIoBytesRead;
-      const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
-      const downloadAmplification = deltaIoBytesRead > 0 ? deltaBytesDownloaded / deltaIoBytesRead : 0;
-      const lastFetchRangeText = remote.lastFetchRange
-        ? `${formatBytes(remote.lastFetchRange.start)}-${formatBytes(remote.lastFetchRange.end - 1)}`
-        : "—";
-      const lastFetchAtText = remote.lastFetchAtMs === null ? "—" : new Date(remote.lastFetchAtMs).toLocaleTimeString();
-      const sinceText = statsBaselineAtMs === null ? "—" : new Date(statsBaselineAtMs).toLocaleTimeString();
 
       stats.textContent =
         `imageSize=${formatBytes(remote.totalSize)}\n` +
         `cache=${formatBytes(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${cacheLimitText}\n` +
-        `blockSize=${formatBytes(remote.blockSize)}\n` +
-        `since=${sinceText}\n` +
-        `ioReads=${res.io.reads - baseIoReads} inflightReads=${res.io.inflightReads} lastReadMs=${res.io.lastReadMs === null ? "—" : res.io.lastReadMs.toFixed(1)}\n` +
-        `ioBytesRead=${formatBytes(deltaIoBytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
-        `requests=${remote.requests - baseRequests} bytesDownloaded=${formatBytes(deltaBytesDownloaded)}\n` +
-        `blockRequests=${remote.blockRequests - baseBlockRequests} hits=${deltaCacheHits} misses=${deltaCacheMisses} inflightJoins=${remote.inflightJoins - baseInflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
-        `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? "—" : remote.lastFetchMs.toFixed(1)}ms)`;
+        `cachedRanges=${remote.cachedRanges.length}`;
     } catch (err) {
       stats.textContent = err instanceof Error ? err.message : String(err);
     } finally {
@@ -1608,10 +1660,16 @@ function renderRemoteDiskPanel(): HTMLElement {
       await closeHandle();
 
       output.textContent = "Probing… (this will make HTTP requests)\n";
-      const openedHandle = await ensureOpen();
-      const res = await client.stats(openedHandle);
-      output.textContent = JSON.stringify(res.remote, null, 2);
+      const opened = await ensureOpen();
+      if (opened.mode === "chunked") {
+        const res = await client.stats(opened.handle);
+        output.textContent = JSON.stringify(res.remote, null, 2);
+      } else {
+        const res = await ioWorker.getRemoteDiskCacheStatus();
+        output.textContent = JSON.stringify(res.status, null, 2);
+      }
       updateButtons();
+      void refreshStats();
     } catch (err) {
       output.textContent = err instanceof Error ? err.message : String(err);
     }
@@ -1622,16 +1680,33 @@ function renderRemoteDiskPanel(): HTMLElement {
     progress.value = 0;
 
     try {
-      const openedHandle = await ensureOpen();
-
-      const bytes = await client.read(openedHandle, 2, 512);
-      const res = await client.stats(openedHandle);
-      output.textContent = JSON.stringify(
-        { read: { lba: 2, byteLength: 512, first16: Array.from(bytes.slice(0, 16)) }, stats: res.remote },
-        null,
-        2,
-      );
+      const opened = await ensureOpen();
+      if (opened.mode === "chunked") {
+        const bytes = await client.read(opened.handle, 2, 512);
+        const res = await client.stats(opened.handle);
+        output.textContent = JSON.stringify(
+          { read: { lba: 2, byteLength: 512, first16: Array.from(bytes.slice(0, 16)) }, stats: res.remote },
+          null,
+          2,
+        );
+      } else {
+        if (!guestMemory) {
+          guestMemory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+        }
+        const diskOffset = 2 * 512;
+        const length = 512;
+        const guestOffset = 0;
+        await ioWorker.diskReadIntoSharedMemory({ diskOffset, guestMemory, guestOffset, length });
+        const bytes = new Uint8Array(guestMemory.buffer, guestOffset, length);
+        const res = await ioWorker.getRemoteDiskCacheStatus();
+        output.textContent = JSON.stringify(
+          { read: { diskOffset, byteLength: length, first16: Array.from(bytes.slice(0, 16)) }, cache: res.status },
+          null,
+          2,
+        );
+      }
       progress.value = 1;
+      void refreshStats();
     } catch (err) {
       output.textContent = err instanceof Error ? err.message : String(err);
     }
@@ -1641,11 +1716,16 @@ function renderRemoteDiskPanel(): HTMLElement {
     output.textContent = "";
     progress.value = 0;
     try {
-      if (handle === null) {
+      if (!hasOpenDisk()) {
         output.textContent = "Nothing to flush (probe/open first).";
         return;
       }
-      await client.flush(handle);
+      if (modeSelect.value === "chunked") {
+        if (handle === null) throw new Error("No chunked disk handle is open.");
+        await client.flush(handle);
+      } else {
+        await ioWorker.flushRemoteDiskCache();
+      }
       progress.value = 1;
       void refreshStats();
     } catch (err) {
@@ -1657,13 +1737,18 @@ function renderRemoteDiskPanel(): HTMLElement {
     output.textContent = "";
     progress.value = 0;
     try {
-      if (handle === null) {
+      if (!hasOpenDisk()) {
         output.textContent = "Nothing to clear (probe/open first).";
         return;
       }
-      await client.clearCache(handle);
-      statsBaseline = null;
-      statsBaselineAtMs = null;
+      if (modeSelect.value === "chunked") {
+        if (handle === null) throw new Error("No chunked disk handle is open.");
+        await client.clearCache(handle);
+        statsBaseline = null;
+        statsBaselineAtMs = null;
+      } else {
+        await ioWorker.clearRemoteDiskCache();
+      }
       progress.value = 1;
       output.textContent = "Cache cleared.";
       void refreshStats();

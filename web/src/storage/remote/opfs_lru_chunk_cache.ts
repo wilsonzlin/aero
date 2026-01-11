@@ -1,3 +1,5 @@
+import { createSyncAccessHandleInDedicatedWorker } from "../../platform/opfs";
+
 export type RemoteChunkCacheStats = {
   totalBytes: number;
   chunkCount: number;
@@ -515,17 +517,40 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
       const chunks = await this.getOrCreateChunksDir();
       const handle = await chunks.getFileHandle(this.chunkFileName(index), { create: true });
 
-      const writable = await handle.createWritable({ keepExistingData: false });
+      // Prefer SyncAccessHandle writes when running inside a dedicated worker. This avoids building
+      // `File` objects and is noticeably faster for high-frequency chunk caching.
+      let sync: FileSystemSyncAccessHandle | null = null;
       try {
-        await writable.write(toArrayBufferUint8(data));
-        await writable.close();
-      } catch (err) {
+        sync = await createSyncAccessHandleInDedicatedWorker(handle);
+      } catch {
+        // Fall back to async writable stream (works on the main thread and in workers that
+        // don't support SyncAccessHandle).
+        sync = null;
+      }
+      if (sync) {
         try {
-          await writable.abort(err);
-        } catch {
-          // ignore abort failures
+          sync.truncate(data.byteLength);
+          const written = sync.write(data, { at: 0 });
+          if (written !== data.byteLength) {
+            throw new Error(`short cache write: expected=${data.byteLength} actual=${written}`);
+          }
+          sync.flush();
+        } finally {
+          sync.close();
         }
-        throw err;
+      } else {
+        const writable = await handle.createWritable({ keepExistingData: false });
+        try {
+          await writable.write(toArrayBufferUint8(data));
+          await writable.close();
+        } catch (err) {
+          try {
+            await writable.abort(err);
+          } catch {
+            // ignore abort failures
+          }
+          throw err;
+        }
       }
 
       const key = String(index);

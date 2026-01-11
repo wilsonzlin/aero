@@ -419,9 +419,12 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       );
     }
 
+    const resolvedCacheLimitBytes =
+      options.cacheLimitBytes === undefined ? 512 * 1024 * 1024 : options.cacheLimitBytes;
+
     const resolved: ResolvedRemoteDiskOptions = {
       blockSize: options.blockSize ?? 1024 * 1024,
-      cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
+      cacheLimitBytes: resolvedCacheLimitBytes,
       prefetchSequentialBlocks: options.prefetchSequentialBlocks ?? 2,
       cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
       leaseRefreshMarginMs: options.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS,
@@ -436,6 +439,10 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (resolved.cacheLimitBytes !== null) {
       if (!Number.isSafeInteger(resolved.cacheLimitBytes) || resolved.cacheLimitBytes < 0) {
         throw new Error(`Invalid cacheLimitBytes=${resolved.cacheLimitBytes}`);
+      }
+      // Treat 0 as "cache disabled" so callers can use 0/null interchangeably.
+      if (resolved.cacheLimitBytes === 0) {
+        resolved.cacheLimitBytes = null;
       }
     }
     if (!Number.isSafeInteger(resolved.prefetchSequentialBlocks) || resolved.prefetchSequentialBlocks < 0) {
@@ -456,6 +463,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     }
 
     const parts = cacheKeyPartsFromUrl(params.sourceId, options);
+    // Cache disabled: do not touch OPFS / IndexedDB at all (use direct Range fetches only).
+    if (resolved.cacheLimitBytes === null) {
+      const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
+      disk.leaseRefresher.start();
+      return disk;
+    }
+
     const cacheKey = await RemoteCacheManager.deriveCacheKey(parts);
     const resolvedEtag = options.cacheEtag !== undefined ? options.cacheEtag : params.etag ?? probe.etag;
     const validators = { sizeBytes: probe.size, etag: resolvedEtag, lastModified: probe.lastModified };
@@ -503,6 +517,14 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async getCacheStatus(): Promise<RemoteDiskCacheStatus> {
+    if (this.cacheLimitBytes === null) {
+      return {
+        totalSize: this.totalSize,
+        cachedBytes: 0,
+        cachedRanges: [],
+        cacheLimitBytes: null,
+      };
+    }
     if (this.cacheBackend === "idb") {
       if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
       const status = await this.idbCache.getStatus();
@@ -556,6 +578,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async flushCache(): Promise<void> {
+    if (this.cacheLimitBytes === null) return;
     if (this.cacheBackend === "idb") return;
     await this.opfsCache?.flush();
   }
@@ -614,12 +637,14 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   async clearCache(): Promise<void> {
     this.cacheGeneration += 1;
-    if (this.cacheBackend === "idb") {
-      if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
-      await this.idbCache.clear();
-    } else {
-      if (!this.opfsCache) throw new Error("Remote disk OPFS cache not initialized");
-      await this.opfsCache.clear();
+    if (this.cacheLimitBytes !== null) {
+      if (this.cacheBackend === "idb") {
+        if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
+        await this.idbCache.clear();
+      } else {
+        if (!this.opfsCache) throw new Error("Remote disk OPFS cache not initialized");
+        await this.opfsCache.clear();
+      }
     }
     this.rangeSet = new RangeSet();
     this.cachedBytes = 0;
@@ -670,6 +695,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   private async getBlock(blockIndex: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
     this.telemetry.blockRequests++;
+    if (this.cacheLimitBytes === null) {
+      return await this.getBlockNoCache(blockIndex, onLog);
+    }
     if (this.cacheBackend === "idb") {
       return await this.getBlockIdb(blockIndex, onLog);
     }
@@ -741,6 +769,56 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         this.rangeSet.remove(evictedRange.start, evictedRange.end);
       }
       this.cachedBytes = (await this.opfsCache!.getStats()).totalBytes;
+      this.telemetry.lastFetchMs = performance.now() - start;
+      this.telemetry.lastFetchAtMs = Date.now();
+      return buf;
+    })();
+
+    this.inflight.set(blockIndex, task);
+    try {
+      return await task;
+    } finally {
+      if (this.inflight.get(blockIndex) === task) {
+        this.inflight.delete(blockIndex);
+      }
+    }
+  }
+
+  private async getBlockNoCache(blockIndex: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
+    const r = this.blockRange(blockIndex);
+
+    const existing = this.inflight.get(blockIndex);
+    if (existing) {
+      this.telemetry.inflightJoins++;
+      return await existing;
+    }
+
+    const generation = this.cacheGeneration;
+    const task = (async () => {
+      const start = performance.now();
+      this.telemetry.cacheMisses++;
+      this.telemetry.requests++;
+      this.telemetry.lastFetchRange = { ...r };
+      onLog?.(`fetching bytes=${r.start}-${r.end - 1}`);
+      await this.maybeRefreshLease();
+      const resp = await fetchWithDiskAccessLease(
+        this.lease,
+        { headers: { Range: `bytes=${r.start}-${r.end - 1}` } },
+        { retryAuthOnce: true },
+      );
+      if (resp.status !== 206) {
+        throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
+      }
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      if (buf.length !== r.end - r.start) {
+        throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
+      }
+
+      if (generation !== this.cacheGeneration) {
+        return buf;
+      }
+
+      this.telemetry.bytesDownloaded += buf.byteLength;
       this.telemetry.lastFetchMs = performance.now() - start;
       this.telemetry.lastFetchAtMs = Date.now();
       return buf;
