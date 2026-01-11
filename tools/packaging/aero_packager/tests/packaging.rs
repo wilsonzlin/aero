@@ -386,6 +386,55 @@ fn aerogpu_driver_directory_alias_is_accepted() -> anyhow::Result<()> {
 }
 
 #[test]
+fn aerogpu_driver_directory_alias_conflict_is_rejected() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    for arch in ["x86", "amd64"] {
+        fs::create_dir_all(drivers_tmp.path().join(arch).join("aerogpu"))?;
+        fs::create_dir_all(drivers_tmp.path().join(arch).join("aero-gpu"))?;
+    }
+
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({
+        "drivers": [
+            {
+                "name": "aerogpu",
+                "required": true,
+                "expected_hardware_ids": [r"PCI\\VEN_A3A0&DEV_0001"],
+            }
+        ]
+    });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("multiple driver directories found for aerogpu"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
 ) -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
