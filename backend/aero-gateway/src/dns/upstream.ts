@@ -59,6 +59,7 @@ export async function queryUdpUpstream(
       socket.close();
       reject(new Error(`UDP upstream timeout after ${timeoutMs}ms`));
     }, timeoutMs);
+    timer.unref?.();
 
     socket.once("error", (err) => {
       clearTimeout(timer);
@@ -88,6 +89,7 @@ export async function queryDohUpstream(
 ): Promise<Buffer> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
 
   try {
     const response = await fetch(upstream.url, {
