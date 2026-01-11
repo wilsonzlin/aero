@@ -5091,6 +5091,434 @@ bool TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull() {
 #endif
 }
 
+bool TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload() {
+#if defined(_WIN32)
+  // Portable tests exercise the non-WDK code paths; skip on Windows where this
+  // D3D9 UMD is expected to run against the real WDDM runtime.
+  return true;
+#else
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Enable allocation-list tracking in a portable build.
+  D3DDDI_ALLOCATIONLIST alloc_list[8] = {};
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->wddm_context.hContext = 1;
+    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
+    dev->alloc_list_tracker.reset();
+  }
+
+  // Create a CPU-only system-memory source surface.
+  D3D9DDIARG_CREATERESOURCE create_src{};
+  create_src.type = 0;
+  create_src.format = 22u; // D3DFMT_X8R8G8B8
+  create_src.width = 4;
+  create_src.height = 4;
+  create_src.depth = 1;
+  create_src.mip_levels = 1;
+  create_src.usage = 0;
+  create_src.pool = 2u; // D3DPOOL_SYSTEMMEM
+  create_src.size = 0;
+  create_src.hResource.pDrvPrivate = nullptr;
+  create_src.pSharedHandle = nullptr;
+  create_src.pKmdAllocPrivateData = nullptr;
+  create_src.KmdAllocPrivateDataSize = 0;
+  create_src.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_src);
+  if (!Check(hr == S_OK, "CreateResource(systemmem src surface)")) {
+    return false;
+  }
+  if (!Check(create_src.hResource.pDrvPrivate != nullptr, "CreateResource returned src resource")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_src.hResource);
+
+  // Fill the source surface with some bytes.
+  auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
+  D3D9DDIARG_LOCK lock_src{};
+  lock_src.hResource = create_src.hResource;
+  lock_src.offset_bytes = 0;
+  lock_src.size_bytes = 0;
+  lock_src.flags = 0;
+
+  D3DDDI_LOCKEDBOX locked_src{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock_src, &locked_src);
+  if (!Check(hr == S_OK, "Lock(src systemmem)")) {
+    return false;
+  }
+  if (!Check(locked_src.pData != nullptr, "Lock returns src pointer")) {
+    return false;
+  }
+  if (!Check(src_res != nullptr && src_res->size_bytes != 0, "src resource size")) {
+    return false;
+  }
+  std::memset(locked_src.pData, 0x7E, src_res->size_bytes);
+
+  D3D9DDIARG_UNLOCK unlock_src{};
+  unlock_src.hResource = create_src.hResource;
+  unlock_src.offset_bytes = 0;
+  unlock_src.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock_src);
+  if (!Check(hr == S_OK, "Unlock(src systemmem)")) {
+    return false;
+  }
+
+  // Create a guest-backed destination surface via OpenResource.
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 0x7777u;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0xAABBCCDDEEFF0011ull;
+  priv.size_bytes = 4ull * 4ull * 4ull;
+  priv.reserved0 = 0;
+
+  D3D9DDIARG_OPENRESOURCE open_dst{};
+  open_dst.pPrivateDriverData = &priv;
+  open_dst.private_driver_data_size = sizeof(priv);
+  open_dst.type = 0;
+  open_dst.format = 22u; // D3DFMT_X8R8G8B8
+  open_dst.width = 4;
+  open_dst.height = 4;
+  open_dst.depth = 1;
+  open_dst.mip_levels = 1;
+  open_dst.usage = 0;
+  open_dst.size = 0;
+  open_dst.hResource.pDrvPrivate = nullptr;
+  open_dst.wddm_hAllocation = 0x1234u;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_dst);
+  if (!Check(hr == S_OK, "OpenResource(guest-backed dst surface)")) {
+    return false;
+  }
+  if (!Check(open_dst.hResource.pDrvPrivate != nullptr, "OpenResource returned dst resource")) {
+    return false;
+  }
+  cleanup.resources.push_back(open_dst.hResource);
+
+  auto* dst_res = reinterpret_cast<Resource*>(open_dst.hResource.pDrvPrivate);
+  if (!Check(dst_res != nullptr && dst_res->backing_alloc_id == priv.alloc_id, "dst backing_alloc_id")) {
+    return false;
+  }
+
+  RECT src_rect{};
+  src_rect.left = 0;
+  src_rect.top = 0;
+  src_rect.right = 4;
+  src_rect.bottom = 2;
+  POINT dst_point{};
+  dst_point.x = 0;
+  dst_point.y = 1;
+
+  D3D9DDIARG_UPDATESURFACE update{};
+  update.hSrc = create_src.hResource;
+  update.pSrcRect = &src_rect;
+  update.hDst = open_dst.hResource;
+  update.pDstPoint = &dst_point;
+  update.flags = 0;
+
+  hr = cleanup.device_funcs.pfnUpdateSurface(create_dev.hDevice, &update);
+  if (!Check(hr == S_OK, "UpdateSurface(guest-backed dst)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0, "UpdateSurface must not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  const CmdLoc dirty = FindLastOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty.hdr != nullptr, "UpdateSurface emits RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(dirty.hdr);
+  if (!Check(cmd->resource_handle == dst_res->handle, "dirty_range handle")) {
+    return false;
+  }
+  const uint64_t expected_offset = 1ull * 16ull; // dst_point.y * row_pitch (4*4)
+  const uint64_t expected_size = 2ull * 16ull;   // 2 rows
+  if (!Check(cmd->offset_bytes == expected_offset, "dirty_range offset")) {
+    return false;
+  }
+  if (!Check(cmd->size_bytes == expected_size, "dirty_range size")) {
+    return false;
+  }
+
+  if (!Check(dev->alloc_list_tracker.list_len() == 1, "allocation list contains dst mapping")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].hAllocation == open_dst.wddm_hAllocation, "allocation list hAllocation matches")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].WriteOperation == 0, "dirty range tracks allocation as read")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len);
+#endif
+}
+
+bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
+#if defined(_WIN32)
+  return true;
+#else
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Enable allocation-list tracking in a portable build.
+  D3DDDI_ALLOCATIONLIST alloc_list[8] = {};
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->wddm_context.hContext = 1;
+    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
+    dev->alloc_list_tracker.reset();
+  }
+
+  // Source: system-memory pool texture-like surface.
+  D3D9DDIARG_CREATERESOURCE create_src{};
+  create_src.type = 0;
+  create_src.format = 22u; // D3DFMT_X8R8G8B8
+  create_src.width = 4;
+  create_src.height = 4;
+  create_src.depth = 1;
+  create_src.mip_levels = 1;
+  create_src.usage = 0;
+  create_src.pool = 2u; // D3DPOOL_SYSTEMMEM
+  create_src.size = 0;
+  create_src.hResource.pDrvPrivate = nullptr;
+  create_src.pSharedHandle = nullptr;
+  create_src.pKmdAllocPrivateData = nullptr;
+  create_src.KmdAllocPrivateDataSize = 0;
+  create_src.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_src);
+  if (!Check(hr == S_OK, "CreateResource(systemmem src)")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_src.hResource);
+
+  auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
+  if (!Check(src_res != nullptr && src_res->size_bytes != 0, "src size")) {
+    return false;
+  }
+
+  D3D9DDIARG_LOCK lock_src{};
+  lock_src.hResource = create_src.hResource;
+  lock_src.offset_bytes = 0;
+  lock_src.size_bytes = 0;
+  lock_src.flags = 0;
+
+  D3DDDI_LOCKEDBOX locked_src{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock_src, &locked_src);
+  if (!Check(hr == S_OK, "Lock(src)")) {
+    return false;
+  }
+  std::memset(locked_src.pData, 0x3C, src_res->size_bytes);
+
+  D3D9DDIARG_UNLOCK unlock_src{};
+  unlock_src.hResource = create_src.hResource;
+  unlock_src.offset_bytes = 0;
+  unlock_src.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock_src);
+  if (!Check(hr == S_OK, "Unlock(src)")) {
+    return false;
+  }
+
+  // Destination: guest-backed surface via OpenResource.
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 0x8888u;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0xCAFEBABEDEADBEEFull;
+  priv.size_bytes = 4ull * 4ull * 4ull;
+  priv.reserved0 = 0;
+
+  D3D9DDIARG_OPENRESOURCE open_dst{};
+  open_dst.pPrivateDriverData = &priv;
+  open_dst.private_driver_data_size = sizeof(priv);
+  open_dst.type = 0;
+  open_dst.format = 22u;
+  open_dst.width = 4;
+  open_dst.height = 4;
+  open_dst.depth = 1;
+  open_dst.mip_levels = 1;
+  open_dst.usage = 0;
+  open_dst.size = 0;
+  open_dst.hResource.pDrvPrivate = nullptr;
+  open_dst.wddm_hAllocation = 0x4321u;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_dst);
+  if (!Check(hr == S_OK, "OpenResource(dst guest-backed)")) {
+    return false;
+  }
+  cleanup.resources.push_back(open_dst.hResource);
+
+  auto* dst_res = reinterpret_cast<Resource*>(open_dst.hResource.pDrvPrivate);
+  if (!Check(dst_res != nullptr && dst_res->backing_alloc_id == priv.alloc_id, "dst backing_alloc_id")) {
+    return false;
+  }
+
+  D3D9DDIARG_UPDATETEXTURE update{};
+  update.hSrc = create_src.hResource;
+  update.hDst = open_dst.hResource;
+  update.flags = 0;
+
+  hr = cleanup.device_funcs.pfnUpdateTexture(create_dev.hDevice, &update);
+  if (!Check(hr == S_OK, "UpdateTexture(guest-backed dst)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0, "UpdateTexture must not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  const CmdLoc dirty = FindLastOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty.hdr != nullptr, "UpdateTexture emits RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(dirty.hdr);
+  if (!Check(cmd->resource_handle == dst_res->handle, "dirty_range handle")) {
+    return false;
+  }
+  if (!Check(cmd->offset_bytes == 0, "dirty_range offset 0")) {
+    return false;
+  }
+  if (!Check(cmd->size_bytes == dst_res->size_bytes, "dirty_range size matches dst size")) {
+    return false;
+  }
+
+  if (!Check(dev->alloc_list_tracker.list_len() == 1, "allocation list contains dst mapping")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].hAllocation == open_dst.wddm_hAllocation, "allocation list hAllocation matches")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].WriteOperation == 0, "dirty range tracks allocation as read")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len);
+#endif
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -5135,5 +5563,7 @@ int main() {
   failures += !aerogpu::TestOpenResourceTracksWddmAllocationHandle();
   failures += !aerogpu::TestGuestBackedUnlockEmitsDirtyRangeNotUpload();
   failures += !aerogpu::TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull();
+  failures += !aerogpu::TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload();
+  failures += !aerogpu::TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload();
   return failures ? 1 : 0;
 }

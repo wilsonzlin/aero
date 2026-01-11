@@ -342,6 +342,15 @@ bool upload_resource_bytes_locked(Device* dev,
   if (!dev || !res || !res->handle || !data) {
     return false;
   }
+  if (res->backing_alloc_id != 0) {
+    // Host-side validation rejects UPLOAD_RESOURCE for guest-backed resources.
+    // Callers must write into the guest allocation memory (e.g. via WDDM LockCb)
+    // and then notify the host using RESOURCE_DIRTY_RANGE.
+    logf("aerogpu-d3d9: upload_resource_bytes_locked called on guest-backed resource handle=%u alloc_id=%u\n",
+         static_cast<unsigned>(res->handle),
+         static_cast<unsigned>(res->backing_alloc_id));
+    return false;
+  }
 
   size_t remaining = size_bytes;
   uint64_t cur_offset = offset_bytes;
@@ -1314,8 +1323,14 @@ HRESULT update_surface_locked(Device* dev,
     return E_FAIL;
   }
 
-  // Compat path: update the CPU shadow and upload raw bytes.
+  // Compat path: update CPU shadow storage. Host-owned resources are updated by
+  // embedding raw bytes in the command stream; guest-backed resources must use
+  // RESOURCE_DIRTY_RANGE so the host re-uploads from the guest allocation table.
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if (dst->backing_alloc_id == 0 && dst->storage.size() >= dst_bytes) {
+#else
   if (dst->storage.size() >= dst_bytes) {
+#endif
     for (uint32_t y = 0; y < copy_h; ++y) {
       const uint64_t src_off = (static_cast<uint64_t>(src_top) + y) * src->row_pitch +
                                static_cast<uint64_t>(src_left) * bpp;
@@ -1339,14 +1354,47 @@ HRESULT update_surface_locked(Device* dev,
         }
       }
 
-      if (!upload_resource_bytes_locked(dev,
-                                        dst,
-                                        /*offset_bytes=*/dst_off,
-                                        dst_row,
-                                        row_bytes)) {
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+      if (dst->backing_alloc_id == 0) {
+#endif
+        if (!upload_resource_bytes_locked(dev,
+                                          dst,
+                                          /*offset_bytes=*/dst_off,
+                                          dst_row,
+                                          row_bytes)) {
+          return E_OUTOFMEMORY;
+        }
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+      }
+#endif
+    }
+
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+    if (dst->backing_alloc_id != 0) {
+      const uint64_t dirty_offset = static_cast<uint64_t>(dst_top) * dst->row_pitch +
+                                    static_cast<uint64_t>(dst_left) * bpp;
+      const uint64_t dirty_size = static_cast<uint64_t>(copy_h - 1) * dst->row_pitch + row_bytes;
+      if (dirty_offset + dirty_size > dst_bytes) {
+        return E_INVALIDARG;
+      }
+
+      if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
         return E_OUTOFMEMORY;
       }
+      const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/false);
+      if (FAILED(track_hr)) {
+        return track_hr;
+      }
+      auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      if (!cmd) {
+        return E_OUTOFMEMORY;
+      }
+      cmd->resource_handle = dst->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = dirty_offset;
+      cmd->size_bytes = dirty_size;
     }
+#endif
     return S_OK;
   }
 
@@ -1450,8 +1498,14 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
     return D3DERR_INVALIDCALL;
   }
 
-  // Compat path: update CPU shadow and upload raw bytes.
+  // Compat path: update CPU shadow storage. Host-owned resources are updated by
+  // embedding raw bytes via UPLOAD_RESOURCE. Guest-backed resources must use
+  // RESOURCE_DIRTY_RANGE so the host re-uploads from guest memory.
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if (dst->backing_alloc_id == 0 && dst->storage.size() >= dst->size_bytes) {
+#else
   if (dst->storage.size() >= dst->size_bytes) {
+#endif
     if (can_fast_copy) {
       std::memcpy(dst->storage.data(), src->storage.data(), dst->size_bytes);
     } else {
@@ -1465,13 +1519,35 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
       }
     }
 
-    if (!upload_resource_bytes_locked(dev,
-                                      dst,
-                                      /*offset_bytes=*/0,
-                                      dst->storage.data(),
-                                      dst->size_bytes)) {
-      return E_OUTOFMEMORY;
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+    if (dst->backing_alloc_id == 0) {
+#endif
+      if (!upload_resource_bytes_locked(dev,
+                                        dst,
+                                        /*offset_bytes=*/0,
+                                        dst->storage.data(),
+                                        dst->size_bytes)) {
+        return E_OUTOFMEMORY;
+      }
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+    } else {
+      if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
+        return E_OUTOFMEMORY;
+      }
+      const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/false);
+      if (FAILED(track_hr)) {
+        return track_hr;
+      }
+      auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      if (!cmd) {
+        return E_OUTOFMEMORY;
+      }
+      cmd->resource_handle = dst->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = 0;
+      cmd->size_bytes = dst->size_bytes;
     }
+#endif
     return S_OK;
   }
 
