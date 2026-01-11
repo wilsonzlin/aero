@@ -197,8 +197,14 @@ for test in manifest_tests:
         if not source_path.is_file():
             raise SystemExit(f"{manifest_path}: missing source file for test {test!r}: {source_path}")
         source_text = source_path.read_text(encoding="utf-8", errors="replace")
-        if "TestReporter reporter" not in source_text:
-            raise SystemExit(f"{source_path}: expected `TestReporter reporter` (for --json support)")
+        # Require that the test actually instantiates a reporter (not just references the type in
+        # a helper signature). Don't mandate the variable name; any `TestReporter <ident>(...)`
+        # construction is acceptable.
+        if not re.search(
+            r"(?m)^\s*(?!//)(?:aerogpu_test::)?TestReporter\s+[A-Za-z_][A-Za-z0-9_]*\s*[\(\{]",
+            source_text,
+        ):
+            raise SystemExit(f"{source_path}: expected a TestReporter instance (for --json support)")
         if "--json" not in source_text:
             raise SystemExit(f"{source_path}: expected `--json` usage text (for discoverability)")
 
