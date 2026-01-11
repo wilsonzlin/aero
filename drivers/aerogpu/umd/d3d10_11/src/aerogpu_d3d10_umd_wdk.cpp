@@ -1077,14 +1077,28 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
   if (!dev || !res || res->handle == kInvalidHandle || size_bytes == 0) {
     return;
   }
-  if (offset_bytes > static_cast<uint64_t>(SIZE_MAX) || size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+
+  uint64_t upload_offset = offset_bytes;
+  uint64_t upload_size = size_bytes;
+  if (res->kind == ResourceKind::Buffer) {
+    const uint64_t end = offset_bytes + size_bytes;
+    if (end < offset_bytes) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+    upload_offset = offset_bytes & ~3ull;
+    const uint64_t upload_end = AlignUpU64(end, 4);
+    upload_size = upload_end - upload_offset;
+  }
+  if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
     SetError(hDevice, E_OUTOFMEMORY);
     return;
   }
 
-  const size_t off = static_cast<size_t>(offset_bytes);
-  const size_t sz = static_cast<size_t>(size_bytes);
+  const size_t off = static_cast<size_t>(upload_offset);
+  const size_t sz = static_cast<size_t>(upload_size);
   if (off > res->storage.size() || sz > res->storage.size() - off) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
 
@@ -1097,8 +1111,8 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
     }
     cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;
-    cmd->offset_bytes = offset_bytes;
-    cmd->size_bytes = size_bytes;
+    cmd->offset_bytes = upload_offset;
+    cmd->size_bytes = upload_size;
     return;
   }
 
@@ -1121,7 +1135,7 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
   }
 
   HRESULT copy_hr = S_OK;
-  if (res->kind == ResourceKind::Texture2D) {
+  if (res->kind == ResourceKind::Texture2D && upload_offset == 0 && upload_size == res->storage.size()) {
     const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
     const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
     const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
@@ -1182,8 +1196,8 @@ Unlock:
   }
   dirty->resource_handle = res->handle;
   dirty->reserved0 = 0;
-  dirty->offset_bytes = offset_bytes;
-  dirty->size_bytes = size_bytes;
+  dirty->offset_bytes = upload_offset;
+  dirty->size_bytes = upload_size;
 }
 
 // -----------------------------------------------------------------------------
