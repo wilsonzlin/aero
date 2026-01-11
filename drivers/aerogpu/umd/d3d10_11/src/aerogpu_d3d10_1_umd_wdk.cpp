@@ -1124,6 +1124,8 @@ void emit_dirty_range_locked(AeroGpuDevice* dev,
     return;
   }
 
+  TrackWddmAllocForSubmitLocked(dev, res);
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!cmd) {
     set_error(dev, E_FAIL);
@@ -2136,13 +2138,15 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     __if_exists(D3D10DDIARG_CREATERESOURCE::CpuAccessFlags) {
       cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->CpuAccessFlags) != 0);
     }
+    bool is_staging = false;
     __if_exists(D3D10DDIARG_CREATERESOURCE::Usage) {
       const uint32_t usage = static_cast<uint32_t>(pDesc->Usage);
       #ifdef D3D10_USAGE_STAGING
-      cpu_visible = cpu_visible || (usage == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      is_staging = (usage == static_cast<uint32_t>(D3D10_USAGE_STAGING));
       #else
-      cpu_visible = cpu_visible || (usage == 3u);
+      is_staging = (usage == 3u);
       #endif
+      cpu_visible = cpu_visible || is_staging;
     }
 
     const bool is_rt = (res->bind_flags & kD3D10BindRenderTarget) != 0;
@@ -2153,6 +2157,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
   #endif
+    const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
+    cpu_visible = cpu_visible || want_guest_backed;
 
     bool want_host_owned = false;
     __if_exists(D3D10DDIARG_CREATERESOURCE::Usage) {
@@ -2289,13 +2295,15 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     __if_exists(D3D10DDIARG_CREATERESOURCE::CpuAccessFlags) {
       cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->CpuAccessFlags) != 0);
     }
+    bool is_staging = false;
     __if_exists(D3D10DDIARG_CREATERESOURCE::Usage) {
       const uint32_t usage = static_cast<uint32_t>(pDesc->Usage);
       #ifdef D3D10_USAGE_STAGING
-      cpu_visible = cpu_visible || (usage == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      is_staging = (usage == static_cast<uint32_t>(D3D10_USAGE_STAGING));
       #else
-      cpu_visible = cpu_visible || (usage == 3u);
+      is_staging = (usage == 3u);
       #endif
+      cpu_visible = cpu_visible || is_staging;
     }
     const bool is_rt = (res->bind_flags & kD3D10BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D10BindDepthStencil) != 0;
@@ -2305,6 +2313,10 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
   #endif
+    const bool want_guest_backed =
+        !is_shared && !is_primary && !is_staging && !is_rt && !is_ds &&
+        ((res->bind_flags & kD3D10BindShaderResource) != 0);
+    cpu_visible = cpu_visible || want_guest_backed;
 
     bool want_host_owned = false;
     __if_exists(D3D10DDIARG_CREATERESOURCE::Usage) {
@@ -2498,6 +2510,23 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     }
   }
 
+  if (res->handle != kInvalidHandle) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+  }
+
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
+  if (is_guest_backed && !dev->cmd.empty()) {
+    // Flush before releasing the WDDM allocation so submissions that referenced
+    // backing_alloc_id can still build an alloc_table from this allocation.
+    HRESULT submit_hr = S_OK;
+    submit_locked(dev, /*want_present=*/false, &submit_hr);
+    if (FAILED(submit_hr)) {
+      set_error(dev, submit_hr);
+    }
+  }
+
   if (res->wddm.km_resource_handle != 0 || !res->wddm.km_allocation_handles.empty()) {
     const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
     if (!cb || !cb->pfnDeallocateCb) {
@@ -2545,12 +2574,6 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_resource_handle = 0;
     res->wddm_allocation_handle = 0;
-  }
-
-  if (res->handle != kInvalidHandle) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
   }
   res->~AeroGpuResource();
 }
