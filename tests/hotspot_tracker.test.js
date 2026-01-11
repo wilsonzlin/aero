@@ -19,3 +19,25 @@ test('HotspotTracker reports a tight loop PC as the dominant hotspot', () => {
   assert(top.percent_of_total > 90);
 });
 
+test('HotspotTracker ignores NaN/non-positive instruction counts', () => {
+  const tracker = new HotspotTracker({ capacity: 8 });
+
+  tracker.recordBlock(0x1000, NaN);
+  tracker.recordBlock(0x1000, 0);
+  tracker.recordBlock(0x1000, -5);
+
+  assert.equal(tracker.totalInstructions, 0);
+  assert.deepEqual(tracker.snapshot({ limit: 1 }), []);
+});
+
+test('HotspotTracker saturates instruction counts on Infinity to keep percentages finite', () => {
+  const tracker = new HotspotTracker({ capacity: 8 });
+
+  tracker.recordBlock(0x1000, Infinity);
+  const [top] = tracker.snapshot({ limit: 1 });
+
+  assert.equal(tracker.totalInstructions, Number.MAX_SAFE_INTEGER);
+  assert.equal(top.pc, '0x1000');
+  assert.equal(top.hits, 1);
+  assert.equal(top.percent_of_total, 100);
+});

@@ -1,5 +1,12 @@
 import { SpaceSavingTopK } from './space_saving_topk.js';
 
+const MAX_TOTAL_INSTRUCTIONS = Number.MAX_SAFE_INTEGER;
+
+function addSaturating(a, b) {
+  const sum = a + b;
+  return !Number.isFinite(sum) || sum >= MAX_TOTAL_INSTRUCTIONS ? MAX_TOTAL_INSTRUCTIONS : sum;
+}
+
 /**
  * @param {unknown} pc
  * @returns {string}
@@ -43,11 +50,12 @@ export class HotspotTracker {
    * @param {number} instructionsInBlock
    */
   recordBlock(pc, instructionsInBlock) {
-    if (instructionsInBlock <= 0) return;
+    const instructions = Number(instructionsInBlock);
+    if (!(instructions > 0)) return;
 
-    this._totalInstructions += instructionsInBlock;
+    this._totalInstructions = addSaturating(this._totalInstructions, instructions);
 
-    const { event, replacedKey } = this._instructionsTopK.observe(pc, instructionsInBlock);
+    const { event, replacedKey } = this._instructionsTopK.observe(pc, instructions);
 
     if (event === 'replace') {
       if (replacedKey !== undefined) this._hitsByPc.delete(replacedKey);
@@ -90,4 +98,3 @@ export class HotspotTracker {
     });
   }
 }
-

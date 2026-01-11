@@ -80,12 +80,14 @@ export class SpaceSavingTopK {
    * @returns {{event: 'increment' | 'insert' | 'replace', replacedKey?: TKey}}
    */
   observe(key, weight = 1) {
-    if (weight <= 0) return { event: 'increment' };
+    const w = Number(weight);
+    // Ignore non-positive and NaN weights. (Infinity is treated as a very large weight and saturates.)
+    if (!(w > 0)) return { event: 'increment' };
 
     const idx = this._indexByKey.get(key);
     if (idx !== undefined) {
       const entry = this._entries[idx];
-      entry.count = addSaturating(entry.count, weight);
+      entry.count = addSaturating(entry.count, w);
 
       if (idx === this._minIndex) {
         this._recomputeMinIndex();
@@ -94,7 +96,7 @@ export class SpaceSavingTopK {
     }
 
     if (this._entries.length < this._capacity) {
-      this._entries.push({ key, count: Math.min(weight, MAX_COUNT), error: 0 });
+      this._entries.push({ key, count: Math.min(w, MAX_COUNT), error: 0 });
       this._indexByKey.set(key, this._entries.length - 1);
       this._recomputeMinIndex();
       return { event: 'insert' };
@@ -110,7 +112,7 @@ export class SpaceSavingTopK {
 
     minEntry.key = key;
     minEntry.error = prevMinCount;
-    minEntry.count = addSaturating(prevMinCount, weight);
+    minEntry.count = addSaturating(prevMinCount, w);
 
     this._indexByKey.set(key, minIndex);
     this._recomputeMinIndex();
@@ -155,4 +157,3 @@ export class SpaceSavingTopK {
     this._minIndex = minIndex;
   }
 }
-
