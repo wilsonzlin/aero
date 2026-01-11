@@ -161,37 +161,40 @@ constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
 // querying the AeroGPU KMD fence counters via D3DKMTEscape so we still return a
 // real fence value for the submission.
 
+std::once_flag g_submit_log_once;
+bool g_submit_log_enabled = false;
+
 bool submit_log_enabled() {
-  static int cached = -1;
-  if (cached != -1) {
-    return cached != 0;
-  }
+  std::call_once(g_submit_log_once, [] {
 #if defined(_WIN32)
-  char buf[32] = {};
-  const DWORD n = GetEnvironmentVariableA("AEROGPU_D3D9_LOG_SUBMITS", buf, static_cast<DWORD>(sizeof(buf)));
-  if (n == 0 || n >= sizeof(buf)) {
-    cached = 0;
-    return false;
-  }
-  for (char& c : buf) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  cached = (std::strcmp(buf, "1") == 0 || std::strcmp(buf, "true") == 0 || std::strcmp(buf, "yes") == 0 ||
-            std::strcmp(buf, "on") == 0)
-               ? 1
-               : 0;
-  return cached != 0;
+    char buf[32] = {};
+    const DWORD n = GetEnvironmentVariableA("AEROGPU_D3D9_LOG_SUBMITS", buf, static_cast<DWORD>(sizeof(buf)));
+    if (n == 0 || n >= sizeof(buf)) {
+      g_submit_log_enabled = false;
+      return;
+    }
+    for (char& c : buf) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    g_submit_log_enabled = (std::strcmp(buf, "1") == 0 || std::strcmp(buf, "true") == 0 || std::strcmp(buf, "yes") == 0 ||
+                            std::strcmp(buf, "on") == 0);
 #else
-  const char* v = std::getenv("AEROGPU_D3D9_LOG_SUBMITS");
-  if (!v || !*v) {
-    cached = 0;
-    return false;
-  }
-  cached = (std::strcmp(v, "1") == 0 || std::strcmp(v, "true") == 0 || std::strcmp(v, "yes") == 0 || std::strcmp(v, "on") == 0)
-               ? 1
-               : 0;
-  return cached != 0;
+    const char* v = std::getenv("AEROGPU_D3D9_LOG_SUBMITS");
+    if (!v || !*v) {
+      g_submit_log_enabled = false;
+      return;
+    }
+    char buf[32] = {};
+    std::strncpy(buf, v, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = 0;
+    for (char& c : buf) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    g_submit_log_enabled = (std::strcmp(buf, "1") == 0 || std::strcmp(buf, "true") == 0 || std::strcmp(buf, "yes") == 0 ||
+                            std::strcmp(buf, "on") == 0);
 #endif
+  });
+  return g_submit_log_enabled;
 }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
