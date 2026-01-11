@@ -2898,6 +2898,160 @@ void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT
 void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HRESOURCE*, const UINT*, const UINT*) {}
 void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HRESOURCE*, const UINT*, const UINT*) {}
 
+template <typename THandle>
+static bool AnyNonNullHandles(const THandle* handles, UINT count) {
+  if (!handles || count == 0) {
+    return false;
+  }
+  for (UINT i = 0; i < count; ++i) {
+    if (handles[i].pDrvPrivate) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Tessellation and compute stages are unsupported in the current FL10_0 bring-up
+// implementation. These entrypoints must behave like no-ops when
+// clearing/unbinding (runtime ClearState), but should still report E_NOTIMPL when
+// an app attempts to bind real state.
+void AEROGPU_APIENTRY HsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                   D3D11DDI_HHULLSHADER hShader,
+                                   const D3D11DDI_HCLASSINSTANCE*,
+                                   UINT) {
+  if (!hCtx.pDrvPrivate || !hShader.pDrvPrivate) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY HsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
+                                             const UINT*,
+                                             const UINT*) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phBuffers, NumBuffers)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY HsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT,
+                                             UINT NumViews,
+                                             const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phViews, NumViews)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY HsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phSamplers, NumSamplers)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY DsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                   D3D11DDI_HDOMAINSHADER hShader,
+                                   const D3D11DDI_HCLASSINSTANCE*,
+                                   UINT) {
+  if (!hCtx.pDrvPrivate || !hShader.pDrvPrivate) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY DsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
+                                             const UINT*,
+                                             const UINT*) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phBuffers, NumBuffers)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY DsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT,
+                                             UINT NumViews,
+                                             const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phViews, NumViews)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY DsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phSamplers, NumSamplers)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY CsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                   D3D11DDI_HCOMPUTESHADER hShader,
+                                   const D3D11DDI_HCLASSINSTANCE*,
+                                   UINT) {
+  if (!hCtx.pDrvPrivate || !hShader.pDrvPrivate) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY CsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
+                                             const UINT*,
+                                             const UINT*) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phBuffers, NumBuffers)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY CsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT,
+                                             UINT NumViews,
+                                             const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phViews, NumViews)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY CsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phSamplers, NumSamplers)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                                  UINT,
+                                                  UINT NumUavs,
+                                                  const D3D11DDI_HUNORDEREDACCESSVIEW* phUavs,
+                                                  const UINT*) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phUavs, NumUavs)) {
+    return;
+  }
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
 void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT StartSlot,
                                              UINT NumViews,
@@ -4469,6 +4623,36 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs->pfnGsSetConstantBuffers = &GsSetConstantBuffers11;
   ctx_funcs->pfnGsSetShaderResources = &GsSetShaderResources11;
   ctx_funcs->pfnGsSetSamplers = &GsSetSamplers11;
+
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetShader) { ctx_funcs->pfnHsSetShader = &HsSetShader11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetConstantBuffers) {
+    ctx_funcs->pfnHsSetConstantBuffers = &HsSetConstantBuffers11;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetShaderResources) {
+    ctx_funcs->pfnHsSetShaderResources = &HsSetShaderResources11;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetSamplers) { ctx_funcs->pfnHsSetSamplers = &HsSetSamplers11; }
+
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetShader) { ctx_funcs->pfnDsSetShader = &DsSetShader11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetConstantBuffers) {
+    ctx_funcs->pfnDsSetConstantBuffers = &DsSetConstantBuffers11;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetShaderResources) {
+    ctx_funcs->pfnDsSetShaderResources = &DsSetShaderResources11;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetSamplers) { ctx_funcs->pfnDsSetSamplers = &DsSetSamplers11; }
+
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetShader) { ctx_funcs->pfnCsSetShader = &CsSetShader11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetConstantBuffers) {
+    ctx_funcs->pfnCsSetConstantBuffers = &CsSetConstantBuffers11;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetShaderResources) {
+    ctx_funcs->pfnCsSetShaderResources = &CsSetShaderResources11;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetSamplers) { ctx_funcs->pfnCsSetSamplers = &CsSetSamplers11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetUnorderedAccessViews) {
+    ctx_funcs->pfnCsSetUnorderedAccessViews = &CsSetUnorderedAccessViews11;
+  }
 
   ctx_funcs->pfnSetViewports = &SetViewports11;
   ctx_funcs->pfnSetScissorRects = &SetScissorRects11;
