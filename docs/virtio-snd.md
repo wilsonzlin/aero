@@ -65,7 +65,7 @@ If the device does not report the contract-v1 HWID `PCI\VEN_1AF4&DEV_1059&REV_01
 For QEMU bring-up/regression (where the virtio-snd device may enumerate as transitional by default), the repo also
 contains an opt-in compatibility driver package:
 
-- `drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` (binds the transitional virtio-snd PCI ID `PCI\VEN_1AF4&DEV_1018`)
+- `drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` (binds the transitional virtio-snd PCI ID `PCI\VEN_1AF4&DEV_1018`; installs service `aeroviosnd_legacy`)
 - `virtiosnd_legacy.sys` (build with MSBuild `Configuration=Legacy`)
 
 For older bring-up scenarios where a legacy **I/O-port** virtio-pci transport is required (not part of the Aero virtio
