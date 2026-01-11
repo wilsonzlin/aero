@@ -1874,7 +1874,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return init_hr;
     }
 
-    if (res->wddm_allocation_handle != 0 &&
+    if (res->backing_alloc_id != 0 && res->wddm_allocation_handle != 0 &&
         std::find(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle) ==
             dev->wddm_submit_allocation_handles.end()) {
       dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
@@ -2019,7 +2019,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return init_hr;
     }
 
-    if (res->wddm_allocation_handle != 0 &&
+    if (res->backing_alloc_id != 0 && res->wddm_allocation_handle != 0 &&
         std::find(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle) ==
             dev->wddm_submit_allocation_handles.end()) {
       dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
@@ -2075,7 +2075,7 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
         std::remove(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), res),
         dev->pending_staging_writes.end());
   }
-  if (res->wddm_allocation_handle != 0) {
+  if (res->backing_alloc_id != 0 && res->wddm_allocation_handle != 0) {
     dev->wddm_submit_allocation_handles.erase(
         std::remove(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle),
         dev->wddm_submit_allocation_handles.end());

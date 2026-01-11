@@ -2213,7 +2213,9 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
-    TrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
+    if (res->backing_alloc_id != 0) {
+      TrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
+    }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
@@ -2383,7 +2385,9 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
-    TrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
+    if (res->backing_alloc_id != 0) {
+      TrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
+    }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
@@ -2424,7 +2428,9 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (res->mapped) {
     unmap_resource_locked(dev, res, res->mapped_subresource);
   }
-  UntrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
+  if (res->backing_alloc_id != 0) {
+    UntrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
+  }
 
   if (dev->current_rtv_res == res) {
     dev->current_rtv_res = nullptr;
