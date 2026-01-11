@@ -7,6 +7,61 @@
 
 using aerogpu_test::ComPtr;
 
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
+  CloseHandle(h);
+}
+
+static void DumpTightBgra32(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            int row_pitch,
+                            int width,
+                            int height) {
+  if (!data || width <= 0 || height <= 0 || row_pitch < width * 4) {
+    return;
+  }
+  std::vector<uint8_t> tight((size_t)width * (size_t)height * 4u, 0);
+  for (int y = 0; y < height; ++y) {
+    const uint8_t* src_row = (const uint8_t*)data + (size_t)y * (size_t)row_pitch;
+    memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
+  }
+  DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
+}
+
 typedef LONG NTSTATUS;
 
 #ifndef NT_SUCCESS
@@ -632,6 +687,21 @@ static int ValidateSurfacePixels(aerogpu_test::TestReporter* reporter,
     } else if (reporter) {
       reporter->AddArtifactPathW(bmp_path);
     }
+
+    std::wstring bin_name(dump_name);
+    size_t dot = bin_name.rfind(L'.');
+    if (dot != std::wstring::npos) {
+      bin_name = bin_name.substr(0, dot) + L".bin";
+    } else {
+      bin_name += L".bin";
+    }
+    DumpTightBgra32(test_name,
+                    reporter,
+                    bin_name.c_str(),
+                    lr.pBits,
+                    (int)lr.Pitch,
+                    (int)desc.Width,
+                    (int)desc.Height);
   }
 
   sysmem->UnlockRect();
@@ -642,14 +712,18 @@ static int ValidateSurfacePixels(aerogpu_test::TestReporter* reporter,
   if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu) ||
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
     if (reporter) {
-      return reporter->Fail("pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
+      return reporter->Fail("pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX",
                             (unsigned long)center,
-                            (unsigned long)corner);
+                            (unsigned long)expected_center,
+                            (unsigned long)corner,
+                            (unsigned long)expected_corner);
     }
     return aerogpu_test::Fail(test_name,
-                              "pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
+                              "pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX",
                               (unsigned long)center,
-                              (unsigned long)corner);
+                              (unsigned long)expected_center,
+                              (unsigned long)corner,
+                              (unsigned long)expected_corner);
   }
 
   return 0;

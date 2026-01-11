@@ -5,6 +5,61 @@
 
 using aerogpu_test::ComPtr;
 
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
+  CloseHandle(h);
+}
+
+static void DumpTightBgra32(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            int row_pitch,
+                            int width,
+                            int height) {
+  if (!data || width <= 0 || height <= 0 || row_pitch < width * 4) {
+    return;
+  }
+  std::vector<uint8_t> tight((size_t)width * (size_t)height * 4u, 0);
+  for (int y = 0; y < height; ++y) {
+    const uint8_t* src_row = (const uint8_t*)data + (size_t)y * (size_t)row_pitch;
+    memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
+  }
+  DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
+}
+
 static int RunD3D9ExStretchRect(int argc, char** argv) {
   const char* kTestName = "d3d9ex_stretchrect";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -285,14 +340,28 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(dump_stretch_bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d9ex_stretchrect.bin",
+                      lr.pBits,
+                      (int)lr.Pitch,
+                      (int)bb_desc.Width,
+                      (int)bb_desc.Height);
     }
     bb_sys->UnlockRect();
-    return reporter.Fail("pixel mismatch: outside=0x%08lX tl=0x%08lX tr=0x%08lX bl=0x%08lX br=0x%08lX",
-                         (unsigned long)outside,
-                         (unsigned long)tl,
-                         (unsigned long)tr,
-                         (unsigned long)bl,
-                         (unsigned long)br);
+    return reporter.Fail(
+        "pixel mismatch: outside=0x%08lX expected 0x%08lX; tl=0x%08lX expected 0x%08lX; "
+        "tr=0x%08lX expected 0x%08lX; bl=0x%08lX expected 0x%08lX; br=0x%08lX expected 0x%08lX",
+                          (unsigned long)outside,
+                          (unsigned long)expected_outside,
+                          (unsigned long)tl,
+                          (unsigned long)kRed,
+                          (unsigned long)tr,
+                          (unsigned long)kGreen,
+                          (unsigned long)bl,
+                          (unsigned long)kBlue,
+                          (unsigned long)br,
+                          (unsigned long)kWhite);
   }
 
   bb_sys->UnlockRect();
@@ -312,6 +381,13 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(dump_stretch_bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d9ex_stretchrect.bin",
+                      lr.pBits,
+                      (int)lr.Pitch,
+                      (int)bb_desc.Width,
+                      (int)bb_desc.Height);
       bb_sys->UnlockRect();
     }
   }
@@ -401,7 +477,11 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
       std::string err;
       if (aerogpu_test::WriteBmp32BGRA(dump_tex_bmp_path, kTexW, kTexH, lr.pBits, (int)lr.Pitch, &err)) {
         reporter.AddArtifactPathW(dump_tex_bmp_path);
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: texture BMP dump failed: %s", kTestName, err.c_str());
       }
+      DumpTightBgra32(
+          kTestName, &reporter, L"d3d9ex_stretchrect_texture.bin", lr.pBits, (int)lr.Pitch, kTexW, kTexH);
     }
     tex_sys_readback->UnlockRect();
     return reporter.Fail("UpdateTexture pixel mismatch: center=0x%08lX expected=0x%08lX",
@@ -419,6 +499,8 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(dump_tex_bmp_path);
       }
+      DumpTightBgra32(
+          kTestName, &reporter, L"d3d9ex_stretchrect_texture.bin", lr.pBits, (int)lr.Pitch, kTexW, kTexH);
       tex_sys_readback->UnlockRect();
     }
   }
