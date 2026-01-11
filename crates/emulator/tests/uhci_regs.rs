@@ -606,6 +606,7 @@ fn uhci_portsc_suspend_resume_bits_roundtrip() {
         }
     }
 
+    const PORTSC_PED: u16 = 1 << 2;
     const PORTSC_SUSP: u16 = 1 << 12;
     const PORTSC_RESUME: u16 = 1 << 13;
 
@@ -613,17 +614,21 @@ fn uhci_portsc_suspend_resume_bits_roundtrip() {
     uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
     // Setting SUSP should latch and be visible on readback.
-    uhci.port_write(REG_PORTSC1, 2, PORTSC_SUSP as u32);
+    uhci.port_write(REG_PORTSC1, 2, (PORTSC_PED | PORTSC_SUSP) as u32);
     assert_ne!(uhci.port_read(REG_PORTSC1, 2) as u16 & PORTSC_SUSP, 0);
 
     // Setting RESUME should also latch independently.
-    uhci.port_write(REG_PORTSC1, 2, (PORTSC_SUSP | PORTSC_RESUME) as u32);
+    uhci.port_write(
+        REG_PORTSC1,
+        2,
+        (PORTSC_PED | PORTSC_SUSP | PORTSC_RESUME) as u32,
+    );
     let st = uhci.port_read(REG_PORTSC1, 2) as u16;
     assert_ne!(st & PORTSC_SUSP, 0);
     assert_ne!(st & PORTSC_RESUME, 0);
 
     // Clearing both bits.
-    uhci.port_write(REG_PORTSC1, 2, 0);
+    uhci.port_write(REG_PORTSC1, 2, PORTSC_PED as u32);
     let st = uhci.port_read(REG_PORTSC1, 2) as u16;
     assert_eq!(st & (PORTSC_SUSP | PORTSC_RESUME), 0);
 }
@@ -643,13 +648,14 @@ fn uhci_portsc_suspend_resume_bits_clear_on_detach() {
         }
     }
 
+    const PORTSC_PED: u16 = 1 << 2;
     const PORTSC_SUSP: u16 = 1 << 12;
     const PORTSC_RESUME: u16 = 1 << 13;
 
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
-    uhci.port_write(REG_PORTSC1, 2, (PORTSC_SUSP | PORTSC_RESUME) as u32);
+    uhci.port_write(REG_PORTSC1, 2, (PORTSC_PED | PORTSC_SUSP | PORTSC_RESUME) as u32);
     assert_ne!(
         uhci.port_read(REG_PORTSC1, 2) as u16 & (PORTSC_SUSP | PORTSC_RESUME),
         0
@@ -677,13 +683,18 @@ fn uhci_greset_clears_portsc_suspend_resume_bits() {
         }
     }
 
+    const PORTSC_PED: u16 = 1 << 2;
     const PORTSC_SUSP: u16 = 1 << 12;
     const PORTSC_RESUME: u16 = 1 << 13;
 
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
-    uhci.port_write(REG_PORTSC1, 2, (PORTSC_SUSP | PORTSC_RESUME) as u32);
+    uhci.port_write(
+        REG_PORTSC1,
+        2,
+        (PORTSC_PED | PORTSC_SUSP | PORTSC_RESUME) as u32,
+    );
     assert_ne!(
         uhci.port_read(REG_PORTSC1, 2) as u16 & (PORTSC_SUSP | PORTSC_RESUME),
         0

@@ -358,18 +358,20 @@ fn uhci_portsc_line_status_shows_k_while_resuming() {
     const PORTSC_LS_MASK: u16 = 0b11 << 4;
     const PORTSC_LS_J_FS: u16 = 0b01 << 4;
     const PORTSC_LS_K_FS: u16 = 0b10 << 4;
+    const PORTSC_PED: u16 = 1 << 2;
     const PORTSC_RESUME: u16 = 1 << 13;
 
     let mut hub = RootHub::new();
     hub.attach(0, Box::new(TestUsbDevice));
+    hub.write_portsc(0, PORTSC_PED);
 
     // Default idle line state for a full-speed device is J.
     assert_eq!(hub.read_portsc(0) & PORTSC_LS_MASK, PORTSC_LS_J_FS);
 
-    hub.write_portsc(0, PORTSC_RESUME);
+    hub.write_portsc(0, PORTSC_PED | PORTSC_RESUME);
     assert_eq!(hub.read_portsc(0) & PORTSC_LS_MASK, PORTSC_LS_K_FS);
 
-    hub.write_portsc(0, 0);
+    hub.write_portsc(0, PORTSC_PED);
     assert_eq!(hub.read_portsc(0) & PORTSC_LS_MASK, PORTSC_LS_J_FS);
 }
 

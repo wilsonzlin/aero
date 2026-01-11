@@ -88,6 +88,7 @@ impl Port {
         const CSC: u16 = 1 << 1;
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
+        const RD: u16 = 1 << 6;
         const PR: u16 = 1 << 9;
         const SUSP: u16 = 1 << 12;
         const RESUME: u16 = 1 << 13;
@@ -98,6 +99,9 @@ impl Port {
         }
         if write_mask & PEDC != 0 && value & PEDC != 0 {
             self.enable_change = false;
+        }
+        if write_mask & RD != 0 && value & RD != 0 {
+            self.resume_detect = false;
         }
 
         // Port reset: model a 50ms reset and reset attached device state.
@@ -151,10 +155,9 @@ impl Port {
 
         if write_mask & SUSP != 0 {
             let want_suspended = value & SUSP != 0;
-            // Latch the suspend bit. While a port is enabled, we treat this as "suspended" for
-            // reachability and ticking purposes.
             if want_suspended {
-                if !self.resuming {
+                // Only a connected + enabled port can be suspended.
+                if self.enabled && !self.resuming {
                     self.suspended = true;
                 }
             } else {
@@ -164,7 +167,7 @@ impl Port {
 
         if write_mask & RESUME != 0 {
             let want_resuming = value & RESUME != 0;
-            if want_resuming {
+            if want_resuming && self.enabled {
                 self.resuming = true;
                 self.resume_countdown_ms = 20;
             } else {
