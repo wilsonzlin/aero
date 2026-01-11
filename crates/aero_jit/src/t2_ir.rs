@@ -615,5 +615,8 @@ pub enum Terminator {
         then_bb: BlockId,
         else_bb: BlockId,
     },
+    SideExit {
+        exit_rip: u64,
+    },
     Return,
 }

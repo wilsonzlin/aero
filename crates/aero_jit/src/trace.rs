@@ -81,6 +81,14 @@ impl<'a> TraceBuilder<'a> {
                     trace.ir.kind = TraceKind::Linear;
                     break;
                 }
+                crate::t2_ir::Terminator::SideExit { exit_rip } => {
+                    // Side exits are trace terminators: the trace must return the correct next RIP.
+                    if instr_budget == 0 {
+                        break;
+                    }
+                    trace.ir.body.push(Instr::SideExit { exit_rip: *exit_rip });
+                    return Some(trace);
+                }
                 crate::t2_ir::Terminator::Jump(t) => {
                     if *t == entry_block && self.profile.is_hot_backedge(cur, *t) {
                         trace.ir.kind = TraceKind::Loop;

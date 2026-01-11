@@ -87,6 +87,17 @@ fn fold_inst(
         Instr::LoadReg { .. } | Instr::LoadFlag { .. } | Instr::GuardCodeVersion { .. } => {
             out.push(inst.clone());
         }
+        Instr::LoadMem { dst, addr, width } => {
+            let addr2 = resolve_operand(*addr, repl, consts);
+            if addr2 != *addr {
+                *changed = true;
+            }
+            out.push(Instr::LoadMem {
+                dst: *dst,
+                addr: addr2,
+                width: *width,
+            });
+        }
         Instr::SetFlags { mask, values } => {
             if mask.is_empty() {
                 *changed = true;
@@ -150,17 +161,6 @@ fn fold_inst(
                     disp: *disp,
                 });
             }
-        }
-        Instr::LoadMem { dst, addr, width } => {
-            let addr2 = resolve_operand(*addr, repl, consts);
-            if addr2 != *addr {
-                *changed = true;
-            }
-            out.push(Instr::LoadMem {
-                dst: *dst,
-                addr: addr2,
-                width: *width,
-            });
         }
         Instr::BinOp {
             dst,

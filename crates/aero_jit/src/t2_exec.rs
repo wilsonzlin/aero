@@ -251,6 +251,14 @@ pub fn run_function_from_block(
                 let v = eval_operand(*cond, &values);
                 cur = if v != 0 { *then_bb } else { *else_bb };
             }
+            crate::t2_ir::Terminator::SideExit { exit_rip } => {
+                state.cpu.rip = *exit_rip;
+                if let Some(id) = func.find_block_by_rip(*exit_rip) {
+                    cur = id;
+                    continue 'outer;
+                }
+                return RunExit::SideExit { next_rip: *exit_rip };
+            }
             crate::t2_ir::Terminator::Return => return RunExit::Returned,
         }
     }

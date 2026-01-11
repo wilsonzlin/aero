@@ -15,6 +15,7 @@ pub mod profile;
 pub mod simd;
 pub mod tier1;
 pub mod tier2;
+mod tier2_builder;
 pub mod wasm;
 
 // ---- JIT ABI constants ------------------------------------------------------
