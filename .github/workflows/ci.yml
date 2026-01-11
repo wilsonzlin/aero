@@ -40,6 +40,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check Cargo.lock syntax (no duplicates / no conflict markers)
+        run: python3 scripts/ci/check-cargo-lockfile-syntax.py
+
       - name: Detect docs-only changes
         id: changes
         shell: bash
