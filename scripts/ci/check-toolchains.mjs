@@ -69,7 +69,9 @@ function assertNoFloatingNightlyInWorkflows(workflowsDir) {
 }
 
 const rustToolchainToml = readFileSync(rustToolchainTomlPath, "utf8");
-const channelMatch = rustToolchainToml.match(/^\s*channel\s*=\s*"([^"]+)"\s*$/m);
+// Allow trailing comments after the channel assignment so the file can be annotated without
+// breaking CI policy checks.
+const channelMatch = rustToolchainToml.match(/^\s*channel\s*=\s*"([^"]+)"\s*(?:#.*)?$/m);
 if (!channelMatch) {
     fail(`Unable to find [toolchain].channel in ${rustToolchainTomlPath}`);
 }
