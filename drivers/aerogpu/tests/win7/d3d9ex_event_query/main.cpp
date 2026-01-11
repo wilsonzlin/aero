@@ -176,7 +176,8 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   const char* kTestName = "d3d9ex_event_query";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--show-window] [--iterations=N] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--show] [--show-window] [--hidden] [--iterations=N] [--require-vid=0x####] "
+        "[--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
@@ -186,7 +187,8 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
-  const bool show_window = aerogpu_test::HasArg(argc, argv, "--show-window");
+  const bool show_window =
+      aerogpu_test::HasArg(argc, argv, "--show-window") || aerogpu_test::HasArg(argc, argv, "--show");
 
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
@@ -375,6 +377,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   }
 
   const double kMaxImmediateMs = 5.0;
+  bool saw_immediate_not_ready = false;
   for (uint32_t it = 0; it < iterations; ++it) {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(10 + it, 20 + it, 30 + it), 1.0f, 0);
     if (FAILED(hr)) {
@@ -401,7 +404,9 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     }
     const double immediate_ms = QpcToMs(end_qpc - start_qpc, qpc_freq);
 
-    if (FAILED(hr_immediate) && hr_immediate != S_FALSE && hr_immediate != D3DERR_WASSTILLDRAWING) {
+    if (hr_immediate == S_FALSE || hr_immediate == D3DERR_WASSTILLDRAWING) {
+      saw_immediate_not_ready = true;
+    } else if (hr_immediate != S_OK) {
       return aerogpu_test::FailHresult(kTestName, "GetData(DONOTFLUSH)", hr_immediate);
     }
     if (immediate_ms > kMaxImmediateMs) {
@@ -445,6 +450,13 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                (unsigned)it,
                                immediate_ms,
                                (unsigned)polls);
+  }
+
+  if (!saw_immediate_not_ready) {
+    return aerogpu_test::Fail(
+        kTestName,
+        "GetData(D3DGETDATA_DONOTFLUSH) returned S_OK immediately for every iteration; expected at least "
+        "one not-ready result (S_FALSE/WASSTILLDRAWING) to confirm query completion tracks real progress");
   }
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
