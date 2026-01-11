@@ -22,6 +22,14 @@ Policy:
 - The repository **must** contain an up-to-date lockfile for:
   - The root workspace: `./Cargo.lock`
   - Standalone nested workspaces/tools (each maintains its own `Cargo.lock` next to its `Cargo.toml`).
+    - Current standalone lockfiles include:
+      - `fuzz/Cargo.lock`
+      - `server/disk-gateway/Cargo.lock`
+      - `tools/packaging/aero_packager/Cargo.lock`
+      - `tools/image-chunker/Cargo.lock`
+      - `tools/win-offline-cert-injector/Cargo.lock`
+      - `tools/win-certstore-regblob-export/Cargo.lock`
+      - `tools/win7-slipstream/Cargo.lock`
 - CI runs Rust commands with `--locked` and fails if any command would modify a lockfile.
 - CI verifies lockfile consistency via `cargo metadata --locked` (fails if `Cargo.toml` and `Cargo.lock` drift).
   - Do not add `--no-deps`: `cargo metadata --locked --no-deps` can succeed even when the lockfile is stale,
@@ -39,7 +47,8 @@ Dependency updates happen via PRs:
    - Workspace-wide update: `cargo update -w`
    - Targeted update: `cargo update -p <crate>`
    - After changing `Cargo.toml`: run `cargo generate-lockfile`
-   - For standalone tools: run the same commands from that tool directory (or pass `--manifest-path ...`).
+   - For standalone tools: run the same commands from that tool directory, or use `--manifest-path`, e.g.:
+     - `cargo generate-lockfile --manifest-path tools/win7-slipstream/Cargo.toml`
 
 PRs that change dependency requirements **must** include the corresponding `Cargo.lock` diff.
 
