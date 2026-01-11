@@ -1,5 +1,5 @@
 use crate::t2_ir::{Instr, TraceIr, REG_COUNT};
-use crate::Reg;
+use aero_types::Gpr;
 
 /// A simple guest-register allocation plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,8 +20,8 @@ impl Default for RegAllocPlan {
 }
 
 impl RegAllocPlan {
-    pub fn is_cached(&self, reg: Reg) -> bool {
-        self.cached[reg.index()]
+    pub fn is_cached(&self, reg: Gpr) -> bool {
+        self.cached[reg.as_u8() as usize]
     }
 }
 
@@ -30,7 +30,7 @@ pub fn run(trace: &TraceIr) -> RegAllocPlan {
     for inst in trace.iter_instrs() {
         match *inst {
             Instr::LoadReg { reg, .. } | Instr::StoreReg { reg, .. } => {
-                used[reg.index()] = true;
+                used[reg.as_u8() as usize] = true;
             }
             _ => {}
         }

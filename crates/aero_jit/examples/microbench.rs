@@ -1,9 +1,11 @@
 use std::time::Instant;
 
+use aero_cpu::SimpleBus;
+use aero_types::Gpr;
+
 use aero_jit::opt::{optimize_trace, OptConfig};
 use aero_jit::t2_exec::{run_trace, run_trace_with_cached_regs, RuntimeEnv, T2State};
 use aero_jit::t2_ir::{BinOp, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId};
-use aero_jit::Reg;
 
 fn v(i: u32) -> ValueId {
     ValueId(i)
@@ -19,7 +21,7 @@ fn main() {
         body: vec![
             Instr::LoadReg {
                 dst: v(0),
-                reg: Reg::Rax,
+                reg: Gpr::Rax,
             },
             Instr::Const {
                 dst: v(1),
@@ -33,7 +35,7 @@ fn main() {
                 flags: FlagMask::ALL,
             },
             Instr::StoreReg {
-                reg: Reg::Rax,
+                reg: Gpr::Rax,
                 src: Operand::Value(v(2)),
             },
             Instr::Const {
@@ -57,17 +59,25 @@ fn main() {
     };
 
     let env = RuntimeEnv::default();
+    let mut bus0 = SimpleBus::new(65536);
+    let mut bus1 = bus0.clone();
     let mut base = T2State::default();
     let mut opt_state = T2State::default();
 
     let start = Instant::now();
-    let base_res = run_trace(&trace, &env, &mut base, 100_000);
+    let base_res = run_trace(&trace, &env, &mut bus0, &mut base, 100_000);
     let base_time = start.elapsed();
 
     let opt = optimize_trace(&mut trace, &OptConfig::default());
     let start = Instant::now();
-    let opt_res =
-        run_trace_with_cached_regs(&trace, &env, &mut opt_state, 100_000, &opt.regalloc.cached);
+    let opt_res = run_trace_with_cached_regs(
+        &trace,
+        &env,
+        &mut bus1,
+        &mut opt_state,
+        100_000,
+        &opt.regalloc.cached,
+    );
     let opt_time = start.elapsed();
 
     eprintln!(
@@ -80,7 +90,7 @@ fn main() {
     );
     eprintln!(
         "final rax baseline={} optimized={}",
-        base.cpu.get_reg(Reg::Rax),
-        opt_state.cpu.get_reg(Reg::Rax)
+        base.cpu.get_gpr(Gpr::Rax),
+        opt_state.cpu.get_gpr(Gpr::Rax)
     );
 }

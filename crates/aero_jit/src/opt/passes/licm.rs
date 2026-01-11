@@ -54,7 +54,8 @@ fn is_hoistable(
             }
             operands_invariant([*lhs, *rhs], invariant_values)
         }
-        Instr::LoadReg { reg, .. } => !written_regs[reg.index()],
+        Instr::LoadReg { reg, .. } => !written_regs[reg.as_u8() as usize],
+        Instr::LoadMem { .. } | Instr::StoreMem { .. } => false,
         Instr::LoadFlag { .. } => false,
         _ => false,
     }

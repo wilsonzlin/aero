@@ -1,49 +1,18 @@
 use std::collections::HashMap;
 
+use aero_cpu::CpuBus;
+use aero_types::Flag;
+
 use crate::t2_ir::{
-    eval_binop, Flag, FlagMask, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
+    eval_binop, FlagMask, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
 };
 use crate::CpuState;
-use crate::Reg;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Flags {
-    pub zf: bool,
-    pub sf: bool,
-    pub cf: bool,
-    pub of: bool,
-}
-
-impl Flags {
-    pub fn get(&self, flag: Flag) -> bool {
-        match flag {
-            Flag::Zf => self.zf,
-            Flag::Sf => self.sf,
-            Flag::Cf => self.cf,
-            Flag::Of => self.of,
-        }
-    }
-
-    pub fn apply_mask(&mut self, mask: FlagMask, values: FlagValues) {
-        if mask.intersects(FlagMask::ZF) {
-            self.zf = values.zf;
-        }
-        if mask.intersects(FlagMask::SF) {
-            self.sf = values.sf;
-        }
-        if mask.intersects(FlagMask::CF) {
-            self.cf = values.cf;
-        }
-        if mask.intersects(FlagMask::OF) {
-            self.of = values.of;
-        }
-    }
-}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct T2State {
     pub cpu: CpuState,
-    pub flags: Flags,
+    /// Architectural RFLAGS value (subset of status flags currently modeled by Tier-2).
+    pub rflags: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -56,6 +25,8 @@ pub struct RuntimeEnv {
 pub struct ExecStats {
     pub reg_loads: u64,
     pub reg_stores: u64,
+    pub mem_loads: u64,
+    pub mem_stores: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +68,7 @@ fn exec_instr(
     inst: &Instr,
     state: &mut T2State,
     env: &RuntimeEnv,
+    bus: &mut dyn CpuBus,
     values: &mut [u64],
     stats: &mut ExecStats,
     reg_cache: Option<&mut RegCache>,
@@ -109,7 +81,7 @@ fn exec_instr(
                 cache.read_reg(reg, &state.cpu, stats)
             } else {
                 stats.reg_loads += 1;
-                state.cpu.get_reg(reg)
+                state.cpu.get_gpr(reg)
             };
             values[dst.index()] = val;
         }
@@ -119,14 +91,14 @@ fn exec_instr(
                 cache.write_reg(reg, val, &mut state.cpu, stats);
             } else {
                 stats.reg_stores += 1;
-                state.cpu.set_reg(reg, val);
+                state.cpu.set_gpr(reg, val);
             }
         }
         Instr::LoadFlag { dst, flag } => {
-            values[dst.index()] = state.flags.get(flag) as u64;
+            values[dst.index()] = get_flag(state.rflags, flag) as u64;
         }
         Instr::SetFlags { mask, values: fv } => {
-            state.flags.apply_mask(mask, fv);
+            apply_flag_mask(&mut state.rflags, mask, fv);
         }
         Instr::BinOp {
             dst,
@@ -140,7 +112,7 @@ fn exec_instr(
             let (res, computed) = eval_binop(op, lhs, rhs);
             values[dst.index()] = res;
             if !flags.is_empty() {
-                state.flags.apply_mask(flags, computed);
+                apply_flag_mask(&mut state.rflags, flags, computed);
             }
         }
         Instr::Addr {
@@ -156,6 +128,17 @@ fn exec_instr(
                 .wrapping_add(index.wrapping_mul(scale as u64))
                 .wrapping_add(disp as u64);
             values[dst.index()] = addr;
+        }
+        Instr::LoadMem { dst, addr, width } => {
+            let addr = eval_operand(addr, values);
+            stats.mem_loads += 1;
+            values[dst.index()] = width.truncate(bus.read(addr, width));
+        }
+        Instr::StoreMem { addr, src, width } => {
+            let addr = eval_operand(addr, values);
+            let val = eval_operand(src, values);
+            stats.mem_stores += 1;
+            bus.write(addr, width, val);
         }
         Instr::Guard {
             cond,
@@ -199,15 +182,17 @@ fn exec_instr(
 pub fn run_function(
     func: &Function,
     env: &RuntimeEnv,
+    bus: &mut dyn CpuBus,
     state: &mut T2State,
     max_steps: usize,
 ) -> RunExit {
-    run_function_from_block(func, env, state, func.entry, max_steps)
+    run_function_from_block(func, env, bus, state, func.entry, max_steps)
 }
 
 pub fn run_function_from_block(
     func: &Function,
     env: &RuntimeEnv,
+    bus: &mut dyn CpuBus,
     state: &mut T2State,
     start: crate::t2_ir::BlockId,
     max_steps: usize,
@@ -225,7 +210,9 @@ pub fn run_function_from_block(
         state.cpu.rip = block.start_rip;
         let mut dummy_stats = ExecStats::default();
         for inst in &block.instrs {
-            if let Some(exit) = exec_instr(inst, state, env, &mut values, &mut dummy_stats, None) {
+            if let Some(exit) =
+                exec_instr(inst, state, env, bus, &mut values, &mut dummy_stats, None)
+            {
                 match exit {
                     RunExit::SideExit { next_rip } => {
                         if let Some(id) = func.find_block_by_rip(next_rip) {
@@ -256,26 +243,29 @@ pub fn run_function_from_block(
 pub fn run_trace(
     trace: &TraceIr,
     env: &RuntimeEnv,
+    bus: &mut dyn CpuBus,
     state: &mut T2State,
     max_iters: usize,
 ) -> RunResult {
-    run_trace_inner(trace, env, state, max_iters, None)
+    run_trace_inner(trace, env, bus, state, max_iters, None)
 }
 
 pub fn run_trace_with_cached_regs(
     trace: &TraceIr,
     env: &RuntimeEnv,
+    bus: &mut dyn CpuBus,
     state: &mut T2State,
     max_iters: usize,
     cached_regs: &[bool; REG_COUNT],
 ) -> RunResult {
     let cache = RegCache::new(*cached_regs);
-    run_trace_inner(trace, env, state, max_iters, Some(cache))
+    run_trace_inner(trace, env, bus, state, max_iters, Some(cache))
 }
 
 fn run_trace_inner(
     trace: &TraceIr,
     env: &RuntimeEnv,
+    bus: &mut dyn CpuBus,
     state: &mut T2State,
     max_iters: usize,
     mut cache: Option<RegCache>,
@@ -285,7 +275,9 @@ fn run_trace_inner(
     let mut stats = ExecStats::default();
 
     for inst in &trace.prologue {
-        if let Some(exit) = exec_instr(inst, state, env, &mut values, &mut stats, cache.as_mut()) {
+        if let Some(exit) =
+            exec_instr(inst, state, env, bus, &mut values, &mut stats, cache.as_mut())
+        {
             return RunResult { exit, stats };
         }
     }
@@ -304,7 +296,7 @@ fn run_trace_inner(
         iters += 1;
         for inst in &trace.body {
             if let Some(exit) =
-                exec_instr(inst, state, env, &mut values, &mut stats, cache.as_mut())
+                exec_instr(inst, state, env, bus, &mut values, &mut stats, cache.as_mut())
             {
                 return RunResult { exit, stats };
             }
@@ -339,25 +331,25 @@ impl RegCache {
         }
     }
 
-    fn read_reg(&mut self, reg: Reg, cpu: &CpuState, stats: &mut ExecStats) -> u64 {
-        let idx = reg.index();
+    fn read_reg(&mut self, reg: aero_types::Gpr, cpu: &CpuState, stats: &mut ExecStats) -> u64 {
+        let idx = reg.as_u8() as usize;
         if !self.cached[idx] {
             stats.reg_loads += 1;
-            return cpu.get_reg(reg);
+            return cpu.get_gpr(reg);
         }
         if !self.valid[idx] {
             stats.reg_loads += 1;
-            self.locals[idx] = cpu.get_reg(reg);
+            self.locals[idx] = cpu.get_gpr(reg);
             self.valid[idx] = true;
         }
         self.locals[idx]
     }
 
-    fn write_reg(&mut self, reg: Reg, value: u64, cpu: &mut CpuState, stats: &mut ExecStats) {
-        let idx = reg.index();
+    fn write_reg(&mut self, reg: aero_types::Gpr, value: u64, cpu: &mut CpuState, stats: &mut ExecStats) {
+        let idx = reg.as_u8() as usize;
         if !self.cached[idx] {
             stats.reg_stores += 1;
-            cpu.set_reg(reg, value);
+            cpu.set_gpr(reg, value);
             return;
         }
         self.locals[idx] = value;
@@ -366,34 +358,68 @@ impl RegCache {
     }
 
     fn spill(&mut self, cpu: &mut CpuState, stats: &mut ExecStats) {
-        for reg in all_regs() {
-            let idx = reg.index();
+        for reg in all_gprs() {
+            let idx = reg.as_u8() as usize;
             if self.cached[idx] && self.dirty[idx] {
                 stats.reg_stores += 1;
-                cpu.set_reg(reg, self.locals[idx]);
+                cpu.set_gpr(reg, self.locals[idx]);
                 self.dirty[idx] = false;
             }
         }
     }
 }
 
-fn all_regs() -> [Reg; REG_COUNT] {
+fn all_gprs() -> [aero_types::Gpr; REG_COUNT] {
     [
-        Reg::Rax,
-        Reg::Rcx,
-        Reg::Rdx,
-        Reg::Rbx,
-        Reg::Rsp,
-        Reg::Rbp,
-        Reg::Rsi,
-        Reg::Rdi,
-        Reg::R8,
-        Reg::R9,
-        Reg::R10,
-        Reg::R11,
-        Reg::R12,
-        Reg::R13,
-        Reg::R14,
-        Reg::R15,
+        aero_types::Gpr::Rax,
+        aero_types::Gpr::Rcx,
+        aero_types::Gpr::Rdx,
+        aero_types::Gpr::Rbx,
+        aero_types::Gpr::Rsp,
+        aero_types::Gpr::Rbp,
+        aero_types::Gpr::Rsi,
+        aero_types::Gpr::Rdi,
+        aero_types::Gpr::R8,
+        aero_types::Gpr::R9,
+        aero_types::Gpr::R10,
+        aero_types::Gpr::R11,
+        aero_types::Gpr::R12,
+        aero_types::Gpr::R13,
+        aero_types::Gpr::R14,
+        aero_types::Gpr::R15,
     ]
+}
+
+fn get_flag(rflags: u64, flag: Flag) -> bool {
+    ((rflags >> flag.rflags_bit()) & 1) != 0
+}
+
+fn set_flag(rflags: &mut u64, flag: Flag, value: bool) {
+    let bit = 1u64 << flag.rflags_bit();
+    if value {
+        *rflags |= bit;
+    } else {
+        *rflags &= !bit;
+    }
+}
+
+fn apply_flag_mask(rflags: &mut u64, mask: FlagMask, values: FlagValues) {
+    if mask.intersects(FlagMask::CF) {
+        set_flag(rflags, Flag::Cf, values.cf);
+    }
+    if mask.intersects(FlagMask::PF) {
+        set_flag(rflags, Flag::Pf, values.pf);
+    }
+    if mask.intersects(FlagMask::AF) {
+        set_flag(rflags, Flag::Af, values.af);
+    }
+    if mask.intersects(FlagMask::ZF) {
+        set_flag(rflags, Flag::Zf, values.zf);
+    }
+    if mask.intersects(FlagMask::SF) {
+        set_flag(rflags, Flag::Sf, values.sf);
+    }
+    if mask.intersects(FlagMask::OF) {
+        set_flag(rflags, Flag::Of, values.of);
+    }
 }

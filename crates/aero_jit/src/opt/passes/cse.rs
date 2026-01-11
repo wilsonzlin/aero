@@ -119,7 +119,7 @@ fn process_list(
                 output.push(inst.clone());
             }
             Instr::LoadReg { dst, reg } => {
-                let idx = reg.index();
+                let idx = reg.as_u8() as usize;
                 if let Some(current) = reg_state[idx] {
                     repl.insert(*dst, current);
                     *changed = true;
@@ -137,7 +137,30 @@ fn process_list(
                     reg: *reg,
                     src: src2,
                 });
-                reg_state[reg.index()] = Some(src2);
+                reg_state[reg.as_u8() as usize] = Some(src2);
+            }
+            Instr::LoadMem { dst, addr, width } => {
+                let addr2 = resolve_operand(*addr, repl);
+                if addr2 != *addr {
+                    *changed = true;
+                }
+                output.push(Instr::LoadMem {
+                    dst: *dst,
+                    addr: addr2,
+                    width: *width,
+                });
+            }
+            Instr::StoreMem { addr, src, width } => {
+                let addr2 = resolve_operand(*addr, repl);
+                let src2 = resolve_operand(*src, repl);
+                if addr2 != *addr || src2 != *src {
+                    *changed = true;
+                }
+                output.push(Instr::StoreMem {
+                    addr: addr2,
+                    src: src2,
+                    width: *width,
+                });
             }
             Instr::LoadFlag { dst, flag } => {
                 output.push(Instr::LoadFlag {

@@ -1,17 +1,20 @@
 use std::collections::HashMap;
 
+use aero_cpu::SimpleBus;
+use aero_types::{Flag, Gpr};
+
 use aero_jit::opt::{optimize_trace, OptConfig};
 use aero_jit::profile::{ProfileData, TraceConfig};
-use aero_jit::t2_exec::{run_trace_with_cached_regs, Flags, RunExit, RuntimeEnv, T2State};
+use aero_jit::t2_exec::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
 use aero_jit::t2_ir::{
     BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, TraceKind, ValueId,
 };
 use aero_jit::trace::TraceBuilder;
 use aero_jit::wasm::tier2::{
-    Tier2WasmCodegen, EXPORT_TRACE_FN, FLAGS_MASK_OFFSET, IMPORT_CODE_PAGE_VERSION,
+    Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION, RFLAGS_OFFSET,
 };
 use aero_jit::wasm::{IMPORT_MEMORY, IMPORT_MODULE};
-use aero_jit::{CpuState, Reg};
+use aero_jit::CpuState;
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 use wasmparser::Validator;
@@ -62,22 +65,6 @@ fn instantiate_trace(
     (store, memory, trace)
 }
 
-fn flags_from_mask(mask: u32) -> Flags {
-    Flags {
-        zf: (mask & (1 << 0)) != 0,
-        sf: (mask & (1 << 1)) != 0,
-        cf: (mask & (1 << 2)) != 0,
-        of: (mask & (1 << 3)) != 0,
-    }
-}
-
-fn flags_to_mask(flags: Flags) -> u32 {
-    (flags.zf as u32) << 0
-        | (flags.sf as u32) << 1
-        | (flags.cf as u32) << 2
-        | (flags.of as u32) << 3
-}
-
 fn v(idx: u32) -> ValueId {
     ValueId(idx)
 }
@@ -95,7 +82,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
                 instrs: vec![
                     Instr::LoadReg {
                         dst: v(0),
-                        reg: Reg::Rax,
+                        reg: Gpr::Rax,
                     },
                     Instr::Const {
                         dst: v(1),
@@ -109,7 +96,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
                         flags: FlagMask::ALL,
                     },
                     Instr::StoreReg {
-                        reg: Reg::Rax,
+                        reg: Gpr::Rax,
                         src: Operand::Value(v(2)),
                     },
                     Instr::Const {
@@ -163,22 +150,22 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     validate_wasm(&wasm);
 
     let mut init_state = T2State::default();
-    init_state.cpu.set_reg(Reg::Rax, 0);
+    init_state.cpu.set_gpr(Gpr::Rax, 0);
     init_state.cpu.rip = 0;
-    init_state.flags = Flags {
-        zf: true,
-        sf: true,
-        cf: true,
-        of: true,
-    };
+    init_state.rflags = 0x2;
+    for flag in [Flag::Cf, Flag::Pf, Flag::Af, Flag::Zf, Flag::Sf, Flag::Of] {
+        init_state.rflags |= 1u64 << flag.rflags_bit();
+    }
 
     let mut env = RuntimeEnv::default();
     env.code_page_versions.insert(0, 7);
 
     let mut interp_state = init_state.clone();
+    let mut bus = SimpleBus::new(65536);
     let expected = run_trace_with_cached_regs(
         &trace.ir,
         &env,
+        &mut bus,
         &mut interp_state,
         1_000_000,
         &opt.regalloc.cached,
@@ -187,9 +174,8 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
 
     let mut mem = vec![0u8; 65536];
     init_state.cpu.write_to_mem(&mut mem, 0);
-    let mask = flags_to_mask(init_state.flags);
-    mem[FLAGS_MASK_OFFSET as usize..FLAGS_MASK_OFFSET as usize + 4]
-        .copy_from_slice(&mask.to_le_bytes());
+    mem[RFLAGS_OFFSET as usize..RFLAGS_OFFSET as usize + 8]
+        .copy_from_slice(&init_state.rflags.to_le_bytes());
 
     let mut code_versions = HashMap::new();
     code_versions.insert(0, 7);
@@ -202,13 +188,12 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     let mut got_mem = vec![0u8; mem.len()];
     memory.read(&store, 0, &mut got_mem).unwrap();
     let got_cpu = CpuState::read_from_mem(&got_mem, 0);
-    let got_mask = u32::from_le_bytes(
-        got_mem[FLAGS_MASK_OFFSET as usize..FLAGS_MASK_OFFSET as usize + 4]
+    let got_rflags = u64::from_le_bytes(
+        got_mem[RFLAGS_OFFSET as usize..RFLAGS_OFFSET as usize + 8]
             .try_into()
             .unwrap(),
     );
-    let got_flags = flags_from_mask(got_mask);
 
     assert_eq!(got_cpu, interp_state.cpu);
-    assert_eq!(got_flags, interp_state.flags);
+    assert_eq!(got_rflags, interp_state.rflags);
 }

@@ -107,6 +107,18 @@ fn fold_inst(
                 src: src2,
             });
         }
+        Instr::StoreMem { addr, src, width } => {
+            let addr2 = resolve_operand(*addr, repl, consts);
+            let src2 = resolve_operand(*src, repl, consts);
+            if addr2 != *addr || src2 != *src {
+                *changed = true;
+            }
+            out.push(Instr::StoreMem {
+                addr: addr2,
+                src: src2,
+                width: *width,
+            });
+        }
         Instr::Addr {
             dst,
             base,
@@ -138,6 +150,17 @@ fn fold_inst(
                     disp: *disp,
                 });
             }
+        }
+        Instr::LoadMem { dst, addr, width } => {
+            let addr2 = resolve_operand(*addr, repl, consts);
+            if addr2 != *addr {
+                *changed = true;
+            }
+            out.push(Instr::LoadMem {
+                dst: *dst,
+                addr: addr2,
+                width: *width,
+            });
         }
         Instr::BinOp {
             dst,

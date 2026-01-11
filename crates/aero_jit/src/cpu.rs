@@ -1,3 +1,5 @@
+use aero_types::Gpr;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Reg {
@@ -104,13 +106,28 @@ impl CpuState {
     }
 
     #[inline]
+    pub fn get_gpr(&self, reg: Gpr) -> u64 {
+        self.regs[reg.as_u8() as usize]
+    }
+
+    #[inline]
     pub fn set_reg(&mut self, reg: Reg, val: u64) {
         self.regs[reg.index()] = val;
     }
 
     #[inline]
+    pub fn set_gpr(&mut self, reg: Gpr, val: u64) {
+        self.regs[reg.as_u8() as usize] = val;
+    }
+
+    #[inline]
     pub const fn reg_offset(reg: Reg) -> u32 {
         Self::REGS_OFFSET + (reg as u32) * 8
+    }
+
+    #[inline]
+    pub const fn gpr_offset(reg: Gpr) -> u32 {
+        Self::REGS_OFFSET + (reg.as_u8() as u32) * 8
     }
 
     pub fn write_to_mem(&self, mem: &mut [u8], base: usize) {

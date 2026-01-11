@@ -1,29 +1,23 @@
 use std::fmt;
 
-use crate::Reg;
+use aero_types::{Flag, Gpr, Width};
 
-pub const REG_COUNT: usize = Reg::COUNT;
-
-/// A single x86 flag.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Flag {
-    Zf,
-    Sf,
-    Cf,
-    Of,
-}
+pub const REG_COUNT: usize = 16;
 
 /// Bitmask of flags used by the Tier-2 optimizer.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct FlagMask(u8);
+pub struct FlagMask(u64);
 
 impl FlagMask {
     pub const EMPTY: Self = Self(0);
-    pub const ZF: Self = Self(1 << 0);
-    pub const SF: Self = Self(1 << 1);
-    pub const CF: Self = Self(1 << 2);
-    pub const OF: Self = Self(1 << 3);
-    pub const ALL: Self = Self(Self::ZF.0 | Self::SF.0 | Self::CF.0 | Self::OF.0);
+    pub const CF: Self = Self(1u64 << (Flag::Cf.rflags_bit() as u32));
+    pub const PF: Self = Self(1u64 << (Flag::Pf.rflags_bit() as u32));
+    pub const AF: Self = Self(1u64 << (Flag::Af.rflags_bit() as u32));
+    pub const ZF: Self = Self(1u64 << (Flag::Zf.rflags_bit() as u32));
+    pub const SF: Self = Self(1u64 << (Flag::Sf.rflags_bit() as u32));
+    pub const OF: Self = Self(1u64 << (Flag::Of.rflags_bit() as u32));
+    pub const ALL: Self =
+        Self(Self::CF.0 | Self::PF.0 | Self::AF.0 | Self::ZF.0 | Self::SF.0 | Self::OF.0);
 
     #[inline]
     pub const fn is_empty(self) -> bool {
@@ -63,6 +57,27 @@ impl fmt::Debug for FlagMask {
         }
         f.write_str("FlagMask(")?;
         let mut first = true;
+        if self.intersects(Self::CF) {
+            if !first {
+                f.write_str("|")?;
+            }
+            first = false;
+            f.write_str("CF")?;
+        }
+        if self.intersects(Self::PF) {
+            if !first {
+                f.write_str("|")?;
+            }
+            first = false;
+            f.write_str("PF")?;
+        }
+        if self.intersects(Self::AF) {
+            if !first {
+                f.write_str("|")?;
+            }
+            first = false;
+            f.write_str("AF")?;
+        }
         if self.intersects(Self::ZF) {
             if !first {
                 f.write_str("|")?;
@@ -76,13 +91,6 @@ impl fmt::Debug for FlagMask {
             }
             first = false;
             f.write_str("SF")?;
-        }
-        if self.intersects(Self::CF) {
-            if !first {
-                f.write_str("|")?;
-            }
-            first = false;
-            f.write_str("CF")?;
         }
         if self.intersects(Self::OF) {
             if !first {
@@ -109,30 +117,29 @@ impl std::ops::BitOrAssign for FlagMask {
 
 impl From<Flag> for FlagMask {
     fn from(value: Flag) -> Self {
-        match value {
-            Flag::Zf => Self::ZF,
-            Flag::Sf => Self::SF,
-            Flag::Cf => Self::CF,
-            Flag::Of => Self::OF,
-        }
+        Self(1u64 << (value.rflags_bit() as u32))
     }
 }
 
 /// Concrete values for flags.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FlagValues {
+    pub cf: bool,
+    pub pf: bool,
+    pub af: bool,
     pub zf: bool,
     pub sf: bool,
-    pub cf: bool,
     pub of: bool,
 }
 
 impl FlagValues {
     pub fn get(&self, flag: Flag) -> bool {
         match flag {
+            Flag::Cf => self.cf,
+            Flag::Pf => self.pf,
+            Flag::Af => self.af,
             Flag::Zf => self.zf,
             Flag::Sf => self.sf,
-            Flag::Cf => self.cf,
             Flag::Of => self.of,
         }
     }
@@ -199,14 +206,22 @@ impl BinOp {
 
 /// Evaluate a [`BinOp`], returning `(result, flags)` computed using a simplified x86-like model.
 pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
+    fn parity_even(byte: u8) -> bool {
+        (byte.count_ones() & 1) == 0
+    }
+
     match op {
         BinOp::Add => {
             let (res, cf) = lhs.overflowing_add(rhs);
             let of = ((lhs ^ res) & (rhs ^ res) & (1u64 << 63)) != 0;
+            let af = ((lhs ^ rhs ^ res) & 0x10) != 0;
+            let pf = parity_even(res as u8);
             let flags = FlagValues {
+                cf,
+                pf,
+                af,
                 zf: res == 0,
                 sf: (res >> 63) != 0,
-                cf,
                 of,
             };
             (res, flags)
@@ -214,10 +229,14 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
         BinOp::Sub => {
             let (res, cf) = lhs.overflowing_sub(rhs);
             let of = ((lhs ^ rhs) & (lhs ^ res) & (1u64 << 63)) != 0;
+            let af = ((lhs ^ rhs ^ res) & 0x10) != 0;
+            let pf = parity_even(res as u8);
             let flags = FlagValues {
+                cf,
+                pf,
+                af,
                 zf: res == 0,
                 sf: (res >> 63) != 0,
-                cf,
                 of,
             };
             (res, flags)
@@ -227,9 +246,11 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
             (
                 res,
                 FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
                     zf: res == 0,
                     sf: (res >> 63) != 0,
-                    cf: false,
                     of: false,
                 },
             )
@@ -239,9 +260,11 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
             (
                 res,
                 FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
                     zf: res == 0,
                     sf: (res >> 63) != 0,
-                    cf: false,
                     of: false,
                 },
             )
@@ -251,9 +274,11 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
             (
                 res,
                 FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
                     zf: res == 0,
                     sf: (res >> 63) != 0,
-                    cf: false,
                     of: false,
                 },
             )
@@ -263,9 +288,11 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
             (
                 res,
                 FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
                     zf: res == 0,
                     sf: (res >> 63) != 0,
-                    cf: false,
                     of: false,
                 },
             )
@@ -276,9 +303,11 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
             (
                 res,
                 FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
                     zf: res == 0,
                     sf: (res >> 63) != 0,
-                    cf: false,
                     of: false,
                 },
             )
@@ -289,9 +318,11 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
             (
                 res,
                 FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
                     zf: res == 0,
                     sf: (res >> 63) != 0,
-                    cf: false,
                     of: false,
                 },
             )
@@ -301,9 +332,11 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
             (
                 res,
                 FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
                     zf: res == 0,
                     sf: false,
-                    cf: false,
                     of: false,
                 },
             )
@@ -313,9 +346,11 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
             (
                 res,
                 FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
                     zf: res == 0,
                     sf: false,
-                    cf: false,
                     of: false,
                 },
             )
@@ -333,10 +368,10 @@ pub enum Instr {
     },
     LoadReg {
         dst: ValueId,
-        reg: Reg,
+        reg: Gpr,
     },
     StoreReg {
-        reg: Reg,
+        reg: Gpr,
         src: Operand,
     },
 
@@ -366,6 +401,17 @@ pub enum Instr {
         disp: i64,
     },
 
+    LoadMem {
+        dst: ValueId,
+        addr: Operand,
+        width: Width,
+    },
+    StoreMem {
+        addr: Operand,
+        src: Operand,
+        width: Width,
+    },
+
     Guard {
         cond: Operand,
         expected: bool,
@@ -390,9 +436,11 @@ impl Instr {
             | Self::LoadReg { dst, .. }
             | Self::LoadFlag { dst, .. }
             | Self::BinOp { dst, .. }
-            | Self::Addr { dst, .. } => Some(dst),
+            | Self::Addr { dst, .. }
+            | Self::LoadMem { dst, .. } => Some(dst),
             Self::Nop
             | Self::StoreReg { .. }
+            | Self::StoreMem { .. }
             | Self::SetFlags { .. }
             | Self::Guard { .. }
             | Self::GuardCodeVersion { .. }
@@ -418,6 +466,8 @@ impl Instr {
     pub fn has_side_effects(&self) -> bool {
         match self {
             Self::StoreReg { .. }
+            | Self::LoadMem { .. }
+            | Self::StoreMem { .. }
             | Self::Guard { .. }
             | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. }
@@ -446,6 +496,11 @@ impl Instr {
                 f(base);
                 f(index);
             }
+            Self::LoadMem { addr, .. } => f(addr),
+            Self::StoreMem { addr, src, .. } => {
+                f(addr);
+                f(src);
+            }
             Self::Guard { cond, .. } => f(cond),
             Self::Nop
             | Self::Const { .. }
@@ -467,6 +522,11 @@ impl Instr {
             Self::Addr { base, index, .. } => {
                 f(base);
                 f(index);
+            }
+            Self::LoadMem { addr, .. } => f(addr),
+            Self::StoreMem { addr, src, .. } => {
+                f(addr);
+                f(src);
             }
             Self::Guard { cond, .. } => f(cond),
             Self::Nop
@@ -513,7 +573,7 @@ impl TraceIr {
         let mut written = [false; REG_COUNT];
         for inst in &self.body {
             if let Instr::StoreReg { reg, .. } = *inst {
-                written[reg.index()] = true;
+                written[reg.as_u8() as usize] = true;
             }
         }
         written
