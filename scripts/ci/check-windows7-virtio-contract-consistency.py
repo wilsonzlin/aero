@@ -2,7 +2,9 @@
 """
 Guardrail: prevent drift between the definitive Windows 7 virtio contract
 (`docs/windows7-virtio-driver-contract.md`, Contract ID: AERO-W7-VIRTIO) and the
-Windows device/driver binding docs/manifest (`docs/windows-device-contract.*`).
+Windows device/driver binding docs/manifest (`docs/windows-device-contract.*`),
+and ensure the canonical in-tree Windows 7 virtio driver INFs remain aligned with
+the contract identity policy (modern IDs + revision gating).
 
 Why this exists:
   - PCI IDs are effectively API for Windows INF matching and Guest Tools
