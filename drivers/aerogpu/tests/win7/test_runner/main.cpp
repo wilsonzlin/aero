@@ -547,6 +547,7 @@ int main(int argc, char** argv) {
       "d3d11_caps_smoke",
       "d3d11_rs_om_state_sanity",
       "d3d11_geometry_shader_smoke",
+      "dxgi_swapchain_probe",
       "d3d11_swapchain_rotate_sanity",
       "d3d11_map_dynamic_buffer_sanity",
       "d3d11_update_subresource_texture_sanity",
