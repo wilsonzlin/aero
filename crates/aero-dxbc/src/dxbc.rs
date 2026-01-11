@@ -1,6 +1,6 @@
 use crate::error::DxbcError;
 use crate::fourcc::FourCC;
-use crate::signature::{parse_signature_chunk, SignatureChunk};
+use crate::signature::{parse_signature_chunk_for_fourcc, SignatureChunk};
 use core::fmt;
 
 const DXBC_MAGIC: FourCC = FourCC(*b"DXBC");
@@ -228,7 +228,7 @@ impl<'a> DxbcFile<'a> {
     /// as `ISG1`, `OSG1`, `PSG1` depending on the compiler/toolchain).
     pub fn get_signature(&self, kind: FourCC) -> Option<Result<SignatureChunk, DxbcError>> {
         if let Some(chunk) = self.get_chunk(kind) {
-            return Some(parse_signature_chunk(chunk.data).map_err(|e| {
+            return Some(parse_signature_chunk_for_fourcc(chunk.fourcc, chunk.data).map_err(|e| {
                 DxbcError::invalid_chunk(format!("{kind} signature chunk: {}", e.context()))
             }));
         }
@@ -246,7 +246,7 @@ impl<'a> DxbcFile<'a> {
         }?;
 
         let chunk = self.get_chunk(fallback_kind)?;
-        Some(parse_signature_chunk(chunk.data).map_err(|e| {
+        Some(parse_signature_chunk_for_fourcc(chunk.fourcc, chunk.data).map_err(|e| {
             DxbcError::invalid_chunk(format!("{fallback_kind} signature chunk: {}", e.context()))
         }))
     }

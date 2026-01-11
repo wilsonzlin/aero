@@ -3,6 +3,7 @@
 //! Signature chunks provide semantic/register mappings for shader inputs and
 //! outputs in shader model 4 and newer.
 
+use crate::fourcc::FourCC;
 use crate::DxbcError;
 
 const SIGNATURE_HEADER_LEN: usize = 8;
@@ -42,6 +43,20 @@ pub struct SignatureEntry {
 /// This function expects the chunk payload bytes (the data following the chunk's
 /// `FourCC` and size fields inside the DXBC container).
 pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> {
+    parse_signature_chunk_impl(None, bytes)
+}
+
+pub(crate) fn parse_signature_chunk_for_fourcc(
+    fourcc: FourCC,
+    bytes: &[u8],
+) -> Result<SignatureChunk, DxbcError> {
+    parse_signature_chunk_impl(Some(fourcc), bytes)
+}
+
+fn parse_signature_chunk_impl(
+    fourcc: Option<FourCC>,
+    bytes: &[u8],
+) -> Result<SignatureChunk, DxbcError> {
     if bytes.len() < SIGNATURE_HEADER_LEN {
         return Err(DxbcError::invalid_chunk(format!(
             "signature chunk is truncated: need {SIGNATURE_HEADER_LEN} bytes for header, got {}",
@@ -76,27 +91,40 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
         )));
     }
 
-    // Most DXBC signatures use 24-byte entries, but some toolchains emit a 32-byte
-    // variant (carrying stream/min-precision as DWORDs). Try the common format
-    // first, then fall back to the larger entry size if needed.
-    match parse_signature_chunk_with_entry_size(
-        bytes,
-        param_count,
-        param_offset,
-        SIGNATURE_ENTRY_LEN_V0,
-    ) {
+    let mut prefer_v1 = matches!(fourcc, Some(f) if f.0[3] == b'1');
+    if !prefer_v1 {
+        prefer_v1 = detect_v1_layout(bytes, param_offset_usize);
+    }
+
+    let (first_size, second_size, first_name, second_name) = if prefer_v1 {
+        (
+            SIGNATURE_ENTRY_LEN_V1,
+            SIGNATURE_ENTRY_LEN_V0,
+            "v1 32-byte layout",
+            "v0 24-byte layout",
+        )
+    } else {
+        (
+            SIGNATURE_ENTRY_LEN_V0,
+            SIGNATURE_ENTRY_LEN_V1,
+            "v0 24-byte layout",
+            "v1 32-byte layout",
+        )
+    };
+
+    match parse_signature_chunk_with_entry_size(bytes, param_count, param_offset, first_size) {
         Ok(chunk) => Ok(chunk),
-        Err(err_v0) => match parse_signature_chunk_with_entry_size(
+        Err(err_first) => match parse_signature_chunk_with_entry_size(
             bytes,
             param_count,
             param_offset,
-            SIGNATURE_ENTRY_LEN_V1,
+            second_size,
         ) {
             Ok(chunk) => Ok(chunk),
-            Err(err_v1) => Err(DxbcError::invalid_chunk(format!(
-                "failed to parse signature entries (v0 24-byte layout: {}; v1 32-byte layout: {})",
-                err_v0.context(),
-                err_v1.context()
+            Err(err_second) => Err(DxbcError::invalid_chunk(format!(
+                "failed to parse signature entries ({first_name}: {}; {second_name}: {})",
+                err_first.context(),
+                err_second.context()
             ))),
         },
     }
@@ -244,6 +272,26 @@ fn parse_signature_chunk_with_entry_size(
     }
 
     Ok(SignatureChunk { entries })
+}
+
+fn detect_v1_layout(bytes: &[u8], param_offset: usize) -> bool {
+    // Heuristic: in the 32-byte entry layout the first entry stores `stream` and
+    // `min_precision` as DWORDs. These values are typically small, whereas in the
+    // 24-byte layout the same offsets usually point into the semantic name string
+    // table, which starts with ASCII bytes (large u32 values).
+    let Some(stream) = read_u32_le_opt(bytes, param_offset + 24) else {
+        return false;
+    };
+    let Some(min_precision) = read_u32_le_opt(bytes, param_offset + 28) else {
+        return false;
+    };
+    (stream <= 3) && (min_precision <= 8)
+}
+
+fn read_u32_le_opt(bytes: &[u8], offset: usize) -> Option<u32> {
+    let end = offset.checked_add(4)?;
+    let slice = bytes.get(offset..end)?;
+    Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
 fn read_u32_le(bytes: &[u8], offset: usize, what: &str) -> Result<u32, DxbcError> {
