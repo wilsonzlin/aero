@@ -43,6 +43,9 @@ jobs:
       - name: Check security header templates
         run: node scripts/ci/check-security-headers.mjs
 
+      - name: Check pinned toolchains
+        run: node scripts/ci/check-toolchains.mjs
+
       - name: Setup Rust (pinned stable)
         uses: ./.github/actions/setup-rust
         with:
