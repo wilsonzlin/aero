@@ -432,31 +432,32 @@ mod wasm {
             })?;
 
         let mut d3d9_state = d3d9_state;
-        let exec_result: Result<(), JsValue> =
-            match (alloc_table.as_ref(), guest_memory.as_mut()) {
-                (Some(_), None) => Err(JsValue::from_str(
-                    "guest memory is not configured; call set_guest_memory(Uint8Array) before executing submissions with alloc_table",
-                )),
-                (Some(table), Some(mem)) => d3d9_state
-                    .executor
-                    .execute_cmd_stream_with_guest_memory_for_context_async(
-                        context_id,
-                        &bytes,
-                        mem,
-                        Some(table),
-                    )
-                    .await
-                    .map_err(|err| JsValue::from_str(&err.to_string())),
-                (None, Some(mem)) => d3d9_state
-                    .executor
-                    .execute_cmd_stream_with_guest_memory_for_context_async(context_id, &bytes, mem, None)
-                    .await
-                    .map_err(|err| JsValue::from_str(&err.to_string())),
-                (None, None) => d3d9_state
-                    .executor
-                    .execute_cmd_stream_for_context(context_id, &bytes)
-                    .map_err(|err| JsValue::from_str(&err.to_string())),
-            };
+        let exec_result: Result<(), JsValue> = match (alloc_table.as_ref(), guest_memory.as_mut()) {
+            (Some(_), None) => Err(JsValue::from_str(
+                "guest memory is not configured; call set_guest_memory(Uint8Array) before executing submissions with alloc_table",
+            )),
+            (Some(table), Some(mem)) => d3d9_state
+                .executor
+                .execute_cmd_stream_with_guest_memory_for_context_async(
+                    context_id,
+                    &bytes,
+                    mem,
+                    Some(table),
+                )
+                .await
+                .map_err(|err| JsValue::from_str(&err.to_string())),
+            (None, Some(mem)) => d3d9_state
+                .executor
+                .execute_cmd_stream_with_guest_memory_for_context_async(
+                    context_id, &bytes, mem, None,
+                )
+                .await
+                .map_err(|err| JsValue::from_str(&err.to_string())),
+            (None, None) => d3d9_state
+                .executor
+                .execute_cmd_stream_for_context(context_id, &bytes)
+                .map_err(|err| JsValue::from_str(&err.to_string())),
+        };
 
         let processor_result: Result<(Option<u64>, Option<u32>), JsValue> = if exec_result.is_ok() {
             PROCESSOR.with(|processor| {

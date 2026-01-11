@@ -2588,8 +2588,9 @@ mod tests {
         let table_gpa = 0x200u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err = AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
-            .unwrap_err();
+        let err =
+            AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
+                .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
                 assert!(message.contains("alloc_id must be non-zero"), "{message}");
@@ -2605,8 +2606,9 @@ mod tests {
         let table_gpa = 0x300u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err = AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
-            .unwrap_err();
+        let err =
+            AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
+                .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
                 assert!(message.contains("duplicate"), "{message}");
@@ -2625,8 +2627,9 @@ mod tests {
         let table_gpa = 0x400u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err = AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
-            .unwrap_err();
+        let err =
+            AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
+                .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
                 assert!(message.contains("BadSizeField"), "{message}");

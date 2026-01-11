@@ -712,8 +712,12 @@ fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream_draw, &mut guest_memory, Some(&alloc_table_draw))
-        .expect("draw submission should succeed");
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_draw,
+        &mut guest_memory,
+        Some(&alloc_table_draw),
+    )
+    .expect("draw submission should succeed");
 
     let (_out_w, _out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
         .expect("readback should succeed");

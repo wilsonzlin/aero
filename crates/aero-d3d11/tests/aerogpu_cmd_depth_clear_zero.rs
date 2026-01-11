@@ -264,7 +264,8 @@ fn aerogpu_cmd_clear_depth_zero_rejects_far_fragments() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap();
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap();
         exec.poll_wait();
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();
