@@ -47,7 +47,10 @@ bring-up and small smoke tests (ring mechanics, MMIO doorbell/IRQ plumbing, dete
 a triangle”). That implementation lived in `crates/aero-emulator`, but it has since been
 removed in favor of the canonical Win7/WDDM path.
 
-The protocol is still documented for reference in `docs/abi/gpu-command-protocol.md`:
+The protocol is still documented for reference, but it is archived:
+
+- `docs/legacy/aerogpu-prototype-command-protocol.md` (full spec)
+- `docs/abi/gpu-command-protocol.md` (deprecated stub / original location)
 
 - Commands are things like `CREATE_SURFACE`, `UPDATE_SURFACE`, `CLEAR_RGBA`, `PRESENT`.
 - The code is intentionally simple and does not model WDDM concepts.
