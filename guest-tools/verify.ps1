@@ -1632,7 +1632,13 @@ try {
         if (-not $exists) { $svcDedup += $s }
     }
     $svcCandidates = $svcDedup
-    $kw = @("aero","virtio","1af4","1ae0")
+    # Heuristic keywords used to identify Aero/virtio devices in WMI output.
+    #
+    # Includes AeroGPU PCI vendor IDs:
+    # - A3A0: new, versioned AeroGPU ABI (`drivers/aerogpu/protocol/aerogpu_pci.h`)
+    # - 1AED: legacy bring-up ABI (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
+    # - 1AE0: deprecated early prototype ID (kept here only to help identify very old images)
+    $kw = @("aero","virtio","1af4","a3a0","1aed","1ae0")
 
     $signedDriverMap = @{}
     $signedDrivers = Try-GetWmi "Win32_PnPSignedDriver" ""

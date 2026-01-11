@@ -20,11 +20,15 @@ The contract is expressed as C/C++ headers suitable for **WDK** builds and for h
 - `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
+- `aerogpu_protocol.h` – legacy bring-up ABI (older BAR0/MMIO + ring layout; still supported via the legacy device model).
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
 - `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract for stable `alloc_id` / `share_token` exchange across CreateAllocation/OpenAllocation.
 - `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Currently layered on top of the legacy `aerogpu_protocol.h` Escape header.)
 - `aerogpu_protocol.h` – **legacy** (non-versioned) bring-up ABI (older MMIO + ring format, plus an older command stream). Kept only so the legacy Win7 KMD and legacy emulator device model can continue to function during migration.
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
+
+For a quick overview of the canonical AeroGPU PCI IDs (new vs legacy) and which emulator device
+models implement each ABI, see: `docs/abi/aerogpu-pci-identity.md`.
 
 ## Versioning model
 

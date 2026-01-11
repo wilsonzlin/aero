@@ -54,6 +54,8 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
 - Secondary/legacy HWID (legacy bring-up ABI): `1AED:0001` (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
 
 > Note: these are virtual-only IDs used inside the guest; they are not required to be PCI-SIG allocated.
+>
+> See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
 
 ## Device table (normative)
 
