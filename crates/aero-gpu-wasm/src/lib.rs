@@ -56,14 +56,14 @@ mod wasm {
                 .process_submission(&bytes, signal_fence)
                 .map_err(|err| JsValue::from_str(&err.to_string()))?;
 
-            let mut present_count = 0u64;
+            let mut had_present = false;
             for event in events {
                 if matches!(event, AeroGpuEvent::PresentCompleted { .. }) {
-                    present_count = present_count.saturating_add(1);
+                    had_present = true;
                 }
             }
 
-            Ok::<u64, JsValue>(present_count)
+            Ok::<Option<u64>, JsValue>(had_present.then(|| processor.present_count()))
         })?;
 
         let out = Object::new();
@@ -72,11 +72,13 @@ mod wasm {
             &JsValue::from_str("completedFence"),
             &BigInt::from(signal_fence).into(),
         )?;
-        Reflect::set(
-            &out,
-            &JsValue::from_str("presentCount"),
-            &BigInt::from(present_count).into(),
-        )?;
+        if let Some(present_count) = present_count {
+            Reflect::set(
+                &out,
+                &JsValue::from_str("presentCount"),
+                &BigInt::from(present_count).into(),
+            )?;
+        }
 
         Ok(out.into())
     }
