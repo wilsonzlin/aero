@@ -93,6 +93,7 @@ export class UsbBroker {
   })();
 
   private readonly ports = new Set<MessagePort | Worker>();
+  private readonly portListeners = new Map<MessagePort | Worker, EventListener>();
 
   private readonly queue: QueueItem[] = [];
   private processing = false;
@@ -210,6 +211,7 @@ export class UsbBroker {
           void this.handleSelectDevice(port, data);
         }
       };
+      this.portListeners.set(port, onMessage);
       port.addEventListener("message", onMessage);
 
       // When using addEventListener() MessagePorts need start() to begin dispatch.
@@ -222,6 +224,15 @@ export class UsbBroker {
         this.postToPort(port, { type: "usb.selected", ok: false, error: this.disconnectError } satisfies UsbSelectedMessage);
       }
     }
+  }
+
+  detachWorkerPort(port: MessagePort | Worker): void {
+    const listener = this.portListeners.get(port);
+    if (listener) {
+      this.portListeners.delete(port);
+      port.removeEventListener("message", listener);
+    }
+    this.ports.delete(port);
   }
 
   private async handleSelectDevice(port: MessagePort | Worker, msg: UsbSelectDeviceMessage): Promise<void> {
@@ -319,7 +330,7 @@ export class UsbBroker {
     try {
       port.postMessage(msg);
     } catch {
-      this.ports.delete(port);
+      this.detachWorkerPort(port);
     }
   }
 

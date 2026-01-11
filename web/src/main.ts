@@ -3206,6 +3206,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
     const ioWorker = workerCoordinator.getIoWorker();
     if (ioWorker !== attachedIoWorker) {
+      if (attachedIoWorker) usbBroker.detachWorkerPort(attachedIoWorker);
       if (ioWorker) usbBroker.attachWorkerPort(ioWorker);
       attachedIoWorker = ioWorker;
     }
