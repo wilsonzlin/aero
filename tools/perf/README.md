@@ -17,6 +17,13 @@ This keeps CI signal stable and avoids GPU/WebGPU dependencies.
 
 In CI, the workflows build the app and run against a Vite `preview` server (`http://127.0.0.1:4173/`) via `--url` so "startup" includes a realistic page load.
 
+CI uses a small wrapper script, [`scripts/ci/run_browser_perf.mjs`](../../scripts/ci/run_browser_perf.mjs), to:
+
+- detect the workspace (via `.github/actions/setup-node-workspace`)
+- build the app (when running in `--preview` mode)
+- start/stop a Vite preview server safely
+- run the perf harness (`tools/perf/run.mjs`) and collect artifacts in a consistent layout
+
 The runner also writes `perf_export.json` and `trace.json` alongside `raw.json`/`summary.json`:
 
 - If the page exposes `window.aero.perf` with the capture/export API, it contains a short capture export.
@@ -52,6 +59,16 @@ Run locally (requires a Playwright Chromium install):
 
 ```bash
 node tools/perf/run.mjs --out-dir perf-results/local --iterations 7
+```
+
+Run locally against a built/previewed app (closer to CI behavior):
+
+```bash
+# One-time setup (per machine): install Playwright browsers.
+npx playwright install chromium
+
+# Build + start `vite preview`, wait for readiness, run tools/perf/run.mjs, and clean up.
+node scripts/ci/run_browser_perf.mjs --preview --out-dir perf-results/local --iterations 7
 ```
 
 Capture an Aero trace (best-effort; requires the target page to expose the trace API):
