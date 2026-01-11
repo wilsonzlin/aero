@@ -27,7 +27,7 @@ func (s *Server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
 
 		normalizedOrigin, originHost, ok := origin.NormalizeHeader(originHeader)
 		if !ok || !origin.IsAllowed(normalizedOrigin, originHost, r.Host, s.cfg.AllowedOrigins) {
-			http.Error(w, "forbidden", http.StatusForbidden)
+			WriteJSON(w, http.StatusForbidden, map[string]any{"code": "forbidden", "message": "forbidden"})
 			return
 		}
 

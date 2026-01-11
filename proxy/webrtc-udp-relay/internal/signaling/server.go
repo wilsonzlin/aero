@@ -243,7 +243,7 @@ func (s *Server) incMetric(name string) {
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if !s.checkOrigin(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
 		return
 	}
 
@@ -281,7 +281,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	if !s.checkOrigin(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
 		return
 	}
 
@@ -399,7 +399,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 	if !s.checkOrigin(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
 		return
 	}
 
