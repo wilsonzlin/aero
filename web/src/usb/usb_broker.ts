@@ -304,6 +304,17 @@ export class UsbBroker {
     });
   }
 
+  /**
+   * Attach a worker/MessagePort to the broker.
+   *
+   * The port will receive `usb.selected` and `usb.guest.status` broadcasts, and can send `usb.action`
+   * requests for the broker to execute on the currently-selected WebUSB device.
+   *
+   * By default, the broker also allocates SharedArrayBuffer USB proxy rings and sends `usb.ringAttach`
+   * to enable the high-throughput fast path when `crossOriginIsolated` is available. UI-only ports
+   * (which only listen for status updates) should pass `{ attachRings: false }` to avoid allocating
+   * ring buffers and per-port drain timers.
+   */
   attachWorkerPort(port: MessagePort | Worker, options: { attachRings?: boolean } = {}): void {
     const isNew = !this.ports.has(port);
     if (isNew) this.ports.add(port);
