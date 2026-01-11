@@ -258,11 +258,11 @@ mod wasm {
             .validate_prefix()
             .map_err(|err| JsValue::from_str(&format!("invalid alloc table header: {err:?}")))?;
 
-        // Match the native emulator's decoder: the entry stride must match the ABI's exact entry
-        // size. (Future extensions can use a new header ABI version.)
-        if header.entry_stride_bytes != ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
+        // Match the native emulator decoder: `entry_stride_bytes` must be large enough to hold an
+        // `aerogpu_alloc_entry`, but may be larger for forward-compatible extensions.
+        if header.entry_stride_bytes < ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
             return Err(JsValue::from_str(&format!(
-                "invalid alloc table entry_stride_bytes={} (expected {})",
+                "alloc table entry_stride_bytes={} too small (min {})",
                 header.entry_stride_bytes,
                 ring::AerogpuAllocEntry::SIZE_BYTES
             )));
