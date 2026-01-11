@@ -23,7 +23,9 @@ We need a single canonical definition of AeroGPU’s PCI identity and ABI, plus 
 
 ### Canonical PCI identity
 
-The canonical AeroGPU PCI identity is:
+The canonical AeroGPU PCI identity is: `VEN=0xA3A0 DEV=0x0001 SUBSYS=0x0001A3A0`.
+
+Expanded:
 
 - `VEN=0xA3A0`
 - `DEV=0x0001`
@@ -33,7 +35,8 @@ This is the identity new device models must expose by default, and new Windows d
 
 ### Canonical ABI
 
-The canonical AeroGPU guest↔host ABI is the **versioned protocol** defined by:
+The canonical AeroGPU guest↔host ABI is the **versioned protocol** defined by
+`drivers/aerogpu/protocol/{aerogpu_pci.h,aerogpu_ring.h,aerogpu_cmd.h}`:
 
 - [`drivers/aerogpu/protocol/aerogpu_pci.h`](../../drivers/aerogpu/protocol/aerogpu_pci.h) (PCI identity + MMIO register map + ABI version)
 - [`drivers/aerogpu/protocol/aerogpu_ring.h`](../../drivers/aerogpu/protocol/aerogpu_ring.h) (ring layout and synchronization)
