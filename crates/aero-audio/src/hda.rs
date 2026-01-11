@@ -769,6 +769,23 @@ impl HdaController {
         self.process_into(mem, output_frames, sink);
     }
 
+    /// Like [`Self::process_with_clock`], but also services the capture stream using `capture`.
+    pub fn process_with_clock_and_capture(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        clock: &mut AudioFrameClock,
+        now_ns: u64,
+        sink: &mut dyn AudioSink,
+        capture: &mut dyn AudioCaptureSource,
+    ) {
+        debug_assert_eq!(
+            clock.sample_rate_hz, self.output_rate_hz,
+            "AudioFrameClock sample rate must match HDA output rate"
+        );
+        let output_frames = clock.advance_to(now_ns);
+        self.process_into_with_capture(mem, output_frames, sink, capture);
+    }
+
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
         if size == 0 {
             return 0;

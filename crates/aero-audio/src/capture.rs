@@ -57,6 +57,12 @@ impl AudioCaptureSource for VecDequeCaptureSource {
     }
 }
 
+impl AudioCaptureSource for aero_platform::audio::mic_bridge::MonoRingBuffer {
+    fn read_mono_f32(&mut self, out: &mut [f32]) -> usize {
+        self.read(out) as usize
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 impl AudioCaptureSource for aero_platform::audio::mic_bridge::MicBridge {
     fn read_mono_f32(&mut self, out: &mut [f32]) -> usize {
