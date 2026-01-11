@@ -135,7 +135,7 @@ use the opt-in legacy package in that case.
 | Mode | Expected HWID | INF | SYS |
 |---|---|---|---|
 | Aero contract v1 (modern-only; default build) | `PCI\VEN_1AF4&DEV_1059&REV_01` | `aero-virtio-snd.inf` | `virtiosnd.sys` |
-| QEMU transitional (optional) | transitional virtio-snd PCI HWID (see Device Manager) | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` |
+| QEMU transitional (optional) | `PCI\VEN_1AF4&DEV_1018` (transitional; see Device Manager for full list) | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` |
 
 The shipped INF (`inf/aero-virtio-snd.inf`) is intentionally strict and matches only:
 

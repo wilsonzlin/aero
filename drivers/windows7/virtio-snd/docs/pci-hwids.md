@@ -56,7 +56,7 @@ the same HWIDs.
 If your QEMU build cannot set both `disable-legacy=on` and `x-pci-revision=0x01`, it will not be able to exercise the
 strict Aero INF match (`...&REV_01`) reliably. In that case, use the opt-in QEMU compatibility package instead:
 
-- `inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`
+- `inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys` (binds transitional virtio-snd: `PCI\VEN_1AF4&DEV_1018`)
 
 The repository also contains an optional **legacy filename alias** INF (`inf/virtio-snd.inf.disabled`). If you rename
 it back to `virtio-snd.inf` (and regenerate/sign `virtio-snd.cat`), it installs the same driver/service as
