@@ -1,4 +1,8 @@
-import { HID_INPUT_REPORT_RECORD_HEADER_BYTES } from "../hid/hid_input_report_ring";
+import {
+  HID_INPUT_REPORT_RECORD_HEADER_BYTES,
+  HID_INPUT_REPORT_RECORD_MAGIC,
+  HID_INPUT_REPORT_RECORD_VERSION,
+} from "../hid/hid_input_report_ring";
 import { normalizeCollections, type HidCollectionInfo } from "../hid/webhid_normalize";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
@@ -369,9 +373,12 @@ export class WebHidPassthroughManager {
             const tsMs = typeof ts === "number" ? (Math.max(0, Math.floor(ts)) >>> 0) : 0;
             const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + src.byteLength, (dest) => {
               const view = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
-              view.setUint32(0, numericDeviceId >>> 0, true);
-              view.setUint32(4, event.reportId >>> 0, true);
-              view.setUint32(8, tsMs, true);
+              view.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
+              view.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
+              view.setUint32(8, numericDeviceId >>> 0, true);
+              view.setUint32(12, event.reportId >>> 0, true);
+              view.setUint32(16, tsMs, true);
+              view.setUint32(20, src.byteLength >>> 0, true);
               dest.set(src, HID_INPUT_REPORT_RECORD_HEADER_BYTES);
             });
             if (ok) return;

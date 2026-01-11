@@ -1,4 +1,7 @@
-export const HID_INPUT_REPORT_RECORD_HEADER_BYTES = 12;
+export const HID_INPUT_REPORT_RECORD_MAGIC = 0x5244_4948; // "HIDR" LE
+export const HID_INPUT_REPORT_RECORD_VERSION = 1;
+
+export const HID_INPUT_REPORT_RECORD_HEADER_BYTES = 24;
 
 export type HidInputReportRingRecord = Readonly<{
   deviceId: number;
@@ -19,11 +22,15 @@ export function encodeHidInputReportRingRecord(opts: {
   data: Uint8Array;
 }): Uint8Array {
   const headerBytes = HID_INPUT_REPORT_RECORD_HEADER_BYTES;
-  const out = new Uint8Array(headerBytes + opts.data.byteLength);
+  const dataLen = opts.data.byteLength >>> 0;
+  const out = new Uint8Array(headerBytes + dataLen);
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
-  view.setUint32(0, opts.deviceId >>> 0, true);
-  view.setUint32(4, opts.reportId >>> 0, true);
-  view.setUint32(8, toU32(opts.tsMs ?? 0), true);
+  view.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
+  view.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
+  view.setUint32(8, opts.deviceId >>> 0, true);
+  view.setUint32(12, opts.reportId >>> 0, true);
+  view.setUint32(16, toU32(opts.tsMs ?? 0), true);
+  view.setUint32(20, dataLen, true);
   out.set(opts.data, headerBytes);
   return out;
 }
@@ -31,9 +38,15 @@ export function encodeHidInputReportRingRecord(opts: {
 export function decodeHidInputReportRingRecord(payload: Uint8Array): HidInputReportRingRecord | null {
   if (payload.byteLength < HID_INPUT_REPORT_RECORD_HEADER_BYTES) return null;
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const deviceId = view.getUint32(0, true);
-  const reportId = view.getUint32(4, true);
-  const tsMs = view.getUint32(8, true);
+  const magic = view.getUint32(0, true);
+  if (magic !== HID_INPUT_REPORT_RECORD_MAGIC) return null;
+  const version = view.getUint32(4, true);
+  if (version !== HID_INPUT_REPORT_RECORD_VERSION) return null;
+  const deviceId = view.getUint32(8, true);
+  const reportId = view.getUint32(12, true);
+  const tsMs = view.getUint32(16, true);
+  const len = view.getUint32(20, true) >>> 0;
+  if (payload.byteLength !== HID_INPUT_REPORT_RECORD_HEADER_BYTES + len) return null;
   return {
     deviceId,
     reportId,
@@ -41,4 +54,3 @@ export function decodeHidInputReportRingRecord(payload: Uint8Array): HidInputRep
     data: payload.subarray(HID_INPUT_REPORT_RECORD_HEADER_BYTES),
   };
 }
-

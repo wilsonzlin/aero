@@ -41,7 +41,7 @@ export function drainIoHidInputRing(
         // WASM bridge accepts Uint8Array views regardless of buffer type. If a caller
         // needs to retain the data beyond this synchronous callback, it must copy it.
         data: record.data as unknown as Uint8Array<ArrayBuffer>,
-        tsMs: record.tsMs,
+        ...(record.tsMs !== 0 ? { tsMs: record.tsMs } : {}),
       });
       forwarded += 1;
     });

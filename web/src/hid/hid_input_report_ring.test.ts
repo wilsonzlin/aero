@@ -21,7 +21,6 @@ describe("hid/hid_input_report_ring", () => {
 
   it("returns null for malformed records", () => {
     expect(decodeHidInputReportRingRecord(new Uint8Array())).toBeNull();
-    expect(decodeHidInputReportRingRecord(new Uint8Array(11))).toBeNull();
+    expect(decodeHidInputReportRingRecord(new Uint8Array(23))).toBeNull();
   });
 });
-
