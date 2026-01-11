@@ -28,6 +28,14 @@ export type UsbPassthroughDemoResult =
 
 export type UsbPassthroughDemoResultMessage = { type: "usb.demoResult"; result: UsbPassthroughDemoResult };
 
+export type UsbPassthroughDemoRunMessage =
+  | { type: "usb.demo.run"; request: "deviceDescriptor"; length?: number }
+  | { type: "usb.demo.run"; request: "configDescriptor"; length?: number };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 export function isUsbPassthroughDemoResultMessage(value: unknown): value is UsbPassthroughDemoResultMessage {
   if (!value || typeof value !== "object") return false;
   const msg = value as { type?: unknown; result?: unknown };
@@ -44,6 +52,14 @@ export function isUsbPassthroughDemoResultMessage(value: unknown): value is UsbP
     default:
       return false;
   }
+}
+
+export function isUsbPassthroughDemoRunMessage(value: unknown): value is UsbPassthroughDemoRunMessage {
+  if (!isRecord(value) || value.type !== "usb.demo.run") return false;
+  const request = value.request;
+  if (request !== "deviceDescriptor" && request !== "configDescriptor") return false;
+  if (value.length === undefined) return true;
+  return typeof value.length === "number" && Number.isInteger(value.length) && value.length >= 0 && value.length <= 0xffff;
 }
 
 export interface UsbPassthroughDemoApi {

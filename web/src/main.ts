@@ -48,7 +48,11 @@ import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
 import { isUsbUhciHarnessStatusMessage, type WebUsbUhciHarnessRuntimeSnapshot } from "./usb/webusb_harness_runtime";
 import { UsbBroker } from "./usb/usb_broker";
 import { renderWebUsbBrokerPanel as renderWebUsbBrokerPanelUi } from "./usb/usb_broker_panel";
-import { isUsbPassthroughDemoResultMessage, type UsbPassthroughDemoResult } from "./usb/usb_passthrough_demo_runtime";
+import {
+  isUsbPassthroughDemoResultMessage,
+  type UsbPassthroughDemoResult,
+  type UsbPassthroughDemoRunMessage,
+} from "./usb/usb_passthrough_demo_runtime";
 import type { UsbHostAction, UsbHostCompletion } from "./usb/usb_proxy_protocol";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
@@ -2829,12 +2833,32 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   let attachedIoWorker: Worker | null = null;
   let lastResult: UsbPassthroughDemoResult | null = null;
 
+  const runDeviceButton = el("button", {
+    text: "Run GET_DESCRIPTOR(Device)",
+    onclick: () => {
+      lastResult = null;
+      refreshUi();
+      attachedIoWorker?.postMessage({ type: "usb.demo.run", request: "deviceDescriptor", length: 18 } satisfies UsbPassthroughDemoRunMessage);
+    },
+  }) as HTMLButtonElement;
+
+  const runConfigButton = el("button", {
+    text: "Run GET_DESCRIPTOR(Configuration)",
+    onclick: () => {
+      lastResult = null;
+      refreshUi();
+      attachedIoWorker?.postMessage({ type: "usb.demo.run", request: "configDescriptor", length: 255 } satisfies UsbPassthroughDemoRunMessage);
+    },
+  }) as HTMLButtonElement;
+
   function formatHexBytes(bytes: Uint8Array): string {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(" ");
   }
 
   const refreshUi = (): void => {
     const workerReady = !!attachedIoWorker;
+    runDeviceButton.disabled = !workerReady;
+    runConfigButton.disabled = !workerReady;
 
     status.textContent = `ioWorker=${workerReady ? "ready" : "stopped"}\n` + `lastResult=${lastResult?.status ?? "(none)"}`;
 
@@ -2914,7 +2938,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const hint = el("div", {
     class: "hint",
     text:
-      "Demo: select a WebUSB device via the broker panel. The I/O worker runs a WASM-side UsbPassthroughDemo which queues a GET_DESCRIPTOR(Device) action and reports the result back as usb.demoResult.",
+      "Demo: select a WebUSB device via the broker panel, then click Run. The I/O worker runs a WASM-side UsbPassthroughDemo which queues GET_DESCRIPTOR actions and reports the result back as usb.demoResult.",
   });
 
   return el(
@@ -2923,7 +2947,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     el("h2", { text: "WebUSB passthrough demo (IO worker + UsbBroker)" }),
     hint,
     status,
-    el("div", { class: "row" }, clearButton),
+    el("div", { class: "row" }, runDeviceButton, runConfigButton, clearButton),
     resultLine,
     bytesLine,
     errorLine,

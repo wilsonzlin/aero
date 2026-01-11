@@ -49,7 +49,12 @@ import { applyUsbSelectedToWebUsbUhciBridge, type WebUsbUhciHotplugBridgeLike } 
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
 import { WebUsbPassthroughRuntime, type UsbPassthroughBridgeLike } from "../usb/webusb_passthrough_runtime";
-import { UsbPassthroughDemoRuntime, type UsbPassthroughDemoResultMessage } from "../usb/usb_passthrough_demo_runtime";
+import {
+  UsbPassthroughDemoRuntime,
+  isUsbPassthroughDemoRunMessage,
+  type UsbPassthroughDemoResultMessage,
+  type UsbPassthroughDemoRunMessage,
+} from "../usb/usb_passthrough_demo_runtime";
 import {
   isHidAttachMessage,
   isHidDetachMessage,
@@ -1048,6 +1053,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<HidProxyMessage>
       | Partial<UsbSelectedMessage>
       | Partial<UsbCompletionMessage>
+      | Partial<UsbPassthroughDemoRunMessage>
       | Partial<UsbUhciHarnessStartMessage>
       | Partial<UsbUhciHarnessStopMessage>
       | Partial<HidAttachMessage>
@@ -1198,6 +1204,39 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
         hidGuest.inputReport(input);
       }
+      return;
+    }
+
+    if (isUsbPassthroughDemoRunMessage(data)) {
+      const msg = data;
+      if (!usbDemo || !usbDemoApi) {
+        ctx.postMessage({
+          type: "usb.demoResult",
+          result: { status: "error", message: "UsbPassthroughDemo is unavailable in this WASM build." },
+        } satisfies UsbPassthroughDemoResultMessage);
+        return;
+      }
+
+      if (!lastUsbSelected?.ok) {
+        ctx.postMessage({
+          type: "usb.demoResult",
+          result: { status: "error", message: "No WebUSB device is selected." },
+        } satisfies UsbPassthroughDemoResultMessage);
+        return;
+      }
+
+      usbDemo.reset();
+
+      if (msg.request === "deviceDescriptor") {
+        usbDemoApi.queue_get_device_descriptor((msg.length ?? 18) & 0xffff);
+      } else if (msg.request === "configDescriptor") {
+        usbDemoApi.queue_get_config_descriptor((msg.length ?? 255) & 0xffff);
+      }
+
+      // Drain immediately so the action reaches the main-thread broker without waiting for the
+      // next IO tick.
+      usbDemo.tick();
+      usbDemo.pollResults();
       return;
     }
 

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { UsbSelectedMessage, UsbHostCompletion } from "./usb_proxy_protocol";
-import { UsbPassthroughDemoRuntime, isUsbPassthroughDemoResultMessage } from "./usb_passthrough_demo_runtime";
+import {
+  UsbPassthroughDemoRuntime,
+  isUsbPassthroughDemoResultMessage,
+  isUsbPassthroughDemoRunMessage,
+} from "./usb_passthrough_demo_runtime";
 
 class FakeDemo {
   actions: unknown[] = [];
@@ -62,6 +66,17 @@ describe("UsbPassthroughDemoRuntime", () => {
     expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult", result: { status: "success", data: [1, 2] } })).toBe(false);
     expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult", result: { status: "error" } })).toBe(false);
     expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult" })).toBe(false);
+  });
+
+  it("validates usb.demo.run messages with a strict type guard", () => {
+    expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "deviceDescriptor" })).toBe(true);
+    expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "configDescriptor", length: 255 })).toBe(true);
+    expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "configDescriptor", length: 0xffff })).toBe(true);
+
+    expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "unknown" })).toBe(false);
+    expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "deviceDescriptor", length: -1 })).toBe(false);
+    expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run", request: "deviceDescriptor", length: 1.5 })).toBe(false);
+    expect(isUsbPassthroughDemoRunMessage({ type: "usb.demo.run" })).toBe(false);
   });
 
   it("queues a control-in action when usb.selected arrives", () => {
