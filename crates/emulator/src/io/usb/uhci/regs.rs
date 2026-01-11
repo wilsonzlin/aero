@@ -36,6 +36,15 @@ pub const USBSTS_HCHALTED: u16 = 1 << 5;
 pub const USBSTS_W1C_MASK: u16 =
     USBSTS_USBINT | USBSTS_USBERRINT | USBSTS_RESUMEDETECT | USBSTS_HSE | USBSTS_HCPROCESSERR;
 
+/// Bits defined by the spec that this model exposes (reserved bits read back as 0).
+pub const USBSTS_READ_MASK: u16 = USBSTS_W1C_MASK | USBSTS_HCHALTED;
+
+/// Alias for [`USBSTS_HSE`] (Host System Error).
+pub const USBSTS_HOSTSYSERR: u16 = USBSTS_HSE;
+/// Alias for [`USBSTS_HCPROCESSERR`] (Host Controller Process Error).
+pub const USBSTS_HCPROCERR: u16 = USBSTS_HCPROCESSERR;
+
+// UHCI 1.1 spec, section 2.1.3 "USB Interrupt Enable (USBINTR)".
 pub const USBINTR_TIMEOUT_CRC: u16 = 1 << 0;
 pub const USBINTR_RESUME: u16 = 1 << 1;
 pub const USBINTR_IOC: u16 = 1 << 2;
@@ -46,6 +55,9 @@ pub const USBINTR_SHORT_PACKET: u16 = 1 << 3;
 // hardware still gates IRQ generation using the per-cause USBINTR bits.
 pub const USBINT_CAUSE_IOC: u16 = 1 << 0;
 pub const USBINT_CAUSE_SHORT_PACKET: u16 = 1 << 1;
+/// All USBINTR bits we currently model; reserved bits must read as 0.
+pub const USBINTR_MASK: u16 =
+    USBINTR_TIMEOUT_CRC | USBINTR_RESUME | USBINTR_IOC | USBINTR_SHORT_PACKET;
 
 #[derive(Debug, Clone)]
 pub struct UhciRegs {

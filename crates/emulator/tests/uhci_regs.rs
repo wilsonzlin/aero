@@ -1,4 +1,5 @@
 use emulator::io::pci::PciDevice;
+use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::uhci::regs::*;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
@@ -644,4 +645,178 @@ fn uhci_greset_clears_portsc_suspend_resume_bits() {
         uhci.port_read(REG_PORTSC1, 2) as u16 & (PORTSC_SUSP | PORTSC_RESUME),
         0
     );
+}
+
+#[test]
+fn uhci_regs_power_on_defaults() {
+    let uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    let usbcmd = uhci.port_read(REG_USBCMD, 2) as u16;
+    assert_eq!(usbcmd, USBCMD_MAXP);
+
+    let usbsts = uhci.port_read(REG_USBSTS, 2) as u16;
+    assert_eq!(usbsts, USBSTS_HCHALTED);
+    assert_eq!(usbsts & !USBSTS_READ_MASK, 0);
+
+    let usbintr = uhci.port_read(REG_USBINTR, 2) as u16;
+    assert_eq!(usbintr, 0);
+
+    let frnum = uhci.port_read(REG_FRNUM, 2) as u16;
+    assert_eq!(frnum, 0);
+
+    let flbaseadd = uhci.port_read(REG_FLBASEADD, 4);
+    assert_eq!(flbaseadd, 0);
+
+    let sofmod = uhci.port_read(REG_SOFMOD, 1) as u8;
+    assert_eq!(sofmod, 0x40);
+}
+
+#[test]
+fn uhci_regs_frnum_flbaseadd_sofmod_masks() {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    // FRNUM is 11 bits (0..10).
+    uhci.port_write(REG_FRNUM, 2, 0xffff);
+    assert_eq!(uhci.port_read(REG_FRNUM, 2) as u16, 0x07ff);
+
+    // FLBASEADD is 4KiB aligned.
+    uhci.port_write(REG_FLBASEADD, 4, 0x12345);
+    assert_eq!(uhci.port_read(REG_FLBASEADD, 4), 0x12000);
+
+    // SOFMOD is read/write.
+    uhci.port_write(REG_SOFMOD, 1, 0x12);
+    assert_eq!(uhci.port_read(REG_SOFMOD, 1) as u8, 0x12);
+}
+
+#[test]
+fn uhci_regs_w1c_usb_sts() {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    uhci.controller.set_usbsts_bits(
+        USBSTS_USBINT | USBSTS_USBERRINT | USBSTS_RESUMEDETECT | USBSTS_HOSTSYSERR | USBSTS_HCPROCERR,
+    );
+
+    let usbsts = uhci.port_read(REG_USBSTS, 2) as u16;
+    assert_eq!(
+        usbsts,
+        USBSTS_HCHALTED
+            | USBSTS_USBINT
+            | USBSTS_USBERRINT
+            | USBSTS_RESUMEDETECT
+            | USBSTS_HOSTSYSERR
+            | USBSTS_HCPROCERR
+    );
+
+    // Writing 1 clears, writing 0 does not. Writes must not affect HCHALTED.
+    uhci.port_write(
+        REG_USBSTS,
+        2,
+        u32::from(USBSTS_USBINT | USBSTS_HOSTSYSERR | USBSTS_HCHALTED),
+    );
+
+    let usbsts = uhci.port_read(REG_USBSTS, 2) as u16;
+    assert_eq!(
+        usbsts,
+        USBSTS_HCHALTED | USBSTS_USBERRINT | USBSTS_RESUMEDETECT | USBSTS_HCPROCERR
+    );
+
+    // All-zero write should be a no-op.
+    uhci.port_write(REG_USBSTS, 2, 0);
+    assert_eq!(uhci.port_read(REG_USBSTS, 2) as u16, usbsts);
+
+    // Clear remaining W1C bits.
+    uhci.port_write(REG_USBSTS, 2, u32::from(USBSTS_W1C_MASK));
+    assert_eq!(uhci.port_read(REG_USBSTS, 2) as u16, USBSTS_HCHALTED);
+}
+
+#[test]
+fn uhci_regs_hcreset_self_clears_and_resets_registers() {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let keyboard = UsbHidKeyboardHandle::new();
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+
+    let portsc_before = uhci.port_read(REG_PORTSC1, 2) as u16;
+
+    // Dirty a few registers.
+    uhci.port_write(
+        REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_CF | USBCMD_SWDBG | USBCMD_MAXP),
+    );
+    uhci.port_write(REG_USBINTR, 2, u32::from(USBINTR_MASK));
+    uhci.port_write(REG_FRNUM, 2, 0x07ff);
+    uhci.port_write(REG_FLBASEADD, 4, 0x12345);
+    uhci.port_write(REG_SOFMOD, 1, 0x12);
+    uhci.controller
+        .set_usbsts_bits(USBSTS_USBINT | USBSTS_USBERRINT | USBSTS_RESUMEDETECT);
+
+    assert!(uhci.irq_level());
+
+    // Trigger a host controller reset.
+    uhci.port_write(REG_USBCMD, 2, u32::from(USBCMD_HCRESET));
+
+    // HCRESET is self-clearing and the register block returns to defaults.
+    let usbcmd = uhci.port_read(REG_USBCMD, 2) as u16;
+    assert_eq!(usbcmd & USBCMD_HCRESET, 0);
+    assert_eq!(usbcmd, USBCMD_MAXP);
+
+    assert_eq!(uhci.port_read(REG_USBINTR, 2) as u16, 0);
+    assert_eq!(uhci.port_read(REG_FRNUM, 2) as u16, 0);
+    assert_eq!(uhci.port_read(REG_FLBASEADD, 4), 0);
+    assert_eq!(uhci.port_read(REG_SOFMOD, 1) as u8, 0x40);
+    assert_eq!(uhci.port_read(REG_USBSTS, 2) as u16, USBSTS_HCHALTED);
+    assert!(!uhci.irq_level());
+
+    // Host controller reset should not detach the root-hub device.
+    let portsc_after = uhci.port_read(REG_PORTSC1, 2) as u16;
+    assert_eq!(portsc_after, portsc_before);
+}
+
+#[test]
+fn uhci_regs_irq_gating() {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    // USBINT gating (IOC/short packet).
+    uhci.port_write(REG_USBINTR, 2, 0);
+    uhci.port_write(REG_USBSTS, 2, u32::from(USBSTS_W1C_MASK));
+    uhci.controller.set_usbsts_bits(USBSTS_USBINT);
+    assert!(!uhci.irq_level());
+
+    uhci.port_write(REG_USBINTR, 2, u32::from(USBINTR_IOC));
+    assert!(uhci.irq_level());
+
+    uhci.port_write(REG_USBINTR, 2, 0);
+    assert!(!uhci.irq_level());
+
+    uhci.port_write(REG_USBINTR, 2, u32::from(USBINTR_SHORT_PACKET));
+    assert!(uhci.irq_level());
+
+    uhci.port_write(REG_USBSTS, 2, u32::from(USBSTS_USBINT));
+    assert!(!uhci.irq_level());
+
+    // USBERRINT gating.
+    uhci.port_write(REG_USBINTR, 2, 0);
+    uhci.port_write(REG_USBSTS, 2, u32::from(USBSTS_W1C_MASK));
+    uhci.controller.set_usbsts_bits(USBSTS_USBERRINT);
+    assert!(!uhci.irq_level());
+
+    uhci.port_write(REG_USBINTR, 2, u32::from(USBINTR_TIMEOUT_CRC));
+    assert!(uhci.irq_level());
+
+    uhci.port_write(REG_USBSTS, 2, u32::from(USBSTS_USBERRINT));
+    assert!(!uhci.irq_level());
+
+    // RESUMEDETECT gating.
+    uhci.port_write(REG_USBINTR, 2, 0);
+    uhci.port_write(REG_USBSTS, 2, u32::from(USBSTS_W1C_MASK));
+    uhci.controller.set_usbsts_bits(USBSTS_RESUMEDETECT);
+    assert!(!uhci.irq_level());
+
+    uhci.port_write(REG_USBINTR, 2, u32::from(USBINTR_RESUME));
+    assert!(uhci.irq_level());
+
+    uhci.port_write(REG_USBSTS, 2, u32::from(USBSTS_RESUMEDETECT));
+    assert!(!uhci.irq_level());
 }

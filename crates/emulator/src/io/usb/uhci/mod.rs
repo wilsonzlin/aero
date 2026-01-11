@@ -49,6 +49,19 @@ impl UhciController {
         &self.regs
     }
 
+    /// Forces status bits in USBSTS for tests and diagnostics.
+    ///
+    /// Reserved bits are masked out; the HCHALTED bit is driven by `USBCMD.RS` and
+    /// should not be set manually.
+    pub fn set_usbsts_bits(&mut self, bits: u16) {
+        let bits = bits & (USBSTS_READ_MASK & !USBSTS_HCHALTED);
+        if bits & USBSTS_USBINT != 0 {
+            self.regs.usbint_causes |= USBINT_CAUSE_IOC | USBINT_CAUSE_SHORT_PACKET;
+        }
+        self.regs.usbsts |= bits;
+        self.update_irq();
+    }
+
     fn reset(&mut self) {
         self.regs = UhciRegs::new();
         self.irq_level = false;
@@ -110,6 +123,7 @@ impl UhciController {
         // Write-1-to-clear status bits.
         let w1c = value & USBSTS_W1C_MASK;
         self.regs.usbsts &= !w1c;
+        self.regs.usbsts &= USBSTS_READ_MASK;
         if w1c & USBSTS_USBINT != 0 {
             self.regs.usbint_causes = 0;
         }
@@ -117,7 +131,7 @@ impl UhciController {
 
     fn write_usbintr(&mut self, value: u16) {
         // UHCI 1.1 spec, section 2.1.3 "USB Interrupt Enable (USBINTR)".
-        self.regs.usbintr = value & 0x0f;
+        self.regs.usbintr = value & USBINTR_MASK;
     }
 
     fn write_frnum(&mut self, value: u16) {
@@ -139,13 +153,16 @@ impl UhciController {
         const REG_PORTSC1_HI: u16 = REG_PORTSC1 + 1;
         const REG_PORTSC2_HI: u16 = REG_PORTSC2 + 1;
 
+        let usbsts = self.regs.usbsts & USBSTS_READ_MASK;
+        let usbintr = self.regs.usbintr & USBINTR_MASK;
+
         match offset {
             REG_USBCMD => (self.regs.usbcmd & 0x00ff) as u8,
             REG_USBCMD_HI => (self.regs.usbcmd >> 8) as u8,
-            REG_USBSTS => (self.regs.usbsts & 0x00ff) as u8,
-            REG_USBSTS_HI => (self.regs.usbsts >> 8) as u8,
-            REG_USBINTR => (self.regs.usbintr & 0x00ff) as u8,
-            REG_USBINTR_HI => (self.regs.usbintr >> 8) as u8,
+            REG_USBSTS => (usbsts & 0x00ff) as u8,
+            REG_USBSTS_HI => (usbsts >> 8) as u8,
+            REG_USBINTR => (usbintr & 0x00ff) as u8,
+            REG_USBINTR_HI => (usbintr >> 8) as u8,
             REG_FRNUM => (self.regs.frnum & 0x00ff) as u8,
             REG_FRNUM_HI => (self.regs.frnum >> 8) as u8,
             REG_FLBASEADD..=REG_FLBASEADD_END => {
