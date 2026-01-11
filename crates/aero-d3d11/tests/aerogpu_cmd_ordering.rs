@@ -3,9 +3,10 @@ use aero_gpu::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
+use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -153,5 +154,168 @@ fn aerogpu_cmd_preserves_upload_copy_ordering() {
 
         assert_eq!(got_dst1, pattern_a, "dst1 should match first upload");
         assert_eq!(got_dst2, pattern_b, "dst2 should match second upload");
+    });
+}
+
+#[test]
+fn aerogpu_cmd_preserves_upload_copy_ordering_for_buffers() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping aerogpu_cmd buffer ordering test");
+                return;
+            }
+        };
+
+        const SRC: u32 = 10;
+        const DST1: u32 = 11;
+        const DST2: u32 = 12;
+        const RB1: u32 = 13;
+        const RB2: u32 = 14;
+
+        let buf_size = 16u64;
+        let pattern_a = vec![0x11u8; buf_size as usize];
+        let pattern_b = vec![0x22u8; buf_size as usize];
+
+        let alloc = AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: 0,
+            gpa: 0x100,
+            size_bytes: 0x1000,
+            reserved0: 0,
+        };
+        let allocs = [alloc];
+        let rb1_offset = 0u32;
+        let rb2_offset = 0x100u32;
+
+        let guest_mem = VecGuestMemory::new(0x2000);
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_BUFFER (host allocated)
+        for &handle in &[SRC, DST1, DST2] {
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+            stream.extend_from_slice(&handle.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+            stream.extend_from_slice(&buf_size.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+        }
+
+        // CREATE_BUFFER readback buffers (guest-backed)
+        for (handle, backing_offset) in [(RB1, rb1_offset), (RB2, rb2_offset)] {
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+            stream.extend_from_slice(&handle.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+            stream.extend_from_slice(&buf_size.to_le_bytes());
+            stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+            stream.extend_from_slice(&backing_offset.to_le_bytes());
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+        }
+
+        // UPLOAD_RESOURCE(src, patternA)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::UploadResource as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&(pattern_a.len() as u64).to_le_bytes());
+        stream.extend_from_slice(&pattern_a);
+        stream.resize(
+            stream.len() + (align4(pattern_a.len()) - pattern_a.len()),
+            0,
+        );
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER(dst1 <- src)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        stream.extend_from_slice(&DST1.to_le_bytes()); // dst_buffer
+        stream.extend_from_slice(&SRC.to_le_bytes()); // src_buffer
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // UPLOAD_RESOURCE(src, patternB)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::UploadResource as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&(pattern_b.len() as u64).to_le_bytes());
+        stream.extend_from_slice(&pattern_b);
+        stream.resize(
+            stream.len() + (align4(pattern_b.len()) - pattern_b.len()),
+            0,
+        );
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER(dst2 <- src)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        stream.extend_from_slice(&DST2.to_le_bytes()); // dst_buffer
+        stream.extend_from_slice(&SRC.to_le_bytes()); // src_buffer
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER(readback1 <- dst1) (WRITEBACK_DST)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        stream.extend_from_slice(&RB1.to_le_bytes()); // dst_buffer
+        stream.extend_from_slice(&DST1.to_le_bytes()); // src_buffer
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_COPY_FLAG_WRITEBACK_DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER(readback2 <- dst2) (WRITEBACK_DST)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        stream.extend_from_slice(&RB2.to_le_bytes()); // dst_buffer
+        stream.extend_from_slice(&DST2.to_le_bytes()); // src_buffer
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_COPY_FLAG_WRITEBACK_DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let mem = guest_mem.as_slice();
+        let rb1_base = (alloc.gpa + rb1_offset as u64) as usize;
+        let rb2_base = (alloc.gpa + rb2_offset as u64) as usize;
+
+        assert_eq!(
+            &mem[rb1_base..rb1_base + buf_size as usize],
+            pattern_a.as_slice(),
+            "rb1 should match first upload",
+        );
+        assert_eq!(
+            &mem[rb2_base..rb2_base + buf_size as usize],
+            pattern_b.as_slice(),
+            "rb2 should match second upload",
+        );
     });
 }
