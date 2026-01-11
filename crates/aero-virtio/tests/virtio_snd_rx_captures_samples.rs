@@ -2,7 +2,7 @@ use aero_virtio::devices::snd::{
     AudioCaptureSource, VirtioSnd, CAPTURE_STREAM_ID, VIRTIO_SND_PCM_FMT_S16,
     VIRTIO_SND_PCM_RATE_48000, VIRTIO_SND_QUEUE_CONTROL, VIRTIO_SND_QUEUE_RX,
     VIRTIO_SND_R_PCM_PREPARE, VIRTIO_SND_R_PCM_SET_PARAMS, VIRTIO_SND_R_PCM_START,
-    VIRTIO_SND_S_OK,
+    VIRTIO_SND_S_IO_ERR, VIRTIO_SND_S_OK,
 };
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
@@ -357,6 +357,47 @@ fn virtio_snd_rx_captures_samples() {
         VIRTIO_SND_S_OK
     );
 
+    // RX request while stream is Prepared (not started yet) should return IO_ERR and write silence.
+    let rx_hdr = 0x8000;
+    let rx_payload = 0x8100;
+    let rx_resp = 0x8200;
+
+    let hdr = [CAPTURE_STREAM_ID.to_le_bytes(), 0u32.to_le_bytes()].concat();
+    mem.write(rx_hdr, &hdr).unwrap();
+
+    let mut rx_avail_idx = 0u16;
+    mem.write(rx_payload, &[0xffu8; 8]).unwrap();
+    mem.write(rx_resp, &[0xffu8; 8]).unwrap();
+    submit_rx_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        rx_desc,
+        rx_avail,
+        rx_avail_idx,
+        rx_hdr,
+        rx_payload,
+        8,
+        rx_resp,
+    );
+    rx_avail_idx += 1;
+
+    let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()),
+        VIRTIO_SND_S_IO_ERR
+    );
+    assert_eq!(u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()), 0);
+
+    let payload_bytes = mem.get_slice(rx_payload, 8).unwrap();
+    let mut got = [0i16; 4];
+    for (i, slot) in got.iter_mut().enumerate() {
+        let off = i * 2;
+        *slot = i16::from_le_bytes(payload_bytes[off..off + 2].try_into().unwrap());
+    }
+    assert_eq!(got, [0, 0, 0, 0]);
+
+    // Start capture stream.
     let start = [VIRTIO_SND_R_PCM_START.to_le_bytes(), CAPTURE_STREAM_ID.to_le_bytes()].concat();
     mem.write(ctrl_req, &start).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
@@ -379,16 +420,8 @@ fn virtio_snd_rx_captures_samples() {
     );
 
     // RX request: capture 4 mono samples (8 bytes).
-    let rx_hdr = 0x8000;
-    let rx_payload = 0x8100;
-    let rx_resp = 0x8200;
-
-    let hdr = [CAPTURE_STREAM_ID.to_le_bytes(), 0u32.to_le_bytes()].concat();
-    mem.write(rx_hdr, &hdr).unwrap();
     mem.write(rx_payload, &[0xffu8; 8]).unwrap();
     mem.write(rx_resp, &[0xffu8; 8]).unwrap();
-
-    let mut rx_avail_idx = 0u16;
     submit_rx_chain(
         &mut dev,
         &mut mem,
@@ -408,7 +441,6 @@ fn virtio_snd_rx_captures_samples() {
     assert_eq!(u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()), 0);
 
     let payload_bytes = mem.get_slice(rx_payload, 8).unwrap();
-    let mut got = [0i16; 4];
     for (i, slot) in got.iter_mut().enumerate() {
         let off = i * 2;
         *slot = i16::from_le_bytes(payload_bytes[off..off + 2].try_into().unwrap());
