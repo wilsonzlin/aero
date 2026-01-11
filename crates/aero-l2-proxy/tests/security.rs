@@ -134,7 +134,13 @@ fn tamper_session_token(token: &str) -> String {
     format!("{payload}.{sig}")
 }
 
-fn mint_jwt_token(secret: &str, sid: &str, exp_secs: u64, aud: Option<&str>, iss: Option<&str>) -> String {
+fn mint_jwt_token(
+    secret: &str,
+    sid: &str,
+    exp_secs: u64,
+    aud: Option<&str>,
+    iss: Option<&str>,
+) -> String {
     auth::mint_relay_jwt_hs256(
         &auth::RelayJwtClaims {
             iat: exp_secs.saturating_sub(60),
@@ -1086,8 +1092,10 @@ async fn jwt_auth_accepts_bearer_and_query_and_validates_audience_and_issuer() {
     let mut req = base_ws_request(addr);
     req.headers_mut()
         .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut()
-        .insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+    req.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
 
@@ -1123,8 +1131,10 @@ async fn jwt_auth_accepts_bearer_and_query_and_validates_audience_and_issuer() {
     let mut req = base_ws_request(addr);
     req.headers_mut()
         .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut()
-        .insert("authorization", HeaderValue::from_str(&format!("Bearer {bad_iss}")).unwrap());
+    req.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {bad_iss}")).unwrap(),
+    );
     let err = tokio_tungstenite::connect_async(req)
         .await
         .expect_err("expected wrong-issuer jwt to be rejected");
@@ -1163,15 +1173,19 @@ async fn max_connections_per_session_enforced_for_jwt() {
     let mut req = base_ws_request(addr);
     req.headers_mut()
         .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut()
-        .insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+    req.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
     let (mut ws1, _) = tokio_tungstenite::connect_async(req).await.unwrap();
 
     let mut req = base_ws_request(addr);
     req.headers_mut()
         .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut()
-        .insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+    req.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
     let err = tokio_tungstenite::connect_async(req)
         .await
         .expect_err("expected per-session tunnel limit enforcement for jwt auth");
@@ -1185,8 +1199,10 @@ async fn max_connections_per_session_enforced_for_jwt() {
     let mut req = base_ws_request(addr);
     req.headers_mut()
         .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut()
-        .insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+    req.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
     let (mut ws2, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws2.send(Message::Close(None)).await;
 

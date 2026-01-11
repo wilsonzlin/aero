@@ -176,7 +176,8 @@ fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static st
 }
 
 fn error_wire(state: &AppState, code: u16, message: &str) -> Option<Vec<u8>> {
-    let payload = protocol::encode_error_payload(code, message, state.l2_limits.max_control_payload);
+    let payload =
+        protocol::encode_error_payload(code, message, state.l2_limits.max_control_payload);
     aero_l2_protocol::encode_with_limits(
         aero_l2_protocol::L2_TUNNEL_TYPE_ERROR,
         0,
@@ -267,7 +268,9 @@ pub(crate) async fn run_session(
         span.record("session_id", &tracing::field::display(session_id));
     }
 
-    run_session_inner(socket, state, tunnel_id).instrument(span).await
+    run_session_inner(socket, state, tunnel_id)
+        .instrument(span)
+        .await
 }
 
 async fn run_session_inner(

@@ -486,7 +486,10 @@ fn d3d9_cmd_stream_draw_skips_when_scissor_rect_has_no_intersection() {
         .expect("readback should succeed");
 
     // Scissor is completely out of bounds; draw should have produced no fragments.
-    assert_eq!(pixel_at(&rgba, width, width / 2, height / 2), [255, 0, 0, 255]);
+    assert_eq!(
+        pixel_at(&rgba, width, width / 2, height / 2),
+        [255, 0, 0, 255]
+    );
 }
 
 #[test]

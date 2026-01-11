@@ -322,7 +322,10 @@ async fn l2_ws_handler(
             _ => None,
         };
 
-    if session_identity.is_some() && state.session_tunnels.is_some() && session_tunnel_permit.is_none() {
+    if session_identity.is_some()
+        && state.session_tunnels.is_some()
+        && session_tunnel_permit.is_none()
+    {
         state.metrics.upgrade_reject_max_connections_per_session();
         state.metrics.session_connection_denied();
         tracing::warn!(

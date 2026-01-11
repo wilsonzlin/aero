@@ -25,9 +25,7 @@ pub const ERROR_CODE_QUOTA_CONNECTIONS: u16 = 8;
 /// The returned payload is truncated as needed to fit within `max_payload_bytes`.
 pub fn encode_error_payload(code: u16, message: &str, max_payload_bytes: usize) -> Vec<u8> {
     // Need space for the 4-byte header (code + msg_len).
-    let max_msg_len = max_payload_bytes
-        .saturating_sub(4)
-        .min(u16::MAX as usize);
+    let max_msg_len = max_payload_bytes.saturating_sub(4).min(u16::MAX as usize);
 
     let msg_bytes = message.as_bytes();
     let mut msg_len = msg_bytes.len().min(max_msg_len);

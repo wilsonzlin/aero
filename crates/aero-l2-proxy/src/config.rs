@@ -209,12 +209,10 @@ impl SecurityConfig {
             None
         };
 
-        let jwt_audience = std::env::var("AERO_L2_JWT_AUDIENCE")
-            .ok()
-            .and_then(|v| {
-                let trimmed = v.trim();
-                (!trimmed.is_empty()).then(|| trimmed.to_string())
-            });
+        let jwt_audience = std::env::var("AERO_L2_JWT_AUDIENCE").ok().and_then(|v| {
+            let trimmed = v.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
 
         let jwt_issuer = std::env::var("AERO_L2_JWT_ISSUER").ok().and_then(|v| {
             let trimmed = v.trim();
