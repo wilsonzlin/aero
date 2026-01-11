@@ -62,7 +62,7 @@ The corresponding “do not regress this” tests live alongside the type:
 `CpuState` contains **architectural CPU state** (GPRs, RIP/RFLAGS, segment caches, control/debug registers, MSRs, FPU/SSE state, etc). Runtime/bookkeeping state lives outside the ABI so it can evolve without breaking JIT code:
 
 - CPUID policy, INVLPG logging: `assist::AssistContext`
-- Virtual time / TSC model: `time::TimeSource` (typically stored in `interrupts::CpuCore.time`)
+- Virtual time / TSC model: `time::TimeSource` (typically stored in `CpuCore.time`)
 - Pending interrupts/exceptions, interrupt shadow bookkeeping, IRET frame stack: `interrupts::PendingEventState`
 - JIT runtime caches/profiling/hotness counters: `jit::*`
 
@@ -124,7 +124,7 @@ Runtime state for assists is split across:
 - `assist::AssistContext` (non-ABI):
   - `features`: CPUID feature policy (also used to mask MSR writes coherently)
   - `invlpg_log`: optional log of invalidated linear addresses (useful for tests)
-- `time::TimeSource` (non-ABI): owns virtual TSC progression and is typically stored on `interrupts::CpuCore` as `cpu.time`.
+- `time::TimeSource` (non-ABI): owns virtual TSC progression and is typically stored on `CpuCore` as `cpu.time`.
 
 Callers that use the assist layer directly should pass both the architectural state and the time source:
 

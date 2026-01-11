@@ -592,7 +592,7 @@ fn cli_sti_are_privileged_by_iopl() {
     bus.write_u32(tss_base + 4, 0x9000).unwrap(); // ESP0
     bus.write_u16(tss_base + 8, 0x10).unwrap(); // SS0
 
-    let mut exec_interrupt = |cpu: &mut aero_cpu_core::interrupts::CpuCore, bytes: &[u8]| {
+    let mut exec_interrupt = |cpu: &mut aero_cpu_core::CpuCore, bytes: &[u8]| {
         cpu.state.set_rip(CODE_BASE);
         let mut buf = [0u8; 15];
         buf[..bytes.len()].copy_from_slice(bytes);
@@ -603,7 +603,7 @@ fn cli_sti_are_privileged_by_iopl() {
 
     // IOPL=0, CPL3 => #GP(0) for both CLI and STI.
     for instr in [&[0xFA][..], &[0xFB][..]] {
-        let mut cpu = aero_cpu_core::interrupts::CpuCore::new(CpuMode::Bit32);
+        let mut cpu = aero_cpu_core::CpuCore::new(CpuMode::Bit32);
         cpu.state.tables.idtr.base = idt_base;
         cpu.state.tables.idtr.limit = 0x7FF;
         cpu.state.tables.tr.selector = 0x28;
@@ -626,7 +626,7 @@ fn cli_sti_are_privileged_by_iopl() {
 
     // Raise IOPL so user mode is allowed to toggle IF.
     {
-        let mut cpu = aero_cpu_core::interrupts::CpuCore::new(CpuMode::Bit32);
+        let mut cpu = aero_cpu_core::CpuCore::new(CpuMode::Bit32);
         cpu.state.segments.cs.selector = 0x23; // CPL3
         cpu.state
             .set_rflags((RFLAGS_RESERVED1 | RFLAGS_IF) | (3u64 << 12));
@@ -640,7 +640,7 @@ fn cli_sti_are_privileged_by_iopl() {
     }
 
     {
-        let mut cpu = aero_cpu_core::interrupts::CpuCore::new(CpuMode::Bit32);
+        let mut cpu = aero_cpu_core::CpuCore::new(CpuMode::Bit32);
         cpu.state.segments.cs.selector = 0x23; // CPL3
         cpu.state.set_rflags((RFLAGS_RESERVED1) | (3u64 << 12));
         let outcome = exec_interrupt(&mut cpu, &[0xFB]); // STI
