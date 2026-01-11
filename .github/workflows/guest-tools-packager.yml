@@ -104,7 +104,7 @@ jobs:
           cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/packaging/aero_packager/Cargo.toml -- \
             --drivers-dir tools/packaging/aero_packager/testdata/drivers \
             --guest-tools-dir guest-tools \
-            --spec tools/packaging/aero_packager/testdata/spec.json \
+            --spec tools/packaging/aero_packager/testdata/spec-smoke-real-guest-tools.json \
             --out-dir out/guest-tools-packager/smoke \
             --version 0.0.0 \
             --build-id ci \
