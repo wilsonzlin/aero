@@ -58,10 +58,96 @@ pub struct CommandProcessor {
     config: ProcessorConfig,
     devices: HashMap<u32, DeviceEntry>,
     contexts: HashMap<u32, u32>,
+
+    shared_textures: SharedTextureState,
 }
 
 struct DeviceEntry {
     runtime: D3D9Runtime,
+}
+
+#[derive(Default)]
+struct SharedTextureState {
+    /// `share_token -> underlying texture handle`.
+    shared_surface_by_token: HashMap<u64, u32>,
+    /// `texture handle -> underlying texture handle`.
+    ///
+    /// Includes both original handles (identity mapping) and imported aliases.
+    texture_handles: HashMap<u32, u32>,
+    /// `underlying texture handle -> live handle refcount` (original + aliases).
+    texture_refcounts: HashMap<u32, u32>,
+}
+
+impl SharedTextureState {
+    fn clear(&mut self) {
+        self.shared_surface_by_token.clear();
+        self.texture_handles.clear();
+        self.texture_refcounts.clear();
+    }
+
+    fn resolve_texture_handle(&self, handle: u32) -> Option<u32> {
+        self.texture_handles.get(&handle).copied()
+    }
+
+    fn register_texture_handle(&mut self, handle: u32, underlying: u32) -> Result<(), String> {
+        if self.texture_handles.contains_key(&handle) {
+            return Err(format!("texture handle {handle} already exists"));
+        }
+        self.texture_handles.insert(handle, underlying);
+        *self.texture_refcounts.entry(underlying).or_insert(0) += 1;
+        Ok(())
+    }
+
+    fn destroy_texture_handle(
+        &mut self,
+        runtime: &mut D3D9Runtime,
+        handle: u32,
+    ) -> Result<(), String> {
+        let underlying = self
+            .texture_handles
+            .remove(&handle)
+            .ok_or_else(|| format!("unknown texture handle {handle}"))?;
+
+        let Some(count) = self.texture_refcounts.get_mut(&underlying) else {
+            return Err(format!(
+                "internal error: missing refcount entry for texture {underlying}"
+            ));
+        };
+
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.texture_refcounts.remove(&underlying);
+            runtime
+                .destroy_texture(underlying)
+                .map_err(|e| e.to_string())?;
+            self.shared_surface_by_token
+                .retain(|_, v| *v != underlying);
+        }
+
+        Ok(())
+    }
+
+    fn export_shared_surface(&mut self, resource_handle: u32, share_token: u64) -> Result<(), String> {
+        let underlying = self.resolve_texture_handle(resource_handle).ok_or_else(|| {
+            format!("ExportSharedSurface references unknown texture handle {resource_handle}")
+        })?;
+        self.shared_surface_by_token.insert(share_token, underlying);
+        Ok(())
+    }
+
+    fn import_shared_surface(&mut self, out_resource_handle: u32, share_token: u64) -> Result<(), String> {
+        let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
+            return Err(format!("unknown shared surface token 0x{share_token:016X}"));
+        };
+
+        if !self.texture_refcounts.contains_key(&underlying) {
+            return Err(format!(
+                "shared surface token 0x{share_token:016X} refers to destroyed texture {underlying}"
+            ));
+        }
+
+        self.register_texture_handle(out_resource_handle, underlying)
+    }
 }
 
 impl CommandProcessor {
@@ -70,6 +156,7 @@ impl CommandProcessor {
             config,
             devices: HashMap::new(),
             contexts: HashMap::new(),
+            shared_textures: SharedTextureState::default(),
         }
     }
 
@@ -211,6 +298,28 @@ impl CommandProcessor {
             .map_err(|e| e.to_string())
     }
 
+    pub async fn readback_texture_rgba8(
+        &self,
+        device_id: u32,
+        texture_handle: u32,
+    ) -> Result<(u32, u32, Vec<u8>), String> {
+        let underlying = self
+            .shared_textures
+            .resolve_texture_handle(texture_handle)
+            .ok_or_else(|| format!("unknown texture handle {texture_handle}"))?;
+
+        let device = self
+            .devices
+            .get(&device_id)
+            .ok_or_else(|| format!("unknown device {device_id}"))?;
+
+        device
+            .runtime
+            .readback_texture_rgba8(underlying)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     async fn execute_command(
         &mut self,
         opcode: Opcode,
@@ -248,6 +357,10 @@ impl CommandProcessor {
                     return Err(format!("unknown device {device_id}"));
                 }
                 self.contexts.retain(|_, v| *v != device_id);
+                // The test command processor uses a per-device runtime that owns all texture
+                // resources. When a runtime is torn down, clear any outstanding alias/token state
+                // to avoid dangling references.
+                self.shared_textures.clear();
                 Ok(())
             }
             Opcode::ContextCreate => {
@@ -275,6 +388,28 @@ impl CommandProcessor {
                 }
                 Ok(())
             }
+            Opcode::ExportSharedSurface => {
+                let resource_handle = p.read_u32_le().map_err(|e| e.message)?;
+                p.read_u32_le().map_err(|e| e.message)?; // reserved0
+                let share_token = p.read_u64_le().map_err(|e| e.message)?;
+                if p.remaining() != 0 {
+                    return Err("ExportSharedSurface payload must be exactly 16 bytes".into());
+                }
+
+                self.shared_textures
+                    .export_shared_surface(resource_handle, share_token)
+            }
+            Opcode::ImportSharedSurface => {
+                let out_resource_handle = p.read_u32_le().map_err(|e| e.message)?;
+                p.read_u32_le().map_err(|e| e.message)?; // reserved0
+                let share_token = p.read_u64_le().map_err(|e| e.message)?;
+                if p.remaining() != 0 {
+                    return Err("ImportSharedSurface payload must be exactly 16 bytes".into());
+                }
+
+                self.shared_textures
+                    .import_shared_surface(out_resource_handle, share_token)
+            }
             _ => {
                 let context_id = p.read_u32_le().map_err(|e| e.message)?;
                 let device_id = *self
@@ -290,6 +425,7 @@ impl CommandProcessor {
                 }
 
                 let result = Self::execute_context_command(
+                    &mut self.shared_textures,
                     &mut device.runtime,
                     opcode,
                     context_id,
@@ -311,6 +447,7 @@ impl CommandProcessor {
     }
 
     async fn execute_context_command(
+        shared_textures: &mut SharedTextureState,
         runtime: &mut D3D9Runtime,
         opcode: Opcode,
         _context_id: u32,
@@ -396,6 +533,10 @@ impl CommandProcessor {
                     return Err("TextureCreate payload must be exactly 28 bytes".into());
                 }
 
+                if shared_textures.texture_handles.contains_key(&texture_id) {
+                    return Err(format!("texture handle {texture_id} already exists"));
+                }
+
                 let format = TextureFormat::from_u32(format_raw)
                     .ok_or_else(|| format!("unknown texture format {format_raw}"))?;
 
@@ -411,15 +552,19 @@ impl CommandProcessor {
                         },
                     )
                     .map_err(|e| e.to_string())?;
+                shared_textures.register_texture_handle(texture_id, texture_id)?;
                 Ok(())
             }
             Opcode::TextureUpdate => {
-                let texture_id = p.read_u32_le().map_err(|e| e.message)?;
+                let texture_handle = p.read_u32_le().map_err(|e| e.message)?;
                 let mip_level = p.read_u32_le().map_err(|e| e.message)?;
                 let width = p.read_u32_le().map_err(|e| e.message)?;
                 let height = p.read_u32_le().map_err(|e| e.message)?;
                 let data = p.read_bytes(p.remaining()).map_err(|e| e.message)?;
 
+                let texture_id = shared_textures
+                    .resolve_texture_handle(texture_handle)
+                    .ok_or_else(|| format!("unknown texture handle {texture_handle}"))?;
                 runtime
                     .write_texture_full_mip(texture_id, mip_level, width, height, data)
                     .map_err(|e| e.to_string())?;
@@ -430,9 +575,7 @@ impl CommandProcessor {
                 if p.remaining() != 0 {
                     return Err("TextureDestroy payload must be exactly 8 bytes".into());
                 }
-                runtime
-                    .destroy_texture(texture_id)
-                    .map_err(|e| e.to_string())?;
+                shared_textures.destroy_texture_handle(runtime, texture_id)?;
                 Ok(())
             }
             Opcode::SetRenderTargets => match p.remaining() {
@@ -456,13 +599,22 @@ impl CommandProcessor {
                     let color = match color_kind {
                         0 => None,
                         1 => Some(RenderTarget::SwapChain(color_id)),
-                        2 => Some(RenderTarget::Texture(color_id)),
+                        2 => {
+                            let texture_id = shared_textures
+                                .resolve_texture_handle(color_id)
+                                .ok_or_else(|| format!("unknown texture handle {color_id}"))?;
+                            Some(RenderTarget::Texture(texture_id))
+                        }
                         _ => return Err(format!("unknown color render target kind {color_kind}")),
                     };
 
                     let depth = match depth_kind {
                         0 => None,
-                        2 => Some(depth_id),
+                        2 => Some(
+                            shared_textures
+                                .resolve_texture_handle(depth_id)
+                                .ok_or_else(|| format!("unknown texture handle {depth_id}"))?,
+                        ),
                         _ => {
                             return Err(format!(
                                 "unknown depth-stencil target kind {depth_kind}"
@@ -677,7 +829,9 @@ impl CommandProcessor {
             Opcode::DeviceCreate
             | Opcode::DeviceDestroy
             | Opcode::ContextCreate
-            | Opcode::ContextDestroy => Err(format!("opcode {opcode:?} dispatched incorrectly")),
+            | Opcode::ContextDestroy
+            | Opcode::ExportSharedSurface
+            | Opcode::ImportSharedSurface => Err(format!("opcode {opcode:?} dispatched incorrectly")),
         }
     }
 }
@@ -853,4 +1007,3 @@ mod tests {
         );
     }
 }
-

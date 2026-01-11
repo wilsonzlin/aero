@@ -1142,7 +1142,7 @@ impl D3D9Runtime {
 
     pub async fn fence_signal(&mut self, fence_id: u32, value: u64) -> Result<(), RuntimeError> {
         self.present()?;
-        wait_for_queue(&self.queue).await;
+        wait_for_queue(&self.device, &self.queue).await;
         self.fences.insert(fence_id, value);
         Ok(())
     }
@@ -1153,7 +1153,7 @@ impl D3D9Runtime {
             if current >= value {
                 return Ok(());
             }
-            wait_for_queue(&self.queue).await;
+            wait_for_queue(&self.device, &self.queue).await;
         }
     }
 
@@ -1235,6 +1235,90 @@ impl D3D9Runtime {
             .await
             .ok_or(RuntimeError::MapAsyncDropped)?;
         mapped.map_err(RuntimeError::MapAsync)?;
+
+        let data = slice.get_mapped_range();
+        let mut pixels = vec![0u8; (width * height * bytes_per_pixel) as usize];
+        for y in 0..height as usize {
+            let src = y * padded_bytes_per_row as usize;
+            let dst = y * unpadded_bytes_per_row as usize;
+            pixels[dst..dst + unpadded_bytes_per_row as usize]
+                .copy_from_slice(&data[src..src + unpadded_bytes_per_row as usize]);
+        }
+
+        drop(data);
+        readback.unmap();
+        Ok((width, height, pixels))
+    }
+
+    pub async fn readback_texture_rgba8(
+        &self,
+        texture_id: u32,
+    ) -> Result<(u32, u32, Vec<u8>), RuntimeError> {
+        let texture = self
+            .textures
+            .get(&texture_id)
+            .ok_or(RuntimeError::UnknownTexture(texture_id))?;
+
+        let wgpu_format = texture.desc.format.to_wgpu();
+        match wgpu_format {
+            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {}
+            other => return Err(RuntimeError::UnsupportedReadbackFormat(other)),
+        }
+
+        let bytes_per_pixel = 4u32;
+        let width = texture.desc.width;
+        let height = texture.desc.height;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let padded_bytes_per_row =
+            align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer_size = padded_bytes_per_row as u64 * height as u64;
+
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d9-texture-readback"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d9-texture-readback-encoder"),
+            });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &readback,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit([encoder.finish()]);
+
+        let slice = readback.slice(..);
+        let (sender, receiver) = oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result.map_err(|e| e.to_string()));
+        });
+
+        self.device.poll(wgpu::Maintain::Wait);
+        let result = receiver.receive().await.ok_or(RuntimeError::MapAsyncDropped)?;
+        result.map_err(RuntimeError::MapAsync)?;
 
         let data = slice.get_mapped_range();
         let mut pixels = vec![0u8; (width * height * bytes_per_pixel) as usize];
@@ -1430,10 +1514,13 @@ fn pad_rows(
     out
 }
 
-async fn wait_for_queue(queue: &wgpu::Queue) {
+async fn wait_for_queue(device: &wgpu::Device, queue: &wgpu::Queue) {
     let (sender, receiver) = oneshot_channel();
     queue.on_submitted_work_done(move || {
         let _ = sender.send(());
     });
+    // wgpu only dispatches `on_submitted_work_done` callbacks while polling the device.
+    // Without an explicit poll this future can deadlock on native backends.
+    device.poll(wgpu::Maintain::Wait);
     let _ = receiver.receive().await;
 }

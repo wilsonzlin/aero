@@ -52,6 +52,10 @@ pub enum Opcode {
     FenceSignal = 0x0061,
     FenceWait = 0x0062,
     FenceDestroy = 0x0063,
+
+    // D3D9Ex shared surface interop (mirrors aerogpu_cmd.h values).
+    ExportSharedSurface = 0x0710,
+    ImportSharedSurface = 0x0711,
 }
 
 impl Opcode {
@@ -83,6 +87,8 @@ impl Opcode {
             0x0061 => Self::FenceSignal,
             0x0062 => Self::FenceWait,
             0x0063 => Self::FenceDestroy,
+            0x0710 => Self::ExportSharedSurface,
+            0x0711 => Self::ImportSharedSurface,
             _ => return None,
         })
     }
@@ -507,6 +513,22 @@ impl StreamEncoder {
         payload.extend_from_slice(&fence_id.to_le_bytes());
         self.push_command(Opcode::FenceDestroy, &payload);
     }
+
+    pub fn export_shared_surface(&mut self, resource_handle: u32, share_token: u64) {
+        let mut payload = Vec::with_capacity(16);
+        payload.extend_from_slice(&resource_handle.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&share_token.to_le_bytes());
+        self.push_command(Opcode::ExportSharedSurface, &payload);
+    }
+
+    pub fn import_shared_surface(&mut self, out_resource_handle: u32, share_token: u64) {
+        let mut payload = Vec::with_capacity(16);
+        payload.extend_from_slice(&out_resource_handle.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&share_token.to_le_bytes());
+        self.push_command(Opcode::ImportSharedSurface, &payload);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -535,4 +557,3 @@ impl fmt::Display for Opcode {
         write!(f, "{self:?}")
     }
 }
-
