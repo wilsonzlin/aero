@@ -10,7 +10,6 @@ members = [
     "crates/aero-acpi",
     "crates/aero-audio",
     "crates/aero-gpu",
-    "crates/aero-gpu-device",
     "crates/aero-gpu-trace",
     "crates/aero-gpu-trace-replay",
     "crates/aero-gpu-utils",
