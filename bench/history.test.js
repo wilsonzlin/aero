@@ -198,6 +198,66 @@ test("normaliseBenchResult supports aero-gpu-bench schemaVersion=2 (raw+summary)
   );
 });
 
+test("normaliseBenchResult supports aero-gateway bench results.json format", () => {
+  const { scenarios, environment } = normaliseBenchResult({
+    meta: {
+      mode: "smoke",
+      nodeVersion: "v20.0.0",
+      platform: "linux",
+      arch: "x64",
+    },
+    tcpProxy: {
+      rttMs: {
+        n: 100,
+        min: 1,
+        p50: 2,
+        p90: 3,
+        p99: 4,
+        max: 5,
+        mean: 2.5,
+        stdev: 1,
+        cv: 0.4,
+      },
+      throughput: { bytes: 5 * 1024 * 1024, seconds: 1, mibPerSecond: 5 },
+    },
+    doh: {
+      qps: 1000,
+      qpsStats: { n: 3, min: 900, max: 1100, mean: 1000, stdev: 100, cv: 0.1 },
+      latencyMs: { p50: 1, p90: 2, p99: 3 },
+      cache: { hits: 96, misses: 4, hitRatio: 0.96 },
+      raw: {},
+    },
+  });
+
+  assert.equal(environment.node, "v20.0.0");
+  assert.equal(environment.platform, "linux");
+  assert.equal(environment.arch, "x64");
+  assert.equal(environment.gatewayMode, "smoke");
+
+  assert.equal(scenarios.gateway.metrics.tcp_rtt_p50_ms.value, 2);
+  assert.equal(scenarios.gateway.metrics.tcp_rtt_p50_ms.unit, "ms");
+  assert.equal(scenarios.gateway.metrics.tcp_rtt_p50_ms.better, "lower");
+  assert.equal(scenarios.gateway.metrics.tcp_rtt_p50_ms.samples.n, 100);
+  assert.equal(scenarios.gateway.metrics.tcp_rtt_p50_ms.samples.stdev, 1);
+  assert.equal(scenarios.gateway.metrics.tcp_rtt_p50_ms.samples.cv, 0.4);
+
+  assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.value, 5);
+  assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.unit, "MiB/s");
+  assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.better, "higher");
+
+  assert.equal(scenarios.gateway.metrics.doh_qps.value, 1000);
+  assert.equal(scenarios.gateway.metrics.doh_qps.unit, "qps");
+  assert.equal(scenarios.gateway.metrics.doh_qps.better, "higher");
+  assert.equal(scenarios.gateway.metrics.doh_qps.samples.n, 3);
+  assert.equal(scenarios.gateway.metrics.doh_qps.samples.stdev, 100);
+  assert.equal(scenarios.gateway.metrics.doh_qps.samples.cv, 0.1);
+
+  assert.equal(scenarios.gateway.metrics.doh_cache_hit_ratio_pct.value, 96);
+  assert.equal(scenarios.gateway.metrics.doh_cache_hit_ratio_pct.unit, "%");
+  assert.equal(scenarios.gateway.metrics.doh_cache_hit_ratio_pct.better, "higher");
+  assert.equal(scenarios.gateway.metrics.doh_cache_hit_ratio_pct.samples.n, 100);
+});
+
 test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-history-"));
   const historyPath = path.join(tmpDir, "history.json");

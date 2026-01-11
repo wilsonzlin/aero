@@ -43,6 +43,20 @@ function statsFromSamplesMs(samplesMs) {
   const sum = samplesMs.reduce((a, b) => a + b, 0);
   const mean = samplesMs.length === 0 ? null : sum / samplesMs.length;
 
+  // Sample standard deviation (unbiased estimator) + coefficient of variation.
+  // We keep this lightweight (simple second pass) since the benchmark already
+  // stores the full samples array in memory.
+  let stdev = 0;
+  if (samplesMs.length > 1 && mean !== null) {
+    let varianceSum = 0;
+    for (const sample of samplesMs) {
+      const diff = sample - mean;
+      varianceSum += diff * diff;
+    }
+    stdev = Math.sqrt(varianceSum / (samplesMs.length - 1));
+  }
+  const cv = mean === null || mean === 0 ? 0 : stdev / Math.abs(mean);
+
   return {
     n: samplesMs.length,
     min: sorted[0] ?? null,
@@ -51,6 +65,8 @@ function statsFromSamplesMs(samplesMs) {
     p99: percentile(sorted, 99),
     max: sorted.at(-1) ?? null,
     mean,
+    stdev,
+    cv,
   };
 }
 
@@ -432,12 +448,38 @@ async function benchDoh({ gatewayPort, durationSeconds, connections }) {
   const hits = parseCounter('dns_cache_hits_total', { qtype: 'A' }) ?? 0;
   const misses = parseCounter('dns_cache_misses_total', { qtype: 'A' }) ?? 0;
   const hitRatio = hits + misses === 0 ? null : hits / (hits + misses);
+
+  const getFiniteNumber = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const summariseAutocannonStats = (stats, { fallbackN } = {}) => {
+    if (!stats || typeof stats !== 'object') return null;
+    const mean = getFiniteNumber(stats.mean) ?? getFiniteNumber(stats.average);
+    if (mean === null) return null;
+    const stdev = getFiniteNumber(stats.stddev) ?? getFiniteNumber(stats.stdev) ?? 0;
+    const cv = mean === 0 ? 0 : stdev / Math.abs(mean);
+    const min = getFiniteNumber(stats.min) ?? mean;
+    const max = getFiniteNumber(stats.max) ?? mean;
+    const n = Number.isFinite(stats.n) ? stats.n : fallbackN ?? 1;
+    return { n, min, max, mean, stdev, cv };
+  };
+
+  const qpsStats = summariseAutocannonStats(result.requests, { fallbackN: durationSeconds });
+  const latencyStats = summariseAutocannonStats(result.latency, { fallbackN: durationSeconds });
   return {
     qps: result.requests.average,
+    qpsStats,
     latencyMs: {
       p50: result.latency.p50,
       p90: result.latency.p90,
       p99: result.latency.p99,
+      ...(latencyStats
+        ? {
+            min: latencyStats.min,
+            max: latencyStats.max,
+            mean: latencyStats.mean,
+            stdev: latencyStats.stdev,
+            cv: latencyStats.cv,
+          }
+        : {}),
     },
     cache: {
       hits,
@@ -551,6 +593,9 @@ async function main() {
     meta: {
       mode,
       outputJson,
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
       gateway: { url: gateway.url },
       dnsUpstream: { host: dnsServer.host, port: dnsServer.port },
       tcpRtt: config.tcpRtt,

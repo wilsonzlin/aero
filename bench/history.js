@@ -66,6 +66,9 @@ export function normaliseBenchResult(result) {
   if (isGpuBenchReport(result)) {
     return normaliseGpuBenchResult(result);
   }
+  if (isAeroGatewayBenchReport(result)) {
+    return normaliseAeroGatewayBenchResult(result);
+  }
   if (result.schemaVersion === 1) {
     return normaliseLegacyBenchResult(result);
   }
@@ -76,7 +79,7 @@ export function normaliseBenchResult(result) {
     return normalisePerfToolResult(result);
   }
   throw new Error(
-    "Unsupported benchmark result format (expected aero-gpu-bench report, schemaVersion=1 scenarios, scenario runner report.json, or tools/perf {meta, benchmarks})",
+    "Unsupported benchmark result format (expected aero-gpu-bench report, aero-gateway bench results.json, schemaVersion=1 scenarios, scenario runner report.json, or tools/perf {meta, benchmarks})",
   );
 }
 
@@ -276,6 +279,99 @@ function normaliseGpuBenchResult(result) {
   }
 
   return { scenarios, environment: Object.keys(environment).length ? environment : undefined };
+}
+
+function isAeroGatewayBenchReport(result) {
+  return (
+    result &&
+    typeof result === "object" &&
+    result.meta &&
+    typeof result.meta === "object" &&
+    result.tcpProxy &&
+    typeof result.tcpProxy === "object" &&
+    result.doh &&
+    typeof result.doh === "object"
+  );
+}
+
+function normaliseAeroGatewayBenchResult(result) {
+  const metrics = {};
+
+  const tcpProxy = result.tcpProxy ?? {};
+  const rtt = tcpProxy.rttMs ?? {};
+  const throughput = tcpProxy.throughput ?? {};
+  const doh = result.doh ?? {};
+
+  /**
+   * @param {number} value
+   * @param {{n?: unknown, min?: unknown, max?: unknown, stdev?: unknown, cv?: unknown}} stats
+   */
+  function samplesFromStats(value, stats) {
+    const n = Number.isFinite(stats?.n) && stats.n >= 1 ? Math.trunc(stats.n) : 1;
+    const min = typeof stats?.min === "number" && Number.isFinite(stats.min) ? stats.min : value;
+    const max = typeof stats?.max === "number" && Number.isFinite(stats.max) ? stats.max : value;
+    const stdev =
+      typeof stats?.stdev === "number" && Number.isFinite(stats.stdev) && stats.stdev >= 0 ? stats.stdev : 0;
+    const cv = typeof stats?.cv === "number" && Number.isFinite(stats.cv) && stats.cv >= 0 ? stats.cv : 0;
+    return { n, min, max, stdev, cv };
+  }
+
+  /**
+   * @param {string} name
+   * @param {any} rawValue
+   * @param {{unit: string, better: "higher" | "lower", samples?: any}} opts
+   */
+  function addMetric(name, rawValue, opts) {
+    if (rawValue === null || rawValue === undefined) return;
+    if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) return;
+    metrics[name] = {
+      value: rawValue,
+      unit: opts.unit,
+      better: opts.better,
+      samples: samplesFromStats(rawValue, opts.samples ?? {}),
+    };
+  }
+
+  addMetric("tcp_rtt_p50_ms", rtt.p50, { unit: "ms", better: "lower", samples: rtt });
+  addMetric("tcp_rtt_p90_ms", rtt.p90, { unit: "ms", better: "lower", samples: rtt });
+  addMetric("tcp_rtt_p99_ms", rtt.p99, { unit: "ms", better: "lower", samples: rtt });
+  addMetric("tcp_throughput_mib_s", throughput.mibPerSecond, { unit: "MiB/s", better: "higher" });
+
+  // Prefer explicit DoH variance summaries from the bench report, but fall back to
+  // autocannon's raw stats if present (older reports only provided raw.*).
+  const dohQpsSamples =
+    doh.qpsStats ??
+    doh.raw?.requests ??
+    // Provide a stable n (for tooltips) when autocannon doesn't provide one.
+    (result.meta?.doh && typeof result.meta.doh === "object" ? { n: result.meta.doh.durationSeconds } : undefined);
+  addMetric("doh_qps", doh.qps, { unit: "qps", better: "higher", samples: dohQpsSamples });
+
+  const hitRatio = doh.cache?.hitRatio;
+  if (typeof hitRatio === "number" && Number.isFinite(hitRatio)) {
+    const hits = typeof doh.cache?.hits === "number" && Number.isFinite(doh.cache.hits) ? doh.cache.hits : 0;
+    const misses = typeof doh.cache?.misses === "number" && Number.isFinite(doh.cache.misses) ? doh.cache.misses : 0;
+    const n = hits + misses > 0 ? hits + misses : 1;
+    addMetric("doh_cache_hit_ratio_pct", hitRatio * 100, {
+      unit: "%",
+      better: "higher",
+      samples: { n },
+    });
+  }
+
+  const scenarios = Object.keys(metrics).length ? { gateway: { metrics } } : {};
+
+  const environment = {};
+  if (result.meta && typeof result.meta === "object") {
+    if (typeof result.meta.nodeVersion === "string") environment.node = result.meta.nodeVersion;
+    if (typeof result.meta.platform === "string") environment.platform = result.meta.platform;
+    if (typeof result.meta.arch === "string") environment.arch = result.meta.arch;
+    if (typeof result.meta.mode === "string") environment.gatewayMode = result.meta.mode;
+  }
+
+  return {
+    scenarios,
+    environment: Object.keys(environment).length ? environment : undefined,
+  };
 }
 
 function normaliseLegacyBenchResult(result) {

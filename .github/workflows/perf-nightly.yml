@@ -80,6 +80,15 @@ jobs:
           set -euo pipefail
           node --experimental-strip-types bench/runner.ts storage_io \
             --out-dir perf-results/storage_io
+      - name: Run aero-gateway bench (nightly)
+        run: |
+          set -euo pipefail
+          mkdir -p perf-results/gateway
+          npm -w backend/aero-gateway run build
+          node backend/aero-gateway/bench/run.mjs \
+            --mode smoke \
+            --json "$GITHUB_WORKSPACE/perf-results/gateway/raw.json" \
+            --assert
 
       - name: Job summary
         if: always()
@@ -195,6 +204,13 @@ jobs:
           node bench/history.js append \
             --history bench/history.json \
             --input perf-results/storage_io/report.json \
+            --timestamp "$ts" \
+            --commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY"
+
+          node bench/history.js append \
+            --history bench/history.json \
+            --input perf-results/gateway/raw.json \
             --timestamp "$ts" \
             --commit "$GITHUB_SHA" \
             --repository "$GITHUB_REPOSITORY"

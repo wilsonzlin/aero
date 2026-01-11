@@ -69,7 +69,8 @@
             "targetUrl": { "type": "string" },
             "userAgent": { "type": "string" },
             "webgpu": { "type": "boolean" },
-            "webgl2": { "type": "boolean" }
+            "webgl2": { "type": "boolean" },
+            "gatewayMode": { "type": "string" }
           }
         },
         "scenarios": {
