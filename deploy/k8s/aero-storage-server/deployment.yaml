@@ -27,7 +27,7 @@ spec:
               mountPath: /images
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 2
             periodSeconds: 10
@@ -41,4 +41,3 @@ spec:
         - name: images
           persistentVolumeClaim:
             claimName: aero-storage-images
-
