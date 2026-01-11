@@ -36,7 +36,7 @@ Designed for the standard flow:
    - `drivers\x86\` (on Win7 x86)
    - `drivers\amd64\` (on Win7 x64)
 5. Adds boot-critical registry plumbing for switching the boot disk from AHCI → virtio-blk (**required before switching storage**):
-   - Validates that the configured storage service name (`AERO_VIRTIO_BLK_SERVICE`) exists in at least one staged driver INF as an `AddService` name (fails fast if not).
+   - Validates that the configured storage service name (`AERO_VIRTIO_BLK_SERVICE`) exists in at least one packaged driver INF (under `drivers\<arch>\...`) as an `AddService` name (fails fast if not).
    - `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_xxxx&DEV_yyyy...`
    - `HKLM\SYSTEM\CurrentControlSet\Services\<storage-service>\Start=0` etc.
 
@@ -103,7 +103,8 @@ Exit codes (for automation):
 - `0`: success
 - `10`: Administrator privileges required
 - `11`: driver directory missing (`drivers\\<arch>\\`)
-- `13`: `AERO_VIRTIO_BLK_SERVICE` does not match any `AddService` name in the staged driver INFs
+- `13`: `AERO_VIRTIO_BLK_SERVICE` does not match any `AddService` name in the packaged driver INFs (`drivers\\<arch>\\...`)
+
 ## Building Guest Tools media for WHQL / production-signed drivers
 
 If you are shipping only WHQL/production-signed drivers (for example from `virtio-win`), you can build Guest Tools media that:
