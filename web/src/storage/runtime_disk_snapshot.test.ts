@@ -4,6 +4,7 @@ import {
   deserializeRuntimeDiskSnapshot,
   serializeRuntimeDiskSnapshot,
   shouldInvalidateRemoteCache,
+  shouldInvalidateRemoteOverlay,
   type RemoteCacheBinding,
   type RemoteDiskBaseSnapshot,
   type RuntimeDiskSnapshot,
@@ -102,5 +103,36 @@ describe("runtime disk snapshot payload", () => {
     ).toBe(true);
 
     expect(shouldInvalidateRemoteCache(expected, null)).toBe(true);
+  });
+
+  it("does not invalidate remote overlays when binding is missing, but does when base identity changes", () => {
+    const expected: RemoteDiskBaseSnapshot = {
+      imageId: "win7",
+      version: "v1",
+      deliveryType: "range",
+      expectedValidator: { kind: "etag", value: "\"abc\"" },
+      chunkSize: 1024,
+    };
+
+    // Missing binding should keep the overlay (avoid data loss).
+    expect(shouldInvalidateRemoteOverlay(expected, null)).toBe(false);
+
+    const okBinding: RemoteCacheBinding = { version: 1, base: { ...expected } };
+    expect(shouldInvalidateRemoteOverlay(expected, okBinding)).toBe(false);
+
+    // Changing only chunk size should not invalidate overlay (cache tuning parameter).
+    expect(
+      shouldInvalidateRemoteOverlay(
+        { ...expected, chunkSize: 2048 },
+        okBinding,
+      ),
+    ).toBe(false);
+
+    expect(
+      shouldInvalidateRemoteOverlay(expected, {
+        version: 1,
+        base: { ...expected, version: "v2" },
+      }),
+    ).toBe(true);
   });
 });

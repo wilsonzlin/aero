@@ -703,6 +703,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             await opfsDeleteDisk(`remote-range-cache-${cacheId}.json`);
           }
           await opfsDeleteDisk(meta.cache.overlayFileName);
+          // Remote overlays also store a base identity binding so they can be invalidated safely.
+          // Best-effort cleanup when deleting the disk.
+          await opfsDeleteDisk(`${meta.cache.overlayFileName}.binding.json`);
         } else {
           const db = await openDiskManagerDb();
           try {

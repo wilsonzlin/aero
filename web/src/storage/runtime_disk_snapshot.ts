@@ -93,6 +93,33 @@ export type RemoteCacheBinding = {
   base: RemoteDiskBaseSnapshot;
 };
 
+export function shouldInvalidateRemoteOverlay(
+  expected: RemoteDiskBaseSnapshot,
+  binding: RemoteCacheBinding | null | undefined,
+): boolean {
+  // Overlay invalidation must be conservative: if we don't have a binding, keep the overlay
+  // (it may contain user state). Only invalidate when we have positive evidence that the
+  // overlay was created against a different remote base identity.
+  if (!binding || binding.version !== 1) return false;
+  const base = binding.base;
+  if (!base) return false;
+
+  if (base.imageId !== expected.imageId) return true;
+  if (base.version !== expected.version) return true;
+  if (base.deliveryType !== expected.deliveryType) return true;
+
+  // NOTE: We intentionally *do not* compare `chunkSize` here. `chunkSize` is a local cache
+  // tuning parameter for remote delivery and can be changed without changing the underlying
+  // remote bytes. Invalidating the overlay on chunk size changes would unnecessarily discard
+  // user state.
+
+  const a = expected.expectedValidator;
+  const b = base.expectedValidator;
+  if (!a && !b) return false;
+  if (!a || !b) return true;
+  return a.kind !== b.kind || a.value !== b.value;
+}
+
 export function shouldInvalidateRemoteCache(
   expected: RemoteDiskBaseSnapshot,
   binding: RemoteCacheBinding | null | undefined,

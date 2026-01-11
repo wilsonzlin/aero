@@ -7,14 +7,23 @@ import { IdbCowDisk } from "./idb_cow";
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
-import { hasOpfsSyncAccessHandle, pickDefaultBackend, type DiskBackend, type DiskImageMetadata } from "./metadata";
+import {
+  hasOpfsSyncAccessHandle,
+  idbReq,
+  idbTxDone,
+  openDiskManagerDb,
+  pickDefaultBackend,
+  type DiskBackend,
+  type DiskImageMetadata,
+} from "./metadata";
 import { RemoteStreamingDisk, type RemoteDiskOptions, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { RemoteChunkedDisk, type RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
-import { opfsDeleteDisk } from "./import_export";
+import { idbDeleteDiskData, opfsDeleteDisk, opfsGetDiskFileHandle } from "./import_export";
 import { RemoteRangeDisk, defaultRemoteRangeUrl } from "./remote_range_disk";
 import {
   deserializeRuntimeDiskSnapshot,
   serializeRuntimeDiskSnapshot,
+  shouldInvalidateRemoteOverlay,
   type DiskBackendSnapshot,
   type RemoteCacheBinding,
   type RuntimeDiskSnapshot,
@@ -150,6 +159,89 @@ async function resolveRemoteChunkedManifestUrl(meta: Extract<DiskImageMetadata, 
   return chunked.manifestUrl;
 }
 
+function opfsBindingFileName(fileName: string): string {
+  return `${fileName}.binding.json`;
+}
+
+async function readOpfsBinding(fileName: string): Promise<RemoteCacheBinding | null> {
+  try {
+    const handle = await opfsGetDiskFileHandle(fileName, { create: false });
+    const file = await handle.getFile();
+    const text = await file.text();
+    if (!text.trim()) return null;
+    return JSON.parse(text) as RemoteCacheBinding;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "NotFoundError") return null;
+    return null;
+  }
+}
+
+async function writeOpfsBinding(fileName: string, binding: RemoteCacheBinding): Promise<void> {
+  const handle = await opfsGetDiskFileHandle(fileName, { create: true });
+  const writable = await handle.createWritable({ keepExistingData: false });
+  await writable.write(JSON.stringify(binding, null, 2));
+  await writable.close();
+}
+
+async function ensureRemoteOverlayBinding(expected: RemoteCacheBinding["base"], overlayFileName: string): Promise<void> {
+  const bindingName = opfsBindingFileName(overlayFileName);
+  const existing = await readOpfsBinding(bindingName);
+  if (shouldInvalidateRemoteOverlay(expected, existing)) {
+    await opfsDeleteDisk(overlayFileName);
+    await opfsDeleteDisk(bindingName);
+  }
+  await writeOpfsBinding(bindingName, { version: 1, base: expected });
+}
+
+function idbOverlayBindingKey(overlayDiskId: string): string {
+  return `overlay-binding:${overlayDiskId}`;
+}
+
+async function readIdbOverlayBinding(overlayDiskId: string): Promise<RemoteCacheBinding | null> {
+  const key = idbOverlayBindingKey(overlayDiskId);
+  const db = await openDiskManagerDb();
+  try {
+    const tx = db.transaction(["remote_chunk_meta"], "readonly");
+    const store = tx.objectStore("remote_chunk_meta");
+    const rec = (await idbReq(store.get(key))) as unknown;
+    await idbTxDone(tx);
+    if (!rec || typeof rec !== "object") return null;
+    const maybe = rec as Partial<RemoteCacheBinding> & { cacheKey?: unknown };
+    if (maybe.version !== 1) return null;
+    if (!maybe.base || typeof maybe.base !== "object") return null;
+    return maybe as RemoteCacheBinding;
+  } finally {
+    db.close();
+  }
+}
+
+async function writeIdbOverlayBinding(overlayDiskId: string, binding: RemoteCacheBinding): Promise<void> {
+  const db = await openDiskManagerDb();
+  try {
+    const tx = db.transaction(["remote_chunk_meta"], "readwrite");
+    tx.objectStore("remote_chunk_meta").put({ cacheKey: idbOverlayBindingKey(overlayDiskId), ...binding });
+    await idbTxDone(tx);
+  } finally {
+    db.close();
+  }
+}
+
+async function ensureIdbRemoteOverlayBinding(expected: RemoteCacheBinding["base"], overlayDiskId: string): Promise<void> {
+  const existing = await readIdbOverlayBinding(overlayDiskId);
+  if (shouldInvalidateRemoteOverlay(expected, existing)) {
+    const db = await openDiskManagerDb();
+    try {
+      await idbDeleteDiskData(db, overlayDiskId);
+      // Best-effort cleanup: remove any stale record under this key.
+      const tx = db.transaction(["remote_chunk_meta"], "readwrite");
+      tx.objectStore("remote_chunk_meta").delete(idbOverlayBindingKey(overlayDiskId));
+      await idbTxDone(tx);
+    } finally {
+      db.close();
+    }
+  }
+  await writeIdbOverlayBinding(overlayDiskId, { version: 1, base: expected });
+}
 function serializeError(err: unknown): { message: string; name?: string; stack?: string } {
   if (err instanceof Error) return { message: err.message, name: err.name, stack: err.stack };
   return { message: String(err) };
@@ -310,10 +402,12 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
     }
     try {
       if (remoteCacheBackend === "idb") {
+        await ensureIdbRemoteOverlayBinding(base, meta.cache.overlayFileName);
         const disk = await IdbCowDisk.open(baseDisk, meta.cache.overlayFileName, meta.sizeBytes);
         return { disk, readOnly, io: emptyIoTelemetry(), backendSnapshot };
       }
 
+      await ensureRemoteOverlayBinding(base, meta.cache.overlayFileName);
       const overlay = await openSparseOrCreate(meta.cache.overlayFileName, {
         diskSizeBytes: meta.sizeBytes,
         blockSizeBytes: meta.cache.overlayBlockSizeBytes,
@@ -619,6 +713,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
 
   if (remoteCacheBackend === "idb") {
     try {
+      await ensureIdbRemoteOverlayBinding(backend.base, backend.overlay.fileName);
       const disk = await IdbCowDisk.open(base, backend.overlay.fileName, backend.sizeBytes);
       return {
         disk,
@@ -634,6 +729,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
 
   let overlay: OpfsAeroSparseDisk | null = null;
   try {
+    await ensureRemoteOverlayBinding(backend.base, backend.overlay.fileName);
     overlay = await openSparseOrCreate(backend.overlay.fileName, {
       diskSizeBytes: backend.overlay.diskSizeBytes,
       blockSizeBytes: backend.overlay.blockSizeBytes,
