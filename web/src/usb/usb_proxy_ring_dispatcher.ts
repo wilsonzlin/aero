@@ -90,8 +90,9 @@ export function subscribeUsbProxyCompletionRing(
   entry.handlers.add(handler);
   ensureTimer(entry);
 
-  // Drain once immediately so subscribers see any completions that were queued before they attached.
-  drain(entry);
+  // Drain after the current call stack so other runtimes processing the same `usb.ringAttach`
+  // event have a chance to subscribe before we consume entries from the single-consumer ring.
+  queueMicrotask(() => drain(entry));
 
   let unsubscribed = false;
   return () => {
@@ -101,4 +102,3 @@ export function subscribeUsbProxyCompletionRing(
     maybeStopTimer(entry);
   };
 }
-
