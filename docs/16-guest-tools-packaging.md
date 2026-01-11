@@ -298,7 +298,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
 
 On Linux/macOS, you can run the same PowerShell wrapper under PowerShell 7 (`pwsh`):
 it will automatically fall back to the cross-platform extractor when `Mount-DiskImage`
-is unavailable.
+is unavailable (or fails to mount).
 
 ```bash
 pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
