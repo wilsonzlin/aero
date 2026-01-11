@@ -40,6 +40,7 @@ pub struct ImagesState {
     metrics: Arc<Metrics>,
     range_options: RangeOptions,
     cors_allow_origin: HeaderValue,
+    cors_allow_credentials: bool,
     public_cache_max_age: Duration,
 }
 
@@ -52,6 +53,7 @@ impl ImagesState {
                 max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             },
             cors_allow_origin: HeaderValue::from_static("*"),
+            cors_allow_credentials: false,
             public_cache_max_age: DEFAULT_PUBLIC_MAX_AGE,
         }
     }
@@ -63,6 +65,11 @@ impl ImagesState {
 
     pub fn with_cors_allow_origin(mut self, cors_allow_origin: HeaderValue) -> Self {
         self.cors_allow_origin = cors_allow_origin;
+        self
+    }
+
+    pub fn with_cors_allow_credentials(mut self, cors_allow_credentials: bool) -> Self {
+        self.cors_allow_credentials = cors_allow_credentials;
         self
     }
 
@@ -388,6 +395,12 @@ pub(crate) fn insert_cors_headers(headers: &mut HeaderMap, state: &ImagesState) 
         HeaderName::from_static("access-control-allow-origin"),
         state.cors_allow_origin.clone(),
     );
+    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
+        headers.insert(
+            HeaderName::from_static("access-control-allow-credentials"),
+            HeaderValue::from_static("true"),
+        );
+    }
     // Be conservative: even when `Access-Control-Allow-Origin: *`, varying on Origin is safe and
     // avoids surprising cache poisoning if deployments change to an allowlist.
     headers.insert(header::VARY, HeaderValue::from_static("Origin"));
@@ -404,6 +417,12 @@ pub(crate) fn insert_cors_preflight_headers(headers: &mut HeaderMap, state: &Ima
         HeaderName::from_static("access-control-allow-origin"),
         state.cors_allow_origin.clone(),
     );
+    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
+        headers.insert(
+            HeaderName::from_static("access-control-allow-credentials"),
+            HeaderValue::from_static("true"),
+        );
+    }
     headers.insert(
         header::VARY,
         HeaderValue::from_static(

@@ -95,13 +95,19 @@ impl IntoResponse for ApiError {
     }
 }
 
-fn metadata_cache_headers() -> HeaderMap {
+fn metadata_cache_headers(state: &AppState) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     headers.insert(
         HeaderName::from_static("access-control-allow-origin"),
-        HeaderValue::from_static("*"),
+        state.cors_allow_origin.clone(),
     );
+    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
+        headers.insert(
+            HeaderName::from_static("access-control-allow-credentials"),
+            HeaderValue::from_static("true"),
+        );
+    }
     headers.insert(
         HeaderName::from_static("access-control-expose-headers"),
         HeaderValue::from_static("ETag, Last-Modified, Cache-Control"),
@@ -122,7 +128,7 @@ pub async fn list_images(
     let list_etag = cache::etag_for_image_list(&etag_entries);
 
     if cache::is_not_modified(&req_headers, list_etag.to_str().ok(), None) {
-        let mut headers = metadata_cache_headers();
+        let mut headers = metadata_cache_headers(&state);
         headers.insert(ETAG, list_etag);
         let mut resp = StatusCode::NOT_MODIFIED.into_response();
         *resp.headers_mut() = headers;
@@ -130,7 +136,7 @@ pub async fn list_images(
     }
 
     let images: Vec<ImageResponse> = images.into_iter().map(ImageResponse::from).collect();
-    let mut headers = metadata_cache_headers();
+    let mut headers = metadata_cache_headers(&state);
     headers.insert(ETAG, list_etag);
     Ok((headers, Json(images)).into_response())
 }
@@ -144,7 +150,7 @@ pub async fn get_image_meta(
     let etag = cache::etag_or_fallback(&image.meta);
 
     if cache::is_not_modified(&req_headers, Some(&etag), image.meta.last_modified) {
-        let mut headers = metadata_cache_headers();
+        let mut headers = metadata_cache_headers(&state);
         headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
         if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
             headers.insert(LAST_MODIFIED, lm);
@@ -154,7 +160,7 @@ pub async fn get_image_meta(
         return Ok(resp);
     }
 
-    let mut headers = metadata_cache_headers();
+    let mut headers = metadata_cache_headers(&state);
     headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
     if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
         headers.insert(LAST_MODIFIED, lm);
@@ -174,14 +180,14 @@ pub async fn head_images(
     let list_etag = cache::etag_for_image_list(&etag_entries);
 
     if cache::is_not_modified(&req_headers, list_etag.to_str().ok(), None) {
-        let mut headers = metadata_cache_headers();
+        let mut headers = metadata_cache_headers(&state);
         headers.insert(ETAG, list_etag);
         let mut resp = StatusCode::NOT_MODIFIED.into_response();
         *resp.headers_mut() = headers;
         return Ok(resp);
     }
 
-    let mut headers = metadata_cache_headers();
+    let mut headers = metadata_cache_headers(&state);
     headers.insert(ETAG, list_etag);
     headers.insert(
         header::CONTENT_TYPE,
@@ -199,7 +205,7 @@ pub async fn head_image_meta(
     let etag = cache::etag_or_fallback(&image.meta);
 
     if cache::is_not_modified(&req_headers, Some(&etag), image.meta.last_modified) {
-        let mut headers = metadata_cache_headers();
+        let mut headers = metadata_cache_headers(&state);
         headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
         if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
             headers.insert(LAST_MODIFIED, lm);
@@ -209,7 +215,7 @@ pub async fn head_image_meta(
         return Ok(resp);
     }
 
-    let mut headers = metadata_cache_headers();
+    let mut headers = metadata_cache_headers(&state);
     headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
     if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
         headers.insert(LAST_MODIFIED, lm);

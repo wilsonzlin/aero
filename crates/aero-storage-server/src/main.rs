@@ -2,6 +2,7 @@ mod config;
 
 use crate::config::Config;
 use aero_storage_server::{store::LocalFsImageStore, AppState};
+use axum::http::HeaderValue;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
@@ -14,7 +15,15 @@ async fn main() -> anyhow::Result<()> {
     tokio::fs::create_dir_all(&config.images_root).await?;
 
     let store = Arc::new(LocalFsImageStore::new(config.images_root.clone()));
-    let app = aero_storage_server::app(AppState::new(store));
+    let mut state = AppState::new(store);
+    if let Some(origin) = config.cors_origin.as_deref() {
+        let origin = origin.trim();
+        state = state.with_cors_allow_origin(HeaderValue::from_str(origin)?);
+        // If an explicit origin is configured (i.e. not `*`), default to allowing credentials so
+        // cookie-authenticated requests can succeed in cross-origin deployments.
+        state = state.with_cors_allow_credentials(origin != "*");
+    }
+    let app = aero_storage_server::app(state);
 
     tracing::info!(
         listen_addr = %config.listen_addr,
