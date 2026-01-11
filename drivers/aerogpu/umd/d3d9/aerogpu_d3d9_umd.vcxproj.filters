@@ -46,6 +46,9 @@
     <ClInclude Include="src\aerogpu_wddm_alloc_list.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\protocol\aerogpu_wddm_alloc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 
   <ItemGroup>

@@ -25,6 +25,9 @@
     <ClInclude Include="..\..\protocol\aerogpu_cmd.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\protocol\aerogpu_wddm_alloc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="aerogpu_d3d10_11_x86.def" />
