@@ -98,10 +98,20 @@ func CredentialFromQuery(mode config.AuthMode, q url.Values) (string, error) {
 		if apiKey := q.Get("apiKey"); apiKey != "" {
 			return apiKey, nil
 		}
+		// Forward/compat: treat token as an alias for apiKey so mode-agnostic
+		// clients can use a single parameter name.
+		if token := q.Get("token"); token != "" {
+			return token, nil
+		}
 		return "", ErrMissingCredentials
 	case config.AuthModeJWT:
 		if token := q.Get("token"); token != "" {
 			return token, nil
+		}
+		// Forward/compat: treat apiKey as an alias for token so mode-agnostic
+		// clients can use a single parameter name.
+		if apiKey := q.Get("apiKey"); apiKey != "" {
+			return apiKey, nil
 		}
 		return "", ErrMissingCredentials
 	default:
@@ -123,10 +133,20 @@ func CredentialFromAuthMessage(mode config.AuthMode, msg WireAuthMessage) (strin
 		if msg.APIKey != "" {
 			return msg.APIKey, nil
 		}
+		// Forward/compat: allow using the token field in api_key mode for
+		// mode-agnostic clients.
+		if msg.Token != "" {
+			return msg.Token, nil
+		}
 		return "", ErrMissingCredentials
 	case config.AuthModeJWT:
 		if msg.Token != "" {
 			return msg.Token, nil
+		}
+		// Forward/compat: allow using the apiKey field in jwt mode for
+		// mode-agnostic clients.
+		if msg.APIKey != "" {
+			return msg.APIKey, nil
 		}
 		return "", ErrMissingCredentials
 	default:
