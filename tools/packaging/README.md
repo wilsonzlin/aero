@@ -19,9 +19,10 @@ cd tools/packaging/aero_packager
 
 # Example:
 #   drivers/ contains:
-#     x86/<driver>/*.{inf,sys,cat,dll}
-#     amd64/<driver>/*.{inf,sys,cat,dll}   (or x64/ on input; the packaged output uses amd64/)
-#       (Driver `.dll` files are optional, e.g. AeroGPU UMDs or WdfCoInstaller*.dll)
+#     x86/<driver>/**   (PnP driver package; at minimum: .inf/.sys/.cat; may also include UMD/coinstaller .dll files)
+#     amd64/<driver>/** (or x64/ on input; the packaged output uses amd64/)
+#       Note: the packager includes driver directories recursively and applies a small
+#       exclusion policy for build outputs (e.g. .pdb/.obj); see docs/16-guest-tools-packaging.md.
 #   guest-tools/ contains:
 #     setup.cmd
 #     uninstall.cmd
