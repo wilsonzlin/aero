@@ -71,7 +71,7 @@ stack is defined by [ADR 0015](./adr/0015-canonical-usb-stack.md):
 
 Legacy/non-canonical USB implementations (do not extend for new browser runtime work):
 
-- Native/legacy USB stack: `crates/emulator/src/io/usb/*`
+- Native/legacy USB stack: `crates/emulator`
 - Repo-root WebUSB demo RPC (direct `navigator.usb` operations): `src/platform/webusb_*`
 
 ### Backend services (production)
