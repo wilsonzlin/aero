@@ -344,10 +344,10 @@ For each entrypoint:
 - **Can be deferred:** Dynamic scaling/rotation.
  
 #### `DxgkDdiSetVidPnSourceAddress`
-   
+    
 - **Purpose:** Point scanout at a given primary surface allocation (flip).
 - **AeroGPU MVP behavior:**
-  - Extract the allocation’s guest-physical backing (PFNs).
+  - Resolve the allocation’s guest physical base address (GPA). For MVP, ensure scanout allocations are physically contiguous so they can be described by a single GPA range.
   - Program scanout0 registers:
     - `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO/HI`
     - `AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES`
@@ -646,7 +646,7 @@ Windows flips/sets scanout via `DxgkDdiSetVidPnSourceAddress`. In our driver:
   
 1. dxgkrnl passes the primary allocation handle and presentation parameters.
 2. KMD resolves that allocation to:
-   - guest physical address list (PFNs)
+   - guest physical base address (GPA) (for MVP, scanout allocations are physically contiguous)
    - pitch
    - pixel format
 3. KMD programs scanout0 MMIO registers (`AEROGPU_MMIO_REG_SCANOUT0_*`) with this info.
