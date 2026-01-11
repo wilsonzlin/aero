@@ -40,6 +40,7 @@
 #include "aerogpu_d3d10_11_wddm_submit.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
+#include "../../common/aerogpu_win32_security.h"
 #include "../../../protocol/aerogpu_dbgctl_escape.h"
 #include "../../../protocol/aerogpu_wddm_alloc.h"
 #include "../../../protocol/aerogpu_umd_private.h"
@@ -81,7 +82,9 @@ uint64_t AllocateGlobalToken() {
 
   if (!g_view) {
     const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
-    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    HANDLE mapping =
+        aerogpu::win32::CreateFileMappingWBestEffortLowIntegrity(
+            INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
     if (mapping) {
       void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
       if (view) {
