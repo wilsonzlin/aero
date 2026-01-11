@@ -76,37 +76,64 @@ runs:
           root="."
         fi
 
-        # Use the resolver shipped with this action's checkout (via `github.action_path`),
-        # rather than requiring the target checkout root to have CI scripts present.
-        #
-        # This makes the action safe to use with multi-checkout workflows where the
-        # candidate checkout could predate the CI tooling.
-        resolver="${{ github.action_path }}/../../../scripts/ci/detect-node-dir.mjs"
-        if [[ ! -f "$resolver" ]]; then
-          echo "error: workspace resolver not found at '$resolver' (working-directory='$root')" >&2
-          exit 1
+        override_dir="${AERO_NODE_DIR:-}"
+        if [[ -z "$override_dir" ]]; then
+          override_dir="${AERO_WEB_DIR:-}"
         fi
-
-        kv="$(node "$resolver" --root "$root" --require-lockfile)"
 
         dir=""
-        lockfile=""
-        while IFS='=' read -r key value; do
-          case "$key" in
-            dir) dir="$value" ;;
-            lockfile) lockfile="$value" ;;
-          esac
-        done <<< "$kv"
+        if [[ -n "$override_dir" ]]; then
+          if [[ "$override_dir" == /* ]]; then
+            dir="$override_dir"
+          elif [[ "$override_dir" == "." ]]; then
+            dir="$root"
+          elif [[ "$root" == "." ]]; then
+            dir="$override_dir"
+          else
+            dir="$root/$override_dir"
+          fi
+
+          if [[ ! -f "$dir/package.json" ]]; then
+            echo "error: override directory '$override_dir' does not contain package.json" >&2
+            echo "Set AERO_NODE_DIR to a directory containing package.json." >&2
+            exit 1
+          fi
+        else
+          candidates=("$root" "$root/frontend" "$root/web")
+          for candidate in "${candidates[@]}"; do
+            if [[ -f "$candidate/package.json" ]]; then
+              dir="$candidate"
+              break
+            fi
+          done
+        fi
 
         if [[ -z "$dir" ]]; then
-          echo "error: resolver did not return dir" >&2
-          echo "$kv" >&2
+          echo "error: unable to locate package.json under '$root' (set AERO_NODE_DIR to override)" >&2
           exit 1
         fi
 
+        # Normalize for nicer downstream logs (match detect-node-dir output style).
+        dir="${dir%/}"
+        dir="${dir#./}"
+        if [[ -z "$dir" ]]; then
+          dir="."
+        fi
+
+        lockfile=""
+        if [[ -f "$dir/package-lock.json" ]]; then
+          lockfile="$dir/package-lock.json"
+        elif [[ -f "$root/package-lock.json" ]]; then
+          lockfile="$root/package-lock.json"
+        else
+          echo "error: package-lock.json not found in '$dir' or '$root' (npm ci requires a lockfile)" >&2
+          exit 1
+        fi
+
+        lockfile="${lockfile%/}"
+        lockfile="${lockfile#./}"
         if [[ -z "$lockfile" ]]; then
-          echo "error: resolver did not return lockfile (CI requires a lockfile)" >&2
-          echo "$kv" >&2
+          echo "error: internal error: computed empty lockfile path" >&2
           exit 1
         fi
 
