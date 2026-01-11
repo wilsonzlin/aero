@@ -58,13 +58,18 @@ fn tsc_advances_without_rdtsc() {
     let mut ctx = AssistContext::default();
 
     exec_one(&mut ctx, &mut cpu, &mut bus); // NOP
+    assert_eq!(cpu.state.msr.tsc, 1);
     exec_one(&mut ctx, &mut cpu, &mut bus); // NOP
+    assert_eq!(cpu.state.msr.tsc, 2);
     exec_one(&mut ctx, &mut cpu, &mut bus); // RDTSC
     let tsc1 = tsc_from_edx_eax(&cpu.state);
+    assert_eq!(cpu.state.msr.tsc, 3);
 
     exec_one(&mut ctx, &mut cpu, &mut bus); // NOP
+    assert_eq!(cpu.state.msr.tsc, 4);
     exec_one(&mut ctx, &mut cpu, &mut bus); // RDTSC
     let tsc2 = tsc_from_edx_eax(&cpu.state);
+    assert_eq!(cpu.state.msr.tsc, 5);
 
     assert_eq!(tsc1, 2);
     assert_eq!(tsc2, 4);

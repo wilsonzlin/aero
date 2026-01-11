@@ -796,6 +796,7 @@ impl snapshot::SnapshotTarget for Machine {
 
     fn restore_mmu_state(&mut self, state: snapshot::MmuState) {
         snapshot::apply_mmu_state_to_cpu_core(&state, &mut self.cpu);
+        self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
     }
 
     fn restore_device_states(&mut self, states: Vec<snapshot::DeviceState>) {
@@ -981,5 +982,24 @@ mod tests {
 
         let out = m.take_serial_output();
         assert_eq!(out, b"OK\n");
+    }
+
+    #[test]
+    fn snapshot_restore_syncs_time_source_with_ia32_tsc() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        src.cpu.time.set_tsc(0x1234);
+        src.cpu.state.msr.tsc = 0x1234;
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&snap).unwrap();
+
+        assert_eq!(restored.cpu.state.msr.tsc, 0x1234);
+        assert_eq!(restored.cpu.time.read_tsc(), 0x1234);
     }
 }

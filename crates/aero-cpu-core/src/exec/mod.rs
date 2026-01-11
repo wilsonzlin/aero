@@ -255,12 +255,14 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                 StepExit::Continue => {
                     cpu.cpu.pending.retire_instruction();
                     cpu.cpu.time.advance_cycles(1);
+                    cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                     executed += 1;
                     continue;
                 }
                 StepExit::ContinueInhibitInterrupts => {
                     cpu.cpu.pending.retire_instruction();
                     cpu.cpu.time.advance_cycles(1);
+                    cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                     cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
                     executed += 1;
                     continue;
@@ -268,11 +270,13 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                 StepExit::Branch => {
                     cpu.cpu.pending.retire_instruction();
                     cpu.cpu.time.advance_cycles(1);
+                    cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                     break;
                 }
                 StepExit::Halted => {
                     cpu.cpu.pending.retire_instruction();
                     cpu.cpu.time.advance_cycles(1);
+                    cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                     break;
                 }
                 StepExit::BiosInterrupt(vector) => {
@@ -284,6 +288,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     cpu.cpu.state.set_pending_bios_int(vector);
                     cpu.cpu.pending.retire_instruction();
                     cpu.cpu.time.advance_cycles(1);
+                    cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                     break;
                 }
                 StepExit::Assist(AssistReason::Interrupt) => {
@@ -334,6 +339,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             } else {
                                 cpu.cpu.pending.retire_instruction();
                                 cpu.cpu.time.advance_cycles(1);
+                                cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                                 cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, false);
                                 cpu.cpu.state.set_rip(next_ip);
                             }
@@ -360,6 +366,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             } else {
                                 cpu.cpu.pending.retire_instruction();
                                 cpu.cpu.time.advance_cycles(1);
+                                cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                                 cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, true);
                                 cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
                                 cpu.cpu.state.set_rip(next_ip);
@@ -374,6 +381,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             }
                             cpu.cpu.pending.retire_instruction();
                             cpu.cpu.time.advance_cycles(1);
+                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                         }
                         Mnemonic::Int3 => {
                             cpu.cpu.pending.raise_software_interrupt(3, next_ip);
@@ -383,6 +391,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             }
                             cpu.cpu.pending.retire_instruction();
                             cpu.cpu.time.advance_cycles(1);
+                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                         }
                         Mnemonic::Int1 => {
                             cpu.cpu.pending.raise_software_interrupt(1, next_ip);
@@ -392,6 +401,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             }
                             cpu.cpu.pending.retire_instruction();
                             cpu.cpu.time.advance_cycles(1);
+                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                         }
                         Mnemonic::Into => {
                             if cpu.cpu.state.get_flag(crate::state::RFLAGS_OF) {
@@ -405,6 +415,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             }
                             cpu.cpu.pending.retire_instruction();
                             cpu.cpu.time.advance_cycles(1);
+                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                         }
                         Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq => {
                             if let Err(exit) = cpu.cpu.iret(&mut cpu.bus) {
@@ -413,6 +424,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             }
                             cpu.cpu.pending.retire_instruction();
                             cpu.cpu.time.advance_cycles(1);
+                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                         }
                         _ => {
                             cpu.exit = Some(crate::interrupts::CpuExit::UnimplementedInstruction(
@@ -476,6 +488,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         Ok(()) => {
                             cpu.cpu.pending.retire_instruction();
                             cpu.cpu.time.advance_cycles(1);
+                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
                             if inhibits_interrupt {
                                 cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
                             }

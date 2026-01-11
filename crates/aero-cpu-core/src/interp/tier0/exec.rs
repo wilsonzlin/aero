@@ -299,18 +299,21 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                 executed += 1;
                 cpu.pending.retire_instruction();
                 cpu.time.advance_cycles(1);
+                cpu.state.msr.tsc = cpu.time.read_tsc();
             }
             ExecOutcome::ContinueInhibitInterrupts => {
                 cpu.state.set_rip(next_ip);
                 executed += 1;
                 cpu.pending.retire_instruction();
                 cpu.time.advance_cycles(1);
+                cpu.state.msr.tsc = cpu.time.read_tsc();
                 cpu.pending.inhibit_interrupts_for_one_instruction();
             }
             ExecOutcome::Branch => {
                 executed += 1;
                 cpu.pending.retire_instruction();
                 cpu.time.advance_cycles(1);
+                cpu.state.msr.tsc = cpu.time.read_tsc();
                 return BatchResult {
                     executed,
                     exit: BatchExit::Branch,
@@ -321,6 +324,7 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                 executed += 1;
                 cpu.pending.retire_instruction();
                 cpu.time.advance_cycles(1);
+                cpu.state.msr.tsc = cpu.time.read_tsc();
                 if let Some(vector) = cpu.state.take_pending_bios_int() {
                     return BatchResult {
                         executed,
@@ -357,6 +361,7 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                 executed += 1;
                 cpu.pending.retire_instruction();
                 cpu.time.advance_cycles(1);
+                cpu.state.msr.tsc = cpu.time.read_tsc();
                 if inhibits_interrupt {
                     cpu.pending.inhibit_interrupts_for_one_instruction();
                 }
