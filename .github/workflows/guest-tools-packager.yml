@@ -192,6 +192,39 @@ jobs:
             }
           }
 
+      - name: Smoke-test convenience wrapper (drivers/scripts/make-guest-tools-from-ci.ps1)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          foreach ($case in @(
+            @{ OutDir = 'out/guest-tools-packager/make-from-ci-test'; SigningPolicy = 'test' },
+            @{ OutDir = 'out/guest-tools-packager/make-from-ci-testsigning'; SigningPolicy = 'testsigning' }
+          )) {
+            New-Item -ItemType Directory -Force -Path $case.OutDir | Out-Null
+
+            pwsh -NoProfile -ExecutionPolicy Bypass -File 'drivers/scripts/make-guest-tools-from-ci.ps1' `
+              -PackagesRoot 'tools/packaging/aero_packager/testdata/drivers' `
+              -GuestToolsDir 'tools/packaging/aero_packager/testdata/guest-tools' `
+              -SigningPolicy $case.SigningPolicy `
+              -CertPath 'tools/packaging/aero_packager/testdata/guest-tools/certs/test.cer' `
+              -SpecPath 'tools/packaging/aero_packager/testdata/spec.json' `
+              -OutDir $case.OutDir `
+              -Version '0.0.0' `
+              -BuildId 'ci' `
+              -SourceDateEpoch 0
+
+            foreach ($p in @(
+              (Join-Path $case.OutDir 'aero-guest-tools.iso'),
+              (Join-Path $case.OutDir 'aero-guest-tools.zip'),
+              (Join-Path $case.OutDir 'manifest.json')
+            )) {
+              if (!(Test-Path -LiteralPath $p)) {
+                throw "Missing expected wrapper output: $p"
+              }
+            }
+          }
+
       - name: Smoke-test aero-virtio Guest Tools wrapper (drivers/scripts/make-guest-tools-from-aero-virtio.ps1)
         if: matrix.os == 'windows-latest'
         shell: pwsh

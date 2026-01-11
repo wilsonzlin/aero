@@ -24,7 +24,7 @@ param(
   # - testsigning / test-signing -> test
   # - nointegritychecks / no-integrity-checks -> none
   # - prod / whql -> production
-  [ValidateSet("test", "production", "none", "testsigning", "test-signing", "prod", "whql", "nointegritychecks", "no-integrity-checks")]
+  [ValidateSet("test", "production", "none", "testsigning", "test-signing", "nointegritychecks", "no-integrity-checks", "prod", "whql")]
   [string] $SigningPolicy = "test",
 
   # Public certificate used to sign the driver catalogs (required when SigningPolicy resolves to test).
@@ -51,7 +51,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function Resolve-RepoRoot {
-  return (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+  return (Resolve-Path (Join-Path (Join-Path $PSScriptRoot "..") "..")).Path
 }
 
 $repoRoot = Resolve-RepoRoot
