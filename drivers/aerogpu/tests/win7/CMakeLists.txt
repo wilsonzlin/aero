@@ -133,6 +133,11 @@ aerogpu_add_win7_test(d3d9ex_shared_surface_ipc
 )
 target_link_libraries(d3d9ex_shared_surface_ipc PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9ex_alloc_id_persistence
+  d3d9ex_alloc_id_persistence/main.cpp
+)
+target_link_libraries(d3d9ex_alloc_id_persistence PRIVATE user32 gdi32 d3d9)
+
 if(CMAKE_SIZEOF_VOID_P EQUAL 4)
   aerogpu_add_win7_test(d3d9ex_shared_surface_wow64
     d3d9ex_shared_surface_wow64/producer_main.cpp

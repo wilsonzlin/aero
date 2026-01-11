@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -762,11 +763,13 @@ static int RunParent(int argc, char** argv) {
   const char* kTestName = "d3d9ex_alloc_id_persistence";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--show] [--iterations=N] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--dump] [--show] [--iterations=N] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
@@ -1280,8 +1283,7 @@ static int RunParent(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "child failed with exit code %lu", (unsigned long)exit_code);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
@@ -1291,4 +1293,3 @@ int main(int argc, char** argv) {
   }
   return RunParent(argc, argv);
 }
-
