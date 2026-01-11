@@ -277,11 +277,12 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                 );
             }
         } else if dev.device == "aero-gpu" {
-            // AeroGPU's canonical Windows binding contract is A3A0 (versioned ABI). The deprecated
-            // legacy bring-up identity (vendor 1AED) is intentionally excluded from the canonical
-            // Windows device contract; it requires the legacy INFs under
-            // `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model in the
-            // emulator.
+            // AeroGPU's canonical Windows binding contract is A3A0 (versioned ABI).
+            //
+            // The legacy bring-up identity (vendor 1AED) is intentionally excluded from the
+            // canonical Guest Tools device contract; it uses the legacy INFs under
+            // `drivers/aerogpu/packaging/win7/legacy/` and requires enabling the legacy emulator
+            // device model (feature `emulator/aerogpu-legacy`).
             let hwids = dev
                 .hardware_id_patterns
                 .iter()
@@ -298,16 +299,19 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                     "{name}: hardware_id_patterns missing PCI\\\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0"
                 );
             }
-            if hwids.iter().any(|p| !p.contains("VEN_A3A0&DEV_0001")) {
-                bail!("{name}: hardware_id_patterns must all be in the PCI\\\\VEN_A3A0&DEV_0001 family");
-            }
 
+            // Ensure we do not accidentally re-add the legacy AeroGPU ID to the canonical contract.
+            //
             // Avoid embedding the full legacy vendor token (`VEN_` + `1AED`) in the source (there
             // is a repo-wide guard test that tracks where legacy IDs are allowed to appear).
             let legacy_vendor = format!("VEN_{}", "1AED");
             let legacy_fragment = format!("{legacy_vendor}&DEV_0001");
             if hwids.iter().any(|p| p.contains(&legacy_fragment)) {
                 bail!("{name}: hardware_id_patterns must not include legacy bring-up HWID family (vendor 1AED); canonical contract is A3A0-only");
+            }
+
+            if hwids.iter().any(|p| !p.contains("VEN_A3A0&DEV_0001")) {
+                bail!("{name}: hardware_id_patterns must all be in the PCI\\\\VEN_A3A0&DEV_0001 family");
             }
         }
     }
@@ -1568,5 +1572,78 @@ Signature="$Windows NT$"
             .build()
             .unwrap();
         assert!(pattern_matches_transitional_virtio_device_ids(&re).is_empty());
+    }
+
+    fn virtio_entry(name: &str, virtio_device_type: u32) -> DeviceEntry {
+        let did = 0x1040u16 + u16::try_from(virtio_device_type).unwrap();
+        let trans = 0x1000u16 + u16::try_from(virtio_device_type).unwrap() - 1;
+        DeviceEntry {
+            device: name.to_string(),
+            pci_vendor_id: "0x1AF4".to_string(),
+            pci_device_id: format!("0x{did:04X}"),
+            pci_device_id_transitional: Some(format!("0x{trans:04X}")),
+            hardware_id_patterns: vec![format!("PCI\\VEN_1AF4&DEV_{did:04X}&REV_01")],
+            driver_service_name: format!("{name}-svc"),
+            inf_name: format!("{name}.inf"),
+            virtio_device_type: Some(virtio_device_type),
+        }
+    }
+
+    fn minimal_devices_for_contract_entry_tests(
+        aerogpu_patterns: &[&str],
+    ) -> BTreeMap<String, DeviceEntry> {
+        let mut devices = BTreeMap::new();
+        for (name, vtype) in [
+            ("virtio-blk", 2),
+            ("virtio-net", 1),
+            ("virtio-input", 18),
+            ("virtio-snd", 25),
+        ] {
+            let entry = virtio_entry(name, vtype);
+            devices.insert(entry.device.clone(), entry);
+        }
+        let aero_gpu = DeviceEntry {
+            device: "aero-gpu".to_string(),
+            pci_vendor_id: "0xA3A0".to_string(),
+            pci_device_id: "0x0001".to_string(),
+            pci_device_id_transitional: None,
+            hardware_id_patterns: aerogpu_patterns.iter().map(|s| s.to_string()).collect(),
+            driver_service_name: "aerogpu".to_string(),
+            inf_name: "aerogpu.inf".to_string(),
+            virtio_device_type: None,
+        };
+        devices.insert(aero_gpu.device.clone(), aero_gpu);
+        devices
+    }
+
+    #[test]
+    fn contract_entry_validation_accepts_minimal_aerogpu_patterns() {
+        let devices = minimal_devices_for_contract_entry_tests(&[
+            r"PCI\VEN_A3A0&DEV_0001",
+            r"PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
+        ]);
+        validate_contract_entries(&devices).unwrap();
+    }
+
+    #[test]
+    fn contract_entry_validation_rejects_aerogpu_patterns_outside_canonical_family() {
+        let devices = minimal_devices_for_contract_entry_tests(&[
+            r"PCI\VEN_A3A0&DEV_0001",
+            r"PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
+            r"PCI\VEN_A3A0&DEV_0002",
+        ]);
+        let err = validate_contract_entries(&devices).unwrap_err();
+        assert!(err.to_string().contains("VEN_A3A0&DEV_0001 family"));
+    }
+
+    #[test]
+    fn contract_entry_validation_rejects_legacy_aerogpu_hwid_with_specific_error() {
+        let devices = minimal_devices_for_contract_entry_tests(&[
+            r"PCI\VEN_A3A0&DEV_0001",
+            r"PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
+            r"PCI\VEN_1AED&DEV_0001",
+        ]);
+        let err = validate_contract_entries(&devices).unwrap_err();
+        assert!(err.to_string().contains("vendor 1AED"));
     }
 }
