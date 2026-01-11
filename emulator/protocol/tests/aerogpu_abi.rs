@@ -3148,13 +3148,15 @@ fn rust_layout_matches_c_headers() {
         "AEROGPU_BLEND_INV_DEST_ALPHA",
         AerogpuBlendFactor::InvDestAlpha as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_BLEND_FACTOR"),
-        AerogpuBlendFactor::BlendFactor as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_BLEND_FACTOR",
+        AerogpuBlendFactor::BlendFactor as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_BLEND_INV_BLEND_FACTOR"),
-        AerogpuBlendFactor::InvBlendFactor as u64
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_INV_BLEND_FACTOR",
+        AerogpuBlendFactor::InvBlendFactor as u64,
     );
 
     check_const(
