@@ -1253,11 +1253,13 @@ Adapter* acquire_adapter(const LUID& luid,
     adapter->umd_version = umd_version;
     adapter->adapter_callbacks = callbacks;
     adapter->adapter_callbacks2 = callbacks2;
+    adapter->share_token_allocator.set_adapter_luid(luid);
     return adapter;
   }
 
   auto* adapter = new Adapter();
   adapter->luid = luid;
+  adapter->share_token_allocator.set_adapter_luid(luid);
   adapter->open_count.store(1);
   adapter->interface_version = interface_version;
   adapter->umd_version = umd_version;
@@ -1571,21 +1573,34 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       return kD3DErrInvalidCall;
     }
 
-    // Generate a stable cross-process share_token and derive a 31-bit alloc_id
-    // from it. The allocator is shared across guest processes via a named file
-    // mapping (see allocate_share_token()).
+    // Allocate a stable cross-process alloc_id (31-bit) and a collision-resistant
+    // share_token (64-bit) and persist them in allocation private data so they
+    // survive OpenResource/OpenAllocation in another process.
     //
     // NOTE: DWM may compose many shared surfaces from *different* processes in a
     // single submission. alloc_id values must therefore avoid collisions across
-    // guest processes (not just within one process).
-    const uint64_t share_token = allocate_share_token(dev->adapter);
-    const uint32_t alloc_id = static_cast<uint32_t>(share_token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
-    if (!share_token || !alloc_id) {
-      logf("aerogpu-d3d9: Failed to allocate shared ids (share_token=%llu alloc_id=%u)\n",
-           static_cast<unsigned long long>(share_token),
-           static_cast<unsigned>(alloc_id));
-      return E_FAIL;
+    // guest processes (not just within one process). share_token must also be
+    // collision-resistant across the entire guest because the host maintains a
+    // global (share_token -> resource) table.
+    uint32_t alloc_id = 0;
+    {
+      // `allocate_share_token()` provides a monotonic 64-bit counter shared
+      // across guest processes (best effort). Derive a 31-bit alloc_id from it.
+      uint64_t alloc_token = 0;
+      do {
+        alloc_token = allocate_share_token(dev->adapter);
+        alloc_id = static_cast<uint32_t>(alloc_token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
+      } while (alloc_token != 0 && alloc_id == 0);
+
+      if (!alloc_token || !alloc_id) {
+        logf("aerogpu-d3d9: Failed to allocate shared alloc_id (token=%llu alloc_id=%u)\n",
+             static_cast<unsigned long long>(alloc_token),
+             static_cast<unsigned>(alloc_id));
+        return E_FAIL;
+      }
     }
+
+    const uint64_t share_token = dev->adapter->share_token_allocator.allocate_share_token();
 
     aerogpu_wddm_alloc_priv priv{};
     priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;

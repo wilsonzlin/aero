@@ -58,6 +58,9 @@
     <ClInclude Include="src\aerogpu_d3d9_objects.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\aerogpu_d3d9_shared_resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\aerogpu_kmd_query.h">
       <Filter>Header Files</Filter>
     </ClInclude>

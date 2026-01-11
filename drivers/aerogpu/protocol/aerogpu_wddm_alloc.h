@@ -105,6 +105,9 @@ typedef struct aerogpu_wddm_alloc_priv {
    * identical for every allocation that is part of the same shared resource.
    *
    * Recommended schemes:
+   * - Prefer a random non-zero 64-bit token from a cryptographically strong RNG
+   *   (e.g. RtlGenRandom/BCryptGenRandom). This is collision-resistant across
+   *   the entire guest (multi-process).
    * - If alloc_id is globally unique across guest processes:
    *     share_token = (u64)alloc_id
    * - If alloc_id is only unique within a process, include a process-unique

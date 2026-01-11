@@ -125,6 +125,7 @@
     <ClInclude Include="src\aerogpu_d3d9_builtin_shaders.h" />
     <ClInclude Include="src\aerogpu_d3d9_caps.h" />
     <ClInclude Include="src\aerogpu_d3d9_objects.h" />
+    <ClInclude Include="src\aerogpu_d3d9_shared_resource.h" />
     <ClInclude Include="src\aerogpu_kmd_query.h" />
     <ClInclude Include="src\aerogpu_log.h" />
     <ClInclude Include="src\aerogpu_wddm_alloc_list.h" />

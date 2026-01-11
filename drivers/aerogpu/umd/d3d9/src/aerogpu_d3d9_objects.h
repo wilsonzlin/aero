@@ -11,6 +11,7 @@
 
 #include "aerogpu_kmd_query.h"
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_d3d9_shared_resource.h"
 #include "aerogpu_wddm_context.h"
 #include "aerogpu_wddm_alloc_list.h"
 
@@ -139,6 +140,9 @@ struct Adapter {
   UINT umd_version = 0;
 
   std::atomic<uint32_t> next_handle{1};
+
+  // 64-bit token generator for shared-surface interop (EXPORT/IMPORT_SHARED_SURFACE).
+  ShareTokenAllocator share_token_allocator;
 
   // Different D3D9 runtimes/headers may use different numeric encodings for the
   // EVENT query type at the DDI boundary. Once we observe the first EVENT query

@@ -817,12 +817,15 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  * EXPORT_SHARED_SURFACE:
  * - Associates an existing `resource_handle` with a driver-chosen `share_token`.
  * - `share_token` is an opaque 64-bit value that must be stable across guest
- *   processes. On Win7 WDDM 1.1 this is achieved by having the UMD generate the
- *   token at CreateResource time and store it in the WDDM allocation private
- *   data blob that dxgkrnl preserves and returns on OpenResource/OpenAllocation
- *   (see `aerogpu_wddm_alloc.h`). A simple recommended scheme (if alloc_id is
- *   globally unique) is `share_token = (uint64_t)alloc_id`; otherwise include a
- *   process-unique component, e.g. `((u64)pid << 32) | alloc_id`.
+ *   processes and collision-resistant across the entire guest (multi-process).
+ *   Prefer generating a random non-zero 64-bit token via a cryptographically
+ *   strong RNG (e.g. RtlGenRandom/BCryptGenRandom). Deterministic schemes based
+ *   solely on per-process counters are not sufficient.
+ *
+ *   On Win7 WDDM 1.1, stability across processes is achieved by having the UMD
+ *   generate the token at CreateResource time and store it in the WDDM
+ *   allocation private data blob that dxgkrnl preserves and returns on
+ *   OpenResource/OpenAllocation (see `aerogpu_wddm_alloc.h`).
  * - The host stores a mapping of (share_token -> resource).
  * - MVP limitation: the shared resource must be backed by a single guest
  *   allocation (i.e. one contiguous guest memory range).
