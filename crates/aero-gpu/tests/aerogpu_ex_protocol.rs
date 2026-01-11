@@ -561,7 +561,10 @@ fn reusing_destroyed_underlying_handle_while_alias_alive_is_an_error() {
         .expect("submission 1 should succeed");
 
     let err = processor.process_submission(&submit2, 2).unwrap_err();
-    assert!(matches!(err, CommandProcessorError::SharedSurfaceHandleInUse(0x10)));
+    assert!(matches!(
+        err,
+        CommandProcessorError::SharedSurfaceHandleInUse(0x10)
+    ));
 }
 
 #[test]

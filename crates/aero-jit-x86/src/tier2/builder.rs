@@ -74,7 +74,9 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
                         start_rip: entry_rip,
                         code_len: 0,
                         instrs: Vec::new(),
-                        term: Terminator::SideExit { exit_rip: entry_rip },
+                        term: Terminator::SideExit {
+                            exit_rip: entry_rip,
+                        },
                     }],
                     entry: id,
                 };
@@ -155,7 +157,9 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
                 start_rip: bb.entry_rip,
                 code_len,
                 instrs: Vec::new(),
-                term: Terminator::SideExit { exit_rip: bb.entry_rip },
+                term: Terminator::SideExit {
+                    exit_rip: bb.entry_rip,
+                },
             };
         }
 
@@ -215,7 +219,9 @@ fn lower_terminator<B: Tier1Bus>(
         // re-execute the block (including the control-flow instruction).
         IrTerminator::IndirectJump { .. } => TerminatorLowering::DeoptAtEntry,
         IrTerminator::ExitToInterpreter { next_rip } => match bb.end_kind {
-            BlockEndKind::Limit { next_rip: limit_rip } => {
+            BlockEndKind::Limit {
+                next_rip: limit_rip,
+            } => {
                 debug_assert_eq!(next_rip, limit_rip);
                 match builder.get_or_create_block(next_rip) {
                     Some(id) => TerminatorLowering::Term(Terminator::Jump(id)),
@@ -470,7 +476,12 @@ impl BlockLowerer<'_> {
         }
     }
 
-    fn lower_trunc(&mut self, dst: crate::tier1_ir::ValueId, src: crate::tier1_ir::ValueId, width: Width) {
+    fn lower_trunc(
+        &mut self,
+        dst: crate::tier1_ir::ValueId,
+        src: crate::tier1_ir::ValueId,
+        width: Width,
+    ) {
         self.instrs.push(Instr::BinOp {
             dst: self.map_value(dst),
             op: BinOp::And,

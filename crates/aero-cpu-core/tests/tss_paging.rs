@@ -1,5 +1,7 @@
 use aero_cpu_core::mem::CpuBus as _;
-use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE, CR0_PG, CR4_PAE, EFER_LME, SEG_ACCESS_PRESENT};
+use aero_cpu_core::state::{
+    CpuMode, CpuState, CR0_PE, CR0_PG, CR4_PAE, EFER_LME, SEG_ACCESS_PRESENT,
+};
 use aero_cpu_core::{Exception, PagingBus};
 use aero_mmu::MemoryBus;
 use core::convert::TryInto;
@@ -133,4 +135,3 @@ fn tss_helper_reads_ignore_user_supervisor_paging_bit() {
     );
     assert_eq!(state.segments.cs.selector, 0x33);
 }
-

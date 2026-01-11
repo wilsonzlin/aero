@@ -4,9 +4,9 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 
+use aero_usb::GuestMemory;
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::usb::{SetupPacket as BusSetupPacket, UsbDevice, UsbHandshake};
-use aero_usb::GuestMemory;
 
 use aero_usb::passthrough::{
     SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
@@ -110,7 +110,9 @@ struct VecMemory {
 
 impl VecMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn read_u32(&self, addr: u32) -> u32 {
@@ -245,7 +247,8 @@ impl WebUsbProxyDeviceInner {
     }
 
     fn push_completion(&mut self, completion: UsbHostCompletion) {
-        self.completions.insert(completion_id(&completion), completion);
+        self.completions
+            .insert(completion_id(&completion), completion);
     }
 
     fn take_completion(&mut self, id: u32) -> Option<UsbHostCompletion> {
@@ -285,7 +288,10 @@ impl WebUsbProxyDeviceInner {
         let host_setup = Self::host_setup_packet(setup);
 
         if self.ctl_dir_in {
-            self.actions.push_back(UsbHostAction::ControlIn { id, setup: host_setup });
+            self.actions.push_back(UsbHostAction::ControlIn {
+                id,
+                setup: host_setup,
+            });
             self.ctl_action_kind = Some("controlIn");
         } else {
             // For OUT requests without a data stage (`wLength == 0`) this is a complete transfer.
@@ -478,7 +484,9 @@ impl UsbDevice for WebUsbProxyDevice {
             let remaining = inner.ctl_in_buf.len().saturating_sub(inner.ctl_in_offset);
             let take = remaining.min(buf.len());
             if take != 0 {
-                buf[..take].copy_from_slice(&inner.ctl_in_buf[inner.ctl_in_offset..inner.ctl_in_offset + take]);
+                buf[..take].copy_from_slice(
+                    &inner.ctl_in_buf[inner.ctl_in_offset..inner.ctl_in_offset + take],
+                );
                 inner.ctl_in_offset += take;
             }
             return UsbHandshake::Ack { bytes: take };
@@ -775,7 +783,8 @@ impl WebUsbUhciPassthroughHarness {
                         }
                     }
                     self.phase = HarnessPhase::GetDeviceDesc18;
-                    self.phase_detail = format!("GET_DESCRIPTOR(Device, 18) max_packet={}", self.max_packet);
+                    self.phase_detail =
+                        format!("GET_DESCRIPTOR(Device, 18) max_packet={}", self.max_packet);
                     self.pending_chain = Some(build_control_in_chain(
                         &mut self.mem,
                         &mut self.alloc,
@@ -858,7 +867,8 @@ impl WebUsbUhciPassthroughHarness {
                     }
 
                     self.phase = HarnessPhase::GetConfigDescFull;
-                    self.phase_detail = format!("GET_DESCRIPTOR(Config, {})", self.config_total_len);
+                    self.phase_detail =
+                        format!("GET_DESCRIPTOR(Config, {})", self.config_total_len);
                     self.pending_chain = Some(build_control_in_chain(
                         &mut self.mem,
                         &mut self.alloc,
@@ -905,8 +915,8 @@ impl WebUsbUhciPassthroughHarness {
 
     /// Push a single host completion into the harness.
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
-        let completion: UsbHostCompletion =
-            serde_wasm_bindgen::from_value(completion).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.device.borrow_mut().push_completion(completion);
         Ok(())
     }

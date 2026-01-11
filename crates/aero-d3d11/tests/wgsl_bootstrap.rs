@@ -76,4 +76,3 @@ fn bootstrap_ignores_nop_and_customdata_comment() {
         .wgsl;
     assert!(wgsl.contains("@fragment"));
 }
-

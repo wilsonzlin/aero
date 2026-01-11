@@ -612,7 +612,8 @@ fn deliver_protected_mode<B: CpuBus>(
         {
             return Ok(());
         }
-        if push32(bus, state, pending, old_esp, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+        if push32(bus, state, pending, old_esp, saved_rip)? == PushOutcome::NestedExceptionDelivered
+        {
             return Ok(());
         }
     }
@@ -788,7 +789,8 @@ fn deliver_long_mode<B: CpuBus>(
         {
             return Ok(());
         }
-        if push64(bus, state, pending, old_rsp, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+        if push64(bus, state, pending, old_rsp, saved_rip)? == PushOutcome::NestedExceptionDelivered
+        {
             return Ok(());
         }
         if new_cpl < current_cpl {

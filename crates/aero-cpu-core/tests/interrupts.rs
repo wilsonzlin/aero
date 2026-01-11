@@ -282,12 +282,7 @@ impl CpuBus for FailingWriteU32Bus {
         self.inner.io_read(port, size)
     }
 
-    fn io_write(
-        &mut self,
-        port: u16,
-        size: u32,
-        val: u64,
-    ) -> Result<(), aero_cpu_core::Exception> {
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), aero_cpu_core::Exception> {
         self.inner.io_write(port, size, val)
     }
 }
@@ -595,7 +590,8 @@ fn int_long_mode_non_canonical_ist_pointer_delivers_ts_using_alt_ist() -> Result
     // Provide a valid RSP0 (not used because the interrupt uses IST1).
     mem.write_u64(tss_base + 4, 0x9000).unwrap();
     // Non-canonical IST1 should raise #TS.
-    mem.write_u64(tss_base + 0x24, 0x0001_0000_0000_0000).unwrap();
+    mem.write_u64(tss_base + 0x24, 0x0001_0000_0000_0000)
+        .unwrap();
     // IST2 stack for #TS delivery.
     mem.write_u64(tss_base + 0x2C, 0x9000).unwrap();
 

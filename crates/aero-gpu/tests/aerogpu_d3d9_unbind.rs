@@ -208,4 +208,3 @@ fn d3d9_set_index_buffer_zero_handle_unbinds() {
         Ok(_) => panic!("expected draw_indexed to fail due to missing index buffer"),
     }
 }
-

@@ -2,8 +2,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 
 use aero_snapshot::{
-    Compression, CpuState, RamMode, SectionId, SnapshotError, SnapshotIndex,
-    SnapshotSectionInfo, SnapshotTarget,
+    Compression, CpuState, RamMode, SectionId, SnapshotError, SnapshotIndex, SnapshotSectionInfo,
+    SnapshotTarget,
 };
 
 use crate::error::{Result, XtaskError};
@@ -494,11 +494,7 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
     Ok(())
 }
 
-fn validate_string_u32_utf8(
-    r: &mut impl Read,
-    max_len: u32,
-    what: &str,
-) -> Result<()> {
+fn validate_string_u32_utf8(r: &mut impl Read, max_len: u32, what: &str) -> Result<()> {
     let len = read_u32_le(r)?;
     if len > max_len {
         return Err(XtaskError::Message(format!("{what} too long")));
@@ -506,7 +502,9 @@ fn validate_string_u32_utf8(
     let mut limited = r.take(len as u64);
     validate_utf8_bytes(&mut limited, what)?;
     if limited.limit() != 0 {
-        return Err(XtaskError::Message(format!("{what}: truncated string bytes")));
+        return Err(XtaskError::Message(format!(
+            "{what}: truncated string bytes"
+        )));
     }
     Ok(())
 }
@@ -545,7 +543,9 @@ fn validate_utf8_bytes<R: Read>(r: &mut std::io::Take<R>, what: &str) -> Result<
     }
 
     if r.limit() != 0 {
-        return Err(XtaskError::Message(format!("{what}: truncated string bytes")));
+        return Err(XtaskError::Message(format!(
+            "{what}: truncated string bytes"
+        )));
     }
     if carry_len != 0 {
         return Err(XtaskError::Message(format!("{what}: invalid utf-8")));

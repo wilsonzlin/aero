@@ -159,7 +159,10 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
         aerogpu_inf_text.contains(&expected_hwid_short),
         "aerogpu.inf must contain {expected_hwid_short:?}"
     );
-    let expected_add_service = format!("AddService = {}", require_json_str(aerogpu, "driver_service_name"));
+    let expected_add_service = format!(
+        "AddService = {}",
+        require_json_str(aerogpu, "driver_service_name")
+    );
     assert!(
         contains_needle(&aerogpu_inf_text, &expected_add_service),
         "aerogpu.inf must contain {expected_add_service:?} (case-insensitive)"
@@ -214,10 +217,22 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     // checks can enforce its absence in docs without tripping on this test itself.
     let legacy_guest_windows_slash = format!("{}/{}", "guest", "windows");
     let legacy_guest_windows_backslash = format!("{}\\{}", "guest", "windows");
-    assert!(!contains_needle(&contract_text, &legacy_guest_windows_slash));
-    assert!(!contains_needle(&contract_md_text, &legacy_guest_windows_slash));
-    assert!(!contains_needle(&contract_text, &legacy_guest_windows_backslash));
-    assert!(!contains_needle(&contract_md_text, &legacy_guest_windows_backslash));
+    assert!(!contains_needle(
+        &contract_text,
+        &legacy_guest_windows_slash
+    ));
+    assert!(!contains_needle(
+        &contract_md_text,
+        &legacy_guest_windows_slash
+    ));
+    assert!(!contains_needle(
+        &contract_text,
+        &legacy_guest_windows_backslash
+    ));
+    assert!(!contains_needle(
+        &contract_md_text,
+        &legacy_guest_windows_backslash
+    ));
 }
 
 fn contains_needle(haystack: &str, needle: &str) -> bool {
@@ -263,7 +278,10 @@ fn windows_device_contract_driver_service_names_match_driver_infs() {
             "virtio-input",
             root.join("drivers/windows/virtio-input/virtio-input.inf"),
         ),
-        ("aero-gpu", root.join("drivers/aerogpu/packaging/win7/aerogpu.inf")),
+        (
+            "aero-gpu",
+            root.join("drivers/aerogpu/packaging/win7/aerogpu.inf"),
+        ),
     ];
 
     for (device_name, inf_path) in cases {
@@ -430,7 +448,10 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
         if rel.is_empty() {
             continue;
         }
-        if allowed_prefixes.iter().any(|prefix| rel.starts_with(prefix)) {
+        if allowed_prefixes
+            .iter()
+            .any(|prefix| rel.starts_with(prefix))
+        {
             continue;
         }
         let rel_str = String::from_utf8_lossy(rel);

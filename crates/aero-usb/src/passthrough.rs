@@ -793,10 +793,10 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
             }
             ControlStage::InDataPending => {
                 let setup = state.setup;
-                match self.passthrough.handle_control_request(
-                    Self::to_passthrough_setup(setup),
-                    None,
-                ) {
+                match self
+                    .passthrough
+                    .handle_control_request(Self::to_passthrough_setup(setup), None)
+                {
                     ControlResponse::Nak => UsbHandshake::Nak,
                     ControlResponse::Stall => UsbHandshake::Stall,
                     ControlResponse::Timeout => UsbHandshake::Timeout,
@@ -844,10 +844,10 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                     return UsbHandshake::Stall;
                 }
                 let setup = state.setup;
-                match self.passthrough.handle_control_request(
-                    Self::to_passthrough_setup(setup),
-                    data.as_deref(),
-                ) {
+                match self
+                    .passthrough
+                    .handle_control_request(Self::to_passthrough_setup(setup), data.as_deref())
+                {
                     ControlResponse::Nak => UsbHandshake::Nak,
                     ControlResponse::Ack => {
                         if let Some(addr) = self.pending_address.take() {

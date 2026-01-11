@@ -1026,7 +1026,9 @@ impl AerogpuD3d9Executor {
                                         return Ok(());
                                     }
                                     if origin_y.saturating_add(copy_h) > *height {
-                                        return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
+                                        return Err(AerogpuD3d9Error::UploadOutOfBounds(
+                                            resource_handle,
+                                        ));
                                     }
 
                                     let src_bpr = src_pitch;
@@ -1051,10 +1053,14 @@ impl AerogpuD3d9Executor {
                                 } else {
                                     // Single-row upload (eg `UpdateSurface`, or chunked texture uploads).
                                     if x_bytes.saturating_add(size_bytes) > src_pitch_u64 {
-                                        return Err(AerogpuD3d9Error::UploadNotSupported(resource_handle));
+                                        return Err(AerogpuD3d9Error::UploadNotSupported(
+                                            resource_handle,
+                                        ));
                                     }
                                     if (size_bytes % bpp as u64) != 0 {
-                                        return Err(AerogpuD3d9Error::UploadNotSupported(resource_handle));
+                                        return Err(AerogpuD3d9Error::UploadNotSupported(
+                                            resource_handle,
+                                        ));
                                     }
 
                                     let copy_w = (size_bytes / bpp as u64) as u32;
@@ -1062,7 +1068,9 @@ impl AerogpuD3d9Executor {
                                         return Ok(());
                                     }
                                     if x.saturating_add(copy_w) > *width {
-                                        return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
+                                        return Err(AerogpuD3d9Error::UploadOutOfBounds(
+                                            resource_handle,
+                                        ));
                                     }
 
                                     let src_bpr = copy_w.saturating_mul(bpp);
@@ -1483,7 +1491,9 @@ impl AerogpuD3d9Executor {
                     s if s == cmd::AerogpuShaderStage::Vertex as u32 => {
                         Some(shader::ShaderStage::Vertex)
                     }
-                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => Some(shader::ShaderStage::Pixel),
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => {
+                        Some(shader::ShaderStage::Pixel)
+                    }
                     _ => None,
                 };
                 if let Some(expected_stage) = expected_stage {
@@ -1699,9 +1709,9 @@ impl AerogpuD3d9Executor {
             } => {
                 let start = start_slot as usize;
                 let count = buffer_count as usize;
-                let end = start
-                    .checked_add(count)
-                    .ok_or_else(|| AerogpuD3d9Error::Validation("SET_VERTEX_BUFFERS: slot range overflow".into()))?;
+                let end = start.checked_add(count).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation("SET_VERTEX_BUFFERS: slot range overflow".into())
+                })?;
                 if end > self.state.vertex_buffers.len() {
                     return Err(AerogpuD3d9Error::Validation(
                         "SET_VERTEX_BUFFERS: slot range out of bounds".into(),
@@ -2042,10 +2052,7 @@ impl AerogpuD3d9Executor {
             let len = usize::try_from(len_u64)
                 .map_err(|_| AerogpuD3d9Error::Validation("buffer dirty range too large".into()))?;
             let mut data = vec![0u8; len];
-            let src_gpa = backing
-                .base_gpa
-                .checked_add(aligned_start)
-                .ok_or_else(|| {
+            let src_gpa = backing.base_gpa.checked_add(aligned_start).ok_or_else(|| {
                 AerogpuD3d9Error::Validation("buffer backing gpa overflow".into())
             })?;
             guest_memory.read(src_gpa, &mut data)?;
@@ -3093,10 +3100,14 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 
 fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat, AerogpuD3d9Error> {
     Ok(match format {
-        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 || x == AerogpuFormat::B8G8R8X8Unorm as u32 => {
+        x if x == AerogpuFormat::B8G8R8A8Unorm as u32
+            || x == AerogpuFormat::B8G8R8X8Unorm as u32 =>
+        {
             wgpu::TextureFormat::Bgra8Unorm
         }
-        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 || x == AerogpuFormat::R8G8B8X8Unorm as u32 => {
+        x if x == AerogpuFormat::R8G8B8A8Unorm as u32
+            || x == AerogpuFormat::R8G8B8X8Unorm as u32 =>
+        {
             wgpu::TextureFormat::Rgba8Unorm
         }
         x if x == AerogpuFormat::D24UnormS8Uint as u32 => wgpu::TextureFormat::Depth24PlusStencil8,
@@ -3119,9 +3130,15 @@ fn bytes_per_pixel(format: wgpu::TextureFormat) -> u32 {
 
 fn map_topology(topology: u32) -> Result<wgpu::PrimitiveTopology, AerogpuD3d9Error> {
     Ok(match topology {
-        x if x == cmd::AerogpuPrimitiveTopology::PointList as u32 => wgpu::PrimitiveTopology::PointList,
-        x if x == cmd::AerogpuPrimitiveTopology::LineList as u32 => wgpu::PrimitiveTopology::LineList,
-        x if x == cmd::AerogpuPrimitiveTopology::LineStrip as u32 => wgpu::PrimitiveTopology::LineStrip,
+        x if x == cmd::AerogpuPrimitiveTopology::PointList as u32 => {
+            wgpu::PrimitiveTopology::PointList
+        }
+        x if x == cmd::AerogpuPrimitiveTopology::LineList as u32 => {
+            wgpu::PrimitiveTopology::LineList
+        }
+        x if x == cmd::AerogpuPrimitiveTopology::LineStrip as u32 => {
+            wgpu::PrimitiveTopology::LineStrip
+        }
         x if x == cmd::AerogpuPrimitiveTopology::TriangleList as u32 => {
             wgpu::PrimitiveTopology::TriangleList
         }

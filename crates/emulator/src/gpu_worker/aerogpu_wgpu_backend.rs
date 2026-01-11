@@ -10,7 +10,8 @@ use anyhow::{anyhow, bail, Result};
 use memory::MemoryBus;
 
 use crate::gpu_worker::aerogpu_backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend,
 };
 
 pub struct AerogpuWgpuBackend {
@@ -77,7 +78,10 @@ fn decode_alloc_table_bytes(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
     let mut entries = Vec::with_capacity(entry_count);
     for idx in 0..entry_count {
         let off = header_size
-            .checked_add(idx.checked_mul(stride).ok_or_else(|| anyhow!("alloc table index overflow"))?)
+            .checked_add(
+                idx.checked_mul(stride)
+                    .ok_or_else(|| anyhow!("alloc table index overflow"))?,
+            )
             .ok_or_else(|| anyhow!("alloc table index overflow"))?;
         let end = off
             .checked_add(AerogpuAllocEntry::SIZE_BYTES)

@@ -1550,17 +1550,17 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         for range in &buffer.dirty_ranges {
             let aligned_start = align_down_u64(range.start, wgpu::COPY_BUFFER_ALIGNMENT);
-            let aligned_end = align_up_u64(range.end, wgpu::COPY_BUFFER_ALIGNMENT)?
-                .min(buffer.size_bytes);
+            let aligned_end =
+                align_up_u64(range.end, wgpu::COPY_BUFFER_ALIGNMENT)?.min(buffer.size_bytes);
             let len = aligned_end
                 .checked_sub(aligned_start)
                 .ok_or_else(|| ExecutorError::Validation("invalid dirty range".into()))?;
-            let len_usize = usize::try_from(len).map_err(|_| {
-                ExecutorError::Validation("buffer dirty range too large".into())
-            })?;
+            let len_usize = usize::try_from(len)
+                .map_err(|_| ExecutorError::Validation("buffer dirty range too large".into()))?;
             let mut data = vec![0u8; len_usize];
             guest_memory.read(backing.base_gpa + aligned_start, &mut data)?;
-            self.queue.write_buffer(&buffer.buffer, aligned_start, &data);
+            self.queue
+                .write_buffer(&buffer.buffer, aligned_start, &data);
         }
 
         buffer.dirty_ranges.clear();

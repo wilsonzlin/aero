@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
-use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState,
     AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
@@ -31,9 +30,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR,
-    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE, AEROGPU_FEATURE_TRANSFER,
-    AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE,
-    AEROGPU_MMIO_MAGIC, AEROGPU_MMIO_REG_DOORBELL, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS,
+    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE,
+    AEROGPU_FEATURE_TRANSFER, AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC,
+    AEROGPU_MMIO_REG_DOORBELL, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS,
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
     AEROGPU_PCI_BAR0_INDEX, AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
     AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF, AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE,
@@ -43,17 +42,20 @@ use aero_protocol::aerogpu::aerogpu_pci::{
 use aero_protocol::aerogpu::aerogpu_ring::{
     write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader,
     AerogpuFencePage, AerogpuRingDecodeError, AerogpuRingHeader, AerogpuSubmitDesc,
-    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, AEROGPU_SUBMIT_FLAG_NO_IRQ,
-    AEROGPU_SUBMIT_FLAG_PRESENT,
+    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC,
+    AEROGPU_SUBMIT_FLAG_NO_IRQ, AEROGPU_SUBMIT_FLAG_PRESENT,
 };
 use aero_protocol::aerogpu::aerogpu_umd_private::{
     AerogpuUmdPrivateV1, AEROGPU_UMDPRIV_FEATURE_CURSOR, AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE,
-    AEROGPU_UMDPRIV_FEATURE_SCANOUT, AEROGPU_UMDPRIV_FEATURE_TRANSFER, AEROGPU_UMDPRIV_FEATURE_VBLANK,
-    AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE, AEROGPU_UMDPRIV_FLAG_HAS_VBLANK, AEROGPU_UMDPRIV_FLAG_IS_LEGACY,
+    AEROGPU_UMDPRIV_FEATURE_SCANOUT, AEROGPU_UMDPRIV_FEATURE_TRANSFER,
+    AEROGPU_UMDPRIV_FEATURE_VBLANK, AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE,
+    AEROGPU_UMDPRIV_FLAG_HAS_VBLANK, AEROGPU_UMDPRIV_FLAG_IS_LEGACY,
     AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP, AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU,
     AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI,
-    AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO, AEROGPU_UMDPRIV_MMIO_REG_MAGIC, AEROGPU_UMDPRIV_STRUCT_VERSION_V1,
+    AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO, AEROGPU_UMDPRIV_MMIO_REG_MAGIC,
+    AEROGPU_UMDPRIV_STRUCT_VERSION_V1,
 };
+use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 
 #[derive(Debug, Default)]
 struct AbiDump {
@@ -315,9 +317,7 @@ fn assert_name_set_eq(mut seen: Vec<String>, mut expected: Vec<String>, what: &s
     let missing: Vec<String> = expected_set.difference(&seen_set).cloned().collect();
     let extra: Vec<String> = seen_set.difference(&expected_set).cloned().collect();
 
-    panic!(
-        "{what} coverage mismatch.\nmissing: {missing:#?}\nextra: {extra:#?}"
-    );
+    panic!("{what} coverage mismatch.\nmissing: {missing:#?}\nextra: {extra:#?}");
 }
 
 fn parse_c_cmd_opcode_const_names() -> Vec<String> {
@@ -687,9 +687,8 @@ fn rust_layout_matches_c_headers() {
 
     // Coverage guard: every `struct aerogpu_*` defined in `aerogpu_cmd.h` must have its size
     // checked against the C headers (not just the packet structs tied to opcodes).
-    let expected_cmd_struct_defs = parse_c_struct_def_names(
-        &repo_root().join("drivers/aerogpu/protocol/aerogpu_cmd.h"),
-    );
+    let expected_cmd_struct_defs =
+        parse_c_struct_def_names(&repo_root().join("drivers/aerogpu/protocol/aerogpu_cmd.h"));
     let mut cmd_struct_defs_seen = vec![
         "aerogpu_cmd_stream_header".to_string(),
         "aerogpu_cmd_hdr".to_string(),
@@ -708,9 +707,8 @@ fn rust_layout_matches_c_headers() {
     );
 
     // Coverage guard: same for `aerogpu_ring.h`.
-    let expected_ring_struct_defs = parse_c_struct_def_names(
-        &repo_root().join("drivers/aerogpu/protocol/aerogpu_ring.h"),
-    );
+    let expected_ring_struct_defs =
+        parse_c_struct_def_names(&repo_root().join("drivers/aerogpu/protocol/aerogpu_ring.h"));
     let ring_struct_defs_seen = vec![
         "aerogpu_alloc_table_header".to_string(),
         "aerogpu_alloc_entry".to_string(),
@@ -2334,8 +2332,16 @@ fn rust_layout_matches_c_headers() {
     };
 
     // aerogpu_pci.h
-    check_const(&mut pci_consts_seen, "AEROGPU_ABI_MAJOR", AEROGPU_ABI_MAJOR as u64);
-    check_const(&mut pci_consts_seen, "AEROGPU_ABI_MINOR", AEROGPU_ABI_MINOR as u64);
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_ABI_MAJOR",
+        AEROGPU_ABI_MAJOR as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_ABI_MINOR",
+        AEROGPU_ABI_MINOR as u64,
+    );
     check_const(
         &mut pci_consts_seen,
         "AEROGPU_ABI_VERSION_U32",
@@ -2694,7 +2700,11 @@ fn rust_layout_matches_c_headers() {
         AerogpuFormat::D32Float as u64,
     );
 
-    assert_name_set_eq(pci_consts_seen, expected_pci_consts, "aerogpu_pci.h constants");
+    assert_name_set_eq(
+        pci_consts_seen,
+        expected_pci_consts,
+        "aerogpu_pci.h constants",
+    );
 
     // aerogpu_ring.h
     check_const(
@@ -2743,7 +2753,11 @@ fn rust_layout_matches_c_headers() {
         ring::AEROGPU_ALLOC_FLAG_READONLY as u64,
     );
 
-    assert_name_set_eq(ring_consts_seen, expected_ring_consts, "aerogpu_ring.h constants");
+    assert_name_set_eq(
+        ring_consts_seen,
+        expected_ring_consts,
+        "aerogpu_ring.h constants",
+    );
 
     // aerogpu_cmd.h
     check_const(
@@ -2904,7 +2918,11 @@ fn rust_layout_matches_c_headers() {
         AerogpuBlendFactor::InvDestAlpha as u64,
     );
 
-    check_const(&mut cmd_consts_seen, "AEROGPU_BLEND_OP_ADD", AerogpuBlendOp::Add as u64);
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_OP_ADD",
+        AerogpuBlendOp::Add as u64,
+    );
     check_const(
         &mut cmd_consts_seen,
         "AEROGPU_BLEND_OP_SUBTRACT",
@@ -2915,8 +2933,16 @@ fn rust_layout_matches_c_headers() {
         "AEROGPU_BLEND_OP_REV_SUBTRACT",
         AerogpuBlendOp::RevSubtract as u64,
     );
-    check_const(&mut cmd_consts_seen, "AEROGPU_BLEND_OP_MIN", AerogpuBlendOp::Min as u64);
-    check_const(&mut cmd_consts_seen, "AEROGPU_BLEND_OP_MAX", AerogpuBlendOp::Max as u64);
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_OP_MIN",
+        AerogpuBlendOp::Min as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_BLEND_OP_MAX",
+        AerogpuBlendOp::Max as u64,
+    );
 
     check_const(
         &mut cmd_consts_seen,
@@ -2970,13 +2996,21 @@ fn rust_layout_matches_c_headers() {
         AerogpuFillMode::Wireframe as u64,
     );
 
-    check_const(&mut cmd_consts_seen, "AEROGPU_CULL_NONE", AerogpuCullMode::None as u64);
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_CULL_NONE",
+        AerogpuCullMode::None as u64,
+    );
     check_const(
         &mut cmd_consts_seen,
         "AEROGPU_CULL_FRONT",
         AerogpuCullMode::Front as u64,
     );
-    check_const(&mut cmd_consts_seen, "AEROGPU_CULL_BACK", AerogpuCullMode::Back as u64);
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_CULL_BACK",
+        AerogpuCullMode::Back as u64,
+    );
 
     check_const(
         &mut cmd_consts_seen,
@@ -3036,7 +3070,11 @@ fn rust_layout_matches_c_headers() {
         AerogpuPrimitiveTopology::TriangleFan as u64,
     );
 
-    assert_name_set_eq(cmd_consts_seen, expected_cmd_consts, "aerogpu_cmd.h constants");
+    assert_name_set_eq(
+        cmd_consts_seen,
+        expected_cmd_consts,
+        "aerogpu_cmd.h constants",
+    );
 
     assert_eq!(
         abi.konst("AEROGPU_UMDPRIV_STRUCT_VERSION_V1"),

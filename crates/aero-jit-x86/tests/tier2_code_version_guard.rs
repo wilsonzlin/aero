@@ -35,7 +35,12 @@ fn guard_code_version_invalidates_on_version_mismatch() {
     let mut state = T2State::default();
     state.cpu.rip = entry_rip;
     let res = run_trace(&trace, &env, &mut bus, &mut state, 1);
-    assert_eq!(res.exit, RunExit::Invalidate { next_rip: entry_rip });
+    assert_eq!(
+        res.exit,
+        RunExit::Invalidate {
+            next_rip: entry_rip
+        }
+    );
 }
 
 #[test]

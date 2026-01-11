@@ -253,12 +253,8 @@ fn aerogpu_ci_package_manifest_includes_wow64_umds_for_dx11_inf() {
 
     let manifest_path = repo_root.join("drivers/aerogpu/ci-package.json");
     let manifest_text = read_file(&manifest_path);
-    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text).unwrap_or_else(|err| {
-        panic!(
-            "{}: failed to parse JSON: {err}",
-            manifest_path.display()
-        )
-    });
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
+        .unwrap_or_else(|err| panic!("{}: failed to parse JSON: {err}", manifest_path.display()));
 
     let stages_dx11_inf = match manifest_json.get("infFiles") {
         Some(value) => value
@@ -274,12 +270,14 @@ fn aerogpu_ci_package_manifest_includes_wow64_umds_for_dx11_inf() {
                 })
             })
             .any(|path| path.ends_with("aerogpu_dx11.inf")),
-        None => repo_root
-            .join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf")
-            .is_file()
-            || repo_root
-                .join("drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf")
-                .is_file(),
+        None => {
+            repo_root
+                .join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf")
+                .is_file()
+                || repo_root
+                    .join("drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf")
+                    .is_file()
+        }
     };
 
     if !stages_dx11_inf {

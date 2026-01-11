@@ -1,5 +1,8 @@
 #![cfg(feature = "aerogpu-exec")]
 
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+};
 use emulator::devices::aerogpu_regs::ring_control;
 use emulator::devices::aerogpu_ring::AEROGPU_RING_MAGIC;
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
@@ -7,7 +10,6 @@ use emulator::gpu_worker::aerogpu_executor::{
     AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode,
 };
 use emulator::gpu_worker::aerogpu_wgpu_backend::AerogpuWgpuBackend;
-use aero_protocol::aerogpu::aerogpu_cmd::{AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET};
 use memory::MemoryBus;
 
 #[derive(Clone, Debug)]
@@ -17,7 +19,9 @@ struct VecMemory {
 
 impl VecMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {

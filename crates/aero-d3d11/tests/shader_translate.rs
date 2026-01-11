@@ -207,7 +207,9 @@ fn translates_vertex_legacy_position_output_semantic() {
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
-    assert!(translated.wgsl.contains("@builtin(position) pos: vec4<f32>"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(position) pos: vec4<f32>"));
     assert!(translated.wgsl.contains("out.pos = o0;"));
 }
 

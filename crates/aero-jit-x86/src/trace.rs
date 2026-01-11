@@ -92,7 +92,9 @@ impl<'a> TraceBuilder<'a> {
                     if instr_budget == 0 {
                         break;
                     }
-                    trace.ir.body.push(Instr::SideExit { exit_rip: *exit_rip });
+                    trace.ir.body.push(Instr::SideExit {
+                        exit_rip: *exit_rip,
+                    });
                     break;
                 }
                 crate::t2_ir::Terminator::Jump(t) => {

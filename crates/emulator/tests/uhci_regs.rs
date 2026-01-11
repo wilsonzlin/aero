@@ -461,7 +461,9 @@ fn uhci_reserved_register_bytes_read_as_zero() {
 fn uhci_portsc_high_byte_write_does_not_clear_change_bits() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     let keyboard = UsbHidKeyboardHandle::new();
-    uhci.controller.hub_mut().attach(0, Box::new(keyboard.clone()));
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
     uhci.controller.hub_mut().force_enable_for_tests(0);
 
     const PORTSC_CSC: u16 = 1 << 1;

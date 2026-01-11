@@ -11,7 +11,7 @@ mod util;
 use util::{
     actlen, install_frame_list, td_ctrl, td_token, write_qh, write_td, Alloc, TestIrq, TestMemory,
     LINK_PTR_T, PORTSC_PR, REG_FRBASEADD, REG_PORTSC1, REG_USBCMD, REG_USBINTR, TD_CTRL_ACTIVE,
-    TD_CTRL_NAK, TD_CTRL_STALLED, USBINTR_IOC, USBCMD_RUN,
+    TD_CTRL_NAK, TD_CTRL_STALLED, USBCMD_RUN, USBINTR_IOC,
 };
 
 fn setup_packet_bytes(setup: SetupPacket) -> [u8; 8] {

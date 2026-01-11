@@ -5,7 +5,9 @@ use std::{
 };
 
 use aero_net_stack::packet::*;
-use aero_net_stack::{Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent};
+use aero_net_stack::{
+    Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
+};
 use futures_util::{SinkExt, StreamExt};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -137,7 +139,12 @@ async fn net_e2e() {
     .expect("gateway connect timeout")
     .expect("gateway connect");
     assert!(stack
-        .handle_tcp_proxy_event(TcpProxyEvent::Connected { connection_id: conn_id }, 31)
+        .handle_tcp_proxy_event(
+            TcpProxyEvent::Connected {
+                connection_id: conn_id
+            },
+            31
+        )
         .is_empty());
 
     // Guest ACK to complete handshake.
@@ -171,18 +178,21 @@ async fn net_e2e() {
     );
     let actions = stack.process_outbound_ethernet(&psh, 33);
     let to_proxy = match actions.as_slice() {
-        [Action::TcpProxySend { connection_id, data }, Action::EmitFrame(_)]
-        | [Action::EmitFrame(_), Action::TcpProxySend { connection_id, data }] => {
+        [Action::TcpProxySend {
+            connection_id,
+            data,
+        }, Action::EmitFrame(_)]
+        | [Action::EmitFrame(_), Action::TcpProxySend {
+            connection_id,
+            data,
+        }] => {
             assert_eq!(*connection_id, conn_id);
             data.clone()
         }
         _ => panic!("expected TcpProxySend + EmitFrame, got {actions:?}"),
     };
 
-    tcp_proxy
-        .send_binary(&to_proxy)
-        .await
-        .expect("proxy send");
+    tcp_proxy.send_binary(&to_proxy).await.expect("proxy send");
     let echoed = timeout(Duration::from_secs(2), tcp_proxy.recv_exact(to_proxy.len()))
         .await
         .expect("proxy recv timeout")
@@ -232,7 +242,10 @@ async fn net_e2e() {
 
     let echoed_udp = timeout(
         Duration::from_secs(2),
-        udp_send_recv(SocketAddr::new(udp_dst_ip.into(), udp_dst_port), udp_payload),
+        udp_send_recv(
+            SocketAddr::new(udp_dst_ip.into(), udp_dst_port),
+            udp_payload,
+        ),
     )
     .await
     .expect("udp roundtrip timeout")
@@ -421,7 +434,10 @@ async fn handle_doh_connection(
         return Ok(());
     }
 
-    let content_type = headers.get("content-type").map(|v| v.as_str()).unwrap_or("");
+    let content_type = headers
+        .get("content-type")
+        .map(|v| v.as_str())
+        .unwrap_or("");
     if !content_type.starts_with("application/dns-message") {
         stream
             .write_all(b"HTTP/1.1 415 Unsupported Media Type\r\nContent-Length: 0\r\n\r\n")
@@ -558,10 +574,7 @@ impl TcpProxyClient {
         remote_ip: Ipv4Addr,
         remote_port: u16,
     ) -> Result<Self, tokio_tungstenite::tungstenite::Error> {
-        let url = format!(
-            "ws://{proxy_addr}/tcp?target={}:{remote_port}",
-            remote_ip
-        );
+        let url = format!("ws://{proxy_addr}/tcp?target={}:{remote_port}", remote_ip);
         let (ws, _resp) = tokio_tungstenite::connect_async(url).await?;
         Ok(Self { ws })
     }
@@ -570,9 +583,7 @@ impl TcpProxyClient {
         &mut self,
         data: &[u8],
     ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
-        self.ws
-            .send(Message::Binary(data.to_vec().into()))
-            .await?;
+        self.ws.send(Message::Binary(data.to_vec().into())).await?;
         Ok(())
     }
 
@@ -644,9 +655,9 @@ async fn read_http_message(
     let header = std::str::from_utf8(&buf[..header_end])
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid http header"))?;
     let mut lines = header.split("\r\n");
-    let start_line = lines
-        .next()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "missing start line"))?;
+    let start_line = lines.next().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "missing start line")
+    })?;
     let mut start_parts = start_line.split_whitespace();
     let method = start_parts
         .next()
@@ -906,7 +917,12 @@ fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
     out
 }
 
-fn build_dhcp_request(xid: u32, mac: MacAddr, requested_ip: Ipv4Addr, server_id: Ipv4Addr) -> Vec<u8> {
+fn build_dhcp_request(
+    xid: u32,
+    mac: MacAddr,
+    requested_ip: Ipv4Addr,
+    server_id: Ipv4Addr,
+) -> Vec<u8> {
     let mut out = vec![0u8; 240];
     out[0] = 1; // BOOTREQUEST
     out[1] = 1;

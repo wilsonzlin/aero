@@ -132,14 +132,8 @@ fn assemble_vs_passthrough_pos_and_t0() -> Vec<u8> {
     //   mov oT0, v1
     //   end
     let mut words = vec![0xFFFE_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(6, 0, 0xF), enc_src(1, 1, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    words.extend(enc_inst(0x0001, &[enc_dst(6, 0, 0xF), enc_src(1, 1, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -150,10 +144,7 @@ fn assemble_ps_solid_color_c0() -> Vec<u8> {
     //   mov oC0, c0
     //   end
     let mut words = vec![0xFFFF_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4)]));
     words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
@@ -240,7 +231,12 @@ fn fullscreen_strip_vb(uv: [[f32; 2]; 4]) -> Vec<u8> {
 
 fn pixel_at(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let idx = ((y * width + x) * 4) as usize;
-    [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]]
+    [
+        pixels[idx],
+        pixels[idx + 1],
+        pixels[idx + 2],
+        pixels[idx + 3],
+    ]
 }
 
 #[test]
@@ -264,12 +260,7 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
 
     let width = 64u32;
     let height = 64u32;
-    let vb_data = fullscreen_strip_vb([
-        [0.0, 0.0],
-        [0.0, 1.0],
-        [1.0, 0.0],
-        [1.0, 1.0],
-    ]);
+    let vb_data = fullscreen_strip_vb([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]);
     let vertex_decl = vertex_decl_pos4_uv2();
 
     let vs_bytes = assemble_vs_passthrough_pos_and_t0();
@@ -429,7 +420,7 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-            // c0 = red
+                              // c0 = red
             push_f32(out, 1.0);
             push_f32(out, 0.0);
             push_f32(out, 0.0);
@@ -478,7 +469,7 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-            // c0 = 1.0 (no-op multiplier)
+                              // c0 = 1.0 (no-op multiplier)
             push_f32(out, 1.0);
             push_f32(out, 1.0);
             push_f32(out, 1.0);
@@ -542,12 +533,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_clips_draw() {
 
     let width = 64u32;
     let height = 64u32;
-    let vb_data = fullscreen_strip_vb([
-        [0.0, 0.0],
-        [0.0, 1.0],
-        [1.0, 0.0],
-        [1.0, 1.0],
-    ]);
+    let vb_data = fullscreen_strip_vb([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]);
     let vertex_decl = vertex_decl_pos4_uv2();
 
     let vs_bytes = assemble_vs_passthrough_pos_and_t0();
@@ -745,12 +731,7 @@ fn d3d9_cmd_stream_sampler_address_wrap_vs_clamp() {
 
     let width = 64u32;
     let height = 64u32;
-    let vb_data = fullscreen_strip_vb([
-        [1.1, 0.5],
-        [1.1, 0.5],
-        [1.1, 0.5],
-        [1.1, 0.5],
-    ]);
+    let vb_data = fullscreen_strip_vb([[1.1, 0.5], [1.1, 0.5], [1.1, 0.5], [1.1, 0.5]]);
     let vertex_decl = vertex_decl_pos4_uv2();
 
     let vs_bytes = assemble_vs_passthrough_pos_and_t0();

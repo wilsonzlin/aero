@@ -516,7 +516,8 @@ impl AeroGpuExecutor {
                                 .as_ref()
                                 .map(|h| h.size_bytes)
                                 .unwrap_or(desc.cmd_size_bytes)
-                                .min(desc.cmd_size_bytes) as usize;
+                                .min(desc.cmd_size_bytes)
+                                as usize;
                             let mut bytes = vec![0u8; size];
                             mem.read_physical(desc.cmd_gpa, &mut bytes);
                             bytes
@@ -651,8 +652,7 @@ impl AeroGpuExecutor {
                     };
 
                     if self.backend.submit(mem, submit).is_err() {
-                        regs.stats.gpu_exec_errors =
-                            regs.stats.gpu_exec_errors.saturating_add(1);
+                        regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
                         regs.irq_status |= irq_bits::ERROR;
                         // If the backend rejects the submission, still unblock the fence.
                         if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {

@@ -1,7 +1,7 @@
 mod tier1_common;
 
-use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_jit_x86::tier2::ir::Terminator;
+use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use tier1_common::SimpleBus;
 
 #[test]

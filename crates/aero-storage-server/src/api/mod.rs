@@ -43,8 +43,8 @@ struct VersionResponse {
 }
 
 async fn version() -> Json<VersionResponse> {
-    let version =
-        std::env::var("AERO_STORAGE_SERVER_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+    let version = std::env::var("AERO_STORAGE_SERVER_VERSION")
+        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
     let git_sha = std::env::var("AERO_STORAGE_SERVER_GIT_SHA")
         .or_else(|_| std::env::var("GIT_SHA"))
         .unwrap_or_else(|_| "dev".to_string());
@@ -78,7 +78,12 @@ mod tests {
         let app = crate::app(AppState::new(store));
 
         let response = app
-            .oneshot(Request::builder().uri("/version").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 

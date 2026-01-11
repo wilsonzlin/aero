@@ -556,8 +556,16 @@ fn cpu_core_bus_translates_legacy32_4mb_page_via_mmu() {
     // Read should populate the TLB and set accessed on the leaf PDE, but not dirty.
     assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
     let pde_after_read = memory::MemoryBus::read_u32(&mut bus.platform.memory, pde_addr);
-    assert_ne!(pde_after_read & (1 << 5), 0, "PDE accessed bit should be set");
-    assert_eq!(pde_after_read & (1 << 6), 0, "PDE dirty bit should not be set on read");
+    assert_ne!(
+        pde_after_read & (1 << 5),
+        0,
+        "PDE accessed bit should be set"
+    );
+    assert_eq!(
+        pde_after_read & (1 << 6),
+        0,
+        "PDE dirty bit should not be set on read"
+    );
 
     // Write should set the dirty bit even on a TLB hit.
     bus.write_u8(vaddr, 0xBB).unwrap();
@@ -709,8 +717,16 @@ fn cpu_core_bus_translates_pae_2mb_page_via_mmu() {
     );
 
     let pde_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pde_addr);
-    assert_ne!(pde_after_read & (1 << 5), 0, "PDE accessed bit should be set");
-    assert_eq!(pde_after_read & (1 << 6), 0, "PDE dirty bit should not be set on read");
+    assert_ne!(
+        pde_after_read & (1 << 5),
+        0,
+        "PDE accessed bit should be set"
+    );
+    assert_eq!(
+        pde_after_read & (1 << 6),
+        0,
+        "PDE dirty bit should not be set on read"
+    );
 
     // Write should set dirty even on a TLB hit.
     bus.write_u8(vaddr, 0xBB).unwrap();
@@ -867,12 +883,28 @@ fn cpu_core_bus_translates_long4_2mb_page_via_mmu() {
     assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
 
     let pml4e_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pml4e_addr);
-    assert_ne!(pml4e_after_read & (1 << 5), 0, "PML4E accessed bit should be set");
+    assert_ne!(
+        pml4e_after_read & (1 << 5),
+        0,
+        "PML4E accessed bit should be set"
+    );
     let pdpte_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pdpte_addr);
-    assert_ne!(pdpte_after_read & (1 << 5), 0, "PDPTE accessed bit should be set");
+    assert_ne!(
+        pdpte_after_read & (1 << 5),
+        0,
+        "PDPTE accessed bit should be set"
+    );
     let pde_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pde_addr);
-    assert_ne!(pde_after_read & (1 << 5), 0, "PDE accessed bit should be set");
-    assert_eq!(pde_after_read & (1 << 6), 0, "PDE dirty bit should not be set on read");
+    assert_ne!(
+        pde_after_read & (1 << 5),
+        0,
+        "PDE accessed bit should be set"
+    );
+    assert_eq!(
+        pde_after_read & (1 << 6),
+        0,
+        "PDE dirty bit should not be set on read"
+    );
 
     // Write should set dirty even on a TLB hit.
     bus.write_u8(vaddr, 0xBB).unwrap();
@@ -922,16 +954,32 @@ fn cpu_core_bus_translates_long4_1gb_page_via_mmu() {
     assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
 
     let pml4e_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pml4e_addr);
-    assert_ne!(pml4e_after_read & (1 << 5), 0, "PML4E accessed bit should be set");
+    assert_ne!(
+        pml4e_after_read & (1 << 5),
+        0,
+        "PML4E accessed bit should be set"
+    );
     let pdpte_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pdpte_addr);
-    assert_ne!(pdpte_after_read & (1 << 5), 0, "PDPTE accessed bit should be set");
-    assert_eq!(pdpte_after_read & (1 << 6), 0, "PDPTE dirty bit should not be set on read");
+    assert_ne!(
+        pdpte_after_read & (1 << 5),
+        0,
+        "PDPTE accessed bit should be set"
+    );
+    assert_eq!(
+        pdpte_after_read & (1 << 6),
+        0,
+        "PDPTE dirty bit should not be set on read"
+    );
 
     // Write should set dirty even on a TLB hit.
     bus.write_u8(vaddr, 0xBB).unwrap();
     assert_eq!(bus.platform.memory.read_u8(phys_addr), 0xBB);
     let pdpte_after_write = memory::MemoryBus::read_u64(&mut bus.platform.memory, pdpte_addr);
-    assert_ne!(pdpte_after_write & (1 << 6), 0, "PDPTE dirty bit should be set");
+    assert_ne!(
+        pdpte_after_write & (1 << 6),
+        0,
+        "PDPTE dirty bit should be set"
+    );
 }
 
 #[test]

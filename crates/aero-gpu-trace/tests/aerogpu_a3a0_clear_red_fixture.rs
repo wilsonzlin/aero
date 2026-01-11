@@ -1,7 +1,7 @@
 use aero_gpu_trace::{TraceMeta, TraceReader, TraceRecord, TraceWriter};
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CLEAR_COLOR;
-use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};

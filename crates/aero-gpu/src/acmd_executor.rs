@@ -266,10 +266,14 @@ impl AeroGpuAcmdExecutor {
 
 fn map_texture_format(format: u32) -> Result<wgpu::TextureFormat, AeroGpuAcmdExecutorError> {
     Ok(match format {
-        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 || x == AerogpuFormat::B8G8R8X8Unorm as u32 => {
+        x if x == AerogpuFormat::B8G8R8A8Unorm as u32
+            || x == AerogpuFormat::B8G8R8X8Unorm as u32 =>
+        {
             wgpu::TextureFormat::Bgra8Unorm
         }
-        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 || x == AerogpuFormat::R8G8B8X8Unorm as u32 => {
+        x if x == AerogpuFormat::R8G8B8A8Unorm as u32
+            || x == AerogpuFormat::R8G8B8X8Unorm as u32 =>
+        {
             wgpu::TextureFormat::Rgba8Unorm
         }
         other => return Err(AeroGpuAcmdExecutorError::UnsupportedTextureFormat(other)),

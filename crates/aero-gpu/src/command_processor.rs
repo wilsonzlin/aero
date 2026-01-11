@@ -28,7 +28,10 @@ pub struct AeroGpuSubmissionAllocation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResourceDesc {
-    Buffer { usage_flags: u32, size_bytes: u64 },
+    Buffer {
+        usage_flags: u32,
+        size_bytes: u64,
+    },
     Texture2d {
         usage_flags: u32,
         format: u32,
@@ -125,7 +128,9 @@ pub enum CommandProcessorError {
         size_bytes: u64,
         alloc_size_bytes: u64,
     },
-    CreateRebindMismatch { resource_handle: u32 },
+    CreateRebindMismatch {
+        resource_handle: u32,
+    },
     InvalidCreateTexture2d,
 }
 
@@ -497,7 +502,9 @@ impl AeroGpuCommandProcessor {
                 } => {
                     let underlying = self.resolve_shared_surface(resource_handle);
                     let Some(entry) = self.resources.get(&underlying).copied() else {
-                        return Err(CommandProcessorError::UnknownResourceHandle(resource_handle));
+                        return Err(CommandProcessorError::UnknownResourceHandle(
+                            resource_handle,
+                        ));
                     };
 
                     let resource_size_bytes = entry.desc.size_bytes()?;

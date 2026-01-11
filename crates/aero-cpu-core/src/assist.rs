@@ -1767,7 +1767,11 @@ fn is_canonical(addr: u64, bits: u8) -> bool {
     }
 }
 
-fn instr_syscall(ctx: &AssistContext, state: &mut CpuState, return_ip: u64) -> Result<(), Exception> {
+fn instr_syscall(
+    ctx: &AssistContext,
+    state: &mut CpuState,
+    return_ip: u64,
+) -> Result<(), Exception> {
     if state.mode != CpuMode::Long {
         return Err(Exception::InvalidOpcode);
     }

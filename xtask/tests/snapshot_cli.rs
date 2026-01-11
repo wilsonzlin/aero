@@ -3,8 +3,8 @@ use std::io::Cursor;
 use std::io::{Seek, Write};
 
 use aero_snapshot::{
-    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions,
-    DiskOverlayRef, SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
+    CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, RamMode,
+    RamWriteOptions, SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
 };
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -616,5 +616,7 @@ fn snapshot_deep_validate_refuses_large_ram() {
         .args(["snapshot", "validate", "--deep", snap.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("refuses to restore snapshots with RAM >"));
+        .stderr(predicate::str::contains(
+            "refuses to restore snapshots with RAM >",
+        ));
 }

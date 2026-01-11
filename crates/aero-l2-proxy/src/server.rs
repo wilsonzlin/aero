@@ -258,7 +258,10 @@ fn enforce_security(
             crate::config::AllowedOrigins::List(list) => {
                 if !list.iter().any(|allowed| allowed == origin) {
                     return Err(Box::new(
-                        (StatusCode::FORBIDDEN, format!("Origin not allowed: {origin}"))
+                        (
+                            StatusCode::FORBIDDEN,
+                            format!("Origin not allowed: {origin}"),
+                        )
                             .into_response(),
                     ));
                 }

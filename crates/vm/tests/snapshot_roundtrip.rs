@@ -2,7 +2,7 @@
 
 use aero_snapshot::RamMode;
 use firmware::bios::{Bios, BiosConfig};
-use machine::{CpuExit, InMemoryDisk, MemoryAccess, FLAG_CF, FLAG_ZF, FLAG_ALWAYS_ON};
+use machine::{CpuExit, InMemoryDisk, MemoryAccess, FLAG_ALWAYS_ON, FLAG_CF, FLAG_ZF};
 use vm::{SnapshotError, SnapshotOptions, Vm};
 
 fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {
@@ -256,12 +256,18 @@ fn snapshot_restore_requires_full_dirty_parent_chain() {
 
     // Cannot apply C onto a fresh VM (no parent restored).
     let err = restored.restore_snapshot(&diff2).unwrap_err();
-    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("snapshot parent mismatch")
+    ));
 
     // Restoring A then skipping B and applying C must also fail (wrong parent id).
     restored.restore_snapshot(&base).unwrap();
     let err = restored.restore_snapshot(&diff2).unwrap_err();
-    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("snapshot parent mismatch")
+    ));
 
     // Restoring the full chain A -> B -> C should succeed.
     restored.restore_snapshot(&diff1).unwrap();

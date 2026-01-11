@@ -94,6 +94,7 @@ fn tier2_traces_have_globally_unique_value_ids_across_blocks() {
     let wasm = Tier2WasmCodegen::new().compile_trace(&trace.ir, &opt.regalloc);
 
     let mut validator = Validator::new();
-    validator.validate_all(&wasm).expect("generated wasm is valid");
+    validator
+        .validate_all(&wasm)
+        .expect("generated wasm is valid");
 }
-

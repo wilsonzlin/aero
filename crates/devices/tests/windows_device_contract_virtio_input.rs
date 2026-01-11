@@ -215,9 +215,7 @@ fn virtio_input_pci_ids_match_windows_device_contract() {
 
     // Contract JSON specifies the canonical INF filename; it must exist in-tree and match the same HWID.
     let inf_name = require_str(virtio_input, "inf_name");
-    let inf_path = root
-        .join("drivers/windows/virtio-input")
-        .join(inf_name);
+    let inf_path = root.join("drivers/windows/virtio-input").join(inf_name);
     assert!(
         inf_path.is_file(),
         "{}: virtio-input INF referenced by windows-device-contract.json is missing: {}",

@@ -81,11 +81,12 @@ impl Metrics {
     }
 
     pub fn session_closed(&self) {
-        let _ = self.inner.sessions_active.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |val| Some(val.saturating_sub(1)),
-        );
+        let _ =
+            self.inner
+                .sessions_active
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
+                    Some(val.saturating_sub(1))
+                });
     }
 
     pub fn tcp_conn_opened(&self) {
@@ -93,11 +94,12 @@ impl Metrics {
     }
 
     pub fn tcp_conn_closed(&self) {
-        let _ = self.inner.tcp_conns_active.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |val| Some(val.saturating_sub(1)),
-        );
+        let _ =
+            self.inner
+                .tcp_conns_active
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
+                    Some(val.saturating_sub(1))
+                });
     }
 
     pub fn tcp_connect_failed(&self) {
@@ -111,11 +113,12 @@ impl Metrics {
     }
 
     pub fn udp_flow_closed(&self) {
-        let _ = self.inner.udp_flows_active.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |val| Some(val.saturating_sub(1)),
-        );
+        let _ =
+            self.inner
+                .udp_flows_active
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
+                    Some(val.saturating_sub(1))
+                });
     }
 
     pub fn udp_send_failed(&self) {
