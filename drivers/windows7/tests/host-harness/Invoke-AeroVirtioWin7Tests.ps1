@@ -737,7 +737,7 @@ Write-Host "Starting HTTP server on 127.0.0.1:$HttpPort$HttpPath ..."
 $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 
 try {
-  $serialChardev = "file,id=charserial0,path=$SerialLogPath"
+  $serialChardev = "file,id=charserial0,path=$(Quote-AeroWin7QemuKeyvalValue $SerialLogPath)"
   $netdev = "user,id=net0"
   $serialBase = [System.IO.Path]::GetFileNameWithoutExtension((Split-Path -Leaf $SerialLogPath))
   $qemuStderrPath = Join-Path (Split-Path -Parent $SerialLogPath) "$serialBase.qemu.stderr.log"
@@ -746,7 +746,7 @@ try {
   }
   if ($VirtioTransitional) {
     $nic = "virtio-net-pci,netdev=net0"
-    $drive = "file=$DiskImagePath,if=virtio,cache=writeback"
+    $drive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=virtio,cache=writeback"
     if ($Snapshot) { $drive += ",snapshot=on" }
 
     # Transitional mode is primarily an escape hatch for older QEMU builds (or intentionally

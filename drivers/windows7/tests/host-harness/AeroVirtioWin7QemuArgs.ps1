@@ -70,6 +70,22 @@ function Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 {
   }
 }
 
+function Quote-AeroWin7QemuKeyvalValue {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Value
+  )
+
+  # Quote a QEMU keyval value (for args like `-drive file=...`, `-chardev ...,path=...`).
+  # This keeps paths containing spaces/commas robust on PowerShell 5.1 where Start-Process joins args
+  # into a single string (and doesn't consistently quote/escape individual elements).
+  #
+  # QEMU keyval parsing supports `"..."` quoting and backslash-escaped quotes inside the string.
+  $escaped = $Value.Replace('"', '\"')
+  return '"' + $escaped + '"'
+}
+
 function New-AeroWin7VirtioNetDeviceArg {
   [CmdletBinding()]
   param(
@@ -94,7 +110,7 @@ function New-AeroWin7VirtioBlkDriveArg {
     [switch]$Snapshot
   )
 
-  $drive = "file=$DiskImagePath,if=none,id=$DriveId,cache=writeback"
+  $drive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=none,id=$DriveId,cache=writeback"
   if ($Snapshot) {
     $drive += ",snapshot=on"
   }
