@@ -448,6 +448,12 @@ Pragmatic approach for early bring-up:
 * Treat `Present`/`Flush` as publishing points:
   * When the producing process presents or flushes, the shared surface content becomes visible to DWM on the next frame.
 
+Guest-side validation:
+
+* `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` exercises the cross-process “create shared → open shared” path.
+  * Default mode validates open + minimal submit (`ColorFill` + `Flush`).
+  * Pass `--validate-sharing` (or `--dump`) to also validate cross-process pixel sharing via readback.
+
 ---
 
 ## 5) Error handling & stability (avoid TDR, avoid falling back to Basic)
