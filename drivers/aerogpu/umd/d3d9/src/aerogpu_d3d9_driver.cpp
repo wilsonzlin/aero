@@ -8794,9 +8794,11 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(D3DDDI_HDEVICE hDevice, uint32_
     period_ms = std::max<uint32_t>(1, 1000u / dev->adapter->primary_refresh_hz);
   }
   // Some display stacks (particularly remote/virtualised ones) can report bizarre
-  // refresh rates (e.g. 1Hz). Clamp the computed period so WaitForVBlank remains
-  // bounded and DWM never stalls for seconds.
-  period_ms = std::min<uint32_t>(period_ms, 50u);
+  // refresh rates (e.g. 1Hz, or extremely high values that would otherwise lead
+  // to near-zero sleep times). Clamp the computed period so WaitForVBlank
+  // remains bounded and DWM never stalls for seconds or devolves into a busy
+  // loop.
+  period_ms = std::clamp<uint32_t>(period_ms, 4u, 50u);
 
   // Prefer a real vblank wait when possible (KMD-backed scanline polling),
   // but always keep the wait bounded so DWM cannot hang if vblank delivery is
