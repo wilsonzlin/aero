@@ -1173,7 +1173,14 @@ pub fn aggregate_reports(
 }
 
 fn report_bits(items: &[HidReportItem]) -> u32 {
-    items.iter().map(HidReportItem::bit_len).sum()
+    // The public size helpers (`report_bytes_for_id`, `max_*_report_bytes`) are best-effort and
+    // should not panic on pathological descriptors. Use a wide, saturating accumulator and clamp
+    // to `u32::MAX` if the total exceeds the representable range.
+    let bits = items
+        .iter()
+        .map(|item| u64::from(item.bit_len()))
+        .fold(0u64, |acc, v| acc.saturating_add(v));
+    u32::try_from(bits).unwrap_or(u32::MAX)
 }
 
 /// Returns the total number of bits for a given `(kind, report_id)` across the whole descriptor.
@@ -1196,7 +1203,8 @@ pub fn report_bytes_for_id(
     report_id: u32,
 ) -> usize {
     let bits = report_bits_for_id(collections, kind, report_id);
-    usize::try_from((bits + 7) / 8).unwrap_or(usize::MAX)
+    let bytes = (u64::from(bits) + 7) / 8;
+    usize::try_from(bytes).unwrap_or(usize::MAX)
 }
 
 fn max_report_bytes(collections: &[HidCollectionInfo], kind: HidReportKind) -> usize {
@@ -1204,7 +1212,11 @@ fn max_report_bytes(collections: &[HidCollectionInfo], kind: HidReportKind) -> u
     aggregated
         .iter()
         .filter(|((k, _), _)| *k == kind)
-        .map(|(_, items)| usize::try_from((report_bits(items) + 7) / 8).unwrap_or(usize::MAX))
+        .map(|(_, items)| {
+            let bits = report_bits(items);
+            let bytes = (u64::from(bits) + 7) / 8;
+            usize::try_from(bytes).unwrap_or(usize::MAX)
+        })
         .max()
         .unwrap_or(0)
 }
