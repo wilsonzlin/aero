@@ -177,9 +177,10 @@ test.describe.serial('udp relay (webrtc)', () => {
     echoPort: number,
     authToken?: string,
     dstIp: string = '127.0.0.1',
+    mode?: 'ws-trickle' | 'http-offer' | 'legacy-offer',
   ) {
     return await page.evaluate(
-      async ({ relayOrigin, echoPort, authToken, dstIp }) => {
+      async ({ relayOrigin, echoPort, authToken, dstIp, mode }) => {
         const { connectUdpRelay } = await import('/web/src/net/udpRelaySignalingClient.ts');
 
         const payload = new Uint8Array([1, 2, 3, 4, 5]);
@@ -193,6 +194,7 @@ test.describe.serial('udp relay (webrtc)', () => {
         const conn = await connectUdpRelay({
           baseUrl: relayOrigin,
           authToken,
+          mode,
           sink: (evt) => resolveEvent?.(evt),
         });
 
@@ -214,7 +216,7 @@ test.describe.serial('udp relay (webrtc)', () => {
           conn.close();
         }
       },
-      { relayOrigin, echoPort, authToken, dstIp },
+      { relayOrigin, echoPort, authToken, dstIp, mode },
     );
   }
 
@@ -274,6 +276,7 @@ test.describe.serial('udp relay (webrtc)', () => {
     try {
       await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
       expectEcho(await runRoundTrip(page, relay.origin, echo.port, apiKey), '127.0.0.1', echo.port);
+      expectEcho(await runRoundTrip(page, relay.origin, echo.port, apiKey, '127.0.0.1', 'http-offer'), '127.0.0.1', echo.port);
       expectEcho(await runRoundTripWebSocket(page, relay.origin, echo.port, apiKey), '127.0.0.1', echo.port);
     } finally {
       await relay.close();
@@ -287,6 +290,7 @@ test.describe.serial('udp relay (webrtc)', () => {
     try {
       await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
       expectEcho(await runRoundTrip(page, relay.origin, echo.port, token), '127.0.0.1', echo.port);
+      expectEcho(await runRoundTrip(page, relay.origin, echo.port, token, '127.0.0.1', 'http-offer'), '127.0.0.1', echo.port);
       expectEcho(await runRoundTripWebSocket(page, relay.origin, echo.port, token), '127.0.0.1', echo.port);
     } finally {
       await relay.close();
@@ -299,6 +303,8 @@ test.describe.serial('udp relay (webrtc)', () => {
 
     try {
       expectEcho(await runRoundTrip(page, relay.origin, echo.port), '127.0.0.1', echo.port);
+      expectEcho(await runRoundTrip(page, relay.origin, echo.port, undefined, '127.0.0.1', 'http-offer'), '127.0.0.1', echo.port);
+      expectEcho(await runRoundTrip(page, relay.origin, echo.port, undefined, '127.0.0.1', 'legacy-offer'), '127.0.0.1', echo.port);
       expectEcho(await runRoundTripWebSocket(page, relay.origin, echo.port), '127.0.0.1', echo.port);
     } finally {
       await relay.close();
@@ -317,6 +323,7 @@ test.describe.serial('udp relay (webrtc)', () => {
       await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
       const expectedIp = '0000:0000:0000:0000:0000:0000:0000:0001';
       expectEcho(await runRoundTrip(page, relay.origin, echo6.port, undefined, '::1'), expectedIp, echo6.port);
+      expectEcho(await runRoundTrip(page, relay.origin, echo6.port, undefined, '::1', 'legacy-offer'), expectedIp, echo6.port);
       expectEcho(await runRoundTripWebSocket(page, relay.origin, echo6.port, undefined, '::1'), expectedIp, echo6.port);
     } finally {
       await relay.close();
