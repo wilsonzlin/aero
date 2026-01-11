@@ -621,6 +621,12 @@ mod tests {
             other => panic!("unexpected action: {other:?}"),
         };
 
+        // Callers may retry while providing a different `max_len`; we must not enqueue duplicate
+        // host actions, and the eventual completion must still be truncated to the original
+        // requested length.
+        assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Nak);
+        assert!(dev.pop_action().is_none(), "no duplicate action");
+
         dev.push_completion(UsbHostCompletion::Completed {
             id,
             result: UsbHostResult::OkIn {
@@ -629,7 +635,7 @@ mod tests {
         });
 
         assert_eq!(
-            dev.handle_in_transfer(0x81, 2),
+            dev.handle_in_transfer(0x81, 8),
             UsbInResult::Data(vec![1, 2])
         );
     }
