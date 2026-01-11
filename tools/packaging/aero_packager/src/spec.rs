@@ -72,12 +72,20 @@ impl From<PackagingSpecRaw> for PackagingSpec {
         let mut index_by_name = std::collections::HashMap::<String, usize>::new();
 
         for drv in raw.drivers {
-            index_by_name.insert(drv.name.clone(), out.len());
+            // Treat driver names as case-insensitive for merge purposes. This
+            // matches our packaging-time validation (which rejects duplicates
+            // case-insensitively) and avoids surprising failures if a spec
+            // temporarily includes both `drivers` and legacy `required_drivers`
+            // with different capitalization.
+            index_by_name.insert(drv.name.to_ascii_lowercase(), out.len());
             out.push(drv);
         }
 
         for legacy in raw.required_drivers {
-            if let Some(idx) = index_by_name.get(&legacy.name).copied() {
+            if let Some(idx) = index_by_name
+                .get(&legacy.name.to_ascii_lowercase())
+                .copied()
+            {
                 let existing = &mut out[idx];
                 existing.required = true;
                 for hwid in legacy.expected_hardware_ids {
@@ -88,7 +96,7 @@ impl From<PackagingSpecRaw> for PackagingSpec {
                 continue;
             }
 
-            index_by_name.insert(legacy.name.clone(), out.len());
+            index_by_name.insert(legacy.name.to_ascii_lowercase(), out.len());
             out.push(DriverSpec {
                 name: legacy.name,
                 required: true,

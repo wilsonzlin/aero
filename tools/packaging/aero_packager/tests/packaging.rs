@@ -164,7 +164,10 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     assert_eq!(manifest.package.version, "1.2.3");
     assert_eq!(manifest.package.build_id, "test");
     assert_eq!(manifest.package.source_date_epoch, 0);
-    assert_eq!(manifest.signing_policy, aero_packager::SigningPolicy::TestSigning);
+    assert_eq!(
+        manifest.signing_policy,
+        aero_packager::SigningPolicy::TestSigning
+    );
     assert!(manifest.certs_required);
 
     let mut manifest_paths = BTreeSet::new();
@@ -203,7 +206,41 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
 }
 
 #[test]
-fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored() -> anyhow::Result<()> {
+fn drivers_and_required_drivers_merge_case_insensitively() -> anyhow::Result<()> {
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({
+        "drivers": [
+            {
+                "name": "testdrv",
+                "required": false,
+                "expected_hardware_ids": [],
+            }
+        ],
+        "required_drivers": [
+            {
+                "name": "TESTDRV",
+                "expected_hardware_ids": [r"PCI\\VEN_1234&DEV_5678"],
+            }
+        ]
+    });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let loaded = aero_packager::PackagingSpec::load(&spec_path)?;
+    assert_eq!(loaded.drivers.len(), 1);
+    assert_eq!(loaded.drivers[0].name, "testdrv");
+    assert!(loaded.drivers[0].required);
+    assert_eq!(
+        loaded.drivers[0].expected_hardware_ids,
+        vec![r"PCI\\VEN_1234&DEV_5678"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
+) -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
 
@@ -261,20 +298,32 @@ fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored()
     assert!(tree.contains("drivers/amd64/testdrv/test.inf"));
 
     assert!(
-        !tree.paths.iter().any(|p| p.starts_with("drivers/x86/stray/")),
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/x86/stray/")),
         "stray driver unexpectedly packaged for x86"
     );
     assert!(
-        !tree.paths.iter().any(|p| p.starts_with("drivers/amd64/stray/")),
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/amd64/stray/")),
         "stray driver unexpectedly packaged for amd64"
     );
 
     assert!(
-        !tree.paths.iter().any(|p| p.starts_with("drivers/x86/optdrv/")),
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/x86/optdrv/")),
         "missing optional driver unexpectedly packaged for x86"
     );
     assert!(
-        !tree.paths.iter().any(|p| p.starts_with("drivers/amd64/optdrv/")),
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/amd64/optdrv/")),
         "missing optional driver unexpectedly packaged for amd64"
     );
 
@@ -595,7 +644,10 @@ fn package_outputs_allow_empty_certs_when_signing_policy_none() -> anyhow::Resul
     let iso_bytes = fs::read(&outputs1.iso_path)?;
     let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
     assert!(
-        !tree.paths.iter().any(|p| p.starts_with("certs/") && !p.ends_with("README.md")),
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("certs/") && !p.ends_with("README.md")),
         "expected no certificates in ISO when signing_policy=none"
     );
 
@@ -754,7 +806,10 @@ fn empty_driver_list_is_rejected() -> anyhow::Result<()> {
 
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
     let msg = format!("{err:#}");
-    assert!(msg.contains("contains no drivers"), "unexpected error: {msg}");
+    assert!(
+        msg.contains("contains no drivers"),
+        "unexpected error: {msg}"
+    );
 
     Ok(())
 }

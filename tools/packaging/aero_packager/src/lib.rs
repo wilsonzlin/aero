@@ -365,7 +365,10 @@ fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPl
             bail!("packaging spec contains a driver with an empty name");
         }
         if name == "." || name == ".." {
-            bail!("packaging spec contains an invalid driver name: {}", drv.name);
+            bail!(
+                "packaging spec contains an invalid driver name: {}",
+                drv.name
+            );
         }
         if name.contains('/') || name.contains('\\') {
             bail!(
