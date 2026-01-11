@@ -43,16 +43,24 @@ async function connectOrReject(url, { protocols, ...opts } = {}) {
 
 async function waitForClose(ws, timeoutMs = 2_000) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("timeout waiting for close")), timeoutMs);
+    let lastErr = null;
+    const timeout = setTimeout(() => {
+      const suffix = lastErr ? ` (last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)})` : "";
+      reject(new Error(`timeout waiting for close${suffix}`));
+    }, timeoutMs);
     timeout.unref();
     ws.once("close", (code, reason) => {
       clearTimeout(timeout);
+      ws.off("error", onError);
       resolve({ code, reason: reason.toString() });
     });
-    ws.once("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
+    const onError = (err) => {
+      lastErr = err;
+      // Some servers reset the TCP socket immediately after sending a WebSocket close frame.
+      // The client may observe `ECONNRESET` while attempting to write the close response.
+      // Treat this as non-fatal as long as we still receive a `close` event.
+    };
+    ws.once("error", onError);
   });
 }
 
@@ -171,7 +179,7 @@ test("l2 proxy closes the socket when per-connection quotas are exceeded", async
     AERO_L2_ALLOWED_ORIGINS: "",
     AERO_L2_TOKEN: "",
     AERO_L2_MAX_CONNECTIONS: "0",
-    AERO_L2_MAX_BYTES_PER_CONNECTION: "10",
+    AERO_L2_MAX_BYTES_PER_CONNECTION: "64",
     AERO_L2_MAX_FRAMES_PER_SECOND: "2",
   });
 
@@ -179,7 +187,7 @@ test("l2 proxy closes the socket when per-connection quotas are exceeded", async
     const conn = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
     assert.equal(conn.ok, true);
 
-    conn.ws.send(Buffer.alloc(11));
+    conn.ws.send(Buffer.alloc(65));
     const closedBytes = await waitForClose(conn.ws);
     assert.equal(closedBytes.code, 1008);
     assert.match(closedBytes.reason, /byte quota exceeded/i);
@@ -196,4 +204,3 @@ test("l2 proxy closes the socket when per-connection quotas are exceeded", async
     await proxy.close();
   }
 });
-

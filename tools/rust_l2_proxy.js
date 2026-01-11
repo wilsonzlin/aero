@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { access } from "node:fs/promises";
@@ -38,13 +37,13 @@ let cargoTargetDirPromise;
 async function getCargoTargetDir() {
   if (cargoTargetDirPromise) return cargoTargetDirPromise;
   cargoTargetDirPromise = (async () => {
-    const { stdout } = await runCommand("cargo", ["metadata", "--format-version=1", "--no-deps"], {
-      cwd: REPO_ROOT,
-      timeoutMs: 30_000,
-    });
-    const meta = JSON.parse(stdout);
-    assert.equal(typeof meta.target_directory, "string");
-    return meta.target_directory;
+    // `cargo metadata` output can be very large in this repo, and we only need the
+    // (potentially overridden) target directory.
+    const targetDir = process.env.CARGO_TARGET_DIR;
+    if (targetDir) {
+      return path.isAbsolute(targetDir) ? targetDir : path.join(REPO_ROOT, targetDir);
+    }
+    return path.join(REPO_ROOT, "target");
   })();
   return cargoTargetDirPromise;
 }
