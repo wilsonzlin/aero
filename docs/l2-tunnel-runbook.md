@@ -105,13 +105,13 @@ cd proxy/webrtc-udp-relay
  # If the backend uses session-cookie auth (`AERO_L2_AUTH_MODE=cookie` on `crates/aero-l2-proxy`):
  # export L2_BACKEND_FORWARD_AERO_SESSION=1   # forwards Cookie: aero_session=... captured from signaling
  # export L2_BACKEND_AUTH_FORWARD_MODE=query        # default
- # export L2_BACKEND_AUTH_FORWARD_MODE=subprotocol  # Sec-WebSocket-Protocol: aero-l2-token.<credential> (credential must be a valid HTTP token / RFC 7230 tchar)
+ # export L2_BACKEND_AUTH_FORWARD_MODE=subprotocol  # offer Sec-WebSocket-Protocol entry aero-l2-token.<credential> alongside aero-l2-tunnel-v1 (credential must be a valid HTTP token / RFC 7230 tchar)
  # If your backend requires a static token (e.g. `AERO_L2_AUTH_MODE=api_key|jwt` on `crates/aero-l2-proxy`):
- # export L2_BACKEND_TOKEN=sekrit                   # Sec-WebSocket-Protocol: aero-l2-token.<token> (token must be a valid HTTP token / RFC 7230 tchar)
+ # export L2_BACKEND_TOKEN=sekrit                   # offer Sec-WebSocket-Protocol entry aero-l2-token.<token> alongside aero-l2-tunnel-v1 (token must be a valid HTTP token / RFC 7230 tchar)
  # export L2_BACKEND_AUTH_FORWARD_MODE=none         # don't also forward client creds in ?token=/?apiKey=
  # export L2_BACKEND_ORIGIN_OVERRIDE=https://example.com
  # export L2_BACKEND_ORIGIN=https://example.com # alias for L2_BACKEND_ORIGIN_OVERRIDE
- go run ./cmd/aero-webrtc-udp-relay
+  go run ./cmd/aero-webrtc-udp-relay
 ```
 
 See [`proxy/webrtc-udp-relay/README.md`](../proxy/webrtc-udp-relay/README.md) for TURN/docker-compose
