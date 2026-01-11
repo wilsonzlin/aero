@@ -204,6 +204,7 @@ fn network_stack_roundtrip_with_policy() {
 fn hda_state_roundtrip() {
     let hda = HdaControllerState {
         gctl: 1,
+        wakeen: 0x00aa,
         statests: 0x0001,
         intctl: 2,
         intsts: 3,
@@ -228,6 +229,7 @@ fn hda_state_roundtrip() {
             lpib: 0x20,
             cbl: 0x30,
             lvi: 2,
+            fifow: 0x12,
             fifos: 0x40,
             fmt: 0x4011,
             bdpl: 0x1000,
@@ -251,6 +253,7 @@ fn hda_state_roundtrip() {
             amp_mute_right: true,
             pin_conn_select: 0,
             pin_ctl: 0x40,
+            output_pin_power_state: 2,
             afg_power_state: 0,
         },
         codec_capture: HdaCodecCaptureState {
@@ -259,6 +262,7 @@ fn hda_state_roundtrip() {
             input_format: 0x0010,
             mic_pin_conn_select: 0,
             mic_pin_ctl: 0,
+            mic_pin_power_state: 3,
         },
         worklet_ring: AudioWorkletRingState {
             capacity_frames: 48000,

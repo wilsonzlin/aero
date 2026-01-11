@@ -80,13 +80,13 @@ Audio snapshots must capture guest-visible progress (DMA positions, buffer state
 ### What must be captured
 
 - **Guest-visible HDA controller state**
-  - Global registers: `GCTL`, `STATESTS`, `INTCTL`, `INTSTS`, DMA position buffer base (`DPLBASE/DPUBASE`).
+  - Global registers: `GCTL`, `WAKEEN`, `STATESTS`, `INTCTL`, `INTSTS`, DMA position buffer base (`DPLBASE/DPUBASE`).
   - CORB/RIRB: base addresses, size selectors, read/write pointers, control/status, `RINTCNT`.
-  - Stream descriptor registers for each stream: `CTL`, `LPIB`, `CBL`, `LVI`, `FIFOS`, `FMT`, `BDPL/BDPU`.
+  - Stream descriptor registers for each stream: `CTL`, `LPIB`, `CBL`, `LVI`, `FIFOW`, `FIFOS`, `FMT`, `BDPL/BDPU`.
   - Codec runtime state that affects what Windows sees via verbs (converter stream id/channel, converter format,
-    amp gain/mute, pin widget control, etc.).
+    amp gain/mute, pin widget control, pin/AFG power state, etc.).
   - Stream DMA runtime progress needed to continue deterministically after restore (BDL index + byte offset and
-    resampler fractional position).
+    resampler fractional position; capture also restores the capture-frame accumulator used for rate conversion).
 - **Host-side audio plumbing (recreated)**
   - AudioWorklet ring *indices* (`read_pos` / `write_pos` monotonic frame counters + capacity). The ring buffer
     contents are not serialized.

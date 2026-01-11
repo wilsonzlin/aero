@@ -1832,6 +1832,7 @@ impl HdaController {
     pub fn snapshot_state(&self, worklet_ring: AudioWorkletRingState) -> HdaControllerState {
         HdaControllerState {
             gctl: self.gctl,
+            wakeen: self.wakeen,
             statests: self.statests,
             intctl: self.intctl,
             intsts: self.intsts,
@@ -1862,6 +1863,7 @@ impl HdaController {
                     lpib: sd.lpib,
                     cbl: sd.cbl,
                     lvi: sd.lvi,
+                    fifow: sd.fifow,
                     fifos: sd.fifos,
                     fmt: sd.fmt,
                     bdpl: sd.bdpl,
@@ -1894,6 +1896,7 @@ impl HdaController {
                 amp_mute_right: self.codec.output.amp_mute_right,
                 pin_conn_select: self.codec.output_pin.conn_select,
                 pin_ctl: self.codec.output_pin.pin_ctl,
+                output_pin_power_state: self.codec.output_pin.power_state,
                 afg_power_state: self.codec.afg_power_state,
             },
             codec_capture: HdaCodecCaptureState {
@@ -1902,6 +1905,7 @@ impl HdaController {
                 input_format: self.codec.input.format,
                 mic_pin_conn_select: self.codec.mic_pin.conn_select,
                 mic_pin_ctl: self.codec.mic_pin.pin_ctl,
+                mic_pin_power_state: self.codec.mic_pin.power_state,
             },
             worklet_ring,
         }
@@ -1909,7 +1913,7 @@ impl HdaController {
 
     pub fn restore_state(&mut self, state: &HdaControllerState) {
         self.gctl = state.gctl;
-        self.wakeen = 0;
+        self.wakeen = state.wakeen;
         self.statests = state.statests;
         self.intctl = state.intctl;
         self.intsts = state.intsts;
@@ -1938,7 +1942,7 @@ impl HdaController {
             sd.lpib = s.lpib;
             sd.cbl = s.cbl;
             sd.lvi = s.lvi;
-            sd.fifow = 0;
+            sd.fifow = s.fifow;
             sd.fifos = s.fifos;
             sd.fmt = s.fmt;
             sd.bdpl = s.bdpl;
@@ -1988,12 +1992,14 @@ impl HdaController {
         self.codec.output.amp_mute_right = state.codec.amp_mute_right;
         self.codec.output_pin.conn_select = state.codec.pin_conn_select;
         self.codec.output_pin.pin_ctl = state.codec.pin_ctl;
+        self.codec.output_pin.power_state = state.codec.output_pin_power_state;
         self.codec.afg_power_state = state.codec.afg_power_state;
         self.codec.input.stream_id = state.codec_capture.input_stream_id;
         self.codec.input.channel = state.codec_capture.input_channel;
         self.codec.input.format = state.codec_capture.input_format;
         self.codec.mic_pin.conn_select = state.codec_capture.mic_pin_conn_select;
         self.codec.mic_pin.pin_ctl = state.codec_capture.mic_pin_ctl;
+        self.codec.mic_pin.power_state = state.codec_capture.mic_pin_power_state;
 
         for (rt, v) in self
             .stream_rt

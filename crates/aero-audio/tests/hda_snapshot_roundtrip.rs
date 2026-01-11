@@ -6,6 +6,7 @@ use aero_audio::capture::VecDequeCaptureSource;
 use aero_io_snapshot::io::audio::state::AudioWorkletRingState;
 
 const REG_GCTL: u64 = 0x08;
+const REG_WAKEEN: u64 = 0x0c;
 const REG_STATESTS: u64 = 0x0e;
 const REG_INTCTL: u64 = 0x20;
 const REG_INTSTS: u64 = 0x24;
@@ -30,6 +31,7 @@ const REG_SD0CTL: u64 = 0x80;
 const REG_SD0LPIB: u64 = 0x84;
 const REG_SD0CBL: u64 = 0x88;
 const REG_SD0LVI: u64 = 0x8c;
+const REG_SD0FIFOW: u64 = 0x8e;
 const REG_SD0FIFOS: u64 = 0x90;
 const REG_SD0FMT: u64 = 0x92;
 const REG_SD0BDPL: u64 = 0x98;
@@ -53,6 +55,7 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
     hda.mmio_write(REG_GCTL, 4, 0x1);
 
     // Program a few global regs and CORB/RIRB regs (even though we won't execute verbs via CORB).
+    hda.mmio_write(REG_WAKEEN, 2, 0x00aa);
     hda.mmio_write(REG_INTCTL, 4, (1u64 << 31) | 1u64); // GIE + stream0 enable
     hda.mmio_write(REG_DPUBASE, 4, 0);
     hda.mmio_write(REG_DPLBASE, 4, 0x1800); // disabled posbuf (bit0=0)
@@ -88,6 +91,8 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
     hda.codec_mut().execute_verb(2, verb_4(0x3, set_amp_right));
     // Pin widget control.
     hda.codec_mut().execute_verb(3, verb_12(0x707, 0x40));
+    // Pin power state (NID 3).
+    hda.codec_mut().execute_verb(3, verb_12(0x705, 0x02));
     // AFG power state.
     hda.codec_mut().execute_verb(1, verb_12(0x705, 0x00));
 
@@ -119,6 +124,7 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
         sd.bdpu = 0;
         sd.cbl = 4096;
         sd.lvi = 1;
+        sd.fifow = 0x1234;
         sd.fifos = 0x40;
         sd.fmt = fmt_raw;
         // SRST | RUN | IOCE | stream number 1.
@@ -132,6 +138,7 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
     // Capture guest-visible state at snapshot time.
     let regs = [
         (REG_GCTL, 4),
+        (REG_WAKEEN, 2),
         (REG_STATESTS, 2),
         (REG_INTCTL, 4),
         (REG_INTSTS, 4),
@@ -155,6 +162,7 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
         (REG_SD0LPIB, 4),
         (REG_SD0CBL, 4),
         (REG_SD0LVI, 2),
+        (REG_SD0FIFOW, 2),
         (REG_SD0FIFOS, 2),
         (REG_SD0FMT, 2),
         (REG_SD0BDPL, 4),
@@ -170,6 +178,7 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
     let amp_left_snapshot = hda.codec_mut().execute_verb(2, verb_4(0xB, 1 << 13));
     let amp_right_snapshot = hda.codec_mut().execute_verb(2, verb_4(0xB, 1 << 12));
     let pin_ctl_snapshot = hda.codec_mut().execute_verb(3, verb_12(0xF07, 0));
+    let pin_power_snapshot = hda.codec_mut().execute_verb(3, verb_12(0xF05, 0));
     let afg_power_snapshot = hda.codec_mut().execute_verb(1, verb_12(0xF05, 0));
 
     let worklet_ring = AudioWorkletRingState {
@@ -219,6 +228,10 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
         pin_ctl_snapshot
     );
     assert_eq!(
+        restored.codec_mut().execute_verb(3, verb_12(0xF05, 0)),
+        pin_power_snapshot
+    );
+    assert_eq!(
         restored.codec_mut().execute_verb(1, verb_12(0xF05, 0)),
         afg_power_snapshot
     );
@@ -245,6 +258,7 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     // Give mic pin (NID 5) a non-default control value so we can verify codec capture state restores.
     hda.codec_mut().execute_verb(5, verb_12(0x701, 1));
     hda.codec_mut().execute_verb(5, verb_12(0x707, 0x55));
+    hda.codec_mut().execute_verb(5, verb_12(0x705, 0x03));
 
     // Two-entry BDL so we exercise both bdl_offset and bdl_index restoration.
     let bdl_base = 0x1000u64;
@@ -317,4 +331,5 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     );
     assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF01, 0)), 1);
     assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF07, 0)), 0x55);
+    assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF05, 0)), 0x03);
 }
