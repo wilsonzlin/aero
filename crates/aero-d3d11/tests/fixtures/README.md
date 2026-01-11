@@ -22,6 +22,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `ps_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: `mov o0, v1` (return color), `ret`
+* `ps_add.dxbc`
+  * Shader model: `ps_4_0`
+  * Chunks: `ISGN`, `OSGN`, `SHDR`
+  * Behavior: `add_sat o0, v1, v1` (force signature-driven translator), `ret`
 * `ps_sample.dxbc`
   * Shader model: `ps_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
@@ -37,7 +41,9 @@ signature chunk layout. The SM4 token streams are intentionally tiny:
 * A single “declaration-like” opcode (to exercise the SM4 decoder’s “skip decls”
   logic)
 * `mov`/`ret` instructions (so both the bootstrap translator and the real SM4
-  decoder/translator can consume them)
+  decoder/translator can consume them). The `ps_add.dxbc` fixture is an
+  exception: it includes an `add` to ensure tests cover the signature-driven
+  translation path.
 
 Expected entry points (if compiled from HLSL) would be `vs_main` / `ps_main`,
 but note that the DXBC blobs here are not produced by `fxc` directly.
@@ -94,7 +100,8 @@ name, per
    - Note: the index buffer upload is padded to 8 bytes to satisfy
      `wgpu::COPY_BUFFER_ALIGNMENT` (4-byte alignment).
 2. Creates a render-target texture
-3. Creates SM4 vertex/pixel shaders from the DXBC fixtures
+3. Creates SM4 vertex shader (`vs_passthrough.dxbc`) and pixel shader
+   (`ps_add.dxbc`) from the DXBC fixtures
 4. Creates an input layout from `ilay_pos3_color.bin`
 5. Binds state, draws, and emits `PRESENT`
 

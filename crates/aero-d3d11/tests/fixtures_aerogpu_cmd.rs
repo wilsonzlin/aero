@@ -4,7 +4,7 @@ use aero_d3d11::input_layout::{
     fnv1a_32, map_layout_to_shader_locations, InputLayoutBinding, InputLayoutDesc,
     VsInputSignatureElement, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
 };
-use aero_d3d11::{parse_signatures, DxbcFile, ShaderStage, Sm4Program};
+use aero_d3d11::{parse_signatures, DxbcFile, ShaderStage, Sm4Inst, Sm4Program};
 use aero_gpu::{parse_cmd_stream, AeroGpuCmd, AEROGPU_CMD_STREAM_MAGIC};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
@@ -148,7 +148,7 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
     assert_eq!(parsed.cmds.len(), 18);
 
     let vs_dxbc_bytes = load_fixture("vs_passthrough.dxbc");
-    let ps_dxbc_bytes = load_fixture("ps_passthrough.dxbc");
+    let ps_dxbc_bytes = load_fixture("ps_add.dxbc");
     let ilay_bytes = load_fixture("ilay_pos3_color.bin");
 
     // Spot-check the key packets.
@@ -273,6 +273,11 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
             assert_eq!(*dxbc_bytes, ps_dxbc_bytes.as_slice());
             let prog = Sm4Program::parse_from_dxbc_bytes(dxbc_bytes).unwrap();
             assert_eq!(prog.stage, ShaderStage::Pixel);
+            let module = prog.decode().expect("ps_add should decode");
+            assert!(
+                module.instructions.iter().any(|i| matches!(i, Sm4Inst::Add { .. })),
+                "ps_add should include an add instruction"
+            );
         }
         other => panic!("unexpected cmd[6]: {other:?}"),
     }
