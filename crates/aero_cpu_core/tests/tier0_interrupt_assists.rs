@@ -1,7 +1,7 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
 use aero_cpu_core::mem::FlatTestBus;
-use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE, RFLAGS_IF, RFLAGS_RESERVED1};
+use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE, RFLAGS_IF, RFLAGS_RESERVED1, SEG_ACCESS_PRESENT};
 use aero_cpu_core::CpuBus;
 use aero_x86::Register;
 
@@ -177,7 +177,7 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     // Mark TR as usable and point it at the in-memory TSS.
     state.tables.tr.base = TSS_BASE;
     state.tables.tr.limit = 0x67;
-    state.tables.tr.access = 0;
+    state.tables.tr.access = SEG_ACCESS_PRESENT;
 
     // Push sentinel return address on the user stack.
     let sp_pushed = USER_STACK_TOP - 4;
