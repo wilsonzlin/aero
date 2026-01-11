@@ -238,8 +238,30 @@ type QueuedFrame = {
 };
 
 export class WebSocketTcpMuxProxyClient {
+  /**
+   * Fired once per stream.
+   *
+   * Note: `aero-tcp-mux-v1` does not have an explicit OPEN acknowledgement.
+   * `onOpen` is fired once we have locally accepted the OPEN request (i.e. after
+   * enqueueing it). If the gateway rejects the stream, an `ERROR` frame will
+   * arrive later (and we guarantee `onOpen` runs before `onError` for that
+   * stream).
+   */
   onOpen?: (streamId: number) => void;
   onData?: (streamId: number, data: Uint8Array) => void;
+
+  /**
+   * Fired once per stream.
+   *
+   * Important: `CLOSE(FIN)` is a *half-close* (the peer will not send more data,
+   * but may still accept writes). This callback is invoked on remote FIN *and*
+   * when we fully tear down a stream locally (RST/ERROR/session close). It is
+   * only fired once; if a stream half-closes and later fully closes, callers
+   * will not get a second notification.
+   *
+   * Callers that need "fully closed" semantics should treat a local
+   * `close(..., { fin: true })` as the point where they stop writing.
+   */
   onClose?: (streamId: number) => void;
   onError?: (streamId: number, error: TcpMuxError) => void;
 
