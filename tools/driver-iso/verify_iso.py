@@ -152,6 +152,10 @@ def main() -> int:
     files = _list_iso_files(args.iso.resolve())
 
     missing: list[str] = []
+    readme_name = manifest.get("iso", {}).get("readme_filename") or "README.txt"
+    readme_path = f"/{readme_name}"
+    if _normalize_iso_path(readme_path) not in files:
+        missing.append(readme_path)
     if _normalize_iso_path("/THIRD_PARTY_NOTICES.md") not in files:
         missing.append("/THIRD_PARTY_NOTICES.md")
     packages = manifest.get("packages", [])
