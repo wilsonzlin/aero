@@ -33,6 +33,12 @@ param(
   # Packaging spec describing required/optional drivers.
   [string] $SpecPath = "tools/packaging/specs/win7-aero-guest-tools.json",
 
+  # Machine-readable device contract used to generate the packaged `config/devices.cmd`.
+  #
+  # Defaults to the canonical Aero device contract, but can be overridden when packaging
+  # a different driver stack (e.g. virtio-win service naming).
+  [string] $WindowsDeviceContractPath = "docs/windows-device-contract.json",
+
   # Output directory for `aero-guest-tools.iso`, `aero-guest-tools.zip`, and `manifest.json`.
   [string] $OutDir = "out/artifacts",
 
@@ -60,6 +66,7 @@ if (-not (Test-Path -LiteralPath $ciScript -PathType Leaf)) {
   -SigningPolicy $SigningPolicy `
   -CertPath $CertPath `
   -SpecPath $SpecPath `
+  -WindowsDeviceContractPath $WindowsDeviceContractPath `
   -OutDir $OutDir `
   -Version $Version `
   -BuildId $BuildId `
