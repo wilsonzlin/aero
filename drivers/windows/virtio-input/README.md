@@ -2,7 +2,7 @@
 
 This directory contains a **KMDF** driver that registers itself as a **HID minidriver** using `HidRegisterMinidriver`, intended to bind to the Aero contract v1 virtio-input PCI device:
 
-- Aero contract v1 (modern-only, revision-gated): `PCI\VEN_1AF4&DEV_1052&REV_01`
+- Aero contract v1 (modern-only; PCI Revision ID `0x01`): `PCI\VEN_1AF4&DEV_1052`
 
 The driver implements the Aero Windows 7 virtio contract (see `docs/windows7-virtio-driver-contract.md`):
 
