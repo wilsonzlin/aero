@@ -161,7 +161,9 @@ impl Machine {
         };
 
         let ip = self.cpu.rip();
-        let fetch_addr = self.cpu.seg_base_reg(Register::CS).wrapping_add(ip);
+        let fetch_addr = self
+            .cpu
+            .apply_a20(self.cpu.seg_base_reg(Register::CS).wrapping_add(ip));
         let bytes = bus.fetch(fetch_addr, 15)?;
         let decoded = decode(&bytes, ip, self.cpu.bitness()).map_err(|_| Exception::InvalidOpcode)?;
         let next_ip = ip.wrapping_add(decoded.len as u64) & self.cpu.mode.ip_mask();
@@ -547,7 +549,9 @@ fn calc_ea(cpu: &CpuState, instr: &Instruction, next_ip: u64, include_seg: bool)
 
     let addr = (offset as u64) & mask_bits(addr_bits);
     if include_seg {
-        Ok(cpu.seg_base_reg(instr.memory_segment()).wrapping_add(addr))
+        Ok(cpu.apply_a20(
+            cpu.seg_base_reg(instr.memory_segment()).wrapping_add(addr),
+        ))
     } else {
         Ok(addr)
     }
@@ -609,7 +613,7 @@ fn push<B: CpuBus>(cpu: &mut CpuState, bus: &mut B, val: u64, size: u32) -> Resu
     let mut sp = cpu.stack_ptr();
     sp = sp.wrapping_sub(size as u64) & mask_bits(sp_bits);
     cpu.set_stack_ptr(sp);
-    let addr = cpu.seg_base_reg(Register::SS).wrapping_add(sp);
+    let addr = cpu.apply_a20(cpu.seg_base_reg(Register::SS).wrapping_add(sp));
     match size {
         2 => bus.write_u16(addr, val as u16),
         4 => bus.write_u32(addr, val as u32),
@@ -621,7 +625,7 @@ fn push<B: CpuBus>(cpu: &mut CpuState, bus: &mut B, val: u64, size: u32) -> Resu
 fn pop<B: CpuBus>(cpu: &mut CpuState, bus: &mut B, size: u32) -> Result<u64, Exception> {
     let sp_bits = cpu.stack_ptr_bits();
     let sp = cpu.stack_ptr();
-    let addr = cpu.seg_base_reg(Register::SS).wrapping_add(sp);
+    let addr = cpu.apply_a20(cpu.seg_base_reg(Register::SS).wrapping_add(sp));
     let v = match size {
         2 => bus.read_u16(addr)? as u64,
         4 => bus.read_u32(addr)? as u64,
