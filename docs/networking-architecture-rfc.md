@@ -172,6 +172,11 @@ distance and congestion, not protocol details.
 **Recommend Option C: L2 tunnel (Ethernet frames) to a proxy that runs an unprivileged user-space
 network stack (server-side slirp/NAT).**
 
+For the concrete wire protocol and deployment notes, see:
+
+- [`l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
+- [`l2-tunnel-runbook.md`](./l2-tunnel-runbook.md)
+
 ### Rationale
 
 1) **Browser simplicity + emulator performance**: Aero’s performance bottleneck is the client.
@@ -191,6 +196,26 @@ network stack (server-side slirp/NAT).**
   - DHCP + DNS services for the VM subnet
   - NAT (TCP/UDP) to the public internet
   - Policy controls (allow/deny, quotas) and observability
+
+---
+
+## Implementation plan (repo components)
+
+The Option C implementation is split into a small set of concrete components:
+
+- `web/src/net/l2Tunnel.ts`
+  - Browser-side tunnel client.
+  - Owns the WebSocket (default) or WebRTC DataChannel (optional) and forwards raw Ethernet frames
+    between the emulator and the proxy.
+- `crates/emulator/src/io/net/tunnel_backend.rs`
+  - Emulator-side abstraction (`TunnelBackend` / `L2TunnelBackend`) that the NIC device model calls
+    into, instead of running a full TCP/IP stack in WASM.
+- `proxy/aero-l2-proxy`
+  - Unprivileged proxy service implementing a user-space Ethernet/IP stack + NAT + policy.
+  - Terminates the L2 tunnel and returns frames (ARP/DHCP/DNS/etc.) back to the browser.
+- `proxy/webrtc-udp-relay`
+  - Optional WebRTC transport for the L2 tunnel (DataChannel carrying the L2 tunnel framing).
+  - Also remains useful for standalone UDP relay use-cases during migration.
 
 ---
 

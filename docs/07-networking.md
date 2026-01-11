@@ -2,18 +2,100 @@
 
 ## Overview
 
-Windows 7 networking requires TCP/IP stack emulation. Browser constraints mean we must use WebSockets for TCP and WebRTC for UDP.
+Aero needs to expose a “real” NIC to the Windows 7 guest while running inside a browser that cannot
+open arbitrary TCP/UDP sockets. That means *some* proxy service is always in the data path; the
+primary question is where the “host-side” networking stack lives.
 
-> **Architecture note:** This document was written in the “in-browser slirp/NAT” direction.
-> The current recommended direction is to **tunnel Ethernet frames (L2) to a proxy that runs the
-> user-space stack**, to keep browser CPU usage low and avoid implementing TCP in WASM.
-> See [`networking-architecture-rfc.md`](./networking-architecture-rfc.md).
+## Current recommended architecture (Option C: L2 tunnel to proxy)
+
+**Option C (L2 tunnel) is the recommended production architecture.** It keeps browser CPU usage low
+and avoids implementing a TCP/IP stack in WASM.
+
+**Summary:**
+
+- **Browser:** pure Ethernet frame forwarder (an L2 pipe).
+  - The browser does not parse ARP/DHCP/IP/TCP/UDP; it forwards raw frames.
+- **Proxy:** unprivileged user-space NAT stack (“slirp on the server”).
+  - The proxy terminates Ethernet, provides DHCP/DNS on a synthetic LAN, and opens host sockets for
+    outbound TCP/UDP.
+- **Transport:** **WebSocket first** (single reliable tunnel), **WebRTC optional** (DataChannel-based
+  tunnel as an optimization to reduce head-of-line blocking and improve latency under loss).
+
+### End-to-end data path
+
+```
+Windows 7 guest
+  TCP/IP stack + DHCP client
+        │
+        ▼
+Virtual NIC (e1000 / virtio-net)
+        │   (Ethernet frames)
+        ▼
+WASM emulator (Rust)
+  L2TunnelBackend: send_frame/recv_frame
+        │   (tunnel protocol frames)
+        ▼
+Browser transport
+  WebSocket (default) / WebRTC DataChannel (optional)
+        │
+        ▼
+Proxy: aero-l2-proxy
+  user-space Ethernet+IP stack + NAT + policy
+        │   (host TCP/UDP sockets)
+        ▼
+Internet
+```
+
+### Key docs and repo components
+
+- Design rationale: [`networking-architecture-rfc.md`](./networking-architecture-rfc.md)
+- Wire protocol: [`l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
+- Runbook (local + production): [`l2-tunnel-runbook.md`](./l2-tunnel-runbook.md)
+
+Planned/active code paths:
+
+- Browser tunnel client: `web/src/net/l2Tunnel.ts`
+- Emulator tunnel abstraction: `crates/emulator/src/io/net/tunnel_backend.rs`
+- WebSocket L2 proxy (unprivileged): `proxy/aero-l2-proxy`
+- WebRTC transport (optional): `proxy/webrtc-udp-relay` (DataChannel carrying the L2 tunnel)
+
+## Migration from in-browser slirp/NAT
+
+The migration is structured so we can ship Option C incrementally without regressing networking for
+contributors.
+
+### Phase 0 (current): in-browser slirp/NAT using `/tcp` + UDP relay
+
+- Browser runs a slirp-like stack (ARP/DHCP + TCP/UDP NAT).
+- TCP egress is implemented via the gateway’s WebSocket endpoints (`/tcp` or `/tcp-mux`).
+- UDP egress is implemented via a WebRTC relay (see `proxy/webrtc-udp-relay/`).
+
+### Phase 1: introduce `L2TunnelBackend` (frame pipe) and keep slirp as fallback
+
+- Add an `L2TunnelBackend` that forwards raw Ethernet frames to a proxy over WebSocket.
+- Keep the in-browser slirp/NAT stack as a fallback for development and debugging.
+- Ensure snapshots/restore continue to work by capturing tunnel connection bookkeeping and treating
+  active connections as non-restorable (same policy as today).
+
+### Phase 2: default to the L2 tunnel in production builds
+
+- Production builds select the L2 tunnel path by default.
+- Legacy slirp remains available behind a debug flag for bisecting and emergency fallback.
+
+### Phase 3: retire in-browser TCP NAT (keep only as debug fallback)
+
+- Remove the CPU-heavy in-browser TCP NAT path from the normal build.
+- Keep a minimal debug-only fallback for isolating issues (ideally off by default and not shipped
+  for public deployments).
 
 For performance, **virtio-net** is the preferred paravirtualized NIC once virtio drivers are installed. For Windows 7 compatibility, expose virtio devices as **PCI transitional devices** (legacy + modern) so older virtio-win builds that rely on the legacy I/O port interface can bind.
 
 See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
 
 ---
+
+> Note: The sections below primarily describe the Phase 0 in-browser slirp/NAT stack (legacy /
+> fallback). The production path is the L2 tunnel described above.
 
 ## Network Architecture
 
