@@ -43,6 +43,8 @@ fn aerogpu_abi_constants_match_aero_protocol() {
     );
 
     // ABI + identity.
+    assert_eq!(emu::AEROGPU_ABI_MAJOR, proto::AEROGPU_ABI_MAJOR);
+    assert_eq!(emu::AEROGPU_ABI_MINOR, proto::AEROGPU_ABI_MINOR);
     assert_eq!(emu::AEROGPU_ABI_VERSION_U32, proto::AEROGPU_ABI_VERSION_U32);
     assert_eq!(emu::AEROGPU_MMIO_MAGIC, proto::AEROGPU_MMIO_MAGIC);
 
