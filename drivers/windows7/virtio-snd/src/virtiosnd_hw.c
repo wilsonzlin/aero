@@ -512,7 +512,7 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     VirtioPciModernTransportUninit(&Dx->Transport);
 
-    VirtIoSndReleasePciBusInterface(&Dx->PciInterface, &Dx->PciInterfaceAcquired);
+    VirtIoSndReleaseBusInterface(&Dx->PciInterface, &Dx->PciInterfaceAcquired);
     RtlZeroMemory(Dx->PciCfgSpace, sizeof(Dx->PciCfgSpace));
     RtlZeroMemory(&Dx->TransportOs, sizeof(Dx->TransportOs));
 
@@ -539,13 +539,13 @@ NTSTATUS VirtIoSndStartHardware(
 
     VirtIoSndStopHardware(Dx);
 
-    status = VirtIoSndAcquirePciBusInterface(Dx->LowerDeviceObject, &Dx->PciInterface, &Dx->PciInterfaceAcquired);
+    status = VirtIoSndAcquireBusInterface(Dx->LowerDeviceObject, &Dx->PciInterface, &Dx->PciInterfaceAcquired);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("VirtIoSndAcquirePciBusInterface failed: 0x%08X\n", (UINT)status);
+        VIRTIOSND_TRACE_ERROR("VirtIoSndAcquireBusInterface failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
-    cfgBytes = VirtIoSndPciReadConfig(&Dx->PciInterface, Dx->PciCfgSpace, 0, (ULONG)sizeof(Dx->PciCfgSpace));
+    cfgBytes = VirtIoSndBusReadConfig(&Dx->PciInterface, Dx->PciCfgSpace, 0, (ULONG)sizeof(Dx->PciCfgSpace));
     if (cfgBytes != sizeof(Dx->PciCfgSpace)) {
         status = STATUS_DEVICE_CONFIGURATION_ERROR;
         VIRTIOSND_TRACE_ERROR("failed to read PCI config space (got %lu)\n", cfgBytes);
