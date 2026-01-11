@@ -188,7 +188,7 @@ function validateMeta(parsed: unknown): RemoteCacheMetaV1 | null {
   return obj as RemoteCacheMetaV1;
 }
 
-async function sha256Hex(data: Uint8Array): Promise<string> {
+async function sha256Hex(data: Uint8Array<ArrayBuffer>): Promise<string> {
   // WebCrypto is available in modern browsers and Node 20+. If unavailable, fall back.
   const subtle = (globalThis as typeof globalThis & { crypto?: Crypto }).crypto?.subtle;
   if (subtle) {

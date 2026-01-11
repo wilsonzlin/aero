@@ -78,8 +78,8 @@ export type RemoteChunkedDiskOptions = {
 export type RemoteChunkedDiskOpenOptions = Omit<RemoteChunkedDiskOptions, "store">;
 
 export interface BinaryStore {
-  read(path: string): Promise<Uint8Array | null>;
-  write(path: string, data: Uint8Array): Promise<void>;
+  read(path: string): Promise<Uint8Array<ArrayBuffer> | null>;
+  write(path: string, data: Uint8Array<ArrayBuffer>): Promise<void>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
 
@@ -93,14 +93,14 @@ function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 class MemoryStore implements BinaryStore {
-  private readonly files = new Map<string, Uint8Array>();
+  private readonly files = new Map<string, Uint8Array<ArrayBuffer>>();
 
-  async read(path: string): Promise<Uint8Array | null> {
+  async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
     const data = this.files.get(path);
     return data ? data.slice() : null;
   }
 
-  async write(path: string, data: Uint8Array): Promise<void> {
+  async write(path: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
     this.files.set(path, data.slice());
   }
 
@@ -118,7 +118,7 @@ class MemoryStore implements BinaryStore {
 }
 
 class OpfsStore implements BinaryStore {
-  async read(path: string): Promise<Uint8Array | null> {
+  async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
     try {
       const handle = await openFileHandle(path, { create: false });
       const file = await handle.getFile();
@@ -128,7 +128,7 @@ class OpfsStore implements BinaryStore {
     }
   }
 
-  async write(path: string, data: Uint8Array): Promise<void> {
+  async write(path: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
     const handle = await openFileHandle(path, { create: true });
     const writable = await handle.createWritable({ keepExistingData: false });
     await writable.write(toArrayBufferUint8(data));
@@ -245,12 +245,12 @@ class StoreDirHandle implements RemoteCacheDirectoryHandle {
 }
 
 type ChunkCache = {
-  getChunk(chunkIndex: number): Promise<Uint8Array | null>;
-  putChunk(chunkIndex: number, bytes: Uint8Array): Promise<void>;
-  flush(): Promise<void>;
-  clear(): Promise<void>;
+  getChunk(chunkIndex: number): Promise<Uint8Array<ArrayBuffer> | null>;
+  putChunk(chunkIndex: number, bytes: Uint8Array<ArrayBuffer>): Promise<void>;
   getCachedBytes(): number;
   getCacheLimitBytes(): number | null;
+  flush(): Promise<void>;
+  clear(): Promise<void>;
   close?: () => void;
 };
 
@@ -279,7 +279,7 @@ class IdbChunkCache implements ChunkCache {
     return this.manifest.chunkSizes[chunkIndex] ?? 0;
   }
 
-  async getChunk(chunkIndex: number): Promise<Uint8Array | null> {
+  async getChunk(chunkIndex: number): Promise<Uint8Array<ArrayBuffer> | null> {
     const expectedLen = this.expectedLen(chunkIndex);
     const bytes = await this.cache.get(chunkIndex);
     if (!bytes) return null;
@@ -291,10 +291,11 @@ class IdbChunkCache implements ChunkCache {
       this.cachedBytes = status.bytesUsed;
       return null;
     }
-    return bytes;
+    // Stored in IndexedDB as an ArrayBuffer, so this is safe.
+    return bytes as Uint8Array<ArrayBuffer>;
   }
 
-  async putChunk(chunkIndex: number, bytes: Uint8Array): Promise<void> {
+  async putChunk(chunkIndex: number, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
     const expectedLen = this.expectedLen(chunkIndex);
     if (bytes.byteLength !== expectedLen) {
       throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.byteLength}`);
@@ -467,7 +468,7 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
   return { totalSize, chunkSize, chunkCount, chunkIndexWidth, chunkSizes, chunkSha256 };
 }
 
-async function sha256Hex(data: Uint8Array): Promise<string> {
+async function sha256Hex(data: Uint8Array<ArrayBuffer>): Promise<string> {
   const subtle = crypto.subtle;
   const digest = await subtle.digest("SHA-256", toArrayBufferUint8(data));
   const bytes = new Uint8Array(digest);
@@ -557,7 +558,7 @@ class RemoteChunkCache implements ChunkCache {
     this.meta.lastAccessedAtMs = Date.now();
   }
 
-  async getChunk(chunkIndex: number): Promise<Uint8Array | null> {
+  async getChunk(chunkIndex: number): Promise<Uint8Array<ArrayBuffer> | null> {
     const r = this.chunkRange(chunkIndex);
     if (!this.rangeSet.containsRange(r.start, r.end)) return null;
 
@@ -579,7 +580,7 @@ class RemoteChunkCache implements ChunkCache {
     return bytes;
   }
 
-  async putChunk(chunkIndex: number, bytes: Uint8Array): Promise<void> {
+  async putChunk(chunkIndex: number, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
     const r = this.chunkRange(chunkIndex);
     const expectedLen = r.end - r.start;
     if (bytes.length !== expectedLen) {
@@ -667,7 +668,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   private readonly retryBaseDelayMs: number;
   private readonly abort = new AbortController();
 
-  private readonly inflight = new Map<number, Promise<Uint8Array>>();
+  private readonly inflight = new Map<number, Promise<Uint8Array<ArrayBuffer>>>();
   private lastReadEnd: number | null = null;
   private closed = false;
 
@@ -848,7 +849,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const startChunk = Math.floor(offset / this.manifest.chunkSize);
     const endChunk = Math.floor((offset + buffer.byteLength - 1) / this.manifest.chunkSize);
 
-    const promises: Promise<Uint8Array>[] = [];
+    const promises: Promise<Uint8Array<ArrayBuffer>>[] = [];
     for (let chunk = startChunk; chunk <= endChunk; chunk += 1) {
       promises.push(this.getChunk(chunk));
     }
@@ -920,7 +921,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     return true;
   }
 
-  private async fetchChunkOnce(chunkIndex: number, generation: number): Promise<Uint8Array> {
+  private async fetchChunkOnce(chunkIndex: number, generation: number): Promise<Uint8Array<ArrayBuffer>> {
     const expectedLen = this.manifest.chunkSizes[chunkIndex]!;
     const expectedSha = this.manifest.chunkSha256[chunkIndex];
     const url = this.chunkUrl(chunkIndex);
@@ -955,7 +956,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     return bytes;
   }
 
-  private async fetchChunkWithRetries(chunkIndex: number, generation: number): Promise<Uint8Array> {
+  private async fetchChunkWithRetries(chunkIndex: number, generation: number): Promise<Uint8Array<ArrayBuffer>> {
     return await retryWithBackoff(
       async (_attempt) => {
         const release = await this.semaphore.acquire();
@@ -973,7 +974,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     );
   }
 
-  private async getChunk(chunkIndex: number): Promise<Uint8Array> {
+  private async getChunk(chunkIndex: number): Promise<Uint8Array<ArrayBuffer>> {
     if (chunkIndex < 0 || chunkIndex >= this.manifest.chunkCount) {
       throw new Error(`chunkIndex out of range: ${chunkIndex}`);
     }
