@@ -233,6 +233,7 @@ async fn udp_flow_cap_drops_new_flows() {
 
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
     let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
@@ -356,6 +357,7 @@ async fn udp_flow_idle_timeout_closes_flow() {
 
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
     let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");

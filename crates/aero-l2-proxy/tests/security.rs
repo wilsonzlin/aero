@@ -57,6 +57,7 @@ struct CommonL2Env {
     _jwt_audience: EnvVarGuard,
     _jwt_issuer: EnvVarGuard,
     _legacy_token: EnvVarGuard,
+    _insecure_allow_no_auth: EnvVarGuard,
 }
 
 impl CommonL2Env {
@@ -70,7 +71,9 @@ impl CommonL2Env {
             _max_bytes: EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0"),
             _max_fps: EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0"),
             _ping_interval: EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0"),
-            _auth_mode: EnvVarGuard::unset("AERO_L2_AUTH_MODE"),
+            // Default to explicit unauthenticated mode so tests don't rely on implicit "no auth"
+            // defaults (production config fails fast when no auth is configured).
+            _auth_mode: EnvVarGuard::set("AERO_L2_AUTH_MODE", "none"),
             _api_key: EnvVarGuard::unset("AERO_L2_API_KEY"),
             _jwt_secret: EnvVarGuard::unset("AERO_L2_JWT_SECRET"),
             // Ensure developer shells don't accidentally harden or otherwise change proxy behavior
@@ -81,6 +84,7 @@ impl CommonL2Env {
             _session_secret_alias: EnvVarGuard::unset("SESSION_SECRET"),
             _gateway_session_secret: EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET"),
             _legacy_token: EnvVarGuard::unset("AERO_L2_TOKEN"),
+            _insecure_allow_no_auth: EnvVarGuard::unset("AERO_L2_INSECURE_ALLOW_NO_AUTH"),
         }
     }
 }
@@ -345,6 +349,7 @@ async fn origin_allowlist_and_open_mode() {
 async fn wildcard_still_rejects_invalid_origin_values() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
@@ -1040,11 +1045,6 @@ async fn host_allowlist_rejects_mismatch() {
     let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
     let _allowed_hosts = EnvVarGuard::set("AERO_L2_ALLOWED_HOSTS", "allowed.test");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
-    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
-    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
-    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
-    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -1397,6 +1397,103 @@ async fn cookie_auth_falls_back_to_session_secret() {
 }
 
 #[tokio::test]
+async fn session_or_token_accepts_token_without_cookie() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "session_or_token");
+    let _secret = EnvVarGuard::set("AERO_GATEWAY_SESSION_SECRET", "cookie-sekrit");
+    let _token = EnvVarGuard::set("AERO_L2_TOKEN", "tok-sekrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    // Token works without a session cookie.
+    let ws_url = format!("ws://{addr}/l2?token=tok-sekrit");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_and_token_requires_both_mechanisms() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "session_and_token");
+    let _secret = EnvVarGuard::set("AERO_GATEWAY_SESSION_SECRET", "cookie-sekrit");
+    let _token = EnvVarGuard::set("AERO_L2_TOKEN", "tok-sekrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(60);
+    let cookie_token = mint_session_token("cookie-sekrit", "sid-test", exp);
+    let cookie = format!("aero_session={cookie_token}");
+
+    // Cookie without token is rejected.
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("cookie", HeaderValue::from_str(&cookie).unwrap());
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected missing token to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    // Token without cookie is rejected.
+    let ws_url = format!("ws://{addr}/l2?token=tok-sekrit");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected missing cookie to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    // Cookie + token succeeds.
+    let ws_url = format!("ws://{addr}/l2?token=tok-sekrit");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("cookie", HeaderValue::from_str(&cookie).unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn open_mode_disables_origin_but_not_token_auth() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1598,7 +1695,6 @@ async fn max_connections_per_ip_enforced_with_x_forwarded_for_when_trusting_prox
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
     let _trust_proxy = EnvVarGuard::set("AERO_L2_TRUST_PROXY", "1");
     let _max_per_ip = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_IP", "1");
 
@@ -1995,11 +2091,6 @@ async fn oversized_ws_messages_are_rejected_at_websocket_layer() {
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
-    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
-    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
-    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
-    let _session_secret_fallback = EnvVarGuard::unset("SESSION_SECRET");
 
     // Force tiny protocol limits so we can trip the WebSocket size caps with a small message.
     let _max_frame_payload = EnvVarGuard::set("AERO_L2_MAX_FRAME_PAYLOAD", "1");

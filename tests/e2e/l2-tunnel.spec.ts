@@ -166,7 +166,7 @@ async function startL2Proxy(opts: {
     AERO_L2_ALLOWED_ORIGINS_EXTRA: '',
     AERO_L2_ALLOWED_HOSTS: '',
     AERO_L2_TRUST_PROXY_HOST: '',
-    AERO_L2_AUTH_MODE: 'cookie',
+    AERO_L2_AUTH_MODE: 'session',
     AERO_L2_API_KEY: '',
     AERO_L2_JWT_SECRET: '',
     AERO_L2_SESSION_SECRET: opts.sessionSecret,

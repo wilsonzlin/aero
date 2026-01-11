@@ -71,6 +71,7 @@ async fn idle_timeout_closes_tunnel_and_increments_metric() {
 
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _bytes = EnvVarGuard::unset("AERO_L2_MAX_BYTES_PER_CONNECTION");
     let _fps = EnvVarGuard::unset("AERO_L2_MAX_FRAMES_PER_SECOND");
@@ -130,6 +131,7 @@ async fn idle_timeout_resets_on_inbound_keepalive() {
 
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _bytes = EnvVarGuard::unset("AERO_L2_MAX_BYTES_PER_CONNECTION");
     let _fps = EnvVarGuard::unset("AERO_L2_MAX_FRAMES_PER_SECOND");

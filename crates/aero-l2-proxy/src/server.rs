@@ -26,13 +26,12 @@ use tokio::{
 use crate::{
     capture::CaptureManager,
     dns::DnsService,
+    gateway_session,
     metrics::{AuthRejectReason, Metrics},
     session,
     session_limits::{SessionTunnelPermit, SessionTunnelTracker},
     ProxyConfig, TUNNEL_SUBPROTOCOL,
 };
-
-const SESSION_COOKIE_NAME: &str = "aero_session";
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -427,18 +426,11 @@ fn enforce_security(
                 .session_secret
                 .as_deref()
                 .unwrap_or_default();
-            let cookie = headers
-                .get(axum::http::header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
-            let cookie_present = session_token.is_some();
             let now_ms = now_ms();
-            let sid = session_token.as_deref().and_then(|token| {
-                crate::auth::verify_session_token(token, secret, now_ms)
-                    .ok()
-                    .map(|claims| claims.sid)
-            });
+            let sid = headers
+                .get(header::COOKIE)
+                .and_then(|cookie| gateway_session::verify_session_cookie(cookie, secret, now_ms))
+                .map(|session| session.id);
             if sid.is_none() {
                 state.metrics.auth_failed();
                 let reject_reason = if cookie_present {
@@ -511,18 +503,13 @@ fn enforce_security(
                 .as_deref()
                 .unwrap_or_default();
 
-            let cookie = headers
-                .get(axum::http::header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
-            let cookie_present = session_token.is_some();
             let now_ms = now_ms();
-            let sid = session_token.as_deref().and_then(|token| {
-                crate::auth::verify_session_token(token, cookie_secret, now_ms)
-                    .ok()
-                    .map(|claims| claims.sid)
-            });
+            let sid = headers
+                .get(header::COOKIE)
+                .and_then(|cookie| {
+                    gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
+                })
+                .map(|session| session.id);
 
             if let Some(sid) = sid {
                 auth_sid = Some(sid);
@@ -598,18 +585,13 @@ fn enforce_security(
                 .unwrap_or_default();
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
 
-            let cookie = headers
-                .get(axum::http::header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
-            let cookie_present = session_token.is_some();
             let now_ms = now_ms();
-            let sid = session_token.as_deref().and_then(|token| {
-                crate::auth::verify_session_token(token, cookie_secret, now_ms)
-                    .ok()
-                    .map(|claims| claims.sid)
-            });
+            let sid = headers
+                .get(header::COOKIE)
+                .and_then(|cookie| {
+                    gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
+                })
+                .map(|session| session.id);
 
             if let Some(sid) = sid {
                 auth_sid = Some(sid);
@@ -657,6 +639,67 @@ fn enforce_security(
                     ));
                 }
             }
+        }
+        crate::config::AuthMode::CookieAndApiKey => {
+            let cookie_secret = state
+                .cfg
+                .security
+                .session_secret
+                .as_deref()
+                .unwrap_or_default();
+            let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
+
+            let now_ms = now_ms();
+            let sid = headers
+                .get(header::COOKIE)
+                .and_then(|cookie| {
+                    gateway_session::verify_session_cookie(cookie, cookie_secret, now_ms)
+                })
+                .map(|session| session.id);
+            let cookie_ok = sid.is_some();
+
+            let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
+            let api_key_present = provided.is_some();
+            let api_key_ok = provided.as_deref() == Some(expected);
+
+            if !cookie_ok || !api_key_ok {
+                state.metrics.auth_failed();
+
+                let reject_reason = if api_key_present && !api_key_ok {
+                    AuthRejectReason::InvalidApiKey
+                } else if cookie_present && !cookie_ok {
+                    AuthRejectReason::InvalidCookie
+                } else {
+                    AuthRejectReason::MissingCredentials
+                };
+
+                let missing = matches!(reject_reason, AuthRejectReason::MissingCredentials);
+                if missing {
+                    state.metrics.upgrade_reject_auth_missing();
+                } else {
+                    state.metrics.upgrade_reject_auth_invalid();
+                }
+                state.metrics.auth_rejected(reject_reason);
+                tracing::warn!(
+                    reason = if missing { "auth_missing" } else { "auth_invalid" },
+                    auth_reject_reason = reject_reason.label(),
+                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                    auth_mode = %auth_mode(state),
+                    token_present,
+                    cookie_present,
+                    client_ip = %client_ip,
+                    "rejected l2 websocket upgrade",
+                );
+                return Err(Box::new(
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        "missing or invalid auth".to_string(),
+                    )
+                        .into_response(),
+                ));
+            }
+
+            auth_sid = sid;
         }
     }
 
@@ -1017,6 +1060,7 @@ fn auth_mode(state: &AppState) -> &'static str {
         crate::config::AuthMode::Jwt => "jwt",
         crate::config::AuthMode::CookieOrJwt => "cookie_or_jwt",
         crate::config::AuthMode::CookieOrApiKey => "cookie_or_api_key",
+        crate::config::AuthMode::CookieAndApiKey => "session_and_token",
     }
 }
 
@@ -1187,7 +1231,9 @@ fn token_present(
                 || token_present_in_query(uri, "token")
                 || token_present_in_subprotocol(headers)
         }
-        crate::config::AuthMode::ApiKey | crate::config::AuthMode::CookieOrApiKey => {
+        crate::config::AuthMode::ApiKey
+        | crate::config::AuthMode::CookieOrApiKey
+        | crate::config::AuthMode::CookieAndApiKey => {
             token_present_in_query(uri, "apiKey")
                 || token_present_in_query(uri, "token")
                 || token_present_in_subprotocol(headers)
@@ -1237,7 +1283,7 @@ fn session_cookie_present(headers: &HeaderMap) -> bool {
         let Some((k, v)) = trimmed.split_once('=') else {
             return false;
         };
-        k.trim() == SESSION_COOKIE_NAME && !v.trim().is_empty()
+        k.trim() == gateway_session::SESSION_COOKIE_NAME && !v.trim().is_empty()
     })
 }
 
@@ -1268,22 +1314,6 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 
 fn token_from_query(uri: &axum::http::Uri) -> Option<String> {
     query_param(uri, "token").or_else(|| query_param(uri, "apiKey"))
-}
-
-fn cookie_value(cookie_header: &str, key: &str) -> Option<String> {
-    for part in cookie_header.split(';') {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let (k, v) = trimmed.split_once('=')?;
-        if k.trim() != key {
-            continue;
-        }
-        let v = v.trim();
-        return (!v.is_empty()).then(|| percent_decode(v));
-    }
-    None
 }
 
 fn now_ms() -> u64 {

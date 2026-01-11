@@ -150,6 +150,7 @@ test("l2 proxy exposes /metrics and counts rx frames", { timeout: 900_000 }, asy
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_AUTH_MODE: "none",
     AERO_L2_TOKEN: "",
     AERO_L2_MAX_CONNECTIONS: "0",
   });

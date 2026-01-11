@@ -95,6 +95,7 @@ test("l2 proxy requires Sec-WebSocket-Protocol: aero-l2-tunnel-v1", { timeout: L
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_AUTH_MODE: "none",
     AERO_L2_TOKEN: "",
     AERO_L2_MAX_CONNECTIONS: "0",
   });
@@ -112,6 +113,7 @@ test("l2 proxy requires Origin by default", { timeout: L2_PROXY_TEST_TIMEOUT_MS 
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "0",
     AERO_L2_ALLOWED_ORIGINS: "https://app.example.com",
+    AERO_L2_AUTH_MODE: "none",
     AERO_L2_TOKEN: "",
     AERO_L2_MAX_CONNECTIONS: "0",
   });
@@ -144,6 +146,7 @@ test("l2 proxy supports ALLOWED_ORIGINS fallback", { timeout: L2_PROXY_TEST_TIME
     // Ensure fallback is used even if callers pass through an empty env var.
     AERO_L2_ALLOWED_ORIGINS: "",
     ALLOWED_ORIGINS: "https://app.example.com",
+    AERO_L2_AUTH_MODE: "none",
     AERO_L2_TOKEN: "",
     AERO_L2_MAX_CONNECTIONS: "0",
   });
@@ -174,6 +177,7 @@ test("l2 proxy enforces token auth when configured", { timeout: L2_PROXY_TEST_TI
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "0",
     AERO_L2_ALLOWED_ORIGINS: "https://app.example.com",
+    AERO_L2_AUTH_MODE: "token",
     AERO_L2_TOKEN: "sekrit",
     AERO_L2_MAX_CONNECTIONS: "0",
   });
@@ -214,6 +218,7 @@ test("token errors take precedence over Origin errors", { timeout: L2_PROXY_TEST
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "0",
     AERO_L2_ALLOWED_ORIGINS: "*",
+    AERO_L2_AUTH_MODE: "token",
     AERO_L2_TOKEN: "sekrit",
     AERO_L2_MAX_CONNECTIONS: "0",
   });
@@ -235,6 +240,7 @@ test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", { timeout:
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_AUTH_MODE: "token",
     AERO_L2_TOKEN: "sekrit",
     AERO_L2_MAX_CONNECTIONS: "0",
   });
@@ -258,7 +264,7 @@ test("cookie auth requires a valid aero_session cookie", { timeout: L2_PROXY_TES
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
     AERO_L2_TOKEN: "",
-    AERO_L2_AUTH_MODE: "cookie",
+    AERO_L2_AUTH_MODE: "session",
     AERO_L2_SESSION_SECRET: "sekrit",
     AERO_L2_MAX_CONNECTIONS: "0",
   });
@@ -299,6 +305,7 @@ test("l2 proxy enforces max connection quota at upgrade time", { timeout: L2_PRO
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_AUTH_MODE: "none",
     AERO_L2_TOKEN: "",
     AERO_L2_MAX_CONNECTIONS: "1",
   });
@@ -323,7 +330,7 @@ test("l2 proxy enforces per-session tunnel quota (cookie auth)", { timeout: L2_P
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
     AERO_L2_TOKEN: "",
-    AERO_L2_AUTH_MODE: "cookie",
+    AERO_L2_AUTH_MODE: "session",
     AERO_L2_SESSION_SECRET: "sekrit",
     AERO_L2_MAX_CONNECTIONS: "0",
     AERO_L2_MAX_TUNNELS_PER_SESSION: "1",
@@ -381,6 +388,7 @@ test("l2 proxy closes the socket when per-connection quotas are exceeded", { tim
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_AUTH_MODE: "none",
     AERO_L2_TOKEN: "",
     AERO_L2_MAX_CONNECTIONS: "0",
     AERO_L2_MAX_BYTES_PER_CONNECTION: "64",

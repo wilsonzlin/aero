@@ -61,6 +61,7 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     std::env::set_var("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
     std::env::set_var("AERO_L2_PING_INTERVAL_MS", "0");
     std::env::set_var("AERO_L2_ALLOWED_ORIGINS", "*");
+    std::env::set_var("AERO_L2_AUTH_MODE", "none");
     std::env::set_var("AERO_L2_DNS_A", "echo.local=203.0.113.10");
     std::env::set_var("AERO_L2_ALLOWED_TCP_PORTS", tcp_allowed_port.to_string());
     std::env::set_var("AERO_L2_ALLOWED_UDP_PORTS", udp_allowed_port.to_string());

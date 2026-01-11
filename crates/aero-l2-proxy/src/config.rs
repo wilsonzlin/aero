@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 use aero_net_stack::StackConfig;
 
@@ -10,13 +10,14 @@ impl AuthMode {
     fn parse(raw: &str) -> Result<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "none" => Ok(AuthMode::None),
-            "cookie" => Ok(AuthMode::Cookie),
-            "api_key" => Ok(AuthMode::ApiKey),
+            "cookie" | "session" => Ok(AuthMode::Cookie),
+            "api_key" | "token" => Ok(AuthMode::ApiKey),
             "jwt" => Ok(AuthMode::Jwt),
             "cookie_or_jwt" => Ok(AuthMode::CookieOrJwt),
-            "cookie_or_api_key" => Ok(AuthMode::CookieOrApiKey),
+            "cookie_or_api_key" | "session_or_token" => Ok(AuthMode::CookieOrApiKey),
+            "cookie_and_api_key" | "session_and_token" => Ok(AuthMode::CookieAndApiKey),
             other => anyhow::bail!(
-                "unsupported AERO_L2_AUTH_MODE={other:?} (expected one of: none, cookie, api_key, jwt, cookie_or_jwt, cookie_or_api_key)"
+                "unsupported AERO_L2_AUTH_MODE={other:?} (expected one of: none, token, session, session_or_token, session_and_token; legacy aliases: cookie, api_key, jwt, cookie_or_jwt, cookie_or_api_key)"
             ),
         }
     }
@@ -127,6 +128,13 @@ impl SecurityConfig {
                 .filter(|v| v.split(',').any(|entry| !entry.trim().is_empty()))
         }
 
+        // Another escape hatch: allow the proxy to start without auth configured. This must be
+        // explicit so we don't silently run unauthenticated in production by accident.
+        let insecure_allow_no_auth = std::env::var("AERO_L2_INSECURE_ALLOW_NO_AUTH")
+            .ok()
+            .map(|v| v.trim() == "1")
+            .unwrap_or(false);
+
         let allowed_origins = {
             let base: Option<(&'static str, String)> = env_non_empty_csv("AERO_L2_ALLOWED_ORIGINS")
                 .map(|v| ("AERO_L2_ALLOWED_ORIGINS", v))
@@ -144,54 +152,64 @@ impl SecurityConfig {
             parse_allowed_origins(sources)?
         };
 
-        let api_key_var = std::env::var("AERO_L2_API_KEY").ok().and_then(|v| {
-            let trimmed = v.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        });
+        let token = std::env::var("AERO_L2_TOKEN")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .or_else(|| {
+                std::env::var("AERO_L2_API_KEY")
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            });
 
-        let legacy_token = std::env::var("AERO_L2_TOKEN").ok().and_then(|v| {
-            let trimmed = v.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        });
-
-        let api_key_candidate = api_key_var.clone().or_else(|| legacy_token.clone());
+        let session_secret_candidate = [
+            "AERO_GATEWAY_SESSION_SECRET",
+            "SESSION_SECRET",
+            "AERO_L2_SESSION_SECRET",
+        ]
+        .into_iter()
+        .find_map(|key| {
+            std::env::var(key)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        })
+        .map(|v| v.into_bytes());
 
         let auth_mode_raw = std::env::var("AERO_L2_AUTH_MODE")
             .ok()
-            .map(|v| v.trim().to_ascii_lowercase())
+            .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
 
         let auth_mode = match auth_mode_raw.as_deref() {
-            None => api_key_candidate
-                .as_ref()
-                .map(|_| {
-                    tracing::warn!(
-                        env = "AERO_L2_TOKEN",
-                        "AERO_L2_TOKEN is deprecated; use AERO_L2_AUTH_MODE=api_key + AERO_L2_API_KEY instead"
-                    );
-                    AuthMode::ApiKey
-                })
-                .unwrap_or(AuthMode::None),
             Some(raw) => AuthMode::parse(raw)?,
+            None => {
+                if session_secret_candidate.is_some() {
+                    AuthMode::CookieOrApiKey
+                } else if token.is_some() {
+                    AuthMode::ApiKey
+                } else if open && insecure_allow_no_auth {
+                    AuthMode::None
+                } else {
+                    bail!(
+                        "no L2 auth configured; set AERO_L2_AUTH_MODE or configure AERO_GATEWAY_SESSION_SECRET/SESSION_SECRET/AERO_L2_SESSION_SECRET or AERO_L2_TOKEN (or set AERO_L2_OPEN=1 and AERO_L2_INSECURE_ALLOW_NO_AUTH=1 to explicitly allow unauthenticated access)"
+                    );
+                }
+            }
         };
 
-        let api_key = if matches!(auth_mode, AuthMode::ApiKey | AuthMode::CookieOrApiKey) {
-            let key = api_key_var.clone().or_else(|| {
-                legacy_token.clone().inspect(|_| {
-                    tracing::warn!(
-                        env = "AERO_L2_TOKEN",
-                        "AERO_L2_TOKEN is deprecated; use AERO_L2_API_KEY instead"
-                    );
-                })
-            });
-            if key.is_none() {
-                return Err(anyhow!(
-                    "AERO_L2_API_KEY (or legacy AERO_L2_TOKEN) is required for AERO_L2_AUTH_MODE=api_key/cookie_or_api_key"
-                ));
+        let api_key = match auth_mode {
+            AuthMode::ApiKey | AuthMode::CookieAndApiKey => {
+                if token.is_none() {
+                    return Err(anyhow!(
+                        "AERO_L2_TOKEN (or AERO_L2_API_KEY) is required for AERO_L2_AUTH_MODE=token/session_and_token"
+                    ));
+                }
+                token
             }
-            key
-        } else {
-            None
+            AuthMode::CookieOrApiKey => token,
+            _ => None,
         };
 
         let jwt_secret = if matches!(auth_mode, AuthMode::Jwt | AuthMode::CookieOrJwt) {
@@ -221,34 +239,17 @@ impl SecurityConfig {
 
         let session_secret = if matches!(
             auth_mode,
-            AuthMode::Cookie | AuthMode::CookieOrJwt | AuthMode::CookieOrApiKey
+            AuthMode::Cookie
+                | AuthMode::CookieOrJwt
+                | AuthMode::CookieOrApiKey
+                | AuthMode::CookieAndApiKey
         ) {
-            let secret = std::env::var("AERO_L2_SESSION_SECRET")
-                .ok()
-                .and_then(|v| {
-                    let trimmed = v.trim();
-                    (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
-                })
-                .or_else(|| {
-                    std::env::var("SESSION_SECRET").ok().and_then(|v| {
-                        let trimmed = v.trim();
-                        (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
-                    })
-                })
-                .or_else(|| {
-                    std::env::var("AERO_GATEWAY_SESSION_SECRET")
-                        .ok()
-                        .and_then(|v| {
-                            let trimmed = v.trim();
-                            (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
-                        })
-                });
-            if secret.is_none() {
+            if session_secret_candidate.is_none() {
                 return Err(anyhow!(
-                    "AERO_L2_SESSION_SECRET (or SESSION_SECRET / AERO_GATEWAY_SESSION_SECRET) is required for AERO_L2_AUTH_MODE=cookie/cookie_or_jwt/cookie_or_api_key"
+                    "AERO_GATEWAY_SESSION_SECRET/SESSION_SECRET/AERO_L2_SESSION_SECRET is required for session-based auth"
                 ));
             }
-            secret
+            session_secret_candidate
         } else {
             None
         };
@@ -372,6 +373,7 @@ pub enum AuthMode {
     Jwt,
     CookieOrJwt,
     CookieOrApiKey,
+    CookieAndApiKey,
 }
 
 #[derive(Debug, Clone)]

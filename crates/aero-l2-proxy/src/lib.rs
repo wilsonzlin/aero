@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod capture;
+mod gateway_session;
 mod metrics;
 mod pcapng;
 
