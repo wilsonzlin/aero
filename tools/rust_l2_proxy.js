@@ -386,8 +386,21 @@ export async function startRustL2Proxy(env = {}) {
     env: {
       ...process.env,
       AERO_L2_PROXY_LISTEN_ADDR: "127.0.0.1:0",
+      // Avoid inheriting origin allowlists from developer environments (these
+      // can subtly change security behavior when tests rely on defaults).
+      ALLOWED_ORIGINS: "",
+      AERO_L2_ALLOWED_ORIGINS: "",
+      AERO_L2_ALLOWED_ORIGINS_EXTRA: "",
+      AERO_L2_ALLOWED_HOSTS: "",
+      AERO_L2_TRUST_PROXY_HOST: "",
       // Avoid inheriting user auth-mode overrides from the test runner environment.
       AERO_L2_AUTH_MODE: "",
+      AERO_L2_TOKEN: "",
+      AERO_L2_API_KEY: "",
+      AERO_L2_JWT_SECRET: "",
+      AERO_L2_SESSION_SECRET: "",
+      SESSION_SECRET: "",
+      AERO_L2_OPEN: "",
       ...env,
       // Ensure the "listening on ..." log line is emitted for test orchestration.
       RUST_LOG: "aero_l2_proxy=info",
