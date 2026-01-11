@@ -99,6 +99,13 @@ async fn metrics_increment_after_frames() {
     let rx = parse_metric(&body, "l2_frames_rx_total").unwrap();
     assert!(rx >= 1, "expected rx counter >= 1, got {rx}");
 
+    let bytes_rx = parse_metric(&body, "l2_bytes_rx_total").unwrap();
+    assert!(
+        bytes_rx >= frame.len() as u64,
+        "expected bytes rx >= {}, got {bytes_rx}",
+        frame.len()
+    );
+
     server.shutdown().await;
 }
 
