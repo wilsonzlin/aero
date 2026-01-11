@@ -123,18 +123,19 @@
 
 | Component | Responsibility | Key Interfaces |
 |-----------|----------------|----------------|
-| **Interpreter** | Slow but accurate instruction execution | `ExecuteInstruction(opcode)` |
-| **JIT Engine** | Fast compiled code execution | `ExecuteBlock(address)` |
-| **Instruction Decoder** | x86-64 instruction parsing | `Decode(bytes) -> Instruction` |
-| **Registers** | CPU register file (RAX-R15, etc.) | `GetReg(id)`, `SetReg(id, val)` |
-| **MMU** | Virtual → Physical address translation | `Translate(vaddr) -> paddr` |
-| **Interrupt Controller** | IRQ handling, APIC emulation | `RaiseIRQ(num)`, `CheckPending()` |
+| **Interpreter (Tier-0)** | Slow but accurate instruction execution | `aero_cpu_core::interp::tier0` (`exec::step`) |
+| **JIT Engine (Tier-1/2)** | Fast compiled code execution | `aero_cpu_core::exec::ExecDispatcher` + `aero_cpu_core::jit` |
+| **Instruction Decoder** | x86-64 instruction parsing | `aero_x86::decode` (iced-x86 wrapper) |
+| **Registers / architectural state** | CPU register file + control state | `aero_cpu_core::state::CpuState` (JIT ABI) |
+| **MMU / paging** | Linear → physical address translation | `aero_cpu_core::PagingBus` (wraps `aero_mmu`) |
+| **Interrupts / exceptions** | Architectural delivery + bookkeeping | `aero_cpu_core::interrupts::{CpuCore, PendingEventState}` |
 
 #### Multi-vCPU execution
 
 To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 
-- Each vCPU has its own `CpuState` and local APIC state.
+- Each vCPU has its own `aero_cpu_core::state::CpuState` and local interrupt bookkeeping
+  (`aero_cpu_core::interrupts::PendingEventState`).
 - Guest physical memory and device models are shared.
 - Scheduling is either:
   - **Parallel vCPU workers** (one Web Worker per vCPU), or
