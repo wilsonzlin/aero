@@ -1,5 +1,12 @@
 {
   "$schema": "../../ci/driver-package.schema.json",
+  "additionalFiles": [
+    "packaging/win7/README.md",
+    "packaging/win7/install.cmd",
+    "packaging/win7/uninstall.cmd",
+    "packaging/win7/sign_test.cmd",
+    "packaging/win7/trust_test_cert.cmd"
+  ],
   "infFiles": ["packaging/win7/aerogpu.inf"],
   "wow64Files": ["aerogpu_d3d9.dll"]
 }
