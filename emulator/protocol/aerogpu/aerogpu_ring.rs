@@ -49,6 +49,47 @@ pub struct AerogpuAllocTableHeader {
 
 impl AerogpuAllocTableHeader {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn decode_from_le_bytes(buf: &[u8]) -> Result<Self, AerogpuRingDecodeError> {
+        if buf.len() < Self::SIZE_BYTES {
+            return Err(AerogpuRingDecodeError::BufferTooSmall);
+        }
+
+        Ok(Self {
+            magic: u32::from_le_bytes(buf[0..4].try_into().unwrap()),
+            abi_version: u32::from_le_bytes(buf[4..8].try_into().unwrap()),
+            size_bytes: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+            entry_count: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+            entry_stride_bytes: u32::from_le_bytes(buf[16..20].try_into().unwrap()),
+            reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+        })
+    }
+
+    pub fn validate_prefix(&self) -> Result<(), AerogpuRingDecodeError> {
+        if self.magic != AEROGPU_ALLOC_TABLE_MAGIC {
+            return Err(AerogpuRingDecodeError::BadMagic { found: self.magic });
+        }
+
+        let _ = parse_and_validate_abi_version_u32(self.abi_version)?;
+
+        if self.entry_stride_bytes < AerogpuAllocEntry::SIZE_BYTES as u32 {
+            return Err(AerogpuRingDecodeError::BadStrideField {
+                found: self.entry_stride_bytes,
+            });
+        }
+
+        let required = match (self.entry_count as u64).checked_mul(self.entry_stride_bytes as u64) {
+            Some(bytes) => (Self::SIZE_BYTES as u64).checked_add(bytes).unwrap_or(u64::MAX),
+            None => u64::MAX,
+        };
+        if required > self.size_bytes as u64 {
+            return Err(AerogpuRingDecodeError::BadSizeField {
+                found: self.size_bytes,
+            });
+        }
+
+        Ok(())
+    }
 }
 
 #[repr(C)]
@@ -63,6 +104,20 @@ pub struct AerogpuAllocEntry {
 
 impl AerogpuAllocEntry {
     pub const SIZE_BYTES: usize = 32;
+
+    pub fn decode_from_le_bytes(buf: &[u8]) -> Result<Self, AerogpuRingDecodeError> {
+        if buf.len() < Self::SIZE_BYTES {
+            return Err(AerogpuRingDecodeError::BufferTooSmall);
+        }
+
+        Ok(Self {
+            alloc_id: u32::from_le_bytes(buf[0..4].try_into().unwrap()),
+            flags: u32::from_le_bytes(buf[4..8].try_into().unwrap()),
+            gpa: u64::from_le_bytes(buf[8..16].try_into().unwrap()),
+            size_bytes: u64::from_le_bytes(buf[16..24].try_into().unwrap()),
+            reserved0: u64::from_le_bytes(buf[24..32].try_into().unwrap()),
+        })
+    }
 }
 
 /// Fixed-size submission descriptor written into the ring by the guest KMD.

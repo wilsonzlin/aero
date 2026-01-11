@@ -460,6 +460,47 @@ fn ring_header_rejects_size_too_small_for_layout() {
 }
 
 #[test]
+fn alloc_table_header_accepts_unknown_minor_and_extended_stride() {
+    let mut buf = vec![0u8; AerogpuAllocTableHeader::SIZE_BYTES];
+    buf[0..4].copy_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    buf[4..8].copy_from_slice(&((AEROGPU_ABI_MAJOR << 16) | 999u32).to_le_bytes());
+    buf[8..12].copy_from_slice(&(24u32 + 2u32 * 64u32).to_le_bytes()); // size_bytes
+    buf[12..16].copy_from_slice(&(2u32).to_le_bytes()); // entry_count
+    buf[16..20].copy_from_slice(&(64u32).to_le_bytes()); // entry_stride_bytes
+
+    let hdr = AerogpuAllocTableHeader::decode_from_le_bytes(&buf).unwrap();
+    hdr.validate_prefix().unwrap();
+}
+
+#[test]
+fn alloc_table_header_rejects_stride_too_small() {
+    let mut buf = vec![0u8; AerogpuAllocTableHeader::SIZE_BYTES];
+    buf[0..4].copy_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    buf[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    buf[8..12].copy_from_slice(&(24u32 + 2u32 * 16u32).to_le_bytes()); // size_bytes
+    buf[12..16].copy_from_slice(&(2u32).to_le_bytes()); // entry_count
+    buf[16..20].copy_from_slice(&(16u32).to_le_bytes()); // entry_stride_bytes
+
+    let hdr = AerogpuAllocTableHeader::decode_from_le_bytes(&buf).unwrap();
+    let err = hdr.validate_prefix().unwrap_err();
+    assert!(matches!(err, AerogpuRingDecodeError::BadStrideField { found: 16 }));
+}
+
+#[test]
+fn alloc_table_header_rejects_size_too_small_for_layout() {
+    let mut buf = vec![0u8; AerogpuAllocTableHeader::SIZE_BYTES];
+    buf[0..4].copy_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    buf[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    buf[8..12].copy_from_slice(&(24u32).to_le_bytes()); // size_bytes
+    buf[12..16].copy_from_slice(&(2u32).to_le_bytes()); // entry_count
+    buf[16..20].copy_from_slice(&(32u32).to_le_bytes()); // entry_stride_bytes
+
+    let hdr = AerogpuAllocTableHeader::decode_from_le_bytes(&buf).unwrap();
+    let err = hdr.validate_prefix().unwrap_err();
+    assert!(matches!(err, AerogpuRingDecodeError::BadSizeField { found: 24 }));
+}
+
+#[test]
 fn fence_page_write_updates_expected_bytes() {
     let mut page = [0u8; AerogpuFencePage::SIZE_BYTES];
     write_fence_page_completed_fence_le(&mut page, 0x0102_0304_0506_0708).unwrap();

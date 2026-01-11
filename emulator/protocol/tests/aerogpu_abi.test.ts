@@ -74,6 +74,16 @@ import {
   parseAndValidateAbiVersionU32,
 } from "../aerogpu/aerogpu_pci.ts";
 import {
+  AEROGPU_ALLOC_ENTRY_OFF_GPA,
+  AEROGPU_ALLOC_ENTRY_OFF_SIZE_BYTES,
+  AEROGPU_ALLOC_ENTRY_SIZE,
+  AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION,
+  AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_COUNT,
+  AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_STRIDE_BYTES,
+  AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC,
+  AEROGPU_ALLOC_TABLE_HEADER_OFF_SIZE_BYTES,
+  AEROGPU_ALLOC_TABLE_HEADER_SIZE,
+  AEROGPU_ALLOC_TABLE_MAGIC,
   AEROGPU_FENCE_PAGE_MAGIC,
   AEROGPU_FENCE_PAGE_OFF_COMPLETED_FENCE,
   AEROGPU_FENCE_PAGE_OFF_MAGIC,
@@ -93,6 +103,7 @@ import {
   AEROGPU_SUBMIT_DESC_SIZE,
   AEROGPU_SUBMIT_FLAG_NO_IRQ,
   AEROGPU_SUBMIT_FLAG_PRESENT,
+  decodeAllocTableHeader,
   decodeRingHeader,
   decodeSubmitDesc,
   writeFencePageCompletedFence,
@@ -208,6 +219,9 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_cmd_import_shared_surface"), AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE);
   assert.equal(size("aerogpu_cmd_flush"), AEROGPU_CMD_FLUSH_SIZE);
 
+  assert.equal(size("aerogpu_alloc_table_header"), AEROGPU_ALLOC_TABLE_HEADER_SIZE);
+  assert.equal(size("aerogpu_alloc_entry"), AEROGPU_ALLOC_ENTRY_SIZE);
+
   assert.equal(size("aerogpu_submit_desc"), AEROGPU_SUBMIT_DESC_SIZE);
   assert.equal(size("aerogpu_ring_header"), AEROGPU_RING_HEADER_SIZE);
   assert.equal(size("aerogpu_fence_page"), AEROGPU_FENCE_PAGE_SIZE);
@@ -220,6 +234,27 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(off("aerogpu_cmd_hdr", "opcode"), AEROGPU_CMD_HDR_OFF_OPCODE);
   assert.equal(off("aerogpu_cmd_hdr", "size_bytes"), AEROGPU_CMD_HDR_OFF_SIZE_BYTES);
+
+  assert.equal(off("aerogpu_alloc_table_header", "magic"), AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC);
+  assert.equal(
+    off("aerogpu_alloc_table_header", "abi_version"),
+    AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION,
+  );
+  assert.equal(
+    off("aerogpu_alloc_table_header", "size_bytes"),
+    AEROGPU_ALLOC_TABLE_HEADER_OFF_SIZE_BYTES,
+  );
+  assert.equal(
+    off("aerogpu_alloc_table_header", "entry_count"),
+    AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_COUNT,
+  );
+  assert.equal(
+    off("aerogpu_alloc_table_header", "entry_stride_bytes"),
+    AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_STRIDE_BYTES,
+  );
+
+  assert.equal(off("aerogpu_alloc_entry", "gpa"), AEROGPU_ALLOC_ENTRY_OFF_GPA);
+  assert.equal(off("aerogpu_alloc_entry", "size_bytes"), AEROGPU_ALLOC_ENTRY_OFF_SIZE_BYTES);
 
   assert.equal(off("aerogpu_submit_desc", "cmd_gpa"), AEROGPU_SUBMIT_DESC_OFF_CMD_GPA);
   assert.equal(off("aerogpu_submit_desc", "alloc_table_gpa"), AEROGPU_SUBMIT_DESC_OFF_ALLOC_TABLE_GPA);
@@ -302,6 +337,47 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_PRESENT"), BigInt(AEROGPU_SUBMIT_FLAG_PRESENT));
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_NO_IRQ"), BigInt(AEROGPU_SUBMIT_FLAG_NO_IRQ));
+});
+
+test("decodeAllocTableHeader accepts unknown minor versions and extended strides", () => {
+  const buf = new ArrayBuffer(AEROGPU_ALLOC_TABLE_HEADER_SIZE);
+  const view = new DataView(buf);
+
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC, AEROGPU_ALLOC_TABLE_MAGIC, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION, (AEROGPU_ABI_MAJOR << 16) | 999, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_SIZE_BYTES, 24 + 2 * 64, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_COUNT, 2, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_STRIDE_BYTES, 64, true);
+
+  const hdr = decodeAllocTableHeader(view, 0, 24 + 2 * 64);
+  assert.equal(hdr.entryCount, 2);
+  assert.equal(hdr.entryStrideBytes, 64);
+});
+
+test("decodeAllocTableHeader rejects too-small strides", () => {
+  const buf = new ArrayBuffer(AEROGPU_ALLOC_TABLE_HEADER_SIZE);
+  const view = new DataView(buf);
+
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC, AEROGPU_ALLOC_TABLE_MAGIC, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION, AEROGPU_ABI_VERSION_U32, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_SIZE_BYTES, 24 + 2 * 16, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_COUNT, 2, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_STRIDE_BYTES, 16, true);
+
+  assert.throws(() => decodeAllocTableHeader(view, 0), /entry_stride_bytes too small/);
+});
+
+test("decodeAllocTableHeader rejects size_bytes that cannot fit the declared layout", () => {
+  const buf = new ArrayBuffer(AEROGPU_ALLOC_TABLE_HEADER_SIZE);
+  const view = new DataView(buf);
+
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC, AEROGPU_ALLOC_TABLE_MAGIC, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION, AEROGPU_ABI_VERSION_U32, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_SIZE_BYTES, 24, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_COUNT, 2, true);
+  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_STRIDE_BYTES, 32, true);
+
+  assert.throws(() => decodeAllocTableHeader(view, 0), /size_bytes too small for layout/);
 });
 
 test("decodeSubmitDesc decodes the expected byte layout", () => {

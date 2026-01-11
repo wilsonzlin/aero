@@ -22,6 +22,78 @@ export class AerogpuRingError extends Error {
   }
 }
 
+/* ---------------------------- Allocation table ----------------------------- */
+
+export const AEROGPU_ALLOC_TABLE_HEADER_SIZE = 24;
+export const AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC = 0;
+export const AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION = 4;
+export const AEROGPU_ALLOC_TABLE_HEADER_OFF_SIZE_BYTES = 8;
+export const AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_COUNT = 12;
+export const AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_STRIDE_BYTES = 16;
+
+export interface AerogpuAllocTableHeader {
+  abiVersion: number;
+  sizeBytes: number;
+  entryCount: number;
+  entryStrideBytes: number;
+}
+
+export function decodeAllocTableHeader(
+  view: DataView,
+  byteOffset = 0,
+  maxSizeBytes?: number,
+): AerogpuAllocTableHeader {
+  if (view.byteLength < byteOffset + AEROGPU_ALLOC_TABLE_HEADER_SIZE) {
+    throw new AerogpuRingError("Buffer too small for aerogpu_alloc_table_header");
+  }
+
+  const magic = view.getUint32(byteOffset + AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC, true);
+  if (magic !== AEROGPU_ALLOC_TABLE_MAGIC) {
+    throw new AerogpuRingError(`Bad alloc table magic: 0x${magic.toString(16)}`);
+  }
+
+  const abiVersion = view.getUint32(byteOffset + AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION, true);
+  parseAndValidateAbiVersionU32(abiVersion);
+
+  const sizeBytes = view.getUint32(byteOffset + AEROGPU_ALLOC_TABLE_HEADER_OFF_SIZE_BYTES, true);
+  if (sizeBytes < AEROGPU_ALLOC_TABLE_HEADER_SIZE) {
+    throw new AerogpuRingError(`alloc_table.size_bytes too small: ${sizeBytes}`);
+  }
+  if (maxSizeBytes !== undefined && sizeBytes > maxSizeBytes) {
+    throw new AerogpuRingError(
+      `alloc_table.size_bytes exceeds max size (${sizeBytes} > ${maxSizeBytes})`,
+    );
+  }
+
+  const entryCount = view.getUint32(byteOffset + AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_COUNT, true);
+  const entryStrideBytes = view.getUint32(
+    byteOffset + AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_STRIDE_BYTES,
+    true,
+  );
+  if (entryStrideBytes < AEROGPU_ALLOC_ENTRY_SIZE) {
+    throw new AerogpuRingError(`alloc_table.entry_stride_bytes too small: ${entryStrideBytes}`);
+  }
+
+  const requiredBytes =
+    BigInt(AEROGPU_ALLOC_TABLE_HEADER_SIZE) + BigInt(entryCount) * BigInt(entryStrideBytes);
+  if (requiredBytes > BigInt(sizeBytes)) {
+    throw new AerogpuRingError(`alloc_table.size_bytes too small for layout: ${sizeBytes}`);
+  }
+
+  return {
+    abiVersion,
+    sizeBytes,
+    entryCount,
+    entryStrideBytes,
+  };
+}
+
+export const AEROGPU_ALLOC_ENTRY_SIZE = 32;
+export const AEROGPU_ALLOC_ENTRY_OFF_ALLOC_ID = 0;
+export const AEROGPU_ALLOC_ENTRY_OFF_FLAGS = 4;
+export const AEROGPU_ALLOC_ENTRY_OFF_GPA = 8;
+export const AEROGPU_ALLOC_ENTRY_OFF_SIZE_BYTES = 16;
+
 /* ------------------------------- Ring header ------------------------------ */
 
 export const AEROGPU_RING_HEADER_SIZE = 64;
