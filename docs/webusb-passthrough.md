@@ -129,6 +129,9 @@ type UsbHostCompletion =
   | { kind: "bulkOut"; id: number /* u32 */; status: "error"; message: string };
 ```
 
+For bulk transfers, `endpoint` is a USB endpoint **address** (direction bit included), not just the
+endpoint number. See [Bulk transfers](#bulk-transfers-packet-granularity-and-toggle-sync) for details.
+
 The `id` correlates an action with its completion and is also how we prevent duplicate
 WebUSB calls when the guest retries a NAKed TD.
 
