@@ -3,6 +3,7 @@
 #include <ntddk.h>
 
 #include "virtio_snd_proto.h"
+#include "virtio_pci_modern_wdm.h"
 
 #define VIRTIOSND_POOL_TAG 'dnSV' // 'VSnd' (endianness depends on debugger display)
 
@@ -19,6 +20,10 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     PDEVICE_OBJECT LowerDeviceObject;
 
     IO_REMOVE_LOCK RemoveLock;
+
+    /* Virtio PCI modern transport state (BAR0 mapping + common_cfg helpers). */
+    VIRTIOSND_TRANSPORT Transport;
+    UINT64 NegotiatedFeatures;
 
     ULONG MmioRangeCount;
     VIRTIOSND_MMIO_RANGE MmioRanges[VIRTIOSND_MAX_MMIO_RANGES];

@@ -31,6 +31,14 @@ static VOID
 VirtIoSndReleaseHardwareResources(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     ULONG i;
+
+    /*
+     * Always tear down the virtio-pci modern transport first (it owns a BAR0
+     * MmMapIoSpace mapping and holds a referenced PCI bus interface).
+     */
+    VirtIoSndTransportUninit(&Dx->Transport);
+    Dx->NegotiatedFeatures = 0;
+
     for (i = 0; i < Dx->MmioRangeCount; ++i) {
         if (Dx->MmioRanges[i].BaseAddress != NULL && Dx->MmioRanges[i].Length != 0) {
             MmUnmapIoSpace(Dx->MmioRanges[i].BaseAddress, Dx->MmioRanges[i].Length);
@@ -55,21 +63,37 @@ VirtIoSndStartDevice(
     _In_opt_ PCM_RESOURCE_LIST TranslatedResources
     )
 {
-    UNREFERENCED_PARAMETER(RawResources);
+    NTSTATUS status;
+    UINT64 negotiated;
 
     VirtIoSndReleaseHardwareResources(Dx);
 
-    if (TranslatedResources == NULL || TranslatedResources->Count < 1) {
-        VIRTIOSND_TRACE("StartDevice: no translated resources\n");
-        Dx->Started = TRUE;
-        return STATUS_SUCCESS;
+    negotiated = 0;
+
+    if (RawResources == NULL || TranslatedResources == NULL) {
+        VIRTIOSND_TRACE_ERROR("StartDevice: missing CM resources\n");
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+    if (RawResources->Count < 1 || TranslatedResources->Count < 1) {
+        VIRTIOSND_TRACE_ERROR("StartDevice: empty CM resources list\n");
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
-    if (TranslatedResources->List[0].PartialResourceList.Count == 0) {
-        VIRTIOSND_TRACE("StartDevice: empty translated resources list\n");
-        Dx->Started = TRUE;
-        return STATUS_SUCCESS;
+    status = VirtIoSndTransportInit(&Dx->Transport, Dx->LowerDeviceObject, RawResources, TranslatedResources);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("StartDevice: transport init failed: 0x%08X\n", status);
+        VirtIoSndReleaseHardwareResources(Dx);
+        return status;
     }
+
+    status = VirtIoSndTransportNegotiateFeatures(&Dx->Transport, &negotiated);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("StartDevice: feature negotiation failed: 0x%08X\n", status);
+        VirtIoSndReleaseHardwareResources(Dx);
+        return status;
+    }
+
+    Dx->NegotiatedFeatures = negotiated;
 
     {
         PCM_PARTIAL_RESOURCE_DESCRIPTOR desc;

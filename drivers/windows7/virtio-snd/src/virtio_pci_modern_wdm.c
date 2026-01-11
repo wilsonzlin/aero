@@ -33,7 +33,13 @@ VirtIoSndTransportIrpCompletionRoutine(_In_ PDEVICE_OBJECT DeviceObject, _In_ PI
 
     event = (PKEVENT)Context;
     KeSetEvent(event, IO_NO_INCREMENT, FALSE);
-    return STATUS_CONTINUE_COMPLETION;
+    /*
+     * Stop IRP completion so the caller can safely read IoStatus and free the
+     * IRP it allocated (IoAllocateIrp). This avoids races where the waiting
+     * thread frees the IRP while the completing thread is still unwinding the
+     * stack.
+     */
+    return STATUS_MORE_PROCESSING_REQUIRED;
 }
 
 static NTSTATUS
