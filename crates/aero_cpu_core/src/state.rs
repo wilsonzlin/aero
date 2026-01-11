@@ -869,6 +869,9 @@ impl CpuState {
     pub fn cpl(&self) -> u8 {
         match self.mode {
             CpuMode::Real => 0,
+            // Virtual-8086 mode always executes with CPL=3, regardless of the
+            // low bits of the real-mode segment selectors.
+            CpuMode::Vm86 => 3,
             _ => self.segments.cs.rpl(),
         }
     }
@@ -1694,5 +1697,15 @@ mod tests {
         cpu.update_mode();
         assert_eq!(cpu.mode, CpuMode::Real);
         assert_eq!(cpu.msr.efer & EFER_LMA, 0);
+    }
+
+    #[test]
+    fn vm86_cpl_is_always_three() {
+        let mut cpu = CpuState::new(CpuMode::Vm86);
+        cpu.segments.cs.selector = 0x0000;
+        assert_eq!(cpu.cpl(), 3);
+
+        cpu.segments.cs.selector = 0x1234;
+        assert_eq!(cpu.cpl(), 3);
     }
 }
