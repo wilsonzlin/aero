@@ -151,8 +151,10 @@ Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target
 
 Still missing / in progress (guest-visible USB integration):
 
-- Snapshot/restore integration for passthrough device state (queued reports, USB configuration
-  state, etc).
+- VM snapshot/restore integration for passthrough device state (queued reports, USB configuration
+  state, etc). The underlying device models in `crates/aero-usb` now implement deterministic
+  `aero-io-snapshot` TLV save/restore via `IoSnapshot`, but the higher-level VM snapshot wiring
+  (coordinator/device entry plumbing) is still pending.
 
 ## Host-side model (main thread owns the device)
 
