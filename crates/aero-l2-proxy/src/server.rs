@@ -191,7 +191,8 @@ async fn version() -> impl IntoResponse {
         .or_else(|_| std::env::var("BUILD_TIMESTAMP"))
         .unwrap_or_default();
 
-    // Keep dependencies minimal: emit a tiny JSON object without pulling in serde/serde_json.
+    // Emit a tiny JSON object manually so the endpoint stays stable and doesn't require a
+    // dedicated response struct.
     fn escape_json_string(input: &str) -> String {
         let mut out = String::with_capacity(input.len());
         for ch in input.chars() {
