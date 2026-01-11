@@ -8,7 +8,7 @@ AeroGPU spans multiple layers (emulator device model, guest kernel-mode driver, 
 - `docs/windows-device-contract.{md,json}` documents the canonical Windows-facing AeroGPU binding contract (**A3A0**) and is checked in CI; older experiments (the obsolete experimental `aero-gpu-device` ABI, formerly implemented in `crates/aero-gpu-device`) used different PCI identities/ABIs and have been retired (see `docs/legacy/experimental-gpu-command-abi.md`).
 - Legacy stacks exist with different IDs/ABIs, notably:
   - **1AED**: legacy BAR0 MMIO ABI (and associated INF matching).
-  - **1AE0**: older in-tree guest stack / placeholder PCI IDs.
+  - **1AE0**: archived Win7 prototype stack (see `prototype/legacy-win7-aerogpu-1ae0/`).
   - Retired experimental cmd/completion-ring ABI (`aero-gpu-device`, formerly `crates/aero-gpu-device`), used for early host-side experiments and must not be used for the WDDM AeroGPU device.
 
 This drift is costly because **PCI IDs and guest↔host ABIs are API**:
