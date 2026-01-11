@@ -447,16 +447,37 @@ VirtIoSndWaveRtDpcRoutine(
             goto Exit;
         }
 
+        /*
+         * Drain RX completions at the start of each tick.
+         *
+         * This keeps capture progressing even if rxq interrupts are delayed,
+         * lost, or suppressed (e.g. because the device completes buffers
+         * immediately and would otherwise interrupt-storm).
+         *
+         * Important: release the stream lock before draining so the RX completion
+         * callback can safely take it to advance the write cursor.
+         */
+        KeReleaseSpinLock(&stream->Lock, oldIrql);
+        (VOID)VirtIoSndHwDrainRxCompletions(dx, NULL, NULL);
+
+        KeAcquireSpinLock(&stream->Lock, &oldIrql);
+        if (stream->Stopping || stream->State != KSSTATE_RUN || stream->BufferDma.Va == NULL || stream->BufferSize == 0 ||
+            stream->PeriodBytes == 0 || stream->PeriodBytes > stream->BufferSize) {
+            KeReleaseSpinLock(&stream->Lock, oldIrql);
+            goto Exit;
+        }
+
+        periodBytes = stream->PeriodBytes;
+        bufferSize = stream->BufferSize;
+        bufferMdl = stream->BufferMdl;
+
+        if (dx == NULL || dx->Removed || !dx->Started || bufferMdl == NULL) {
+            KeReleaseSpinLock(&stream->Lock, oldIrql);
+            goto Exit;
+        }
+
         if (InterlockedCompareExchange(&stream->RxInFlight, 0, 0) != 0) {
             KeReleaseSpinLock(&stream->Lock, oldIrql);
-            /*
-             * If an interrupt is lost/delayed, the RX completion may already be
-             * sitting in the used ring. Poll the rxq so capture continues to
-             * make progress (completions are still throttled by this period timer).
-             */
-            if (dx != NULL) {
-                (VOID)VirtIoSndHwDrainRxCompletions(dx, NULL, NULL);
-            }
             goto Exit;
         }
 
