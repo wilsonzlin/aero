@@ -278,7 +278,6 @@ fn convert_item(item: &HidReportItem) -> Result<report_descriptor::HidReportItem
         usages,
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
