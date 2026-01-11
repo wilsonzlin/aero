@@ -50,7 +50,7 @@ The selftest emits machine-parseable markers:
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
  # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
-  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
  # or:
  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
