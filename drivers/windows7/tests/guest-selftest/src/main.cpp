@@ -1672,7 +1672,11 @@ static TestVerdict VirtioSndTest(Logger& log, const Options& opt) {
   log.LogLine("virtio-snd: starting WaveOut smoke test");
 
   if (opt.disable_snd) {
-    log.LogLine("virtio-snd: disabled by configuration");
+    if (opt.require_snd) {
+      log.LogLine("virtio-snd: disabled by configuration (require_snd ignored)");
+    } else {
+      log.LogLine("virtio-snd: disabled by configuration");
+    }
     return TestVerdict::kSkip;
   }
 
