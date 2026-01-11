@@ -41,6 +41,8 @@ compose() {
     AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
     AERO_L2_PROXY_LISTEN_ADDR= \
     AERO_L2_ALLOW_PRIVATE_IPS=0 \
+    AERO_L2_AUTH_MODE=session \
+    AERO_L2_SESSION_SECRET="$SMOKE_SESSION_SECRET" \
     AERO_WEBRTC_UDP_RELAY_UPSTREAM=aero-webrtc-udp-relay:8080 \
     BUILD_COMMIT= \
     BUILD_TIME= \
@@ -270,7 +272,7 @@ assert_header_exact "Content-Type" "application/json" "$webrtc_headers"
 # We validate the TLS + Upgrade path and cookie/session enforcement without relying on
 # external tools like `wscat`/`websocat`.
 if command -v node >/dev/null 2>&1; then
-  echo "deploy smoke: verifying wss://localhost/tcp upgrade (session cookie)" >&2
+  echo "deploy smoke: verifying wss://localhost/tcp and /l2 upgrades (session cookie)" >&2
   # The /udp smoke test sends a UDP datagram to the host via the docker network
   # gateway, so we need the gateway IP.
   #
@@ -290,7 +292,18 @@ if command -v node >/dev/null 2>&1; then
 
  const host = "localhost";
  const port = 443;
+ const l2Protocol = "aero-l2-tunnel-v1";
  const dockerGatewayIP = process.env.AERO_SMOKE_DOCKER_GATEWAY_IP;
+ 
+ function parseStatusCode(statusLine) {
+   const match = /^HTTP\/\d+(?:\.\d+)?\s+(\d{3})\b/.exec(statusLine);
+   if (!match) return null;
+   return Number(match[1]);
+ }
+
+ function sleep(ms) {
+   return new Promise((resolve) => setTimeout(resolve, ms));
+ }
 
  function readSocketChunk(socket, timeoutMs, label) {
    return new Promise((resolve, reject) => {
@@ -355,15 +368,22 @@ if command -v node >/dev/null 2>&1; then
             reject(new Error(`invalid JSON from /session: ${err}`));
             return;
           }
-          if (!payload || typeof payload !== "object") {
-            reject(new Error("invalid /session response body"));
-            return;
-          }
-          const udpRelay = payload.udpRelay;
-          if (!udpRelay || typeof udpRelay !== "object") {
-            reject(new Error("missing udpRelay in /session response (gateway should be configured for same-origin UDP relay)"));
-            return;
-          }
+           if (!payload || typeof payload !== "object") {
+             reject(new Error("invalid /session response body"));
+             return;
+           }
+
+           const l2Path = payload?.endpoints?.l2;
+           if (typeof l2Path !== "string" || l2Path.length === 0) {
+             reject(new Error("missing endpoints.l2 in /session response"));
+             return;
+           }
+
+           const udpRelay = payload.udpRelay;
+           if (!udpRelay || typeof udpRelay !== "object") {
+             reject(new Error("missing udpRelay in /session response (gateway should be configured for same-origin UDP relay)"));
+             return;
+           }
           if (udpRelay.baseUrl !== `https://${host}`) {
             reject(new Error(`unexpected udpRelay.baseUrl: ${udpRelay.baseUrl}`));
             return;
@@ -415,15 +435,15 @@ if command -v node >/dev/null 2>&1; then
             reject(new Error(`unexpected session cookie from /session: ${cookiePair}`));
             return;
           }
-          if (status < 200 || status >= 400) {
-            reject(new Error(`unexpected /session status: ${status}`));
-            return;
-          }
-          resolve({ cookiePair, udpRelayToken: token });
-        });
-      },
-    );
-    req.on("error", reject);
+           if (status < 200 || status >= 400) {
+             reject(new Error(`unexpected /session status: ${status}`));
+             return;
+           }
+           resolve({ cookiePair, udpRelayToken: token, l2Path });
+         });
+       },
+     );
+     req.on("error", reject);
     req.end(body);
    });
  }
@@ -507,6 +527,152 @@ function checkTcpUpgrade(cookiePair) {
       }
 
       resolve();
+    });
+
+    socket.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
+function checkL2Upgrade(cookiePair, path) {
+  return new Promise((resolve, reject) => {
+    const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    const key = crypto.randomBytes(16).toString("base64");
+    const expectedAccept = crypto.createHash("sha1").update(key + guid).digest("base64");
+
+    const req = [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${host}`,
+      "Connection: Upgrade",
+      "Upgrade: websocket",
+      "Sec-WebSocket-Version: 13",
+      `Sec-WebSocket-Key: ${key}`,
+      `Sec-WebSocket-Protocol: ${l2Protocol}`,
+      `Cookie: ${cookiePair}`,
+      `Origin: https://${host}`,
+      "",
+      "",
+    ].join("\r\n");
+
+    const socket = tls.connect({
+      host,
+      port,
+      servername: host,
+      rejectUnauthorized: false,
+    });
+
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`timeout waiting for ${path} upgrade response`));
+    }, 5000);
+
+    let buf = "";
+    socket.on("secureConnect", () => {
+      socket.write(req);
+    });
+
+    socket.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const idx = buf.indexOf("\r\n\r\n");
+      if (idx === -1) return;
+
+      clearTimeout(timeout);
+      socket.end();
+
+      const headerBlock = buf.slice(0, idx);
+      const lines = headerBlock.split("\r\n");
+      const statusLine = lines[0] ?? "";
+      const status = parseStatusCode(statusLine);
+      if (status !== 101) {
+        reject(new Error(`unexpected status line from ${path}: ${statusLine}`));
+        return;
+      }
+
+      const acceptLine = lines.find((line) => /^sec-websocket-accept:/i.test(line));
+      if (!acceptLine) {
+        reject(new Error(`missing Sec-WebSocket-Accept in ${path} upgrade response`));
+        return;
+      }
+      const accept = acceptLine.split(":", 2)[1]?.trim() ?? "";
+      if (accept !== expectedAccept) {
+        reject(new Error(`unexpected Sec-WebSocket-Accept for ${path} (expected ${expectedAccept}, got ${accept})`));
+        return;
+      }
+
+      const protoLine = lines.find((line) => /^sec-websocket-protocol:/i.test(line));
+      if (!protoLine) {
+        reject(new Error(`missing Sec-WebSocket-Protocol in ${path} upgrade response`));
+        return;
+      }
+      const proto = protoLine.split(":", 2)[1]?.trim() ?? "";
+      if (proto !== l2Protocol) {
+        reject(new Error(`unexpected subprotocol for ${path} (expected ${l2Protocol}, got ${proto})`));
+        return;
+      }
+
+      resolve();
+    });
+
+    socket.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
+function checkL2RejectsMissingCookie(path) {
+  return new Promise((resolve, reject) => {
+    const key = crypto.randomBytes(16).toString("base64");
+
+    const req = [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${host}`,
+      "Connection: Upgrade",
+      "Upgrade: websocket",
+      "Sec-WebSocket-Version: 13",
+      `Sec-WebSocket-Key: ${key}`,
+      `Sec-WebSocket-Protocol: ${l2Protocol}`,
+      `Origin: https://${host}`,
+      "",
+      "",
+    ].join("\r\n");
+
+    const socket = tls.connect({
+      host,
+      port,
+      servername: host,
+      rejectUnauthorized: false,
+    });
+
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`timeout waiting for ${path} unauthenticated response`));
+    }, 5000);
+
+    let buf = "";
+    socket.on("secureConnect", () => {
+      socket.write(req);
+    });
+
+    socket.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const idx = buf.indexOf("\r\n\r\n");
+      if (idx === -1) return;
+
+      clearTimeout(timeout);
+      socket.end();
+
+      const headerBlock = buf.slice(0, idx);
+      const lines = headerBlock.split("\r\n");
+      const statusLine = lines[0] ?? "";
+      const status = parseStatusCode(statusLine);
+      if (status === 401 || status === 403) {
+        resolve();
+        return;
+      }
+      reject(new Error(`expected ${path} without cookie to be rejected with 401/403 (got: ${statusLine})`));
     });
 
     socket.on("error", (err) => {
@@ -1056,6 +1222,24 @@ function checkUdpRelayToken(cookiePair) {
   const session = await requestSessionInfo();
   await checkDnsQuery(session.cookiePair);
   await checkTcpUpgrade(session.cookiePair);
+  let lastL2Error;
+  for (let attempt = 1; attempt <= 30; attempt++) {
+    try {
+      await checkL2Upgrade(session.cookiePair, session.l2Path);
+      lastL2Error = undefined;
+      break;
+    } catch (err) {
+      lastL2Error = err;
+      if (attempt !== 30) {
+        await sleep(1000);
+      }
+    }
+  }
+  if (lastL2Error) {
+    throw lastL2Error;
+  }
+
+  await checkL2RejectsMissingCookie(session.l2Path);
   const token = await checkUdpRelayToken(session.cookiePair);
   if (token !== session.udpRelayToken) {
     throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);
@@ -1068,184 +1252,7 @@ function checkUdpRelayToken(cookiePair) {
  });
 NODE
 else
-  echo "deploy smoke: node not found; skipping /tcp WebSocket validation" >&2
-fi
-
-# /l2 WebSocket upgrade check (L2 tunnel).
-#
-# We validate the TLS + Upgrade path, subprotocol negotiation, and (when enabled)
-# session cookie auth without relying on external tools like `wscat`/`websocat`.
-#
-# If `node` is unavailable, skip this check (local dev convenience script).
-if command -v node >/dev/null 2>&1; then
-  echo "deploy smoke: verifying L2 WebSocket upgrade (endpoints.l2, aero-l2-tunnel-v1 + session cookie)" >&2
-  l2_ok=0
-  l2_last_error=""
-  for _ in $(seq 1 30); do
-    if l2_last_error="$(
-      node --input-type=commonjs - 2>&1 <<'NODE'
-const https = require("node:https");
-const tls = require("node:tls");
-const crypto = require("node:crypto");
-
-const host = "localhost";
-const port = 443;
-const expectedProtocol = "aero-l2-tunnel-v1";
-
-function requestSessionInfo() {
-  return new Promise((resolve, reject) => {
-    const body = Buffer.from("{}", "utf8");
-    const req = https.request(
-      {
-        host,
-        port,
-        method: "POST",
-        path: "/session",
-        rejectUnauthorized: false,
-        headers: {
-          "content-type": "application/json",
-          "content-length": String(body.length),
-        },
-      },
-      (res) => {
-        res.setEncoding("utf8");
-        let bodyText = "";
-        res.on("data", (chunk) => {
-          bodyText += chunk;
-        });
-
-        const setCookie = res.headers["set-cookie"];
-        if (!setCookie) {
-          reject(new Error("missing Set-Cookie from /session"));
-          return;
-        }
-        const cookieLine = Array.isArray(setCookie) ? setCookie[0] : setCookie;
-        if (typeof cookieLine !== "string" || cookieLine.length === 0) {
-          reject(new Error("invalid Set-Cookie from /session"));
-          return;
-        }
-        const cookiePair = cookieLine.split(";", 1)[0] ?? "";
-        if (!cookiePair.startsWith("aero_session=")) {
-          reject(new Error(`unexpected session cookie from /session: ${cookiePair}`));
-          return;
-        }
-        res.on("end", () => {
-          let payload;
-          try {
-            payload = JSON.parse(bodyText || "{}");
-          } catch (err) {
-            reject(new Error(`invalid JSON from /session: ${err}`));
-            return;
-          }
-
-          const l2Path = payload?.endpoints?.l2;
-          if (typeof l2Path !== "string" || l2Path.length === 0) {
-            reject(new Error("missing endpoints.l2 in /session response"));
-            return;
-          }
-
-          resolve({ cookiePair, l2Path });
-        });
-      },
-    );
-    req.on("error", reject);
-    req.end(body);
-  });
-}
-
-async function checkL2Upgrade(cookiePair, path) {
-  const key = crypto.randomBytes(16).toString("base64");
-  const req = [
-    `GET ${path} HTTP/1.1`,
-    `Host: ${host}`,
-    "Connection: Upgrade",
-    "Upgrade: websocket",
-    "Sec-WebSocket-Version: 13",
-    `Sec-WebSocket-Key: ${key}`,
-    `Sec-WebSocket-Protocol: ${expectedProtocol}`,
-    `Origin: https://${host}`,
-    `Cookie: ${cookiePair}`,
-    "",
-    "",
-  ].join("\r\n");
-
-  const socket = tls.connect({
-    host,
-    port,
-    servername: host,
-    rejectUnauthorized: false,
-  });
-
-  const timeout = setTimeout(() => {
-    console.error(`timeout waiting for ${path} upgrade response`);
-    process.exit(1);
-  }, 2_000);
-
-  let buf = "";
-  socket.on("secureConnect", () => {
-    socket.write(req);
-  });
-
-  socket.on("data", (chunk) => {
-    buf += chunk.toString("utf8");
-    const idx = buf.indexOf("\r\n\r\n");
-    if (idx === -1) return;
-
-    clearTimeout(timeout);
-    socket.end();
-
-    const headerBlock = buf.slice(0, idx);
-    const lines = headerBlock.split("\r\n");
-    const statusLine = lines[0] ?? "";
-    if (!statusLine.includes(" 101 ")) {
-      console.error(`unexpected status line from ${path}: ${statusLine}`);
-      process.exit(1);
-    }
-
-    const protoLine = lines.find((line) => /^sec-websocket-protocol:/i.test(line));
-    if (!protoLine) {
-      console.error(`missing Sec-WebSocket-Protocol in ${path} upgrade response`);
-      process.exit(1);
-    }
-    const proto = protoLine.split(":", 2)[1]?.trim() ?? "";
-    if (proto !== expectedProtocol) {
-      console.error(`unexpected subprotocol for ${path} (expected ${expectedProtocol}, got ${proto})`);
-      process.exit(1);
-    }
-
-    process.exit(0);
-  });
-
-  socket.on("error", (err) => {
-    clearTimeout(timeout);
-    console.error(`error waiting for ${path} upgrade response:`, err);
-    process.exit(1);
-  });
-}
-
-requestSessionInfo()
-  .then(({ cookiePair, l2Path }) => checkL2Upgrade(cookiePair, l2Path))
-  .catch((err) => {
-    console.error("l2 upgrade check failed:", err);
-    process.exit(1);
-  });
-NODE
-    )"; then
-      l2_ok=1
-      break
-    fi
-    sleep 1
-  done
-
-  if [[ $l2_ok -ne 1 ]]; then
-    echo "deploy smoke: /l2 WebSocket upgrade failed" >&2
-    if [[ -n "$l2_last_error" ]]; then
-      echo "$l2_last_error" >&2
-    fi
-    exit 1
-  fi
-else
-  echo "deploy smoke: node not found; skipping /l2 WebSocket validation" >&2
+  echo "deploy smoke: node not found; skipping WebSocket validation (/tcp, /l2)" >&2
 fi
 
 echo "deploy smoke: OK" >&2
