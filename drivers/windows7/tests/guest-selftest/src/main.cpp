@@ -2908,6 +2908,14 @@ int wmain(int argc, wchar_t** argv) {
       return 2;
     }
   }
+
+  if (opt.disable_snd && (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture)) {
+    fprintf(stderr,
+            "--disable-snd cannot be combined with --test-snd/--require-snd, --require-snd-capture, or "
+            "--test-snd-capture\n");
+    PrintUsage();
+    return 2;
+  }
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
