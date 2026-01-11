@@ -1689,10 +1689,14 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->backing_alloc_id = alloc_id;
     res->backing_offset_bytes = 0;
     res->wddm.km_resource_handle = km_resource;
-    res->wddm_allocation_handle = static_cast<uint32_t>(alloc_info[0].hAllocation);
-    if (res->wddm_allocation_handle == 0) {
-      res->wddm_allocation_handle = static_cast<uint32_t>(km_alloc);
+    uint32_t runtime_alloc = 0;
+    __if_exists(AllocationInfoT::hAllocation) {
+      runtime_alloc = static_cast<uint32_t>(alloc_info[0].hAllocation);
     }
+    // Prefer the runtime allocation handle (`hAllocation`) for LockCb/UnlockCb,
+    // but fall back to the only handle we have if the WDK revision does not
+    // expose it.
+    res->wddm_allocation_handle = runtime_alloc ? runtime_alloc : static_cast<uint32_t>(km_alloc);
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_allocation_handles.push_back(km_alloc);
     return S_OK;
