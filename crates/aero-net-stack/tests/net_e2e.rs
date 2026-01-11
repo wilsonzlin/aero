@@ -780,27 +780,30 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
                     .expect("build response"));
             }
 
-            let mut version: Option<u32> = None;
-            let mut host: Option<String> = None;
-            let mut port: Option<u16> = None;
-            let mut legacy_target: Option<String> = None;
+            let mut raw_version: Option<String> = None;
+            let mut raw_host: Option<String> = None;
+            let mut raw_port: Option<String> = None;
+            let mut raw_target: Option<String> = None;
 
             if let Some(query) = uri.query() {
                 for pair in query.split('&') {
-                    let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-                    match k {
-                        "v" => version = v.parse::<u32>().ok(),
-                        "host" => host = Some(v.to_string()),
-                        "port" => port = v.parse::<u16>().ok(),
-                        "target" => legacy_target = Some(v.to_string()),
+                    let (k_raw, v_raw) = pair.split_once('=').unwrap_or((pair, ""));
+                    let k = url_decode_component(k_raw).unwrap_or_else(|| k_raw.to_string());
+                    let v = url_decode_component(v_raw).unwrap_or_else(|| v_raw.to_string());
+                    match k.as_str() {
+                        "v" => raw_version = Some(v),
+                        "host" => raw_host = Some(v),
+                        "port" => raw_port = Some(v),
+                        "target" => raw_target = Some(v),
                         _ => {}
                     }
                 }
             }
 
-            if let Some(v) = version {
-                // The test harness only implements the v=1 gateway `/tcp` query contract.
-                if v != 1 {
+            if let Some(raw) = raw_version.as_deref() {
+                // Mirror the gateway behavior: v defaults to 1 if omitted/empty, and any non-1
+                // value is rejected.
+                if !raw.is_empty() && raw != "1" {
                     return Err(Response::builder()
                         .status(400)
                         .body(Some("unsupported tcp version".to_string()))
@@ -810,23 +813,31 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
 
             // Match the documented gateway precedence: if both the canonical form and the legacy
             // `target=` alias are provided, prefer `target`.
-            if let Some(legacy) = legacy_target {
-                if let Ok(parsed) = parse_target(&legacy) {
-                    target = Some(parsed);
-                } else {
+            if let Some(raw_target) = raw_target {
+                target = match parse_target(&raw_target) {
+                    Ok(v) => Some(v),
+                    Err(_) => {
+                        return Err(Response::builder()
+                            .status(400)
+                            .body(Some("invalid target".to_string()))
+                            .expect("build response"));
+                    }
+                };
+            } else {
+                let Some(raw_host) = raw_host else {
                     return Err(Response::builder()
                         .status(400)
-                        .body(Some("invalid target".to_string()))
+                        .body(Some("missing host".to_string()))
                         .expect("build response"));
-                }
-            } else if let (Some(host), Some(port)) = (host, port) {
-                if port == 0 {
+                };
+                let Some(raw_port) = raw_port else {
                     return Err(Response::builder()
                         .status(400)
-                        .body(Some("invalid port".to_string()))
+                        .body(Some("missing port".to_string()))
                         .expect("build response"));
-                }
-                let host = match parse_host(&host) {
+                };
+
+                let host = match parse_host(&raw_host) {
                     Ok(v) => v,
                     Err(_) => {
                         return Err(Response::builder()
@@ -835,6 +846,21 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
                             .expect("build response"));
                     }
                 };
+                let port = match parse_port(&raw_port) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(Response::builder()
+                            .status(400)
+                            .body(Some("invalid port".to_string()))
+                            .expect("build response"));
+                    }
+                };
+                if port == 0 {
+                    return Err(Response::builder()
+                        .status(400)
+                        .body(Some("invalid port".to_string()))
+                        .expect("build response"));
+                }
                 target = Some((host, port));
             }
 
@@ -895,6 +921,9 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
 }
 
 fn parse_target(target: &str) -> Result<(String, u16), &'static str> {
+    if target.is_empty() {
+        return Err("empty target");
+    }
     if let Some(rest) = target.strip_prefix('[') {
         let Some((host, rest)) = rest.split_once(']') else {
             return Err("missing closing bracket in IPv6 address");
@@ -905,10 +934,7 @@ fn parse_target(target: &str) -> Result<(String, u16), &'static str> {
         let Some(port) = rest.strip_prefix(':') else {
             return Err("missing :port suffix");
         };
-        let port: u16 = port.parse().map_err(|_| "invalid port")?;
-        if port == 0 {
-            return Err("invalid port");
-        }
+        let port = parse_port(port)?;
         return Ok((host.to_string(), port));
     }
 
@@ -923,14 +949,17 @@ fn parse_target(target: &str) -> Result<(String, u16), &'static str> {
     if host.contains(':') {
         return Err("IPv6 targets must be bracketed");
     }
-    let port: u16 = port.parse().map_err(|_| "invalid port")?;
-    if port == 0 {
-        return Err("invalid port");
+    if host.contains('[') || host.contains(']') {
+        return Err("invalid target: unexpected bracket in host");
     }
+    let port = parse_port(port)?;
     Ok((host.to_string(), port))
 }
 
 fn parse_host(host: &str) -> Result<String, &'static str> {
+    if host.is_empty() {
+        return Err("missing host");
+    }
     if let Some(rest) = host.strip_prefix('[') {
         let Some(host) = rest.strip_suffix(']') else {
             return Err("missing closing bracket in host");
@@ -940,10 +969,63 @@ fn parse_host(host: &str) -> Result<String, &'static str> {
         }
         return Ok(host.to_string());
     }
-    if host.is_empty() {
-        return Err("missing host");
+    if host.ends_with(']') {
+        return Err("mismatched host brackets");
     }
     Ok(host.to_string())
+}
+
+fn parse_port(port: &str) -> Result<u16, &'static str> {
+    if port.is_empty() {
+        return Err("invalid port");
+    }
+    if !port.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("invalid port");
+    }
+    let port: u16 = port.parse().map_err(|_| "invalid port")?;
+    if port == 0 {
+        return Err("invalid port");
+    }
+    Ok(port)
+}
+
+fn url_decode_component(input: &str) -> Option<String> {
+    fn from_hex_digit(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let bytes = input.as_bytes();
+    let mut out = Vec::<u8>::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                if i + 2 >= bytes.len() {
+                    return None;
+                }
+                let hi = from_hex_digit(bytes[i + 1])?;
+                let lo = from_hex_digit(bytes[i + 2])?;
+                out.push((hi << 4) | lo);
+                i += 3;
+            }
+            b'+' => {
+                // WHATWG URLSearchParams uses application/x-www-form-urlencoded semantics.
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+
+    String::from_utf8(out).ok()
 }
 
 struct TcpProxyClient {
