@@ -22,6 +22,10 @@ function dispatchMessage(data: unknown): void {
 (globalThis as unknown as { postMessage?: unknown }).postMessage = (msg: unknown) => parentPort?.postMessage(msg);
 (globalThis as unknown as { close?: unknown }).close = () => parentPort?.close();
 
+// Provide a stable location.href so the worker code can resolve same-origin
+// `/path` proxyUrl values via `new URL(path, location.href)`.
+(globalThis as unknown as { location?: unknown }).location = { href: "https://gateway.example.com/app/index.html" };
+
 (globalThis as unknown as { addEventListener?: unknown }).addEventListener = (type: string, listener: MessageListener) => {
   if (type !== "message") return;
   messageListeners.add(listener);

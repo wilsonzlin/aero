@@ -126,6 +126,15 @@ describe("workers/net.worker (worker_threads)", () => {
 
       await workerReady;
 
+      // Switch to a same-origin relative path and ensure it resolves against the
+      // worker's location (Node shim provides a stable https://gateway.example.com base).
+      const wsCreatedRel = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
+        url?: string;
+      }>;
+      worker.postMessage({ kind: "config.update", version: 2, config: makeConfig("/base") });
+      const createdRelMsg = await wsCreatedRel;
+      expect(createdRelMsg.url).toBe("wss://gateway.example.com/base/l2");
+
       const frame = Uint8Array.of(1, 2, 3, 4, 5);
       while (!netTxRing.tryPush(frame)) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -205,7 +214,7 @@ describe("workers/net.worker (worker_threads)", () => {
         (msg) => (msg as { type?: unknown }).type === "ws.created",
         10000,
       )) as { url?: string };
-      expect(wsCreated2.url).toBe("wss://gateway.example.com/l2");
+      expect(wsCreated2.url).toBe("wss://gateway.example.com/base/l2");
 
       const frame2 = Uint8Array.of(6, 7, 8);
       while (!netTxRing.tryPush(frame2)) {
