@@ -339,7 +339,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
   const local = pc.localDescription;
   if (!local?.sdp) throw new Error("missing local description after setting offer");
 
-  const protocols: Array<string | undefined> = [undefined];
+  const protocols: Array<string | undefined> = authToken ? [undefined, authToken] : [undefined];
   const authFirstVariants: boolean[] = authToken ? [true, false] : [false];
 
   let lastErr: unknown = null;

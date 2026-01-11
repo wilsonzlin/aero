@@ -138,12 +138,13 @@ export class WebSocketUdpProxyClient {
     }
     if (this.connectPromise) return this.connectPromise;
 
-    this.connectPromise = this.connectWithAuth({ sendAuthMessage: false })
-      .catch(async (err) => {
-        if (!this.authToken) throw err;
-        // Retry with explicit first-message auth for hardened relay builds.
-        return await this.connectWithAuth({ sendAuthMessage: true });
-      })
+    this.connectPromise = (this.authToken
+      ? this.connectWithAuth({ includeQueryAuth: false, sendAuthMessage: true }).catch(() =>
+          // Query-string auth is a compatibility fallback for environments where
+          // a first-message auth handshake is not supported.
+          this.connectWithAuth({ includeQueryAuth: true, sendAuthMessage: false }),
+        )
+      : this.connectWithAuth({ includeQueryAuth: false, sendAuthMessage: false }))
       .finally(() => {
         this.connectPromise = null;
       });
@@ -151,13 +152,15 @@ export class WebSocketUdpProxyClient {
     return this.connectPromise;
   }
 
-  private connectWithAuth(opts: { sendAuthMessage: boolean }): Promise<void> {
+  private connectWithAuth(opts: { includeQueryAuth: boolean; sendAuthMessage: boolean }): Promise<void> {
     this.close();
     this.authAccepted = false;
 
     const url = new URL(this.proxyBaseUrl);
+    if (url.protocol === "http:") url.protocol = "ws:";
+    else if (url.protocol === "https:") url.protocol = "wss:";
     url.pathname = `${url.pathname.replace(/\/$/, "")}/udp`;
-    if (this.authToken) {
+    if (this.authToken && opts.includeQueryAuth) {
       // Forward/compat: support both jwt token and api_key query param names.
       url.searchParams.set("token", this.authToken);
       url.searchParams.set("apiKey", this.authToken);
