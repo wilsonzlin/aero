@@ -500,7 +500,8 @@ static bool IsAllowedVirtioSndPciHardwareId(const std::vector<std::wstring>& hwi
   return IsAllowedVirtioSndPciId(info, allow_transitional);
 }
 
-static constexpr const wchar_t* kVirtioSndExpectedService = L"aeroviosnd";
+static constexpr const wchar_t* kVirtioSndExpectedServiceModern = L"aeroviosnd";
+static constexpr const wchar_t* kVirtioSndExpectedServiceTransitional = L"aeroviosnd_legacy";
 
 static const char* CmProblemCodeToName(DWORD code) {
   switch (code) {
@@ -850,9 +851,12 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     if (!hwids.empty()) {
       log.Logf("virtio-snd: detected PCI device hwid0=%s", WideToUtf8(hwids[0]).c_str());
     }
+    const std::wstring expected_service = snd.is_transitional && !snd.is_modern
+                                              ? kVirtioSndExpectedServiceTransitional
+                                              : kVirtioSndExpectedServiceModern;
     log.Logf("virtio-snd: pci driver service=%s inf=%s section=%s (expected service=%s)",
              WideToUtf8(snd.service).c_str(), WideToUtf8(snd.inf_path).c_str(),
-             WideToUtf8(snd.inf_section).c_str(), "aeroviosnd");
+             WideToUtf8(snd.inf_section).c_str(), WideToUtf8(expected_service).c_str());
     log.Logf("virtio-snd: pci cm_status=0x%08lx(%s) cm_problem=%lu(%s: %s)",
              static_cast<unsigned long>(snd.cm_status), CmStatusFlagsToString(snd.cm_status).c_str(),
              static_cast<unsigned long>(snd.cm_problem), CmProblemCodeToName(snd.cm_problem),
@@ -943,18 +947,22 @@ static VirtioSndBindingCheckResult CheckVirtioSndPciBinding(Logger& log,
   VirtioSndBindingCheckResult out;
 
   for (const auto& dev : devices) {
+    const std::wstring expected_service = dev.is_transitional && !dev.is_modern
+                                              ? kVirtioSndExpectedServiceTransitional
+                                              : kVirtioSndExpectedServiceModern;
     const bool has_service = !dev.service.empty();
-    const bool service_ok = has_service && EqualsInsensitive(dev.service, kVirtioSndExpectedService);
+    const bool service_ok = has_service && EqualsInsensitive(dev.service, expected_service);
     const bool problem_ok = (dev.cm_problem == 0) && ((dev.cm_status & DN_HAS_PROBLEM) == 0);
 
     if (!has_service) {
       out.any_missing_service = true;
       log.Logf("virtio-snd: pci device pnp_id=%s has no bound service (expected %s)",
-               WideToUtf8(dev.instance_id).c_str(), "aeroviosnd");
+               WideToUtf8(dev.instance_id).c_str(), WideToUtf8(expected_service).c_str());
     } else if (!service_ok) {
       out.any_wrong_service = true;
       log.Logf("virtio-snd: pci device pnp_id=%s bound_service=%s (expected %s)",
-               WideToUtf8(dev.instance_id).c_str(), WideToUtf8(dev.service).c_str(), "aeroviosnd");
+               WideToUtf8(dev.instance_id).c_str(), WideToUtf8(dev.service).c_str(),
+               WideToUtf8(expected_service).c_str());
     }
     if (!problem_ok) {
       out.any_problem = true;

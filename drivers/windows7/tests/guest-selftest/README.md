@@ -29,13 +29,14 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
     - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
-      `PCI\VEN_1AF4&DEV_1018`. The Aero INF/contract v1 is **modern-only**, so the device will not bind and
-      the selftest will treat the device as missing.
-      - For debugging/backcompat only, you can explicitly allow transitional matching with
-        `--allow-virtio-snd-transitional`.
-  - Validate that the PCI device is bound to the expected in-tree driver service (`aeroviosnd`) and emit
+      `PCI\VEN_1AF4&DEV_1018`. The default Aero contract-v1 INF is **modern-only**, so the device will not bind
+      unless you install the opt-in transitional package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
+      - Pass `--allow-virtio-snd-transitional` to accept the transitional ID (intended for QEMU bring-up/regression).
+  - Validate that the PCI device is bound to the expected in-tree driver service and emit
     actionable diagnostics (PNP instance ID, ConfigManagerErrorCode / Device Manager “Code X”, driver INF name
     when queryable).
+    - Modern (`DEV_1059`): expects service `aeroviosnd`
+    - Transitional (`DEV_1018` + `--allow-virtio-snd-transitional`): expects service `aeroviosnd_legacy`
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
