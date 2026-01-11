@@ -25,6 +25,10 @@ The key architectural choice is to **avoid implementing a traditional, hardware-
 This doc is the implementation spec for the Win7 driver stack. It intentionally focuses on the minimal surface area needed to achieve DWM + D3D9 stability before expanding into D3D10/11.
 
 Implementation + build tooling lives under `drivers/aerogpu/` (start at `drivers/aerogpu/README.md`).
+
+Protocol source of truth:
+`drivers/aerogpu/protocol/*` (see `drivers/aerogpu/protocol/README.md` and
+`docs/graphics/aerogpu-protocols.md`).
   
 ---
  

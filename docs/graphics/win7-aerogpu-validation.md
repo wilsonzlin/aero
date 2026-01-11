@@ -7,6 +7,10 @@ This document is a practical “bring-up and keep-it-stable” checklist for the
 - **DWM falling back to Basic theme** (“The color scheme has been changed…”) → no Aero glass
 - **Random hangs** (often vblank waits or fence/interrupt issues) → frozen desktop, deadlocked threads
 
+Protocol source of truth:
+`drivers/aerogpu/protocol/*` (see `drivers/aerogpu/protocol/README.md` and
+`docs/graphics/aerogpu-protocols.md`).
+
 The goal is repeatability: a developer should be able to follow this in a VM and converge on a **stable** driver before chasing correctness/performance.
 
 ---
