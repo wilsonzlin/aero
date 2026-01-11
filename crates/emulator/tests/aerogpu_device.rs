@@ -1,7 +1,8 @@
 use std::time::{Duration, Instant};
 
+use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC};
 use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_ABI_MAJOR, AEROGPU_MMIO_MAGIC};
-use emulator::devices::aerogpu_ring::{AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC};
+use emulator::devices::aerogpu_ring::{AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC};
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::io::pci::MmioDevice;
@@ -261,7 +262,7 @@ fn vsynced_present_fence_completes_on_vblank() {
     let cmd_gpa = 0x4000u64;
     let cmd_size_bytes = 40u32;
 
-    mem.write_u32(cmd_gpa + 0, 0x444D_4341); // "ACMD"
+    mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
     mem.write_u32(cmd_gpa + 4, dev.regs.abi_version);
     mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
     mem.write_u32(cmd_gpa + 12, 0); // flags
@@ -269,15 +270,15 @@ fn vsynced_present_fence_completes_on_vblank() {
     mem.write_u32(cmd_gpa + 20, 0);
 
     // aerogpu_cmd_present
-    mem.write_u32(cmd_gpa + 24, 0x700); // opcode
+    mem.write_u32(cmd_gpa + 24, AerogpuCmdOpcode::Present as u32);
     mem.write_u32(cmd_gpa + 28, 16); // size_bytes
     mem.write_u32(cmd_gpa + 32, 0); // scanout_id
-    mem.write_u32(cmd_gpa + 36, 1); // AEROGPU_PRESENT_FLAG_VSYNC
+    mem.write_u32(cmd_gpa + 36, AEROGPU_PRESENT_FLAG_VSYNC);
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
     mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
-    mem.write_u32(desc_gpa + 4, 0); // flags
+    mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
     mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
