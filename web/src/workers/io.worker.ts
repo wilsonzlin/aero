@@ -340,7 +340,6 @@ const hidPassthroughPathsByDeviceId = new Map<string, GuestUsbPath>();
 // L2 tunnel forwarder telemetry (best-effort observability)
 // -----------------------------------------------------------------------------
 
-let l2Forwarder: L2TunnelForwarder | null = null;
 let l2ConnectionState: L2TunnelForwarderConnectionState = "closed";
 let l2LastStats: L2TunnelForwarderStats | null = null;
 let l2NextStatsLogMs = 0;
@@ -356,23 +355,33 @@ let ioServerTask: Promise<void> | null = null;
 
 function applyL2TunnelConfig(config: AeroConfig | null): void {
   const proxyUrl = config?.proxyUrl ?? null;
-  if (!l2TunnelForwarder) return;
+  const forwarder = l2TunnelForwarder;
+  if (!forwarder) return;
 
   // Ensure we stop/close the previous tunnel when the proxy URL changes.
   if (proxyUrl !== l2TunnelProxyUrl) {
-    l2TunnelForwarder.stop();
+    forwarder.stop();
     l2TunnelClient = null;
     l2TunnelProxyUrl = proxyUrl;
+    setL2TunnelConnectionState("closed");
   }
 
   if (proxyUrl === null) return;
 
   if (!l2TunnelClient) {
-    l2TunnelClient = new WebSocketL2TunnelClient(proxyUrl, l2TunnelForwarder.sink);
-    l2TunnelForwarder.setTunnel(l2TunnelClient);
+    const client = new WebSocketL2TunnelClient(proxyUrl, (ev) => {
+      // Avoid stale events from previously replaced tunnels clobbering connection state.
+      if (l2TunnelClient !== client) return;
+      forwarder.sink(ev);
+    });
+    l2TunnelClient = client;
+    forwarder.setTunnel(client);
   }
 
-  l2TunnelForwarder.start();
+  if (l2ConnectionState !== "open") {
+    setL2TunnelConnectionState("connecting");
+  }
+  forwarder.start();
 }
 
 type SetMicrophoneRingBufferMessage = {
@@ -471,7 +480,7 @@ function setL2TunnelConnectionState(next: L2TunnelForwarderConnectionState, deta
 }
 
 function maybeEmitL2TunnelStatsLog(nowMs: number): void {
-  const fwd = l2Forwarder;
+  const fwd = l2TunnelForwarder;
   if (!fwd) return;
   if (nowMs < l2NextStatsLogMs) return;
   l2NextStatsLogMs = nowMs + L2_STATS_LOG_INTERVAL_MS;
@@ -678,13 +687,14 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       l2TunnelForwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
         onTunnelEvent: (ev) => {
           if (ev.type === "open") {
-            pushEvent({ kind: "log", level: "info", message: "L2 tunnel connected" });
+            setL2TunnelConnectionState("open");
           } else if (ev.type === "close") {
-            const suffix = ev.code === undefined ? "" : ` (code=${ev.code}${ev.reason ? ` reason=${ev.reason}` : ""})`;
-            pushEvent({ kind: "log", level: "warn", message: `L2 tunnel disconnected${suffix}` });
+            const detail =
+              ev.code === undefined ? undefined : `code=${ev.code}${ev.reason ? ` reason=${ev.reason}` : ""}`;
+            setL2TunnelConnectionState("closed", detail);
           } else if (ev.type === "error") {
             const msg = ev.error instanceof Error ? ev.error.message : String(ev.error);
-            pushEvent({ kind: "log", level: "warn", message: `L2 tunnel error: ${msg}` });
+            setL2TunnelConnectionState("error", msg);
           }
         },
       });
@@ -1040,11 +1050,10 @@ function startIoIpcServer(): void {
       flushPendingIoEvents();
       drainRuntimeCommands();
       mgr.tick(nowMs);
-      l2Forwarder?.pump();
+      l2TunnelForwarder?.tick();
       maybeEmitL2TunnelStatsLog(nowMs);
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
-      l2TunnelForwarder?.tick();
       usbUhciHarnessRuntime?.pollOnce();
 
       if (perfActive) perfIoMs += performance.now() - t0;
