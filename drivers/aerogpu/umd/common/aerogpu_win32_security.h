@@ -52,23 +52,14 @@ inline bool mic_debug_logging_enabled() {
   // every process that loads the UMDs.
   //
   // Values: 1/true/yes/on enable. 0/false/no/off disable.
-  static LONG cached = -1; // -1 unknown, 0 false, 1 true
-  const LONG state = cached;
-  if (state != -1) {
-    return state != 0;
-  }
-
   wchar_t buf[16] = {};
   const DWORD n = GetEnvironmentVariableW(L"AEROGPU_LOG_MIC", buf, static_cast<DWORD>(sizeof(buf) / sizeof(buf[0])));
   if (n == 0 || n >= (sizeof(buf) / sizeof(buf[0]))) {
-    InterlockedExchange(&cached, 0);
     return false;
   }
 
   ascii_tolower_inplace(buf);
-  const bool enabled = (wstr_eq(buf, L"1") || wstr_eq(buf, L"true") || wstr_eq(buf, L"yes") || wstr_eq(buf, L"on"));
-  InterlockedExchange(&cached, enabled ? 1 : 0);
-  return enabled;
+  return (wstr_eq(buf, L"1") || wstr_eq(buf, L"true") || wstr_eq(buf, L"yes") || wstr_eq(buf, L"on"));
 }
 
 inline void output_debug_hex_dword(DWORD v) {
