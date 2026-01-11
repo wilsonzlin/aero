@@ -69,7 +69,9 @@ Extraction backend selection is controlled by `--backend`:
 The extractor is a plain Python script and aims to work on Python 3.8+.
 
 Note: the `pycdlib` backend prefers **Joliet** paths (mixed-case). If the ISO was authored
-without Joliet, it will fall back to **Rock Ridge** (and then ISO-9660) paths.
+without Joliet, it will fall back to **Rock Ridge** (and then ISO-9660) paths. When using
+plain ISO-9660 paths, the extractor strips ISO file version suffixes like `;1` from the
+extracted filenames (so downstream tooling sees normal `*.inf`/`*.sys` names).
 
 Installing dependencies:
 
