@@ -492,6 +492,7 @@ describe("chunked delivery", () => {
     });
 
     expect(res.statusCode).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
     const body = res.json() as { chunked?: { delivery: string; manifestUrl: string } };
     expect(body.chunked).toEqual({
       delivery: "chunked",
@@ -546,6 +547,7 @@ describe("chunked delivery", () => {
     });
 
     expect(res.statusCode).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
     const body = res.json() as { chunked?: { delivery: string; manifestUrl: string } };
     expect(body.chunked?.delivery).toBe("chunked");
     expect(body.chunked?.manifestUrl).toMatch(

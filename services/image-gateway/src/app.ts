@@ -669,7 +669,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       }
     }
 
-    reply.send({
+    reply.header("cache-control", "no-store").send({
       url,
       auth,
       size: record.size,
