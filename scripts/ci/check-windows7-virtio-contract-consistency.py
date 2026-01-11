@@ -1639,6 +1639,32 @@ def main() -> None:
         except json.JSONDecodeError as e:
             fail(f"invalid JSON in {WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {e}")
 
+        base_schema = manifest.get("schema_version")
+        virtio_win_schema = virtio_win_manifest.get("schema_version")
+        if base_schema != virtio_win_schema:
+            errors.append(
+                format_error(
+                    "windows-device-contract-virtio-win.json schema_version must match windows-device-contract.json:",
+                    [
+                        f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {base_schema!r}",
+                        f"{WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {virtio_win_schema!r}",
+                    ],
+                )
+            )
+
+        base_version = manifest.get("contract_version")
+        virtio_win_version = virtio_win_manifest.get("contract_version")
+        if base_version != virtio_win_version:
+            errors.append(
+                format_error(
+                    "windows-device-contract-virtio-win.json contract_version must match windows-device-contract.json:",
+                    [
+                        f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {base_version!r}",
+                        f"{WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {virtio_win_version!r}",
+                    ],
+                )
+            )
+
         base_manifest_devices = parse_manifest_device_map(manifest, file=WINDOWS_DEVICE_CONTRACT_JSON)
         virtio_win_devices = parse_manifest_device_map(virtio_win_manifest, file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON)
 
