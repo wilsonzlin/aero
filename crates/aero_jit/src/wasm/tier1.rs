@@ -10,7 +10,7 @@ use crate::tier1_ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 use super::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
 };
 
 /// WASM export name for Tier-1 blocks.
@@ -253,7 +253,7 @@ impl Tier1WasmCodegen {
 
         emitter
             .func
-            .instruction(&Instruction::LocalGet(layout.next_rip_local()));
+            .instruction(&Instruction::LocalGet(layout.scratch_local()));
         emitter.func.instruction(&Instruction::Return);
         emitter.func.instruction(&Instruction::End);
 
@@ -596,6 +596,23 @@ impl Emitter<'_> {
         }
         self.func
             .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
+
+        // Encode `exit_to_interpreter` in the return value while still updating `CpuState.rip`
+        // in linear memory:
+        // - normal control flow returns the computed `next_rip`
+        // - `ExitToInterpreter` returns `JIT_EXIT_SENTINEL_I64` and the runtime reads the real
+        //   `next_rip` from `CpuState.rip`
+        match *term {
+            IrTerminator::ExitToInterpreter { .. } => {
+                self.func.instruction(&Instruction::I64Const(JIT_EXIT_SENTINEL_I64));
+            }
+            _ => {
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.next_rip_local()));
+            }
+        }
+        self.func
+            .instruction(&Instruction::LocalSet(self.layout.scratch_local()));
     }
 
     fn emit_trunc(&mut self, width: Width) {

@@ -16,6 +16,10 @@ pub mod block;
 pub mod tier1_ir;
 pub mod translate;
 
+// Native (non-wasm32) JIT backend glue for `aero_cpu_core::jit::runtime::JitRuntime`.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod backend;
+
 pub use block::{discover_block, BasicBlock, BlockEndKind, BlockLimits};
 pub use translate::translate_block;
 pub use cpu::{

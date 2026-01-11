@@ -2,11 +2,11 @@
 
 use aero_cpu::{CpuBus, CpuState, SimpleBus};
 use aero_jit::tier1_ir::interp::execute_block;
-use aero_jit::wasm::tier1::Tier1WasmCodegen;
+use aero_jit::wasm::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
 use aero_jit::wasm::{
-    EXPORT_BLOCK_FN, IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
-    IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
-    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT,
+    IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT,
 };
 use aero_jit::{discover_block, translate_block, BlockLimits};
 use aero_types::{Gpr, Width};
@@ -64,7 +64,7 @@ fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<i32, i64>) {
 
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
     let block = instance
-        .get_typed_func::<i32, i64>(&store, EXPORT_BLOCK_FN)
+        .get_typed_func::<i32, i64>(&store, EXPORT_TIER1_BLOCK_FN)
         .unwrap();
     (store, memory, block)
 }
