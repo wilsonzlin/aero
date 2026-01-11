@@ -194,6 +194,49 @@ fn uhci_usbsts_write_1_to_clear_clears_latched_interrupt_bits() {
 }
 
 #[test]
+fn uhci_usbsts_byte_writes_do_not_cross_clear_w1c_bits() {
+    let mut mem = Bus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    // Schedule a single TD to an address with no device attached to force an error interrupt.
+    write_td(
+        &mut mem,
+        TD0,
+        1, // terminate
+        TD_STATUS_ACTIVE,
+        td_token(PID_IN, 5, 0, 0, 8),
+        0,
+    );
+    write_qh(&mut mem, QH_ADDR, TD0);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.port_write(REG_USBINTR, 2, USBINTR_TIMEOUT_CRC as u32);
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
+
+    uhci.tick_1ms(&mut mem);
+
+    assert_ne!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
+        0
+    );
+
+    // Writing the USBSTS high byte should not clear low-byte W1C bits.
+    uhci.port_write(REG_USBSTS + 1, 1, 0xff);
+    assert_ne!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
+        0
+    );
+
+    // Clear via an 8-bit W1C write to the low byte.
+    uhci.port_write(REG_USBSTS, 1, USBSTS_USBERRINT as u32);
+    assert_eq!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
+        0
+    );
+}
+
+#[test]
 fn uhci_pci_bar_relocation_updates_io_window() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0x1000);
 
