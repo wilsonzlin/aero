@@ -119,6 +119,7 @@ def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
         raise ValidationError(f"Windows device contract {path} must contain a list field 'devices'.")
 
     out: Dict[str, ContractDevice] = {}
+    pci_ven_dev_re = re.compile(r"(?i)PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4}")
     for entry in devices:
         if not isinstance(entry, dict):
             raise ValidationError(f"Windows device contract {path} contains a non-object device entry: {entry!r}")
@@ -143,12 +144,19 @@ def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
         pci_vendor_id = _parse_hex_u16(pci_vendor_id_raw, ctx=f"{path} device {name!r} pci_vendor_id")
         pci_device_id = _parse_hex_u16(pci_device_id_raw, ctx=f"{path} device {name!r} pci_device_id")
         expected_substr = f"VEN_{pci_vendor_id:04X}&DEV_{pci_device_id:04X}"
+        has_canonical = False
         for hwid in hwids:
-            if expected_substr not in hwid.upper():
+            if not pci_ven_dev_re.search(hwid):
                 raise ValidationError(
-                    f"Windows device contract {path} device {name!r} has hardware_id_patterns entry that does not "
-                    f"match pci_vendor_id/pci_device_id ({expected_substr}): {hwid!r}"
+                    f"Windows device contract {path} device {name!r} has invalid hardware_id_patterns entry: {hwid!r}"
                 )
+            if expected_substr in hwid.upper():
+                has_canonical = True
+        if not has_canonical:
+            raise ValidationError(
+                f"Windows device contract {path} device {name!r} has no hardware_id_patterns entries matching "
+                f"pci_vendor_id/pci_device_id ({expected_substr})."
+            )
 
         # Enforce AERO-W7-VIRTIO v1 invariants for virtio devices (modern-only + REV_01).
         if name.lower().startswith("virtio-"):

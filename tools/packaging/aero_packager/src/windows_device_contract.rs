@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
@@ -51,6 +52,8 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
     }
 
     let mut seen_device_names = HashSet::<String>::new();
+    let base_pci_hwid_re = Regex::new(r"(?i)PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4}")
+        .expect("valid PCI HWID regex");
 
     for device in &contract.devices {
         let name = device.device.trim();
@@ -152,16 +155,25 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
         if device.hardware_id_patterns.is_empty() {
             anyhow::bail!("windows-device-contract device {name} has no hardware_id_patterns");
         }
+        let mut has_canonical_vendor_device = false;
         for hwid in &device.hardware_id_patterns {
             let hwid = hwid.trim();
             if hwid.is_empty() {
                 anyhow::bail!("windows-device-contract device {name} has empty hardware_id_patterns entry");
             }
-            if !hwid.to_ascii_uppercase().contains(&expected_substr) {
+            if base_pci_hwid_re.find(hwid).is_none() {
                 anyhow::bail!(
-                    "windows-device-contract device {name} hardware_id_patterns entry does not match pci_vendor_id/pci_device_id: {hwid} (expected to contain {expected_substr})"
+                    "windows-device-contract device {name} has invalid PCI hardware_id_patterns entry: {hwid}"
                 );
             }
+            if hwid.to_ascii_uppercase().contains(&expected_substr) {
+                has_canonical_vendor_device = true;
+            }
+        }
+        if !has_canonical_vendor_device {
+            anyhow::bail!(
+                "windows-device-contract device {name} hardware_id_patterns is missing canonical pci_vendor_id/pci_device_id pattern (expected to contain {expected_substr})"
+            );
         }
     }
 

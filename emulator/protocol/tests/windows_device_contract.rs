@@ -215,8 +215,8 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     let legacy_vendor = format!("VEN_{legacy_vendor_id}");
     let legacy_hwid = format!("PCI\\{legacy_vendor}&DEV_0001");
     assert!(
-        !contains_case_insensitive(&patterns, &legacy_hwid),
-        "hardware_id_patterns for aero-gpu must not include legacy bring-up HWID {legacy_hwid}; the canonical Windows device contract is A3A0-only (got {patterns:?})",
+        contains_case_insensitive(&patterns, &legacy_hwid),
+        "hardware_id_patterns for aero-gpu must include legacy bring-up HWID {legacy_hwid} (got {patterns:?})",
     );
 
     let aerogpu_inf_path = root.join("drivers/aerogpu/packaging/win7/aerogpu.inf");
@@ -633,11 +633,17 @@ fn no_aerogpu_1ae0_tokens_outside_archived_prototype_tree() {
 #[test]
 fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
     // Guard against accidentally reintroducing the deprecated AeroGPU legacy bring-up PCI identity
-    // into canonical docs/config. The legacy identity (1AED) is still supported for optional
-    // compatibility testing, but it should remain confined to:
+    // beyond the intended compatibility surface. The legacy identity (1AED) is still supported for
+    // optional compatibility testing, and Guest Tools need to accept it (depending on the emulator
+    // device model), but it should remain confined to:
     //   - docs/abi/aerogpu-pci-identity.md (mapping doc / source-of-truth context)
+    //   - docs/windows-device-contract.json (machine-readable contract; drives Guest Tools config)
     //   - drivers/aerogpu/protocol/legacy/
+    //   - drivers/aerogpu/packaging/win7/README.md (install docs reference both HWIDs)
     //   - drivers/aerogpu/packaging/win7/legacy/
+    //   - guest-tools/config/devices.cmd (generated from the device contract)
+    //   - scripts/generate-guest-tools-devices-cmd.py (generator source)
+    //   - tools/packaging/aero_packager/src/guest_tools_config.rs (packager generator)
     //   - prototype/legacy-win7-aerogpu-1ae0/ (archived prototype tree)
     let root = repo_root();
 
@@ -656,9 +662,14 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
     let files = output.stdout;
 
     let allowed_mapping_doc = b"docs/abi/aerogpu-pci-identity.md";
-    let allowed_prefixes: [&[u8]; 3] = [
+    let allowed_prefixes: &[&[u8]] = &[
+        b"docs/windows-device-contract.json",
         b"drivers/aerogpu/protocol/legacy/",
+        b"drivers/aerogpu/packaging/win7/README.md",
         b"drivers/aerogpu/packaging/win7/legacy/",
+        b"guest-tools/config/devices.cmd",
+        b"scripts/generate-guest-tools-devices-cmd.py",
+        b"tools/packaging/aero_packager/src/guest_tools_config.rs",
         b"prototype/legacy-win7-aerogpu-1ae0/",
     ];
 

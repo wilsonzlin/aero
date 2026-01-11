@@ -6,7 +6,7 @@ rem Source of truth: Windows device contract JSON
 rem Generator: scripts/generate-guest-tools-devices-cmd.py
 rem Contract name: aero-windows-pci-device-contract
 rem Contract schema_version: 1
-rem Contract version: 1.0.2
+rem Contract version: 1.0.3
 rem -----------------------------------------------------------------------------
 
 rem This file is sourced by guest-tools\setup.cmd and guest-tools\uninstall.cmd.
@@ -30,6 +30,11 @@ set AERO_VIRTIO_INPUT_HWIDS="PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01" "PCI\
 set "AERO_VIRTIO_SND_SERVICE=aeroviosnd"
 set "AERO_VIRTIO_SND_SYS="
 set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01" "PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4" "PCI\VEN_1AF4&DEV_1059&REV_01" "PCI\VEN_1AF4&DEV_1059"
+rem
+rem AeroGPU HWIDs:
+rem   - PCI\VEN_A3A0&DEV_0001  (canonical / current)
+rem   - PCI\VEN_1AED&DEV_0001  (legacy bring-up ABI; emulator/aerogpu-legacy)
+rem The Win7 driver package includes INFs for both; Guest Tools should accept either.
 set "AERO_GPU_SERVICE=aerogpu"
-set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0" "PCI\VEN_A3A0&DEV_0001"
+set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0" "PCI\VEN_A3A0&DEV_0001" "PCI\VEN_1AED&DEV_0001"
 

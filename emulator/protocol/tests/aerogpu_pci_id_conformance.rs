@@ -128,14 +128,14 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_DEVICE_ID");
     let legacy_hwid = format!("PCI\\VEN_{legacy_vendor_id:04X}&DEV_{legacy_device_id:04X}");
 
-    // The shipped driver package + guest-tools target the canonical, versioned ABI (A3A0:0001).
-    // The legacy bring-up device model still exists for debugging, but requires enabling the
-    // legacy emulator device model feature (`emulator/aerogpu-legacy`) and using the legacy INFs
-    // under `drivers/aerogpu/packaging/win7/legacy/` (or another INF that matches the legacy HWID).
+    // The shipped driver package targets the canonical, versioned ABI (A3A0:0001) by default.
+    // The legacy bring-up device model still exists behind the legacy emulator device model feature
+    // (`emulator/aerogpu-legacy`) and uses the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`.
+    //
+    // Guest Tools config/contract should accept both, since the emulator/device model may expose either.
     for relative_path in [
         "drivers/aerogpu/packaging/win7/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/aerogpu_dx11.inf",
-        "guest-tools/config/devices.cmd",
     ] {
         let path = repo_root.join(relative_path);
         assert_file_contains_noncomment_line(&path, &new_hwid);
@@ -150,6 +150,13 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         assert_file_contains_noncomment_line(&path, &legacy_hwid);
         assert_file_not_contains(&path, &new_hwid);
     }
+
+    // Guest Tools config is generated from the Windows device contract and must accept both the
+    // canonical and legacy AeroGPU PCI HWIDs (the emulator/device model may expose either).
+    let devices_cmd_path = repo_root.join("guest-tools/config/devices.cmd");
+    assert_file_contains_noncomment_line(&devices_cmd_path, &new_hwid);
+    assert_file_contains_noncomment_line(&devices_cmd_path, &legacy_hwid);
+
     let contract_path = repo_root.join("docs/windows-device-contract.json");
     let contract_text = read_file(&contract_path);
     let contract_json: serde_json::Value = serde_json::from_str(&contract_text)
@@ -236,13 +243,9 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         "{}: aero-gpu hardware_id_patterns missing `{new_hwid}`. Found: {patterns:?}",
         contract_path.display()
     );
-    // The contract manifest intentionally represents the canonical, versioned AeroGPU PCI identity
-    // only. The legacy bring-up ABI (`drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`)
-    // remains in-tree for reference and optional compatibility, but must not be treated as part of
-    // the stable Windows device binding contract.
     assert!(
-        !patterns.contains(&legacy_hwid),
-        "{}: aero-gpu hardware_id_patterns must not include legacy bring-up `{legacy_hwid}`. Found: {patterns:?}",
+        patterns.contains(&legacy_hwid),
+        "{}: aero-gpu hardware_id_patterns missing `{legacy_hwid}`. Found: {patterns:?}",
         contract_path.display()
     );
 }

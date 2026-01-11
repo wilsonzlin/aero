@@ -141,22 +141,25 @@ reg query "HKLM\SYSTEM\CurrentControlSet\Control\Video\%VIDEOID%\0000" /v UserMo
 
 ## 2) Confirm the PCI Hardware ID(s) (required)
 
-By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the canonical AeroGPU PCI Hardware ID:
+This Win7 driver package supports the following AeroGPU PCI Hardware IDs:
 
 ```
 PCI\VEN_A3A0&DEV_0001  (canonical / current, versioned ABI / "AGPU")
+PCI\VEN_1AED&DEV_0001  (legacy bring-up ABI)
 ```
 
-The Win7 KMD still has a compatibility path for the deprecated legacy bring-up device (the legacy `"ARGP"` device model),
-but the shipped INFs intentionally do **not** match it (to discourage accidental installs against the legacy device model).
-If you need the legacy device model for bring-up/compatibility, install using the legacy INFs under
-`drivers/aerogpu/packaging/win7/legacy/` and build the emulator with the legacy device model enabled (feature
-`emulator/aerogpu-legacy`).
+`A3A0:0001` is the canonical ABI identity; `1AED:0001` is the deprecated legacy bring-up ABI and may still appear
+depending on the emulator/device model (the emulator legacy device model is behind feature `emulator/aerogpu-legacy`).
+
+The Win7 KMD still has a compatibility path for the legacy bring-up device model, but the primary INFs in this
+directory (`aerogpu.inf` and `aerogpu_dx11.inf`) intentionally match only the canonical `A3A0:0001` device model (to
+discourage accidental installs against the legacy device model). If you need the legacy `1AED:0001` device model for
+bring-up/compatibility, install using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`.
 
 See `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD
 supports multiple ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
-Before installing, confirm your VM's device model reports the expected Hardware ID:
+Before installing, confirm your VM's device model reports one of the above Hardware IDs:
 
 1. In the Win7 VM: Device Manager → Display adapters (or unknown device) → Properties → Details → *Hardware Ids*
 2. Copy the `PCI\VEN_....&DEV_....` value.

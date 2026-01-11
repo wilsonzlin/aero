@@ -165,6 +165,11 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
         "set AERO_VIRTIO_SND_HWIDS={}\r\n",
         quote_cmd_list(&virtio_snd_hwids)
     ));
+    out.push_str("rem\r\n");
+    out.push_str("rem AeroGPU HWIDs:\r\n");
+    out.push_str("rem   - PCI\\VEN_A3A0&DEV_0001  (canonical / current)\r\n");
+    out.push_str("rem   - PCI\\VEN_1AED&DEV_0001  (legacy bring-up ABI; emulator/aerogpu-legacy)\r\n");
+    out.push_str("rem The Win7 driver package includes INFs for both; Guest Tools should accept either.\r\n");
     out.push_str(&format!("set \"AERO_GPU_SERVICE={gpu_service}\"\r\n"));
     out.push_str(&format!(
         "set AERO_GPU_HWIDS={}\r\n",
