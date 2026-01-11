@@ -729,6 +729,9 @@ VirtioSndCtrlPcmInfo1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO
     if (Ctrl == NULL || Info == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     return VirtioSndCtrlPcmInfoQuery(Ctrl, &playbackInfo, Info);
 }
@@ -743,6 +746,9 @@ VirtioSndCtrlSetParams(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, 
 
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
     }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
@@ -815,6 +821,9 @@ VirtioSndCtrlSetParams1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes,
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
     status = VirtioSndCtrlSetParamsLocked(Ctrl, VIRTIO_SND_CAPTURE_STREAM_ID, BufferBytes, PeriodBytes);
@@ -886,6 +895,9 @@ VirtioSndCtrlPrepare1(_Inout_ VIRTIOSND_CONTROL* Ctrl)
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
 
@@ -941,6 +953,9 @@ VirtioSndCtrlStart1(_Inout_ VIRTIOSND_CONTROL* Ctrl)
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
 
@@ -995,6 +1010,9 @@ VirtioSndCtrlStop1(_Inout_ VIRTIOSND_CONTROL* Ctrl)
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
 
@@ -1041,6 +1059,9 @@ VirtioSndCtrlRelease1(_Inout_ VIRTIOSND_CONTROL* Ctrl)
 
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
     }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
