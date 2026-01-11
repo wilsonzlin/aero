@@ -277,7 +277,8 @@ fn variable_payload_decoders_allow_trailing_bytes() {
     let mut set_vertex_buffers_payload = Vec::new();
     push_u32(&mut set_vertex_buffers_payload, 2); // start_slot
     push_u32(&mut set_vertex_buffers_payload, 1); // buffer_count
-                                                  // binding[0]
+
+    // binding[0]
     push_u32(&mut set_vertex_buffers_payload, 11); // buffer
     push_u32(&mut set_vertex_buffers_payload, 16); // stride_bytes
     push_u32(&mut set_vertex_buffers_payload, 0); // offset_bytes
