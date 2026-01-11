@@ -3517,7 +3517,10 @@ void AEROGPU_APIENTRY Map11Void(D3D11DDI_HDEVICECONTEXT hCtx,
                        static_cast<unsigned>(subresource),
                        static_cast<unsigned>(map_type),
                        static_cast<unsigned>(map_flags));
-  (void)MapCore11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
+  const HRESULT hr = MapCore11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
+  if (hr == kDxgiErrorWasStillDrawing) {
+    SetError(DeviceFromContext(hCtx), hr);
+  }
 }
 
 void AEROGPU_APIENTRY Unmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, UINT) {
@@ -3619,7 +3622,10 @@ void AEROGPU_APIENTRY StagingResourceMap11Void(D3D11DDI_HDEVICECONTEXT hCtx,
                                                D3D11_DDI_MAP map_type,
                                                UINT map_flags,
                                                D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
-  (void)StagingResourceMap11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
+  const HRESULT hr = StagingResourceMap11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
+  if (hr == kDxgiErrorWasStillDrawing) {
+    SetError(DeviceFromContext(hCtx), hr);
+  }
 }
 
 void AEROGPU_APIENTRY StagingResourceUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, UINT) {

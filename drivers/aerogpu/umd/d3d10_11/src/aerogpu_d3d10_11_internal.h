@@ -381,6 +381,14 @@ inline uint64_t submit_locked(Device* dev) {
   }
   adapter->fence_cv.notify_all();
 
+  dev->last_submitted_fence.store(fence, std::memory_order_relaxed);
+  dev->last_completed_fence.store(fence, std::memory_order_relaxed);
+  for (Resource* res : dev->pending_staging_writes) {
+    if (res) {
+      res->last_gpu_write_fence = fence;
+    }
+  }
+  dev->pending_staging_writes.clear();
   dev->cmd.reset();
   return fence;
 }
