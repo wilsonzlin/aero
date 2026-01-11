@@ -1134,6 +1134,30 @@ try {
         if (-not $cfgVirtioBlkHwids -or $cfgVirtioBlkHwids.Count -eq 0) {
             $cfgStatus = "WARN"
             $cfgDetails += "AERO_VIRTIO_BLK_HWIDS is not set."
+        } else {
+            $expected = "PCI\VEN_1AF4&DEV_1042&REV_01"
+            $found = $false
+            $hasModern = $false
+            $hasTransitional = $false
+            foreach ($h in $cfgVirtioBlkHwids) {
+                if (-not $h) { continue }
+                $u = ("" + $h).ToUpper()
+                if ($u.Contains("DEV_1042")) { $hasModern = $true }
+                if ($u.Contains("DEV_1001")) { $hasTransitional = $true }
+                if (("" + $h).ToLower() -eq $expected.ToLower()) { $found = $true }
+            }
+            if (-not $hasModern) {
+                $cfgStatus = "WARN"
+                $cfgDetails += "AERO_VIRTIO_BLK_HWIDS does not include DEV_1042 (virtio-blk modern ID)."
+            }
+            if ($hasTransitional) {
+                $cfgStatus = "WARN"
+                $cfgDetails += "AERO_VIRTIO_BLK_HWIDS contains DEV_1001 (virtio-blk transitional ID). Aero Win7 contract v1 is modern-only (DEV_1042)."
+            }
+            if (-not $found) {
+                $cfgStatus = "WARN"
+                $cfgDetails += ("AERO_VIRTIO_BLK_HWIDS should include '" + $expected + "' (Aero Win7 virtio contract v1 expects REV_01).")
+            }
         }
         if (-not $cfgVirtioSndService) {
             $cfgStatus = "WARN"
@@ -1145,23 +1169,58 @@ try {
         } else {
             $expected = "PCI\VEN_1AF4&DEV_1059&REV_01"
             $found = $false
+            $hasTransitional = $false
             foreach ($h in $cfgVirtioSndHwids) {
                 if (-not $h) { continue }
-                if (("" + $h).ToLower() -eq $expected.ToLower()) { $found = $true; break }
+                $u = ("" + $h).ToUpper()
+                if ($u.Contains("DEV_1018")) { $hasTransitional = $true }
+                if (("" + $h).ToLower() -eq $expected.ToLower()) { $found = $true }
             }
             if (-not $found) {
                 $cfgStatus = "WARN"
                 $cfgDetails += ("AERO_VIRTIO_SND_HWIDS should include '" + $expected + "' (Aero Win7 virtio contract v1 expects REV_01).")
             }
+            if ($hasTransitional) {
+                $cfgStatus = "WARN"
+                $cfgDetails += "AERO_VIRTIO_SND_HWIDS contains DEV_1018 (virtio-snd transitional ID). Aero Win7 contract v1 is modern-only (DEV_1059)."
+            }
+        }
+        if ($cfgVirtioNetHwids -and $cfgVirtioNetHwids.Count -gt 0) {
+            $expected = "PCI\VEN_1AF4&DEV_1041&REV_01"
+            $found = $false
+            $hasModern = $false
+            $hasTransitional = $false
+            foreach ($h in $cfgVirtioNetHwids) {
+                if (-not $h) { continue }
+                $u = ("" + $h).ToUpper()
+                if ($u.Contains("DEV_1041")) { $hasModern = $true }
+                if ($u.Contains("DEV_1000")) { $hasTransitional = $true }
+                if (("" + $h).ToLower() -eq $expected.ToLower()) { $found = $true }
+            }
+            if (-not $hasModern) {
+                $cfgStatus = "WARN"
+                $cfgDetails += "AERO_VIRTIO_NET_HWIDS does not include DEV_1041 (virtio-net modern ID)."
+            }
+            if ($hasTransitional) {
+                $cfgStatus = "WARN"
+                $cfgDetails += "AERO_VIRTIO_NET_HWIDS contains DEV_1000 (virtio-net transitional ID). Aero Win7 contract v1 is modern-only (DEV_1041)."
+            }
+            if (-not $found) {
+                $cfgStatus = "WARN"
+                $cfgDetails += ("AERO_VIRTIO_NET_HWIDS should include '" + $expected + "' (Aero Win7 virtio contract v1 expects REV_01).")
+            }
         }
         if ($cfgVirtioInputHwids -and $cfgVirtioInputHwids.Count -gt 0) {
             $hasModern = $false
             $hasTransitional = $false
+            $expected = "PCI\VEN_1AF4&DEV_1052&REV_01"
+            $found = $false
             foreach ($h in $cfgVirtioInputHwids) {
                 if (-not $h) { continue }
                 $u = ("" + $h).ToUpper()
                 if ($u.Contains("DEV_1052")) { $hasModern = $true }
                 if ($u.Contains("DEV_1011")) { $hasTransitional = $true }
+                if (("" + $h).ToLower() -eq $expected.ToLower()) { $found = $true }
             }
             if (-not $hasModern) {
                 $cfgStatus = "WARN"
@@ -1170,6 +1229,10 @@ try {
             if ($hasTransitional) {
                 $cfgStatus = "WARN"
                 $cfgDetails += "AERO_VIRTIO_INPUT_HWIDS contains DEV_1011 (virtio-input transitional ID). Aero Win7 contract v1 is modern-only (DEV_1052)."
+            }
+            if (-not $found) {
+                $cfgStatus = "WARN"
+                $cfgDetails += ("AERO_VIRTIO_INPUT_HWIDS should include '" + $expected + "' (Aero Win7 virtio contract v1 expects REV_01).")
             }
         }
         if ($cfgVirtioBlkService) { $cfgDetails += "AERO_VIRTIO_BLK_SERVICE=" + $cfgVirtioBlkService }
