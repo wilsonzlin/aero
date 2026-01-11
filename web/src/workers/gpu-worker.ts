@@ -185,6 +185,82 @@ let presenterSrcHeight = 0;
 
 const aerogpuState = createAerogpuCpuExecutorState();
 
+type AeroGpuWasmApi = typeof import("../wasm/aero-gpu.ts");
+
+let aerogpuWasm: AeroGpuWasmApi | null = null;
+let aerogpuWasmLoadPromise: Promise<AeroGpuWasmApi> | null = null;
+let aerogpuWasmD3d9InitPromise: Promise<void> | null = null;
+let aerogpuWasmD3d9Backend: PresenterBackendKind | null = null;
+let aerogpuWasmD3d9InternalCanvas: OffscreenCanvas | null = null;
+
+async function loadAerogpuWasm(): Promise<AeroGpuWasmApi> {
+  if (aerogpuWasm) return aerogpuWasm;
+  if (!aerogpuWasmLoadPromise) {
+    aerogpuWasmLoadPromise = (async () => {
+      const mod = (await import("../wasm/aero-gpu.ts")) as AeroGpuWasmApi;
+      await mod.default();
+      aerogpuWasm = mod;
+      return mod;
+    })();
+  }
+  return await aerogpuWasmLoadPromise;
+}
+
+async function ensureAerogpuWasmD3d9(backend: PresenterBackendKind): Promise<AeroGpuWasmApi> {
+  const mod = await loadAerogpuWasm();
+
+  // Re-init if the backend target changed (webgpu <-> webgl2_wgpu).
+  if (aerogpuWasmD3d9Backend && aerogpuWasmD3d9Backend !== backend) {
+    try {
+      mod.destroy_gpu();
+    } catch {
+      // Ignore.
+    }
+    aerogpuWasmD3d9Backend = null;
+    aerogpuWasmD3d9InternalCanvas = null;
+  }
+
+  if (aerogpuWasmD3d9Backend === backend) return mod;
+
+  if (!aerogpuWasmD3d9InitPromise) {
+    aerogpuWasmD3d9InitPromise = (async () => {
+      const requiredFeatures = runtimeOptions?.presenter?.requiredFeatures as unknown as string[] | undefined;
+
+      if (backend === "webgpu") {
+        try {
+          await mod.init_aerogpu_d3d9(undefined, { preferWebGpu: true, disableWebGpu: false, requiredFeatures });
+          aerogpuWasmD3d9Backend = backend;
+          return;
+        } catch {
+          // Fall back to the wgpu WebGL2 backend using an internal OffscreenCanvas.
+        }
+      }
+
+      // WebGL2 path requires a surface; use a private OffscreenCanvas so we don't conflict with the
+      // presenter's canvas context.
+      aerogpuWasmD3d9InternalCanvas = new OffscreenCanvas(1, 1);
+      await mod.init_aerogpu_d3d9(aerogpuWasmD3d9InternalCanvas, {
+        preferWebGpu: false,
+        disableWebGpu: true,
+        requiredFeatures,
+      });
+      aerogpuWasmD3d9Backend = backend;
+    })()
+      .catch((err) => {
+        // Ensure failed inits can be retried.
+        aerogpuWasmD3d9Backend = null;
+        aerogpuWasmD3d9InternalCanvas = null;
+        throw err;
+      })
+      .finally(() => {
+        aerogpuWasmD3d9InitPromise = null;
+      });
+  }
+
+  await aerogpuWasmD3d9InitPromise;
+  return mod;
+}
+
 // Ensure submissions execute serially even though message handlers are async.
 let aerogpuSubmitChain: Promise<void> = Promise.resolve();
 
@@ -1272,17 +1348,54 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
   const signalFence = typeof req.signalFence === "bigint" ? req.signalFence : BigInt(req.signalFence);
   const vsyncPaced = cmdStreamHasVsyncPresent(req.cmdStream);
 
-  let presentDelta = 0n;
+  let presentCount: bigint | undefined = undefined;
   let submitOk = false;
   try {
     await maybeSendReady();
-    const allocTable = req.allocTable ? decodeAerogpuAllocTable(req.allocTable) : null;
-    presentDelta = executeAerogpuCmdStream(aerogpuState, req.cmdStream, {
-      allocTable,
-      guestU8,
-      presentTexture: presentAerogpuTexture,
-    });
-    submitOk = true;
+
+    const backend = presenter?.backend ?? null;
+    const useWasm = backend != null && backend !== "webgl2_raw";
+    if (useWasm) {
+      const wasm = await ensureAerogpuWasmD3d9(backend);
+
+      if (guestU8) {
+        wasm.set_guest_memory(guestU8);
+      } else {
+        wasm.clear_guest_memory();
+      }
+
+      const cmdU8 = new Uint8Array(req.cmdStream);
+      const allocTableU8 = req.allocTable ? new Uint8Array(req.allocTable) : undefined;
+
+      const submit = wasm.submit_aerogpu_d3d9(cmdU8, signalFence, 0, allocTableU8);
+      presentCount = submit.presentCount;
+
+      if (presentCount !== undefined) {
+        const shot = await wasm.request_screenshot_info();
+        aerogpuState.lastPresentedFrame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
+
+        if (presenter) {
+          if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
+            presenterSrcWidth = shot.width;
+            presenterSrcHeight = shot.height;
+            if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+            presenter.resize(shot.width, shot.height, outputDpr);
+          }
+          presenter.present(shot.rgba8, shot.width * BYTES_PER_PIXEL_RGBA8);
+        }
+      }
+
+      submitOk = true;
+    } else {
+      const allocTable = req.allocTable ? decodeAerogpuAllocTable(req.allocTable) : null;
+      const presentDelta = executeAerogpuCmdStream(aerogpuState, req.cmdStream, {
+        allocTable,
+        guestU8,
+        presentTexture: presentAerogpuTexture,
+      });
+      if (presentDelta > 0n) presentCount = aerogpuState.presentCount;
+      submitOk = true;
+    }
   } catch (err) {
     sendError(err);
   }
@@ -1290,7 +1403,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
   enqueueAerogpuSubmitComplete({
     requestId: req.requestId,
     completedFence: signalFence,
-    ...(presentDelta > 0n ? { presentCount: aerogpuState.presentCount } : {}),
+    ...(presentCount !== undefined ? { presentCount } : {}),
     kind: submitOk && vsyncPaced ? "vsync" : "immediate",
   });
 };
@@ -1710,6 +1823,17 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presenterSrcHeight = 0;
 
         resetAerogpuCpuExecutorState(aerogpuState);
+        // Reset wasm-backed executor state (if it was used previously).
+        aerogpuWasmD3d9InitPromise = null;
+        aerogpuWasmD3d9Backend = null;
+        aerogpuWasmD3d9InternalCanvas = null;
+        if (aerogpuWasm) {
+          try {
+            aerogpuWasm.destroy_gpu();
+          } catch {
+            // Ignore; wasm module may not be initialized.
+          }
+        }
         aerogpuSubmitChain = Promise.resolve();
         aerogpuPendingSubmitComplete.length = 0;
         cursorImage = null;

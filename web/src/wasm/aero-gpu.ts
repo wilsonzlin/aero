@@ -187,3 +187,34 @@ export function submit_aerogpu(cmdStream: Uint8Array, signalFence: bigint, alloc
   const mod = requireLoaded();
   return mod.submit_aerogpu(cmdStream, signalFence, allocTable) as SubmitAerogpuResult;
 }
+
+export async function init_aerogpu_d3d9(
+  offscreenCanvas?: OffscreenCanvas | null,
+  options: GpuWorkerInitOptions = {},
+): Promise<void> {
+  const mod = requireLoaded();
+  // wasm-bindgen uses `undefined` for `Option<T>`.
+  await mod.init_aerogpu_d3d9(offscreenCanvas ?? undefined, options);
+}
+
+export function submit_aerogpu_d3d9(
+  cmdStream: Uint8Array,
+  signalFence: bigint,
+  contextId: number,
+  allocTable?: Uint8Array,
+): SubmitAerogpuResult {
+  const mod = requireLoaded();
+  return mod.submit_aerogpu_d3d9(cmdStream, signalFence, contextId, allocTable) as SubmitAerogpuResult;
+}
+
+export type ScreenshotInfo = {
+  width: number;
+  height: number;
+  rgba8: ArrayBuffer;
+  origin?: "top-left";
+};
+
+export async function request_screenshot_info(): Promise<ScreenshotInfo> {
+  const mod = requireLoaded();
+  return (await mod.request_screenshot_info()) as ScreenshotInfo;
+}

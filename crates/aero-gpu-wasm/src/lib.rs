@@ -2516,6 +2516,83 @@ mod wasm {
         Ok(Uint8Array::from(bytes.as_slice()))
     }
 
+    /// Request a screenshot along with its dimensions.
+    ///
+    /// - When the D3D9 executor is initialized, this captures the last-presented scanout.
+    /// - Otherwise, it captures the legacy RGBA presenter framebuffer.
+    ///
+    /// Returned object shape:
+    /// `{ width: number, height: number, rgba8: ArrayBuffer, origin: "top-left" }`.
+    #[wasm_bindgen]
+    pub async fn request_screenshot_info() -> Result<JsValue, JsValue> {
+        let d3d9_state = D3D9_STATE.with(|slot| slot.borrow_mut().take());
+        if let Some(d3d9_state) = d3d9_state {
+            let result = if let Some(scanout_id) = d3d9_state.last_presented_scanout {
+                d3d9_state
+                    .executor
+                    .read_presented_scanout_rgba8(scanout_id)
+                    .await
+                    .map_err(|err| JsValue::from_str(&err.to_string()))
+                    .map(|opt| opt.unwrap_or((0, 0, Vec::new())))
+            } else {
+                Ok((0, 0, Vec::new()))
+            };
+
+            D3D9_STATE.with(|slot| {
+                *slot.borrow_mut() = Some(d3d9_state);
+            });
+
+            let (width, height, bytes) = result?;
+            let rgba8 = Uint8Array::from(bytes.as_slice()).buffer();
+
+            let out = Object::new();
+            Reflect::set(&out, &JsValue::from_str("width"), &JsValue::from_f64(width as f64))?;
+            Reflect::set(
+                &out,
+                &JsValue::from_str("height"),
+                &JsValue::from_f64(height as f64),
+            )?;
+            Reflect::set(&out, &JsValue::from_str("rgba8"), &rgba8)?;
+            Reflect::set(
+                &out,
+                &JsValue::from_str("origin"),
+                &JsValue::from_str("top-left"),
+            )?;
+            return Ok(out.into());
+        }
+
+        let state = STATE.with(|slot| slot.borrow_mut().take());
+        let Some(state) = state else {
+            return Err(JsValue::from_str("GPU backend not initialized."));
+        };
+
+        let (width, height) = state.presenter.src_size;
+        let result = state.presenter.screenshot().await;
+
+        // Restore state regardless of whether screenshot succeeds.
+        STATE.with(|slot| {
+            *slot.borrow_mut() = Some(state);
+        });
+
+        let bytes = result?;
+        let rgba8 = Uint8Array::from(bytes.as_slice()).buffer();
+
+        let out = Object::new();
+        Reflect::set(&out, &JsValue::from_str("width"), &JsValue::from_f64(width as f64))?;
+        Reflect::set(
+            &out,
+            &JsValue::from_str("height"),
+            &JsValue::from_f64(height as f64),
+        )?;
+        Reflect::set(&out, &JsValue::from_str("rgba8"), &rgba8)?;
+        Reflect::set(
+            &out,
+            &JsValue::from_str("origin"),
+            &JsValue::from_str("top-left"),
+        )?;
+        Ok(out.into())
+    }
+
     #[wasm_bindgen]
     pub fn get_frame_timings() -> Result<JsValue, JsValue> {
         with_state(|state| match state.presenter.latest_timings() {
