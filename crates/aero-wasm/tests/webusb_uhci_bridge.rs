@@ -1,6 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_usb::passthrough::UsbHostAction;
+use aero_wasm::UhciControllerBridge;
 use aero_wasm::WebUsbUhciBridge;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -129,6 +130,93 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
 
     // Some drivers use 32-bit I/O at 0x00 to update USBCMD+USBSTS simultaneously.
     bridge.io_write(REG_USBCMD, 4, USBCMD_RUN);
+    bridge.step_frames(1);
+
+    let drained = bridge.drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+
+    assert!(
+        !actions.is_empty(),
+        "expected at least one queued UsbHostAction"
+    );
+    assert!(matches!(actions[0], UsbHostAction::ControlIn { .. }));
+}
+
+#[wasm_bindgen_test]
+fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
+    // Allocate a chunk of linear memory that we treat as guest RAM.
+    let mut backing = vec![0u8; 0x50_000];
+    let base = backing.as_mut_ptr() as u32;
+
+    // Pick a 4KiB-aligned region inside the buffer for the frame list.
+    let fl_linear = (base + 0x0fff) & !0x0fff;
+    let fl_guest = fl_linear - base;
+
+    // Layout (guest physical addresses, all 16-byte aligned).
+    let qh_guest = fl_guest + 0x1000;
+    let setup_td = qh_guest + 0x20;
+    let data_td = setup_td + 0x20;
+    let status_td = data_td + 0x20;
+    let setup_buf = status_td + 0x20;
+    let data_buf = setup_buf + 0x10;
+
+    let qh_linear = base + qh_guest;
+    let setup_td_linear = base + setup_td;
+    let data_td_linear = base + data_td;
+    let status_td_linear = base + status_td;
+    let setup_buf_linear = base + setup_buf;
+    let _data_buf_linear = base + data_buf;
+
+    unsafe {
+        for i in 0..1024u32 {
+            write_u32(fl_linear + i * 4, qh_guest | LINK_PTR_Q);
+        }
+
+        // QH: head=terminate, element=SETUP TD.
+        write_u32(qh_linear + 0x00, LINK_PTR_T);
+        write_u32(qh_linear + 0x04, setup_td);
+
+        // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
+        let setup_packet = [
+            0x80, // bmRequestType: device-to-host | standard | device
+            0x06, // bRequest: GET_DESCRIPTOR
+            0x00, 0x01, // wValue: (DEVICE=1)<<8 | index 0
+            0x00, 0x00, // wIndex
+            0x08, 0x00, // wLength: 8
+        ];
+        write_bytes(setup_buf_linear, &setup_packet);
+
+        // SETUP TD.
+        write_u32(setup_td_linear + 0x00, data_td);
+        write_u32(setup_td_linear + 0x04, td_ctrl(true, false));
+        write_u32(setup_td_linear + 0x08, td_token(0x2D, 0, 0, false, 8));
+        write_u32(setup_td_linear + 0x0C, setup_buf);
+
+        // DATA IN TD (will NAK until host completion is pushed).
+        write_u32(data_td_linear + 0x00, status_td);
+        write_u32(data_td_linear + 0x04, td_ctrl(true, false));
+        write_u32(data_td_linear + 0x08, td_token(0x69, 0, 0, true, 8));
+        write_u32(data_td_linear + 0x0C, data_buf);
+
+        // STATUS OUT TD (0-length, IOC).
+        write_u32(status_td_linear + 0x00, LINK_PTR_T);
+        write_u32(status_td_linear + 0x04, td_ctrl(true, true));
+        write_u32(status_td_linear + 0x08, td_token(0xE1, 0, 0, true, 0));
+        write_u32(status_td_linear + 0x0C, 0);
+    }
+
+    let mut bridge = UhciControllerBridge::new(base, backing.len() as u32).expect("UhciControllerBridge::new ok");
+    bridge.set_connected(true);
+
+    bridge.io_write(REG_FRBASEADD as u16, 4, fl_guest);
+    bridge.io_write(REG_USBINTR as u16, 4, USBINTR_IOC);
+
+    // Reset the second root port (PORTSC2 lives in the upper 16-bits of a 32-bit write to PORTSC1).
+    bridge.io_write(REG_PORTSC1 as u16, 4, PORTSC_PR << 16);
+    bridge.step_frames(50);
+
+    bridge.io_write(REG_USBCMD as u16, 4, USBCMD_RUN);
     bridge.step_frames(1);
 
     let drained = bridge.drain_actions().expect("drain_actions ok");

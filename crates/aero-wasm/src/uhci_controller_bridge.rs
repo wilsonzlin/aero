@@ -14,8 +14,10 @@ use wasm_bindgen::prelude::*;
 
 use aero_usb::GuestMemory;
 use aero_usb::hub::UsbHubDevice;
+use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::usb::UsbDevice;
+use aero_usb::UsbWebUsbPassthroughDevice;
 
 const UHCI_IO_BASE: u16 = 0;
 const UHCI_IRQ_LINE: u8 = 0x0b;
@@ -29,6 +31,10 @@ const REG_FRBASEADD: u16 = 0x08;
 const REG_SOFMOD: u16 = 0x0C;
 const REG_PORTSC1: u16 = 0x10;
 const REG_PORTSC2: u16 = 0x12;
+
+// Reserve the 2nd UHCI root port for the WebUSB passthrough device. Root port 0 is used for
+// the external WebHID hub by default (see `web/src/platform/webhid_passthrough.ts`).
+const WEBUSB_ROOT_PORT: usize = 1;
 
 // PORTSC bits used by the `aero_usb::uhci` model. We only need these for masked writes.
 const PORTSC_CSC: u16 = 1 << 1;
@@ -476,6 +482,19 @@ impl UhciControllerBridge {
             _ => {}
         }
     }
+
+    fn webusb_device(&self) -> Option<&UsbWebUsbPassthroughDevice> {
+        let port = self.ctrl.bus().port(WEBUSB_ROOT_PORT)?;
+        let dev = port.device.as_ref()?;
+        dev.as_any().downcast_ref::<UsbWebUsbPassthroughDevice>()
+    }
+
+    fn webusb_device_mut(&mut self) -> Option<&mut UsbWebUsbPassthroughDevice> {
+        let port = self.ctrl.bus_mut().port_mut(WEBUSB_ROOT_PORT)?;
+        let dev = port.device.as_mut()?;
+        dev.as_any_mut()
+            .downcast_mut::<UsbWebUsbPassthroughDevice>()
+    }
 }
 
 #[wasm_bindgen]
@@ -622,6 +641,69 @@ impl UhciControllerBridge {
     /// Whether the UHCI interrupt line should be raised.
     pub fn irq_asserted(&self) -> bool {
         self.irq.asserted
+    }
+
+    /// Connect or disconnect the WebUSB passthrough device on a reserved UHCI root port.
+    ///
+    /// The passthrough device is implemented by `aero_usb::UsbWebUsbPassthroughDevice` and emits
+    /// host actions that must be executed by the browser `UsbBroker` (see `web/src/usb`).
+    pub fn set_connected(&mut self, connected: bool) {
+        let was_connected = self
+            .ctrl
+            .bus()
+            .port(WEBUSB_ROOT_PORT)
+            .is_some_and(|p| p.connected);
+
+        match (was_connected, connected) {
+            (true, true) | (false, false) => {}
+            (false, true) => {
+                self.ctrl.connect_device(
+                    WEBUSB_ROOT_PORT,
+                    Box::new(UsbWebUsbPassthroughDevice::new()),
+                );
+            }
+            (true, false) => {
+                self.ctrl.disconnect_device(WEBUSB_ROOT_PORT);
+            }
+        }
+    }
+
+    /// Drain queued WebUSB passthrough host actions as plain JS objects.
+    pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
+        let Some(dev) = self.webusb_device_mut() else {
+            return Ok(JsValue::NULL);
+        };
+
+        let actions: Vec<UsbHostAction> = dev.drain_actions();
+        if actions.is_empty() {
+            return Ok(JsValue::NULL);
+        }
+        serde_wasm_bindgen::to_value(&actions).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Push a host completion into the WebUSB passthrough device.
+    pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
+        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        if let Some(dev) = self.webusb_device_mut() {
+            dev.push_completion(completion);
+        }
+        Ok(())
+    }
+
+    /// Reset the WebUSB passthrough device without disturbing the rest of the USB topology.
+    pub fn reset(&mut self) {
+        if let Some(dev) = self.webusb_device_mut() {
+            dev.reset();
+        }
+    }
+
+    /// Return a debug summary of queued actions/completions for the WebUSB passthrough device.
+    pub fn pending_summary(&self) -> Result<JsValue, JsValue> {
+        let Some(summary) = self.webusb_device().map(|d| d.pending_summary()) else {
+            return Ok(JsValue::NULL);
+        };
+        serde_wasm_bindgen::to_value(&summary).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Attach a USB 1.1 external hub device to a root port.

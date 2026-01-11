@@ -107,6 +107,23 @@ export interface WasmApi {
                 device: InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>,
             ): void;
 
+            /**
+             * WebUSB passthrough device helpers.
+             *
+             * The passthrough device is connected to a reserved UHCI root port and emits
+             * `UsbHostAction`s that must be executed by the browser `UsbBroker`.
+             */
+            set_connected(connected: boolean): void;
+            drain_actions(): UsbHostAction[] | null;
+            push_completion(completion: UsbHostCompletion): void;
+            reset(): void;
+            pending_summary(): {
+                queued_actions: number;
+                queued_completions: number;
+                inflight_control?: number | null;
+                inflight_endpoints: number;
+            } | null;
+
             free(): void;
         };
     };
