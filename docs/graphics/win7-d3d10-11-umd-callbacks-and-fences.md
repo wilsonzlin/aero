@@ -495,14 +495,14 @@ Important fields:
 **How to pick the target fence value:**
 
 - Track a monotonically increasing fence/timeline value per submission.
-  - On Win7, this is typically the `NewFenceValue` returned by the last `pfnRenderCb` / `pfnPresentCb` submission that produced the data you need.
+  - On Win7, this is typically the `NewFenceValue` (or `SubmissionFenceId`, depending on header revision) returned by the last `pfnRenderCb` / `pfnPresentCb` submission that produced the data you need.
 - Store “last write fence” on resources that are written by the GPU.
 - When mapping for read, wait for `completed >= last_write_fence`.
 
 **Polling (for DO_NOT_WAIT paths):**
 
 - Call the wait callback with `Timeout = 0`.
-- If it indicates not-ready (timeout), return `DXGI_ERROR_WAS_STILL_DRAWING` from the `Map` DDI (D3D11) / `D3D10DDIERR_WASSTILLDRAWING`-style equivalent as applicable.
+- If it indicates not-ready (timeout), return `DXGI_ERROR_WAS_STILL_DRAWING` from the `Map` DDI (D3D11), or (for `void`-returning map variants) call `pfnSetErrorCb(hRTDevice, DXGI_ERROR_WAS_STILL_DRAWING)` and return.
 
 ### 4.3 Direct thunk alternative: `D3DKMTWaitForSynchronizationObject`
 
