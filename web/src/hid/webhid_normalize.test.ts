@@ -75,22 +75,55 @@ describe("normalizeCollections(WebHID)", () => {
         usagePage: 1,
         usage: 2,
         type: 1,
-        inputReports: [{}],
+        inputReports: [
+          {
+            items: [{} as unknown as HIDReportItem],
+          } as unknown as HIDReportInfo,
+        ],
       },
     ];
 
     const normalized = normalizeCollections(collections);
-    expect(normalized).toEqual([
-      {
-        usagePage: 1,
-        usage: 2,
-        collectionType: 1,
-        children: [],
-        inputReports: [{ reportId: 0, items: [] }],
-        outputReports: [],
-        featureReports: [],
-      },
-    ]);
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0]).toMatchObject({
+      usagePage: 1,
+      usage: 2,
+      collectionType: 1,
+      children: [],
+      inputReports: [{ reportId: 0 }],
+      outputReports: [],
+      featureReports: [],
+    });
+    expect(normalized[0]!.inputReports[0]!.items).toHaveLength(1);
+
+    const item = normalized[0]!.inputReports[0]!.items[0]!;
+    expect(item).toMatchObject({
+      usagePage: 0,
+      usages: [],
+      usageMinimum: 0,
+      usageMaximum: 0,
+      reportSize: 0,
+      reportCount: 0,
+      unitExponent: 0,
+      unit: 0,
+      logicalMinimum: 0,
+      logicalMaximum: 0,
+      physicalMinimum: 0,
+      physicalMaximum: 0,
+      strings: [],
+      designators: [],
+      isAbsolute: true,
+      isRelative: false,
+      isArray: false,
+      isConstant: false,
+      isBufferedBytes: false,
+      isLinear: true,
+      isRange: false,
+      isVolatile: false,
+      hasNull: false,
+      hasPreferredState: true,
+      isWrapped: false,
+    });
   });
 
   it("deep-copies the full tree and produces mutable JS arrays", () => {
