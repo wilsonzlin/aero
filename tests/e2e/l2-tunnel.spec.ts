@@ -208,7 +208,7 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
       gateway = await startGateway({ port: gatewayPort, sessionSecret, allowedOrigin: webOrigin });
       l2Proxy = await startL2Proxy({ port: l2Port, sessionSecret, allowedOrigin: webOrigin, udpEchoPort: udpEcho.port });
 
-      await page.goto('/', { waitUntil: 'load' });
+      await page.goto('http://127.0.0.1:5173/tests/e2e/fixtures/l2_tunnel.html', { waitUntil: 'load' });
 
       const result = await page.evaluate(
         async ({ gatewayOrigin, l2ProxyOrigin, udpEchoPort }) => {
