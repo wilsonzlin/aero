@@ -1411,12 +1411,9 @@ impl AerogpuD3d11Executor {
         }
 
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-        if dst_offset_bytes % alignment != 0
-            || src_offset_bytes % alignment != 0
-            || size_bytes % alignment != 0
-        {
+        if dst_offset_bytes % alignment != 0 || src_offset_bytes % alignment != 0 {
             bail!(
-                "COPY_BUFFER: offsets and size must be multiples of {alignment} (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})"
+                "COPY_BUFFER: offsets must be multiples of {alignment} (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes})"
             );
         }
 
@@ -1465,6 +1462,7 @@ impl AerogpuD3d11Executor {
         }
 
         let mut staging: Option<wgpu::Buffer> = None;
+        let mut copy_size_aligned = size_bytes;
 
         // Encode the copy.
         {
@@ -1499,18 +1497,38 @@ impl AerogpuD3d11Executor {
                 );
             }
 
+            if size_bytes % alignment != 0 {
+                if src_end != src.size || dst_copy_end != dst.size {
+                    bail!(
+                        "COPY_BUFFER: size_bytes must be a multiple of {alignment} unless copying to the end of both buffers (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes} dst_size={} src_size={})",
+                        dst.size,
+                        src.size
+                    );
+                }
+                copy_size_aligned = align_copy_buffer_size(size_bytes)?;
+            }
+            let src_copy_end_aligned = src_offset_bytes
+                .checked_add(copy_size_aligned)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: aligned src range overflows u64"))?;
+            let dst_copy_end_aligned = dst_offset_bytes
+                .checked_add(copy_size_aligned)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: aligned dst range overflows u64"))?;
+            if src_copy_end_aligned > src.gpu_size || dst_copy_end_aligned > dst.gpu_size {
+                bail!("COPY_BUFFER: aligned copy range overruns wgpu buffer allocation");
+            }
+
             encoder.copy_buffer_to_buffer(
                 &src.buffer,
                 src_offset_bytes,
                 &dst.buffer,
                 dst_offset_bytes,
-                size_bytes,
+                copy_size_aligned,
             );
 
             if writeback {
                 let staging_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("aerogpu_cmd copy_buffer writeback staging"),
-                    size: size_bytes,
+                    size: copy_size_aligned,
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1519,7 +1537,7 @@ impl AerogpuD3d11Executor {
                     dst_offset_bytes,
                     &staging_buf,
                     0,
-                    size_bytes,
+                    copy_size_aligned,
                 );
                 staging = Some(staging_buf);
             }
@@ -1576,8 +1594,11 @@ impl AerogpuD3d11Executor {
                     .map_err(|e| anyhow!("COPY_BUFFER: writeback map_async failed: {e:?}"))?;
 
                 let mapped = slice.get_mapped_range();
+                let len: usize = size_bytes
+                    .try_into()
+                    .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
                 guest_mem
-                    .write(dst_gpa, &mapped)
+                    .write(dst_gpa, &mapped[..len])
                     .map_err(anyhow_guest_mem)?;
                 drop(mapped);
                 staging.unmap();

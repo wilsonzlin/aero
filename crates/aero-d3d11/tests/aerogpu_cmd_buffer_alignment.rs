@@ -1,12 +1,14 @@
 mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
-use aero_gpu::guest_memory::VecGuestMemory;
+use aero_gpu::guest_memory::{GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -147,5 +149,108 @@ fn aerogpu_cmd_rejects_unaligned_copy_buffer() {
             format!("{err:#}").contains("COPY_BUFFER"),
             "unexpected error: {err:#}"
         );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_allows_unaligned_copy_buffer_at_end_of_buffer() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const SRC: u32 = 1;
+        const DST: u32 = 2;
+        let bytes: [u8; 6] = [1, 2, 3, 4, 5, 6];
+        let size_bytes = bytes.len() as u64;
+
+        let guest_mem = VecGuestMemory::new(0x1000);
+        let src_alloc_id = 1u32;
+        let dst_alloc_id = 2u32;
+        let src_gpa = 0x100u64;
+        let dst_gpa = 0x200u64;
+        guest_mem.write(src_gpa, &bytes).unwrap();
+        guest_mem.write(dst_gpa, &[0u8; 6]).unwrap();
+
+        let allocs = [
+            AerogpuAllocEntry {
+                alloc_id: src_alloc_id,
+                flags: 0,
+                gpa: src_gpa,
+                size_bytes,
+                reserved0: 0,
+            },
+            AerogpuAllocEntry {
+                alloc_id: dst_alloc_id,
+                flags: 0,
+                gpa: dst_gpa,
+                size_bytes,
+                reserved0: 0,
+            },
+        ];
+
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_BUFFER (SRC, guest-backed)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER.to_le_bytes());
+        stream.extend_from_slice(&size_bytes.to_le_bytes());
+        stream.extend_from_slice(&src_alloc_id.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // RESOURCE_DIRTY_RANGE (full SRC buffer)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::ResourceDirtyRange as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&size_bytes.to_le_bytes()); // size_bytes
+        end_cmd(&mut stream, start);
+
+        // CREATE_BUFFER (DST, guest-backed)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER.to_le_bytes());
+        stream.extend_from_slice(&size_bytes.to_le_bytes());
+        stream.extend_from_slice(&dst_alloc_id.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER (SRC -> DST) with WRITEBACK_DST and unaligned size (6 bytes).
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&size_bytes.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_COPY_FLAG_WRITEBACK_DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+            .unwrap();
+        exec.poll_wait();
+
+        let mut out = [0u8; 6];
+        guest_mem.read(dst_gpa, &mut out).unwrap();
+        assert_eq!(out, bytes);
     });
 }
