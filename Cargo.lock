@@ -269,6 +269,7 @@ name = "aero-gpu-wasm"
 version = "0.1.0"
 dependencies = [
  "aero-gpu",
+ "aero-protocol",
  "bytemuck",
  "futures-intrusive",
  "js-sys",

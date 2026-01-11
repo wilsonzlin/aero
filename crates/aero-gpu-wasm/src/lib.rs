@@ -8,12 +8,14 @@
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use std::cell::RefCell;
+    use std::collections::HashSet;
 
     use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
     use aero_gpu::{
-        AeroGpuCommandProcessor, AeroGpuEvent, FrameTimingsReport, GuestMemory, GuestMemoryError,
-        GpuBackendKind, GpuProfiler,
+        AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, FrameTimingsReport,
+        GuestMemory, GuestMemoryError, GpuBackendKind, GpuProfiler,
     };
+    use aero_protocol::aerogpu::aerogpu_ring as ring;
     use futures_intrusive::channel::shared::oneshot_channel;
     use js_sys::{Array, BigInt, Object, Reflect, Uint8Array};
     use wasm_bindgen::prelude::*;
@@ -109,15 +111,109 @@ mod wasm {
         Ok(Uint8Array::from(out.as_slice()))
     }
 
+    fn decode_submission_allocations(buf: &Uint8Array) -> Result<Vec<AeroGpuSubmissionAllocation>, JsValue> {
+        let buf_len = buf.length() as usize;
+        if buf_len < ring::AerogpuAllocTableHeader::SIZE_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "alloc table too small (got {buf_len} bytes, need {})",
+                ring::AerogpuAllocTableHeader::SIZE_BYTES
+            )));
+        }
+
+        let mut bytes = vec![0u8; buf_len];
+        buf.copy_to(&mut bytes);
+
+        let header = ring::AerogpuAllocTableHeader::decode_from_le_bytes(&bytes)
+            .map_err(|err| JsValue::from_str(&format!("failed to decode alloc table header: {err:?}")))?;
+        header
+            .validate_prefix()
+            .map_err(|err| JsValue::from_str(&format!("invalid alloc table header: {err:?}")))?;
+
+        let size_bytes = usize::try_from(header.size_bytes)
+            .map_err(|_| JsValue::from_str("alloc table header size_bytes does not fit in usize"))?;
+        if size_bytes < ring::AerogpuAllocTableHeader::SIZE_BYTES || size_bytes > bytes.len() {
+            return Err(JsValue::from_str(&format!(
+                "invalid alloc table header size_bytes={} (buffer_len={})",
+                header.size_bytes,
+                bytes.len()
+            )));
+        }
+
+        let entry_count = usize::try_from(header.entry_count)
+            .map_err(|_| JsValue::from_str("alloc table header entry_count does not fit in usize"))?;
+        let entry_stride_bytes = usize::try_from(header.entry_stride_bytes).map_err(|_| {
+            JsValue::from_str("alloc table header entry_stride_bytes does not fit in usize")
+        })?;
+
+        let required_bytes = ring::AerogpuAllocTableHeader::SIZE_BYTES
+            .checked_add(
+                entry_count
+                    .checked_mul(entry_stride_bytes)
+                    .ok_or_else(|| JsValue::from_str("alloc table entry_count * stride overflows"))?,
+            )
+            .ok_or_else(|| JsValue::from_str("alloc table size computation overflows"))?;
+        if required_bytes > size_bytes {
+            return Err(JsValue::from_str(&format!(
+                "alloc table size_bytes too small for layout (size_bytes={} < required_bytes={required_bytes})",
+                header.size_bytes,
+            )));
+        }
+
+        let mut seen = HashSet::with_capacity(entry_count);
+        let mut out = Vec::with_capacity(entry_count);
+
+        for i in 0..entry_count {
+            let base = ring::AerogpuAllocTableHeader::SIZE_BYTES
+                .checked_add(
+                    i.checked_mul(entry_stride_bytes)
+                        .ok_or_else(|| JsValue::from_str("alloc table entry offset overflows"))?,
+                )
+                .ok_or_else(|| JsValue::from_str("alloc table entry offset overflows"))?;
+            let end = base
+                .checked_add(ring::AerogpuAllocEntry::SIZE_BYTES)
+                .ok_or_else(|| JsValue::from_str("alloc table entry range overflows"))?;
+            if end > size_bytes {
+                return Err(JsValue::from_str(&format!(
+                    "alloc table entry {i} is out of bounds (end={end}, size_bytes={size_bytes})"
+                )));
+            }
+
+            let entry = ring::AerogpuAllocEntry::decode_from_le_bytes(&bytes[base..end])
+                .map_err(|err| JsValue::from_str(&format!("failed to decode alloc table entry {i}: {err:?}")))?;
+
+            let alloc_id = entry.alloc_id;
+            if alloc_id == 0 {
+                return Err(JsValue::from_str(&format!(
+                    "alloc table entry {i} has alloc_id=0"
+                )));
+            }
+            if !seen.insert(alloc_id) {
+                return Err(JsValue::from_str(&format!(
+                    "alloc table contains duplicate alloc_id={alloc_id}"
+                )));
+            }
+
+            out.push(AeroGpuSubmissionAllocation {
+                alloc_id,
+                gpa: entry.gpa,
+                size_bytes: entry.size_bytes,
+            });
+        }
+
+        Ok(out)
+    }
+
     #[wasm_bindgen]
     pub fn submit_aerogpu(
         cmd_stream: Uint8Array,
         signal_fence: u64,
         alloc_table: Option<Uint8Array>,
     ) -> Result<JsValue, JsValue> {
-        // `alloc_table` is reserved for future guest-memory backing support.
-        // Keep the parameter so the JS/IPC surface remains stable.
-        drop(alloc_table);
+        let allocations = match alloc_table.as_ref() {
+            Some(buf) => Some(decode_submission_allocations(buf)?),
+            None => None,
+        };
+        let allocations = allocations.as_deref();
 
         let mut bytes = vec![0u8; cmd_stream.length() as usize];
         cmd_stream.copy_to(&mut bytes);
@@ -125,7 +221,7 @@ mod wasm {
         let present_count = PROCESSOR.with(|processor| {
             let mut processor = processor.borrow_mut();
             let events = processor
-                .process_submission(&bytes, signal_fence)
+                .process_submission_with_allocations(&bytes, allocations, signal_fence)
                 .map_err(|err| JsValue::from_str(&err.to_string()))?;
 
             let mut had_present = false;

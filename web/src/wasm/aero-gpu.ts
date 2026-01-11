@@ -177,3 +177,13 @@ export function read_guest_memory(gpa: bigint, len: number): Uint8Array {
   const mod = requireLoaded();
   return mod.read_guest_memory(gpa, len) as Uint8Array;
 }
+
+export type SubmitAerogpuResult = {
+  completedFence: bigint;
+  presentCount?: bigint;
+};
+
+export function submit_aerogpu(cmdStream: Uint8Array, signalFence: bigint, allocTable?: Uint8Array): SubmitAerogpuResult {
+  const mod = requireLoaded();
+  return mod.submit_aerogpu(cmdStream, signalFence, allocTable) as SubmitAerogpuResult;
+}
