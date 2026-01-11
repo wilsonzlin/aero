@@ -48,6 +48,20 @@ typedef struct _VIRTIOSND_QUEUE_OPS {
         _Out_ UINT32 *used_len_out);
 
     VOID (*Kick)(_In_ void *ctx);
+
+    /*
+     * Optional interrupt suppression controls.
+     *
+     * Contract v1 drivers may choose to suppress interrupts for high-frequency
+     * queues (e.g. txq) by setting VRING_AVAIL_F_NO_INTERRUPT.
+     *
+     * If a queue implementation does not support interrupt toggling, these may
+     * be NULL.
+     *
+     * IRQL: <= DISPATCH_LEVEL.
+     */
+    VOID (*DisableInterrupts)(_In_ void *ctx);
+    _Must_inspect_result_ BOOLEAN (*EnableInterrupts)(_In_ void *ctx);
 } VIRTIOSND_QUEUE_OPS, *PVIRTIOSND_QUEUE_OPS;
 
 typedef struct _VIRTIOSND_QUEUE {
@@ -75,4 +89,22 @@ static __inline BOOLEAN
 VirtioSndQueuePopUsed(_In_ const VIRTIOSND_QUEUE *Queue, _Out_ void **CookieOut, _Out_ UINT32 *UsedLenOut)
 {
     return Queue->Ops->PopUsed(Queue->Ctx, CookieOut, UsedLenOut);
+}
+
+static __inline VOID
+VirtioSndQueueDisableInterrupts(_In_ const VIRTIOSND_QUEUE *Queue)
+{
+    if (Queue == NULL || Queue->Ops == NULL || Queue->Ops->DisableInterrupts == NULL) {
+        return;
+    }
+    Queue->Ops->DisableInterrupts(Queue->Ctx);
+}
+
+static __inline BOOLEAN
+VirtioSndQueueEnableInterrupts(_In_ const VIRTIOSND_QUEUE *Queue)
+{
+    if (Queue == NULL || Queue->Ops == NULL || Queue->Ops->EnableInterrupts == NULL) {
+        return FALSE;
+    }
+    return Queue->Ops->EnableInterrupts(Queue->Ctx);
 }

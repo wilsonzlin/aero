@@ -302,6 +302,7 @@ VirtioSndCtrlProcessUsed(_Inout_ VIRTIOSND_CONTROL* Ctrl)
         }
 
         if (cookie != NULL) {
+            InterlockedIncrement(&Ctrl->Stats.RequestsCompleted);
             VirtioSndCtrlCompleteRequest((VIRTIOSND_CTRL_REQUEST*)cookie, (ULONG)usedLen);
         }
     }
@@ -344,6 +345,10 @@ VirtioSndCtrlSendSyncLocked(
     ULONG virtioStatus;
     ULONG copyLen;
     KIRQL oldIrql;
+
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     if (OutVirtioStatus != NULL) {
         *OutVirtioStatus = 0;
@@ -457,6 +462,8 @@ VirtioSndCtrlSendSyncLocked(
         return status;
     }
 
+    InterlockedIncrement(&Ctrl->Stats.RequestsSent);
+
     VirtioSndQueueKick(Ctrl->ControlQ);
 
     /*
@@ -469,6 +476,8 @@ VirtioSndCtrlSendSyncLocked(
     waitStatus = KeWaitForSingleObject(&ctx->Event, Executive, KernelMode, FALSE, &timeout);
     if (waitStatus == STATUS_TIMEOUT) {
         VIRTIOSND_TRACE_ERROR("ctrlq timeout code=0x%08lx\n", ctx->Code);
+
+        InterlockedIncrement(&Ctrl->Stats.RequestsTimedOut);
 
         /* Drop the send-thread reference. */
         VirtioSndCtrlRequestRelease(ctx);
@@ -544,6 +553,10 @@ VirtioSndCtrlSendSync(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
     ExAcquireFastMutex(&Ctrl->Mutex);
     status = VirtioSndCtrlSendSyncLocked(Ctrl, Req, ReqLen, Resp, RespCap, TimeoutMs, OutVirtioStatus, OutRespLen);
     ExReleaseFastMutex(&Ctrl->Mutex);
@@ -562,6 +575,9 @@ VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO*
 
     if (Ctrl == NULL || Info == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
     }
 
     RtlZeroMemory(&req, sizeof(req));
@@ -646,6 +662,9 @@ VirtioSndCtrlSetParams(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, 
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     RtlZeroMemory(&req, sizeof(req));
     req.code = VIRTIO_SND_R_PCM_SET_PARAMS;
@@ -719,6 +738,9 @@ VirtioSndCtrlPrepare(_Inout_ VIRTIOSND_CONTROL* Ctrl)
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
 
@@ -743,6 +765,9 @@ VirtioSndCtrlStart(_Inout_ VIRTIOSND_CONTROL* Ctrl)
 
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
     }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
@@ -769,6 +794,9 @@ VirtioSndCtrlStop(_Inout_ VIRTIOSND_CONTROL* Ctrl)
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
 
@@ -793,6 +821,9 @@ VirtioSndCtrlRelease(_Inout_ VIRTIOSND_CONTROL* Ctrl)
 
     if (Ctrl == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
     }
 
     ExAcquireFastMutex(&Ctrl->Mutex);

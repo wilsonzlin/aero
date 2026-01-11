@@ -37,6 +37,12 @@ typedef struct _VIRTIOSND_PCM_PARAMS {
     UCHAR Rate;
 } VIRTIOSND_PCM_PARAMS;
 
+typedef struct _VIRTIOSND_CONTROL_STATS {
+    volatile LONG RequestsSent;
+    volatile LONG RequestsCompleted;
+    volatile LONG RequestsTimedOut;
+} VIRTIOSND_CONTROL_STATS;
+
 typedef struct _VIRTIOSND_CONTROL {
     PVIRTIOSND_DMA_CONTEXT DmaCtx;
 
@@ -63,6 +69,8 @@ typedef struct _VIRTIOSND_CONTROL {
 
     VIRTIOSND_STREAM_STATE StreamState;
     VIRTIOSND_PCM_PARAMS Params;
+
+    VIRTIOSND_CONTROL_STATS Stats;
 } VIRTIOSND_CONTROL, *PVIRTIOSND_CONTROL;
 
 #ifdef __cplusplus
@@ -109,6 +117,11 @@ VOID VirtioSndCtrlProcessUsed(_Inout_ VIRTIOSND_CONTROL* Ctrl);
  */
 VOID VirtioSndCtrlOnUsed(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_opt_ void* Cookie, _In_ UINT32 UsedLen);
 
+/*
+ * Submit a single control request and synchronously wait for completion.
+ *
+ * IRQL: PASSIVE_LEVEL only (waits).
+ */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlSendSync(
     _Inout_ VIRTIOSND_CONTROL* Ctrl,
     _In_reads_bytes_(ReqLen) const void* Req,
@@ -119,16 +132,22 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlSendSync(
     _Out_opt_ ULONG* OutVirtioStatus,
     _Out_opt_ ULONG* OutRespLen);
 
+/* IRQL: PASSIVE_LEVEL only. */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* Info);
 
+/* IRQL: PASSIVE_LEVEL only. */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlSetParams(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
 
+/* IRQL: PASSIVE_LEVEL only. */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlPrepare(_Inout_ VIRTIOSND_CONTROL* Ctrl);
 
+/* IRQL: PASSIVE_LEVEL only. */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlStart(_Inout_ VIRTIOSND_CONTROL* Ctrl);
 
+/* IRQL: PASSIVE_LEVEL only. */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlStop(_Inout_ VIRTIOSND_CONTROL* Ctrl);
 
+/* IRQL: PASSIVE_LEVEL only. */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlRelease(_Inout_ VIRTIOSND_CONTROL* Ctrl);
 
 #ifdef __cplusplus

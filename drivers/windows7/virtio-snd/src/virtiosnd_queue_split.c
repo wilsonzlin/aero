@@ -123,7 +123,18 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
 
     VirtioSndQueueSplitLock(qs, &lock_state);
 
-    should_kick = VirtqSplitKickPrepare(qs->Vq);
+    /*
+     * Contract v1 uses "always notify" semantics (EVENT_IDX is not offered).
+     *
+     * Even if the device sets VIRTQ_USED_F_NO_NOTIFY, Aero drivers still notify
+     * after publishing new available entries to keep behavior deterministic and
+     * avoid relying on suppression bits that are out of scope for the contract.
+     */
+    should_kick = (qs->Vq->num_added != 0);
+    if (qs->Vq->event_idx) {
+        /* If EVENT_IDX is enabled, respect the standard virtio suppression logic. */
+        should_kick = VirtqSplitKickPrepare(qs->Vq);
+    }
 
     if (should_kick) {
         /*
@@ -154,10 +165,46 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
     VirtioSndQueueSplitUnlock(qs, &lock_state);
 }
 
+static VOID
+VirtioSndQueueSplitDisableInterrupts(_In_ void* ctx)
+{
+    VIRTIOSND_QUEUE_SPLIT* qs;
+    VIRTIOSND_QUEUE_SPLIT_LOCK_STATE lock_state;
+
+    qs = (VIRTIOSND_QUEUE_SPLIT*)ctx;
+    if (qs == NULL || qs->Vq == NULL) {
+        return;
+    }
+
+    VirtioSndQueueSplitLock(qs, &lock_state);
+    VirtqSplitDisableInterrupts(qs->Vq);
+    VirtioSndQueueSplitUnlock(qs, &lock_state);
+}
+
+static BOOLEAN
+VirtioSndQueueSplitEnableInterrupts(_In_ void* ctx)
+{
+    VIRTIOSND_QUEUE_SPLIT* qs;
+    VIRTIOSND_QUEUE_SPLIT_LOCK_STATE lock_state;
+    BOOLEAN ok;
+
+    qs = (VIRTIOSND_QUEUE_SPLIT*)ctx;
+    if (qs == NULL || qs->Vq == NULL) {
+        return FALSE;
+    }
+
+    VirtioSndQueueSplitLock(qs, &lock_state);
+    ok = VirtqSplitEnableInterrupts(qs->Vq);
+    VirtioSndQueueSplitUnlock(qs, &lock_state);
+    return ok;
+}
+
 static const VIRTIOSND_QUEUE_OPS g_VirtioSndQueueSplitOps = {
     VirtioSndQueueSplitSubmit,
     VirtioSndQueueSplitPopUsed,
     VirtioSndQueueSplitKick,
+    VirtioSndQueueSplitDisableInterrupts,
+    VirtioSndQueueSplitEnableInterrupts,
 };
 
 _Use_decl_annotations_

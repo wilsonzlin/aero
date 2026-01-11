@@ -11,7 +11,7 @@
 TARGETNAME=virtiosnd
 TARGETTYPE=DRIVER
 TARGETPATH=obj
-
+ 
 INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include;..\..\..\windows\virtio\common;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 SOURCES= \

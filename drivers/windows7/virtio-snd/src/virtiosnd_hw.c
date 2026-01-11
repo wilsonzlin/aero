@@ -153,6 +153,16 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             return status;
         }
 
+        /*
+         * Contract v1 requires VIRTIO_F_RING_INDIRECT_DESC and expects drivers to
+         * use indirect descriptors for TX submissions to keep ring descriptor
+         * consumption low. Force the split virtqueue policy to always prefer
+         * indirect for txq as long as an indirect table pool is available.
+         */
+        if ((USHORT)q == VIRTIO_SND_QUEUE_TX && Dx->QueueSplit[q].Vq != NULL && Dx->QueueSplit[q].Vq->indirect_pool_va != NULL) {
+            Dx->QueueSplit[q].Vq->indirect_threshold = 0;
+        }
+
         notifyOffReadback = 0;
         status = VirtIoSndTransportSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa, &notifyOffReadback);
         if (!NT_SUCCESS(status)) {
