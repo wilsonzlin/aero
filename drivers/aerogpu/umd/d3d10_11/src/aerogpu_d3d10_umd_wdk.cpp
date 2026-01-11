@@ -2325,11 +2325,11 @@ HRESULT APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
     map.MapType = map_type;
   }
   __if_exists(D3D10DDIARG_MAP::MapFlags) {
-    map.MapFlags = map_flags;
+    map.MapFlags = static_cast<decltype(map.MapFlags)>(map_flags);
   }
   __if_not_exists(D3D10DDIARG_MAP::MapFlags) {
     __if_exists(D3D10DDIARG_MAP::Flags) {
-      map.Flags = map_flags;
+      map.Flags = static_cast<decltype(map.Flags)>(map_flags);
     }
   }
 
