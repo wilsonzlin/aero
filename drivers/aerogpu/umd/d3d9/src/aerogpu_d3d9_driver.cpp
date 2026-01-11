@@ -250,6 +250,9 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnQueryResourceResidency);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetDisplayModeEx);
 AEROGPU_DEFINE_HAS_MEMBER(pfnComposeRects);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetConvolutionMonoKernel);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetAutoGenFilterType);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetAutoGenFilterType);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGenerateMipSubLevels);
 AEROGPU_DEFINE_HAS_MEMBER(pfnDrawPrimitiveUP);
 
 // Fixed function / legacy state paths (commonly hit by DWM + simple D3D9 apps).
@@ -428,6 +431,9 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnValidateDevice, D3d9TraceFunc::DeviceValidateDev
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
 // fully implemented (DWM should not rely on it).
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetAutoGenFilterType, D3d9TraceFunc::DeviceSetAutoGenFilterType, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetAutoGenFilterType, D3d9TraceFunc::DeviceGetAutoGenFilterType, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGenerateMipSubLevels, D3d9TraceFunc::DeviceGenerateMipSubLevels, S_OK);
 
 // Cursor, palette, and clip-status management is not implemented yet, but these
 // can be treated as benign no-ops for bring-up.
@@ -9102,6 +9108,24 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
         pfnSetConvolutionMonoKernel,
         aerogpu_d3d9_stub_pfnSetConvolutionMonoKernel<decltype(
             pDeviceFuncs->pfnSetConvolutionMonoKernel)>::pfnSetConvolutionMonoKernel);
+  }
+  if constexpr (aerogpu_has_member_pfnSetAutoGenFilterType<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetAutoGenFilterType,
+        aerogpu_d3d9_stub_pfnSetAutoGenFilterType<decltype(
+            pDeviceFuncs->pfnSetAutoGenFilterType)>::pfnSetAutoGenFilterType);
+  }
+  if constexpr (aerogpu_has_member_pfnGetAutoGenFilterType<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetAutoGenFilterType,
+        aerogpu_d3d9_stub_pfnGetAutoGenFilterType<decltype(
+            pDeviceFuncs->pfnGetAutoGenFilterType)>::pfnGetAutoGenFilterType);
+  }
+  if constexpr (aerogpu_has_member_pfnGenerateMipSubLevels<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGenerateMipSubLevels,
+        aerogpu_d3d9_stub_pfnGenerateMipSubLevels<decltype(
+            pDeviceFuncs->pfnGenerateMipSubLevels)>::pfnGenerateMipSubLevels);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnRotateResourceIdentities, device_rotate_resource_identities);

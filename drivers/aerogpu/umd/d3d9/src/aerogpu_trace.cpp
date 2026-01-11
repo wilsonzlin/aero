@@ -406,6 +406,12 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetShaderConstB (stub)";
     case D3d9TraceFunc::DeviceSetConvolutionMonoKernel:
       return "Device::SetConvolutionMonoKernel (stub)";
+    case D3d9TraceFunc::DeviceSetAutoGenFilterType:
+      return "Device::SetAutoGenFilterType (stub)";
+    case D3d9TraceFunc::DeviceGetAutoGenFilterType:
+      return "Device::GetAutoGenFilterType (stub)";
+    case D3d9TraceFunc::DeviceGenerateMipSubLevels:
+      return "Device::GenerateMipSubLevels (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }
