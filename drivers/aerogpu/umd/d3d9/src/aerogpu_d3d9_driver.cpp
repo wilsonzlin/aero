@@ -1541,28 +1541,6 @@ uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
 #endif
 }
 
-aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
-  if (!adapter) {
-    return 0;
-  }
-
-#if defined(_WIN32)
-  for (;;) {
-    const uint64_t token = allocate_share_token(adapter);
-    const aerogpu_handle_t handle = static_cast<aerogpu_handle_t>(token & 0xFFFFFFFFu);
-    if (handle != 0) {
-      return handle;
-    }
-  }
-#else
-  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  if (handle == 0) {
-    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  }
-  return handle;
-#endif
-}
-
 namespace {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
 template <typename T, typename = void>
@@ -4110,6 +4088,18 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   bool bindings_changed = false;
+
+  // The runtime may destroy a shader while it is still bound. Clear both the
+  // public "user" bindings and the currently-bound shader slots so subsequent
+  // draws can re-bind the fixed-function fallback if needed.
+  if (dev->user_vs == sh) {
+    dev->user_vs = nullptr;
+    bindings_changed = true;
+  }
+  if (dev->user_ps == sh) {
+    dev->user_ps = nullptr;
+    bindings_changed = true;
+  }
   if (dev->vs == sh) {
     dev->vs = nullptr;
     bindings_changed = true;
@@ -4118,6 +4108,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
     dev->ps = nullptr;
     bindings_changed = true;
   }
+
   if (bindings_changed) {
     (void)emit_bind_shaders_locked(dev);
   }
@@ -5836,6 +5827,31 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
 }
 
 } // namespace
+
+aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
+  if (!adapter) {
+    return 0;
+  }
+
+#if defined(_WIN32)
+  // Use the share-token allocator as an entropy source so handles are extremely
+  // unlikely to collide across guest processes. Only the low 32 bits are used
+  // because `aerogpu_handle_t` is a 32-bit identifier.
+  for (;;) {
+    const uint64_t token = adapter->share_token_allocator.allocate_share_token();
+    const aerogpu_handle_t handle = static_cast<aerogpu_handle_t>(token & 0xFFFFFFFFu);
+    if (handle != 0) {
+      return handle;
+    }
+  }
+#else
+  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  if (handle == 0) {
+    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  }
+  return handle;
+#endif
+}
 
 uint64_t submit_locked(Device* dev, bool is_present) {
   return submit(dev, is_present);
