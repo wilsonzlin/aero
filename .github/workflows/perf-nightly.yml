@@ -95,6 +95,15 @@ jobs:
             if [[ -f perf-results/storage_io/storage_bench.json ]]; then
               echo "- Storage: \`perf-results/storage_io/storage_bench.json\`"
             fi
+            if [[ -f perf-results/storage_io/report.json ]]; then
+              echo "- Storage report: \`perf-results/storage_io/report.json\`"
+            fi
+            if [[ -f perf-results/gpu/raw.json ]]; then
+              echo "- GPU: \`perf-results/gpu/raw.json\`"
+            fi
+            if [[ -f perf-results/gateway/raw.json ]]; then
+              echo "- Gateway: \`perf-results/gateway/raw.json\`"
+            fi
             echo ""
             if [[ -f perf-results/nightly/summary.json ]]; then
               node - <<'NODE'
