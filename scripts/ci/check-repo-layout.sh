@@ -44,6 +44,30 @@ if grep -q "$retired_gpu_device_dir" Cargo.toml; then
   die "Cargo workspace must not include the retired $retired_gpu_device_dir member"
 fi
 
+# Guest Tools layout: canonical driver directory name is `aerogpu` (no hyphen), matching
+# the INF naming (`aerogpu.inf`) and source tree (`drivers/aerogpu/`).
+#
+# The packager/validators accept `aero-gpu` as a legacy alias for *input* layouts, but we
+# should not check in the legacy directory name (it tends to reappear via copy/paste).
+guest_tools_aerogpu_dirs=(
+  "guest-tools/drivers/amd64/aerogpu"
+  "guest-tools/drivers/x86/aerogpu"
+)
+for d in "${guest_tools_aerogpu_dirs[@]}"; do
+  if [[ ! -d "$d" ]]; then
+    die "expected Guest Tools driver directory '$d' to exist (canonical AeroGPU dir name is 'aerogpu')"
+  fi
+done
+guest_tools_aerogpu_legacy_dirs=(
+  "guest-tools/drivers/amd64/aero-gpu"
+  "guest-tools/drivers/x86/aero-gpu"
+)
+for d in "${guest_tools_aerogpu_legacy_dirs[@]}"; do
+  if [[ -d "$d" ]]; then
+    die "legacy Guest Tools driver dir '$d' found; rename to use the canonical 'aerogpu' directory name"
+  fi
+done
+
 # AeroGPU shared-surface contract: `share_token` is persisted via WDDM allocation
 # private driver data (dxgkrnl preserves the blob across OpenResource).
 need_file "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
