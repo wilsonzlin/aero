@@ -79,6 +79,39 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 
+  it("supports explicit wss:// gateway URLs (bootstraps session over https and reuses /l2 path)", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
+
+    const fetchMock = vi.fn(async () => {
+      return new Response("{}", { status: 201, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    resetFakeWebSocket();
+    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("wss://gateway.example.com/l2", {
+      mode: "ws",
+      sink: (ev) => events.push(ev),
+    });
+
+    try {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url] = (fetchMock as unknown as { mock: { calls: any[][] } }).mock.calls[0]!;
+      expect(url).toBe("https://gateway.example.com/session");
+
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2");
+      expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
+    } finally {
+      tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
+      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
+    }
+  });
+
   it("ws mode connects to /l2 and requests aero-l2-tunnel-v1 subprotocol", async () => {
     const originalFetch = globalThis.fetch;
     const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
@@ -158,4 +191,3 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 });
-
