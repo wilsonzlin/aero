@@ -37,9 +37,9 @@ Aero constrains virtio to a small, testable subset. The definitive contract is:
   - §2: split-ring virtqueue subset
   - §3.4: virtio-snd device contract (queue layout, minimum feature set, minimal PCM)
 
-Note: `AERO-W7-VIRTIO` v1 is modern-only. The default virtio-snd driver build targets
-that modern transport subset (BAR0 MMIO virtio-pci modern + split rings) and negotiates
-`VIRTIO_F_VERSION_1` as required by the contract.
+Note: `AERO-W7-VIRTIO` v1 is modern-only. The default virtio-snd PortCls/WaveRT driver build
+targets that modern transport subset (BAR0 MMIO virtio-pci modern + split rings) and
+negotiates `VIRTIO_F_VERSION_1` as required by the contract.
 
 ## In-repo implementation guides consulted
  
@@ -84,15 +84,15 @@ The virtio-snd driver is linked against in-repo virtio support code (no copying;
 
 Default PortCls build (virtio-pci modern, contract v1):
 
+- Shared virtio-pci modern transport + contract validation:
+  - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_modern_wdm.h`)
+  - `drivers/windows7/virtio/common/src/virtio_pci_contract.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_contract.h`)
 - Split virtqueue implementation:
   - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
-- Virtio PCI capability parsing:
+- Virtio PCI capability parsing + identity/layout:
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c` (plus `virtio_pci_cap_parser.h`)
-- Aero MMIO layout helper (BAR0 offsets/multipliers):
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c` (plus `virtio_pci_aero_layout.h`)
-- Aero contract identity enforcement:
-  - `drivers/windows7/virtio/common/src/virtio_pci_contract.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_contract.h`)
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c` (plus `virtio_pci_identity.h`)
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c` (plus `virtio_pci_aero_layout.h`)
 - INTx ISR/DPC helper:
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_intx_wdm.h`)
 - Spec constants/layouts (headers):

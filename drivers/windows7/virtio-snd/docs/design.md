@@ -31,7 +31,7 @@ There are currently **two virtio transport implementations** in-tree:
 - Virtio-pci modern bring-up + split virtqueues + protocol engines:
   - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
-  - `src/virtiosnd_hw.c`
+  - `src/virtiosnd_hw.c` (`VirtIoSndStartHardware`/`VirtIoSndStopHardware`)
   - `src/virtiosnd_queue_split.c`
   - `drivers/windows/virtio/common/virtqueue_split.c` (shared split-ring implementation)
   - `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
@@ -39,6 +39,7 @@ There are currently **two virtio transport implementations** in-tree:
 - Shared virtio support code linked in from:
   - `drivers/windows/virtio/common/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
   - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
@@ -55,7 +56,7 @@ CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
 
 - **Transport:** virtio-pci **modern** (MMIO + PCI vendor-specific capabilities; negotiates `VIRTIO_F_VERSION_1`).
 - **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four, but the current
-  PortCls integration is render-only and primarily uses `controlq` (0) + `txq` (2); capture endpoint plumbing is still pending.
+  PortCls integration is render-only and primarily uses `controlq` (0) + `txq` (2). `eventq` is currently unused by the render endpoint, and capture endpoint plumbing is still pending.
 - **Interrupts:** INTx only.
 - **Protocol:** PCM control + TX/RX protocol engines for streams 0/1 (PortCls integration is render-only today).
 - **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used

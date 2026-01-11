@@ -118,6 +118,7 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * `src/backend_virtio.c` — virtio-snd backend implementation (PortCls ↔ virtio glue)
 * `src/backend_null.c` — silent backend implementation (fallback / debugging)
 * `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
+  - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, INTx wiring, and reset/teardown
 * Shared virtio-pci modern transport:
   - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
 * INTx integration:
@@ -140,19 +141,10 @@ Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 Notes:
 
 * **Queues:** `controlq`/`eventq`/`txq`/`rxq` are initialized per contract v1; playback uses `controlq` (0) + `txq` (2).
-  `rxq` (capture) bring-up exists in-tree, but capture is not yet exposed as a Windows endpoint.
+  - `eventq` is initialized for contract conformance but is not currently used by the render-only PortCls endpoint.
+  - `rxq` (capture) bring-up exists in-tree, but capture is not yet exposed as a Windows endpoint.
 * **Interrupts:** **INTx** only (MSI/MSI-X not currently used by this driver package).
-* **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32).
-
-### Modern virtio transport notes
-
-- Sets up split-ring virtqueues (control/event/tx/rx) using the reusable backend in `virtiosnd_queue_split.c`
-  - Note: `rxq` (capture) bring-up exists in-tree, but capture is not yet exposed as a Windows endpoint.
-- Connects **INTx** and routes used-ring completions to the control/TX/RX protocol engines in a DPC
-- Includes control/TX/RX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c` / `virtiosnd_rx.c`) and thin wrappers:
-  - `VirtIoSndHwSendControl`, `VirtIoSndHwSubmitTx` (playback)
-  - `VirtIoSndInitRxEngine`, `VirtIoSndHwSubmitRxSg` + `VirtIoSndHwSetRxCompletionCallback` (capture)
-  Capture endpoint plumbing (PortCls pin) is not implemented yet.
+* **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
 ## Legacy / transitional virtio-pci path (not shipped)
 

@@ -109,7 +109,13 @@ which is **virtio-pci modern only**:
 - Modern virtio-snd device ID: `PCI\VEN_1AF4&DEV_1059`
 - Contract major version is encoded in the PCI Revision ID: `REV_01`
 
-The recommended Aero INF (`inf/aero-virtio-snd.inf`) is intentionally strict:
+Expected HWID (short form):
+
+| Device | Expected HWID |
+|---|---|
+| virtio-snd (AERO-W7-VIRTIO v1) | `PCI\VEN_1AF4&DEV_1059&REV_01` |
+
+The shipped INF (`inf/aero-virtio-snd.inf`) is intentionally strict:
 
 - It matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
   - An optional subsystem-qualified match (`...&SUBSYS_00191AF4&REV_01`) is present but commented out.
@@ -132,8 +138,9 @@ qemu-system-x86_64 -device virtio-sound-pci,help
 
 Development note: the repo also contains an optional legacy filename alias INF
 (`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf`, it installs the same
-driver/service as `aero-virtio-snd.inf` but provides the legacy filename for compatibility with
-older tooling/workflows. This legacy INF is **not** staged into the CI driver bundle.
+driver/service as `aero-virtio-snd.inf` (same contract-v1 HWIDs), but provides the legacy filename
+for compatibility with older tooling/workflows and uses `CatalogFile = virtio-snd.cat`. This legacy
+INF is **not** staged into the CI driver bundle.
 
 ## Verifying HWID in Device Manager
 
@@ -156,13 +163,19 @@ If you see `PCI\VEN_1AF4&DEV_1018` (transitional) or `REV_00`, update the QEMU c
 `disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device (or upgrade QEMU if those
 properties are missing).
 
-The automated Win7 host harness probes QEMU for supported virtio-snd device properties (via
+
+## Preferred: automated host harness
+
+For repeatable automated validation (including strict `AERO-W7-VIRTIO` v1 device configuration),
+prefer the Windows 7 host harness. It probes QEMU for supported virtio-snd device properties (via
 `-device virtio-sound-pci,help`) and enables contract-v1 identification when supported (for example
-`disable-legacy=on` and `x-pci-revision=0x01`). This is the same configuration required for the
-stock `aero-virtio-snd.inf` to bind under QEMU. This manual test plan uses the same approach.
+`disable-legacy=on` and `x-pci-revision=0x01`).
 
 - `drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1`
 - `drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py`
+
+The harness configures **modern-only** virtio devices (it enables `disable-legacy=on` and forces
+`x-pci-revision=0x01` when supported), which matches the default virtio-snd driver + INF contract.
 
 ## Guest-side validation (Windows 7)
 
@@ -318,6 +331,7 @@ Then review:
 - If Windows shows `REV_00`, you likely forgot `x-pci-revision=0x01` in QEMU (revision gate mismatch).
   Example:
   - `-device virtio-sound-pci,audiodev=...,disable-legacy=on,x-pci-revision=0x01`
+- If your QEMU build cannot override revision IDs, the stock Aero INF will not bind. Use a contract-v1-capable QEMU/hypervisor build that can set `REV_01` (or patch QEMU).
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
 

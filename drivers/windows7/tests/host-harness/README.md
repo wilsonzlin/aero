@@ -289,7 +289,8 @@ Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-b
 (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`) and sets `x-pci-revision=0x01` so strict contract-v1 INFs can bind.
 For virtio-snd, the canonical INF (`aero-virtio-snd.inf`) requires `PCI\VEN_1AF4&DEV_1059&REV_01`. The repo also
 contains an optional legacy filename alias INF (`virtio-snd.inf.disabled`; rename to `virtio-snd.inf` to enable)
-that installs the same driver/service and matches the same contract-v1 HWID, but it is not used by default.
+for compatibility with older workflows/tools. It installs the same driver/service and matches the same contract-v1
+HWIDs, but it is not used by default.
 
 For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`).
 Avoid installing multiple INFs that bind the same HWID, or disambiguate by passing a relative INF path via

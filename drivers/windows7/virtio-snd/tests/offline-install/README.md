@@ -246,7 +246,7 @@ Once the system boots with virtio-snd hardware present:
   - `aero-virtio-snd.inf`, or
   - the device hardware ID (for Aero contract v1 virtio-snd: `PCI\VEN_1AF4&DEV_1059&REV_01`; more-specific `SUBSYS_...` qualifiers may also appear)
 
-  Note: If the device enumerates as `DEV_1018` (transitional) or `REV_00`, the Aero INF is intentionally strict and will not bind. For QEMU, use `disable-legacy=on` and `x-pci-revision=0x01` on the virtio-snd device.
+  Note: If the device enumerates as `DEV_1018` (transitional) or `REV_00`, the Aero INF is intentionally strict and will not bind. For QEMU, use `disable-legacy=on` and `x-pci-revision=0x01` on the virtio-snd device. If your hypervisor cannot expose `DEV_1059&REV_01`, the stock Aero virtio-snd driver package will not bind.
 
 If the driver package is staged but the device doesn’t bind:
 
