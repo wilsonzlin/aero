@@ -136,20 +136,8 @@ export type CoordinatorToWorkerPostMessage =
   | SetMicrophoneRingBufferMessage
   | SetAudioRingBufferMessage;
 
-export type SerialOutputMessage = {
-  kind: "serial.output";
-  port: number;
-  data: Uint8Array;
-};
-
-export type ResetRequestMessage = {
-  kind: "reset.request";
-};
-
 export type WorkerToCoordinatorPostMessage =
   | ReadyMessage
   | ErrorMessage
   | WasmReadyMessage
-  | ConfigAckMessage
-  | SerialOutputMessage
-  | ResetRequestMessage;
+  | ConfigAckMessage;

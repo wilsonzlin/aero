@@ -55,8 +55,6 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
-  type ResetRequestMessage,
-  type SerialOutputMessage,
   type SetMicrophoneRingBufferMessage,
   type SetAudioRingBufferMessage,
   type WorkerInitMessage,
@@ -671,12 +669,6 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         },
         onA20: (enabled) => {
           perf.counter("cpu:io:a20Enabled", enabled ? 1 : 0);
-        },
-        onSerialOutput: (port, data) => {
-          ctx.postMessage({ kind: "serial.output", port, data } satisfies SerialOutputMessage);
-        },
-        onReset: () => {
-          ctx.postMessage({ kind: "reset.request" } satisfies ResetRequestMessage);
         },
       });
 

@@ -528,13 +528,20 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
               enqueueIoEvent(encodeEvent({ kind: "a20Set", enabled: Boolean(enabled) }));
             },
             requestReset: () => {
+              // Reset is a VM lifecycle event: publish it on the worker's runtime
+              // event ring so the coordinator can reset/restart the VM, and also
+              // forward it to the CPU side via the ioIpc event queue.
+              pushEvent({ kind: "resetRequest" });
               enqueueIoEvent(encodeEvent({ kind: "resetRequest" }));
             },
           };
 
           const serialSink: SerialOutputSink = {
             write: (port, data) => {
-              enqueueIoEvent(encodeEvent({ kind: "serialOutput", port: port & 0xffff, data }));
+              // Serial output is a host-facing debug stream; send it directly to
+              // the coordinator via the worker event ring (not via ioIpc, which
+              // is reserved for CPU-device traffic).
+              pushEvent({ kind: "serialOutput", port: port & 0xffff, data });
             },
           };
 
