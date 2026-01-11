@@ -2676,24 +2676,56 @@ void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 }
 
-void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT,
+template <typename THandle>
+static bool AnyNonNullHandles(const THandle* handles, UINT count);
+
+void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT,
-                                             UINT,
-                                             const D3D11DDI_HRESOURCE*,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
                                              const UINT*,
-                                             const UINT*) {}
-void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT,
+                                             const UINT*) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phBuffers, NumBuffers)) {
+    return;
+  }
+  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
+  if (!ctx || !ctx->device) {
+    return;
+  }
+  SetError(ctx->device, E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT,
-                                             UINT,
-                                             const D3D11DDI_HRESOURCE*,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
                                              const UINT*,
-                                             const UINT*) {}
-void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT,
+                                             const UINT*) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phBuffers, NumBuffers)) {
+    return;
+  }
+  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
+  if (!ctx || !ctx->device) {
+    return;
+  }
+  SetError(ctx->device, E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT,
-                                             UINT,
-                                             const D3D11DDI_HRESOURCE*,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
                                              const UINT*,
-                                             const UINT*) {}
+                                             const UINT*) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phBuffers, NumBuffers)) {
+    return;
+  }
+  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
+  if (!ctx || !ctx->device) {
+    return;
+  }
+  SetError(ctx->device, E_NOTIMPL);
+}
 
 template <typename THandle>
 static bool AnyNonNullHandles(const THandle* handles, UINT count) {
@@ -2950,11 +2982,61 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 }
 
-void AEROGPU_APIENTRY GsSetShaderResources11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSHADERRESOURCEVIEW*) {}
+void AEROGPU_APIENTRY GsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT,
+                                             UINT NumViews,
+                                             const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phViews, NumViews)) {
+    return;
+  }
+  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
+  if (!ctx || !ctx->device) {
+    return;
+  }
+  SetError(ctx->device, E_NOTIMPL);
+}
 
-void AEROGPU_APIENTRY VsSetSamplers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSAMPLER*) {}
-void AEROGPU_APIENTRY PsSetSamplers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSAMPLER*) {}
-void AEROGPU_APIENTRY GsSetSamplers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSAMPLER*) {}
+void AEROGPU_APIENTRY VsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phSamplers, NumSamplers)) {
+    return;
+  }
+  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
+  if (!ctx || !ctx->device) {
+    return;
+  }
+  SetError(ctx->device, E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY PsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phSamplers, NumSamplers)) {
+    return;
+  }
+  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
+  if (!ctx || !ctx->device) {
+    return;
+  }
+  SetError(ctx->device, E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY GsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phSamplers, NumSamplers)) {
+    return;
+  }
+  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
+  if (!ctx || !ctx->device) {
+    return;
+  }
+  SetError(ctx->device, E_NOTIMPL);
+}
 
 void AEROGPU_APIENTRY SetViewports11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumViewports, const D3D10_DDI_VIEWPORT* pViewports) {
   if (!hCtx.pDrvPrivate || !pViewports || NumViewports == 0) {
