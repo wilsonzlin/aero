@@ -165,10 +165,6 @@ pub enum InputLayoutError {
         count: u32,
         max: u32,
     },
-    BlobSizeMismatch {
-        expected: usize,
-        actual: usize,
-    },
     InputSlotOutOfRange {
         slot: u32,
         max: u32,
@@ -236,10 +232,6 @@ impl fmt::Display for InputLayoutError {
             InputLayoutError::ElementCountTooLarge { count, max } => {
                 write!(f, "ILAY element_count {count} exceeds max {max}")
             }
-            InputLayoutError::BlobSizeMismatch { expected, actual } => write!(
-                f,
-                "ILAY blob size mismatch: expected {expected} bytes, got {actual}"
-            ),
             InputLayoutError::InputSlotOutOfRange { slot, max } => {
                 write!(f, "input_slot {slot} is out of range (max {max})")
             }
@@ -343,8 +335,11 @@ impl InputLayoutDesc {
         }
 
         let expected_size = HEADER_SIZE + (element_count as usize) * ELEMENT_SIZE;
-        if blob.len() != expected_size {
-            return Err(InputLayoutError::BlobSizeMismatch {
+        // Forward-compat: allow trailing bytes so newer ILAY blob versions can append fields after
+        // the element array without breaking older hosts. Only the element prefix we understand is
+        // required.
+        if blob.len() < expected_size {
+            return Err(InputLayoutError::BufferTooSmall {
                 expected: expected_size,
                 actual: blob.len(),
             });
@@ -881,6 +876,32 @@ mod tests {
                 instance_data_step_rate: 0
             }
         );
+    }
+
+    #[test]
+    fn parses_ilay_blob_with_trailing_bytes() {
+        let mut blob = Vec::new();
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, 1); // element_count
+        push_u32(&mut blob, 0); // reserved0
+
+        // One element.
+        push_u32(&mut blob, 0xDEAD_BEEF); // semantic hash
+        push_u32(&mut blob, 0); // semantic index
+        push_u32(&mut blob, 6); // DXGI_FORMAT_R32G32B32_FLOAT
+        push_u32(&mut blob, 0); // input_slot
+        push_u32(&mut blob, 0); // offset
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        // Extra extension bytes (future-proofing).
+        blob.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+        blob.extend_from_slice(&0x9abc_def0u32.to_le_bytes());
+
+        let parsed = InputLayoutDesc::parse(&blob).expect("parse failed");
+        assert_eq!(parsed.elements.len(), 1);
+        assert_eq!(parsed.elements[0].semantic_name_hash, 0xDEAD_BEEF);
     }
 
     #[test]
