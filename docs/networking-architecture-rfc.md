@@ -232,8 +232,11 @@ This RFC is accompanied by a minimal prototype that demonstrates the Option C sh
 For a maintained, policy-driven L2 tunnel proxy implementation, use `crates/aero-l2-proxy`
 (see [`docs/l2-tunnel-runbook.md`](./l2-tunnel-runbook.md)) and treat it as a security-critical egress
 surface (enforce strict policy and quotas).
-For the legacy socket-level relays (`/tcp`, DoH), use `backend/aero-gateway` (or `net-proxy/` for
-local development).
+For the legacy socket-level relays (Phase 0 `/tcp`, DoH, UDP datagrams), use:
+
+- `backend/aero-gateway` for TCP + DNS (`/tcp`, `/tcp-mux`, `/dns-query`, `/dns-json`; see `docs/backend/openapi.yaml`)
+- `proxy/webrtc-udp-relay` for UDP datagrams (`/webrtc/*`, `/udp`; see `proxy/webrtc-udp-relay/PROTOCOL.md`)
+- `net-proxy/` can be used as a local dev relay.
 
 **Protocol note:** the prototype now uses the versioned L2 tunnel framing (including basic
 PING/PONG handling) over WebSocket. Production implementations should use the maintained codec and
@@ -251,3 +254,23 @@ See:
 - `prototype/nt-arch-rfc/proxy-server.js`
 - `prototype/nt-arch-rfc/client.js`
 - `tests/networking-architecture-rfc.test.js`
+
+---
+
+## Current implementation status
+
+What exists today (in repo):
+
+- **Option C (L2 tunnel):**
+  - Wire protocol: `docs/l2-tunnel-protocol.md` (`aero-l2-tunnel-v1`)
+  - Browser client: `web/src/net/l2Tunnel.ts`
+  - Proxy: `crates/aero-l2-proxy` (`GET /l2` WebSocket, user-space stack + NAT)
+  - Optional WebRTC transport bridge: `proxy/webrtc-udp-relay` (`l2` DataChannel ↔ backend WS `/l2`, per `PROTOCOL.md`)
+- **Phase 0 / migration (socket-level relays):**
+  - `backend/aero-gateway` (`POST /session`, `/tcp`, `/tcp-mux`, `/dns-query`, `/dns-json`, `/udp-relay/token`)
+  - `proxy/webrtc-udp-relay` UDP relay (`udp` DataChannel framing v1/v2 + WebSocket `/udp` fallback)
+
+What Option C still requires to fully replace Phase 0:
+
+- Making the L2 tunnel the default path in production builds (with clear fallbacks for debugging).
+- Continued hardening of the proxy egress policy, observability, and resource accounting under real workloads.

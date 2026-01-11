@@ -54,6 +54,15 @@ Internet
 - Wire protocol: [`l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
 - Runbook (local + production): [`l2-tunnel-runbook.md`](./l2-tunnel-runbook.md)
 
+Authoritative endpoint/protocol docs (browser-facing contracts):
+
+- **Aero Gateway HTTP API:** [`docs/backend/openapi.yaml`](./backend/openapi.yaml)
+  - `/session`, `/dns-query`, `/dns-json`, `/udp-relay/token`, etc.
+- **Aero Gateway WebSocket API:** [`docs/backend/01-aero-gateway-api.md`](./backend/01-aero-gateway-api.md)
+  - `/tcp` and `/tcp-mux` (`aero-tcp-mux-v1`)
+- **WebRTC UDP relay (+ `/udp` WebSocket fallback + `l2` bridge):**
+  [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md)
+
 Planned/active code paths:
 
 - Browser tunnel client: `web/src/net/l2Tunnel.ts`
@@ -69,8 +78,11 @@ contributors.
 ### Phase 0 (current): in-browser slirp/NAT using `/tcp` + UDP relay
 
 - Browser runs a slirp-like stack (ARP/DHCP + TCP/UDP NAT).
-- TCP egress is implemented via the gateway’s WebSocket endpoints (`/tcp` or `/tcp-mux`).
-- UDP egress is implemented via a WebRTC relay (see `proxy/webrtc-udp-relay/`).
+- TCP egress is implemented via the gateway’s WebSocket endpoints (`/tcp` or `/tcp-mux`,
+  subprotocol `aero-tcp-mux-v1`).
+- DNS resolution uses the gateway’s DoH endpoints (`/dns-query`, optional `/dns-json`).
+- UDP egress is implemented via `proxy/webrtc-udp-relay` (WebRTC DataChannel `udp`, with `/udp`
+  WebSocket fallback; see `proxy/webrtc-udp-relay/PROTOCOL.md`).
 
 ### Phase 1: introduce `L2TunnelBackend` (frame pipe) and keep slirp as fallback
 
@@ -102,65 +114,123 @@ See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitiona
 ## Network Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Network Stack                                 │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  Windows 7                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Applications (HTTP, FTP, etc.)                          │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│       │                                                          │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Winsock (ws2_32.dll)                                    │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│       │                                                          │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  TCP/IP Stack (tcpip.sys)                                │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│       │                                                          │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  NDIS (Network Driver Interface)                         │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│       │                                                          │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  NIC Driver (e1000e.sys or virtio-net)                   │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│       │                                                          │
-└───────┼─────────────────────────────────────────────────────────┘
-        │  ◄── Emulation Boundary
-        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Aero Network Emulation                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Virtual NIC (E1000 or Virtio-net)                       │    │
-│  │    - DMA Ring Buffers                                    │    │
-│  │    - Packet Queues                                       │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│       │                                                          │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  User-space Network Stack                                │    │
-│  │    - Ethernet frame processing                           │    │
-│  │    - ARP/DHCP handling                                   │    │
-│  │    - NAT (Network Address Translation)                   │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│       │                                                          │
-│  ┌────────────────┐  ┌────────────────┐                         │
-│  │   WebSocket    │  │    WebRTC      │                         │
-│  │   (TCP proxy)  │  │  (UDP proxy)   │                         │
-│  └────────────────┘  └────────────────┘                         │
-│       │                     │                                    │
-│       ▼                     ▼                                    │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │          Networking backends (production)                │    │
-│  │    - backend/aero-gateway: TCP proxy + DNS-over-HTTPS    │    │
-│  │    - proxy/webrtc-udp-relay: UDP relay (WebRTC)          │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                                Windows 7 guest                                 │
+│                                                                               │
+│  apps → Winsock → tcpip.sys → NDIS → NIC driver (e1000e.sys / virtio-net.sys)  │
+└───────────────────────────────────────────────────────────────────────────────┘
+                 │  ◄── emulation boundary (guest ↔ browser/WASM)
+                 ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                            Browser (Aero emulator)                             │
+│                                                                               │
+│  Phase 0 (fallback): in-browser slirp/NAT (`crates/aero-net-stack`)            │
+│    - TCP  → WebSocket `/tcp` (or `/tcp-mux` + `aero-tcp-mux-v1`)               │
+│    - DNS  → DoH `/dns-query` (optional `/dns-json`)                            │
+│    - UDP  → WebRTC DataChannel `udp` (or WebSocket `/udp` fallback)            │
+└───────────────────────────────────────────────────────────────────────────────┘
+                 │ HTTPS / WSS (same-site recommended; cookies)     │ WebRTC (UDP)
+                 │                                                    │
+                 ▼                                                    ▼
+┌──────────────────────────────────────────────┐     ┌──────────────────────────────────────────────┐
+│ backend/aero-gateway                          │     │ proxy/webrtc-udp-relay                        │
+│  - POST /session                              │     │  - WebRTC signaling (see PROTOCOL.md)         │
+│  - WS  /tcp (1 TCP stream per WS)             │     │    - GET  /webrtc/signal (WS, trickle ICE)     │
+│  - WS  /tcp-mux (subprotocol aero-tcp-mux-v1) │     │    - POST /webrtc/offer (HTTP offer→answer)    │
+│  - DoH /dns-query (+ optional /dns-json)      │     │  - UDP relay: DataChannel `udp` + WS /udp      │
+│  - POST /udp-relay/token (optional)           │     └──────────────────────────────────────────────┘
+└──────────────────────────────────────────────┘
 ```
+
+Production deployment commonly puts a reverse proxy (e.g. Caddy) in front so the browser only
+talks to a single HTTPS origin:
+
+- `/session`, `/tcp`, `/tcp-mux`, `/dns-query`, `/dns-json`, `/udp-relay/token` → **aero-gateway**
+- `/webrtc/*`, `/offer`, `/udp` → **webrtc-udp-relay**
+- `/l2` → **aero-l2-proxy** (Option C; `aero-l2-tunnel-v1`)
+
+Note: WebRTC’s **data plane** still requires UDP connectivity to the relay’s ICE port range (or a
+TURN server). The reverse proxy only fronts the relay’s HTTP/WebSocket signaling endpoints.
+
+---
+
+## Canonical protocols (wire formats)
+
+This section summarizes the canonical on-the-wire formats. The full specifications live in the
+linked documents.
+
+### `aero-tcp-mux-v1` (TCP multiplexing over WebSocket)
+
+Used by `GET /tcp-mux` (WebSocket) on `backend/aero-gateway` (and the dev relays).
+
+- **Spec:** [`docs/backend/01-aero-gateway-api.md`](./backend/01-aero-gateway-api.md)
+- **Reference implementations:**
+  - `backend/aero-gateway/src/protocol/tcpMux.ts`
+  - `net-proxy/src/tcpMuxProtocol.ts`
+  - `web/src/net/tcpMuxProxy.ts`
+
+Frame format (big-endian), fixed **9-byte header**:
+
+| Field | Type | Notes |
+|---|---:|---|
+| `msg_type` | `u8` | `OPEN=1`, `DATA=2`, `CLOSE=3`, `ERROR=4`, `PING=5`, `PONG=6` |
+| `stream_id` | `u32` | Client-assigned stream ID (`0` reserved for connection-level messages) |
+| `length` | `u32` | Payload length |
+| `payload` | `bytes[length]` | Message payload |
+
+### UDP relay framing v1/v2 (WebRTC DataChannel `udp` and WebSocket `/udp`)
+
+Used by `proxy/webrtc-udp-relay` for UDP proxying:
+
+- **WebRTC DataChannel label:** `udp` (`ordered=false`, `maxRetransmits=0`)
+- **WebSocket fallback:** `GET /udp` (message-oriented; one datagram frame per WS binary message)
+
+Spec and implementations:
+
+- **Spec:** [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md)
+- **Reference implementations:**
+  - Go: `proxy/webrtc-udp-relay/internal/udpproto/*`
+  - Browser: `web/src/shared/udpRelayProtocol.ts`
+
+Version detection rules (from `PROTOCOL.md`):
+
+- If `len(frame) >= 2` and the first two bytes are `0xA2 0x02`, parse as **v2**.
+- Otherwise, parse as **v1** (legacy, IPv4-only).
+
+Negotiation summary:
+
+- **IPv6 requires v2.**
+- For IPv4, the relay may send v1 or v2 back to the client; relays typically only emit v2 after the
+  client has demonstrated v2 support (to avoid breaking v1-only clients).
+
+Semantic note: `/udp` over WebSocket uses the same framing, but WebSockets are **reliable and
+ordered**, so it cannot perfectly emulate UDP loss/reordering semantics. Treat it as a fallback or
+debug path.
+
+### `aero-l2-tunnel-v1` (Option C: L2 tunnel)
+
+Used by the production L2 tunnel:
+
+- **WebSocket:** `GET /l2` (subprotocol `aero-l2-tunnel-v1`)
+- **WebRTC:** DataChannel label `l2` (must be fully reliable)
+
+See: [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
+
+## Deprecations / historical modules (avoid confusion)
+
+- `server/` is the legacy monolith backend. New backend work should target:
+  - `backend/aero-gateway` (TCP proxy + DoH + UDP relay token minting)
+  - `proxy/webrtc-udp-relay` (WebRTC UDP relay + `/udp` fallback + `l2` bridge)
+  - `crates/aero-l2-proxy` (Option C user-space stack / NAT)
+  - `crates/aero-storage-server` (storage service; part of the backend split)
+- Guest network stack implementations exist in multiple places:
+  - `crates/emulator/src/io/net/stack` and `crates/aero-net` are older paths.
+  - The Phase 0 in-browser stack is converging on `crates/aero-net-stack`.
+  - The recommended production path is Option C (L2 tunnel) as described above.
+- Dev/prototype UDP behavior:
+  - `net-proxy/` supports a legacy per-target UDP mode (`/udp?host=...&port=...`) that forwards raw
+    UDP payload bytes. Prefer the multiplexed v1/v2 datagram framing (`/udp` with no target params)
+    or WebRTC when building new integrations.
 
 ---
 
@@ -715,6 +785,10 @@ The WebRTC UDP relay DataChannel framing and signaling schema are specified in
 [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
 
 The same relay also exposes `GET /udp` as a WebSocket fallback using the same v1/v2 datagram framing.
+
+**Semantic note:** WebSockets are reliable and ordered, so `/udp` cannot preserve UDP loss/reordering
+semantics and may introduce head-of-line blocking. Treat it as a fallback/debug path, not the
+real-time/low-latency path.
 
 ### Browser integration: gateway-minted relay credentials
 
