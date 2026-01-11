@@ -292,6 +292,49 @@ if ($OmitOptionalDrivers) {
   if ($LASTEXITCODE -eq 0) {
     throw "Expected make-driver-pack.ps1 -StrictOptional to fail when optional drivers are missing. See $strictPackLog"
   }
+
+  # When optional drivers are unavailable, callers should still be able to build a pack by
+  # explicitly requesting only the required drivers.
+  Write-Host "Validating -Drivers viostor,netkvm succeeds without optional drivers..."
+  $requiredOnlyPackOutDir = Join-Path $OutRoot "driver-pack-out-required-only"
+  Ensure-EmptyDirectory -Path $requiredOnlyPackOutDir
+  $requiredOnlyPackLog = Join-Path $logsDir "make-driver-pack-required-only.log"
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $driverPackScript `
+    -VirtioWinRoot $syntheticRoot `
+    -OutDir $requiredOnlyPackOutDir `
+    -Drivers "viostor","netkvm" `
+    -NoZip *>&1 | Tee-Object -FilePath $requiredOnlyPackLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-driver-pack.ps1 failed with -Drivers viostor,netkvm (exit $LASTEXITCODE). See $requiredOnlyPackLog"
+  }
+
+  $requiredOnlyPackRoot = Join-Path $requiredOnlyPackOutDir "aero-win7-driver-pack"
+  if (-not (Test-Path -LiteralPath $requiredOnlyPackRoot -PathType Container)) {
+    throw "Expected driver pack staging directory not found: $requiredOnlyPackRoot"
+  }
+
+  $requiredOnlyManifestPath = Join-Path $requiredOnlyPackRoot "manifest.json"
+  if (-not (Test-Path -LiteralPath $requiredOnlyManifestPath -PathType Leaf)) {
+    throw "Expected driver pack manifest not found: $requiredOnlyManifestPath"
+  }
+  $requiredOnlyManifest = Get-Content -LiteralPath $requiredOnlyManifestPath -Raw | ConvertFrom-Json
+  if ($requiredOnlyManifest.optional_drivers_missing_any) {
+    throw "Expected -Drivers viostor,netkvm manifest to have optional_drivers_missing_any=false"
+  }
+  $driversRequested = @($requiredOnlyManifest.drivers_requested | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  foreach ($want in @("viostor", "netkvm")) {
+    if (-not ($driversRequested -contains $want)) {
+      throw "Expected -Drivers viostor,netkvm to request '$want'. Got: $($driversRequested -join ', ')"
+    }
+  }
+  foreach ($notWant in @("viosnd", "vioinput")) {
+    if ($driversRequested -contains $notWant) {
+      throw "Did not expect -Drivers viostor,netkvm to request '$notWant'. Got: $($driversRequested -join ', ')"
+    }
+    if (Test-Path -LiteralPath (Join-Path $requiredOnlyPackRoot "win7\\x86\\$notWant") -PathType Container) {
+      throw "Did not expect optional driver directory to be created: win7/x86/$notWant"
+    }
+  }
 } else {
   if ($driverPackManifest.optional_drivers_missing_any) {
     $missingNames = @($driverPackManifest.optional_drivers_missing | ForEach-Object { $_.name })
