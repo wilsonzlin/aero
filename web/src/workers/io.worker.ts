@@ -52,6 +52,7 @@ import { applyUsbSelectedToWebUsbUhciBridge, type WebUsbUhciHotplugBridgeLike } 
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
 import { WebUsbPassthroughRuntime, type UsbPassthroughBridgeLike } from "../usb/webusb_passthrough_runtime";
+import { hex16 } from "../usb/usb_hex";
 import {
   UsbPassthroughDemoRuntime,
   isUsbPassthroughDemoRunMessage,
@@ -781,9 +782,7 @@ function handleHidPassthroughAttach(msg: HidPassthroughAttachMessage): void {
 
   if (import.meta.env.DEV) {
     console.info(
-      `[hid] attach deviceId=${msg.deviceId} path=${guestPath.join(".")} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId
-        .toString(16)
-        .padStart(4, "0")}`,
+      `[hid] attach deviceId=${msg.deviceId} path=${guestPath.join(".")} vid=${hex16(msg.vendorId)} pid=${hex16(msg.productId)}`,
     );
   }
 
