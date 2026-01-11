@@ -17,10 +17,9 @@ type Session struct {
 
 	limiter *ratelimit.SessionLimiter
 
-	mu       sync.Mutex
-	closed   bool
-	done     chan struct{}
-	bindings map[uint16]struct{}
+	mu     sync.Mutex
+	closed bool
+	done   chan struct{}
 
 	lastViolation time.Time
 	violations    int
@@ -45,14 +44,13 @@ func newSession(id string, cfg config.Config, m *metrics.Metrics, clock ratelimi
 	})
 
 	return &Session{
-		id:       id,
-		cfg:      cfg,
-		metrics:  m,
-		clock:    clock,
-		limiter:  rl,
-		done:     make(chan struct{}),
-		bindings: make(map[uint16]struct{}),
-		onClose:  onClose,
+		id:      id,
+		cfg:     cfg,
+		metrics: m,
+		clock:   clock,
+		limiter: rl,
+		done:    make(chan struct{}),
+		onClose: onClose,
 	}
 }
 
@@ -120,53 +118,10 @@ func (s *Session) closeLocked() func() {
 	return onClose
 }
 
-// EnsureBinding enforces MAX_UDP_BINDINGS_PER_SESSION.
-func (s *Session) EnsureBinding(srcPort uint16) error {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return ErrSessionClosed
-	}
-
-	if _, ok := s.bindings[srcPort]; ok {
-		s.mu.Unlock()
-		return nil
-	}
-
-	if s.cfg.MaxUDPBindingsPerSession > 0 && len(s.bindings) >= s.cfg.MaxUDPBindingsPerSession {
-		s.metrics.Inc(metrics.DropReasonQuotaExceeded)
-		s.metrics.Inc("too_many_bindings")
-		onHardClose, onClose := s.recordViolationLocked(s.clock.Now())
-		s.mu.Unlock()
-		if onHardClose != nil {
-			onHardClose()
-		}
-		if onClose != nil {
-			onClose()
-		}
-		return ErrTooManyBindings
-	}
-
-	s.bindings[srcPort] = struct{}{}
-	s.mu.Unlock()
-	return nil
-}
-
-// ReleaseBinding decrements the session's active UDP binding count.
-//
-// It should be called when a guest-port binding is closed (e.g. due to idle
-// timeout). Calling ReleaseBinding on an unknown binding is a no-op.
-func (s *Session) ReleaseBinding(srcPort uint16) {
-	s.mu.Lock()
-	delete(s.bindings, srcPort)
-	s.mu.Unlock()
-}
-
 // AllowClientDatagram applies rate limiting and destination quota enforcement
 // to a client request to send UDP to destKey.
 //
-// It does not enforce guest-port binding quotas (MAX_UDP_BINDINGS_PER_SESSION);
-// that is handled separately by the relay engine.
+// Guest-port binding limits are enforced by the relay engine (SessionRelay).
 func (s *Session) AllowClientDatagram(destKey string, payload []byte) bool {
 	if s.Closed() {
 		return false
@@ -194,10 +149,7 @@ func (s *Session) AllowClientDatagram(destKey string, payload []byte) bool {
 //
 // On soft failures the datagram is dropped and false is returned. In hard mode
 // the session may also be closed after repeated violations.
-func (s *Session) HandleClientDatagram(srcPort uint16, destKey string, payload []byte) bool {
-	if err := s.EnsureBinding(srcPort); err != nil {
-		return false
-	}
+func (s *Session) HandleClientDatagram(_ uint16, destKey string, payload []byte) bool {
 	return s.AllowClientDatagram(destKey, payload)
 }
 

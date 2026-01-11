@@ -93,29 +93,6 @@ func TestSession_EnforcesUniqueDestinationQuota(t *testing.T) {
 	}
 }
 
-func TestSession_EnforcesBindingQuota(t *testing.T) {
-	clk := &ratelimitTestClock{now: time.Unix(0, 0)}
-	cfg := config.Config{
-		MaxUDPBindingsPerSession: 1,
-	}
-	m := metrics.New()
-	sm := NewSessionManager(cfg, m, clk)
-	s, err := sm.CreateSession()
-	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-
-	if !s.HandleClientDatagram(1111, "1.1.1.1:53", []byte("hi")) {
-		t.Fatalf("expected first binding to be allowed")
-	}
-	if s.HandleClientDatagram(2222, "1.1.1.1:53", []byte("hi")) {
-		t.Fatalf("expected second binding to be rejected")
-	}
-	if m.Get(metrics.DropReasonQuotaExceeded) == 0 || m.Get("too_many_bindings") == 0 {
-		t.Fatalf("expected binding quota metrics to be incremented")
-	}
-}
-
 func TestSession_EnforcesDataChannelBps(t *testing.T) {
 	clk := &ratelimitTestClock{now: time.Unix(0, 0)}
 	cfg := config.Config{
