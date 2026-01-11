@@ -63,6 +63,18 @@ describe("usb/usb_proxy_protocol", () => {
     ).toBe(false);
   });
 
+  it("rejects invalid bulk endpoint directions and endpoint 0", () => {
+    // bulkIn expects an IN endpoint address (`0x80 | ep_num`).
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x80, length: 8 })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x91, length: 8 })).toBe(false);
+
+    // bulkOut expects an OUT endpoint address (`ep_num` with bit7 clear).
+    expect(isUsbHostAction({ kind: "bulkOut", id: 1, endpoint: 0x81, data: Uint8Array.of(1) })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkOut", id: 1, endpoint: 0, data: Uint8Array.of(1) })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkOut", id: 1, endpoint: 0x71, data: Uint8Array.of(1) })).toBe(false);
+  });
+
   it("accepts the supported completion shapes", () => {
     const completions: UsbHostCompletion[] = [
       { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) },

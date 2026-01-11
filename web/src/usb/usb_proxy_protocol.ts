@@ -89,6 +89,23 @@ function isUint32(value: unknown): value is number {
   return isSafeInteger(value) && value >= 0 && value <= 0xffff_ffff;
 }
 
+function isUsbEndpointAddress(value: unknown): value is number {
+  if (!isUint8(value)) return false;
+  // `value` should be a USB endpoint address, not just an endpoint number:
+  // - bit7 = direction (IN=1, OUT=0)
+  // - bits4..6 must be 0 (endpoint numbers are 0..=15)
+  // - endpoint 0 is the control pipe and should not be used for bulk/interrupt actions
+  return (value & 0x70) === 0 && (value & 0x0f) !== 0;
+}
+
+function isUsbInEndpointAddress(value: unknown): value is number {
+  return isUsbEndpointAddress(value) && (value & 0x80) !== 0;
+}
+
+function isUsbOutEndpointAddress(value: unknown): value is number {
+  return isUsbEndpointAddress(value) && (value & 0x80) === 0;
+}
+
 export function isUsbSetupPacket(value: unknown): value is SetupPacket {
   if (!isRecord(value)) return false;
   return (
@@ -110,9 +127,9 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
     case "controlOut":
       return isUsbSetupPacket(value.setup) && value.data instanceof Uint8Array;
     case "bulkIn":
-      return isUint8(value.endpoint) && isUint32(value.length);
+      return isUsbInEndpointAddress(value.endpoint) && isUint32(value.length);
     case "bulkOut":
-      return isUint8(value.endpoint) && value.data instanceof Uint8Array;
+      return isUsbOutEndpointAddress(value.endpoint) && value.data instanceof Uint8Array;
     default:
       return false;
   }
