@@ -243,6 +243,8 @@ Resource update/copy (minimum)
   * struct: `D3D10DDIARG_UPDATESUBRESOURCEUP`
 * `pfnCopyResource` / `pfnCopySubresourceRegion` (optional but commonly used internally by runtimes)
 
+See also: [Win7 WDDM 1.1 D3D10/11 UMD resource allocation + Map/Unmap callbacks](../windows/win7-wddm11-d3d10-11-umd-alloc-map.md).
+
 Command submission
 * `pfnFlush` (or equivalent submit/flush entrypoint in the DDI) to ensure GPU work reaches the KMD/host.
 
@@ -375,6 +377,8 @@ Resource updates
   * struct: `D3D11DDIARG_UPDATESUBRESOURCEUP`
 * `pfnCopyResource` / `pfnCopySubresourceRegion`
 * `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
+
+See also: [Win7 WDDM 1.1 D3D10/11 UMD resource allocation + Map/Unmap callbacks](../windows/win7-wddm11-d3d10-11-umd-alloc-map.md).
 
 ---
 
