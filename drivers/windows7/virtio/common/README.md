@@ -98,6 +98,16 @@ Selector serialization:
   `queue_select`). Multi-step sequences that depend on selectors must be
   serialized (for example, via a per-device spin lock).
 
+Feature negotiation (modern, 64-bit):
+
+- Device features are read via the selector pattern:
+  - write `device_feature_select = 0` then read `device_feature` (low 32 bits)
+  - write `device_feature_select = 1` then read `device_feature` (high 32 bits)
+- Driver features are written similarly via `driver_feature_select` /
+  `driver_feature`.
+- Aero contract v1 devices require `VIRTIO_F_VERSION_1` (bit 32) and the provided
+  `VirtioPciNegotiateFeatures` helpers always enforce it.
+
 Even though Aero contract v1 fixes the BAR0 offsets, drivers should still validate
 that the device exposes the required virtio vendor-specific PCI capabilities
 (cap ID `0x09`) and that they describe the expected BAR/offset/length. Miniports
