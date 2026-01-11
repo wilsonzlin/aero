@@ -193,6 +193,15 @@ if (overrideDir) {
 if (!workspaceAbs) {
     if (allowMissing) {
         const empty = { dir: "", lockfile: "", package_name: "", package_version: "" };
+        if (githubOutputPath) {
+            const lines = Object.entries(empty)
+                .map(([k, v]) => `${k}=${v}`)
+                .join("\n");
+            appendFileSync(githubOutputPath, `${lines}\n`, { encoding: "utf8" });
+        }
+
+        console.error("[detect-node-dir] No package.json found; returning empty outputs (--allow-missing).");
+
         process.stdout.write(
             Object.entries(empty)
                 .map(([k, v]) => `${k}=${v}`)

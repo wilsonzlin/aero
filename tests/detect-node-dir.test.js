@@ -140,3 +140,40 @@ test("detect-node-dir: supports --root for multi-checkout workflows", () => {
     fs.rmSync(temp.workspaceRoot, { recursive: true, force: true });
   }
 });
+
+test("detect-node-dir: --allow-missing writes empty outputs (including GitHub output file)", () => {
+  const temp = setupTempRepo();
+  try {
+    const githubOutput = path.join(temp.repoRoot, "github-output.txt");
+    const stdout = execFileSync(
+      process.execPath,
+      [temp.resolverPath, "--require-lockfile", "--allow-missing", "--github-output", githubOutput],
+      {
+        encoding: "utf8",
+        cwd: temp.repoRoot,
+        env: {
+          ...process.env,
+          AERO_NODE_DIR: "",
+          AERO_WEB_DIR: "",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const detected = parseKeyVal(stdout);
+    assert.equal(detected.dir, "");
+    assert.equal(detected.lockfile, "");
+    assert.equal(detected.package_name, "");
+    assert.equal(detected.package_version, "");
+
+    assert.ok(fs.existsSync(githubOutput), "expected --github-output file to be written");
+    const fileOut = parseKeyVal(fs.readFileSync(githubOutput, "utf8"));
+    assert.deepEqual(fileOut, {
+      dir: "",
+      lockfile: "",
+      package_name: "",
+      package_version: "",
+    });
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
