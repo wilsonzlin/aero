@@ -37,6 +37,7 @@ guest-tools/
   verify.cmd (optional)
   verify.ps1 (optional, but required if verify.cmd is present)
   README.md
+  THIRD_PARTY_NOTICES.md
   config/
     devices.cmd
   certs/
@@ -51,6 +52,8 @@ The tool produces the following in the output directory:
 - `aero-guest-tools.zip`
 - `manifest.json`
 
+The packaged media also includes `THIRD_PARTY_NOTICES.md` at the ISO/zip root.
+
 The ISO/zip root layout matches what `guest-tools/setup.cmd` expects (and may include optional verification scripts):
 
 ```
@@ -60,6 +63,7 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects (and may in
   verify.cmd
   verify.ps1
   README.md
+  THIRD_PARTY_NOTICES.md
   manifest.json
   config/
     devices.cmd

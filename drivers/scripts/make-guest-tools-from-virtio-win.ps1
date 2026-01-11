@@ -69,6 +69,10 @@ if (-not (Test-Path -LiteralPath $packScript -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $guestToolsDir -PathType Container)) {
   throw "Expected directory not found: $guestToolsDir"
 }
+$guestToolsNotices = Join-Path $guestToolsDir "THIRD_PARTY_NOTICES.md"
+if (-not (Test-Path -LiteralPath $guestToolsNotices -PathType Leaf)) {
+  throw "Expected third-party notices file not found: $guestToolsNotices"
+}
 if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
   throw "Expected packaging spec not found: $SpecPath"
 }

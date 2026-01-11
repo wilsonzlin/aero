@@ -19,6 +19,36 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Derive-VirtioWinVersion {
+  param(
+    [string]$IsoPath,
+    [string]$VirtioRoot
+  )
+
+  # Best-effort: some virtio-win ISOs include a version marker at the root.
+  foreach ($candidate in @("VERSION", "VERSION.txt", "version.txt", "virtio-win-version.txt")) {
+    if (-not $VirtioRoot) { break }
+    $p = Join-Path $VirtioRoot $candidate
+    if (Test-Path -LiteralPath $p -PathType Leaf) {
+      try {
+        $line = (Get-Content -LiteralPath $p -TotalCount 1 -ErrorAction Stop).Trim()
+        if ($line) { return $line }
+      } catch {
+        # Ignore and keep trying other heuristics.
+      }
+    }
+  }
+
+  if ($IsoPath) {
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($IsoPath)
+    if ($base -match '(?i)^virtio-win-(.+)$') {
+      return $Matches[1]
+    }
+  }
+
+  return $null
+}
+
 function Find-ChildDir {
   param(
     [Parameter(Mandatory = $true)]
@@ -72,13 +102,17 @@ function Copy-VirtioWinDriver {
 
 $mounted = $false
 $isoPath = $null
+$isoHash = $null
+$isoVolumeLabel = $null
 
 try {
   if ($PSCmdlet.ParameterSetName -eq "FromIso") {
     $isoPath = (Resolve-Path $VirtioWinIso).Path
+    $isoHash = (Get-FileHash -Algorithm SHA256 -Path $isoPath).Hash.ToLowerInvariant()
     $img = Mount-DiskImage -ImagePath $isoPath -PassThru
     $mounted = $true
     $vol = $img | Get-Volume
+    $isoVolumeLabel = $vol.FileSystemLabel
     $VirtioWinRoot = "$($vol.DriveLetter):\"
   } else {
     $VirtioWinRoot = (Resolve-Path $VirtioWinRoot).Path
@@ -103,6 +137,17 @@ try {
   Copy-Item -Path (Join-Path $PSScriptRoot "install.cmd") -Destination (Join-Path $packRoot "install.cmd") -Force
   Copy-Item -Path (Join-Path $PSScriptRoot "enable-testsigning.cmd") -Destination (Join-Path $packRoot "enable-testsigning.cmd") -Force
 
+  $noticesSrc = Join-Path $PSScriptRoot "..\virtio\THIRD_PARTY_NOTICES.md"
+  if (-not (Test-Path -LiteralPath $noticesSrc -PathType Leaf)) {
+    throw "Expected third-party notices file not found: $noticesSrc"
+  }
+  Copy-Item -LiteralPath $noticesSrc -Destination (Join-Path $packRoot "THIRD_PARTY_NOTICES.md") -Force
+
+  $virtioReadmeSrc = Join-Path $PSScriptRoot "..\virtio\README.md"
+  if (Test-Path -LiteralPath $virtioReadmeSrc -PathType Leaf) {
+    Copy-Item -LiteralPath $virtioReadmeSrc -Destination (Join-Path $packRoot "README.md") -Force
+  }
+
   $drivers = @(
     @{ Name = "viostor"; Upstream = "viostor" },
     @{ Name = "netkvm"; Upstream = "NetKVM" },
@@ -120,16 +165,24 @@ try {
     Copy-VirtioWinDriver -VirtioRoot $VirtioWinRoot -DriverDirName $up -OsDirCandidates $OsFolderCandidates -ArchCandidates $ArchCandidatesX86 -DestDir (Join-Path $win7X86 $name)
   }
 
-  $manifest = @{
+  $createdUtc = (Get-Date).ToUniversalTime().ToString("o")
+  $sourcePath = if ($isoPath) { $isoPath } else { $VirtioWinRoot }
+  $sourceHash = if ($isoHash) { @{ algorithm = "sha256"; value = $isoHash } } else { $null }
+  $derivedVersion = Derive-VirtioWinVersion -IsoPath $isoPath -VirtioRoot $VirtioWinRoot
+
+  $manifest = [ordered]@{
     pack = "aero-win7-driver-pack"
-    created_utc = (Get-Date).ToUniversalTime().ToString("o")
-    source = @{
-      virtio_win_root = $VirtioWinRoot
-      virtio_win_iso = $isoPath
+    created_utc = $createdUtc
+    source = [ordered]@{
+      path = $sourcePath
+      hash = $sourceHash
+      volume_label = $isoVolumeLabel
+      derived_version = $derivedVersion
+      timestamp_utc = $createdUtc
     }
     drivers = @("viostor", "netkvm", "viosnd", "vioinput")
     targets = @("win7-x86", "win7-amd64")
-  } | ConvertTo-Json -Depth 4
+  } | ConvertTo-Json -Depth 6
 
   $manifest | Out-File -FilePath (Join-Path $packRoot "manifest.json") -Encoding UTF8
 

@@ -110,7 +110,14 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     // Guest tools top-level scripts/doc.
     //
     // Keep this list in sync with the published Guest Tools ISO root.
-    for file_name in ["setup.cmd", "uninstall.cmd", "verify.cmd", "verify.ps1", "README.md"] {
+    for file_name in [
+        "setup.cmd",
+        "uninstall.cmd",
+        "verify.cmd",
+        "verify.ps1",
+        "README.md",
+        "THIRD_PARTY_NOTICES.md",
+    ] {
         let src = config.guest_tools_dir.join(file_name);
         if !src.is_file() {
             bail!(

@@ -7,6 +7,7 @@ It provides:
 - `setup.cmd`: offline certificate + driver installer
 - `uninstall.cmd`: best-effort cleanup
 - `verify.cmd` / `verify.ps1`: offline diagnostics/verification
+- `THIRD_PARTY_NOTICES.md`: third-party attribution/redistribution notices for packaged components
 - `certs\`: public certificate(s) needed to validate Aero driver signatures
 - `drivers\`: driver packages (`.inf/.cat/.sys`) for x86 + amd64
 - `config\`: expected device IDs (PCI VEN/DEV pairs) used for boot-critical pre-seeding

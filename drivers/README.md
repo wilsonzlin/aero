@@ -34,6 +34,11 @@ Output:
 - `drivers\out\aero-win7-driver-pack\` (staging dir)
 - `drivers\out\aero-win7-driver-pack.zip` (what the web UI/injector consumes)
 
+Both the staging directory and the zip include:
+
+- `manifest.json` (provenance info; records the source virtio-win ISO path/hash when applicable)
+- `THIRD_PARTY_NOTICES.md` (third-party attribution/redistribution notices for virtio-win-derived artifacts)
+
 ### Optional: build a mountable drivers ISO (for Windows Setup “Load driver”)
 
 If you want a CD-ROM ISO containing the same `win7/x86/...` and `win7/amd64/...` directories:
@@ -57,6 +62,9 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
 ```
 
 This emits `aero-guest-tools.iso` and `aero-guest-tools.zip` under `dist/guest-tools/`.
+
+The Guest Tools ISO/zip root also includes `THIRD_PARTY_NOTICES.md` (sourced from
+`guest-tools/THIRD_PARTY_NOTICES.md` in this repo).
 
 ## In-guest install workflow (post-install)
 
