@@ -4640,10 +4640,14 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
 
   // Prefer GetCommandBufferCb when available; fall back to AllocateCb for older
   // runtimes that require explicit per-submit allocation + DeallocateCb.
+  bool tried_get_command_buffer = false;
+  HRESULT get_command_buffer_hr = E_NOTIMPL;
   HRESULT hr = E_NOTIMPL;
   if constexpr (has_pfnGetCommandBufferCb<WddmDeviceCallbacks>::value) {
     if (dev->wddm_callbacks.pfnGetCommandBufferCb) {
-      hr = wddm_acquire_submit_buffers_get_command_buffer_impl(dev, dev->wddm_callbacks.pfnGetCommandBufferCb);
+      tried_get_command_buffer = true;
+      get_command_buffer_hr = wddm_acquire_submit_buffers_get_command_buffer_impl(dev, dev->wddm_callbacks.pfnGetCommandBufferCb);
+      hr = get_command_buffer_hr;
     }
   }
   // If GetCommandBufferCb succeeds but returns an undersized buffer for the
@@ -4657,14 +4661,55 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
         dev->wddm_context.pDmaBufferPrivateData &&
         dev->wddm_context.DmaBufferPrivateDataSize >= expected_dma_priv_bytes;
     if (!have_required) {
+      if (tried_get_command_buffer) {
+        static std::once_flag log_once;
+        const void* cmd_ptr = dev->wddm_context.pCommandBuffer;
+        const uint32_t cmd_bytes = dev->wddm_context.CommandBufferSize;
+        const void* alloc_ptr = dev->wddm_context.pAllocationList;
+        const uint32_t alloc_entries = dev->wddm_context.AllocationListSize;
+        const void* dma_priv_ptr = dev->wddm_context.pDmaBufferPrivateData;
+        const uint32_t dma_priv_bytes = dev->wddm_context.DmaBufferPrivateDataSize;
+        std::call_once(log_once,
+                       [cmd_ptr, cmd_bytes, min_buffer_bytes, alloc_ptr, alloc_entries, dma_priv_ptr, dma_priv_bytes, expected_dma_priv_bytes] {
+          aerogpu::logf("aerogpu-d3d9: GetCommandBufferCb returned incomplete/undersized buffers; "
+                        "falling back to AllocateCb (cmd=%p bytes=%u need=%u alloc=%p entries=%u dma_priv=%p bytes=%u need>=%u)\n",
+                        cmd_ptr,
+                        static_cast<unsigned>(cmd_bytes),
+                        static_cast<unsigned>(min_buffer_bytes),
+                        alloc_ptr,
+                        static_cast<unsigned>(alloc_entries),
+                        dma_priv_ptr,
+                        static_cast<unsigned>(dma_priv_bytes),
+                        static_cast<unsigned>(expected_dma_priv_bytes));
+        });
+      }
       hr = E_FAIL;
     }
   }
   if (FAILED(hr)) {
+    if (tried_get_command_buffer && FAILED(get_command_buffer_hr)) {
+      static std::once_flag log_once;
+      const unsigned hr_code = static_cast<unsigned>(get_command_buffer_hr);
+      std::call_once(log_once, [hr_code] {
+        aerogpu::logf("aerogpu-d3d9: GetCommandBufferCb failed hr=0x%08x; falling back to AllocateCb\n", hr_code);
+      });
+    }
+    HRESULT allocate_hr = E_NOTIMPL;
     if constexpr (has_pfnAllocateCb<WddmDeviceCallbacks>::value && has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
       if (dev->wddm_callbacks.pfnAllocateCb && dev->wddm_callbacks.pfnDeallocateCb) {
-        hr = wddm_acquire_submit_buffers_allocate_impl(dev, dev->wddm_callbacks.pfnAllocateCb, request_bytes);
+        allocate_hr = wddm_acquire_submit_buffers_allocate_impl(dev, dev->wddm_callbacks.pfnAllocateCb, request_bytes);
+        hr = allocate_hr;
       }
+    }
+    if (FAILED(hr)) {
+      static std::once_flag log_once;
+      const unsigned get_hr_code = static_cast<unsigned>(get_command_buffer_hr);
+      const unsigned alloc_hr_code = static_cast<unsigned>(allocate_hr);
+      std::call_once(log_once, [get_hr_code, alloc_hr_code] {
+        aerogpu::logf("aerogpu-d3d9: failed to acquire WDDM submit buffers (GetCommandBufferCb hr=0x%08x AllocateCb hr=0x%08x)\n",
+                      get_hr_code,
+                      alloc_hr_code);
+      });
     }
   }
   if (FAILED(hr)) {
