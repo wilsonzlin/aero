@@ -276,7 +276,8 @@ npm run test:unit
 `npm run test:unit` runs two harnesses:
 
 - **Node-only tests (`node:test`)**: Node integration/unit suites (e.g. `web/test/**/*.test.ts`).
-- **Unit tests (Vitest)**: colocated unit tests under `web/src/**/*.test.ts` (configured via `web/vite.config.ts`).
+- **Unit tests (Vitest)**: colocated unit tests under `web/src/**/*.test.ts`, plus any dedicated Vitest suites under
+  `web/test/**/*.vitest.ts` (configured via `web/vite.config.ts`).
 
 Run with coverage (most runners accept `--coverage` via argument passthrough):
 
