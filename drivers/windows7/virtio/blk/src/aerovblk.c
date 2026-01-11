@@ -364,12 +364,12 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
 
   if (allocateResources) {
     if (!AerovblkAllocateVirtqueue(devExt)) {
-      AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
+      AeroVirtioFailDevice(&devExt->Vdev);
       return FALSE;
     }
 
     if (!AerovblkAllocateRequestContexts(devExt)) {
-      AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
+      AeroVirtioFailDevice(&devExt->Vdev);
       return FALSE;
     }
   } else {
