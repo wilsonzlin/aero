@@ -940,7 +940,11 @@ try {
                     $mStatus = "PASS"
                 }
 
-                $mSummary = "Guest Tools media: version=" + $version + ", build_id=" + $buildId + "; files checked=" + $mediaIntegrity.files_checked + " (missing=" + $missingCount + ", hash_mismatch=" + $hashMismatchCount + ", unreadable=" + $unreadableCount + ")"
+                 $policySummary = ""
+                 if ($mediaIntegrity.signing_policy) {
+                     $policySummary = ", signing_policy=" + ("" + $mediaIntegrity.signing_policy)
+                 }
+                 $mSummary = "Guest Tools media: version=" + $version + ", build_id=" + $buildId + $policySummary + "; files checked=" + $mediaIntegrity.files_checked + " (missing=" + $missingCount + ", hash_mismatch=" + $hashMismatchCount + ", unreadable=" + $unreadableCount + ")"
 
                 if ($missingCount -gt 0) {
                     foreach ($p in $mediaIntegrity.missing_files) { $mDetails += ("FAIL: Missing file: " + $p) }
