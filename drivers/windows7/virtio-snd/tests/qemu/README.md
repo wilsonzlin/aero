@@ -301,7 +301,8 @@ The selftest logs to:
     C:\AeroTests\aero-virtio-selftest.exe --test-snd
     ```
     Notes:
-    - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
+    - `--test-snd` (alias: `--require-snd`) makes virtio-snd **required**: missing virtio-snd is treated as a FAIL.
+      (If a supported virtio-snd PCI function is detected, playback is exercised automatically even without `--test-snd`.)
     - The strict `aero-virtio-snd.inf` package expects the contract-v1 HWID (`...DEV_1059&REV_01`). Under QEMU, configure the device with
       `disable-legacy=on,x-pci-revision=0x01` so the strict INF can bind.
     - If your device enumerates as transitional, install the opt-in legacy driver package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`)
@@ -312,8 +313,8 @@ The selftest logs to:
     - `--test-snd-capture` runs a capture smoke test (WASAPI, fallback to waveIn) that records for a short interval.
       This passes even on silence by default; use `--require-non-silence` to require a non-silent buffer.
     - `--require-snd-capture` fails the overall selftest if the capture endpoint is missing (instead of `SKIP`).
-    - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`
-      (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).
+    - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).
     - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
  3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
