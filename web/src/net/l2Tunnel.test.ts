@@ -243,6 +243,39 @@ describe("net/l2Tunnel", () => {
     }
   });
 
+  it("disables keepalive when keepaliveMinMs=keepaliveMaxMs=0", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 0,
+      keepaliveMaxMs: 0,
+    });
+
+    try {
+      client.connect();
+      FakeWebSocket.last?.open();
+      await microtask();
+      expect(events[0]?.type).toBe("open");
+
+      // Allow a brief delay; with keepalive disabled we should not emit any PINGs.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(FakeWebSocket.last?.sent.length).toBe(0);
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
   it("WebSocket client sends token via query string by default", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;

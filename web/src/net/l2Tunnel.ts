@@ -90,6 +90,8 @@ export type L2TunnelClientOptions = {
   /**
    * Keepalive PING interval range. A randomized value in this range is picked
    * each time to avoid synchronized thundering herds.
+   *
+   * Set both to 0 to disable keepalive.
    */
   keepaliveMinMs?: number;
   keepaliveMaxMs?: number;
@@ -456,6 +458,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
   }
 
   private startKeepalive(): void {
+    if (this.opts.keepaliveMaxMs <= 0) return;
     this.scheduleNextPing();
   }
 
@@ -469,6 +472,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
   private scheduleNextPing(): void {
     if (this.keepaliveTimer !== null) return;
+    if (this.opts.keepaliveMaxMs <= 0) return;
 
     // Uniform random within [min, max].
     const span = this.opts.keepaliveMaxMs - this.opts.keepaliveMinMs;
