@@ -14,6 +14,7 @@ import {
   type UsbHostAction as BackendUsbHostAction,
   type UsbHostCompletion as BackendUsbHostCompletion,
 } from "./webusb_backend";
+import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 
 type UsbDeviceInfo = { vendorId: number; productId: number; productName?: string };
 
@@ -226,7 +227,7 @@ export class UsbBroker {
     try {
       await this.requestDevice(msg.filters);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatWebUsbError(err);
       this.postToPort(port, { type: "usb.selected", ok: false, error: message } satisfies UsbSelectedMessage);
     }
   }
@@ -271,7 +272,7 @@ export class UsbBroker {
           ),
         ]);
       } catch (err) {
-        completion = usbErrorCompletion(item.action.id, err instanceof Error ? err.message : String(err));
+        completion = usbErrorCompletion(item.action.id, formatWebUsbError(err));
       }
 
       item.resolve(completion);
