@@ -428,6 +428,55 @@ describe("app", () => {
     expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
   });
 
+  it("returns 416 with Content-Range size by probing S3 when image size is unknown", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    let headCalls = 0;
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof HeadObjectCommand) {
+          headCalls += 1;
+          return {
+            ContentLength: 123,
+            ETag: '"etag"',
+            ContentType: "application/octet-stream",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-0,2-3",
+      },
+    });
+
+    expect(headCalls).toBe(1);
+    expect(res.statusCode).toBe(416);
+    expect(res.headers["content-range"]).toBe("bytes */123");
+    expect(store.get(imageId)?.size).toBe(123);
+  });
+
   it("allows ranged GET when If-Range matches the current ETag", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
