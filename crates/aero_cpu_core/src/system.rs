@@ -2,32 +2,56 @@
 //!
 //! This is a purposely compact model of the parts of the x86 privileged ISA
 //! that Windows 7 expects early during boot and during kernel runtime.
+//!
+//! The canonical execution engine in `aero_cpu_core` operates on the JIT-ABI
+//! [`crate::state::CpuState`] via the Tier-0 interpreter + assist layer and the
+//! tiered JIT runtime.
+//!
+//! The legacy `system::Cpu` model is retained behind the `legacy-interp`
+//! feature (default-off). The only always-available items in this module are
+//! the TSS helper types used by Tier-0 interrupt delivery (`Tss32`, `Tss64`).
 
+#[cfg(feature = "legacy-interp")]
 use crate::cpuid::{cpuid, CpuFeatures, CpuidResult};
+#[cfg(feature = "legacy-interp")]
 use crate::exceptions::{Exception as ArchException, InterruptSource, PendingEvent};
+#[cfg(feature = "legacy-interp")]
 use crate::fpu::FpKind;
+#[cfg(feature = "legacy-interp")]
 use crate::msr::EFER_SCE;
+#[cfg(feature = "legacy-interp")]
 use crate::time::TimeSource;
+#[cfg(feature = "legacy-interp")]
 use crate::{msr::MsrState, CpuState, Exception, FxStateError, FXSAVE_AREA_SIZE};
+#[cfg(feature = "legacy-interp")]
 use std::collections::VecDeque;
 
 // --- Control register bit definitions (subset) ---
+#[cfg(feature = "legacy-interp")]
 pub const CR0_MP: u64 = 1 << 1;
+#[cfg(feature = "legacy-interp")]
 pub const CR0_EM: u64 = 1 << 2;
+#[cfg(feature = "legacy-interp")]
 pub const CR0_TS: u64 = 1 << 3;
+#[cfg(feature = "legacy-interp")]
 pub const CR0_NE: u64 = 1 << 5;
 
+#[cfg(feature = "legacy-interp")]
 pub const CR4_OSFXSR: u64 = 1 << 9;
+#[cfg(feature = "legacy-interp")]
 pub const CR4_OSXMMEXCPT: u64 = 1 << 10;
 
+#[cfg(feature = "legacy-interp")]
 const MXCSR_EXCEPTION_MASK: u32 = 0x1F80;
 
 /// A device/bus surface for port I/O instructions.
+#[cfg(feature = "legacy-interp")]
 pub trait PortIo {
     fn port_read(&mut self, port: u16, size: u8) -> u32;
     fn port_write(&mut self, port: u16, size: u8, val: u32);
 }
 
+#[cfg(feature = "legacy-interp")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CpuMode {
     /// 16-bit real mode.
@@ -39,6 +63,7 @@ pub enum CpuMode {
 }
 
 /// GDTR/IDTR layout.
+#[cfg(feature = "legacy-interp")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DescriptorTableRegister {
     pub limit: u16,
@@ -93,6 +118,7 @@ impl Tss64 {
 }
 
 /// Minimal CPU core state required by the system instruction surface.
+#[cfg(feature = "legacy-interp")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cpu {
     pub mode: CpuMode,
@@ -174,6 +200,7 @@ pub struct Cpu {
     pub invlpg_log: Vec<u64>,
 }
 
+#[cfg(feature = "legacy-interp")]
 impl Cpu {
     pub const RFLAGS_FIXED1: u64 = 1 << 1;
     pub const RFLAGS_IF: u64 = 1 << 9;
@@ -990,12 +1017,14 @@ impl Cpu {
     }
 }
 
+#[cfg(feature = "legacy-interp")]
 impl Default for Cpu {
     fn default() -> Self {
         Self::new(CpuFeatures::default())
     }
 }
 
+#[cfg(feature = "legacy-interp")]
 fn map_fx_state_error(err: FxStateError) -> Exception {
     match err {
         // SDM: Loading an MXCSR value with reserved bits set raises #GP(0).
