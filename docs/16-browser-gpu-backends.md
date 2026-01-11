@@ -57,7 +57,7 @@ The fallback is not expected to support the full DirectX translation surface are
 - The main thread owns the DOM canvas and forwards it to the worker as an **`OffscreenCanvas`**.
 - The worker creates a `wgpu::Instance` and chooses one of:
   - **WebGPU backend** (`Backends::BROWSER_WEBGPU`)
-  - **WebGL2 backend** (`Backends::BROWSER_WEBGL`)
+  - **WebGL2 backend** (`Backends::GL`)
 - Rendering/presentation uses a shared design:
   - Render into an internal texture (`present_src`)
   - Blit to the canvas surface each frame (`present_dst`)
@@ -154,7 +154,7 @@ async fn try_init_webgl2(
     required: RequiredCaps,
 ) -> Result<(SelectedBackend, GpuContext), GpuInitError> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::BROWSER_WEBGL,
+        backends: wgpu::Backends::GL,
         ..Default::default()
     });
     init_with_instance(instance, canvas, required)
