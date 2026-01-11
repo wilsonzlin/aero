@@ -22,10 +22,12 @@ npm ci
 # Required
 export AERO_PROXY_AUTH_TOKEN="dev-token"
 
-# Optional
-export AERO_PROXY_PORT=8080
-export AERO_PROXY_HOST=127.0.0.1
-export AERO_PROXY_ALLOW_PRIVATE_IPS=0
+ # Optional
+ export AERO_PROXY_PORT=8080
+ export AERO_PROXY_HOST=127.0.0.1
+ export AERO_PROXY_ALLOW_PRIVATE_IPS=0
+ # Optional IPv4 CIDR allowlist (evaluated even when AERO_PROXY_ALLOW_PRIVATE_IPS=0)
+ # export AERO_PROXY_ALLOW_CIDRS="127.0.0.1/32,192.168.0.0/16"
 
 npm -w tools/net-proxy-server start
 ```
@@ -48,6 +50,7 @@ This server is **powerful**: it can connect to any TCP endpoint that the host ma
 Default protections:
 - Requires an auth token (`AERO_PROXY_AUTH_TOKEN`)
 - Blocks private / special-purpose IP ranges unless explicitly enabled (`AERO_PROXY_ALLOW_PRIVATE_IPS=1`)
+- Optional IPv4 CIDR allowlist for local dev (`AERO_PROXY_ALLOW_CIDRS`).
 
 > Note: This tool intentionally does **NOT** implement the Aero Gateway's cookie-backed
 > sessions (`POST /session`, `aero_session` cookie). The `?token=` parameter is a

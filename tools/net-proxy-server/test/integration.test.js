@@ -228,6 +228,42 @@ test("integration: policy denies private IPs by default", async () => {
   }
 });
 
+test("integration: allowCidrs permits specific private IPv4 destinations", async () => {
+  let echoServer;
+  let proxy;
+  let ws;
+
+  try {
+    echoServer = net.createServer((socket) => {
+      socket.on("data", (d) => socket.write(d));
+    });
+    const echoPort = await listen(echoServer);
+
+    proxy = await createProxyServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "test-token",
+      allowPrivateIps: false,
+      allowCidrs: ["127.0.0.1/32"],
+      metricsIntervalMs: 0,
+    });
+
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+    await waitForWsOpen(ws);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })));
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("ok", "utf8")));
+
+    const d1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 1);
+    assert.equal(d1.payload.toString("utf8"), "ok");
+  } finally {
+    if (ws) ws.terminate();
+    if (proxy) await proxy.close();
+    if (echoServer) await new Promise((resolve) => echoServer.close(resolve));
+  }
+});
+
 test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
   const payloadSize = 2 * 1024 * 1024;
   let burstServer;

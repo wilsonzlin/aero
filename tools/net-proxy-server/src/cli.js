@@ -17,6 +17,11 @@ const host = process.env.AERO_PROXY_HOST ?? "127.0.0.1";
 const port = envInt("AERO_PROXY_PORT", 8080);
 const authToken = process.env.AERO_PROXY_AUTH_TOKEN;
 const allowPrivateIps = envBool("AERO_PROXY_ALLOW_PRIVATE_IPS", false);
+const allowCidrsRaw = process.env.AERO_PROXY_ALLOW_CIDRS ?? "";
+const allowCidrs = allowCidrsRaw
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
 
 if (!authToken) {
   // eslint-disable-next-line no-console
@@ -29,6 +34,7 @@ const server = await createProxyServer({
   port,
   authToken,
   allowPrivateIps,
+  allowCidrs,
 });
 
 // eslint-disable-next-line no-console
@@ -40,4 +46,3 @@ process.on("SIGINT", async () => {
   await server.close();
   process.exit(0);
 });
-
