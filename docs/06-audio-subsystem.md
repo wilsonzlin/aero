@@ -759,8 +759,12 @@ Browsers may ignore the requested `AudioContext` sample rate (Safari/iOS commonl
 The AudioWorklet consumes frames at `AudioContext.sampleRate`, so the device models must be configured
 to produce audio at that *actual* rate:
 
-- HDA (`aero_audio::hda::HdaController`): set `output_rate_hz` to `AudioContext.sampleRate`.
-- virtio-snd (`aero_virtio::devices::snd::VirtioSnd`): set `host_sample_rate_hz` to `AudioContext.sampleRate`.
+- HDA (`aero_audio::hda::HdaController`):
+  - set `output_rate_hz` to the output `AudioContext.sampleRate`
+  - if microphone capture uses a different audio graph/sample rate, set `capture_sample_rate_hz` too
+- virtio-snd (`aero_virtio::devices::snd::VirtioSnd`):
+  - set `host_sample_rate_hz` to the output `AudioContext.sampleRate`
+  - if microphone capture uses a different sample rate, set `capture_sample_rate_hz` too
 
 | Offset | Type | Meaning |
 |--------|------|---------|

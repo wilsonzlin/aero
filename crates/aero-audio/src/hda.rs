@@ -827,6 +827,7 @@ pub struct HdaController {
 
     irq_pending: bool,
     output_rate_hz: u32,
+    capture_sample_rate_hz: u32,
 }
 
 impl HdaController {
@@ -884,6 +885,7 @@ impl HdaController {
 
             irq_pending: false,
             output_rate_hz,
+            capture_sample_rate_hz: output_rate_hz,
         }
     }
 
@@ -893,6 +895,16 @@ impl HdaController {
     /// and [`HdaController::process_into`].
     pub fn output_rate_hz(&self) -> u32 {
         self.output_rate_hz
+    }
+
+    /// Return the host/input sample rate expected by the capture stream.
+    ///
+    /// This should typically match the microphone capture graph's sample rate (for example, the
+    /// `AudioContext.sampleRate` used by the mic AudioWorklet/ScriptProcessor path).
+    ///
+    /// By default, the capture sample rate tracks [`Self::output_rate_hz`].
+    pub fn capture_sample_rate_hz(&self) -> u32 {
+        self.capture_sample_rate_hz
     }
 
     /// Set the host/output sample rate used by the controller when emitting audio.
@@ -905,7 +917,11 @@ impl HdaController {
             return;
         }
 
+        let prev = self.output_rate_hz;
         self.output_rate_hz = output_rate_hz;
+        if self.capture_sample_rate_hz == prev {
+            self.capture_sample_rate_hz = output_rate_hz;
+        }
 
         // Reset stream resamplers (but keep DMA position tracking so changing the host rate doesn't
         // rewind guest playback/capture).
@@ -913,6 +929,7 @@ impl HdaController {
         // Stream descriptor order follows the HDA spec: output streams, input streams, bidirectional streams.
         let oss = (self.gcap & 0xF) as usize;
         let iss = ((self.gcap >> 4) & 0xF) as usize;
+        let capture_sample_rate_hz = self.capture_sample_rate_hz;
         for (idx, rt) in self.stream_rt.iter_mut().enumerate() {
             rt.capture_frame_accum = 0;
             rt.dma_scratch.clear();
@@ -927,7 +944,7 @@ impl HdaController {
             } else if idx < oss + iss {
                 // Capture: host-rate -> guest-rate.
                 let dst = rt.resampler.dst_rate_hz();
-                rt.resampler.reset_rates(output_rate_hz, dst);
+                rt.resampler.reset_rates(capture_sample_rate_hz, dst);
             } else {
                 // Bidir streams (unused): treat as playback for now.
                 let src = rt.resampler.src_rate_hz();
@@ -936,6 +953,33 @@ impl HdaController {
         }
 
         self.audio_out = AudioRingBuffer::new_stereo((output_rate_hz / 10).max(1) as usize);
+    }
+
+    /// Set the host/input sample rate used when pulling microphone samples for the capture stream.
+    ///
+    /// This does not affect the output sample rate/time base used by [`Self::process`] and friends.
+    pub fn set_capture_sample_rate_hz(&mut self, capture_sample_rate_hz: u32) {
+        assert!(
+            capture_sample_rate_hz > 0,
+            "capture_sample_rate_hz must be non-zero"
+        );
+        if self.capture_sample_rate_hz == capture_sample_rate_hz {
+            return;
+        }
+        self.capture_sample_rate_hz = capture_sample_rate_hz;
+
+        // Reset capture stream resamplers (but keep DMA position tracking).
+        let oss = (self.gcap & 0xF) as usize;
+        let iss = ((self.gcap >> 4) & 0xF) as usize;
+        for rt in self.stream_rt.iter_mut().skip(oss).take(iss) {
+            rt.dma_scratch.clear();
+            rt.decode_scratch.clear();
+            rt.resample_out_scratch.clear();
+            rt.capture_mono_scratch.clear();
+
+            let dst = rt.resampler.dst_rate_hz();
+            rt.resampler.reset_rates(capture_sample_rate_hz, dst);
+        }
     }
 
     pub fn codec(&self) -> &HdaCodec {
@@ -1788,16 +1832,18 @@ impl HdaController {
 
         let dst_frames = {
             let rt = &mut self.stream_rt[stream];
-            if rt.last_fmt_raw != fmt_raw
-                || rt.resampler.src_rate_hz() != self.output_rate_hz
-                || rt.resampler.dst_rate_hz() != fmt.sample_rate_hz
-            {
+            let fmt_changed =
+                rt.last_fmt_raw != fmt_raw || rt.resampler.dst_rate_hz() != fmt.sample_rate_hz;
+            let src_changed = rt.resampler.src_rate_hz() != self.capture_sample_rate_hz;
+            if fmt_changed || src_changed {
                 rt.resampler
-                    .reset_rates(self.output_rate_hz, fmt.sample_rate_hz);
-                rt.last_fmt_raw = fmt_raw;
-                rt.bdl_index = 0;
-                rt.bdl_offset = 0;
-                rt.capture_frame_accum = 0;
+                    .reset_rates(self.capture_sample_rate_hz, fmt.sample_rate_hz);
+                if fmt_changed {
+                    rt.last_fmt_raw = fmt_raw;
+                    rt.bdl_index = 0;
+                    rt.bdl_offset = 0;
+                    rt.capture_frame_accum = 0;
+                }
             }
 
             // Convert host time (output_frames @ output_rate_hz) into the number of guest-rate frames.
@@ -2018,7 +2064,7 @@ impl HdaController {
             let is_capture_stream =
                 idx >= num_output_streams && idx < num_output_streams + num_input_streams;
             let (resampler_src_rate, resampler_dst_rate) = if is_capture_stream {
-                (self.output_rate_hz, src_rate_hz)
+                (self.capture_sample_rate_hz, src_rate_hz)
             } else {
                 (src_rate_hz, self.output_rate_hz)
             };
