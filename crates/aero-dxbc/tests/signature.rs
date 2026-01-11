@@ -296,6 +296,17 @@ fn parse_signature_chunk_empty_is_ok() {
 }
 
 #[test]
+fn parse_signature_chunk_empty_with_oob_offset_is_rejected() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // param_count
+    bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // param_offset
+
+    let err = parse_signature_chunk(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::InvalidChunk { .. }));
+    assert!(err.context().contains("param_offset"));
+}
+
+#[test]
 fn dxbc_get_signature_parses_chunk() {
     let sig_bytes = build_signature_chunk();
     let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISGN"), &sig_bytes)]);
@@ -308,6 +319,13 @@ fn dxbc_get_signature_parses_chunk() {
 
     assert_eq!(sig.entries.len(), 2);
     assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
+fn dxbc_get_signature_missing_chunk_returns_none() {
+    let dxbc_bytes = build_dxbc(&[]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+    assert!(dxbc.get_signature(FourCC(*b"ISGN")).is_none());
 }
 
 #[test]
