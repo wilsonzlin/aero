@@ -489,25 +489,12 @@ fn msr_read(
     msr_index: u32,
 ) -> Result<u64, Exception> {
     match msr_index {
-        msr::IA32_EFER => Ok(state.msr.efer),
-        msr::IA32_STAR => Ok(state.msr.star),
-        msr::IA32_LSTAR => Ok(state.msr.lstar),
-        msr::IA32_CSTAR => Ok(state.msr.cstar),
-        msr::IA32_FMASK => Ok(state.msr.fmask),
-        msr::IA32_SYSENTER_CS => Ok(state.msr.sysenter_cs),
-        msr::IA32_SYSENTER_EIP => Ok(state.msr.sysenter_eip),
-        msr::IA32_SYSENTER_ESP => Ok(state.msr.sysenter_esp),
-        msr::IA32_FS_BASE => Ok(state.msr.fs_base),
-        msr::IA32_GS_BASE => Ok(state.msr.gs_base),
-        msr::IA32_KERNEL_GS_BASE => Ok(state.msr.kernel_gs_base),
-        msr::IA32_APIC_BASE => Ok(state.msr.apic_base),
         msr::IA32_TSC => {
             let tsc = time.read_tsc();
             state.msr.tsc = tsc;
             Ok(tsc)
         }
-        msr::IA32_TSC_AUX => Ok(state.msr.tsc_aux as u64),
-        _ => Err(Exception::gp0()),
+        _ => state.msr.read(msr_index),
     }
 }
 
@@ -520,73 +507,22 @@ fn msr_write(
 ) -> Result<(), Exception> {
     match msr_index {
         msr::IA32_EFER => {
-            // Mirror `msr::MsrState` write semantics: keep CPUID/MSR coherent and
-            // preserve the read-only LMA bit.
-            let mut next = value;
-            next = (next & !msr::EFER_LMA) | (state.msr.efer & msr::EFER_LMA);
-
-            if (ctx.features.ext1_edx & cpuid::bits::EXT1_EDX_SYSCALL) == 0 {
-                next &= !msr::EFER_SCE;
-            }
-            if (ctx.features.ext1_edx & cpuid::bits::EXT1_EDX_LM) == 0 {
-                next &= !msr::EFER_LME;
-            }
-            if (ctx.features.ext1_edx & cpuid::bits::EXT1_EDX_NX) == 0 {
-                next &= !msr::EFER_NXE;
-            }
-
-            state.msr.efer = next;
+            state.msr.write(&ctx.features, msr_index, value)?;
             state.update_mode();
             Ok(())
         }
-        msr::IA32_STAR => {
-            state.msr.star = value;
-            Ok(())
-        }
-        msr::IA32_LSTAR => {
-            state.msr.lstar = value;
-            Ok(())
-        }
-        msr::IA32_CSTAR => {
-            state.msr.cstar = value;
-            Ok(())
-        }
-        msr::IA32_FMASK => {
-            state.msr.fmask = value;
-            Ok(())
-        }
-        msr::IA32_SYSENTER_CS => {
-            state.msr.sysenter_cs = value;
-            Ok(())
-        }
-        msr::IA32_SYSENTER_EIP => {
-            state.msr.sysenter_eip = value;
-            Ok(())
-        }
-        msr::IA32_SYSENTER_ESP => {
-            state.msr.sysenter_esp = value;
-            Ok(())
-        }
         msr::IA32_FS_BASE => {
-            state.msr.fs_base = value;
+            state.msr.write(&ctx.features, msr_index, value)?;
             if state.mode == CpuMode::Long {
                 state.segments.fs.base = value;
             }
             Ok(())
         }
         msr::IA32_GS_BASE => {
-            state.msr.gs_base = value;
+            state.msr.write(&ctx.features, msr_index, value)?;
             if state.mode == CpuMode::Long {
                 state.segments.gs.base = value;
             }
-            Ok(())
-        }
-        msr::IA32_KERNEL_GS_BASE => {
-            state.msr.kernel_gs_base = value;
-            Ok(())
-        }
-        msr::IA32_APIC_BASE => {
-            state.msr.apic_base = value;
             Ok(())
         }
         msr::IA32_TSC => {
@@ -594,11 +530,7 @@ fn msr_write(
             state.msr.tsc = value;
             Ok(())
         }
-        msr::IA32_TSC_AUX => {
-            state.msr.tsc_aux = value as u32;
-            Ok(())
-        }
-        _ => Err(Exception::gp0()),
+        _ => state.msr.write(&ctx.features, msr_index, value),
     }
 }
 
