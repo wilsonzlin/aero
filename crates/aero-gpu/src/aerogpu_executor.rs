@@ -1442,3 +1442,22 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
     }
     *ranges = out;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalesce_ranges_merges_overlapping_and_adjacent() {
+        let mut ranges = vec![10u64..12, 0..4, 4..8, 11..15, 20..20];
+        coalesce_ranges(&mut ranges);
+        assert_eq!(ranges, vec![0..8, 10..15]);
+    }
+
+    #[test]
+    fn coalesce_ranges_u32_merges_overlapping_and_adjacent() {
+        let mut ranges = vec![10u32..12, 0..4, 4..8, 11..15, 20..20];
+        coalesce_ranges_u32(&mut ranges);
+        assert_eq!(ranges, vec![0..8, 10..15]);
+    }
+}

@@ -483,3 +483,205 @@ fn upload_resource_updates_host_owned_resources() {
         assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
     });
 }
+
+#[test]
+fn resource_dirty_range_texture_row_pitch_is_respected() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                eprintln!("skipping row_pitch test: no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        // Guest memory + allocation table.
+        let mut guest = VecGuestMemory::new(0x40_000);
+        const ALLOC_VB: u32 = 1;
+        const ALLOC_TEX: u32 = 2;
+        let vb_gpa = 0x1000u64;
+        let tex_gpa = 0x2000u64;
+        let alloc_table_gpa = 0x8000u64;
+
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, 0x434F_4C41); // "ALOC"
+            push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 2); // entry_count
+            push_u32(&mut out, 32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, ALLOC_VB);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, vb_gpa);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            push_u32(&mut out, ALLOC_TEX);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, tex_gpa);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        // Full-screen triangle (pos: vec2<f32>).
+        let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+        let mut vb_bytes = Vec::new();
+        for v in verts {
+            vb_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        guest.write(vb_gpa, &vb_bytes).expect("write vertex data");
+
+        // 1x2 RGBA8 texture in guest memory with a padded row pitch.
+        // row0 = red, row1 = green. Padding bytes are filled with a sentinel to ensure the
+        // uploader ignores them.
+        let row_pitch = 8u32;
+        let mut tex_bytes = [0u8; 16];
+        tex_bytes[0..4].copy_from_slice(&[255, 0, 0, 255]);
+        tex_bytes[4..8].copy_from_slice(&[9, 9, 9, 9]);
+        tex_bytes[8..12].copy_from_slice(&[0, 255, 0, 255]);
+        tex_bytes[12..16].copy_from_slice(&[7, 7, 7, 7]);
+        guest.write(tex_gpa, &tex_bytes).expect("write texture data");
+
+        let stream = build_stream(|out| {
+            // CREATE_BUFFER (handle=1) backed by ALLOC_VB.
+            emit_packet(out, 0x100, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                push_u32(out, ALLOC_VB); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D (handle=2) backed by ALLOC_TEX.
+            emit_packet(out, 0x101, |out| {
+                push_u32(out, 2); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, 1); // width
+                push_u32(out, 2); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, row_pitch); // row_pitch_bytes
+                push_u32(out, ALLOC_TEX); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D (handle=3) host-owned render target.
+            emit_packet(out, 0x101, |out| {
+                push_u32(out, 3); // texture_handle
+                push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
+                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (unused when backing_alloc_id == 0)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // RESOURCE_DIRTY_RANGE for buffer and texture.
+            emit_packet(out, 0x103, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+            });
+            emit_packet(out, 0x103, |out| {
+                push_u32(out, 2); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, 16); // size_bytes
+            });
+
+            // SET_RENDER_TARGETS: color0 = texture 3.
+            emit_packet(out, 0x400, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, 3); // colors[0]
+                for _ in 1..8 {
+                    push_u32(out, 0);
+                }
+            });
+
+            // SET_TEXTURE (ps slot 0) = texture 2.
+            emit_packet(out, 0x510, |out| {
+                push_u32(out, 1); // shader_stage: PIXEL
+                push_u32(out, 0); // slot
+                push_u32(out, 2); // texture handle
+                push_u32(out, 0); // reserved0
+            });
+
+            // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
+            emit_packet(out, 0x500, |out| {
+                push_u32(out, 0); // start_slot
+                push_u32(out, 1); // buffer_count
+                push_u32(out, 1); // binding[0].buffer
+                push_u32(out, 8); // binding[0].stride_bytes
+                push_u32(out, 0); // binding[0].offset_bytes
+                push_u32(out, 0); // binding[0].reserved0
+            });
+
+            // DRAW: 3 vertices. This triggers the dirty-range flush.
+            emit_packet(out, 0x601, |out| {
+                push_u32(out, 3); // vertex_count
+                push_u32(out, 1); // instance_count
+                push_u32(out, 0); // first_vertex
+                push_u32(out, 0); // first_instance
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest.write(cmd_gpa, &stream).expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(
+            report.is_ok(),
+            "executor report had errors: {:#?}",
+            report.events
+        );
+
+        let tex = exec.texture(2).expect("uploaded texture");
+        let rgba = readback_rgba8(
+            exec.device(),
+            exec.queue(),
+            tex,
+            TextureRegion {
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 2,
+                    depth_or_array_layers: 1,
+                },
+            },
+        )
+        .await;
+
+        assert_eq!(&rgba[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&rgba[4..8], &[0, 255, 0, 255]);
+    });
+}
