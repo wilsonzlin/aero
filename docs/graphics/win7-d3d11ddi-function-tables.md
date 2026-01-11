@@ -181,6 +181,21 @@ Win7-specific gotchas:
   * `D3D10DDIARG_PRESENT` is used even for D3D11 devices.
   * buffer rotation uses `pfnRotateResourceIdentities`.
 
+### 1.1 Interface version negotiation (`D3D11DDI_INTERFACE_VERSION`)
+
+The Win7 D3D11 runtime uses `D3D10DDIARG_OPENADAPTER::Interface` / `::Version` as an ABI negotiation step:
+
+* `Interface` must be `D3D11DDI_INTERFACE`
+* `Version` determines the expected struct layout for the device/context function tables
+
+If you accept an unsupported `Version`, the runtime may interpret your filled
+`D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` with the wrong layout and crash.
+
+In AeroGPU we currently accept only `D3D11DDI_INTERFACE_VERSION`:
+
+* `OpenAdapter11` validates the incoming interface/version and stores it in adapter-private state.
+* `CreateDevice11` verifies the negotiated version before filling function tables.
+
 ---
 
 ## 2) Adapter function table: `D3D11DDI_ADAPTERFUNCS`

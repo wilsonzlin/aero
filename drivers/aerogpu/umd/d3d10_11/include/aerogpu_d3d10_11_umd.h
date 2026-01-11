@@ -45,6 +45,9 @@
   #ifndef E_NOTIMPL
     #define E_NOTIMPL ((HRESULT)0x80004001L)
   #endif
+  #ifndef E_NOINTERFACE
+    #define E_NOINTERFACE ((HRESULT)0x80004002L)
+  #endif
   #ifndef E_INVALIDARG
     #define E_INVALIDARG ((HRESULT)0x80070057L)
   #endif

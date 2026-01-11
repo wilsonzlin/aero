@@ -11,7 +11,7 @@
 // KMD submission path. For repository builds (no WDK), this code uses a minimal
 // DDI ABI subset declared in `include/aerogpu_d3d10_11_umd.h`.
 
-#if !defined(_WIN32) || !defined(AEROGPU_UMD_USE_WDK_HEADERS)
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
 
 #include "../include/aerogpu_d3d10_11_umd.h"
 
@@ -22,6 +22,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <type_traits>
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
@@ -77,6 +78,17 @@ void LogModulePathOnce() {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
+
+// Win7 D3D11 runtime requests a specific user-mode DDI interface version. If we
+// accept a version, we must fill function tables whose struct layout matches
+// that version (otherwise the runtime can crash during device creation).
+constexpr UINT kAeroGpuWin7D3D11DdiInterfaceVersion = D3D11DDI_INTERFACE_VERSION;
+
+// Compile-time sanity (avoid sizeof assertions; layouts vary across WDKs).
+static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICEFUNCS::pfnCreateResource)>,
+              "Expected D3D11DDI_DEVICEFUNCS::pfnCreateResource");
+static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw)>,
+              "Expected D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw");
 
 // D3D11_BIND_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
@@ -192,6 +204,8 @@ enum class ResourceKind : uint32_t {
 };
 
 struct AeroGpuAdapter {
+  UINT d3d11_ddi_interface_version = 0;
+
   std::atomic<uint32_t> next_handle{1};
 
   std::mutex fence_mutex;
@@ -1233,6 +1247,9 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   if (!adapter) {
     return E_FAIL;
   }
+  if (adapter->d3d11_ddi_interface_version != kAeroGpuWin7D3D11DdiInterfaceVersion) {
+    return E_NOINTERFACE;
+  }
 
   auto* dev = new (pCreate->hDevice.pDrvPrivate) AeroGpuDevice();
   dev->adapter = adapter;
@@ -1354,7 +1371,18 @@ HRESULT OpenAdapter11Wdk(D3D10DDIARG_OPENADAPTER* pOpenData) {
     return E_INVALIDARG;
   }
 
+  // Interface-version negotiation: Win7 D3D11 runtime tells us which DDI
+  // interface version it will use. If we accept a version, we must fill device
+  // and context function tables matching that version's struct layout.
+  if (pOpenData->Interface != D3D11DDI_INTERFACE) {
+    return E_NOINTERFACE;
+  }
+  if (pOpenData->Version != kAeroGpuWin7D3D11DdiInterfaceVersion) {
+    return E_NOINTERFACE;
+  }
+
   auto* adapter = new AeroGpuAdapter();
+  adapter->d3d11_ddi_interface_version = pOpenData->Version;
   pOpenData->hAdapter.pDrvPrivate = adapter;
 
   auto* funcs = reinterpret_cast<D3D11DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
