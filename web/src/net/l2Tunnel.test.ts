@@ -248,4 +248,44 @@ describe("net/l2Tunnel", () => {
       }
     }
   });
+
+  it("drops outbound frames when bufferedAmount exceeds maxBufferedAmount", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    FakeWebSocket.last = null;
+
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: unknown[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+      maxBufferedAmount: 0,
+      errorIntervalMs: 0,
+    });
+
+    try {
+      client.connect();
+      FakeWebSocket.last!.bufferedAmount = 1;
+      FakeWebSocket.last!.open();
+
+      client.sendFrame(Uint8Array.of(1, 2, 3));
+      await microtask();
+
+      expect(FakeWebSocket.last!.sent.length).toBe(0);
+
+      const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
+      expect(errEv?.error).toBeInstanceOf(Error);
+      expect((errEv?.error as Error | undefined)?.message ?? "").toContain("backpressure");
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
 });

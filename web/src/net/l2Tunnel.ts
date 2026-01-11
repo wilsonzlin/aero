@@ -194,6 +194,15 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       return;
     }
 
+    if (this.isTransportOpen() && this.getTransportBufferedAmount() > this.opts.maxBufferedAmount) {
+      this.emitSessionErrorThrottled(
+        new Error(
+          `dropping outbound frame: transport backpressure (bufferedAmount ${this.getTransportBufferedAmount()} > maxBufferedAmount ${this.opts.maxBufferedAmount})`,
+        ),
+      );
+      return;
+    }
+
     this.enqueue(encodeL2Frame(frame, { maxPayload: this.opts.maxFrameSize }));
   }
 
