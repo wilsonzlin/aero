@@ -66,5 +66,26 @@ describe("usb/usb_proxy_protocol", () => {
     expect(isUsbProxyMessage({ type: "usb.action", action: { kind: "bulkIn", id: 1 } })).toBe(false);
     expect(isUsbProxyMessage({ type: "unknown" })).toBe(false);
   });
-});
 
+  it("messages are structured-cloneable", () => {
+    const msg: UsbActionMessage = {
+      type: "usb.action",
+      action: {
+        kind: "controlOut",
+        id: 123,
+        setup: { bmRequestType: 0, bRequest: 9, wValue: 1, wIndex: 0, wLength: 3 },
+        data: Uint8Array.of(1, 2, 3),
+      },
+    };
+
+    const cloned = structuredClone(msg) as unknown;
+    expect(isUsbProxyMessage(cloned)).toBe(true);
+
+    const completion: UsbCompletionMessage = {
+      type: "usb.completion",
+      completion: { kind: "okIn", id: 123, data: Uint8Array.of(9, 8, 7) },
+    };
+    const clonedCompletion = structuredClone(completion) as unknown;
+    expect(isUsbProxyMessage(clonedCompletion)).toBe(true);
+  });
+});
