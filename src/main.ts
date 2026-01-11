@@ -121,6 +121,16 @@ async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
   output.textContent = JSON.stringify(result, null, 2);
 }
 
+type WebUsbProbePending = {
+  resolve: (value: unknown) => void;
+  reject: (reason: unknown) => void;
+  timeoutHandle: number;
+};
+
+let webUsbProbeWorker: Worker | null = null;
+let webUsbProbeNextId = 1;
+const webUsbProbePending = new Map<number, WebUsbProbePending>();
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   props: Record<string, unknown> = {},
@@ -237,60 +247,57 @@ function summarizeUsbDevice(
   return out;
 }
 
+function rejectAllWebUsbProbePending(err: unknown): void {
+  for (const [id, entry] of webUsbProbePending.entries()) {
+    webUsbProbePending.delete(id);
+    window.clearTimeout(entry.timeoutHandle);
+    entry.reject(err);
+  }
+}
+
+function resetWebUsbProbeWorker(): void {
+  if (webUsbProbeWorker) {
+    webUsbProbeWorker.terminate();
+    webUsbProbeWorker = null;
+  }
+}
+
+function ensureWebUsbProbeWorker(): Worker {
+  if (webUsbProbeWorker) return webUsbProbeWorker;
+
+  const worker = new Worker(new URL('./workers/webusb-probe-worker.ts', import.meta.url), { type: 'module' });
+  webUsbProbeWorker = worker;
+
+  worker.addEventListener('message', (ev: MessageEvent) => {
+    const data = ev.data as { id?: unknown } | null;
+    const id = typeof data?.id === 'number' ? data.id : null;
+    if (id === null) return;
+    const entry = webUsbProbePending.get(id);
+    if (!entry) return;
+    webUsbProbePending.delete(id);
+    window.clearTimeout(entry.timeoutHandle);
+    entry.resolve(ev.data);
+  });
+
+  worker.addEventListener('messageerror', () => {
+    rejectAllWebUsbProbePending(new Error('WebUSB probe worker message deserialization failed'));
+    resetWebUsbProbeWorker();
+  });
+
+  worker.addEventListener('error', (ev) => {
+    rejectAllWebUsbProbePending(new Error(ev instanceof ErrorEvent ? ev.message : String(ev)));
+    resetWebUsbProbeWorker();
+  });
+
+  return worker;
+}
+
 async function runWebUsbProbeWorker(
   msg: unknown,
   { timeoutMs = 10_000, transfer = [] }: { timeoutMs?: number; transfer?: Transferable[] } = {},
 ): Promise<unknown> {
-  type Pending = { resolve: (value: unknown) => void; reject: (reason: unknown) => void; timeoutHandle: number };
-
-  let worker = (runWebUsbProbeWorker as unknown as { worker?: Worker }).worker;
-  let nextId = (runWebUsbProbeWorker as unknown as { nextId?: number }).nextId ?? 1;
-  let pending = (runWebUsbProbeWorker as unknown as { pending?: Map<number, Pending> }).pending;
-  if (!pending) {
-    pending = new Map();
-    (runWebUsbProbeWorker as unknown as { pending?: Map<number, Pending> }).pending = pending;
-  }
-  const pendingMap = pending;
-
-  function rejectAll(err: unknown): void {
-    for (const [id, entry] of pendingMap.entries()) {
-      pendingMap.delete(id);
-      window.clearTimeout(entry.timeoutHandle);
-      entry.reject(err);
-    }
-  }
-
-  if (!worker) {
-    worker = new Worker(new URL('./workers/webusb-probe-worker.ts', import.meta.url), { type: 'module' });
-    (runWebUsbProbeWorker as unknown as { worker?: Worker }).worker = worker;
-
-    worker.addEventListener('message', (ev: MessageEvent) => {
-      const data = ev.data as { id?: unknown } | null;
-      const id = typeof data?.id === 'number' ? data.id : null;
-      if (id === null) return;
-      const entry = pendingMap.get(id);
-      if (!entry) return;
-      pendingMap.delete(id);
-      window.clearTimeout(entry.timeoutHandle);
-      entry.resolve(ev.data);
-    });
-
-    worker.addEventListener('messageerror', () => {
-      rejectAll(new Error('WebUSB probe worker message deserialization failed'));
-      // Force a fresh worker next time.
-      worker?.terminate();
-      (runWebUsbProbeWorker as unknown as { worker?: Worker }).worker = undefined;
-    });
-
-    worker.addEventListener('error', (ev) => {
-      rejectAll(new Error(ev instanceof ErrorEvent ? ev.message : String(ev)));
-      worker?.terminate();
-      (runWebUsbProbeWorker as unknown as { worker?: Worker }).worker = undefined;
-    });
-  }
-
-  const id = nextId;
-  (runWebUsbProbeWorker as unknown as { nextId?: number }).nextId = nextId + 1;
+  const worker = ensureWebUsbProbeWorker();
+  const id = webUsbProbeNextId++;
 
   const payload: Record<string, unknown> =
     msg && typeof msg === 'object' && !Array.isArray(msg) ? { ...(msg as Record<string, unknown>) } : { value: msg };
@@ -298,16 +305,16 @@ async function runWebUsbProbeWorker(
 
   return await new Promise((resolve, reject) => {
     const timeoutHandle = window.setTimeout(() => {
-      pendingMap.delete(id);
+      webUsbProbePending.delete(id);
       reject(new Error(`WebUSB probe worker timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    pendingMap.set(id, { resolve, reject, timeoutHandle });
+    webUsbProbePending.set(id, { resolve, reject, timeoutHandle });
 
     try {
-      worker!.postMessage(payload, transfer);
+      worker.postMessage(payload, transfer);
     } catch (err) {
-      pendingMap.delete(id);
+      webUsbProbePending.delete(id);
       window.clearTimeout(timeoutHandle);
       reject(err);
     }
