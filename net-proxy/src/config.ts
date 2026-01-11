@@ -8,6 +8,9 @@ export interface ProxyConfig {
   wsMaxPayloadBytes: number;
   wsStreamHighWaterMarkBytes: number;
   udpWsBufferedAmountLimitBytes: number;
+  tcpMuxMaxStreams: number;
+  tcpMuxMaxStreamBufferedBytes: number;
+  tcpMuxMaxFramePayloadBytes: number;
 }
 
 function readEnvInt(name: string, fallback: number): number {
@@ -21,6 +24,11 @@ function readEnvInt(name: string, fallback: number): number {
 }
 
 export function loadConfigFromEnv(): ProxyConfig {
+  const tcpMuxMaxStreams = readEnvInt("AERO_PROXY_TCP_MUX_MAX_STREAMS", 1024);
+  if (tcpMuxMaxStreams < 1) {
+    throw new Error(`Invalid AERO_PROXY_TCP_MUX_MAX_STREAMS=${tcpMuxMaxStreams} (must be >= 1)`);
+  }
+
   return {
     listenHost: process.env.AERO_PROXY_LISTEN_HOST ?? "127.0.0.1",
     listenPort: readEnvInt("AERO_PROXY_PORT", 8081),
@@ -30,7 +38,9 @@ export function loadConfigFromEnv(): ProxyConfig {
     dnsTimeoutMs: readEnvInt("AERO_PROXY_DNS_TIMEOUT_MS", 5_000),
     wsMaxPayloadBytes: readEnvInt("AERO_PROXY_WS_MAX_PAYLOAD_BYTES", 1 * 1024 * 1024),
     wsStreamHighWaterMarkBytes: readEnvInt("AERO_PROXY_WS_STREAM_HWM_BYTES", 64 * 1024),
-    udpWsBufferedAmountLimitBytes: readEnvInt("AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES", 1 * 1024 * 1024)
+    udpWsBufferedAmountLimitBytes: readEnvInt("AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES", 1 * 1024 * 1024),
+    tcpMuxMaxStreams,
+    tcpMuxMaxStreamBufferedBytes: readEnvInt("AERO_PROXY_TCP_MUX_MAX_STREAM_BUFFER_BYTES", 1024 * 1024),
+    tcpMuxMaxFramePayloadBytes: readEnvInt("AERO_PROXY_TCP_MUX_MAX_FRAME_PAYLOAD_BYTES", 16 * 1024 * 1024)
   };
 }
-

@@ -40,6 +40,9 @@ Environment variables:
 | `AERO_PROXY_ALLOW` | (empty) | Comma-separated allowlist rules, e.g. `example.com:80,example.com:443,10.0.0.0/8:53` |
 | `AERO_PROXY_CONNECT_TIMEOUT_MS` | `10000` | TCP connect timeout |
 | `AERO_PROXY_DNS_TIMEOUT_MS` | `5000` | DNS lookup timeout |
+| `AERO_PROXY_TCP_MUX_MAX_STREAMS` | `1024` | Max concurrent multiplexed TCP streams per WebSocket (`/tcp-mux`) |
+| `AERO_PROXY_TCP_MUX_MAX_STREAM_BUFFER_BYTES` | `1048576` | Max buffered client→TCP bytes per mux stream before the stream is closed |
+| `AERO_PROXY_TCP_MUX_MAX_FRAME_PAYLOAD_BYTES` | `16777216` | Max `aero-tcp-mux-v1` frame payload size |
 
 Allowlist rules are `hostOrCidr:port` (port can be `*` or a range like `8000-9000`). Domains can use `*.example.com`.
 
@@ -83,6 +86,28 @@ ws.onmessage = (ev) => {
 
 ws.send(new Uint8Array([1, 2, 3])); // writes to the TCP socket
 ```
+
+### TCP Mux (`/tcp-mux`)
+
+WebSocket URL:
+
+```
+ws://<proxy-host>:<proxy-port>/tcp-mux
+```
+
+The client MUST negotiate the WebSocket subprotocol:
+
+```
+Sec-WebSocket-Protocol: aero-tcp-mux-v1
+```
+
+The WebSocket carries a byte stream of `aero-tcp-mux-v1` frames. Each frame is:
+
+- 9-byte header: `msg_type u8`, `stream_id u32 BE`, `length u32 BE`
+- followed by `length` bytes of payload
+
+For the canonical spec (including `OPEN`/`DATA`/`CLOSE` payload schemas and error codes), see
+[`docs/backend/01-aero-gateway-api.md`](../docs/backend/01-aero-gateway-api.md).
 
 ### UDP
 
