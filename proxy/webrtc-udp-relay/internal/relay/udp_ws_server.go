@@ -197,13 +197,12 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// SessionRelay itself still enforces protocol decoding, binding management,
 	// and outbound framing/negotiation.
 	relay := NewSessionRelay(sender, s.relayCfg, s.policy, nil)
-	defer func() {
-		stats := relay.Stats()
-		if metricsSink != nil {
-			metricsSink.Add(wsUDPMetricDroppedBackpress, stats.OutboundSendQueueDrops)
+	if metricsSink != nil && relay.queue != nil {
+		relay.queue.onDrop = func() {
+			metricsSink.Inc(wsUDPMetricDroppedBackpress)
 		}
-		relay.Close()
-	}()
+	}
+	defer relay.Close()
 
 	if sess != nil {
 		go func() {

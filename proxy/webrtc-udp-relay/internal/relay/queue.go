@@ -20,6 +20,8 @@ type sendQueue struct {
 	head     int
 
 	drops atomic.Uint64
+
+	onDrop func()
 }
 
 func newSendQueue(maxBytes int) *sendQueue {
@@ -36,23 +38,20 @@ func (q *sendQueue) DropCount() uint64 {
 // It never blocks.
 func (q *sendQueue) Enqueue(frame []byte) bool {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.closed {
+	if q.closed || len(frame) > q.maxBytes || q.curBytes+len(frame) > q.maxBytes {
 		q.drops.Add(1)
-		return false
-	}
-	if len(frame) > q.maxBytes {
-		q.drops.Add(1)
-		return false
-	}
-	if q.curBytes+len(frame) > q.maxBytes {
-		q.drops.Add(1)
+		onDrop := q.onDrop
+		q.mu.Unlock()
+		if onDrop != nil {
+			onDrop()
+		}
 		return false
 	}
 
 	q.frames = append(q.frames, frame)
 	q.curBytes += len(frame)
 	q.notEmpty.Signal()
+	q.mu.Unlock()
 	return true
 }
 
