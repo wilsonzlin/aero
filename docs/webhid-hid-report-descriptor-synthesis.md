@@ -172,8 +172,8 @@ WebHID surfaces both:
 Normalized JSON note:
 
 - In our **normalized** metadata contract (output of `webhid_normalize.ts`), range items are
-  represented compactly: when `item.isRange == true`, `item.usages` is `[usageMinimum, usageMaximum]`
-  (or `[usageMinimum]` when `min == max`).
+  represented compactly: when `item.isRange == true`, `item.usages` is always the canonical
+  `[usageMinimum, usageMaximum]` form (even when `min == max`).
 - Expanded `usages` lists are not required and are not guaranteed to be preserved for range items.
 
 Synthesis interpretation:
@@ -310,6 +310,26 @@ When using `Usage Minimum` / `Usage Maximum`:
 ### Unit Exponent range
 
 - `unitExponent` MUST be in the inclusive range `-8..=7` (HID 1.11 4-bit signed field).
+
+### Report size / count bounds
+
+To keep synthesized descriptors compatible with Windows 7 (and to avoid generating absurdly large
+reports):
+
+- `reportSize` MUST be in `1..=255` (HID `REPORT_SIZE` is an 8-bit global item).
+- `reportCount` MUST be in `0..=65535` (policy cap).
+- `reportSize * reportCount` MUST fit in `u32`.
+- The total bit length of a given `(kind, reportId)` across the descriptor MUST fit in `u32`.
+
+### Min/max ordering
+
+- `logicalMinimum` MUST be `<= logicalMaximum`.
+- `physicalMinimum` MUST be `<= physicalMaximum`.
+
+### Collection tree bounds
+
+- Collection nesting depth MUST be <= 32.
+- Cyclic collection graphs are rejected.
 
 ### Mixed reportId 0/non-zero policy
 
