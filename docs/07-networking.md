@@ -274,9 +274,9 @@ See: [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
 - Guest network stack implementations exist in multiple places:
   - `crates/aero-net-stack` is the canonical Phase 0 in-browser stack
     (`crates/emulator/src/io/net/stack` is a thin wrapper around it for the native runtime).
-  - `crates/emulator/src/io/net/stack_legacy` is deprecated.
-  - `crates/aero-net` was a Tokio-era networking experiment and has been removed from the workspace
-    (archived in-tree; not built in CI).
+  - Historical implementations have been retired/removed to reduce CI surface:
+    - `crates/emulator/src/io/net/stack_legacy` (old emulator-native stack wrapper)
+    - `crates/aero-net` (Tokio-era experiment; no longer part of the Rust workspace)
   - The recommended production path is Option C (L2 tunnel) as described above.
 - Dev/prototype UDP behavior:
   - `net-proxy/` supports a legacy per-target UDP mode (`/udp?host=...&port=...`) that forwards raw
