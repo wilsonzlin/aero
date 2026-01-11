@@ -43,11 +43,13 @@ Example (explicit INF selection + WOW64 payload DLL in x64 package):
 ```json
 {
   "$schema": "../../ci/driver-package.schema.json",
-  "infFiles": ["packaging/win7/aerogpu.inf"],
-  "wow64Files": ["aerogpu_d3d9.dll"],
-  "additionalFiles": ["packaging/win7/README.md", "packaging/win7/install.cmd"]
+  "infFiles": ["packaging/win7/mydriver.inf"],
+  "wow64Files": ["mydriver_umd.dll"],
+  "additionalFiles": ["README.md", "packaging/win7/install.cmd"]
 }
 ```
+
+For a real in-tree example (multiple INFs + WOW64 payloads), see: `drivers/aerogpu/ci-package.json`.
 
 Example (requires WDF coinstaller):
 
@@ -64,6 +66,8 @@ Example (requires WDF coinstaller):
 
 Template examples are available under `drivers/_template/`:
 
+- `ci-package.README.md` (field reference)
+- `ci-package.json` (minimal template)
 - `ci-package.inf-wow64-example.json`
 - `ci-package.wdf-example.json`
 

@@ -40,11 +40,12 @@ root.
 
 See:
 
-- `ci/driver-package.schema.json`
-- Template manifests under `drivers/_template/`:
-  - `ci-package.json` (minimal)
-  - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
-  - `ci-package.wdf-example.json` (WDF coinstaller example)
+ - `ci/driver-package.schema.json`
+ - Template manifests under `drivers/_template/`:
+   - `ci-package.README.md` (field reference)
+   - `ci-package.json` (minimal)
+   - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
+   - `ci-package.wdf-example.json` (WDF coinstaller example)
 
 ### Legacy WDK BUILD / NMake wrapper projects
 

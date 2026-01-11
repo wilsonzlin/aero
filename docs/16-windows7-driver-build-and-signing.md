@@ -131,6 +131,7 @@ To add a new driver to CI packaging:
 
 See also the examples under `drivers/_template/`:
 
+- `ci-package.README.md` (field reference)
 - `ci-package.inf-wow64-example.json`
 - `ci-package.wdf-example.json`
 

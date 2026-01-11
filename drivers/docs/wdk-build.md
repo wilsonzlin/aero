@@ -55,6 +55,7 @@ For a fully scripted/reproducible build (matching CI), see `drivers/aerogpu/buil
 Note: CI scripts only build/package drivers that include `ci-package.json` at the driver root (explicit opt-in).
 See the template manifests under `drivers/_template/`:
 
+- `ci-package.README.md` (field reference)
 - `ci-package.json` (minimal)
 - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
 - `ci-package.wdf-example.json` (WDF coinstaller example)
