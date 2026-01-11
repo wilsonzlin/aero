@@ -138,6 +138,15 @@ impl UsbPassthroughDevice {
         self.actions.retain(|action| action.id() != id);
     }
 
+    fn cancel_inflight_control(&mut self) {
+        if let Some(prev) = self.control_inflight.take() {
+            self.completions.remove(&prev.id);
+            // If the host has not dequeued the old action yet, drop it so we do not execute a stale
+            // control transfer after the guest has already moved on.
+            self.drop_queued_action(prev.id);
+        }
+    }
+
     fn map_in_result(setup: SetupPacket, result: UsbHostResult) -> ControlResponse {
         match result {
             UsbHostResult::OkIn { mut data } => {
@@ -179,6 +188,10 @@ impl UsbDeviceModel for UsbPassthroughDevice {
         self.ep_inflight.clear();
     }
 
+    fn cancel_control_transfer(&mut self) {
+        self.cancel_inflight_control();
+    }
+
     fn handle_control_request(
         &mut self,
         setup: SetupPacket,
@@ -199,12 +212,7 @@ impl UsbDeviceModel for UsbPassthroughDevice {
 
         if !same_as_inflight {
             // New SETUP while an older request is pending: abandon it.
-            if let Some(prev) = self.control_inflight.take() {
-                self.completions.remove(&prev.id);
-                // If the host has not dequeued the old action yet, drop it so we do not execute a
-                // stale control transfer after the guest has already moved on.
-                self.drop_queued_action(prev.id);
-            }
+            self.cancel_inflight_control();
 
             let id = self.alloc_id();
             let action = if req_dir_in {
@@ -330,6 +338,10 @@ impl UsbDeviceModel for UsbPassthroughHandle {
         self.0.borrow_mut().reset();
     }
 
+    fn cancel_control_transfer(&mut self) {
+        self.0.borrow_mut().cancel_control_transfer();
+    }
+
     fn handle_control_request(
         &mut self,
         setup: SetupPacket,
@@ -370,6 +382,7 @@ impl RequestDirectionExt for crate::io::usb::RequestDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::usb::core::AttachedUsbDevice;
 
     #[test]
     fn control_in_queues_once_then_returns_data() {
@@ -606,5 +619,61 @@ mod tests {
             dev.handle_control_request(setup2, None),
             ControlResponse::Data(vec![9, 8, 7, 6])
         );
+    }
+
+    #[test]
+    fn setup_abort_cancels_inflight_before_out_data_stage_is_seen_by_model() {
+        let passthrough = UsbPassthroughHandle::new();
+        let mut attached = AttachedUsbDevice::new(Box::new(passthrough.clone()));
+
+        let setup_in = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0100,
+            w_index: 0,
+            w_length: 4,
+        };
+
+        // Begin an async control IN request: the passthrough model enqueues an action but the UHCI
+        // control pipe ACKs the SETUP TD and NAKs the DATA stage.
+        assert_eq!(attached.handle_setup(setup_in), UsbOutResult::Ack);
+        let id1 = passthrough
+            .pending_summary()
+            .inflight_control
+            .expect("inflight control");
+        assert_eq!(passthrough.pending_summary().queued_actions, 1);
+
+        // New SETUP (Control OUT with a data stage) aborts the prior request. This is a key edge
+        // case because the control pipe doesn't call `handle_control_request` for OUT+DATA until
+        // the final DATA packet arrives.
+        let setup_out = SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09,
+            w_value: 0x1234,
+            w_index: 0,
+            w_length: 2,
+        };
+        assert_eq!(attached.handle_setup(setup_out), UsbOutResult::Ack);
+
+        // The canceled action should be removed from the queue immediately.
+        assert_eq!(passthrough.pending_summary().queued_actions, 0);
+        assert_eq!(passthrough.pending_summary().inflight_control, None);
+
+        // Stale completion for the canceled request must be ignored.
+        passthrough.push_completion(UsbHostCompletion::Completed {
+            id: id1,
+            result: UsbHostResult::OkIn { data: vec![1, 2, 3] },
+        });
+        assert_eq!(passthrough.pending_summary().queued_completions, 0);
+
+        // Once the OUT data stage completes, the new request is forwarded to the host.
+        assert_eq!(attached.handle_out(0, &[0xaa, 0xbb]), UsbOutResult::Ack);
+        match passthrough.pop_action().expect("expected action") {
+            UsbHostAction::ControlOut { setup, data, .. } => {
+                assert_eq!(setup, setup_out);
+                assert_eq!(data, vec![0xaa, 0xbb]);
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
     }
 }

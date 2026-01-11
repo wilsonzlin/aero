@@ -91,8 +91,14 @@ impl AttachedUsbDevice {
     }
 
     pub fn handle_setup(&mut self, setup: SetupPacket) -> UsbOutResult {
-        // Starting a new SETUP always abandons any in-flight transfer.
+        // Starting a new SETUP always aborts any in-flight control transfer.
+        if self.control.is_some() {
+            self.model.cancel_control_transfer();
+        }
         self.control = None;
+        // `SET_ADDRESS` only takes effect after the STATUS stage; if the control transfer was
+        // aborted by a new SETUP, the pending address must be discarded.
+        self.pending_address = None;
 
         let stage = match setup.request_direction() {
             RequestDirection::DeviceToHost => {
@@ -310,5 +316,105 @@ impl AttachedUsbDevice {
             }
             _ => UsbInResult::Stall,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct AckModel;
+
+    impl UsbDeviceModel for AckModel {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Ack
+        }
+    }
+
+    #[test]
+    fn new_setup_aborts_pending_set_address() {
+        let mut dev = AttachedUsbDevice::new(Box::new(AckModel::default()));
+
+        let set_address = SetupPacket {
+            bm_request_type: 0x00,
+            b_request: USB_REQUEST_SET_ADDRESS,
+            w_value: 5,
+            w_index: 0,
+            w_length: 0,
+        };
+        assert_eq!(dev.handle_setup(set_address), UsbOutResult::Ack);
+
+        // Abort the SET_ADDRESS request before the status stage is executed.
+        let other = SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        };
+        assert_eq!(dev.handle_setup(other), UsbOutResult::Ack);
+
+        // Completing the subsequent status stage must not apply the old pending address.
+        assert_eq!(dev.handle_in(0, 0), UsbInResult::Data(Vec::new()));
+        assert_eq!(dev.address(), 0);
+    }
+
+    #[test]
+    fn new_setup_invokes_cancel_control_transfer_hook() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        #[derive(Clone)]
+        struct CancelCounter(Rc<Cell<u32>>);
+
+        struct CancelModel {
+            counter: CancelCounter,
+        }
+
+        impl UsbDeviceModel for CancelModel {
+            fn cancel_control_transfer(&mut self) {
+                self.counter.0.set(self.counter.0.get() + 1);
+            }
+
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Ack
+            }
+        }
+
+        let counter = CancelCounter(Rc::new(Cell::new(0)));
+        let model = CancelModel {
+            counter: counter.clone(),
+        };
+        let mut dev = AttachedUsbDevice::new(Box::new(model));
+
+        let setup1 = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0100,
+            w_index: 0,
+            w_length: 4,
+        };
+        let setup2 = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0200,
+            w_index: 0,
+            w_length: 4,
+        };
+
+        assert_eq!(dev.handle_setup(setup1), UsbOutResult::Ack);
+        // Second SETUP before the first transfer completes should trigger cancel.
+        assert_eq!(dev.handle_setup(setup2), UsbOutResult::Ack);
+
+        assert_eq!(counter.0.get(), 1);
     }
 }

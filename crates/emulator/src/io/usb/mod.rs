@@ -193,6 +193,14 @@ pub trait UsbDeviceModel {
     /// Implementations should return to an unconfigured, default-address state.
     fn reset(&mut self) {}
 
+    /// Aborts any in-flight control transfer state.
+    ///
+    /// USB allows a new SETUP packet on endpoint 0 to abort the previous control transfer.
+    /// Synchronous device models typically don't need to do anything here, but asynchronous
+    /// models (e.g. USB passthrough to WebUSB/libusb) may need to drop queued host actions and
+    /// ignore stale completions.
+    fn cancel_control_transfer(&mut self) {}
+
     /// Handles a USB control transfer SETUP packet.
     ///
     /// For OUT requests, `data_stage` contains the payload provided by the host.
