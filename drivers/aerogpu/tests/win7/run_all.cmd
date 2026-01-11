@@ -64,6 +64,7 @@ set "TEST_ARGS="
 set "EXPECT_TIMEOUT_VALUE="
 for %%A in (%*) do (
   set "ARG=%%~A"
+  set "RAW=%%A"
   if defined EXPECT_TIMEOUT_VALUE (
     set "EXPECT_TIMEOUT_VALUE="
   ) else (
@@ -73,7 +74,7 @@ for %%A in (%*) do (
     )
     if /I "!ARG!"=="--timeout-ms" set "EXPECT_TIMEOUT_VALUE=1"
     if /I "!ARG!"=="--no-timeout" set "SKIP_ARG=1"
-    if not defined SKIP_ARG set "TEST_ARGS=!TEST_ARGS! !ARG!"
+    if not defined SKIP_ARG set "TEST_ARGS=!TEST_ARGS! !RAW!"
   )
 )
 set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
