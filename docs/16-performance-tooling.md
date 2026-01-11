@@ -370,6 +370,34 @@ Outputs:
 - `storage-perf-results/compare/compare.md`
 - `storage-perf-results/compare/summary.json` (machine-readable)
 
+### Run + compare the gateway benchmark suite (backend networking)
+
+The gateway bench (`backend/aero-gateway/bench/run.mjs`) runs loopback-only benchmarks for Aero's backend networking paths:
+
+- TCP proxy RTT (p50/p90/p99)
+- TCP proxy throughput (MiB/s)
+- DoH QPS + cache hit ratio
+
+It does **not** require Playwright (pure Node + local sockets), but it does require the gateway build artifacts in `backend/aero-gateway/dist/`:
+
+```bash
+npm -w backend/aero-gateway run build
+
+node backend/aero-gateway/bench/run.mjs --mode smoke --json gateway-perf-results/base/raw.json
+node backend/aero-gateway/bench/run.mjs --mode smoke --json gateway-perf-results/head/raw.json
+
+node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
+  --baseline gateway-perf-results/base/raw.json \
+  --candidate gateway-perf-results/head/raw.json \
+  --out-dir gateway-perf-results/compare \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
+```
+
+Outputs:
+- `gateway-perf-results/compare/compare.md`
+- `gateway-perf-results/compare/summary.json` (machine-readable)
+
 ### Interpreting summary output and variance warnings
 
 When the summary shows a high **CV** (coefficient of variation):
