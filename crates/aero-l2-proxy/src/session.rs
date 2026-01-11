@@ -375,9 +375,8 @@ async fn process_actions(
                     .tcp_forward
                     .get(&forward_key)
                     .cloned();
-                if forward.is_none()
-                    && (!state.cfg.policy.allows_ip(remote_ip)
-                        || !state.cfg.policy.allows_tcp_port(remote_port))
+                if !state.cfg.policy.allows_tcp_port(remote_port)
+                    || (forward.is_none() && !state.cfg.policy.allows_ip(remote_ip))
                 {
                     state.metrics.policy_denied();
                     queue.extend(
@@ -444,9 +443,8 @@ async fn process_actions(
                     .udp_forward
                     .get(&forward_key)
                     .cloned();
-                if forward.is_none()
-                    && (!state.cfg.policy.allows_ip(dst_ip)
-                        || !state.cfg.policy.allows_udp_port(dst_port))
+                if !state.cfg.policy.allows_udp_port(dst_port)
+                    || (forward.is_none() && !state.cfg.policy.allows_ip(dst_ip))
                 {
                     state.metrics.policy_denied();
                     continue;
