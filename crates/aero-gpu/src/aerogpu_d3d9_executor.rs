@@ -1732,9 +1732,18 @@ impl AerogpuD3d9Executor {
 
         // Flush guest-backed resources touched by this draw before we bind them.
         let rt = self.state.render_targets;
-        let vertex_bindings = self.state.vertex_buffers;
         let index_binding = self.state.index_buffer;
         let textures_ps = self.state.textures_ps;
+        let streams = {
+            let layout = self
+                .input_layouts
+                .get(&layout_handle)
+                .ok_or(AerogpuD3d9Error::UnknownInputLayout(layout_handle))?;
+            let mut streams: Vec<u8> = layout.decl.elements.iter().map(|e| e.stream).collect();
+            streams.sort_unstable();
+            streams.dedup();
+            streams
+        };
         for slot in 0..rt.color_count.min(8) as usize {
             let handle = rt.colors[slot];
             if handle == 0 {
@@ -1746,11 +1755,19 @@ impl AerogpuD3d9Executor {
             self.flush_texture_if_dirty_strict(rt.depth_stencil, ctx.guest_memory)?;
         }
 
-        for binding in vertex_bindings.into_iter().flatten() {
-            if binding.buffer == 0 {
+        for stream in streams {
+            let Some(binding) = self
+                .state
+                .vertex_buffers
+                .get(stream as usize)
+                .copied()
+                .flatten()
+            else {
                 continue;
+            };
+            if binding.buffer != 0 {
+                self.flush_buffer_if_dirty(binding.buffer, ctx.guest_memory)?;
             }
-            self.flush_buffer_if_dirty(binding.buffer, ctx.guest_memory)?;
         }
 
         if let DrawParams::Indexed { .. } = draw {
