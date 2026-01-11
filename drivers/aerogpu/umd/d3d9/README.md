@@ -56,6 +56,7 @@ If your checkout still contains `drivers\aerogpu\build\build_all.cmd`, treat it 
 ### Notes
 
 - The code in `include/aerogpu_d3d9_umd.h` includes a tiny “compat” subset of the D3D9 DDI types so the core translation code is self-contained in this repository. When integrating into a real Win7 WDK build, wire the entrypoints to the real WDK D3D9 DDI headers and structures (the exported names are the key ABI contract).
+- For Win7 WDK 7.1 ABI verification (struct sizes/offsets + x86 stdcall export decoration), see `tools/wdk_abi_probe/`.
 - Logging is done via `OutputDebugStringA` (view with DebugView/WinDbg) and is intentionally lightweight.
 
 ## Install / Register (INF)
