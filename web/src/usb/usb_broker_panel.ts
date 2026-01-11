@@ -223,7 +223,7 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
     if (typeof MessageChannel !== "undefined") {
       // Keep the panel in sync with broker selection/disconnect events by attaching a MessagePort.
       const channel = new MessageChannel();
-      broker.attachWorkerPort(channel.port1);
+      broker.attachWorkerPort(channel.port1, { attachRings: false });
       channel.port2.addEventListener("message", (ev: MessageEvent<unknown>) => {
         const data = ev.data;
         if (isUsbSelectedMessage(data)) {

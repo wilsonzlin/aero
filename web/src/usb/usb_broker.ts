@@ -304,7 +304,7 @@ export class UsbBroker {
     });
   }
 
-  attachWorkerPort(port: MessagePort | Worker): void {
+  attachWorkerPort(port: MessagePort | Worker, options: { attachRings?: boolean } = {}): void {
     const isNew = !this.ports.has(port);
     if (isNew) this.ports.add(port);
 
@@ -363,7 +363,9 @@ export class UsbBroker {
       // When using addEventListener() MessagePorts need start() to begin dispatch.
       (port as unknown as { start?: () => void }).start?.();
 
-      this.attachRings(port);
+      if (options.attachRings !== false) {
+        this.attachRings(port);
+      }
 
       // Newly attached ports should learn the current selection/disconnect state.
       if (this.selectedInfo && !this.disconnectError) {
