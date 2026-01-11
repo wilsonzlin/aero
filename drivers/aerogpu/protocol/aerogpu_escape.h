@@ -18,6 +18,7 @@
 extern "C" {
 #endif
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* -------------------------- Compile-time utilities ----------------------- */
@@ -99,7 +100,11 @@ typedef struct aerogpu_escape_query_device_v2_out {
   uint64_t features_hi;
 } aerogpu_escape_query_device_v2_out;
 
-AEROGPU_ESCAPE_STATIC_ASSERT(sizeof(aerogpu_escape_query_device_v2_out) == 48);
+AEROGPU_ESCAPE_STATIC_ASSERT(sizeof(aerogpu_escape_query_device_v2_out) == 40);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, detected_mmio_magic) == 16);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, abi_version_u32) == 20);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, features_lo) == 24);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, features_hi) == 32);
 
 #pragma pack(pop)
 

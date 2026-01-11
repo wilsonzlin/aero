@@ -2,6 +2,8 @@
 #include <stdio.h>
 
 #include "drivers/aerogpu/protocol/aerogpu_cmd.h"
+#include "drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h"
+#include "drivers/aerogpu/protocol/aerogpu_escape.h"
 #include "drivers/aerogpu/protocol/aerogpu_ring.h"
 #include "drivers/aerogpu/protocol/aerogpu_umd_private.h"
 
@@ -61,6 +63,15 @@ int main(void) {
 
   PRINT_SIZE("aerogpu_umd_private_v1", aerogpu_umd_private_v1);
 
+  PRINT_SIZE("aerogpu_escape_header", aerogpu_escape_header);
+  PRINT_SIZE("aerogpu_escape_query_device_out", aerogpu_escape_query_device_out);
+  PRINT_SIZE("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out);
+  PRINT_SIZE("aerogpu_escape_query_fence_out", aerogpu_escape_query_fence_out);
+  PRINT_SIZE("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout);
+  PRINT_SIZE("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout);
+  PRINT_SIZE("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout);
+  PRINT_SIZE("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out);
+
   /* -------------------------------- Offsets ------------------------------ */
   PRINT_OFF("aerogpu_cmd_stream_header", struct aerogpu_cmd_stream_header, magic);
   PRINT_OFF("aerogpu_cmd_stream_header", struct aerogpu_cmd_stream_header, abi_version);
@@ -94,6 +105,23 @@ int main(void) {
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_abi_version_u32);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_features);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, flags);
+
+  PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, version);
+  PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, op);
+  PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, size);
+  PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, reserved0);
+
+  PRINT_OFF("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out, detected_mmio_magic);
+  PRINT_OFF("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out, abi_version_u32);
+  PRINT_OFF("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out, features_lo);
+
+  PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vidpn_source_id);
+  PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, irq_enable);
+  PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, irq_status);
+  PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, flags);
+  PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_seq);
+  PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, last_vblank_time_ns);
+  PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_period_ns);
 
   /* ------------------------------ Constants ------------------------------- */
   PRINT_CONST(AEROGPU_ABI_MAJOR);
@@ -179,6 +207,23 @@ int main(void) {
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_IS_LEGACY);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_VBLANK);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE);
+
+  PRINT_CONST(AEROGPU_ESCAPE_VERSION);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_DEVICE);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2);
+
+  PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_FENCE);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_DUMP_RING);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_SELFTEST);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_VBLANK);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_DUMP_RING_V2);
+
+  PRINT_CONST(AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN);
+  PRINT_CONST(AEROGPU_DBGCTL_RING_FORMAT_LEGACY);
+  PRINT_CONST(AEROGPU_DBGCTL_RING_FORMAT_AGPU);
+
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID);
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED);
 
   return 0;
 }

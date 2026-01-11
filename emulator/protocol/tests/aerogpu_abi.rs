@@ -219,6 +219,47 @@ fn rust_layout_matches_c_headers() {
     assert_off!(AerogpuRingHeader, tail, "aerogpu_ring_header", "tail");
     assert_off!(AerogpuFencePage, completed_fence, "aerogpu_fence_page", "completed_fence");
 
+    // Escape ABI (driver-private; should remain stable across x86/x64).
+    assert_eq!(abi.size("aerogpu_escape_header"), 16);
+    assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
+    assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 40);
+    assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 32);
+    assert_eq!(
+        abi.size("aerogpu_escape_dump_ring_inout"),
+        40 + (32 * 24),
+        "sizeof(aerogpu_escape_dump_ring_inout)"
+    );
+    assert_eq!(
+        abi.size("aerogpu_escape_dump_ring_v2_inout"),
+        52 + (32 * 40),
+        "sizeof(aerogpu_escape_dump_ring_v2_inout)"
+    );
+    assert_eq!(abi.size("aerogpu_escape_selftest_inout"), 32);
+    assert_eq!(abi.size("aerogpu_escape_query_vblank_out"), 56);
+
+    assert_eq!(abi.offset("aerogpu_escape_header", "version"), 0);
+    assert_eq!(abi.offset("aerogpu_escape_header", "op"), 4);
+    assert_eq!(abi.offset("aerogpu_escape_header", "size"), 8);
+    assert_eq!(abi.offset("aerogpu_escape_header", "reserved0"), 12);
+
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_device_v2_out", "detected_mmio_magic"),
+        16
+    );
+    assert_eq!(abi.offset("aerogpu_escape_query_device_v2_out", "abi_version_u32"), 20);
+    assert_eq!(abi.offset("aerogpu_escape_query_device_v2_out", "features_lo"), 24);
+
+    assert_eq!(abi.offset("aerogpu_escape_query_vblank_out", "vidpn_source_id"), 16);
+    assert_eq!(abi.offset("aerogpu_escape_query_vblank_out", "irq_enable"), 20);
+    assert_eq!(abi.offset("aerogpu_escape_query_vblank_out", "irq_status"), 24);
+    assert_eq!(abi.offset("aerogpu_escape_query_vblank_out", "flags"), 28);
+    assert_eq!(abi.offset("aerogpu_escape_query_vblank_out", "vblank_seq"), 32);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_vblank_out", "last_vblank_time_ns"),
+        40
+    );
+    assert_eq!(abi.offset("aerogpu_escape_query_vblank_out", "vblank_period_ns"), 48);
+
     // UMD-private discovery blob (UMDRIVERPRIVATE).
     assert_off!(AerogpuUmdPrivateV1, size_bytes, "aerogpu_umd_private_v1", "size_bytes");
     assert_off!(
@@ -445,6 +486,23 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE"),
         AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE as u64
     );
+
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_VERSION"), 1);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE"), 1);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2"), 7);
+
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_FENCE"), 2);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_DUMP_RING"), 3);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_SELFTEST"), 4);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_VBLANK"), 5);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_DUMP_RING_V2"), 6);
+
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN"), 0);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_RING_FORMAT_LEGACY"), 1);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_RING_FORMAT_AGPU"), 2);
+
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"), 1u64 << 31);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"), 1);
 }
 
 #[test]
