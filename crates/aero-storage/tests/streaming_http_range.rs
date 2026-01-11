@@ -502,6 +502,33 @@ async fn request_headers_are_sent_on_all_http_requests() {
 }
 
 #[tokio::test]
+async fn missing_required_header_fails_open_with_http_error() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) = start_range_server_with_options(
+        image,
+        "etag-auth-required",
+        false,
+        Some(("x-test-auth", "secret")),
+        false,
+        false,
+        None,
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+
+    let err = StreamingDisk::open(config).await.err().unwrap();
+    assert!(matches!(err, StreamingDiskError::Http(_)));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
 async fn range_not_supported_is_reported_when_server_ignores_range() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) =

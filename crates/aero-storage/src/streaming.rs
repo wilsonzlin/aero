@@ -1157,7 +1157,13 @@ async fn probe_remote_size_and_validator(
         .map_err(|e| StreamingDiskError::Http(e.to_string()))?;
 
     if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-        return Err(StreamingDiskError::RangeNotSupported);
+        if resp.status().is_success() {
+            return Err(StreamingDiskError::RangeNotSupported);
+        }
+        return Err(StreamingDiskError::Http(format!(
+            "unexpected status {}",
+            resp.status()
+        )));
     }
 
     let validator = resp
