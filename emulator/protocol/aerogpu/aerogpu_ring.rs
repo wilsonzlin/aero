@@ -3,6 +3,7 @@
 //! Source of truth: `drivers/aerogpu/protocol/aerogpu_ring.h`.
 
 use super::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError};
+use std::borrow::Cow;
 
 pub const AEROGPU_ALLOC_TABLE_MAGIC: u32 = 0x434F_4C41; // "ALOC" LE
 pub const AEROGPU_RING_MAGIC: u32 = 0x474E_5241; // "ARNG" LE
@@ -122,10 +123,10 @@ impl AerogpuAllocEntry {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct AerogpuAllocTableView<'a> {
     pub header: AerogpuAllocTableHeader,
-    pub entries: &'a [AerogpuAllocEntry],
+    pub entries: Cow<'a, [AerogpuAllocEntry]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,7 +188,7 @@ pub fn decode_alloc_table_le(
     }
 
     let expected_stride = core::mem::size_of::<AerogpuAllocEntry>() as u32;
-    if header.entry_stride_bytes != expected_stride {
+    if header.entry_stride_bytes < expected_stride {
         return Err(AerogpuAllocTableDecodeError::BadStride {
             found: header.entry_stride_bytes,
             expected: expected_stride,
@@ -208,21 +209,49 @@ pub fn decode_alloc_table_le(
     let entries_buf = &buf[header_size_bytes..header_size_bytes + entries_size_bytes];
 
     let align = core::mem::align_of::<AerogpuAllocEntry>();
-    if !(entries_buf.as_ptr() as usize).is_multiple_of(align) {
-        return Err(AerogpuAllocTableDecodeError::Misaligned);
+    if entry_stride == AerogpuAllocEntry::SIZE_BYTES
+        && (entries_buf.as_ptr() as usize).is_multiple_of(align)
+    {
+        let entries = unsafe {
+            core::slice::from_raw_parts(
+                entries_buf.as_ptr() as *const AerogpuAllocEntry,
+                entry_count,
+            )
+        };
+        return Ok(AerogpuAllocTableView {
+            header,
+            entries: Cow::Borrowed(entries),
+        });
     }
 
-    let entries = unsafe {
-        core::slice::from_raw_parts(
-            entries_buf.as_ptr() as *const AerogpuAllocEntry,
-            entry_count,
-        )
-    };
-    Ok(AerogpuAllocTableView { header, entries })
+    let mut entries = Vec::with_capacity(entry_count);
+    for idx in 0..entry_count {
+        let off = header_size_bytes
+            .checked_add(
+                idx.checked_mul(entry_stride)
+                    .ok_or(AerogpuAllocTableDecodeError::CountOutOfBounds)?,
+            )
+            .ok_or(AerogpuAllocTableDecodeError::CountOutOfBounds)?;
+        let end = off
+            .checked_add(AerogpuAllocEntry::SIZE_BYTES)
+            .ok_or(AerogpuAllocTableDecodeError::CountOutOfBounds)?;
+        let Some(entry_bytes) = buf.get(off..end) else {
+            return Err(AerogpuAllocTableDecodeError::CountOutOfBounds);
+        };
+        entries.push(
+            AerogpuAllocEntry::decode_from_le_bytes(entry_bytes)
+                .map_err(|_| AerogpuAllocTableDecodeError::BufferTooSmall)?,
+        );
+    }
+
+    Ok(AerogpuAllocTableView {
+        header,
+        entries: Cow::Owned(entries),
+    })
 }
 
 pub fn lookup_alloc<'a>(
-    table: &AerogpuAllocTableView<'a>,
+    table: &'a AerogpuAllocTableView<'_>,
     alloc_id: u32,
 ) -> Option<&'a AerogpuAllocEntry> {
     table

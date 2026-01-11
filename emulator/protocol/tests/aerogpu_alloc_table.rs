@@ -181,7 +181,40 @@ fn decode_alloc_table_rejects_entry_count_out_of_bounds() {
 }
 
 #[test]
-fn decode_alloc_table_rejects_misaligned_entries() {
+fn decode_alloc_table_accepts_extended_entry_stride() {
+    let entry_count = 1u32;
+    let entry_stride = AerogpuAllocEntry::SIZE_BYTES + 16;
+    let total_size = AerogpuAllocTableHeader::SIZE_BYTES + (entry_count as usize * entry_stride);
+    assert_eq!(total_size % 8, 0);
+
+    let mut backing = alloc_table_backing_u64(total_size);
+    let buf = backing_as_u8_mut(&mut backing);
+
+    write_u32_le(buf, 0, AEROGPU_ALLOC_TABLE_MAGIC);
+    write_u32_le(buf, 4, AEROGPU_ABI_VERSION_U32);
+    write_u32_le(buf, 8, total_size as u32);
+    write_u32_le(buf, 12, entry_count);
+    write_u32_le(buf, 16, entry_stride as u32);
+    write_u32_le(buf, 20, 0);
+
+    let e0 = AerogpuAllocTableHeader::SIZE_BYTES;
+    write_u32_le(buf, e0, 10);
+    write_u32_le(buf, e0 + 4, AEROGPU_ALLOC_FLAG_READONLY);
+    write_u64_le(buf, e0 + 8, 0x1122_3344_5566_7788);
+    write_u64_le(buf, e0 + 16, 0x1000);
+    write_u64_le(buf, e0 + 24, 0);
+
+    let decoded = decode_alloc_table_le(buf).unwrap();
+    assert_eq!(decoded.header.entry_stride_bytes, entry_stride as u32);
+    assert_eq!(decoded.entries.len(), 1);
+    assert_eq!(decoded.entries[0].alloc_id, 10);
+    assert_eq!(decoded.entries[0].flags, AEROGPU_ALLOC_FLAG_READONLY);
+    assert_eq!(decoded.entries[0].gpa, 0x1122_3344_5566_7788);
+    assert_eq!(decoded.entries[0].size_bytes, 0x1000);
+}
+
+#[test]
+fn decode_alloc_table_accepts_misaligned_entries() {
     let entry_count = 1u32;
     let total_size = AerogpuAllocTableHeader::SIZE_BYTES
         + (entry_count as usize * AerogpuAllocEntry::SIZE_BYTES);
@@ -199,6 +232,14 @@ fn decode_alloc_table_rejects_misaligned_entries() {
     write_u32_le(buf, 16, AerogpuAllocEntry::SIZE_BYTES as u32);
     write_u32_le(buf, 20, 0);
 
-    let err = decode_alloc_table_le(buf).err().unwrap();
-    assert!(matches!(err, AerogpuAllocTableDecodeError::Misaligned));
+    let e0 = AerogpuAllocTableHeader::SIZE_BYTES;
+    write_u32_le(buf, e0, 10);
+    write_u32_le(buf, e0 + 4, AEROGPU_ALLOC_FLAG_READONLY);
+    write_u64_le(buf, e0 + 8, 0x1122_3344_5566_7788);
+    write_u64_le(buf, e0 + 16, 0x1000);
+    write_u64_le(buf, e0 + 24, 0);
+
+    let decoded = decode_alloc_table_le(buf).unwrap();
+    assert_eq!(decoded.entries.len(), 1);
+    assert_eq!(decoded.entries[0].alloc_id, 10);
 }

@@ -5,9 +5,7 @@ use std::collections::{HashMap, VecDeque};
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::{GuestMemory, GuestMemoryError};
-use aero_protocol::aerogpu::aerogpu_ring::{
-    decode_alloc_table_le, AerogpuAllocEntry, AerogpuAllocTableDecodeError, AerogpuAllocTableHeader,
-};
+use aero_protocol::aerogpu::aerogpu_ring::{decode_alloc_table_le, AerogpuAllocEntry};
 use anyhow::{anyhow, Result};
 use memory::MemoryBus;
 
@@ -67,86 +65,9 @@ impl GuestMemory for MemoryBusGuestMemory<'_> {
 }
 
 fn decode_alloc_table_bytes(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
-    match decode_alloc_table_le(bytes) {
-        Ok(view) => Ok(view.entries.to_vec()),
-        Err(AerogpuAllocTableDecodeError::Misaligned)
-        | Err(AerogpuAllocTableDecodeError::BadStride { .. }) => {
-            decode_alloc_table_bytes_unaligned(bytes)
-        }
-        Err(err) => Err(anyhow!("alloc table decode failed: {err:?}")),
-    }
-}
-
-fn decode_alloc_table_bytes_unaligned(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
-    // `decode_alloc_table_le` requires the entry array to be aligned so it can cast the entry
-    // array directly and currently only supports the exact `aerogpu_alloc_entry` stride. When the
-    // allocation table bytes originate from an unaligned `Vec<u8>` copy or a newer guest uses an
-    // extended `entry_stride_bytes`, fall back to decoding entries individually (reading only the
-    // entry prefix we understand and skipping any extension fields).
-    let header = AerogpuAllocTableHeader::decode_from_le_bytes(bytes)
-        .map_err(|e| anyhow!("alloc table header decode failed: {e:?}"))?;
-    header
-        .validate_prefix()
-        .map_err(|e| anyhow!("alloc table header validation failed: {e:?}"))?;
-
-    let size_bytes = usize::try_from(header.size_bytes)
-        .map_err(|_| anyhow!("alloc table header size_bytes does not fit in usize"))?;
-    if size_bytes > bytes.len() {
-        return Err(anyhow!(
-            "alloc table size_bytes={} exceeds buffer length={}",
-            size_bytes,
-            bytes.len()
-        ));
-    }
-
-    let expected_stride = AerogpuAllocEntry::SIZE_BYTES as u32;
-    if header.entry_stride_bytes < expected_stride {
-        return Err(anyhow!(
-            "alloc table entry_stride_bytes={} is smaller than expected_stride={expected_stride}",
-            header.entry_stride_bytes,
-        ));
-    }
-
-    let entry_count = usize::try_from(header.entry_count)
-        .map_err(|_| anyhow!("alloc table header entry_count does not fit in usize"))?;
-
-    let entry_stride = usize::try_from(header.entry_stride_bytes)
-        .map_err(|_| anyhow!("alloc table entry_stride_bytes does not fit in usize"))?;
-    let entries_size_bytes = entry_count
-        .checked_mul(entry_stride)
-        .ok_or_else(|| anyhow!("alloc table entry_count overflows"))?;
-
-    let header_size_bytes = AerogpuAllocTableHeader::SIZE_BYTES;
-    let required_bytes = header_size_bytes
-        .checked_add(entries_size_bytes)
-        .ok_or_else(|| anyhow!("alloc table size computation overflows"))?;
-    if required_bytes > size_bytes {
-        return Err(anyhow!(
-            "alloc table entries out of bounds: required_bytes={required_bytes} size_bytes={size_bytes}"
-        ));
-    }
-
-    let mut entries = Vec::with_capacity(entry_count);
-    for idx in 0..entry_count {
-        let off = header_size_bytes
-            .checked_add(
-                idx.checked_mul(entry_stride)
-                    .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?,
-            )
-            .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?;
-        let end = off
-            .checked_add(AerogpuAllocEntry::SIZE_BYTES)
-            .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?;
-        let Some(entry_bytes) = bytes.get(off..end) else {
-            return Err(anyhow!("alloc table entry {idx} out of bounds"));
-        };
-        entries.push(
-            AerogpuAllocEntry::decode_from_le_bytes(entry_bytes)
-                .map_err(|e| anyhow!("alloc table entry {idx} decode failed: {e:?}"))?,
-        );
-    }
-
-    Ok(entries)
+    let view = decode_alloc_table_le(bytes)
+        .map_err(|err| anyhow!("alloc table decode failed: {err:?}"))?;
+    Ok(view.entries.into_owned())
 }
 
 impl AeroGpuCommandBackend for AerogpuWgpuBackend {
