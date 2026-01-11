@@ -6,7 +6,10 @@ use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit};
 use wasmtime::{Caller, Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
 use super::Tier1Cpu;
-use crate::abi::{CPU_AND_JIT_CTX_BYTE_SIZE, JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET};
+use crate::abi::{
+    self, CPU_AND_JIT_CTX_BYTE_SIZE, JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET,
+    JIT_CTX_TLB_SALT_OFFSET,
+};
 use crate::wasm::tier1::EXPORT_TIER1_BLOCK_FN;
 use crate::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
@@ -20,7 +23,11 @@ use crate::wasm::{
 /// ## Tier-1 ABI contract (`export block(cpu_ptr: i32) -> i64`)
 ///
 /// The compiled block receives a pointer (`cpu_ptr`) into the shared linear memory where an
-/// [`aero_cpu::CpuState`] is stored. The block mutates CPU state in-place and returns an `i64`:
+/// `aero_cpu_core::state::CpuState` *layout* is stored. This backend currently syncs only the
+/// architectural subset required by Tier-1 tests (GPRs/RIP/RFLAGS) from the host [`aero_cpu::CpuState`]
+/// into that canonical layout.
+///
+/// The block mutates CPU state in-place and returns an `i64`:
 ///
 /// - `ret != JIT_EXIT_SENTINEL_I64`: `ret` is the next RIP; execution can continue in the JIT.
 /// - `ret == JIT_EXIT_SENTINEL_I64`: the block requests a one-shot exit to the interpreter.
@@ -57,11 +64,8 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         let mut linker = Linker::new(&engine);
 
         // A single shared memory is imported by all generated blocks.
-        let memory = Memory::new(
-            &mut store,
-            MemoryType::new(memory_pages, None),
-        )
-        .expect("create wasmtime memory");
+        let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None))
+            .expect("create wasmtime memory");
         linker
             .define(&mut store, IMPORT_MODULE, IMPORT_MEMORY, memory)
             .expect("define env.memory import");
@@ -112,8 +116,16 @@ impl<Cpu> WasmtimeBackend<Cpu> {
     }
 
     fn sync_cpu_to_wasm(&mut self, cpu: &CpuState) {
-        let mut buf = vec![0u8; CpuState::BYTE_SIZE];
-        cpu.write_to_mem(&mut buf, 0);
+        let mut buf = vec![0u8; abi::CPU_STATE_SIZE as usize];
+        for (i, v) in cpu.gpr.iter().enumerate() {
+            write_u64_le(&mut buf, abi::CPU_GPR_OFF[i] as usize, *v);
+        }
+        write_u64_le(&mut buf, abi::CPU_RIP_OFF as usize, cpu.rip);
+        write_u64_le(
+            &mut buf,
+            abi::CPU_RFLAGS_OFF as usize,
+            cpu.rflags | abi::RFLAGS_RESERVED1,
+        );
         self.memory
             .write(&mut self.store, self.cpu_ptr as usize, &buf)
             .expect("write CpuState into linear memory");
@@ -133,12 +145,26 @@ impl<Cpu> WasmtimeBackend<Cpu> {
     }
 
     fn sync_cpu_from_wasm(&mut self, cpu: &mut CpuState) {
-        let mut buf = vec![0u8; CpuState::BYTE_SIZE];
+        let mut buf = vec![0u8; abi::CPU_STATE_SIZE as usize];
         self.memory
             .read(&self.store, self.cpu_ptr as usize, &mut buf)
             .expect("read CpuState from linear memory");
-        *cpu = CpuState::read_from_mem(&buf, 0);
+        for (i, slot) in cpu.gpr.iter_mut().enumerate() {
+            *slot = read_u64_le(&buf, abi::CPU_GPR_OFF[i] as usize);
+        }
+        cpu.rip = read_u64_le(&buf, abi::CPU_RIP_OFF as usize);
+        cpu.rflags = read_u64_le(&buf, abi::CPU_RFLAGS_OFF as usize) | abi::RFLAGS_RESERVED1;
     }
+}
+
+fn read_u64_le(mem: &[u8], off: usize) -> u64 {
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&mem[off..off + 8]);
+    u64::from_le_bytes(buf)
+}
+
+fn write_u64_le(mem: &mut [u8], off: usize, value: u64) {
+    mem[off..off + 8].copy_from_slice(&value.to_le_bytes());
 }
 
 impl<Cpu> CpuBus for WasmtimeBackend<Cpu> {

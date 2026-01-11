@@ -4,7 +4,7 @@ use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
 use aero_jit::backend::{compile_and_install, CompileQueue, Tier1Cpu, WasmBackend};
-use aero_jit::tier1_ir::interp::execute_block;
+use aero_jit::tier1_ir::interp::{execute_block, TestCpu as InterpCpu};
 use aero_jit::{discover_block, translate_block, BlockLimits};
 use aero_types::Gpr;
 
@@ -46,7 +46,19 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
         let entry_rip = cpu.rip();
         let block = discover_block(&self.bus, entry_rip, BlockLimits::default());
         let ir = translate_block(&block);
-        let _ = execute_block(&ir, &mut cpu.state, &mut self.bus);
+        let mut cpu_mem = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
+        InterpCpu {
+            gpr: cpu.state.gpr,
+            rip: cpu.state.rip,
+            rflags: cpu.state.rflags,
+        }
+        .write_to_abi_mem(&mut cpu_mem, 0);
+
+        let _ = execute_block(&ir, &mut cpu_mem, &mut self.bus);
+        let out = InterpCpu::from_abi_mem(&cpu_mem, 0);
+        cpu.state.gpr = out.gpr;
+        cpu.state.rip = out.rip;
+        cpu.state.rflags = out.rflags;
         cpu.state.rip
     }
 }
@@ -77,7 +89,9 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
         backend.write_u8(entry + i as u64, *b);
     }
 
-    let interpreter = Tier1Interpreter { bus: backend.clone() };
+    let interpreter = Tier1Interpreter {
+        bus: backend.clone(),
+    };
 
     let queue = CompileQueue::default();
     let config = JitConfig {

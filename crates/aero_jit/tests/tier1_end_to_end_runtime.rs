@@ -66,7 +66,19 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
         let entry = cpu.rip();
         let block = discover_block(&self.mem, entry, BlockLimits::default());
         let ir = aero_jit::translate_block(&block);
-        let _ = tier1_interp::execute_block(&ir, &mut cpu.state, &mut self.mem);
+        let mut cpu_mem = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
+        tier1_interp::TestCpu {
+            gpr: cpu.state.gpr,
+            rip: cpu.state.rip,
+            rflags: cpu.state.rflags,
+        }
+        .write_to_abi_mem(&mut cpu_mem, 0);
+
+        let _ = tier1_interp::execute_block(&ir, &mut cpu_mem, &mut self.mem);
+        let out = tier1_interp::TestCpu::from_abi_mem(&cpu_mem, 0);
+        cpu.state.gpr = out.gpr;
+        cpu.state.rip = out.rip;
+        cpu.state.rflags = out.rflags;
         cpu.state.rip
     }
 }
@@ -120,7 +132,11 @@ impl WasmiBackendInner {
         // Page 0: guest memory. Page 1: CpuState at CPU_PTR.
         let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
         linker
-            .define(aero_jit::wasm::IMPORT_MODULE, aero_jit::wasm::IMPORT_MEMORY, memory.clone())
+            .define(
+                aero_jit::wasm::IMPORT_MODULE,
+                aero_jit::wasm::IMPORT_MEMORY,
+                memory.clone(),
+            )
             .unwrap();
 
         define_mem_helpers(&mut store, &mut linker, memory.clone());
@@ -204,8 +220,13 @@ impl WasmiBackendInner {
         }
 
         // Write CpuState.
-        let mut cpu_bytes = vec![0u8; CpuState::BYTE_SIZE];
-        cpu.state.write_to_mem(&mut cpu_bytes, 0);
+        let mut cpu_bytes = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
+        tier1_interp::TestCpu {
+            gpr: cpu.state.gpr,
+            rip: cpu.state.rip,
+            rflags: cpu.state.rflags,
+        }
+        .write_to_abi_mem(&mut cpu_bytes, 0);
         self.memory
             .write(&mut self.store, CPU_PTR as usize, &cpu_bytes)
             .unwrap();
@@ -220,11 +241,14 @@ impl WasmiBackendInner {
         }
 
         // Read back CpuState.
-        let mut out_cpu_bytes = vec![0u8; CpuState::BYTE_SIZE];
+        let mut out_cpu_bytes = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
         self.memory
             .read(&self.store, CPU_PTR as usize, &mut out_cpu_bytes)
             .unwrap();
-        cpu.state = CpuState::read_from_mem(&out_cpu_bytes, 0);
+        let out = tier1_interp::TestCpu::from_abi_mem(&out_cpu_bytes, 0);
+        cpu.state.gpr = out.gpr;
+        cpu.state.rip = out.rip;
+        cpu.state.rflags = out.rflags;
 
         let exit_to_interpreter = exit_to_interpreter || ret == aero_jit::wasm::JIT_EXIT_SENTINEL_I64;
         let next_rip = if ret == aero_jit::wasm::JIT_EXIT_SENTINEL_I64 {
@@ -381,7 +405,9 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         .unwrap();
 }
 
-fn setup_runtime(hot_threshold: u32) -> (
+fn setup_runtime(
+    hot_threshold: u32,
+) -> (
     SharedMem,
     SharedWasmiBackend,
     Tier1CompileQueue,
@@ -410,11 +436,10 @@ fn setup_runtime(hot_threshold: u32) -> (
     let interp = Tier1Interpreter { mem: mem.clone() };
     let dispatcher = ExecDispatcher::new(interp, jit);
 
-    let compiler = Tier1Compiler::new(mem.clone(), backend.clone())
-        .with_limits(BlockLimits {
-            max_insts: 16,
-            max_bytes: 64,
-        });
+    let compiler = Tier1Compiler::new(mem.clone(), backend.clone()).with_limits(BlockLimits {
+        max_insts: 16,
+        max_bytes: 64,
+    });
 
     let mut cpu = TestCpu {
         state: CpuState::default(),
@@ -422,14 +447,7 @@ fn setup_runtime(hot_threshold: u32) -> (
     };
     cpu.state.rip = entry;
 
-    (
-        mem,
-        backend,
-        compile_queue,
-        dispatcher,
-        compiler,
-        cpu,
-    )
+    (mem, backend, compile_queue, dispatcher, compiler, cpu)
 }
 
 #[test]
@@ -446,7 +464,11 @@ fn tier1_end_to_end_compile_install_and_execute() {
                 entry_rip,
                 next_rip,
             } => {
-                assert_eq!(tier, ExecutedTier::Interpreter, "step {i} should be interpreted");
+                assert_eq!(
+                    tier,
+                    ExecutedTier::Interpreter,
+                    "step {i} should be interpreted"
+                );
                 assert_eq!(entry_rip, entry);
                 assert_eq!(next_rip, entry);
             }

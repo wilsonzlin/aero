@@ -20,9 +20,13 @@ use crate::BlockLimits;
 
 /// Minimal interface a host CPU type must expose to execute Tier-1 WASM blocks.
 ///
-/// The Tier-1 WASM ABI uses the in-memory layout of [`aero_cpu::CpuState`]. The backend copies
-/// this state into the shared `WebAssembly.Memory`, calls the compiled block, and then copies the
-/// updated state back into the host CPU value.
+/// The Tier-1 WASM ABI uses the in-memory layout of [`aero_cpu_core::state::CpuState`]. The backend
+/// copies the host CPU state into the shared `WebAssembly.Memory`, calls the compiled block, and
+/// then copies the updated state back into the host CPU value.
+///
+/// Note: the current trait is intentionally narrow (GPRs/RIP/RFLAGS only) and is used by unit tests
+/// that wrap the lightweight `aero_cpu::CpuState`. Full-system integration uses the canonical
+/// `aero_cpu_core::state::CpuState` layout through [`crate::abi`].
 pub trait Tier1Cpu {
     fn tier1_state(&self) -> &CpuState;
     fn tier1_state_mut(&mut self) -> &mut CpuState;
@@ -69,9 +73,9 @@ impl<Cpu> WasmBackend<Cpu> {
 
     #[must_use]
     pub fn with_memory_pages(memory_pages: u32, cpu_ptr: i32) -> Self {
-        Self(Rc::new(RefCell::new(WasmtimeBackend::new_with_memory_pages(
-            memory_pages, cpu_ptr,
-        ))))
+        Self(Rc::new(RefCell::new(
+            WasmtimeBackend::new_with_memory_pages(memory_pages, cpu_ptr),
+        )))
     }
 
     pub fn add_compiled_block(&mut self, wasm_bytes: &[u8]) -> u32 {
@@ -101,7 +105,11 @@ where
 {
     type Cpu = Cpu;
 
-    fn execute(&mut self, table_index: u32, cpu: &mut Self::Cpu) -> aero_cpu_core::jit::runtime::JitBlockExit {
+    fn execute(
+        &mut self,
+        table_index: u32,
+        cpu: &mut Self::Cpu,
+    ) -> aero_cpu_core::jit::runtime::JitBlockExit {
         self.0.borrow_mut().execute(table_index, cpu)
     }
 }
