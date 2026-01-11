@@ -190,12 +190,15 @@ Aero’s Windows drivers must:
 - Use the **PCI capability-based MMIO regions** (common config / notify / ISR / device config).
 - Not require legacy I/O-port operation for correctness.
 
-> Note: `drivers/windows7/virtio-snd` currently contains a PortCls (WaveRT) audio driver that uses the legacy virtio-pci I/O-port register layout via `drivers/windows7/virtio/common`. That driver requires the legacy I/O-port BAR to be present and can only negotiate the low 32 bits of virtio feature flags.
+> Note: `drivers/windows7/virtio-snd` contains a PortCls (WaveRT) audio driver skeleton that targets
+> the **contract v1 modern** transport (PCI vendor capabilities + BAR0 MMIO) and uses **INTx** for
+> interrupts. Treat `docs/windows7-virtio-driver-contract.md` as authoritative if this document ever
+> disagrees.
 
 ### Interrupts
 
-- MSI-X is recommended.
-- INTx must work as a fallback (at least during early bring-up), unless the platform explicitly disables it.
+- Contract v1 requires **INTx** and the virtio ISR status register **read-to-ack** semantics.
+- MSI-X is permitted but not required in contract v1.
 
 ## Feature negotiation / compatibility checks
 
