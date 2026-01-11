@@ -130,12 +130,13 @@ Tip: in `report.txt`, check:
      - `bcdedit /set {current} testsigning on`
      - Reboot.
 
-2. **Confirm Aero certificate is installed (recommended for both x86 and x64):**
-   - Run `certlm.msc` (Local Computer certificate manager).
-   - Check:
-     - **Trusted Root Certification Authorities → Certificates**
-     - **Trusted Publishers → Certificates**
-   - If the certificate is missing, re-run `setup.cmd` as Administrator.
+2. **Confirm the driver signing certificate is installed (recommended for test-signed/custom-signed drivers):**
+    - Run `certlm.msc` (Local Computer certificate manager).
+    - Check:
+      - **Trusted Root Certification Authorities → Certificates**
+      - **Trusted Publishers → Certificates**
+    - If the certificate is missing, re-run `setup.cmd` as Administrator.
+    - Note: If you are using WHQL/production-signed drivers and your Guest Tools media has `signing_policy=none`, the media may not ship any `certs\*.cer/*.crt/*.p7b`, and installing a custom certificate is typically unnecessary.
 
 3. **Check KB3033929 (SHA-256 support):**
    - See the KB3033929 section below.
@@ -203,7 +204,7 @@ This issue is specific to the Guest Tools diagnostics output (it’s detected by
 **Fix**
 
 1. Replace the Guest Tools ISO/zip with a fresh copy.
-2. Ensure you copy/extract **the entire media root** (including `drivers\`, `certs\`, `config\`).
+2. Ensure you copy/extract **the entire media root** (including `drivers\`, `config\`, and `certs\` when present/required by `manifest.json` `signing_policy`).
 3. Re-run `setup.cmd` as Administrator after replacing the media.
 
 ## Issue: Missing KB3033929 (SHA-256 signature support)
