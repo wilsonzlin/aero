@@ -2635,6 +2635,10 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
   res->cpu_access_flags = cpu_access_flags;
 
   const uint32_t dim = static_cast<uint32_t>(pDesc->ResourceDimension);
+  bool is_primary = false;
+  __if_exists(D3D11DDIARG_CREATERESOURCE::pPrimaryDesc) {
+    is_primary = (pDesc->pPrimaryDesc != nullptr);
+  }
 
   const auto deallocate_if_needed = [&]() {
     if (res->wddm.km_resource_handle == 0 && res->wddm.km_allocation_handles.empty()) {
@@ -2648,16 +2652,26 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
-    dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
-    dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
-    dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
+    __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
+      dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
+    }
+    __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
+      dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
+    }
+    __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
+      dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
+    }
+    __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
+      dealloc.phAllocations = km_allocs.empty() ? nullptr : km_allocs.data();
+    }
     CallCbMaybeHandle(callbacks->pfnDeallocateCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &dealloc);
 
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_resource_handle = 0;
   };
 
-  const auto allocate_one = [&](uint64_t size_bytes, bool cpu_visible, bool is_rt, bool is_ds, bool is_shared) -> HRESULT {
+  const auto allocate_one =
+      [&](uint64_t size_bytes, bool cpu_visible, bool is_rt, bool is_ds, bool is_shared, bool want_primary) -> HRESULT {
     if (!pDesc->pAllocationInfo) {
       return E_INVALIDARG;
     }
@@ -2678,6 +2692,10 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     alloc_info[0].Alignment = 0;
     alloc_info[0].Flags.Value = 0;
     alloc_info[0].Flags.CpuVisible = cpu_visible ? 1u : 0u;
+    using AllocFlagsT = decltype(alloc_info[0].Flags);
+    __if_exists(AllocFlagsT::Primary) {
+      alloc_info[0].Flags.Primary = want_primary ? 1u : 0u;
+    }
     alloc_info[0].SupportedReadSegmentSet = 1;
     alloc_info[0].SupportedWriteSegmentSet = 1;
 
@@ -2710,6 +2728,9 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     if (is_shared) {
       alloc.Flags.CreateShared = 1;
     }
+    __if_exists(decltype(alloc.Flags)::Primary) {
+      alloc.Flags.Primary = want_primary ? 1u : 0u;
+    }
     alloc.ResourceFlags.Value = 0;
     alloc.ResourceFlags.RenderTarget = is_rt ? 1u : 0u;
     alloc.ResourceFlags.ZBuffer = is_ds ? 1u : 0u;
@@ -2719,9 +2740,44 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return hr;
     }
 
-    res->wddm.km_resource_handle = static_cast<uint64_t>(alloc.hKMResource);
+    uint64_t km_resource = 0;
+    __if_exists(D3DDDICB_ALLOCATE::hKMResource) {
+      km_resource = static_cast<uint64_t>(alloc.hKMResource);
+    }
+
+    uint64_t km_alloc = 0;
+    using AllocationInfoT = std::remove_pointer_t<decltype(pDesc->pAllocationInfo)>;
+    __if_exists(AllocationInfoT::hKMAllocation) {
+      km_alloc = static_cast<uint64_t>(alloc_info[0].hKMAllocation);
+    }
+    __if_not_exists(AllocationInfoT::hKMAllocation) {
+      __if_exists(AllocationInfoT::hAllocation) {
+        km_alloc = static_cast<uint64_t>(alloc_info[0].hAllocation);
+      }
+    }
+
+    if (!km_resource || !km_alloc) {
+      D3DDDICB_DEALLOCATE dealloc = {};
+      D3DKMT_HANDLE h = static_cast<D3DKMT_HANDLE>(km_alloc);
+      __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
+        dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(km_resource);
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
+        dealloc.NumAllocations = km_alloc ? 1u : 0u;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
+        dealloc.HandleList = km_alloc ? &h : nullptr;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
+        dealloc.phAllocations = km_alloc ? &h : nullptr;
+      }
+      CallCbMaybeHandle(callbacks->pfnDeallocateCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &dealloc);
+      return E_FAIL;
+    }
+
+    res->wddm.km_resource_handle = km_resource;
     res->wddm.km_allocation_handles.clear();
-    res->wddm.km_allocation_handles.push_back(static_cast<uint64_t>(alloc_info[0].hKMAllocation));
+    res->wddm.km_allocation_handles.push_back(km_alloc);
     return S_OK;
   };
 
@@ -2806,7 +2862,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       is_shared = true;
     }
 #endif
-    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared);
+    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary);
     if (FAILED(hr)) {
       SetError(dev, hr);
       res->~Resource();
@@ -2884,7 +2940,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       is_shared = true;
     }
 #endif
-    HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared);
+    HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary);
     if (FAILED(hr)) {
       SetError(dev, hr);
       res->~Resource();
@@ -2956,9 +3012,18 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
-    dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
-    dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
-    dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
+    __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
+      dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
+    }
+    __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
+      dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
+    }
+    __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
+      dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
+    }
+    __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
+      dealloc.phAllocations = km_allocs.empty() ? nullptr : km_allocs.data();
+    }
     const HRESULT hr = CallCbMaybeHandle(callbacks->pfnDeallocateCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &dealloc);
     if (FAILED(hr)) {
       SetError(dev, hr);
