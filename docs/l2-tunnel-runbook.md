@@ -91,7 +91,7 @@ notes and security controls.
 #### Browser: establish the L2 tunnel over WebRTC
 
 In the browser, use the helper in `web/src/net/l2RelaySignalingClient.ts` to negotiate a
-`RTCPeerConnection` against the relay and obtain a **reliable** `RTCDataChannel` labeled `l2`:
+`RTCPeerConnection` against the relay and obtain a **fully reliable and ordered** `RTCDataChannel` labeled `l2`:
 
 ```ts
 import { connectL2Relay } from "./net";

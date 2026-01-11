@@ -484,9 +484,9 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
 
   const tunnel: ConnectedL2Tunnel = {
     sendFrame(frame: Uint8Array): void {
-      // Mirror the underlying clients: drop outbound frames silently when the
-      // tunnel is disconnected/reconnecting. Callers should treat `close`/`open`
-      // events as the authoritative connection state signal.
+      // Drop outbound frames silently when the tunnel is disconnected/reconnecting.
+      // Callers should treat `close`/`open` events as the authoritative connection
+      // state signal.
       currentSendFrame?.(frame);
     },
     close(): void {

@@ -67,8 +67,8 @@ func NewL2DataChannelInit() *webrtc.DataChannelInit {
 	}
 }
 
-// CreateL2DataChannel creates a DataChannel labeled "l2" with reliable delivery
-// semantics.
+// CreateL2DataChannel creates a DataChannel labeled "l2" with fully reliable and
+// ordered delivery semantics.
 func CreateL2DataChannel(pc *webrtc.PeerConnection) (*webrtc.DataChannel, error) {
 	return pc.CreateDataChannel(DataChannelLabelL2, NewL2DataChannelInit())
 }
