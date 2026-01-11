@@ -56,6 +56,9 @@ VirtioSndTxInit(
     if (MaxPeriodBytes == 0) {
         return STATUS_INVALID_PARAMETER;
     }
+    if ((MaxPeriodBytes % VirtioSndTxFrameSizeBytes()) != 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     count = BufferCount;
     if (count == 0) {
