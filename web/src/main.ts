@@ -437,6 +437,14 @@ function renderSnapshotPanel(): HTMLElement {
     error: null as string | null,
   });
 
+  function clearAutosaveTimer(): void {
+    if (autosaveTimer !== null) {
+      window.clearInterval(autosaveTimer);
+      autosaveTimer = null;
+    }
+    autosaveInFlight = false;
+  }
+
   function setError(msg: string): void {
     error.textContent = msg;
     testState.error = msg;
@@ -513,10 +521,7 @@ function renderSnapshotPanel(): HTMLElement {
   }
 
   function setAutosave(seconds: number): void {
-    if (autosaveTimer !== null) {
-      window.clearInterval(autosaveTimer);
-      autosaveTimer = null;
-    }
+    clearAutosaveTimer();
     if (!Number.isFinite(seconds) || seconds <= 0) {
       status.textContent = "Auto-save disabled.";
       return;
@@ -589,6 +594,7 @@ function renderSnapshotPanel(): HTMLElement {
   const platform = detectPlatformFeatures();
   const opfsOk = platform.opfs && platform.opfsSyncAccessHandle;
   if (!opfsOk) {
+    clearAutosaveTimer();
     status.textContent = "Snapshots unavailable (OPFS sync access handles missing).";
     setButtonsEnabled(false);
     setError(
@@ -605,6 +611,7 @@ function renderSnapshotPanel(): HTMLElement {
     try {
       worker = new Worker(new URL("./workers/demo_vm_snapshot.worker.ts", import.meta.url), { type: "module" });
     } catch (err) {
+      clearAutosaveTimer();
       const message = err instanceof Error ? err.message : String(err);
       status.textContent = "Demo VM unavailable (worker creation failed)";
       setError(message);
@@ -641,6 +648,7 @@ function renderSnapshotPanel(): HTMLElement {
       });
 
       worker.addEventListener("error", (event: ErrorEvent) => {
+        clearAutosaveTimer();
         status.textContent = "Demo VM unavailable (worker crashed)";
         setError(event.message);
         setButtonsEnabled(false);
@@ -659,6 +667,7 @@ function renderSnapshotPanel(): HTMLElement {
           });
 
           if (!init.streamingSnapshots || !init.streamingRestore) {
+            clearAutosaveTimer();
             status.textContent = `Demo VM worker ready (WASM ${init.wasmVariant}) but snapshot streaming is unavailable.`;
             setButtonsEnabled(false);
             setError(
@@ -688,6 +697,7 @@ function renderSnapshotPanel(): HTMLElement {
             setError(err instanceof Error ? err.message : String(err));
           }
         } catch (err) {
+          clearAutosaveTimer();
           const message = err instanceof Error ? err.message : String(err);
           status.textContent = "Demo VM unavailable (worker init failed)";
           setButtonsEnabled(false);
