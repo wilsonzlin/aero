@@ -197,4 +197,3 @@ mod tests {
         assert_eq!(backend.poll_receive(), None);
     }
 }
-

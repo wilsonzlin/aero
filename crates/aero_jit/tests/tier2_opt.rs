@@ -517,7 +517,13 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
     let mut cpu_interp = T2State::default();
     cpu_interp.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
     assert_eq!(
-        run_function(&func, &env, &mut SimpleBus::new(65536), &mut cpu_interp, 1_000_000),
+        run_function(
+            &func,
+            &env,
+            &mut SimpleBus::new(65536),
+            &mut cpu_interp,
+            1_000_000
+        ),
         RunExit::Returned
     );
 
@@ -584,11 +590,7 @@ fn memory_load_store_roundtrip() {
         0x1122_3344_5566_7788
     );
 
-    let got_mem = u64::from_le_bytes(
-        bus.mem()[0x100..0x108]
-            .try_into()
-            .expect("u64 bytes"),
-    );
+    let got_mem = u64::from_le_bytes(bus.mem()[0x100..0x108].try_into().expect("u64 bytes"));
     assert_eq!(got_mem, 0x1122_3344_5566_7788);
 }
 
@@ -601,7 +603,10 @@ fn memory_ops_not_misoptimized_across_store() {
                 dst: v(0),
                 value: 0x200,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::StoreMem {
                 addr: Operand::Value(v(0)),
                 src: Operand::Value(v(1)),
@@ -612,7 +617,10 @@ fn memory_ops_not_misoptimized_across_store() {
                 addr: Operand::Value(v(0)),
                 width: Width::W64,
             },
-            Instr::Const { dst: v(3), value: 2 },
+            Instr::Const {
+                dst: v(3),
+                value: 2,
+            },
             Instr::StoreMem {
                 addr: Operand::Value(v(0)),
                 src: Operand::Value(v(3)),

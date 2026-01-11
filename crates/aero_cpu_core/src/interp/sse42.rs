@@ -282,4 +282,3 @@ pub fn pcmpe_strm(a: u128, b: u128, imm8: u8, len_a: u32, len_b: u32) -> (u128, 
     let (mask, n, _len_a, _len_b, flags) = pcmp_generate_mask(a, b, imm8, Some((len_a, len_b)));
     (pcmp_mask_to_xmm(mask, n, imm8, elem), flags)
 }
-

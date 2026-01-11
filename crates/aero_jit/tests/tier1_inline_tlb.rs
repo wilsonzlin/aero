@@ -117,8 +117,16 @@ fn write_u64_to_memory(
         .expect("memory write in bounds");
 }
 
-fn define_mem_helpers(store: &mut Store<HostState>, linker: &mut Linker<HostState>, memory: Memory) {
-    fn read<const N: usize>(caller: &mut Caller<'_, HostState>, memory: &Memory, addr: usize) -> u64 {
+fn define_mem_helpers(
+    store: &mut Store<HostState>,
+    linker: &mut Linker<HostState>,
+    memory: Memory,
+) {
+    fn read<const N: usize>(
+        caller: &mut Caller<'_, HostState>,
+        memory: &Memory,
+        addr: usize,
+    ) -> u64 {
         let mut buf = [0u8; N];
         memory
             .read(caller, addr, &mut buf)
@@ -306,7 +314,11 @@ fn define_mem_helpers(store: &mut Store<HostState>, linker: &mut Linker<HostStat
         .unwrap();
 }
 
-fn define_mmu_translate(store: &mut Store<HostState>, linker: &mut Linker<HostState>, memory: Memory) {
+fn define_mmu_translate(
+    store: &mut Store<HostState>,
+    linker: &mut Linker<HostState>,
+    memory: Memory,
+) {
     let mem = memory;
     linker
         .define(
@@ -314,7 +326,11 @@ fn define_mmu_translate(store: &mut Store<HostState>, linker: &mut Linker<HostSt
             IMPORT_MMU_TRANSLATE,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, vaddr: i64, _access: i32| -> i64 {
+                move |mut caller: Caller<'_, HostState>,
+                      cpu_ptr: i32,
+                      vaddr: i64,
+                      _access: i32|
+                      -> i64 {
                     caller.data_mut().mmu_translate_calls += 1;
 
                     let vaddr_u = vaddr as u64;
@@ -331,8 +347,10 @@ fn define_mmu_translate(store: &mut Store<HostState>, linker: &mut Linker<HostSt
 
                     let is_ram = vaddr_u < caller.data().ram_size;
                     let phys_base = vaddr_u & PAGE_BASE_MASK;
-                    let flags =
-                        TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | if is_ram { TLB_FLAG_IS_RAM } else { 0 };
+                    let flags = TLB_FLAG_READ
+                        | TLB_FLAG_WRITE
+                        | TLB_FLAG_EXEC
+                        | if is_ram { TLB_FLAG_IS_RAM } else { 0 };
                     let data = phys_base | flags;
 
                     let entry_addr = (cpu_ptr as u64)
@@ -459,10 +477,7 @@ fn tier1_inline_tlb_same_page_access_hits_and_caches() {
     assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 0xAB);
 
     assert_eq!(got_ram[0x1000], 0xAB);
-    assert_eq!(
-        &got_ram[0x1004..0x1008],
-        &0x1234_5678u32.to_le_bytes(),
-    );
+    assert_eq!(&got_ram[0x1004..0x1008], &0x1234_5678u32.to_le_bytes(),);
 
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.mmio_exit_calls, 0);
@@ -556,14 +571,16 @@ fn tier1_inline_tlb_cross_page_load_uses_slow_helper() {
     cpu.rip = 0x1000;
 
     let mut ram = vec![0u8; 0x10000];
-    ram[addr as usize..addr as usize + 8]
-        .copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
 
     let (got_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x10000);
 
     assert_eq!(got_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
-    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344_5566_7788);
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
     assert_eq!(host_state.mmu_translate_calls, 0);
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(host_state.slow_mem_reads, 1);

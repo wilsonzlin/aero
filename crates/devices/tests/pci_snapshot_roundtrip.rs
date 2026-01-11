@@ -13,7 +13,13 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
         | (u32::from(offset) & 0xFC)
 }
 
-fn cfg_read(cfg: &mut PciConfigMechanism1, bus: &mut PciBus, bdf: PciBdf, offset: u16, size: u8) -> u32 {
+fn cfg_read(
+    cfg: &mut PciConfigMechanism1,
+    bus: &mut PciBus,
+    bdf: PciBdf,
+    offset: u16,
+    size: u8,
+) -> u32 {
     cfg.io_write(bus, 0xCF8, 4, cfg_addr(bdf, offset));
     let port = 0xCFC + (offset & 3);
     cfg.io_read(bus, port, size)
@@ -141,7 +147,10 @@ fn pci_snapshot_roundtrip_preserves_config_bars_and_msi_state() {
     let bus_snapshot = PciBusSnapshot::save_from(&bus);
     let bus_bytes = bus_snapshot.save_state();
     let bus_bytes2 = PciBusSnapshot::save_from(&bus).save_state();
-    assert_eq!(bus_bytes, bus_bytes2, "snapshot bytes must be deterministic");
+    assert_eq!(
+        bus_bytes, bus_bytes2,
+        "snapshot bytes must be deterministic"
+    );
 
     let cfg_bytes = cfg.save_state();
 
@@ -188,5 +197,8 @@ fn pci_snapshot_roundtrip_preserves_config_bars_and_msi_state() {
     );
 
     // Config address latch should roundtrip as well.
-    assert_eq!(cfg.io_read(&mut bus, 0xCF8, 4), cfg2.io_read(&mut bus2, 0xCF8, 4));
+    assert_eq!(
+        cfg.io_read(&mut bus, 0xCF8, 4),
+        cfg2.io_read(&mut bus2, 0xCF8, 4)
+    );
 }

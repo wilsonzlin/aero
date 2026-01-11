@@ -65,4 +65,3 @@ fn time_going_backwards_is_ignored() {
     assert_eq!(clock.advance_to(1_500), 0);
     assert_eq!(clock.last_time_ns, 2_000);
 }
-

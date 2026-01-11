@@ -8,14 +8,14 @@ use super::Tier1Cpu;
 use crate::abi;
 use crate::abi::{JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET};
 use crate::tier1_pipeline::Tier1WasmRegistry;
-use crate::Tier1Bus;
 use crate::wasm::tier1::EXPORT_TIER1_BLOCK_FN;
 use crate::wasm::{
-    IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
-    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_MMU_TRANSLATE, IMPORT_PAGE_FAULT,
-    IMPORT_JIT_EXIT_MMIO, JIT_EXIT_SENTINEL_I64,
+    IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
+    IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
+    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
+    IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
 };
+use crate::Tier1Bus;
 
 /// Reference `wasmtime`-powered backend that can execute Tier-1 compiled blocks.
 ///
@@ -66,11 +66,8 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         let mut linker = Linker::new(&engine);
 
         // A single shared memory is imported by all generated blocks.
-        let memory = Memory::new(
-            &mut store,
-            MemoryType::new(memory_pages, None),
-        )
-        .expect("create wasmtime memory");
+        let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None))
+            .expect("create wasmtime memory");
         linker
             .define(&mut store, IMPORT_MODULE, IMPORT_MEMORY, memory)
             .expect("define env.memory import");
@@ -403,10 +400,10 @@ fn define_stub_helpers(linker: &mut Linker<()>, memory: Memory) {
              _value: i64,
              rip: i64|
              -> i64 {
-                 // Return the RIP the block should resume at after the runtime has handled the
-                 // MMIO access. The Tier-1 code generator returns the sentinel separately.
-                 rip
-             },
+                // Return the RIP the block should resume at after the runtime has handled the
+                // MMIO access. The Tier-1 code generator returns the sentinel separately.
+                rip
+            },
         )
         .expect("define jit_exit_mmio");
 

@@ -21,7 +21,8 @@ fn execute_bytes_counted_increments_instruction_counter() {
 
     let shared = Arc::new(PerfCounters::new());
     let mut perf = PerfWorker::new(shared);
-    cpu.execute_bytes_counted(&mut bus, &[0xA4], &mut perf).unwrap(); // MOVSB
+    cpu.execute_bytes_counted(&mut bus, &[0xA4], &mut perf)
+        .unwrap(); // MOVSB
 
     assert_eq!(perf.lifetime_snapshot().instructions_executed, 1);
     assert_eq!(perf.lifetime_snapshot().rep_iterations, 0);

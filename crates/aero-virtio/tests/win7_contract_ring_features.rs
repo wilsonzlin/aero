@@ -48,4 +48,3 @@ fn win7_contract_ring_features_are_consistent_across_devices() {
     let gpu = VirtioGpu2d::new(4, 4, NullScanoutSink);
     assert_win7_contract_ring_features("virtio-gpu", gpu.device_features());
 }
-

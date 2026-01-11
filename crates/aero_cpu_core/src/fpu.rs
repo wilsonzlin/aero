@@ -107,4 +107,3 @@ impl FpuState {
         (exception_flags & !masks) != 0
     }
 }
-

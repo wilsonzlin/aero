@@ -123,7 +123,9 @@ fn setup_runtime(
         cache_max_bytes: 0,
     };
     let jit = JitRuntime::new(config, backend.clone(), compile_queue.clone());
-    let interp = Tier1Interpreter { bus: backend.clone() };
+    let interp = Tier1Interpreter {
+        bus: backend.clone(),
+    };
     let dispatcher = ExecDispatcher::new(interp, jit);
 
     let compiler = Tier1Compiler::new(backend.clone(), backend.clone()).with_limits(BlockLimits {
@@ -153,7 +155,11 @@ fn tier1_end_to_end_compile_install_and_execute() {
                 entry_rip,
                 next_rip,
             } => {
-                assert_eq!(tier, ExecutedTier::Interpreter, "step {i} should be interpreted");
+                assert_eq!(
+                    tier,
+                    ExecutedTier::Interpreter,
+                    "step {i} should be interpreted"
+                );
                 assert_eq!(entry_rip, entry);
                 assert_eq!(next_rip, entry);
             }

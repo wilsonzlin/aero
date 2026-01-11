@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
-use aero_devices::acpi_pm::{register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN};
+use aero_devices::acpi_pm::{
+    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN,
+};
 use aero_devices::irq::PlatformIrqLine;
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use aero_platform::io::IoPortBus;
@@ -82,11 +84,7 @@ fn parse_madt_iso_for_source_irq(madt: &[u8], source_irq: u8) -> Option<MadtIso>
             if entry_source_irq == source_irq {
                 let gsi = read_u32_le(madt, off + 4);
                 let flags = read_u16_le(madt, off + 8);
-                return Some(MadtIso {
-                    bus,
-                    gsi,
-                    flags,
-                });
+                return Some(MadtIso { bus, gsi, flags });
             }
         }
 
@@ -107,7 +105,10 @@ fn ioapic_read_reg(ints: &mut PlatformInterrupts, reg: u8) -> u32 {
 }
 
 fn program_level_ioapic_redirection(ints: &mut PlatformInterrupts, gsi: u32, vector: u8) {
-    assert!(gsi <= (u8::MAX / 2) as u32, "GSI too large for IOAPIC register math");
+    assert!(
+        gsi <= (u8::MAX / 2) as u32,
+        "GSI too large for IOAPIC register math"
+    );
     let redir_low_index = 0x10u8 + (2 * gsi as u8);
     let redir_high_index = redir_low_index + 1;
 
@@ -139,8 +140,14 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
     // deliberate ABI between firmware tables and device models.
     assert_eq!(fadt.sci_int, 9, "FADT SCI_INT must remain IRQ9/GSI9");
     assert_eq!(fadt.smi_cmd_port, 0x00B2, "FADT SMI_CMD port changed");
-    assert_eq!(fadt.acpi_enable_cmd, 0xA0, "FADT ACPI_ENABLE command changed");
-    assert_eq!(fadt.acpi_disable_cmd, 0xA1, "FADT ACPI_DISABLE command changed");
+    assert_eq!(
+        fadt.acpi_enable_cmd, 0xA0,
+        "FADT ACPI_ENABLE command changed"
+    );
+    assert_eq!(
+        fadt.acpi_disable_cmd, 0xA1,
+        "FADT ACPI_DISABLE command changed"
+    );
     assert_eq!(fadt.pm1a_evt_blk, 0x0400, "FADT PM1a_EVT_BLK port changed");
     assert_eq!(fadt.pm1a_cnt_blk, 0x0404, "FADT PM1a_CNT_BLK port changed");
     assert_eq!(fadt.pm_tmr_blk, 0x0408, "FADT PM_TMR_BLK port changed");
@@ -183,8 +190,8 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
 
     // Ensure the firmware's MADT publishes SCI with the expected polarity/trigger.
     let sci_irq = fadt.sci_int as u8;
-    let sci_iso =
-        parse_madt_iso_for_source_irq(tables.madt.as_slice(), sci_irq).expect("missing MADT ISO for SCI");
+    let sci_iso = parse_madt_iso_for_source_irq(tables.madt.as_slice(), sci_irq)
+        .expect("missing MADT ISO for SCI");
     assert_eq!(sci_iso.bus, 0, "SCI ISO must be for ISA bus 0");
     assert_eq!(
         sci_iso.gsi,
@@ -232,12 +239,18 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
     // Guest performs standard ACPI enable handshake (write ACPI_ENABLE to SMI_CMD).
     bus.write(fadt.smi_cmd_port, 1, u32::from(fadt.acpi_enable_cmd));
     assert!(pm.borrow().is_acpi_enabled());
-    assert!(!pm.borrow().sci_level(), "SCI should remain deasserted without a pending event");
+    assert!(
+        !pm.borrow().sci_level(),
+        "SCI should remain deasserted without a pending event"
+    );
     assert_eq!(interrupts.borrow().get_pending(), None);
 
     // Trigger a PM1 event (power button) -> SCI level asserts -> IOAPIC delivers a vector.
     pm.borrow_mut().trigger_power_button();
-    assert!(pm.borrow().sci_level(), "PM1 event should assert SCI once SCI_EN is set");
+    assert!(
+        pm.borrow().sci_level(),
+        "PM1 event should assert SCI once SCI_EN is set"
+    );
     assert_eq!(interrupts.borrow().get_pending(), Some(0x60));
 
     {
@@ -260,7 +273,10 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
 
     // Typical ACPI handler clears the event status before EOI, deasserting SCI.
     bus.write(fadt.pm1a_evt_blk, 2, u32::from(PM1_STS_PWRBTN));
-    assert!(!pm.borrow().sci_level(), "Clearing PM1_STS should deassert SCI");
+    assert!(
+        !pm.borrow().sci_level(),
+        "Clearing PM1_STS should deassert SCI"
+    );
 
     {
         let mut ints = interrupts.borrow_mut();
@@ -327,7 +343,10 @@ fn acpi_pm_sci_legacy_pic_mode_raises_irq9_vector() {
     assert!(pm.borrow().sci_level());
 
     // With PIC offsets (0x20, 0x28), IRQ9 arrives as vector 0x29 (slave IRQ1).
-    let vector = interrupts.borrow().get_pending().expect("missing pending PIC vector for SCI");
+    let vector = interrupts
+        .borrow()
+        .get_pending()
+        .expect("missing pending PIC vector for SCI");
     assert_eq!(
         interrupts
             .borrow()
@@ -352,7 +371,10 @@ fn acpi_pm_sci_legacy_pic_mode_raises_irq9_vector() {
     }
 
     pm.borrow_mut().trigger_power_button();
-    let vector2 = interrupts.borrow().get_pending().expect("missing second PIC vector for SCI");
+    let vector2 = interrupts
+        .borrow()
+        .get_pending()
+        .expect("missing second PIC vector for SCI");
     assert_eq!(
         interrupts
             .borrow()

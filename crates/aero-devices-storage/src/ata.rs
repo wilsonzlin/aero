@@ -58,15 +58,11 @@ impl AtaDrive {
     }
 
     pub fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> io::Result<()> {
-        self.disk
-            .read_sectors(lba, buffer)
-            .map_err(map_disk_error)
+        self.disk.read_sectors(lba, buffer).map_err(map_disk_error)
     }
 
     pub fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> io::Result<()> {
-        self.disk
-            .write_sectors(lba, buffer)
-            .map_err(map_disk_error)
+        self.disk.write_sectors(lba, buffer).map_err(map_disk_error)
     }
 
     pub fn flush(&mut self) -> io::Result<()> {

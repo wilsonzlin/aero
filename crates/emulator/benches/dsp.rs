@@ -2,13 +2,13 @@
 fn main() {}
 
 #[cfg(feature = "legacy-audio")]
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+#[cfg(feature = "legacy-audio")]
 use emulator::io::audio::dsp::pcm::{PcmSampleFormat, PcmSpec};
 #[cfg(feature = "legacy-audio")]
 use emulator::io::audio::dsp::resample::ResamplerKind;
 #[cfg(feature = "legacy-audio")]
 use emulator::io::audio::dsp::StreamProcessor;
-#[cfg(feature = "legacy-audio")]
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 #[cfg(feature = "legacy-audio")]
 fn bench_convert_44k1_s16_stereo_to_48k_stereo(c: &mut Criterion) {

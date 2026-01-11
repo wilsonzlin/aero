@@ -11,9 +11,9 @@ struct MockHandle {
 
 impl OpfsSyncFileHandle for MockHandle {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+        let offset: usize = offset.try_into().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+        })?;
         if offset >= self.data.len() {
             return Ok(0);
         }
@@ -24,12 +24,12 @@ impl OpfsSyncFileHandle for MockHandle {
     }
 
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> std::io::Result<usize> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
-        let end = offset
-            .checked_add(buf.len())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+        let offset: usize = offset.try_into().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+        })?;
+        let end = offset.checked_add(buf.len()).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+        })?;
 
         if end > self.data.len() {
             self.data.resize(end, 0);

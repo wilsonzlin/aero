@@ -167,8 +167,7 @@ impl VbeDevice {
         let oem_ptr = make_far_ptr(Self::VBE_INFO_SEGMENT, Self::OEM_STRING_OFFSET);
         let vendor_ptr = make_far_ptr(Self::VBE_INFO_SEGMENT, Self::VENDOR_STRING_OFFSET);
         let product_ptr = make_far_ptr(Self::VBE_INFO_SEGMENT, Self::PRODUCT_STRING_OFFSET);
-        let product_rev_ptr =
-            make_far_ptr(Self::VBE_INFO_SEGMENT, Self::PRODUCT_REV_STRING_OFFSET);
+        let product_rev_ptr = make_far_ptr(Self::VBE_INFO_SEGMENT, Self::PRODUCT_REV_STRING_OFFSET);
         let mode_ptr = make_far_ptr(Self::VBE_INFO_SEGMENT, Self::MODE_LIST_OFFSET);
 
         let mut buf = [0u8; 512];

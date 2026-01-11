@@ -80,7 +80,9 @@ pub struct VecMemory {
 
 impl VecMemory {
     pub fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 }
 

@@ -111,7 +111,12 @@ impl PcCpuBus {
         Ok(self.platform.memory.read_u8(paddr))
     }
 
-    fn write_u8_access(&mut self, vaddr: u64, access: AccessType, value: u8) -> Result<(), Exception> {
+    fn write_u8_access(
+        &mut self,
+        vaddr: u64,
+        access: AccessType,
+        value: u8,
+    ) -> Result<(), Exception> {
         let paddr = self.translate(vaddr, access)?;
         self.platform.memory.write_u8(paddr, value);
         Ok(())
@@ -219,4 +224,3 @@ impl CpuBus for PcCpuBus {
         }
     }
 }
-

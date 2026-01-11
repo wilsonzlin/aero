@@ -45,9 +45,8 @@ fn wgsl_field_for_element(
     location_map: &dyn VertexLocationMap,
 ) -> Result<WgslVertexInputField, VertexInputError> {
     let location = location_map.location_for(e.usage, e.usage_index)?;
-    let ty = wgsl_type_for_vertex_format(vertex_format).ok_or(VertexInputError::UnsupportedDeclType {
-        ty: e.ty,
-    })?;
+    let ty = wgsl_type_for_vertex_format(vertex_format)
+        .ok_or(VertexInputError::UnsupportedDeclType { ty: e.ty })?;
     Ok(WgslVertexInputField {
         usage: e.usage,
         usage_index: e.usage_index,

@@ -1,4 +1,6 @@
-use aero_storage::{AeroSparseConfig, AeroSparseDisk, MemBackend, StorageBackend as _, VirtualDisk as _};
+use aero_storage::{
+    AeroSparseConfig, AeroSparseDisk, MemBackend, StorageBackend as _, VirtualDisk as _,
+};
 use emulator::io::storage::disk::ByteStorage;
 use emulator::io::storage::{DiskBackend as _, DiskFormat, VirtualDrive, WriteCachePolicy};
 
@@ -131,4 +133,3 @@ fn emulator_aerospar_roundtrip() {
     reopened.read_sectors(5, &mut read_buf).unwrap();
     assert_eq!(read_buf, write_buf);
 }
-

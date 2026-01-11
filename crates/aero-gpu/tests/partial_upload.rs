@@ -32,12 +32,7 @@ impl TextureWriter for CpuTexture {
     }
 }
 
-fn fill_rect_rgba(
-    frame: &mut [u8],
-    stride: usize,
-    rect: Rect,
-    rgba: [u8; 4],
-) {
+fn fill_rect_rgba(frame: &mut [u8], stride: usize, rect: Rect, rgba: [u8; 4]) {
     for y in rect.y..rect.y + rect.h {
         for x in rect.x..rect.x + rect.w {
             let off = y as usize * stride + x as usize * 4;
@@ -53,7 +48,12 @@ fn uploads_two_disjoint_rects_and_matches_expected_frame() -> Result<(), Present
     let bytes_per_pixel = 4usize;
     let stride = width as usize * bytes_per_pixel;
 
-    let mut presenter = Presenter::new(width, height, bytes_per_pixel, CpuTexture::new(width, height, bytes_per_pixel));
+    let mut presenter = Presenter::new(
+        width,
+        height,
+        bytes_per_pixel,
+        CpuTexture::new(width, height, bytes_per_pixel),
+    );
 
     // Start with an all-black frame.
     let frame0 = vec![0u8; stride * height as usize];

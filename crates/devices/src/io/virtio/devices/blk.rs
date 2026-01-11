@@ -152,9 +152,7 @@ impl VirtioBlkDevice {
             return Err(());
         }
 
-        let mut disk_offset = sector
-            .checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-            .ok_or(())?;
+        let mut disk_offset = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE).ok_or(())?;
 
         let mut transferred: u32 = 0;
         for desc in &chain.descs[1..chain.descs.len() - 1] {
@@ -166,9 +164,7 @@ impl VirtioBlkDevice {
                 self.drive.read_at(disk_offset, buf).map_err(|_| ())?;
             } else {
                 let mut tmp = vec![0u8; len];
-                self.drive
-                    .read_at(disk_offset, &mut tmp)
-                    .map_err(|_| ())?;
+                self.drive.read_at(disk_offset, &mut tmp).map_err(|_| ())?;
                 mem.write_from(desc.addr, &tmp).map_err(|_| ())?;
             }
             disk_offset = disk_offset.checked_add(desc.len as u64).ok_or(())?;
@@ -187,9 +183,7 @@ impl VirtioBlkDevice {
             return Err(());
         }
 
-        let mut disk_offset = sector
-            .checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-            .ok_or(())?;
+        let mut disk_offset = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE).ok_or(())?;
 
         for desc in &chain.descs[1..chain.descs.len() - 1] {
             if desc.flags & VIRTQ_DESC_F_WRITE != 0 {
@@ -490,4 +484,3 @@ mod tests {
         assert_eq!(irq.count, 1);
     }
 }
-

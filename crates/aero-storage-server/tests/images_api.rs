@@ -24,7 +24,9 @@ async fn spawn_server(image_root: &std::path::Path) -> (SocketAddr, tokio::task:
 async fn list_images_from_manifest() {
     let tmp = TempDir::new().unwrap();
     let image_path = tmp.path().join("win7.img");
-    tokio::fs::write(&image_path, vec![0u8; 1234]).await.unwrap();
+    tokio::fs::write(&image_path, vec![0u8; 1234])
+        .await
+        .unwrap();
 
     let manifest = r#"{
       "images": [

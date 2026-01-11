@@ -66,22 +66,34 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// Pong response to [`Command::Nop`].
-    Ack { seq: u32 },
+    Ack {
+        seq: u32,
+    },
 
     /// MMIO read response.
-    MmioReadResp { id: u32, data: Vec<u8> },
+    MmioReadResp {
+        id: u32,
+        data: Vec<u8>,
+    },
 
     /// Port I/O read response.
     ///
     /// The CPU side is expected to mask/truncate `value` based on the original
     /// `size` requested.
-    PortReadResp { id: u32, value: u32 },
+    PortReadResp {
+        id: u32,
+        value: u32,
+    },
 
     /// MMIO write completion response.
-    MmioWriteResp { id: u32 },
+    MmioWriteResp {
+        id: u32,
+    },
 
     /// Port I/O write completion response.
-    PortWriteResp { id: u32 },
+    PortWriteResp {
+        id: u32,
+    },
 
     /// Disk read completion response.
     ///
@@ -104,26 +116,42 @@ pub enum Event {
     },
 
     /// Frame completed and ready for presentation.
-    FrameReady { frame_id: u64 },
+    FrameReady {
+        frame_id: u64,
+    },
 
     /// IRQ line changed.
-    IrqRaise { irq: u8 },
-    IrqLower { irq: u8 },
+    IrqRaise {
+        irq: u8,
+    },
+    IrqLower {
+        irq: u8,
+    },
 
     /// System A20 gate line changed (typically via i8042 output port).
-    A20Set { enabled: bool },
+    A20Set {
+        enabled: bool,
+    },
 
     /// System reset requested (typically via i8042 output port / reset pulse).
     ResetRequest,
 
     /// Structured log record (UTF-8).
-    Log { level: LogLevel, message: String },
+    Log {
+        level: LogLevel,
+        message: String,
+    },
 
     /// Bytes written to a legacy serial port (16550).
-    SerialOutput { port: u16, data: Vec<u8> },
+    SerialOutput {
+        port: u16,
+        data: Vec<u8>,
+    },
 
     /// Worker encountered a fatal error (panic or triple fault).
-    Panic { message: String },
+    Panic {
+        message: String,
+    },
     TripleFault,
 }
 

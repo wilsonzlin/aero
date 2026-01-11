@@ -490,11 +490,7 @@ mod tests {
 
         let posbuf_base = 0x7000u64;
         hda.mmio_write(HDA_DPUBASE, 4, 0);
-        hda.mmio_write(
-            HDA_DPLBASE,
-            4,
-            (posbuf_base | DPLBASE_ENABLE as u64) as u64,
-        );
+        hda.mmio_write(HDA_DPLBASE, 4, (posbuf_base | DPLBASE_ENABLE as u64) as u64);
 
         let bdl_base = 0x4000u64;
         let buf0 = 0x5000u64;

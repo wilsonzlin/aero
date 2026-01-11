@@ -8,7 +8,14 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
         | ((offset as u32) & 0xFC)
 }
 
-fn read_dword(cfg: &mut PciConfigMechanism1, bus: &mut PciBus, b: u8, d: u8, f: u8, offset: u8) -> u32 {
+fn read_dword(
+    cfg: &mut PciConfigMechanism1,
+    bus: &mut PciBus,
+    b: u8,
+    d: u8,
+    f: u8,
+    offset: u8,
+) -> u32 {
     cfg.io_write(bus, 0xCF8, 4, cfg_addr(b, d, f, offset));
     cfg.io_read(bus, 0xCFC, 4)
 }

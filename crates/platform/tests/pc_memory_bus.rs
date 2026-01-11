@@ -21,7 +21,12 @@ impl RecordingMmio {
             mem,
             ..Default::default()
         }));
-        (Self { state: state.clone() }, state)
+        (
+            Self {
+                state: state.clone(),
+            },
+            state,
+        )
     }
 }
 
@@ -105,7 +110,9 @@ fn mmio_overrides_rom_and_ram() {
     let mut bus = new_bus(true, 2 * 1024 * 1024);
     let addr = 0x1000u64;
 
-    bus.ram_mut().write_from(addr, &[0x01, 0x02, 0x03, 0x04]).unwrap();
+    bus.ram_mut()
+        .write_from(addr, &[0x01, 0x02, 0x03, 0x04])
+        .unwrap();
     bus.map_rom(addr, Arc::from([0x10u8, 0x20, 0x30, 0x40].as_slice()))
         .unwrap();
 

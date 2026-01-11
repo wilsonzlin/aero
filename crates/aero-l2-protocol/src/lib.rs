@@ -52,10 +52,16 @@ pub enum DecodeError {
 impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            DecodeError::TooShort { len } => write!(f, "message too short: {len} < {L2_TUNNEL_HEADER_LEN}"),
+            DecodeError::TooShort { len } => {
+                write!(f, "message too short: {len} < {L2_TUNNEL_HEADER_LEN}")
+            }
             DecodeError::InvalidMagic { magic } => write!(f, "invalid magic: 0x{magic:02x}"),
-            DecodeError::UnsupportedVersion { version } => write!(f, "unsupported version: 0x{version:02x}"),
-            DecodeError::PayloadTooLarge { len, max } => write!(f, "payload too large: {len} > {max}"),
+            DecodeError::UnsupportedVersion { version } => {
+                write!(f, "unsupported version: 0x{version:02x}")
+            }
+            DecodeError::PayloadTooLarge { len, max } => {
+                write!(f, "payload too large: {len} > {max}")
+            }
         }
     }
 }
@@ -70,7 +76,9 @@ pub enum EncodeError {
 impl core::fmt::Display for EncodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            EncodeError::PayloadTooLarge { len, max } => write!(f, "payload too large: {len} > {max}"),
+            EncodeError::PayloadTooLarge { len, max } => {
+                write!(f, "payload too large: {len} > {max}")
+            }
         }
     }
 }
@@ -85,7 +93,12 @@ fn max_payload_for_type(msg_type: u8, limits: &Limits) -> usize {
     }
 }
 
-pub fn encode_with_limits(msg_type: u8, flags: u8, payload: &[u8], limits: &Limits) -> Result<Vec<u8>, EncodeError> {
+pub fn encode_with_limits(
+    msg_type: u8,
+    flags: u8,
+    payload: &[u8],
+    limits: &Limits,
+) -> Result<Vec<u8>, EncodeError> {
     let max = max_payload_for_type(msg_type, limits);
     if payload.len() > max {
         return Err(EncodeError::PayloadTooLarge {
@@ -125,7 +138,10 @@ pub fn encode_pong(payload: Option<&[u8]>) -> Result<Vec<u8>, EncodeError> {
     )
 }
 
-pub fn decode_with_limits<'a>(buf: &'a [u8], limits: &Limits) -> Result<L2Message<'a>, DecodeError> {
+pub fn decode_with_limits<'a>(
+    buf: &'a [u8],
+    limits: &Limits,
+) -> Result<L2Message<'a>, DecodeError> {
     if buf.len() < L2_TUNNEL_HEADER_LEN {
         return Err(DecodeError::TooShort { len: buf.len() });
     }
@@ -195,7 +211,10 @@ mod tests {
     fn rejects_wrong_magic_and_version() {
         let mut encoded = encode_frame(&[1u8, 2, 3]).unwrap();
         encoded[0] = 0x00;
-        assert!(matches!(decode_message(&encoded), Err(DecodeError::InvalidMagic { .. })));
+        assert!(matches!(
+            decode_message(&encoded),
+            Err(DecodeError::InvalidMagic { .. })
+        ));
 
         let mut encoded = encode_frame(&[1u8, 2, 3]).unwrap();
         encoded[1] = 0xFF;

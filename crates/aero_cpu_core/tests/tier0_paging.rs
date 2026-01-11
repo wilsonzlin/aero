@@ -152,4 +152,3 @@ fn long_mode_non_canonical_is_gp0() {
     let non_canonical = 0x0001_0000_0000_0000u64;
     assert_eq!(bus.read_u8(non_canonical), Err(Exception::gp0()));
 }
-

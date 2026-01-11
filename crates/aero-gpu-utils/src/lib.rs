@@ -133,7 +133,9 @@ mod wasm_tests {
     #[wasm_bindgen_test]
     fn validate_wgsl_errors_are_wasm_safe() {
         assert_eq!(
-            validate_wgsl_render_shader("@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(); }"),
+            validate_wgsl_render_shader(
+                "@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(); }"
+            ),
             Err(ShaderValidationError::MissingVertexStage),
         );
     }

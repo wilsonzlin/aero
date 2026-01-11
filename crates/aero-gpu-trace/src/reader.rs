@@ -291,7 +291,8 @@ fn read_record<R: Read + Seek>(reader: &mut R, end: u64) -> Result<TraceRecord, 
             let signal_fence = u64::from_le_bytes(payload[24..32].try_into().unwrap());
             let cmd_stream_blob_id = u64::from_le_bytes(payload[32..40].try_into().unwrap());
             let alloc_table_blob_id = u64::from_le_bytes(payload[40..48].try_into().unwrap());
-            let memory_range_count = u32::from_le_bytes(payload[48..52].try_into().unwrap()) as usize;
+            let memory_range_count =
+                u32::from_le_bytes(payload[48..52].try_into().unwrap()) as usize;
             let _reserved1 = u32::from_le_bytes(payload[52..56].try_into().unwrap());
 
             let required_len = header_size
@@ -309,7 +310,8 @@ fn read_record<R: Read + Seek>(reader: &mut R, end: u64) -> Result<TraceRecord, 
                 let alloc_id = u32::from_le_bytes(payload[off..off + 4].try_into().unwrap());
                 let flags = u32::from_le_bytes(payload[off + 4..off + 8].try_into().unwrap());
                 let gpa = u64::from_le_bytes(payload[off + 8..off + 16].try_into().unwrap());
-                let size_bytes = u64::from_le_bytes(payload[off + 16..off + 24].try_into().unwrap());
+                let size_bytes =
+                    u64::from_le_bytes(payload[off + 16..off + 24].try_into().unwrap());
                 let blob_id = u64::from_le_bytes(payload[off + 24..off + 32].try_into().unwrap());
                 memory_ranges.push(AerogpuMemoryRangeRef {
                     alloc_id,

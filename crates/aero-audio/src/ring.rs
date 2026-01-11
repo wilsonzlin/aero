@@ -97,8 +97,7 @@ impl AudioRingBuffer {
             let src = frame_idx * self.channels;
             let dst_frame = self.write_frame;
             let dst = dst_frame * self.channels;
-            self.data[dst..dst + self.channels]
-                .copy_from_slice(&samples[src..src + self.channels]);
+            self.data[dst..dst + self.channels].copy_from_slice(&samples[src..src + self.channels]);
             self.write_frame = (self.write_frame + 1) % self.capacity_frames;
         }
         self.len_frames += frames_to_write;

@@ -17,4 +17,3 @@ fn default_pci_pirq_routing_matches_device_model_router() {
     let cfg = AcpiConfig::default();
     assert_eq!(cfg.pirq_to_gsi, PciIntxRouterConfig::default().pirq_to_gsi);
 }
-

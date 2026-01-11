@@ -1,9 +1,8 @@
 use machine::{CpuState, FLAG_ALWAYS_ON, FLAG_IF};
 
 use super::{
-    ivt,
-    pci::PciConfigSpace,
-    rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
+    ivt, pci::PciConfigSpace, rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SEGMENT,
+    EBDA_BASE,
 };
 use crate::smbios::{SmbiosConfig, SmbiosTables};
 

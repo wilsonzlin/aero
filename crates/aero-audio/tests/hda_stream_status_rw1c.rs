@@ -20,7 +20,8 @@ fn stream_status_byte_is_rw1c_and_clears_intsts() {
     hda.codec_mut().execute_verb(4, (0x706u32 << 8) | 0x20);
     // 48kHz, 16-bit, mono.
     let fmt_raw: u16 = (1 << 4) | 0x0;
-    hda.codec_mut().execute_verb(4, (0x200u32 << 8) | (fmt_raw as u8 as u32));
+    hda.codec_mut()
+        .execute_verb(4, (0x200u32 << 8) | (fmt_raw as u8 as u32));
 
     let bdl_base = 0x1000u64;
     let pcm_base = 0x2000u64;
@@ -77,7 +78,8 @@ fn bcis_latches_without_ioce() {
     // Codec ADC (NID 4) -> stream tag 2.
     hda.codec_mut().execute_verb(4, (0x706u32 << 8) | 0x20);
     let fmt_raw: u16 = (1 << 4) | 0x0;
-    hda.codec_mut().execute_verb(4, (0x200u32 << 8) | (fmt_raw as u8 as u32));
+    hda.codec_mut()
+        .execute_verb(4, (0x200u32 << 8) | (fmt_raw as u8 as u32));
 
     let bdl_base = 0x1000u64;
     let pcm_base = 0x2000u64;

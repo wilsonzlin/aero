@@ -43,9 +43,10 @@ impl AeroGpuFormat {
     pub fn bytes_per_pixel(self) -> Option<usize> {
         match self {
             Self::Invalid | Self::D24UnormS8Uint | Self::D32Float => None,
-            Self::B8G8R8A8Unorm | Self::B8G8R8X8Unorm | Self::R8G8B8A8Unorm | Self::R8G8B8X8Unorm => {
-                Some(4)
-            }
+            Self::B8G8R8A8Unorm
+            | Self::B8G8R8X8Unorm
+            | Self::R8G8B8A8Unorm
+            | Self::R8G8B8X8Unorm => Some(4),
             Self::B5G6R5Unorm | Self::B5G5R5A1Unorm => Some(2),
         }
     }
@@ -163,7 +164,9 @@ impl AeroGpuScanoutConfig {
                         dst[3] = if a != 0 { 0xff } else { 0x00 };
                     }
                 }
-                AeroGpuFormat::Invalid | AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float => return None,
+                AeroGpuFormat::Invalid
+                | AeroGpuFormat::D24UnormS8Uint
+                | AeroGpuFormat::D32Float => return None,
             }
         }
 

@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt,
-    fs,
+    fmt, fs,
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
@@ -13,8 +12,8 @@ use std::{
 
 use crate::range_set::{ByteRange, RangeSet};
 use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH,
-    CONTENT_RANGE, ETAG, IF_RANGE, RANGE,
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING,
+    CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -123,8 +122,7 @@ impl Default for StreamingDiskOptions {
 }
 
 /// Persistent cache backend used for storing fetched chunks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StreamingCacheBackend {
     /// Store chunks as individual files under `cache_dir/chunks/`.
     Directory,
@@ -162,7 +160,11 @@ impl fmt::Debug for StreamingDiskConfig {
         // `Authorization` headers). Redact by default to avoid accidental leakage in logs.
         let url = redact_url_for_logs(&self.url);
 
-        let header_names: Vec<&str> = self.request_headers.iter().map(|(k, _)| k.as_str()).collect();
+        let header_names: Vec<&str> = self
+            .request_headers
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
 
         f.debug_struct("StreamingDiskConfig")
             .field("url", &url)
@@ -240,7 +242,11 @@ pub struct SparseFileChunkStore {
 }
 
 impl SparseFileChunkStore {
-    pub fn create(path: impl AsRef<Path>, total_size: u64, chunk_size: u64) -> Result<Self, StreamingDiskError> {
+    pub fn create(
+        path: impl AsRef<Path>,
+        total_size: u64,
+        chunk_size: u64,
+    ) -> Result<Self, StreamingDiskError> {
         let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -335,7 +341,11 @@ pub struct DirectoryChunkStore {
 }
 
 impl DirectoryChunkStore {
-    pub fn create(dir: impl Into<PathBuf>, total_size: u64, chunk_size: u64) -> Result<Self, StreamingDiskError> {
+    pub fn create(
+        dir: impl Into<PathBuf>,
+        total_size: u64,
+        chunk_size: u64,
+    ) -> Result<Self, StreamingDiskError> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
         Ok(Self {
@@ -595,7 +605,8 @@ impl StreamingDisk {
             }
         }
 
-        let backend_ok = cache_backend_looks_populated(&config.cache_dir, config.cache_backend, total_size);
+        let backend_ok =
+            cache_backend_looks_populated(&config.cache_dir, config.cache_backend, total_size);
 
         let cache: Arc<dyn ChunkStore> = match config.cache_backend {
             StreamingCacheBackend::Directory => Arc::new(DirectoryChunkStore::create(
@@ -773,7 +784,11 @@ impl StreamingDisk {
         }
 
         if sequential && read_ahead_chunks > 0 {
-            let next_chunk = if end == 0 { 0 } else { (end.saturating_sub(1) / chunk_size) + 1 };
+            let next_chunk = if end == 0 {
+                0
+            } else {
+                (end.saturating_sub(1) / chunk_size) + 1
+            };
             self.spawn_prefetch(next_chunk, read_ahead_chunks, token);
         }
 
@@ -825,10 +840,9 @@ impl StreamingDisk {
 
                 let token = self.inner.cancel_token.lock().await.clone();
                 self.ensure_chunk_cached(chunk_index, &token).await?;
-                self.inner
-                    .cache
-                    .read_chunk(chunk_index)?
-                    .ok_or_else(|| StreamingDiskError::Io("chunk vanished after re-download".to_string()))
+                self.inner.cache.read_chunk(chunk_index)?.ok_or_else(|| {
+                    StreamingDiskError::Io("chunk vanished after re-download".to_string())
+                })
             }
         }
     }
@@ -915,7 +929,9 @@ impl StreamingDisk {
             permit = self.inner.fetch_sem.acquire() => permit.map_err(|_| StreamingDiskError::Cancelled)?,
         };
 
-        let bytes = self.fetch_with_retries(chunk_start, chunk_end, token).await?;
+        let bytes = self
+            .fetch_with_retries(chunk_start, chunk_end, token)
+            .await?;
 
         if token.is_cancelled() {
             return Err(StreamingDiskError::Cancelled);
@@ -1152,7 +1168,11 @@ async fn probe_remote_size_and_validator(
     let mut head_total_size: Option<u64> = None;
     let mut head_validator: Option<String> = None;
 
-    let head = client.head(url.clone()).headers(request_headers.clone()).send().await;
+    let head = client
+        .head(url.clone())
+        .headers(request_headers.clone())
+        .send()
+        .await;
     if let Ok(resp) = head {
         if resp.status().is_success() {
             head_total_size = resp
@@ -1227,8 +1247,8 @@ fn build_header_map(headers: &[(String, String)]) -> Result<HeaderMap, Streaming
         let name_lower = name.to_ascii_lowercase();
         let name = HeaderName::from_bytes(name_lower.as_bytes())
             .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?;
-        let value =
-            HeaderValue::from_str(value).map_err(|e| StreamingDiskError::Protocol(e.to_string()))?;
+        let value = HeaderValue::from_str(value)
+            .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?;
         out.insert(name, value);
     }
     Ok(out)

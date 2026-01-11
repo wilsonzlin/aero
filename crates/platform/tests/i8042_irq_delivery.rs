@@ -2,9 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aero_devices::i8042::I8042Ports;
-use aero_platform::interrupts::{
-    InterruptController, PlatformInterruptMode, PlatformInterrupts,
-};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 
 fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
     let redtbl_low = 0x10u32 + gsi * 2;
@@ -90,7 +88,10 @@ fn i8042_keyboard_irq1_delivers_ioapic_vector() {
 
     let i8042 = I8042Ports::new();
     i8042.connect_irqs_to_platform_interrupts(interrupts.clone());
-    i8042.controller().borrow_mut().inject_browser_key("KeyA", true);
+    i8042
+        .controller()
+        .borrow_mut()
+        .inject_browser_key("KeyA", true);
 
     assert_eq!(interrupts.borrow().get_pending(), Some(0x31));
 }

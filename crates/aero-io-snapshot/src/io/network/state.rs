@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::io::state::codec::{Decoder, Encoder};
-use crate::io::state::{IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use crate::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Ipv4Addr(pub [u8; 4]);
@@ -289,4 +291,3 @@ impl IoSnapshot for NetworkStackState {
         Ok(())
     }
 }
-

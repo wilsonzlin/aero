@@ -10,7 +10,9 @@ struct VecMemory {
 
 impl VecMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -144,11 +146,17 @@ fn vblank_tick_updates_counters_and_latches_irq_status() {
 
     let t0 = Instant::now();
     dev.tick(t0);
-    assert_eq!(dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK, 0);
+    assert_eq!(
+        dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK,
+        0
+    );
     assert_eq!(dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_SEQ_LO, 4), 0);
 
     dev.tick(t0 + Duration::from_millis(100));
-    assert_ne!(dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK, 0);
+    assert_ne!(
+        dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK,
+        0
+    );
 
     let seq = (dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_SEQ_LO, 4) as u64)
         | ((dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_SEQ_HI, 4) as u64) << 32);

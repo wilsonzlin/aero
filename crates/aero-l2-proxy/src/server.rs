@@ -144,4 +144,3 @@ fn has_subprotocol(headers: &HeaderMap, required: &str) -> bool {
         .map(str::trim)
         .any(|proto| proto == required)
 }
-

@@ -22,7 +22,9 @@ impl DnsService {
         max_ttl_secs: u32,
     ) -> Result<Self> {
         let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap_or_else(|err| {
-            tracing::warn!("failed to load system DNS config ({err}); using default resolver config");
+            tracing::warn!(
+                "failed to load system DNS config ({err}); using default resolver config"
+            );
             TokioAsyncResolver::tokio(
                 trust_dns_resolver::config::ResolverConfig::default(),
                 trust_dns_resolver::config::ResolverOpts::default(),
@@ -72,4 +74,3 @@ fn ttl_secs_from_valid_until(valid_until: Option<Instant>, default_ttl: u32, max
         ttl
     }
 }
-

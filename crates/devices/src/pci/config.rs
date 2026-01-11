@@ -216,7 +216,9 @@ impl PciConfigSpace {
     }
 
     pub fn bar_range(&self, index: u8) -> Option<PciBarRange> {
-        self.bars.get(usize::from(index)).and_then(|bar| bar.range())
+        self.bars
+            .get(usize::from(index))
+            .and_then(|bar| bar.range())
     }
 
     pub fn set_bar_base(&mut self, index: u8, base: u64) {
@@ -282,7 +284,12 @@ impl PciConfigSpace {
         let _ = self.write_with_effects(offset, size, value);
     }
 
-    pub fn write_with_effects(&mut self, offset: u16, size: usize, value: u32) -> PciConfigWriteEffects {
+    pub fn write_with_effects(
+        &mut self,
+        offset: u16,
+        size: usize,
+        value: u32,
+    ) -> PciConfigWriteEffects {
         assert!(matches!(size, 1 | 2 | 4));
         let offset = offset as usize;
         assert!(offset + size <= PCI_CONFIG_SPACE_SIZE);
@@ -563,7 +570,10 @@ impl PciConfigSpace {
 
         // High dword of a 64-bit BAR.
         if self.bars[bar_index].def.is_none() && bar_index > 0 {
-            if matches!(self.bars[bar_index - 1].def, Some(PciBarDefinition::Mmio64 { .. })) {
+            if matches!(
+                self.bars[bar_index - 1].def,
+                Some(PciBarDefinition::Mmio64 { .. })
+            ) {
                 return self.write_bar64_high(bar_index - 1, value);
             }
         }
@@ -607,7 +617,13 @@ impl PciConfigSpace {
         if old_range == new_range {
             (bar_index, PciBarChange::Unchanged)
         } else {
-            (bar_index, PciBarChange::Changed { old: old_range, new: new_range })
+            (
+                bar_index,
+                PciBarChange::Changed {
+                    old: old_range,
+                    new: new_range,
+                },
+            )
         }
     }
 
@@ -641,7 +657,13 @@ impl PciConfigSpace {
         if old_range == new_range {
             (low_index, PciBarChange::Unchanged)
         } else {
-            (low_index, PciBarChange::Changed { old: old_range, new: new_range })
+            (
+                low_index,
+                PciBarChange::Changed {
+                    old: old_range,
+                    new: new_range,
+                },
+            )
         }
     }
 

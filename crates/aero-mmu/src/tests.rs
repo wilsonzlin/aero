@@ -107,8 +107,14 @@ fn no_paging_is_identity() {
 
     mmu.set_cr0(0);
 
-    assert_eq!(mmu.translate(&mut mem, 0x1234, AccessType::Read, 0), Ok(0x1234));
-    assert_eq!(mmu.translate(&mut mem, 0xdead_beef, AccessType::Write, 3), Ok(0xdead_beef));
+    assert_eq!(
+        mmu.translate(&mut mem, 0x1234, AccessType::Read, 0),
+        Ok(0x1234)
+    );
+    assert_eq!(
+        mmu.translate(&mut mem, 0xdead_beef, AccessType::Write, 3),
+        Ok(0xdead_beef)
+    );
     // Linear addresses are 32-bit when paging is disabled.
     assert_eq!(
         mmu.translate(&mut mem, 0x1_0000_0000u64 + 0x5678, AccessType::Read, 0),
@@ -128,14 +134,20 @@ fn legacy32_4kb_translation_sets_accessed_and_dirty() {
     // PDE[0] -> PT
     mem.write_u32_raw(pd_base, (pt_base as u32) | (PTE_P | PTE_RW | PTE_US) as u32);
     // PTE[0] -> page
-    mem.write_u32_raw(pt_base, (page_base as u32) | (PTE_P | PTE_RW | PTE_US) as u32);
+    mem.write_u32_raw(
+        pt_base,
+        (page_base as u32) | (PTE_P | PTE_RW | PTE_US) as u32,
+    );
 
     mmu.set_cr3(pd_base);
     mmu.set_cr4(0);
     mmu.set_cr0(CR0_PG);
 
     let vaddr = 0x123u64;
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
 
     let pde = mem.read_u32_raw(pd_base);
     let pte = mem.read_u32_raw(pt_base);
@@ -144,7 +156,10 @@ fn legacy32_4kb_translation_sets_accessed_and_dirty() {
     assert_eq!(pte & (PTE_D as u32), 0);
 
     // Write should set the dirty bit even on a TLB hit.
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Write, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Write, 3),
+        Ok(page_base + vaddr)
+    );
     let pte2 = mem.read_u32_raw(pt_base);
     assert_ne!(pte2 & (PTE_D as u32), 0);
 }
@@ -167,10 +182,16 @@ fn legacy32_4mb_translation_sets_dirty_on_tlb_hit() {
     mmu.set_cr0(CR0_PG);
 
     let vaddr = 0x0040_1234u64;
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(vaddr & 0x3f_ffff));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(vaddr & 0x3f_ffff)
+    );
 
     // Dirty must be set on a subsequent write even if the translation hits in the TLB.
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Write, 3), Ok(vaddr & 0x3f_ffff));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Write, 3),
+        Ok(vaddr & 0x3f_ffff)
+    );
     let pde_after = mem.read_u32_raw(pde_addr);
     assert_ne!(pde_after & (PTE_D as u32), 0);
 }
@@ -197,7 +218,10 @@ fn pae_4kb_translation_sets_accessed_and_dirty() {
     mmu.set_cr0(CR0_PG);
 
     let vaddr = 0x456u64;
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
 
     // PDPT entries do not have an accessed bit in IA-32 PAE paging.
     assert_eq!(mem.read_u64_raw(pdpt_base) & PTE_A64, 0);
@@ -205,7 +229,10 @@ fn pae_4kb_translation_sets_accessed_and_dirty() {
     assert_ne!(mem.read_u64_raw(pt_base) & PTE_A64, 0);
     assert_eq!(mem.read_u64_raw(pt_base) & PTE_D64, 0);
 
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Write, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Write, 3),
+        Ok(page_base + vaddr)
+    );
     assert_ne!(mem.read_u64_raw(pt_base) & PTE_D64, 0);
 }
 
@@ -232,9 +259,14 @@ fn long4_canonical_check_and_nx() {
     mmu.set_cr0(CR0_PG);
 
     let vaddr = 0x789u64;
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
 
-    let pf = mmu.translate(&mut mem, vaddr, AccessType::Execute, 3).unwrap_err();
+    let pf = mmu
+        .translate(&mut mem, vaddr, AccessType::Execute, 3)
+        .unwrap_err();
     assert_eq!(
         pf,
         TranslateFault::PageFault(PageFault {
@@ -275,18 +307,27 @@ fn tlb_hit_avoids_page_walk_and_invlpg_forces_miss() {
     let vaddr = 0x234u64;
 
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert!(mem.reads() > 0);
 
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert_eq!(mem.reads(), 0);
     assert_eq!(mem.writes(), 0);
 
     mmu.invlpg(vaddr);
 
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert!(mem.reads() > 0);
 }
 
@@ -309,7 +350,10 @@ fn pae_2mb_large_page_translation() {
     mmu.set_cr0(CR0_PG);
 
     let vaddr = 0x0010_1234u64; // within first 2MB
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(vaddr)
+    );
 }
 
 #[test]
@@ -360,7 +404,10 @@ fn long4_large_pages_2mb_and_1gb_translation() {
         mmu.set_cr0(CR0_PG);
 
         let vaddr = 0x0010_5678u64;
-        assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(vaddr));
+        assert_eq!(
+            mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+            Ok(vaddr)
+        );
     }
 
     // 1GB translation via PDPTE.PS
@@ -381,7 +428,10 @@ fn long4_large_pages_2mb_and_1gb_translation() {
         mmu.set_cr0(CR0_PG);
 
         let vaddr = 0x0020_1234u64;
-        assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(vaddr));
+        assert_eq!(
+            mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+            Ok(vaddr)
+        );
     }
 }
 
@@ -420,7 +470,10 @@ fn permission_faults_and_wp_semantics() {
     );
 
     // Supervisor write should succeed with WP=0 (CR0.WP=0) and set dirty.
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Write, 0), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Write, 0),
+        Ok(page_base + vaddr)
+    );
     assert_ne!(mem.read_u64_raw(pt_base) & PTE_D64, 0);
 
     // Enabling CR0.WP should make supervisor writes fault.
@@ -458,13 +511,19 @@ fn global_pages_survive_cr3_reload_with_pge() {
     let vaddr = 0x234u64;
 
     // Fill the TLB.
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
 
     // CR3 reload should keep global entries.
     mmu.set_cr3(pml4_base);
 
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert_eq!(mem.reads(), 0);
     assert_eq!(mem.writes(), 0);
 }
@@ -656,10 +715,15 @@ fn fuzz_long4_4kb_walk_matches_reference_model() {
             let is_user = rng.gen_bool();
 
             let expected =
-                ref_translate_long4_4kb(&mem, pml4_base, wp, nx_enabled, vaddr, access, is_user).map_err(TranslateFault::PageFault);
+                ref_translate_long4_4kb(&mem, pml4_base, wp, nx_enabled, vaddr, access, is_user)
+                    .map_err(TranslateFault::PageFault);
             let got = mmu.translate(&mut mem, vaddr, access, if is_user { 3 } else { 0 });
 
-            assert_eq!(got, expected, "mismatch at vaddr=0x{:x} access={access:?} user={is_user}", vaddr);
+            assert_eq!(
+                got, expected,
+                "mismatch at vaddr=0x{:x} access={access:?} user={is_user}",
+                vaddr
+            );
         }
     }
 }
@@ -690,31 +754,46 @@ fn pcid_tags_tlb_entries_and_invpcid_flushes_single_context() {
     // PCID=1: populate TLB.
     mmu.set_cr3(base_cr3 | 1);
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert!(mem.reads() > 0);
 
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert_eq!(mem.reads(), 0);
     assert_eq!(mem.writes(), 0);
 
     // Switching to a different PCID should not match existing entries.
     mmu.set_cr3(base_cr3 | 2);
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert!(mem.reads() > 0);
 
     // Switching back with CR3[63]=1 (no-flush) preserves PCID=1 entries.
     mmu.set_cr3(base_cr3 | 1 | (1u64 << 63));
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert_eq!(mem.reads(), 0);
     assert_eq!(mem.writes(), 0);
 
     // INVPCID single-context should drop only the requested PCID.
     mmu.invpcid(1, InvpcidType::SingleContext);
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert!(mem.reads() > 0);
 }
 
@@ -755,13 +834,19 @@ fn pcid_invlpg_invalidates_current_pcid_only() {
 
     // PCID=1 should miss now.
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert!(mem.reads() > 0);
 
     // PCID=2 should still hit (INVLPG shouldn't invalidate other PCIDs).
     mmu.set_cr3(base_cr3 | 2 | (1u64 << 63));
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert_eq!(mem.reads(), 0);
     assert_eq!(mem.writes(), 0);
 }
@@ -791,19 +876,28 @@ fn pcid_invlpg_invalidates_global_for_all_pcids() {
 
     // Populate global entry under PCID=1.
     mmu.set_cr3(base_cr3 | 1);
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
 
     // Should hit under a different PCID because it's global.
     mmu.set_cr3(base_cr3 | 2);
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert_eq!(mem.reads(), 0);
     assert_eq!(mem.writes(), 0);
 
     // INVLPG must invalidate global translations too.
     mmu.invlpg(vaddr);
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert!(mem.reads() > 0);
 }
 
@@ -844,13 +938,19 @@ fn invpcid_individual_address_targets_only_specified_pcid() {
     // PCID=1 should miss now.
     mmu.set_cr3(base_cr3 | 1 | (1u64 << 63));
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert!(mem.reads() > 0);
 
     // PCID=2 should still hit.
     mmu.set_cr3(base_cr3 | 2 | (1u64 << 63));
     mem.reset_counters();
-    assert_eq!(mmu.translate(&mut mem, vaddr, AccessType::Read, 3), Ok(page_base + vaddr));
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
     assert_eq!(mem.reads(), 0);
     assert_eq!(mem.writes(), 0);
 }

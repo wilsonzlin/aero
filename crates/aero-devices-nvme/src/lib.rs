@@ -21,8 +21,12 @@
 use std::collections::HashMap;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
-use aero_io_snapshot::io::storage::state::{NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+use aero_io_snapshot::io::storage::state::{
+    NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
+};
 use memory::MemoryBus;
 
 const PAGE_SIZE: usize = 4096;
@@ -36,7 +40,10 @@ pub enum DiskError {
         sectors: u64,
         capacity_sectors: u64,
     },
-    UnalignedBuffer { len: usize, sector_size: u32 },
+    UnalignedBuffer {
+        len: usize,
+        sector_size: u32,
+    },
 }
 
 pub type DiskResult<T> = Result<T, DiskError>;
@@ -219,11 +226,8 @@ impl NvmeController {
         let mpsmin: u64 = 0; // 2^(12 + 0) = 4KiB.
         let mpsmax: u64 = 0;
         let css_nvm: u64 = 1; // NVM command set supported.
-        let cap = (mqes & 0xffff)
-            | (css_nvm << 37)
-            | (mpsmin << 48)
-            | (mpsmax << 52)
-            | (dstrd << 32);
+        let cap =
+            (mqes & 0xffff) | (css_nvm << 37) | (mpsmin << 48) | (mpsmax << 52) | (dstrd << 32);
 
         NvmeController {
             disk,
@@ -263,13 +267,7 @@ impl NvmeController {
         }
     }
 
-    pub fn mmio_write(
-        &mut self,
-        offset: u64,
-        size: usize,
-        value: u64,
-        memory: &mut dyn MemoryBus,
-    ) {
+    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64, memory: &mut dyn MemoryBus) {
         match (offset, size) {
             (0x000c, 4) => {
                 self.intms |= value as u32;
@@ -359,12 +357,7 @@ impl NvmeController {
         self.intx_level = false;
     }
 
-    fn write_doorbell(
-        &mut self,
-        offset: u64,
-        value: u32,
-        memory: &mut dyn MemoryBus,
-    ) {
+    fn write_doorbell(&mut self, offset: u64, value: u32, memory: &mut dyn MemoryBus) {
         if self.csts & 1 == 0 {
             return;
         }
@@ -457,11 +450,7 @@ impl NvmeController {
         self.refresh_intx_level();
     }
 
-    fn process_queue_pair_io(
-        &mut self,
-        qid: u16,
-        memory: &mut dyn MemoryBus,
-    ) {
+    fn process_queue_pair_io(&mut self, qid: u16, memory: &mut dyn MemoryBus) {
         let cqid = match self.io_sqs.get(&qid).map(|sq| sq.cqid) {
             Some(cqid) => cqid,
             None => return,
@@ -498,11 +487,7 @@ impl NvmeController {
         self.refresh_intx_level();
     }
 
-    fn execute_admin(
-        &mut self,
-        cmd: NvmeCommand,
-        memory: &mut dyn MemoryBus,
-    ) -> (NvmeStatus, u32) {
+    fn execute_admin(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
         if cmd.psdt != 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
@@ -515,11 +500,7 @@ impl NvmeController {
         }
     }
 
-    fn execute_io(
-        &mut self,
-        cmd: NvmeCommand,
-        memory: &mut dyn MemoryBus,
-    ) -> (NvmeStatus, u32) {
+    fn execute_io(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
         if cmd.psdt != 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
@@ -532,11 +513,7 @@ impl NvmeController {
         }
     }
 
-    fn cmd_identify(
-        &mut self,
-        cmd: NvmeCommand,
-        memory: &mut dyn MemoryBus,
-    ) -> (NvmeStatus, u32) {
+    fn cmd_identify(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
         let cns = (cmd.cdw10 & 0xff) as u8;
         let data = match cns {
             0x01 => self.identify_controller(),
@@ -615,11 +592,7 @@ impl NvmeController {
         (NvmeStatus::SUCCESS, 0)
     }
 
-    fn cmd_read(
-        &mut self,
-        cmd: NvmeCommand,
-        memory: &mut dyn MemoryBus,
-    ) -> (NvmeStatus, u32) {
+    fn cmd_read(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
         if cmd.nsid != 1 {
             return (NvmeStatus::INVALID_NS, 0);
         }
@@ -651,11 +624,7 @@ impl NvmeController {
         (status, 0)
     }
 
-    fn cmd_write(
-        &mut self,
-        cmd: NvmeCommand,
-        memory: &mut dyn MemoryBus,
-    ) -> (NvmeStatus, u32) {
+    fn cmd_write(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
         if cmd.nsid != 1 {
             return (NvmeStatus::INVALID_NS, 0);
         }
@@ -922,11 +891,7 @@ impl IoSnapshot for NvmeController {
     }
 }
 
-fn read_command(
-    sq_base: u64,
-    head: u16,
-    memory: &mut dyn MemoryBus,
-) -> NvmeCommand {
+fn read_command(sq_base: u64, head: u16, memory: &mut dyn MemoryBus) -> NvmeCommand {
     let mut bytes = [0u8; 64];
     let addr = sq_base + head as u64 * 64;
     memory.read_physical(addr, &mut bytes);
@@ -1087,7 +1052,7 @@ impl PciConfig {
             0x00 => (Self::DEVICE_ID as u32) << 16 | (Self::VENDOR_ID as u32),
             0x04 => (self.status as u32) << 16 | (self.command as u32),
             0x08 => (0x01u32 << 24) | (0x08u32 << 16) | (0x02u32 << 8), // NVMe class code
-            0x0c => 0x00 << 16, // header type 0x00
+            0x0c => 0x00 << 16,                                         // header type 0x00
             0x10 => {
                 if self.bar0_probe {
                     let size = bar0_size.max(0x10);
@@ -1224,7 +1189,9 @@ impl IoSnapshot for NvmePciDevice {
         if let Some(buf) = r.bytes(TAG_CONTROLLER) {
             self.controller.load_state(buf)?;
         } else {
-            return Err(SnapshotError::InvalidFieldEncoding("missing nvme controller state"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "missing nvme controller state",
+            ));
         }
 
         Ok(())
@@ -1244,7 +1211,9 @@ mod tests {
 
     impl TestMem {
         fn new(size: usize) -> Self {
-            Self { buf: vec![0u8; size] }
+            Self {
+                buf: vec![0u8; size],
+            }
         }
     }
 
@@ -1276,7 +1245,10 @@ mod tests {
             let sector_size = 512u32;
             Self {
                 sector_size,
-                data: Arc::new(Mutex::new(vec![0u8; sectors as usize * sector_size as usize])),
+                data: Arc::new(Mutex::new(vec![
+                    0u8;
+                    sectors as usize * sector_size as usize
+                ])),
                 flushed: Arc::new(Mutex::new(0)),
             }
         }

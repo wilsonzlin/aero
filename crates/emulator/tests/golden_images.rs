@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use emulator::devices::vga::{
-    Mode12hRenderer, Mode13hRenderer, TextModeRenderer, VBE_LFB_BASE, VgaDac, VgaDevice, VgaMemory,
-    VramPlane,
+    Mode12hRenderer, Mode13hRenderer, TextModeRenderer, VgaDac, VgaDevice, VgaMemory, VramPlane,
+    VBE_LFB_BASE,
 };
 use emulator::io::PortIO;
 use image::RgbaImage;
@@ -70,7 +70,8 @@ fn program_ega_palette(dac: &mut VgaDac) {
     // standard mode 03h mapping so text rendering that honours the AC palette sees the expected
     // 16-colour values.
     const MODE03_DAC_MAP: [u8; 16] = [
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E,
+        0x3F,
     ];
     for (i, &dac_idx) in MODE03_DAC_MAP.iter().enumerate() {
         let [r, g, b] = EGA[i];
@@ -194,7 +195,8 @@ fn golden_mode_13h_color_bars() {
 #[test]
 fn golden_vbe_1024x768x32_gradient() {
     let mut vga = VgaDevice::new();
-    vga.set_mode(0x4118).expect("set VBE mode 1024x768x32 with LFB");
+    vga.set_mode(0x4118)
+        .expect("set VBE mode 1024x768x32 with LFB");
     assert!(vga.is_lfb_enabled());
     assert_eq!(vga.resolution(), Some((1024, 768)));
     assert_eq!(vga.mode_info(0x118).unwrap().phys_base_ptr(), VBE_LFB_BASE);

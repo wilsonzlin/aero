@@ -1,8 +1,8 @@
 use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};
 use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
-use aero_platform::ChipsetState;
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::ResetLatch;
+use aero_platform::ChipsetState;
 
 const RESET_CS: u16 = 0xF000;
 const RESET_IP: u16 = 0xFFF0;
@@ -120,10 +120,7 @@ impl TestVm {
         let chipset = ChipsetState::new(false);
 
         let mut io = IoPortBus::new();
-        io.register(
-            RESET_CTRL_PORT,
-            Box::new(ResetCtrl::new(reset_sink)),
-        );
+        io.register(RESET_CTRL_PORT, Box::new(ResetCtrl::new(reset_sink)));
 
         let i8042 = I8042Ports::new();
         let controller = i8042.controller();

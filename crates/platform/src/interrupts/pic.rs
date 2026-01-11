@@ -83,8 +83,7 @@ impl Pic8259 {
         };
 
         if irq < 8 {
-            self.inner
-                .port_write_u8(MASTER_CMD, 0x60 | (irq & 0x07));
+            self.inner.port_write_u8(MASTER_CMD, 0x60 | (irq & 0x07));
         } else {
             self.inner
                 .port_write_u8(SLAVE_CMD, 0x60 | ((irq - 8) & 0x07));

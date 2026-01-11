@@ -60,12 +60,14 @@ impl HidReportItem {
             self.report_size != 0,
             "invalid HID report item: report_size must be non-zero"
         );
-        self.report_size.checked_mul(self.report_count).unwrap_or_else(|| {
-            panic!(
-                "invalid HID report item: report_size * report_count overflows u32 ({} * {})",
-                self.report_size, self.report_count
-            )
-        })
+        self.report_size
+            .checked_mul(self.report_count)
+            .unwrap_or_else(|| {
+                panic!(
+                    "invalid HID report item: report_size * report_count overflows u32 ({} * {})",
+                    self.report_size, self.report_count
+                )
+            })
     }
 }
 
@@ -146,10 +148,7 @@ impl LocalState {
         self.usage_maximum = None;
     }
 
-    fn set_usage_page_override(
-        &mut self,
-        page: u32,
-    ) -> Result<(), HidDescriptorError> {
+    fn set_usage_page_override(&mut self, page: u32) -> Result<(), HidDescriptorError> {
         if let Some(existing) = self.usage_page_override {
             if existing != page {
                 return Err(HidDescriptorError::MultipleUsagePages {
@@ -366,10 +365,9 @@ pub fn parse_report_descriptor(
                             9 => {
                                 get_or_create_report(&mut current.output_reports, global.report_id)
                             }
-                            11 => get_or_create_report(
-                                &mut current.feature_reports,
-                                global.report_id,
-                            ),
+                            11 => {
+                                get_or_create_report(&mut current.feature_reports, global.report_id)
+                            }
                             _ => unreachable!(),
                         };
                         report.items.push(item);
@@ -430,43 +428,41 @@ pub fn parse_report_descriptor(
                 }
             }
             // Global items.
-            1 => {
-                match tag {
-                    0 => global.usage_page = parse_unsigned(data),
-                    1 => global.logical_minimum = parse_signed(data),
-                    2 => global.logical_maximum = parse_signed(data),
-                    3 => global.physical_minimum = parse_signed(data),
-                    4 => global.physical_maximum = parse_signed(data),
-                    5 => global.unit_exponent = parse_unit_exponent(data)?,
-                    6 => global.unit = parse_unsigned(data),
-                    7 => global.report_size = parse_unsigned(data),
-                    8 => global.report_id = parse_unsigned(data),
-                    9 => global.report_count = parse_unsigned(data),
-                    10 => {
-                        if !data.is_empty() {
-                            return Err(HidDescriptorError::InvalidItemSize {
-                                context: "Push",
-                                size: data.len(),
-                            });
-                        }
-                        global_stack.push(global.clone());
+            1 => match tag {
+                0 => global.usage_page = parse_unsigned(data),
+                1 => global.logical_minimum = parse_signed(data),
+                2 => global.logical_maximum = parse_signed(data),
+                3 => global.physical_minimum = parse_signed(data),
+                4 => global.physical_maximum = parse_signed(data),
+                5 => global.unit_exponent = parse_unit_exponent(data)?,
+                6 => global.unit = parse_unsigned(data),
+                7 => global.report_size = parse_unsigned(data),
+                8 => global.report_id = parse_unsigned(data),
+                9 => global.report_count = parse_unsigned(data),
+                10 => {
+                    if !data.is_empty() {
+                        return Err(HidDescriptorError::InvalidItemSize {
+                            context: "Push",
+                            size: data.len(),
+                        });
                     }
-                    11 => {
-                        if !data.is_empty() {
-                            return Err(HidDescriptorError::InvalidItemSize {
-                                context: "Pop",
-                                size: data.len(),
-                            });
-                        }
-                        global = global_stack
-                            .pop()
-                            .ok_or(HidDescriptorError::GlobalStackUnderflow)?;
-                    }
-                    _ => {
-                        return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
-                    }
+                    global_stack.push(global.clone());
                 }
-            }
+                11 => {
+                    if !data.is_empty() {
+                        return Err(HidDescriptorError::InvalidItemSize {
+                            context: "Pop",
+                            size: data.len(),
+                        });
+                    }
+                    global = global_stack
+                        .pop()
+                        .ok_or(HidDescriptorError::GlobalStackUnderflow)?;
+                }
+                _ => {
+                    return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
+                }
+            },
             // Local items.
             2 => {
                 match tag {
@@ -805,57 +801,54 @@ impl<'a> Iterator for ReportsInSynthOrder<'a> {
                     mut stage,
                     mut report_idx,
                     mut item_idx,
-                } => {
-                    loop {
-                        let (kind, reports): (Option<HidReportKind>, &[HidReportInfo]) =
-                            match stage {
-                                0 => (
-                                    Some(HidReportKind::Input),
-                                    collection.input_reports.as_slice(),
-                                ),
-                                1 => (
-                                    Some(HidReportKind::Output),
-                                    collection.output_reports.as_slice(),
-                                ),
-                                2 => (
-                                    Some(HidReportKind::Feature),
-                                    collection.feature_reports.as_slice(),
-                                ),
-                                _ => (None, &[]),
-                            };
+                } => loop {
+                    let (kind, reports): (Option<HidReportKind>, &[HidReportInfo]) = match stage {
+                        0 => (
+                            Some(HidReportKind::Input),
+                            collection.input_reports.as_slice(),
+                        ),
+                        1 => (
+                            Some(HidReportKind::Output),
+                            collection.output_reports.as_slice(),
+                        ),
+                        2 => (
+                            Some(HidReportKind::Feature),
+                            collection.feature_reports.as_slice(),
+                        ),
+                        _ => (None, &[]),
+                    };
 
-                        if let Some(kind) = kind {
-                            if let Some(report) = reports.get(report_idx) {
-                                if let Some(item) = report.items.get(item_idx) {
-                                    item_idx += 1;
-                                    self.stack.push(Frame::Collection {
-                                        collection,
-                                        stage,
-                                        report_idx,
-                                        item_idx,
-                                    });
-                                    return Some((kind, report.report_id, item));
-                                }
-
-                                report_idx += 1;
-                                item_idx = 0;
-                                continue;
+                    if let Some(kind) = kind {
+                        if let Some(report) = reports.get(report_idx) {
+                            if let Some(item) = report.items.get(item_idx) {
+                                item_idx += 1;
+                                self.stack.push(Frame::Collection {
+                                    collection,
+                                    stage,
+                                    report_idx,
+                                    item_idx,
+                                });
+                                return Some((kind, report.report_id, item));
                             }
-                        }
 
-                        stage += 1;
-                        report_idx = 0;
-                        item_idx = 0;
-
-                        if stage >= 3 {
-                            self.stack.push(Frame::Collections {
-                                collections: &collection.children,
-                                next_idx: 0,
-                            });
-                            break;
+                            report_idx += 1;
+                            item_idx = 0;
+                            continue;
                         }
                     }
-                }
+
+                    stage += 1;
+                    report_idx = 0;
+                    item_idx = 0;
+
+                    if stage >= 3 {
+                        self.stack.push(Frame::Collections {
+                            collections: &collection.children,
+                            next_idx: 0,
+                        });
+                        break;
+                    }
+                },
             }
         }
     }
@@ -959,7 +952,11 @@ pub fn has_report_ids(collections: &[HidCollectionInfo]) -> bool {
 }
 
 /// Returns the total number of bits for a given `(kind, report_id)` across the whole descriptor.
-pub fn report_bits_for_id(collections: &[HidCollectionInfo], kind: HidReportKind, report_id: u32) -> u32 {
+pub fn report_bits_for_id(
+    collections: &[HidCollectionInfo],
+    kind: HidReportKind,
+    report_id: u32,
+) -> u32 {
     let aggregated = aggregate_reports(collections);
     aggregated
         .get(&(kind, report_id))
@@ -995,7 +992,11 @@ fn max_report_bytes(collections: &[HidCollectionInfo], kind: HidReportKind) -> u
         max = max.max(bytes);
     }
 
-    if found { max } else { 0 }
+    if found {
+        max
+    } else {
+        0
+    }
 }
 
 /// Returns the maximum input report byte length across the descriptor.
@@ -1293,7 +1294,10 @@ mod tests {
         assert_eq!(parsed.collections.len(), 1);
         assert_eq!(parsed.collections[0].input_reports.len(), 1);
         assert_eq!(parsed.collections[0].input_reports[0].items.len(), 1);
-        assert_eq!(parsed.collections[0].input_reports[0].items[0].unit_exponent, -2);
+        assert_eq!(
+            parsed.collections[0].input_reports[0].items[0].unit_exponent,
+            -2
+        );
     }
 
     #[test]
@@ -1315,7 +1319,10 @@ mod tests {
         ];
 
         let parsed = parse_report_descriptor(&desc).unwrap();
-        assert_eq!(parsed.collections[0].input_reports[0].items[0].unit_exponent, -1);
+        assert_eq!(
+            parsed.collections[0].input_reports[0].items[0].unit_exponent,
+            -1
+        );
     }
 
     #[test]
@@ -1595,7 +1602,8 @@ mod tests {
 
         let desc = synthesize_report_descriptor(&collections).unwrap();
         assert!(
-            desc.windows(6).any(|w| w == [0x09, 0x01, 0x09, 0x03, 0x09, 0x04]),
+            desc.windows(6)
+                .any(|w| w == [0x09, 0x01, 0x09, 0x03, 0x09, 0x04]),
             "expected explicit Usage tags for non-contiguous range: {desc:02x?}"
         );
         assert!(
@@ -1726,8 +1734,14 @@ mod tests {
         assert_eq!(items[0].bit_len(), 8);
         assert_eq!(items[1].bit_len(), 16);
 
-        assert_eq!(report_bits_for_id(&collections, HidReportKind::Input, 1), 24);
-        assert_eq!(report_bytes_for_id(&collections, HidReportKind::Input, 1), 3);
+        assert_eq!(
+            report_bits_for_id(&collections, HidReportKind::Input, 1),
+            24
+        );
+        assert_eq!(
+            report_bytes_for_id(&collections, HidReportKind::Input, 1),
+            3
+        );
         assert_eq!(max_input_report_bytes(&collections), 4);
     }
 }
@@ -1837,16 +1851,21 @@ mod proptests {
             // report_id=0 report.
             prop_oneof![
                 Just(Vec::new()),
-                prop::collection::vec(item_strategy(), 0..=8).prop_map(|items| vec![HidReportInfo {
-                    report_id: 0,
-                    items,
-                }]),
+                prop::collection::vec(item_strategy(), 0..=8).prop_map(|items| vec![
+                    HidReportInfo {
+                        report_id: 0,
+                        items,
+                    }
+                ]),
             ]
             .boxed()
         }
     }
 
-    fn collection_strategy(max_depth: u8, use_report_ids: bool) -> BoxedStrategy<HidCollectionInfo> {
+    fn collection_strategy(
+        max_depth: u8,
+        use_report_ids: bool,
+    ) -> BoxedStrategy<HidCollectionInfo> {
         let child_strategy = if max_depth > 1 {
             prop::collection::vec(collection_strategy(max_depth - 1, use_report_ids), 0..=3).boxed()
         } else {

@@ -35,7 +35,12 @@ const D3DTEXF_POINT: u32 = 1;
 
 fn pixel_at(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let idx = ((y * width + x) * 4) as usize;
-    [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]]
+    [
+        pixels[idx],
+        pixels[idx + 1],
+        pixels[idx + 2],
+        pixels[idx + 3],
+    ]
 }
 
 fn run_and_readback(stream: StreamEncoder) -> Option<(u32, u32, Vec<u8>)> {
@@ -143,14 +148,7 @@ fn d3d9_state_alpha_blend_srcalpha_invsrcalpha() {
         TextureFormat::Rgba8Unorm,
         TextureUsage::Sampled as u32,
     );
-    stream.texture_update_full_mip(
-        CONTEXT_ID,
-        1,
-        0,
-        2,
-        1,
-        &[0, 255, 0, 0, 0, 255, 0, 255],
-    );
+    stream.texture_update_full_mip(CONTEXT_ID, 1, 0, 2, 1, &[0, 255, 0, 0, 0, 255, 0, 255]);
 
     stream.set_texture(CONTEXT_ID, ShaderStage::Fragment, 0, 1);
     stream.set_sampler_state_u32(
@@ -193,7 +191,13 @@ fn d3d9_state_alpha_blend_srcalpha_invsrcalpha() {
     stream.set_shader_key(CONTEXT_ID, ShaderStage::Vertex, 1);
     stream.set_shader_key(CONTEXT_ID, ShaderStage::Fragment, 1);
     stream.set_render_state_u32(CONTEXT_ID, D3DRS_ALPHABLENDENABLE, 0);
-    stream.set_constants_f32(CONTEXT_ID, ShaderStage::Fragment, 0, 1, &[1.0, 0.0, 0.0, 1.0]);
+    stream.set_constants_f32(
+        CONTEXT_ID,
+        ShaderStage::Fragment,
+        0,
+        1,
+        &[1.0, 0.0, 0.0, 1.0],
+    );
     stream.draw(CONTEXT_ID, 6, 0);
 
     // Overlay: textured green with alpha; enable blending.

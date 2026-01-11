@@ -1,7 +1,9 @@
 use crate::clock::Clock;
 use crate::ioapic::GsiSink;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
 pub const HPET_MMIO_BASE: u64 = 0xFED0_0000;
 pub const HPET_MMIO_SIZE: u64 = 0x400;
@@ -93,7 +95,8 @@ impl HpetTimer {
         }
         cap_bits |= TIMER_CAP_SIZE_64;
 
-        let config = ((default_route as u64) << TIMER_CFG_INT_ROUTE_SHIFT) & TIMER_CFG_INT_ROUTE_MASK;
+        let config =
+            ((default_route as u64) << TIMER_CFG_INT_ROUTE_SHIFT) & TIMER_CFG_INT_ROUTE_MASK;
 
         Self {
             cap_bits,
@@ -310,13 +313,7 @@ impl<C: Clock> Hpet<C> {
         (reg >> shift) & mask
     }
 
-    pub fn mmio_write(
-        &mut self,
-        offset: u64,
-        size: usize,
-        value: u64,
-        sink: &mut impl GsiSink,
-    ) {
+    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64, sink: &mut impl GsiSink) {
         assert!(size == 1 || size == 2 || size == 4 || size == 8);
         assert!(offset < HPET_MMIO_SIZE);
         if size == 8 {
@@ -341,11 +338,7 @@ impl<C: Clock> Hpet<C> {
     }
 
     fn capabilities_reg(&self) -> u64 {
-        let timers_minus_one = self
-            .config
-            .capabilities
-            .num_timers
-            .saturating_sub(1) as u64;
+        let timers_minus_one = self.config.capabilities.num_timers.saturating_sub(1) as u64;
         let mut reg = self.config.capabilities.revision_id as u64;
         reg |= timers_minus_one << 8;
         if self.config.capabilities.counter_size_64 {
@@ -518,16 +511,10 @@ impl<C: Clock> Hpet<C> {
                             continue;
                         }
 
-                        let before_gsi = apply_legacy_replacement_route(
-                            before_legacy,
-                            timer_idx,
-                            timer.route(),
-                        );
-                        let after_gsi = apply_legacy_replacement_route(
-                            after_legacy,
-                            timer_idx,
-                            timer.route(),
-                        );
+                        let before_gsi =
+                            apply_legacy_replacement_route(before_legacy, timer_idx, timer.route());
+                        let after_gsi =
+                            apply_legacy_replacement_route(after_legacy, timer_idx, timer.route());
                         if before_gsi != after_gsi {
                             sink.lower_gsi(before_gsi);
                             sink.raise_gsi(after_gsi);
@@ -549,7 +536,11 @@ impl<C: Clock> Hpet<C> {
 
                     let (route, is_level, is_asserted) = {
                         let timer = &self.timers[timer_idx];
-                        (timer.route(), timer.is_level_triggered(), timer.irq_asserted)
+                        (
+                            timer.route(),
+                            timer.is_level_triggered(),
+                            timer.irq_asserted,
+                        )
                     };
                     if is_level && is_asserted {
                         let legacy = self.general_config & GEN_CONF_LEGACY_ROUTE != 0;
@@ -725,12 +716,7 @@ mod tests {
             timer0_cfg | TIMER_CFG_INT_ENABLE,
             &mut ioapic,
         );
-        hpet.mmio_write(
-            REG_TIMER0_BASE + REG_TIMER_COMPARATOR,
-            8,
-            5,
-            &mut ioapic,
-        );
+        hpet.mmio_write(REG_TIMER0_BASE + REG_TIMER_COMPARATOR, 8, 5, &mut ioapic);
 
         clock.advance_ns(400);
         hpet.poll(&mut ioapic);
@@ -743,7 +729,10 @@ mod tests {
             vec![GsiEvent::Raise(2), GsiEvent::Lower(2)]
         );
 
-        assert_ne!(hpet.mmio_read(REG_GENERAL_INT_STATUS, 8, &mut ioapic) & 1, 0);
+        assert_ne!(
+            hpet.mmio_read(REG_GENERAL_INT_STATUS, 8, &mut ioapic) & 1,
+            0
+        );
     }
 
     #[test]
@@ -760,20 +749,21 @@ mod tests {
             timer0_cfg | TIMER_CFG_INT_ENABLE | TIMER_CFG_INT_LEVEL,
             &mut ioapic,
         );
-        hpet.mmio_write(
-            REG_TIMER0_BASE + REG_TIMER_COMPARATOR,
-            8,
-            1,
-            &mut ioapic,
-        );
+        hpet.mmio_write(REG_TIMER0_BASE + REG_TIMER_COMPARATOR, 8, 1, &mut ioapic);
 
         clock.advance_ns(100);
         hpet.poll(&mut ioapic);
         assert!(ioapic.is_asserted(2));
-        assert_ne!(hpet.mmio_read(REG_GENERAL_INT_STATUS, 8, &mut ioapic) & 1, 0);
+        assert_ne!(
+            hpet.mmio_read(REG_GENERAL_INT_STATUS, 8, &mut ioapic) & 1,
+            0
+        );
 
         hpet.mmio_write(REG_GENERAL_INT_STATUS, 8, 1, &mut ioapic);
-        assert_eq!(hpet.mmio_read(REG_GENERAL_INT_STATUS, 8, &mut ioapic) & 1, 0);
+        assert_eq!(
+            hpet.mmio_read(REG_GENERAL_INT_STATUS, 8, &mut ioapic) & 1,
+            0
+        );
         assert!(!ioapic.is_asserted(2));
     }
 }

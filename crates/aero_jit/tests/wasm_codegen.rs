@@ -7,7 +7,8 @@ use aero_jit::legacy::{CpuState, Reg};
 use aero_jit::wasm::abi::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
     IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
-    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE, IMPORT_PAGE_FAULT,
+    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
+    IMPORT_PAGE_FAULT,
 };
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
@@ -344,7 +345,11 @@ fn define_mmu_translate(
                     let flags = aero_jit::legacy::TLB_FLAG_READ
                         | aero_jit::legacy::TLB_FLAG_WRITE
                         | aero_jit::legacy::TLB_FLAG_EXEC
-                        | if is_ram { aero_jit::legacy::TLB_FLAG_IS_RAM } else { 0 };
+                        | if is_ram {
+                            aero_jit::legacy::TLB_FLAG_IS_RAM
+                        } else {
+                            0
+                        };
                     let data = phys_base | flags;
 
                     let entry_addr = (cpu_ptr as u64)

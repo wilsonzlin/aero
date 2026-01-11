@@ -114,4 +114,3 @@ mod tests {
         assert!(json.contains("\"surface_reconfigures\":1"));
     }
 }
-

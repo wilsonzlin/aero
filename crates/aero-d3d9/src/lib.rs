@@ -12,9 +12,9 @@ pub mod fixed_function;
 pub mod resources;
 pub mod runtime;
 pub mod shader;
+pub mod sm3;
 pub mod software;
 pub mod state;
-pub mod sm3;
 pub mod vertex;
 
 #[cfg(test)]

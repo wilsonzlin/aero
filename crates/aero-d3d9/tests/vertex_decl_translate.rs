@@ -481,7 +481,11 @@ fn rejects_duplicate_shader_locations() {
     struct BadMap;
 
     impl VertexLocationMap for BadMap {
-        fn location_for(&self, _usage: DeclUsage, _usage_index: u8) -> Result<u32, LocationMapError> {
+        fn location_for(
+            &self,
+            _usage: DeclUsage,
+            _usage_index: u8,
+        ) -> Result<u32, LocationMapError> {
             Ok(0)
         }
     }
@@ -521,7 +525,10 @@ fn rejects_duplicate_shader_locations() {
     )
     .unwrap_err();
 
-    assert!(matches!(err, VertexInputError::DuplicateShaderLocation { .. }));
+    assert!(matches!(
+        err,
+        VertexInputError::DuplicateShaderLocation { .. }
+    ));
 }
 
 #[test]

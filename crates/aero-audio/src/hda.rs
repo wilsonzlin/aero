@@ -9,8 +9,8 @@ use crate::sink::AudioSink;
 
 #[cfg(feature = "io-snapshot")]
 use aero_io_snapshot::io::audio::state::{
-    AudioWorkletRingState, HdaCodecCaptureState, HdaCodecState, HdaControllerState, HdaStreamRuntimeState,
-    HdaStreamState,
+    AudioWorkletRingState, HdaCodecCaptureState, HdaCodecState, HdaControllerState,
+    HdaStreamRuntimeState, HdaStreamState,
 };
 
 /// Size of the HDA MMIO region.
@@ -213,10 +213,7 @@ fn dma_read_stream_bytes(
             break;
         }
 
-        let remaining = entry
-            .len
-            .saturating_sub(*bdl_offset)
-            .min(bytes as u32) as usize;
+        let remaining = entry.len.saturating_sub(*bdl_offset).min(bytes as u32) as usize;
         if remaining == 0 {
             // Move to next entry.
             *bdl_offset = 0;
@@ -230,7 +227,10 @@ fn dma_read_stream_bytes(
 
         let start = out.len();
         out.resize(start + remaining, 0);
-        mem.read_physical(entry.addr + *bdl_offset as u64, &mut out[start..start + remaining]);
+        mem.read_physical(
+            entry.addr + *bdl_offset as u64,
+            &mut out[start..start + remaining],
+        );
 
         *bdl_offset += remaining as u32;
         bytes -= remaining;
@@ -650,9 +650,7 @@ impl HdaCodec {
                 // Audio widget capabilities: type=audio output (0), stereo, out amp present, format override.
                 (0x0u32) | (1 << 4) | (1 << 6) | (1 << 8)
             }
-            0x0A => {
-                supported_pcm_caps()
-            }
+            0x0A => supported_pcm_caps(),
             0x0B => {
                 // Supported stream formats. Returning non-zero tends to keep drivers happy.
                 1
@@ -1241,11 +1239,13 @@ impl HdaController {
         }
 
         if offset >= REG_CORBLBASE && end <= REG_CORBLBASE + 4 {
-            self.corblbase = mmio_write_sub_u32(self.corblbase, offset - REG_CORBLBASE, size, value);
+            self.corblbase =
+                mmio_write_sub_u32(self.corblbase, offset - REG_CORBLBASE, size, value);
             return;
         }
         if offset >= REG_CORBUBASE && end <= REG_CORBUBASE + 4 {
-            self.corbubase = mmio_write_sub_u32(self.corbubase, offset - REG_CORBUBASE, size, value);
+            self.corbubase =
+                mmio_write_sub_u32(self.corbubase, offset - REG_CORBUBASE, size, value);
             return;
         }
         if offset >= REG_CORBWP && end <= REG_CORBRP + 2 {
@@ -1284,11 +1284,13 @@ impl HdaController {
         }
 
         if offset >= REG_RIRBLBASE && end <= REG_RIRBLBASE + 4 {
-            self.rirblbase = mmio_write_sub_u32(self.rirblbase, offset - REG_RIRBLBASE, size, value);
+            self.rirblbase =
+                mmio_write_sub_u32(self.rirblbase, offset - REG_RIRBLBASE, size, value);
             return;
         }
         if offset >= REG_RIRBUBASE && end <= REG_RIRBUBASE + 4 {
-            self.rirbubase = mmio_write_sub_u32(self.rirbubase, offset - REG_RIRBUBASE, size, value);
+            self.rirbubase =
+                mmio_write_sub_u32(self.rirbubase, offset - REG_RIRBUBASE, size, value);
             return;
         }
         if offset >= REG_RIRBWP && end <= REG_RINTCNT + 2 {
@@ -1658,8 +1660,7 @@ impl HdaController {
             return;
         }
 
-        let stream_num =
-            ((self.streams[stream].ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
+        let stream_num = ((self.streams[stream].ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
         if stream_num == 0 || stream_num != self.codec.output_stream_id() {
             return;
         }
@@ -1780,7 +1781,8 @@ impl HdaController {
                 || rt.resampler.src_rate_hz() != self.output_rate_hz
                 || rt.resampler.dst_rate_hz() != fmt.sample_rate_hz
             {
-                rt.resampler.reset_rates(self.output_rate_hz, fmt.sample_rate_hz);
+                rt.resampler
+                    .reset_rates(self.output_rate_hz, fmt.sample_rate_hz);
                 rt.last_fmt_raw = fmt_raw;
                 rt.bdl_index = 0;
                 rt.bdl_offset = 0;
@@ -1977,7 +1979,12 @@ impl HdaController {
         let num_output_streams = (self.gcap & 0x0f) as usize;
         let num_input_streams = ((self.gcap >> 4) & 0x0f) as usize;
 
-        for (idx, (rt, s)) in self.stream_rt.iter_mut().zip(&state.stream_runtime).enumerate() {
+        for (idx, (rt, s)) in self
+            .stream_rt
+            .iter_mut()
+            .zip(&state.stream_runtime)
+            .enumerate()
+        {
             rt.bdl_index = s.bdl_index;
             rt.bdl_offset = s.bdl_offset;
             rt.last_fmt_raw = s.last_fmt_raw;
@@ -1993,7 +2000,8 @@ impl HdaController {
                 self.output_rate_hz
             };
 
-            let is_capture_stream = idx >= num_output_streams && idx < num_output_streams + num_input_streams;
+            let is_capture_stream =
+                idx >= num_output_streams && idx < num_output_streams + num_input_streams;
             let (resampler_src_rate, resampler_dst_rate) = if is_capture_stream {
                 (self.output_rate_hz, src_rate_hz)
             } else {
@@ -2112,7 +2120,10 @@ mod tests {
         // Root parameters.
         assert_eq!(codec.execute_verb(0, verb_12(0xF00, 0x00)), 0x1af4_1620);
         // AFG widget enumeration should include both output and capture widgets.
-        assert_eq!(codec.execute_verb(1, verb_12(0xF00, 0x04)), (2u32 << 16) | 4u32);
+        assert_eq!(
+            codec.execute_verb(1, verb_12(0xF00, 0x04)),
+            (2u32 << 16) | 4u32
+        );
 
         // Set converter stream/channel.
         assert_eq!(codec.execute_verb(2, verb_12(0x706, 0x10)), 0);

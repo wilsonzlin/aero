@@ -1,9 +1,7 @@
 use aero_devices::pci::{
     MsiCapability, PciBdf, PciConfigSpace, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
-use aero_platform::interrupts::{
-    InterruptController, PlatformInterruptMode, PlatformInterrupts,
-};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 
 fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
     let redtbl_low = 0x10u32 + gsi * 2;

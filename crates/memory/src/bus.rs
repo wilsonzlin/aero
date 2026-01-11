@@ -187,7 +187,8 @@ impl PhysicalMemoryBus {
             }
         }
 
-        self.rom_regions.insert(insert_idx, RomRegion { start, data });
+        self.rom_regions
+            .insert(insert_idx, RomRegion { start, data });
         Ok(())
     }
 
@@ -581,11 +582,15 @@ mod tests {
                 return Err(GuestMemoryError::OutOfRange { paddr, len, size });
             }
 
-            let start = usize::try_from(paddr)
-                .map_err(|_| GuestMemoryError::OutOfRange { paddr, len, size })?;
-            let end = start
-                .checked_add(len)
-                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+            let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
+                paddr,
+                len,
+                size,
+            })?;
+            let end =
+                start
+                    .checked_add(len)
+                    .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
 
             dst.copy_from_slice(&bytes[start..end]);
             Ok(())
@@ -603,11 +608,15 @@ mod tests {
                 return Err(GuestMemoryError::OutOfRange { paddr, len, size });
             }
 
-            let start = usize::try_from(paddr)
-                .map_err(|_| GuestMemoryError::OutOfRange { paddr, len, size })?;
-            let end = start
-                .checked_add(len)
-                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+            let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
+                paddr,
+                len,
+                size,
+            })?;
+            let end =
+                start
+                    .checked_add(len)
+                    .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
 
             bytes[start..end].copy_from_slice(src);
             Ok(())
@@ -632,7 +641,12 @@ mod tests {
                 mem,
                 ..Default::default()
             }));
-            (Self { state: state.clone() }, state)
+            (
+                Self {
+                    state: state.clone(),
+                },
+                state,
+            )
         }
     }
 
@@ -886,7 +900,9 @@ impl Bus {
                     let region = &mut self.regions[region_idx];
                     let offset = addr - region.start;
                     return match &mut region.kind {
-                        RegionKind::Mmio(handler) => handler.read(offset, size) & mask_for_size(size),
+                        RegionKind::Mmio(handler) => {
+                            handler.read(offset, size) & mask_for_size(size)
+                        }
                         RegionKind::Rom(bytes) => {
                             let base = offset as usize;
                             let mut out = 0u64;

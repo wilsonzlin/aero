@@ -73,7 +73,10 @@ mod tests {
         assert_eq!(pf.error_code, PF_ERR_PRESENT);
 
         let pf = PageFault::protection(0x1234, AccessType::Execute, 3);
-        assert_eq!(pf.error_code, PF_ERR_PRESENT | PF_ERR_USER | PF_ERR_INSTR_FETCH);
+        assert_eq!(
+            pf.error_code,
+            PF_ERR_PRESENT | PF_ERR_USER | PF_ERR_INSTR_FETCH
+        );
     }
 
     #[test]
@@ -82,4 +85,3 @@ mod tests {
         assert_eq!(pf.error_code, PF_ERR_PRESENT | PF_ERR_WRITE | PF_ERR_RSVD);
     }
 }
-

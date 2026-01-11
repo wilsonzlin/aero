@@ -109,7 +109,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     if !opts.skip_wasm {
-        let wasm_crate_dir = paths::resolve_wasm_crate_dir(&repo_root, opts.wasm_crate_dir.as_deref())?;
+        let wasm_crate_dir =
+            paths::resolve_wasm_crate_dir(&repo_root, opts.wasm_crate_dir.as_deref())?;
 
         let mut cmd = Command::new("wasm-pack");
         cmd.current_dir(&wasm_crate_dir)
@@ -118,10 +119,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             cmd.args(cargo_locked_args);
         }
         runner.run_step(
-            &format!(
-                "WASM: wasm-pack test --node ({})",
-                wasm_crate_dir.display()
-            ),
+            &format!("WASM: wasm-pack test --node ({})", wasm_crate_dir.display()),
             &mut cmd,
         )?;
     }

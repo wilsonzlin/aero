@@ -258,8 +258,8 @@ fn power_reset_and_clear_hub_port(
 
 fn enumerate_keyboard(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, address: u8) {
     let expected_keyboard_device_descriptor = [
-        0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01, 0x01, 0x02,
-        0x00, 0x01,
+        0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01, 0x01,
+        0x02, 0x00, 0x01,
     ];
 
     // GET_DESCRIPTOR(Device) at address 0 (default-address state).
@@ -342,7 +342,10 @@ fn uhci_external_hub_enumerates_downstream_hid() {
         let st = mem.read_u32(td as u64 + 4);
         assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED), 0);
     }
-    assert_eq!(mem.slice(BUF_DATA as usize..BUF_DATA as usize + 2), [0x12, 0x01]); // device desc
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + 2),
+        [0x12, 0x01]
+    ); // device desc
     assert_eq!(mem.mem[BUF_DATA as usize + 4], 0x09); // bDeviceClass = HUB
 
     // SET_ADDRESS(1)
@@ -458,7 +461,10 @@ fn uhci_external_hub_enumerates_downstream_hid() {
     );
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
-    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK),
+        0
+    );
     assert_ne!(mem.mem[BUF_HUB_INT as usize] & 0x02, 0); // bit1 = port1 change
 
     // GET_STATUS(port1) should report enabled + C_RESET (and usually C_CONNECTION).
@@ -474,9 +480,12 @@ fn uhci_external_hub_enumerates_downstream_hid() {
         let st = mem.read_u32(td as u64 + 4);
         assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED), 0);
     }
-    let port_status = u16::from_le_bytes([mem.mem[BUF_DATA as usize], mem.mem[BUF_DATA as usize + 1]]);
-    let port_change =
-        u16::from_le_bytes([mem.mem[BUF_DATA as usize + 2], mem.mem[BUF_DATA as usize + 3]]);
+    let port_status =
+        u16::from_le_bytes([mem.mem[BUF_DATA as usize], mem.mem[BUF_DATA as usize + 1]]);
+    let port_change = u16::from_le_bytes([
+        mem.mem[BUF_DATA as usize + 2],
+        mem.mem[BUF_DATA as usize + 3],
+    ]);
     assert_ne!(port_status & (1 << 1), 0); // PORT_ENABLE
     assert_ne!(port_change & (1 << 4), 0); // C_PORT_RESET
 
@@ -563,7 +572,10 @@ fn uhci_external_hub_enumerates_downstream_hid() {
     );
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
-    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK),
+        0
+    );
     assert_eq!(
         mem.slice(BUF_KBD_INT as usize..BUF_KBD_INT as usize + 8),
         [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]
@@ -654,7 +666,10 @@ fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
     );
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
-    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK),
+        0
+    );
     assert_eq!(
         mem.slice(BUF_KBD_INT as usize..BUF_KBD_INT as usize + 8),
         [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]
@@ -670,7 +685,10 @@ fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
     );
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
-    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK),
+        0
+    );
     assert_eq!(
         mem.slice(BUF_KBD2_INT as usize..BUF_KBD2_INT as usize + 8),
         [0x00, 0x00, 0x05, 0, 0, 0, 0, 0]
@@ -686,7 +704,10 @@ fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
     );
     run_one_frame(&mut uhci, &mut mem, TD0);
     let st = mem.read_u32(TD0 as u64 + 4);
-    assert_eq!(st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK), 0);
+    assert_eq!(
+        st & (TD_STATUS_ACTIVE | TD_STATUS_STALLED | TD_STATUS_NAK),
+        0
+    );
     assert_eq!(
         mem.slice(BUF_KBD3_INT as usize..BUF_KBD3_INT as usize + 8),
         [0x00, 0x00, 0x06, 0, 0, 0, 0, 0]

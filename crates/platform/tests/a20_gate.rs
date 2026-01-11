@@ -1,6 +1,6 @@
 use aero_devices::a20_gate::A20Gate;
-use aero_platform::Platform;
 use aero_platform::reset::{ResetKind, ResetLatch};
+use aero_platform::Platform;
 
 #[test]
 fn a20_disabled_wraps_at_1mib() {

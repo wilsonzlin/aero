@@ -18,8 +18,10 @@ fn try_create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
             .unwrap_or(true);
 
         if needs_runtime_dir {
-            let dir = std::env::temp_dir()
-                .join(format!("aero-gpu-xdg-runtime-{}-upload", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "aero-gpu-xdg-runtime-{}-upload",
+                std::process::id()
+            ));
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
             std::env::set_var("XDG_RUNTIME_DIR", &dir);

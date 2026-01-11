@@ -332,7 +332,10 @@ impl VirtioInputDevice {
                 "Aero Virtio Keyboard".to_string(),
                 VirtioInputBitmaps::for_keyboard(),
             ),
-            VirtioInputDeviceKind::Mouse => ("Aero Virtio Mouse".to_string(), VirtioInputBitmaps::for_mouse()),
+            VirtioInputDeviceKind::Mouse => (
+                "Aero Virtio Mouse".to_string(),
+                VirtioInputBitmaps::for_mouse(),
+            ),
         };
         Self {
             kind,
@@ -436,7 +439,11 @@ impl VirtioInputDevice {
         self.process_pending_events(mem)
     }
 
-    pub fn inject_wheel(&mut self, mem: &mut impl GuestMemory, delta: i32) -> Result<bool, VirtQueueError> {
+    pub fn inject_wheel(
+        &mut self,
+        mem: &mut impl GuestMemory,
+        delta: i32,
+    ) -> Result<bool, VirtQueueError> {
         if delta == 0 {
             return Ok(false);
         }
@@ -472,7 +479,10 @@ impl VirtioInputDevice {
         self.process_pending_events(mem)
     }
 
-    fn process_pending_events(&mut self, mem: &mut impl GuestMemory) -> Result<bool, VirtQueueError> {
+    fn process_pending_events(
+        &mut self,
+        mem: &mut impl GuestMemory,
+    ) -> Result<bool, VirtQueueError> {
         let mut should_interrupt = false;
 
         while let Some(event) = self.pending_events.pop_front() {
@@ -637,7 +647,10 @@ fn read_chain_exact(
 
         let available = desc_len - offset;
         let to_read = usize::min(available, out.len() - written);
-        mem.read_into(desc.addr + offset as u64, &mut out[written..written + to_read])?;
+        mem.read_into(
+            desc.addr + offset as u64,
+            &mut out[written..written + to_read],
+        )?;
         written += to_read;
         offset = 0;
 
@@ -710,8 +723,7 @@ mod tests {
         mem.write_u16_le(avail, flags).unwrap();
         mem.write_u16_le(avail + 2, heads.len() as u16).unwrap();
         for (i, head) in heads.iter().enumerate() {
-            mem.write_u16_le(avail + 4 + (i as u64) * 2, *head)
-                .unwrap();
+            mem.write_u16_le(avail + 4 + (i as u64) * 2, *head).unwrap();
         }
     }
 

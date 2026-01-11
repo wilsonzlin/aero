@@ -22,8 +22,8 @@ use aero_net::{
 };
 use aero_net_proxy_server::{start_proxy_server, ProxyServerOptions};
 use base64::Engine;
-use futures_util::FutureExt;
 use emulator::io::net::trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
+use futures_util::FutureExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -51,7 +51,10 @@ async fn net_e2e() {
         // If the panic occurred before `CaptureArtifactOnPanic` was constructed, still emit an
         // artifact from the frames that were recorded.
         let _ = std::fs::create_dir_all("target/nt-test-artifacts");
-        let _ = std::fs::write("target/nt-test-artifacts/net_e2e.pcapng", tracer.export_pcapng());
+        let _ = std::fs::write(
+            "target/nt-test-artifacts/net_e2e.pcapng",
+            tracer.export_pcapng(),
+        );
         std::panic::resume_unwind(panic);
     }
 }
@@ -91,8 +94,13 @@ async fn run_net_e2e(trace: Trace, tracer: Arc<NetTracer>) {
     trace.log(format!("dhcp: xid={xid:#x} sending DISCOVER"));
     send_dhcp_discover(tracer.as_ref(), &trace, &guest_to_stack_tx, guest_mac, xid).await;
 
-    let offer =
-        recv_dhcp(tracer.as_ref(), &trace, &mut stack_to_guest_rx, DhcpMessageType::Offer).await;
+    let offer = recv_dhcp(
+        tracer.as_ref(),
+        &trace,
+        &mut stack_to_guest_rx,
+        DhcpMessageType::Offer,
+    )
+    .await;
     assert_eq!(offer.yiaddr, cfg.lease_ip);
     trace.log(format!("dhcp: got OFFER yiaddr={}", offer.yiaddr));
 
@@ -107,8 +115,13 @@ async fn run_net_e2e(trace: Trace, tracer: Arc<NetTracer>) {
         cfg.router_ip,
     )
     .await;
-    let ack =
-        recv_dhcp(tracer.as_ref(), &trace, &mut stack_to_guest_rx, DhcpMessageType::Ack).await;
+    let ack = recv_dhcp(
+        tracer.as_ref(),
+        &trace,
+        &mut stack_to_guest_rx,
+        DhcpMessageType::Ack,
+    )
+    .await;
     assert_eq!(ack.yiaddr, cfg.lease_ip);
     trace.log(format!("dhcp: got ACK yiaddr={}", ack.yiaddr));
 
@@ -123,8 +136,13 @@ async fn run_net_e2e(trace: Trace, tracer: Arc<NetTracer>) {
         cfg.router_ip,
     )
     .await;
-    let router_mac =
-        recv_arp_reply(tracer.as_ref(), &trace, &mut stack_to_guest_rx, cfg.router_ip).await;
+    let router_mac = recv_arp_reply(
+        tracer.as_ref(),
+        &trace,
+        &mut stack_to_guest_rx,
+        cfg.router_ip,
+    )
+    .await;
     assert_eq!(router_mac, cfg.router_mac);
 
     // DNS query (guest -> stack -> DoH over proxy -> stack -> guest).

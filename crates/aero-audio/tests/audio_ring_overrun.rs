@@ -54,4 +54,3 @@ fn audio_ring_does_not_overwrite_existing_frames_across_wraparound() {
     let out = ring.pop_interleaved_stereo(4);
     assert_eq!(out, stereo_frames(&[2.0, 3.0, 4.0, 5.0]));
 }
-

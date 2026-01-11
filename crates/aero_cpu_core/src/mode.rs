@@ -58,7 +58,9 @@ impl CpuState {
 
     /// Returns whether long-mode enabling conditions are met (CR0.PG, CR4.PAE, EFER.LME).
     pub fn long_mode_conditions_met(&self) -> bool {
-        (self.control.cr0 & CR0_PG != 0) && (self.control.cr4 & CR4_PAE != 0) && (self.msr.efer & EFER_LME != 0)
+        (self.control.cr0 & CR0_PG != 0)
+            && (self.control.cr4 & CR4_PAE != 0)
+            && (self.msr.efer & EFER_LME != 0)
     }
 
     /// Model-Specific Register (MSR) backed base for FS/GS in IA-32e mode.
@@ -99,4 +101,3 @@ impl CpuState {
         }
     }
 }
-

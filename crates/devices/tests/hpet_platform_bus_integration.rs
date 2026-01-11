@@ -1,8 +1,6 @@
 use aero_devices::clock::ManualClock;
 use aero_devices::hpet::{Hpet, HpetMmio, HPET_MMIO_BASE, HPET_MMIO_SIZE};
-use aero_platform::interrupts::{
-    InterruptController, PlatformInterruptMode, PlatformInterrupts,
-};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use memory::Bus;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -58,4 +56,3 @@ fn hpet_mmio_is_accessible_via_memory_bus_and_delivers_interrupt_via_ioapic() {
     bus.write(HPET_MMIO_BASE + 0x020, 8, 1);
     assert_eq!(bus.read(HPET_MMIO_BASE + 0x020, 8) & 1, 0);
 }
-

@@ -47,7 +47,9 @@ fn pae_2mb_large_page_translation() {
 
     let mut mmu = new_mmu_pae(cr3);
     let cpl = mmu.cpl;
-    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Read, cpl).unwrap();
+    let paddr = mmu
+        .translate(&mut bus, vaddr, AccessType::Read, cpl)
+        .unwrap();
     assert_eq!(paddr, phys_base + (vaddr & 0x1F_FFFF));
 }
 

@@ -110,7 +110,8 @@ impl InterleavedRingBuffer {
             return 0;
         }
 
-        let available = frames_available_clamped(self.read_idx, self.write_idx, self.capacity_frames);
+        let available =
+            frames_available_clamped(self.read_idx, self.write_idx, self.capacity_frames);
         let frames_to_read = requested_frames.min(available);
         if frames_to_read == 0 {
             return 0;
@@ -128,7 +129,8 @@ impl InterleavedRingBuffer {
 
         if second_frames > 0 {
             let second_samples = second_frames as usize * cc;
-            out[first_samples..first_samples + second_samples].copy_from_slice(&self.storage[..second_samples]);
+            out[first_samples..first_samples + second_samples]
+                .copy_from_slice(&self.storage[..second_samples]);
         }
 
         self.read_idx = self.read_idx.wrapping_add(frames_to_read);
@@ -236,7 +238,8 @@ mod wasm {
             let byte_len = buffer_byte_len(capacity_frames, channel_count) as u32;
             let sab = SharedArrayBuffer::new(byte_len);
 
-            let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+            let header =
+                Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
             let samples = Float32Array::new_with_byte_offset_and_length(
                 &sab,
                 HEADER_BYTES as u32,
@@ -278,10 +281,13 @@ mod wasm {
 
             let required = buffer_byte_len(capacity_frames, channel_count) as u32;
             if sab.byte_length() < required {
-                return Err(JsValue::from_str("SharedArrayBuffer is too small for the requested layout"));
+                return Err(JsValue::from_str(
+                    "SharedArrayBuffer is too small for the requested layout",
+                ));
             }
 
-            let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+            let header =
+                Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
             let samples = Float32Array::new_with_byte_offset_and_length(
                 &sab,
                 HEADER_BYTES as u32,
@@ -356,7 +362,11 @@ mod wasm {
                     .copy_from(&samples[first_samples..first_samples + second_samples]);
             }
 
-            atomic_store_u32(&self.header, WRITE_FRAME_INDEX, write_idx.wrapping_add(frames_to_write));
+            atomic_store_u32(
+                &self.header,
+                WRITE_FRAME_INDEX,
+                write_idx.wrapping_add(frames_to_write),
+            );
             frames_to_write
         }
 

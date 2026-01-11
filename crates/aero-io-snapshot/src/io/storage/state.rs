@@ -1,5 +1,7 @@
 use crate::io::state::codec::{Decoder, Encoder};
-use crate::io::state::{IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use crate::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use std::collections::BTreeMap;
 
 // ----------------------------------------
@@ -97,7 +99,8 @@ impl DiskBackendState {
     fn decode_string(d: &mut Decoder<'_>) -> SnapshotResult<String> {
         let len = d.u32()? as usize;
         let bytes = d.bytes(len)?;
-        String::from_utf8(bytes.to_vec()).map_err(|_| SnapshotError::InvalidFieldEncoding("string utf8"))
+        String::from_utf8(bytes.to_vec())
+            .map_err(|_| SnapshotError::InvalidFieldEncoding("string utf8"))
     }
 
     fn encode_overlay(mut e: Encoder, overlay: &DiskOverlayState) -> Encoder {
@@ -219,7 +222,9 @@ impl DiskBackendState {
                 let expected_validator = match d.u8()? {
                     0 => None,
                     1 => Some(RemoteDiskValidator::Etag(Self::decode_string(&mut d)?)),
-                    2 => Some(RemoteDiskValidator::LastModified(Self::decode_string(&mut d)?)),
+                    2 => Some(RemoteDiskValidator::LastModified(Self::decode_string(
+                        &mut d,
+                    )?)),
                     _ => return Err(SnapshotError::InvalidFieldEncoding("validator_kind")),
                 };
                 let chunk_size = d.u32()?;

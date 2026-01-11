@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::ShaderStage;
-use crate::sm4_ir::{OperandModifier, RegFile, RegisterRef, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask};
+use crate::sm4_ir::{
+    OperandModifier, RegFile, RegisterRef, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
+};
 use crate::DxbcFile;
 
 #[derive(Debug, Clone)]
@@ -232,21 +234,18 @@ fn translate_ps(
     })
 }
 
-fn build_io_maps(isgn: &DxbcSignature, osgn: &DxbcSignature) -> Result<IoMaps, ShaderTranslateError> {
+fn build_io_maps(
+    isgn: &DxbcSignature,
+    osgn: &DxbcSignature,
+) -> Result<IoMaps, ShaderTranslateError> {
     let mut inputs = BTreeMap::new();
     for p in &isgn.parameters {
-        inputs.insert(
-            p.register,
-            ParamInfo::from_sig_param("input", p)?,
-        );
+        inputs.insert(p.register, ParamInfo::from_sig_param("input", p)?);
     }
 
     let mut outputs = BTreeMap::new();
     for p in &osgn.parameters {
-        outputs.insert(
-            p.register,
-            ParamInfo::from_sig_param("output", p)?,
-        );
+        outputs.insert(p.register, ParamInfo::from_sig_param("output", p)?);
     }
 
     let mut vs_position_reg = None;
@@ -291,7 +290,10 @@ struct ParamInfo {
 }
 
 impl ParamInfo {
-    fn from_sig_param(io: &'static str, param: &DxbcSignatureParameter) -> Result<Self, ShaderTranslateError> {
+    fn from_sig_param(
+        io: &'static str,
+        param: &DxbcSignatureParameter,
+    ) -> Result<Self, ShaderTranslateError> {
         let mask = param.mask & 0xF;
         let mut comps = [0u8; 4];
         let mut count = 0usize;
@@ -409,7 +411,9 @@ impl IoMaps {
 
         let pos_reg = self
             .vs_position_register
-            .ok_or(ShaderTranslateError::MissingSignature("vertex output SV_Position"))?;
+            .ok_or(ShaderTranslateError::MissingSignature(
+                "vertex output SV_Position",
+            ))?;
 
         w.line("struct VsOut {");
         w.indent();
@@ -458,7 +462,9 @@ impl IoMaps {
     fn emit_vs_return(&self, w: &mut WgslWriter) -> Result<(), ShaderTranslateError> {
         let pos_reg = self
             .vs_position_register
-            .ok_or(ShaderTranslateError::MissingSignature("vertex output SV_Position"))?;
+            .ok_or(ShaderTranslateError::MissingSignature(
+                "vertex output SV_Position",
+            ))?;
         w.line(&format!("out.pos = o{pos_reg};"));
         for p in self.outputs.values() {
             if p.param.register == pos_reg {
@@ -471,23 +477,31 @@ impl IoMaps {
         Ok(())
     }
 
-    fn read_input_vec4(&self, stage: ShaderStage, reg: u32) -> Result<String, ShaderTranslateError> {
+    fn read_input_vec4(
+        &self,
+        stage: ShaderStage,
+        reg: u32,
+    ) -> Result<String, ShaderTranslateError> {
         match stage {
             ShaderStage::Vertex => {
-                let p = self.inputs.get(&reg).ok_or(ShaderTranslateError::SignatureMissingRegister {
-                    io: "input",
-                    register: reg,
-                })?;
+                let p = self.inputs.get(&reg).ok_or(
+                    ShaderTranslateError::SignatureMissingRegister {
+                        io: "input",
+                        register: reg,
+                    },
+                )?;
                 Ok(expand_to_vec4(&format!("input.{}", p.field_name('v')), p))
             }
             ShaderStage::Pixel => {
                 if Some(reg) == self.ps_position_register {
                     return Ok("input.pos".to_owned());
                 }
-                let p = self.inputs.get(&reg).ok_or(ShaderTranslateError::SignatureMissingRegister {
-                    io: "input",
-                    register: reg,
-                })?;
+                let p = self.inputs.get(&reg).ok_or(
+                    ShaderTranslateError::SignatureMissingRegister {
+                        io: "input",
+                        register: reg,
+                    },
+                )?;
                 Ok(expand_to_vec4(&format!("input.{}", p.field_name('v')), p))
             }
             _ => Err(ShaderTranslateError::UnsupportedStage(stage)),
@@ -528,7 +542,11 @@ fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
     let mut out = [String::new(), String::new(), String::new(), String::new()];
     let mut next = 0usize;
     for dst_comp in 0..4usize {
-        let want = p.components.iter().take(p.component_count).any(|&c| c as usize == dst_comp);
+        let want = p
+            .components
+            .iter()
+            .take(p.component_count)
+            .any(|&c| c as usize == dst_comp);
         if want {
             out[dst_comp] = src[next].clone();
             next += 1;
@@ -645,9 +663,7 @@ impl ResourceUsage {
             w.line("");
         }
         for &slot in &self.samplers {
-            w.line(&format!(
-                "@group(2) @binding({slot}) var s{slot}: sampler;"
-            ));
+            w.line(&format!("@group(2) @binding({slot}) var s{slot}: sampler;"));
         }
         if !self.samplers.is_empty() {
             w.line("");
@@ -670,7 +686,10 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
         };
         match inst {
             Sm4Inst::Mov { dst: _, src } => scan_src(src),
-            Sm4Inst::Add { dst: _, a, b } | Sm4Inst::Mul { dst: _, a, b } | Sm4Inst::Dp3 { dst: _, a, b } | Sm4Inst::Dp4 { dst: _, a, b } => {
+            Sm4Inst::Add { dst: _, a, b }
+            | Sm4Inst::Mul { dst: _, a, b }
+            | Sm4Inst::Dp3 { dst: _, a, b }
+            | Sm4Inst::Dp4 { dst: _, a, b } => {
                 scan_src(a);
                 scan_src(b);
             }
@@ -737,7 +756,10 @@ fn emit_temp_and_output_decls(
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
             }
-            Sm4Inst::Add { dst, a, b } | Sm4Inst::Mul { dst, a, b } | Sm4Inst::Dp3 { dst, a, b } | Sm4Inst::Dp4 { dst, a, b } => {
+            Sm4Inst::Add { dst, a, b }
+            | Sm4Inst::Mul { dst, a, b }
+            | Sm4Inst::Dp3 { dst, a, b }
+            | Sm4Inst::Dp4 { dst, a, b } => {
                 scan_reg(dst.reg);
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
@@ -752,7 +774,9 @@ fn emit_temp_and_output_decls(
                 scan_reg(dst.reg);
                 scan_src_regs(coord, &mut scan_reg);
             }
-            Sm4Inst::SampleL { dst, coord, lod, .. } => {
+            Sm4Inst::SampleL {
+                dst, coord, lod, ..
+            } => {
                 scan_reg(dst.reg);
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
@@ -804,7 +828,11 @@ struct EmitCtx<'a> {
     resources: &'a ResourceUsage,
 }
 
-fn emit_instructions(w: &mut WgslWriter, module: &Sm4Module, ctx: &EmitCtx<'_>) -> Result<(), ShaderTranslateError> {
+fn emit_instructions(
+    w: &mut WgslWriter,
+    module: &Sm4Module,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), ShaderTranslateError> {
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         match inst {
             Sm4Inst::Mov { dst, src } => {
@@ -814,12 +842,28 @@ fn emit_instructions(w: &mut WgslWriter, module: &Sm4Module, ctx: &EmitCtx<'_>) 
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "add", ctx)?;
                 let b = emit_src_vec4(b, inst_index, "add", ctx)?;
-                emit_write_masked(w, dst.reg, dst.mask, format!("({a}) + ({b})"), inst_index, "add", ctx)?;
+                emit_write_masked(
+                    w,
+                    dst.reg,
+                    dst.mask,
+                    format!("({a}) + ({b})"),
+                    inst_index,
+                    "add",
+                    ctx,
+                )?;
             }
             Sm4Inst::Mul { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "mul", ctx)?;
                 let b = emit_src_vec4(b, inst_index, "mul", ctx)?;
-                emit_write_masked(w, dst.reg, dst.mask, format!("({a}) * ({b})"), inst_index, "mul", ctx)?;
+                emit_write_masked(
+                    w,
+                    dst.reg,
+                    dst.mask,
+                    format!("({a}) * ({b})"),
+                    inst_index,
+                    "mul",
+                    ctx,
+                )?;
             }
             Sm4Inst::Mad { dst, a, b, c } => {
                 let a = emit_src_vec4(a, inst_index, "mad", ctx)?;
@@ -854,7 +898,10 @@ fn emit_instructions(w: &mut WgslWriter, module: &Sm4Module, ctx: &EmitCtx<'_>) 
                 sampler,
             } => {
                 let coord = emit_src_vec4(coord, inst_index, "sample", ctx)?;
-                let expr = format!("textureSample(t{}, s{}, ({coord}).xy)", texture.slot, sampler.slot);
+                let expr = format!(
+                    "textureSample(t{}, s{}, ({coord}).xy)",
+                    texture.slot, sampler.slot
+                );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "sample", ctx)?;
             }
             Sm4Inst::SampleL {

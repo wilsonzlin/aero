@@ -156,4 +156,3 @@ impl<S: ByteStorage> DiskBackend for AerosparDisk<S> {
         self.inner.flush().map_err(disk_error_from_storage)
     }
 }
-

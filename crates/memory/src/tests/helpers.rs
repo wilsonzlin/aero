@@ -50,7 +50,12 @@ fn pf_protection(vaddr: u64, access: AccessType, cpl: u8) -> TranslateError {
     TranslateError::PageFault(PageFault::protection(vaddr, access, cpl))
 }
 
-fn check_tlb_permissions(entry: &TlbEntry, mmu: &Mmu, vaddr: u64, access: AccessType) -> Option<TranslateError> {
+fn check_tlb_permissions(
+    entry: &TlbEntry,
+    mmu: &Mmu,
+    vaddr: u64,
+    access: AccessType,
+) -> Option<TranslateError> {
     if mmu.cpl == 3 && !entry.user {
         return Some(pf_protection(vaddr, access, mmu.cpl));
     }
@@ -149,7 +154,10 @@ pub struct TlbMmu {
 
 impl TlbMmu {
     pub fn new(mmu: Mmu) -> Self {
-        Self { mmu, tlb: Tlb::new() }
+        Self {
+            mmu,
+            tlb: Tlb::new(),
+        }
     }
 
     pub fn tlb_len(&self) -> usize {

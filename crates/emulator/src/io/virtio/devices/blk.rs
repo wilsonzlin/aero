@@ -1,7 +1,5 @@
 use crate::io::storage::disk::DiskBackend;
-use crate::io::virtio::vio_core::{
-    DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE,
-};
+use crate::io::virtio::vio_core::{DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE};
 use memory::GuestMemory;
 
 pub const VIRTIO_BLK_SECTOR_SIZE: u64 = 512;
@@ -181,7 +179,11 @@ impl VirtioBlkDevice {
         used_len
     }
 
-    fn read_req(&self, mem: &impl GuestMemory, chain: &DescriptorChain) -> Result<VirtioBlkReq, ()> {
+    fn read_req(
+        &self,
+        mem: &impl GuestMemory,
+        chain: &DescriptorChain,
+    ) -> Result<VirtioBlkReq, ()> {
         let hdr = chain.descriptors[0];
         if hdr.flags & VRING_DESC_F_WRITE != 0 || hdr.len < 16 {
             return Err(());
@@ -201,9 +203,7 @@ impl VirtioBlkDevice {
             return Err(());
         }
         let disk_sector_size = u64::from(self.drive.sector_size());
-        let byte_offset = sector
-            .checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-            .ok_or(())?;
+        let byte_offset = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE).ok_or(())?;
         if disk_sector_size == 0 || byte_offset % disk_sector_size != 0 {
             return Err(());
         }
@@ -250,9 +250,7 @@ impl VirtioBlkDevice {
             return Err(());
         }
         let disk_sector_size = u64::from(self.drive.sector_size());
-        let byte_offset = sector
-            .checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-            .ok_or(())?;
+        let byte_offset = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE).ok_or(())?;
         if disk_sector_size == 0 || byte_offset % disk_sector_size != 0 {
             return Err(());
         }
@@ -371,7 +369,11 @@ mod tests {
             inner.data.len() as u64 / inner.sector_size as u64
         }
 
-        fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> Result<(), crate::io::storage::disk::DiskError> {
+        fn read_sectors(
+            &mut self,
+            lba: u64,
+            buf: &mut [u8],
+        ) -> Result<(), crate::io::storage::disk::DiskError> {
             let inner = self.inner.lock().unwrap();
             let offset = (lba * inner.sector_size as u64) as usize;
             let end = offset + buf.len();
@@ -382,7 +384,11 @@ mod tests {
             Ok(())
         }
 
-        fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> Result<(), crate::io::storage::disk::DiskError> {
+        fn write_sectors(
+            &mut self,
+            lba: u64,
+            buf: &[u8],
+        ) -> Result<(), crate::io::storage::disk::DiskError> {
             let mut inner = self.inner.lock().unwrap();
             let offset = (lba * inner.sector_size as u64) as usize;
             let end = offset + buf.len();

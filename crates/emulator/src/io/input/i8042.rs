@@ -214,7 +214,8 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
             }
             0x60 => {
                 // Write command byte (next byte on data port).
-                self.pending_command.set(Some(PendingCommand::WriteCommandByte));
+                self.pending_command
+                    .set(Some(PendingCommand::WriteCommandByte));
             }
             0xA7 => {
                 // Disable mouse port.
@@ -255,7 +256,8 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
             }
             0xD1 => {
                 // Write output port (next byte on data port).
-                self.pending_command.set(Some(PendingCommand::WriteOutputPort));
+                self.pending_command
+                    .set(Some(PendingCommand::WriteOutputPort));
             }
             0xD4 => {
                 // Write to mouse (next byte on data port).
@@ -322,13 +324,17 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
         match source {
             OutputSource::Mouse => {
                 status |= STATUS_MOBF;
-                if (self.command_byte.get() & (CMD_BYTE_MOUSE_INT | CMD_BYTE_MOUSE_DISABLE)) == CMD_BYTE_MOUSE_INT {
+                if (self.command_byte.get() & (CMD_BYTE_MOUSE_INT | CMD_BYTE_MOUSE_DISABLE))
+                    == CMD_BYTE_MOUSE_INT
+                {
                     self.mouse_irq_pending.set(true);
                 }
             }
             OutputSource::Keyboard => {
                 status &= !STATUS_MOBF;
-                if (self.command_byte.get() & (CMD_BYTE_KBD_INT | CMD_BYTE_KBD_DISABLE)) == CMD_BYTE_KBD_INT {
+                if (self.command_byte.get() & (CMD_BYTE_KBD_INT | CMD_BYTE_KBD_DISABLE))
+                    == CMD_BYTE_KBD_INT
+                {
                     self.keyboard_irq_pending.set(true);
                 }
             }
@@ -534,4 +540,3 @@ mod tests {
         assert!(!ctrl.mouse_irq_pending());
     }
 }
-

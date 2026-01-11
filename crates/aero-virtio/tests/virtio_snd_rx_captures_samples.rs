@@ -62,8 +62,7 @@ fn parse_caps(dev: &VirtioPciDevice) -> Caps {
             VIRTIO_PCI_CAP_COMMON_CFG => caps.common = offset,
             VIRTIO_PCI_CAP_NOTIFY_CFG => {
                 caps.notify = offset;
-                caps.notify_mult =
-                    u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
+                caps.notify_mult = u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
             }
             VIRTIO_PCI_CAP_ISR_CFG => caps.isr = offset,
             VIRTIO_PCI_CAP_DEVICE_CFG => caps.device = offset,
@@ -157,15 +156,7 @@ fn submit_chain(
     in_addr: u64,
     in_len: u32,
 ) {
-    write_desc(
-        mem,
-        desc_table,
-        0,
-        out_addr,
-        out_len,
-        VIRTQ_DESC_F_NEXT,
-        1,
-    );
+    write_desc(mem, desc_table, 0, out_addr, out_len, VIRTQ_DESC_F_NEXT, 1);
     write_desc(mem, desc_table, 1, in_addr, in_len, VIRTQ_DESC_F_WRITE, 0);
 
     // Add to avail ring.
@@ -192,15 +183,7 @@ fn submit_rx_chain(
     payload_len: u32,
     resp_addr: u64,
 ) {
-    write_desc(
-        mem,
-        desc_table,
-        0,
-        hdr_addr,
-        8,
-        VIRTQ_DESC_F_NEXT,
-        1,
-    );
+    write_desc(mem, desc_table, 0, hdr_addr, 8, VIRTQ_DESC_F_NEXT, 1);
     write_desc(
         mem,
         desc_table,
@@ -231,14 +214,20 @@ fn virtio_snd_rx_captures_samples() {
         dropped: 7,
     };
 
-    let snd = VirtioSnd::new_with_capture(aero_audio::ring::AudioRingBuffer::new_stereo(8), capture);
+    let snd =
+        VirtioSnd::new_with_capture(aero_audio::ring::AudioRingBuffer::new_stereo(8), capture);
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
     let caps = parse_caps(&dev);
 
     let mut mem = GuestRam::new(0x40000);
 
     // Feature negotiation: accept everything the device offers.
-    bar_write_u8(&mut dev, &mut mem, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
     bar_write_u8(
         &mut dev,
         &mut mem,
@@ -334,8 +323,11 @@ fn virtio_snd_rx_captures_samples() {
         VIRTIO_SND_S_OK
     );
 
-    let prepare =
-        [VIRTIO_SND_R_PCM_PREPARE.to_le_bytes(), CAPTURE_STREAM_ID.to_le_bytes()].concat();
+    let prepare = [
+        VIRTIO_SND_R_PCM_PREPARE.to_le_bytes(),
+        CAPTURE_STREAM_ID.to_le_bytes(),
+    ]
+    .concat();
     mem.write(ctrl_req, &prepare).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
     submit_chain(
@@ -387,7 +379,10 @@ fn virtio_snd_rx_captures_samples() {
         u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()),
         VIRTIO_SND_S_IO_ERR
     );
-    assert_eq!(u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()), 0);
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()),
+        0
+    );
 
     let payload_bytes = mem.get_slice(rx_payload, 8).unwrap();
     let mut got = [0i16; 4];
@@ -398,7 +393,11 @@ fn virtio_snd_rx_captures_samples() {
     assert_eq!(got, [0, 0, 0, 0]);
 
     // Start capture stream.
-    let start = [VIRTIO_SND_R_PCM_START.to_le_bytes(), CAPTURE_STREAM_ID.to_le_bytes()].concat();
+    let start = [
+        VIRTIO_SND_R_PCM_START.to_le_bytes(),
+        CAPTURE_STREAM_ID.to_le_bytes(),
+    ]
+    .concat();
     mem.write(ctrl_req, &start).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
     submit_chain(
@@ -437,8 +436,14 @@ fn virtio_snd_rx_captures_samples() {
     rx_avail_idx += 1;
 
     let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
-    assert_eq!(u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()), VIRTIO_SND_S_OK);
-    assert_eq!(u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()), 0);
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()),
+        0
+    );
 
     let payload_bytes = mem.get_slice(rx_payload, 8).unwrap();
     for (i, slot) in got.iter_mut().enumerate() {
@@ -466,8 +471,14 @@ fn virtio_snd_rx_captures_samples() {
     );
 
     let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
-    assert_eq!(u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()), VIRTIO_SND_S_OK);
-    assert_eq!(u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()), 0);
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()),
+        0
+    );
 
     let payload_bytes = mem.get_slice(rx_payload, 8).unwrap();
     for (i, slot) in got.iter_mut().enumerate() {

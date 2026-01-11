@@ -902,8 +902,9 @@ impl NetworkStack {
                     }
                     conn.guest_next_seq =
                         conn.guest_next_seq.wrapping_add(tcp.payload.len() as u32);
-                    conn.buffered_to_proxy_bytes =
-                        conn.buffered_to_proxy_bytes.saturating_add(tcp.payload.len());
+                    conn.buffered_to_proxy_bytes = conn
+                        .buffered_to_proxy_bytes
+                        .saturating_add(tcp.payload.len());
                     conn.buffered_to_proxy.push(tcp.payload.to_vec());
                 }
                 out.extend(self.emit_tcp_ack(&conn));
@@ -915,8 +916,7 @@ impl NetworkStack {
                 let offset = conn.guest_next_seq.wrapping_sub(tcp.seq) as usize;
                 let tail = &tcp.payload[offset..];
                 if conn.proxy_connected {
-                    conn.guest_next_seq =
-                        conn.guest_next_seq.wrapping_add(tail.len() as u32);
+                    conn.guest_next_seq = conn.guest_next_seq.wrapping_add(tail.len() as u32);
                     out.push(Action::TcpProxySend {
                         connection_id: conn.id,
                         data: tail.to_vec(),
@@ -929,8 +929,7 @@ impl NetworkStack {
                         });
                         return out;
                     }
-                    conn.guest_next_seq =
-                        conn.guest_next_seq.wrapping_add(tail.len() as u32);
+                    conn.guest_next_seq = conn.guest_next_seq.wrapping_add(tail.len() as u32);
                     conn.buffered_to_proxy_bytes =
                         conn.buffered_to_proxy_bytes.saturating_add(tail.len());
                     conn.buffered_to_proxy.push(tail.to_vec());

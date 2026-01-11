@@ -1,9 +1,9 @@
 pub mod handles;
 pub mod registry;
 
+use crate::{GpuCapabilities, GpuError};
 pub use handles::*;
 pub use registry::*;
-use crate::{GpuCapabilities, GpuError};
 
 /// Which backend implementation is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

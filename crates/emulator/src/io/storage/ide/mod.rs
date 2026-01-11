@@ -12,9 +12,9 @@ pub use ata::AtaDevice;
 pub use atapi::{AtapiCdrom, IsoBackend};
 pub use busmaster::{BusMasterChannel, PrdEntry};
 
+use crate::io::pci::PciDevice;
 use crate::io::storage::SECTOR_SIZE;
 use memory::MemoryBus;
-use crate::io::pci::PciDevice;
 
 const IDE_STATUS_BSY: u8 = 0x80;
 const IDE_STATUS_DRDY: u8 = 0x40;
@@ -260,12 +260,20 @@ impl TaskFile {
 
     fn sector_count28(&self) -> u16 {
         let c = self.sector_count as u16;
-        if c == 0 { 256 } else { c }
+        if c == 0 {
+            256
+        } else {
+            c
+        }
     }
 
     fn sector_count48(&self) -> u32 {
         let c = ((self.hob_sector_count as u32) << 8) | self.sector_count as u32;
-        if c == 0 { 65536 } else { c }
+        if c == 0 {
+            65536
+        } else {
+            c
+        }
     }
 }
 
@@ -429,9 +437,10 @@ impl Channel {
     fn finish_data_phase(&mut self) {
         match self.transfer_kind {
             Some(TransferKind::AtaPioWrite) => {
-                let (lba, sectors) = self.pio_write.take().unwrap_or_else(|| {
-                    (self.tf.lba28(), self.tf.sector_count28() as u64)
-                });
+                let (lba, sectors) = self
+                    .pio_write
+                    .take()
+                    .unwrap_or_else(|| (self.tf.lba28(), self.tf.sector_count28() as u64));
                 let data = std::mem::take(&mut self.data);
                 let idx = self.selected_drive() as usize;
                 if let Some(IdeDevice::Ata(dev)) = self.devices[idx].as_mut() {
@@ -877,7 +886,12 @@ impl IdeController {
                 4 => chan.data_out_u32(val),
                 _ => {}
             },
-            ATA_REG_ERROR_FEATURES | ATA_REG_SECTOR_COUNT | ATA_REG_LBA0 | ATA_REG_LBA1 | ATA_REG_LBA2 | ATA_REG_DEVICE => {
+            ATA_REG_ERROR_FEATURES
+            | ATA_REG_SECTOR_COUNT
+            | ATA_REG_LBA0
+            | ATA_REG_LBA1
+            | ATA_REG_LBA2
+            | ATA_REG_DEVICE => {
                 chan.tf.write_reg(reg, val as u8);
             }
             ATA_REG_STATUS_COMMAND => {
@@ -971,10 +985,7 @@ impl IdeController {
                         (chan.tf.lba28(), chan.tf.sector_count28() as u64)
                     };
                     chan.pio_write = Some((lba, sectors));
-                    chan.begin_pio_out(
-                        TransferKind::AtaPioWrite,
-                        (sectors as usize) * SECTOR_SIZE,
-                    );
+                    chan.begin_pio_out(TransferKind::AtaPioWrite, (sectors as usize) * SECTOR_SIZE);
                 } else {
                     chan.set_error(0x04);
                     chan.status &= !IDE_STATUS_BSY;
@@ -992,9 +1003,15 @@ impl IdeController {
                 let req = match chan.devices[dev_idx].as_mut() {
                     Some(IdeDevice::Ata(dev)) => {
                         if is_write {
-                            Some(busmaster::DmaRequest::ata_write(dev.sector_bytes(sectors), lba, sectors))
+                            Some(busmaster::DmaRequest::ata_write(
+                                dev.sector_bytes(sectors),
+                                lba,
+                                sectors,
+                            ))
                         } else {
-                            dev.pio_read(lba, sectors).ok().map(|buf| busmaster::DmaRequest::ata_read(buf, lba, sectors))
+                            dev.pio_read(lba, sectors)
+                                .ok()
+                                .map(|buf| busmaster::DmaRequest::ata_read(buf, lba, sectors))
                         }
                     }
                     _ => None,

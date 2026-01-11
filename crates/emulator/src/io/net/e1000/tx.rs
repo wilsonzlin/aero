@@ -1,7 +1,7 @@
 use super::offload::{apply_checksum_offload, tso_segment, TxChecksumFlags, TxOffloadContext};
 use super::{
-    E1000Device, GuestMemory, NetworkBackend, TxDesc, TxPacketState, ICR_TXDW, TCTL_EN, TXD_CMD_DEXT, TXD_CMD_EOP,
-    TXD_CMD_IC, TXD_CMD_RS, TXD_CMD_TSE, TXD_STAT_DD,
+    E1000Device, GuestMemory, NetworkBackend, TxDesc, TxPacketState, ICR_TXDW, TCTL_EN,
+    TXD_CMD_DEXT, TXD_CMD_EOP, TXD_CMD_IC, TXD_CMD_RS, TXD_CMD_TSE, TXD_STAT_DD,
 };
 
 use nt_packetlib::io::net::packet::checksum::internet_checksum;
@@ -106,7 +106,11 @@ fn write_desc<M: GuestMemory>(mem: &mut M, addr: u64, bytes: &[u8; TxDesc::LEN])
 }
 
 impl E1000Device {
-    pub(crate) fn process_tx<M: GuestMemory, B: NetworkBackend>(&mut self, mem: &mut M, backend: &mut B) {
+    pub(crate) fn process_tx<M: GuestMemory, B: NetworkBackend>(
+        &mut self,
+        mem: &mut M,
+        backend: &mut B,
+    ) {
         if self.tctl & TCTL_EN == 0 {
             return;
         }
@@ -187,7 +191,8 @@ impl E1000Device {
                     }
 
                     if (desc.cmd & TXD_CMD_EOP) != 0 {
-                        let Some(TxPacketState::Legacy { cmd, css, cso }) = self.tx_state.take() else {
+                        let Some(TxPacketState::Legacy { cmd, css, cso }) = self.tx_state.take()
+                        else {
                             self.tx_partial.clear();
                             self.tx_state = None;
                             self.tdh = (self.tdh + 1) % count;
@@ -196,7 +201,10 @@ impl E1000Device {
 
                         if !self.tx_partial.is_empty() {
                             let mut frame = std::mem::take(&mut self.tx_partial);
-                            if (cmd & TXD_CMD_IC) != 0 && css < frame.len() && cso + 2 <= frame.len() {
+                            if (cmd & TXD_CMD_IC) != 0
+                                && css < frame.len()
+                                && cso + 2 <= frame.len()
+                            {
                                 frame[cso..cso + 2].fill(0);
                                 let csum = internet_checksum(&frame[css..]);
                                 frame[cso..cso + 2].copy_from_slice(&csum.to_be_bytes());
@@ -243,7 +251,8 @@ impl E1000Device {
                     }
 
                     if (desc.cmd & TXD_CMD_EOP) != 0 {
-                        let Some(TxPacketState::Advanced { cmd, popts }) = self.tx_state.take() else {
+                        let Some(TxPacketState::Advanced { cmd, popts }) = self.tx_state.take()
+                        else {
                             self.tx_partial.clear();
                             self.tx_state = None;
                             self.tdh = (self.tdh + 1) % count;
@@ -262,7 +271,8 @@ impl E1000Device {
                                         }
                                     }
                                     Err(_) => {
-                                        let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
+                                        let _ =
+                                            apply_checksum_offload(&mut frame, self.tx_ctx, flags);
                                         backend.transmit(frame);
                                     }
                                 }

@@ -51,7 +51,10 @@ impl SharedRingBuffer {
     /// `offset_bytes` must point at the start of the ring header as defined by
     /// `layout::ring_ctrl`.
     #[wasm_bindgen(constructor)]
-    pub fn new(buffer: js_sys::SharedArrayBuffer, offset_bytes: u32) -> Result<SharedRingBuffer, JsValue> {
+    pub fn new(
+        buffer: js_sys::SharedArrayBuffer,
+        offset_bytes: u32,
+    ) -> Result<SharedRingBuffer, JsValue> {
         let ctrl = js_sys::Int32Array::new_with_byte_offset_and_length(
             &buffer,
             offset_bytes,
@@ -122,22 +125,21 @@ impl SharedRingBuffer {
             let start_index = (start % self.cap) as usize;
             write_u32_le(&self.data, start_index, payload_len as u32);
             self.data
-                .subarray(start_index as u32 + 4, start_index as u32 + 4 + payload_len as u32)
+                .subarray(
+                    start_index as u32 + 4,
+                    start_index as u32 + 4 + payload_len as u32,
+                )
                 .copy_from(payload);
 
             // Commit in order.
             loop {
-                let committed =
-                    atomics_load_i32(&self.ctrl, ring_ctrl::TAIL_COMMIT as u32) as u32;
+                let committed = atomics_load_i32(&self.ctrl, ring_ctrl::TAIL_COMMIT as u32) as u32;
                 if committed == tail {
                     break;
                 }
                 // Block until commit changes.
-                let _ = atomics_wait_i32(
-                    &self.ctrl,
-                    ring_ctrl::TAIL_COMMIT as u32,
-                    committed as i32,
-                );
+                let _ =
+                    atomics_wait_i32(&self.ctrl, ring_ctrl::TAIL_COMMIT as u32, committed as i32);
             }
             atomics_store_i32(&self.ctrl, ring_ctrl::TAIL_COMMIT as u32, new_tail as i32);
             atomics_notify_i32(&self.ctrl, ring_ctrl::TAIL_COMMIT as u32, 1);
@@ -232,7 +234,8 @@ impl SharedRingBuffer {
 
 fn read_u32_le(data: &js_sys::Uint8Array, offset: usize) -> u32 {
     let mut tmp = [0u8; 4];
-    data.subarray(offset as u32, offset as u32 + 4).copy_to(&mut tmp);
+    data.subarray(offset as u32, offset as u32 + 4)
+        .copy_to(&mut tmp);
     u32::from_le_bytes(tmp)
 }
 

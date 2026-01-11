@@ -58,7 +58,9 @@ pub struct GuestMemory {
 
 impl GuestMemory {
     pub fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -88,4 +90,3 @@ impl MemoryAccess for GuestMemory {
         self.data[r].copy_from_slice(buf);
     }
 }
-

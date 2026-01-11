@@ -11,11 +11,21 @@ struct Cpu {
 #[derive(Debug, Clone, PartialEq)]
 enum Instruction {
     Nop,
-    LoadImm { reg: usize, imm: i64 },
-    Dec { reg: usize },
-    Jnz { reg: usize, target: usize },
+    LoadImm {
+        reg: usize,
+        imm: i64,
+    },
+    Dec {
+        reg: usize,
+    },
+    Jnz {
+        reg: usize,
+        target: usize,
+    },
     /// Simulated string/`REP` instruction.
-    RepNop { iterations: u64 },
+    RepNop {
+        iterations: u64,
+    },
 }
 
 fn run_interpreter(cpu: &mut Cpu, program: &[Instruction], perf: &mut PerfWorker) {
@@ -148,10 +158,13 @@ fn counts_straight_line_program() {
 fn counts_control_flow_loop() {
     let iterations = 7i64;
     let program = vec![
-        Instruction::LoadImm { reg: 0, imm: iterations }, // 0
-        Instruction::Nop,                                 // 1
-        Instruction::Dec { reg: 0 },                      // 2
-        Instruction::Jnz { reg: 0, target: 1 },           // 3
+        Instruction::LoadImm {
+            reg: 0,
+            imm: iterations,
+        }, // 0
+        Instruction::Nop,                       // 1
+        Instruction::Dec { reg: 0 },            // 2
+        Instruction::Jnz { reg: 0, target: 1 }, // 3
     ];
 
     let shared = Arc::new(PerfCounters::new());
@@ -188,11 +201,14 @@ fn rep_instruction_counts_as_one_architectural_instruction() {
 fn jit_and_interpreter_counts_match() {
     let iterations = 3i64;
     let program = vec![
-        Instruction::LoadImm { reg: 0, imm: iterations }, // 0
-        Instruction::Nop,                                 // 1
-        Instruction::RepNop { iterations: 10 },            // 2
-        Instruction::Dec { reg: 0 },                      // 3
-        Instruction::Jnz { reg: 0, target: 1 },           // 4
+        Instruction::LoadImm {
+            reg: 0,
+            imm: iterations,
+        }, // 0
+        Instruction::Nop,                       // 1
+        Instruction::RepNop { iterations: 10 }, // 2
+        Instruction::Dec { reg: 0 },            // 3
+        Instruction::Jnz { reg: 0, target: 1 }, // 4
     ];
 
     let mut cpu_i = Cpu::default();
@@ -215,4 +231,3 @@ fn jit_and_interpreter_counts_match() {
         perf_j.lifetime_snapshot().rep_iterations
     );
 }
-

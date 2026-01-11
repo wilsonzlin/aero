@@ -51,9 +51,11 @@ impl<Tag, T> ResourceRegistry<Tag, T> {
         let index = id.index();
         let generation = id.generation();
         let slot = self.get_slot(id)?;
-        slot.value
-            .as_ref()
-            .ok_or(GpuError::InvalidHandle { kind, index, generation })
+        slot.value.as_ref().ok_or(GpuError::InvalidHandle {
+            kind,
+            index,
+            generation,
+        })
     }
 
     pub fn get_mut(&mut self, id: Handle<Tag>) -> Result<&mut T, GpuError> {
@@ -61,9 +63,11 @@ impl<Tag, T> ResourceRegistry<Tag, T> {
         let index = id.index();
         let generation = id.generation();
         let slot = self.get_slot_mut(id)?;
-        slot.value
-            .as_mut()
-            .ok_or(GpuError::InvalidHandle { kind, index, generation })
+        slot.value.as_mut().ok_or(GpuError::InvalidHandle {
+            kind,
+            index,
+            generation,
+        })
     }
 
     pub fn remove(&mut self, id: Handle<Tag>) -> Result<T, GpuError> {
@@ -71,10 +75,11 @@ impl<Tag, T> ResourceRegistry<Tag, T> {
         let index = id.index();
         let generation = id.generation();
         let slot = self.get_slot_mut(id)?;
-        let value = slot
-            .value
-            .take()
-            .ok_or(GpuError::InvalidHandle { kind, index, generation })?;
+        let value = slot.value.take().ok_or(GpuError::InvalidHandle {
+            kind,
+            index,
+            generation,
+        })?;
         slot.generation = slot.generation.wrapping_add(1);
         self.free_list.push(index);
         Ok(value)

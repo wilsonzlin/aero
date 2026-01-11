@@ -75,7 +75,11 @@ fn map_attribute_controller(regs: &VgaDevice, index: u8) -> u8 {
     const COLOR_SELECT: usize = 0x14;
 
     let mode_control = regs.ac_regs.get(MODE_CONTROL).copied().unwrap_or(0);
-    let color_plane_enable = regs.ac_regs.get(COLOR_PLANE_ENABLE).copied().unwrap_or(0x0F);
+    let color_plane_enable = regs
+        .ac_regs
+        .get(COLOR_PLANE_ENABLE)
+        .copied()
+        .unwrap_or(0x0F);
     let color_select = regs.ac_regs.get(COLOR_SELECT).copied().unwrap_or(0);
 
     let masked = index & (color_plane_enable & 0x0F);

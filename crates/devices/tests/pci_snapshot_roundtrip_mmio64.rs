@@ -1,5 +1,6 @@
 use aero_devices::pci::{
-    PciBarDefinition, PciBdf, PciBus, PciBusSnapshot, PciConfigMechanism1, PciConfigSpace, PciDevice,
+    PciBarDefinition, PciBdf, PciBus, PciBusSnapshot, PciConfigMechanism1, PciConfigSpace,
+    PciDevice,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 
@@ -11,7 +12,13 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
         | (u32::from(offset) & 0xFC)
 }
 
-fn cfg_read(cfg: &mut PciConfigMechanism1, bus: &mut PciBus, bdf: PciBdf, offset: u16, size: u8) -> u32 {
+fn cfg_read(
+    cfg: &mut PciConfigMechanism1,
+    bus: &mut PciBus,
+    bdf: PciBdf,
+    offset: u16,
+    size: u8,
+) -> u32 {
     cfg.io_write(bus, 0xCF8, 4, cfg_addr(bdf, offset));
     cfg.io_read(bus, 0xCFC + (offset & 3), size)
 }
@@ -108,4 +115,3 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_programming() {
     assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), 0x0000_0001);
     assert_eq!(bus.mapped_bars(), bus2.mapped_bars());
 }
-

@@ -14,7 +14,11 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     std::env::set_var("AERO_L2_DNS_A", "echo.local=203.0.113.10");
     std::env::set_var(
         "AERO_L2_TCP_FORWARD",
-        format!("203.0.113.10:{}=127.0.0.1:{}", echo.addr.port(), echo.addr.port()),
+        format!(
+            "203.0.113.10:{}=127.0.0.1:{}",
+            echo.addr.port(),
+            echo.addr.port()
+        ),
     );
 
     let cfg = ProxyConfig::from_env().unwrap();
@@ -23,8 +27,10 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
 
     let ws_url = format!("ws://{proxy_addr}/l2");
     let mut req = ws_url.into_client_request().unwrap();
-    req.headers_mut()
-        .insert("Sec-WebSocket-Protocol", HeaderValue::from_static(TUNNEL_SUBPROTOCOL));
+    req.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
     let (ws, _resp) = tokio_tungstenite::connect_async(req).await.unwrap();
     let (mut ws_tx, mut ws_rx) = ws.split();
 
@@ -408,15 +414,18 @@ fn is_dhcp_type(frame: &[u8], ty: DhcpMessageType) -> bool {
 }
 
 fn parse_dhcp_from_frame(frame: &[u8]) -> anyhow::Result<DhcpMessage> {
-    let eth = EthernetFrame::parse(frame).map_err(|err| anyhow::anyhow!("ethernet parse: {err:?}"))?;
+    let eth =
+        EthernetFrame::parse(frame).map_err(|err| anyhow::anyhow!("ethernet parse: {err:?}"))?;
     if eth.ethertype != EtherType::IPV4 {
         return Err(anyhow::anyhow!("not ipv4"));
     }
-    let ip = Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
+    let ip =
+        Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
     if ip.protocol != Ipv4Protocol::UDP {
         return Err(anyhow::anyhow!("not udp"));
     }
-    let udp = UdpDatagram::parse(ip.payload).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))?;
+    let udp =
+        UdpDatagram::parse(ip.payload).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))?;
     if udp.src_port != 67 || udp.dst_port != 68 {
         return Err(anyhow::anyhow!("not dhcp"));
     }
@@ -424,11 +433,13 @@ fn parse_dhcp_from_frame(frame: &[u8]) -> anyhow::Result<DhcpMessage> {
 }
 
 fn parse_tcp_from_frame(frame: &[u8]) -> anyhow::Result<TcpSegment<'_>> {
-    let eth = EthernetFrame::parse(frame).map_err(|err| anyhow::anyhow!("ethernet parse: {err:?}"))?;
+    let eth =
+        EthernetFrame::parse(frame).map_err(|err| anyhow::anyhow!("ethernet parse: {err:?}"))?;
     if eth.ethertype != EtherType::IPV4 {
         return Err(anyhow::anyhow!("not ipv4"));
     }
-    let ip = Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
+    let ip =
+        Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
     if ip.protocol != Ipv4Protocol::TCP {
         return Err(anyhow::anyhow!("not tcp"));
     }
@@ -519,7 +530,12 @@ fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
     out
 }
 
-fn build_dhcp_request(xid: u32, mac: MacAddr, requested_ip: Ipv4Addr, server_id: Ipv4Addr) -> Vec<u8> {
+fn build_dhcp_request(
+    xid: u32,
+    mac: MacAddr,
+    requested_ip: Ipv4Addr,
+    server_id: Ipv4Addr,
+) -> Vec<u8> {
     let mut out = vec![0u8; 240];
     out[0] = 1; // BOOTREQUEST
     out[1] = 1;
@@ -554,4 +570,3 @@ fn build_dns_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
     out.extend_from_slice(&1u16.to_be_bytes()); // IN
     out
 }
-

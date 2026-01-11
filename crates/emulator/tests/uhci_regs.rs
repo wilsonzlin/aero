@@ -1,7 +1,7 @@
 use emulator::io::pci::PciDevice;
-use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use emulator::io::usb::uhci::regs::*;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
+use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use emulator::io::PortIO;
 use memory::{Bus, MemoryBus};
 use std::cell::RefCell;
@@ -52,32 +52,18 @@ fn uhci_usbcmd_roundtrips_extended_bits_and_halted_tracks_rs() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
 
     // Reset state: halted until RS is set.
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
 
     // Writes should preserve common driver bits (MAXP/CF) and ignore unknown bits.
-    uhci.port_write(
-        REG_USBCMD,
-        2,
-        (USBCMD_CF | USBCMD_MAXP | 0xff00) as u32,
-    );
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_CF | USBCMD_MAXP | 0xff00) as u32);
     assert_eq!(
         uhci.port_read(REG_USBCMD, 2) as u16,
         USBCMD_CF | USBCMD_MAXP
     );
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
 
     // Setting RS clears HALTED.
-    uhci.port_write(
-        REG_USBCMD,
-        2,
-        (USBCMD_RS | USBCMD_CF | USBCMD_MAXP) as u32,
-    );
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_CF | USBCMD_MAXP) as u32);
     assert_eq!(
         uhci.port_read(REG_USBCMD, 2) as u16,
         USBCMD_RS | USBCMD_CF | USBCMD_MAXP
@@ -90,21 +76,14 @@ fn uhci_usbcmd_roundtrips_extended_bits_and_halted_tracks_rs() {
         uhci.port_read(REG_USBCMD, 2) as u16,
         USBCMD_CF | USBCMD_MAXP
     );
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
 }
 
 #[test]
 fn uhci_hcreset_restores_default_register_state() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
 
-    uhci.port_write(
-        REG_USBCMD,
-        2,
-        (USBCMD_RS | USBCMD_CF | USBCMD_MAXP) as u32,
-    );
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_CF | USBCMD_MAXP) as u32);
     uhci.port_write(REG_USBINTR, 2, 0x0f);
     uhci.port_write(REG_FRNUM, 2, 0x0555);
     uhci.port_write(REG_FLBASEADD, 4, 0x1234_5000);
@@ -114,10 +93,7 @@ fn uhci_hcreset_restores_default_register_state() {
     uhci.port_write(REG_USBCMD, 2, USBCMD_HCRESET as u32);
 
     assert_eq!(uhci.port_read(REG_USBCMD, 2) as u16, USBCMD_MAXP);
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
     assert_eq!(uhci.port_read(REG_USBINTR, 2) as u16, 0);
     assert_eq!(uhci.port_read(REG_FRNUM, 2) as u16, 0);
     assert_eq!(uhci.port_read(REG_FLBASEADD, 4), 0);
@@ -143,10 +119,7 @@ fn uhci_global_reset_resets_state_and_latches_greset_until_cleared() {
         uhci.port_read(REG_USBCMD, 2) as u16,
         USBCMD_GRESET | USBCMD_CF | USBCMD_MAXP
     );
-    assert_ne!(
-        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED,
-        0
-    );
+    assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
     assert_eq!(uhci.port_read(REG_USBINTR, 2) as u16, 0);
     assert_eq!(uhci.port_read(REG_FRNUM, 2) as u16, 0);
     assert_eq!(uhci.port_read(REG_FLBASEADD, 4), 0);
@@ -276,10 +249,7 @@ fn uhci_register_block_supports_byte_accesses() {
 
     // USBINTR is also byte-accessible (low byte only).
     uhci.port_write(REG_USBINTR, 1, USBINTR_TIMEOUT_CRC as u32);
-    assert_eq!(
-        uhci.port_read(REG_USBINTR, 2) as u16,
-        USBINTR_TIMEOUT_CRC
-    );
+    assert_eq!(uhci.port_read(REG_USBINTR, 2) as u16, USBINTR_TIMEOUT_CRC);
 }
 
 #[test]
@@ -291,11 +261,7 @@ fn uhci_fgr_latches_resume_detect_and_can_irq() {
     assert!(!uhci.irq_level());
 
     // Raising FGR latches RESUMEDETECT in USBSTS and asserts IRQ.
-    uhci.port_write(
-        REG_USBCMD,
-        2,
-        (USBCMD_MAXP | USBCMD_RS | USBCMD_FGR) as u32,
-    );
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_MAXP | USBCMD_RS | USBCMD_FGR) as u32);
     assert_ne!(
         uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
         0
@@ -335,9 +301,12 @@ fn uhci_greset_resets_attached_devices() {
     let resets = Rc::new(RefCell::new(0));
 
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(ResetCountingDevice { resets: resets.clone() }));
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(ResetCountingDevice {
+            resets: resets.clone(),
+        }),
+    );
 
     // Assert global reset; model should see a bus reset.
     uhci.port_write(REG_USBCMD, 2, (USBCMD_GRESET | USBCMD_MAXP) as u32);

@@ -61,7 +61,9 @@ impl Sm4Program {
             ));
         }
         if tokens.len() < 2 {
-            return Err(Sm4Error::TooShort { dwords: tokens.len() });
+            return Err(Sm4Error::TooShort {
+                dwords: tokens.len(),
+            });
         }
 
         let version = tokens[0];
@@ -131,7 +133,10 @@ impl fmt::Display for Sm4Error {
             Sm4Error::TooShort { dwords } => {
                 write!(f, "shader bytecode too short ({dwords} dwords)")
             }
-            Sm4Error::DeclaredLengthOutOfBounds { declared, available } => write!(
+            Sm4Error::DeclaredLengthOutOfBounds {
+                declared,
+                available,
+            } => write!(
                 f,
                 "shader bytecode declares {declared} dwords but only {available} provided"
             ),

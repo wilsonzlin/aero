@@ -100,13 +100,15 @@ impl<'a> DxbcFile<'a> {
         let bytes = &bytes[..total_size_usize];
 
         let chunk_count_usize = chunk_count as usize;
-        let offset_table_len = chunk_count_usize
-            .checked_mul(4)
-            .ok_or_else(|| DxbcError::malformed_offsets("chunk_count overflows offset table size"))?;
-
-        let offset_table_end = DXBC_HEADER_LEN.checked_add(offset_table_len).ok_or_else(|| {
-            DxbcError::malformed_offsets("header size overflows when adding chunk offset table")
+        let offset_table_len = chunk_count_usize.checked_mul(4).ok_or_else(|| {
+            DxbcError::malformed_offsets("chunk_count overflows offset table size")
         })?;
+
+        let offset_table_end = DXBC_HEADER_LEN
+            .checked_add(offset_table_len)
+            .ok_or_else(|| {
+                DxbcError::malformed_offsets("header size overflows when adding chunk offset table")
+            })?;
 
         if offset_table_end > bytes.len() {
             return Err(DxbcError::malformed_offsets(format!(
@@ -122,14 +124,13 @@ impl<'a> DxbcFile<'a> {
                     "chunk offset {i} overflows offset table indexing"
                 ))
             })?;
-            let offset_pos_in_file =
-                DXBC_HEADER_LEN
-                    .checked_add(offset_pos_in_table)
-                    .ok_or_else(|| {
-                        DxbcError::malformed_offsets(
-                            "offset table indexing overflows when added to header size",
-                        )
-                    })?;
+            let offset_pos_in_file = DXBC_HEADER_LEN
+                .checked_add(offset_pos_in_table)
+                .ok_or_else(|| {
+                    DxbcError::malformed_offsets(
+                        "offset table indexing overflows when added to header size",
+                    )
+                })?;
 
             let chunk_offset = read_u32_le(bytes, offset_pos_in_file).map_err(|e| {
                 DxbcError::malformed_offsets(format!(
@@ -228,10 +229,7 @@ impl<'a> DxbcFile<'a> {
     pub fn get_signature(&self, kind: FourCC) -> Option<Result<SignatureChunk, DxbcError>> {
         if let Some(chunk) = self.get_chunk(kind) {
             return Some(parse_signature_chunk(chunk.data).map_err(|e| {
-                DxbcError::invalid_chunk(format!(
-                    "{kind} signature chunk: {}",
-                    e.context()
-                ))
+                DxbcError::invalid_chunk(format!("{kind} signature chunk: {}", e.context()))
             }));
         }
 
@@ -249,10 +247,7 @@ impl<'a> DxbcFile<'a> {
 
         let chunk = self.get_chunk(fallback_kind)?;
         Some(parse_signature_chunk(chunk.data).map_err(|e| {
-            DxbcError::invalid_chunk(format!(
-                "{fallback_kind} signature chunk: {}",
-                e.context()
-            ))
+            DxbcError::invalid_chunk(format!("{fallback_kind} signature chunk: {}", e.context()))
         }))
     }
 
@@ -272,9 +267,7 @@ impl<'a> DxbcFile<'a> {
         let _ = write!(
             &mut out,
             "{} total_size={} chunk_count={}",
-            self.header.magic,
-            self.header.total_size,
-            self.header.chunk_count
+            self.header.magic, self.header.total_size, self.header.chunk_count
         );
 
         for (idx, chunk) in self.chunks().enumerate() {
@@ -335,8 +328,7 @@ impl<'a> Iterator for DxbcChunksIter<'a> {
         let header_end = chunk_offset.checked_add(8)?;
         let header = self.bytes.get(chunk_offset..header_end)?;
         let fourcc = FourCC([header[0], header[1], header[2], header[3]]);
-        let chunk_size =
-            u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        let chunk_size = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
         let data_start = chunk_offset.checked_add(8)?;
         let data_end = data_start.checked_add(chunk_size)?;
         let data = self.bytes.get(data_start..data_end)?;
@@ -362,9 +354,9 @@ fn read_array_16(bytes: &[u8], offset: usize) -> Result<[u8; 16], DxbcError> {
 }
 
 fn read_fourcc(bytes: &[u8], offset: usize) -> Result<FourCC, DxbcError> {
-    let end = offset.checked_add(4).ok_or_else(|| {
-        DxbcError::malformed_header("offset overflows when reading fourcc")
-    })?;
+    let end = offset
+        .checked_add(4)
+        .ok_or_else(|| DxbcError::malformed_header("offset overflows when reading fourcc"))?;
     let slice = bytes.get(offset..end).ok_or_else(|| {
         DxbcError::malformed_header(format!(
             "need 4 bytes at {offset}..{end}, but buffer length is {}",
@@ -377,9 +369,9 @@ fn read_fourcc(bytes: &[u8], offset: usize) -> Result<FourCC, DxbcError> {
 }
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, DxbcError> {
-    let end = offset.checked_add(4).ok_or_else(|| {
-        DxbcError::malformed_header("offset overflows when reading u32")
-    })?;
+    let end = offset
+        .checked_add(4)
+        .ok_or_else(|| DxbcError::malformed_header("offset overflows when reading u32"))?;
     let slice = bytes.get(offset..end).ok_or_else(|| {
         DxbcError::malformed_header(format!(
             "need 4 bytes at {offset}..{end}, but buffer length is {}",

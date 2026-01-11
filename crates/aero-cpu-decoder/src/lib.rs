@@ -18,18 +18,18 @@
 
 use iced_x86::{Decoder as IcedDecoder, DecoderError as IcedDecoderError, DecoderOptions};
 
-/// Decoded instruction type used by this crate (re-exported from `iced-x86`).
-pub use iced_x86::Instruction;
-/// Register enum used by decoded instructions (re-exported from `iced-x86`).
-pub use iced_x86::Register;
 /// Instruction kind/code enum (re-exported from `iced-x86`).
 pub use iced_x86::Code;
+/// Decoded instruction type used by this crate (re-exported from `iced-x86`).
+pub use iced_x86::Instruction;
+/// Memory size enum (re-exported from `iced-x86`).
+pub use iced_x86::MemorySize;
 /// Mnemonic enum (re-exported from `iced-x86`).
 pub use iced_x86::Mnemonic;
 /// Operand kind enum (re-exported from `iced-x86`).
 pub use iced_x86::OpKind;
-/// Memory size enum (re-exported from `iced-x86`).
-pub use iced_x86::MemorySize;
+/// Register enum used by decoded instructions (re-exported from `iced-x86`).
+pub use iced_x86::Register;
 
 /// Maximum architectural x86 instruction length.
 pub const MAX_INSTRUCTION_LEN: usize = 15;
@@ -199,7 +199,11 @@ impl DecodedInstruction {
 /// This is the lowest-overhead entry point and is suitable for hot interpreter
 /// loops that only need the decoded operand forms.
 #[inline]
-pub fn decode_instruction(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<Instruction, DecodeError> {
+pub fn decode_instruction(
+    mode: DecodeMode,
+    ip: u64,
+    bytes: &[u8],
+) -> Result<Instruction, DecodeError> {
     if bytes.is_empty() {
         return Err(DecodeError::EmptyInput);
     }
@@ -237,7 +241,11 @@ pub fn decode_instruction(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<Ins
 ///
 /// `ip` is used for RIP-relative addressing and branch target calculation.
 #[inline]
-pub fn decode_one(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<DecodedInstruction, DecodeError> {
+pub fn decode_one(
+    mode: DecodeMode,
+    ip: u64,
+    bytes: &[u8],
+) -> Result<DecodedInstruction, DecodeError> {
     let instruction = decode_instruction(mode, ip, bytes)?;
 
     // Best-effort prefix parsing for consumers that want raw prefix info.
@@ -249,7 +257,10 @@ pub fn decode_one(mode: DecodeMode, ip: u64, bytes: &[u8]) -> Result<DecodedInst
     };
     let prefixes = parse_prefixes(mode, bytes).map_err(|_| DecodeError::UnexpectedEof)?;
 
-    Ok(DecodedInstruction { prefixes, instruction })
+    Ok(DecodedInstruction {
+        prefixes,
+        instruction,
+    })
 }
 
 #[derive(Copy, Clone, Debug)]

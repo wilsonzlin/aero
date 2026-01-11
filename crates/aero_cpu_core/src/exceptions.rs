@@ -8,26 +8,26 @@
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exception {
-    DivideError = 0,             // #DE
-    Debug = 1,                   // #DB
-    NonMaskableInterrupt = 2,    // NMI
-    Breakpoint = 3,              // #BP
-    Overflow = 4,                // #OF
-    BoundRangeExceeded = 5,      // #BR
-    InvalidOpcode = 6,           // #UD
-    DeviceNotAvailable = 7,      // #NM
-    DoubleFault = 8,             // #DF
-    InvalidTss = 10,             // #TS
-    SegmentNotPresent = 11,      // #NP
-    StackFault = 12,             // #SS
-    GeneralProtection = 13,      // #GP
-    PageFault = 14,              // #PF
-    X87Fpu = 16,                 // #MF
-    AlignmentCheck = 17,         // #AC
-    MachineCheck = 18,           // #MC
-    SimdFloatingPoint = 19,      // #XM/#XF
-    Virtualization = 20,         // #VE
-    ControlProtection = 21,      // #CP
+    DivideError = 0,          // #DE
+    Debug = 1,                // #DB
+    NonMaskableInterrupt = 2, // NMI
+    Breakpoint = 3,           // #BP
+    Overflow = 4,             // #OF
+    BoundRangeExceeded = 5,   // #BR
+    InvalidOpcode = 6,        // #UD
+    DeviceNotAvailable = 7,   // #NM
+    DoubleFault = 8,          // #DF
+    InvalidTss = 10,          // #TS
+    SegmentNotPresent = 11,   // #NP
+    StackFault = 12,          // #SS
+    GeneralProtection = 13,   // #GP
+    PageFault = 14,           // #PF
+    X87Fpu = 16,              // #MF
+    AlignmentCheck = 17,      // #AC
+    MachineCheck = 18,        // #MC
+    SimdFloatingPoint = 19,   // #XM/#XF
+    Virtualization = 20,      // #VE
+    ControlProtection = 21,   // #CP
 }
 
 impl Exception {

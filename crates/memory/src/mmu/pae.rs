@@ -11,9 +11,7 @@
 //! instruction fetch (`AccessType::Execute`).
 
 use crate::bus::MemoryBus;
-use crate::mmu::{
-    AccessType, PageFault, TranslateError, CR0_WP, EFER_NXE,
-};
+use crate::mmu::{AccessType, PageFault, TranslateError, CR0_WP, EFER_NXE};
 
 const PTE_P: u64 = 1 << 0;
 const PTE_RW: u64 = 1 << 1;
@@ -58,8 +56,10 @@ pub fn translate(
     let is_user = cpl == 3;
     let is_instr = access == AccessType::Execute;
 
-    let pf_not_present = || TranslateError::PageFault(PageFault::not_present(vaddr as u64, access, cpl));
-    let pf_protection = || TranslateError::PageFault(PageFault::protection(vaddr as u64, access, cpl));
+    let pf_not_present =
+        || TranslateError::PageFault(PageFault::not_present(vaddr as u64, access, cpl));
+    let pf_protection =
+        || TranslateError::PageFault(PageFault::protection(vaddr as u64, access, cpl));
     let pf_rsvd = || TranslateError::PageFault(PageFault::rsvd(vaddr as u64, access, cpl));
 
     let wp = (cr0 & CR0_WP) != 0;

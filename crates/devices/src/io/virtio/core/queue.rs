@@ -39,7 +39,10 @@ impl fmt::Display for VirtQueueError {
                 "virtqueue descriptor index out of range: index={index}, size={size}"
             ),
             VirtQueueError::DescriptorLoop { head_index } => {
-                write!(f, "virtqueue descriptor loop detected: head_index={head_index}")
+                write!(
+                    f,
+                    "virtqueue descriptor loop detected: head_index={head_index}"
+                )
             }
             VirtQueueError::IndirectDescriptorUnsupported => {
                 write!(f, "virtqueue indirect descriptors are not supported")
@@ -205,4 +208,3 @@ impl VirtQueue {
         Ok(self.read_avail_flags(mem)? & VRING_AVAIL_F_NO_INTERRUPT == 0)
     }
 }
-

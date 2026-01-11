@@ -276,10 +276,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 if stop && ctx.usbintr & USBINTR_SHORT_PACKET != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
                 }
-                TdProgress::Advanced {
-                    next_link,
-                    stop,
-                }
+                TdProgress::Advanced { next_link, stop }
             }
             UsbInResult::Nak => {
                 status |= TD_STATUS_NAK;

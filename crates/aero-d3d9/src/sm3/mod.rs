@@ -8,6 +8,6 @@ pub mod verify;
 
 pub use decode::{decode_u32_tokens, decode_u8_le_bytes, DecodedShader};
 pub use ir::ShaderIr;
-pub use types::{ShaderStage, ShaderVersion};
 pub use ir_builder::build_ir;
+pub use types::{ShaderStage, ShaderVersion};
 pub use verify::verify_ir;

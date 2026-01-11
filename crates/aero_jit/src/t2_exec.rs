@@ -299,9 +299,15 @@ fn run_trace_inner(
     let mut stats = ExecStats::default();
 
     for inst in &trace.prologue {
-        if let Some(exit) =
-            exec_instr(inst, state, env, bus, &mut values, &mut stats, cache.as_mut())
-        {
+        if let Some(exit) = exec_instr(
+            inst,
+            state,
+            env,
+            bus,
+            &mut values,
+            &mut stats,
+            cache.as_mut(),
+        ) {
             return RunResult { exit, stats };
         }
     }
@@ -319,9 +325,15 @@ fn run_trace_inner(
         }
         iters += 1;
         for inst in &trace.body {
-            if let Some(exit) =
-                exec_instr(inst, state, env, bus, &mut values, &mut stats, cache.as_mut())
-            {
+            if let Some(exit) = exec_instr(
+                inst,
+                state,
+                env,
+                bus,
+                &mut values,
+                &mut stats,
+                cache.as_mut(),
+            ) {
                 return RunResult { exit, stats };
             }
         }
@@ -355,7 +367,12 @@ impl RegCache {
         }
     }
 
-    fn read_reg(&mut self, reg: Gpr, cpu: &aero_cpu_core::state::CpuState, stats: &mut ExecStats) -> u64 {
+    fn read_reg(
+        &mut self,
+        reg: Gpr,
+        cpu: &aero_cpu_core::state::CpuState,
+        stats: &mut ExecStats,
+    ) -> u64 {
         let idx = reg.as_u8() as usize;
         if !self.cached[idx] {
             stats.reg_loads += 1;

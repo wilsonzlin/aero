@@ -1,6 +1,8 @@
 #![cfg(feature = "legacy-interp")]
 
-use aero_cpu_core::cpuid::{bits, cpuid, CpuFeatureOverrides, CpuFeatureSet, CpuFeatures, CpuProfile, CpuTopology};
+use aero_cpu_core::cpuid::{
+    bits, cpuid, CpuFeatureOverrides, CpuFeatureSet, CpuFeatures, CpuProfile, CpuTopology,
+};
 use aero_cpu_core::msr;
 use aero_cpu_core::system::Cpu;
 

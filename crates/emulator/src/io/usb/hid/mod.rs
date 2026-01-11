@@ -1,9 +1,9 @@
+pub mod composite;
 pub mod gamepad;
 pub mod keyboard;
 pub mod mouse;
-pub mod composite;
-pub mod report_descriptor;
 pub mod passthrough;
+pub mod report_descriptor;
 pub mod usage;
 pub mod webhid;
 

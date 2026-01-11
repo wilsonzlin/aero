@@ -10,27 +10,27 @@ mod acpi;
 mod bios;
 mod bus;
 mod ecam;
-mod ports;
 mod platform;
+mod ports;
 mod resources;
 
 pub use acpi::{build_prt_bus0, dsdt_asl, PciPrtEntry, ACPI_PCI_ROOT_NAME};
 pub use bios::bios_post;
 pub use bus::{PciBus, PciBusSnapshot, PciConfigMechanism1, PciMappedBar};
-pub use ecam::{PciEcamConfig, PciEcamMmio, PCIE_ECAM_BUS_STRIDE};
 pub use config::{
     PciBarDefinition, PciBarKind, PciBarRange, PciCommandChange, PciConfigSpace,
     PciConfigSpaceState, PciConfigWriteEffects, PciDevice, PciSubsystemIds, PciVendorDeviceId,
 };
+pub use ecam::{PciEcamConfig, PciEcamMmio, PCIE_ECAM_BUS_STRIDE};
 pub use irq_router::{
     GsiLevelSink, IoApicPicMirrorSink, PciIntxRouter, PciIntxRouterConfig, PicIrqLevelSink,
 };
 pub use msi::MsiCapability;
-pub use ports::{
-    register_pci_config_ports, PciConfigPort, PciConfigPorts, SharedPciConfigPorts, PCI_CFG_ADDR_PORT,
-    PCI_CFG_DATA_PORT,
-};
 pub use platform::{PciHostBridge, PciIsaBridge, PciPlatform};
+pub use ports::{
+    register_pci_config_ports, PciConfigPort, PciConfigPorts, SharedPciConfigPorts,
+    PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 pub use resources::{PciResourceAllocator, PciResourceAllocatorConfig, PciResourceError};
 
 /// PCI bus/device/function identifier.
@@ -47,7 +47,11 @@ impl PciBdf {
     /// The caller is responsible for ensuring the values are within the PCI ranges:
     /// bus < 256, device < 32, function < 8.
     pub const fn new(bus: u8, device: u8, function: u8) -> Self {
-        Self { bus, device, function }
+        Self {
+            bus,
+            device,
+            function,
+        }
     }
 }
 

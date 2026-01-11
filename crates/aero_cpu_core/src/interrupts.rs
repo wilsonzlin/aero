@@ -87,12 +87,8 @@ struct IdtGate64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InterruptFrame {
     Real16,
-    Protected32 {
-        stack_switched: bool,
-    },
-    Long64 {
-        stack_switched: bool,
-    },
+    Protected32 { stack_switched: bool },
+    Long64 { stack_switched: bool },
 }
 
 /// Extra CPU-core state that is intentionally *not* part of the JIT ABI.
@@ -291,12 +287,21 @@ pub fn iret<B: CpuBus>(
 ) -> Result<(), CpuExit> {
     let Some(frame) = pending.interrupt_frames.pop() else {
         // No pending frame; on real hardware this would be #GP(0).
-        return deliver_exception(bus, state, pending, Exception::GeneralProtection, state.rip(), Some(0));
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            state.rip(),
+            Some(0),
+        );
     };
 
     match frame {
         InterruptFrame::Real16 => iret_real(state, bus),
-        InterruptFrame::Protected32 { stack_switched } => iret_protected(state, bus, stack_switched),
+        InterruptFrame::Protected32 { stack_switched } => {
+            iret_protected(state, bus, stack_switched)
+        }
         InterruptFrame::Long64 { stack_switched } => iret_long(state, bus, pending, stack_switched),
     }
 }
@@ -344,7 +349,14 @@ fn deliver_exception<B: CpuBus>(
             return Err(CpuExit::TripleFault);
         }
         if exception != Exception::DoubleFault && should_double_fault(first, exception) {
-            return deliver_exception(bus, state, pending, Exception::DoubleFault, saved_rip, Some(0));
+            return deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::DoubleFault,
+                saved_rip,
+                Some(0),
+            );
         }
     }
 
@@ -387,10 +399,24 @@ fn deliver_vector<B: CpuBus>(
     match state.mode {
         CpuMode::Real | CpuMode::Vm86 => deliver_real_mode(bus, state, pending, vector, saved_rip),
         CpuMode::Protected => deliver_protected_mode(
-            bus, state, pending, vector, saved_rip, error_code, is_interrupt, source,
+            bus,
+            state,
+            pending,
+            vector,
+            saved_rip,
+            error_code,
+            is_interrupt,
+            source,
         ),
         CpuMode::Long => deliver_long_mode(
-            bus, state, pending, vector, saved_rip, error_code, is_interrupt, source,
+            bus,
+            state,
+            pending,
+            vector,
+            saved_rip,
+            error_code,
+            is_interrupt,
+            source,
         ),
     }
 }
@@ -406,13 +432,27 @@ fn deliver_real_mode<B: CpuBus>(
     let offset = match bus.read_u16(ivt_addr) {
         Ok(v) => v as u64,
         Err(_) => {
-            return deliver_exception(bus, state, pending, Exception::GeneralProtection, saved_rip, Some(0))
+            return deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::GeneralProtection,
+                saved_rip,
+                Some(0),
+            )
         }
     };
     let segment = match bus.read_u16(ivt_addr + 2) {
         Ok(v) => v,
         Err(_) => {
-            return deliver_exception(bus, state, pending, Exception::GeneralProtection, saved_rip, Some(0))
+            return deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::GeneralProtection,
+                saved_rip,
+                Some(0),
+            )
         }
     };
 
@@ -450,15 +490,36 @@ fn deliver_protected_mode<B: CpuBus>(
     let gate = match read_idt_gate32(bus, state, vector) {
         Ok(gate) => gate,
         Err(()) => {
-            return deliver_exception(bus, state, pending, Exception::GeneralProtection, saved_rip, Some(0))
+            return deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::GeneralProtection,
+                saved_rip,
+                Some(0),
+            )
         }
     };
     if !gate.present {
-        return deliver_exception(bus, state, pending, Exception::SegmentNotPresent, saved_rip, Some(0));
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::SegmentNotPresent,
+            saved_rip,
+            Some(0),
+        );
     }
 
     if gate.gate_type == GateType::Task {
-        return deliver_exception(bus, state, pending, Exception::GeneralProtection, saved_rip, Some(0));
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            saved_rip,
+            Some(0),
+        );
     }
 
     if is_interrupt && source == InterruptSource::Software {
@@ -498,10 +559,24 @@ fn deliver_protected_mode<B: CpuBus>(
             },
             None => {
                 if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
-                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
                 }
                 if new_cpl > 2 {
-                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
                 }
                 let base = state.tables.tr.base;
                 let esp_off = 4u64 + (new_cpl as u64) * 8;
@@ -562,7 +637,14 @@ fn deliver_protected_mode<B: CpuBus>(
                 };
 
                 if new_ss == 0 {
-                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
                 }
 
                 (new_ss, new_esp)
@@ -621,15 +703,36 @@ fn deliver_long_mode<B: CpuBus>(
     let gate = match read_idt_gate64(bus, state, vector) {
         Ok(gate) => gate,
         Err(()) => {
-            return deliver_exception(bus, state, pending, Exception::GeneralProtection, saved_rip, Some(0))
+            return deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::GeneralProtection,
+                saved_rip,
+                Some(0),
+            )
         }
     };
     if !gate.present {
-        return deliver_exception(bus, state, pending, Exception::SegmentNotPresent, saved_rip, Some(0));
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::SegmentNotPresent,
+            saved_rip,
+            Some(0),
+        );
     }
 
     if gate.gate_type == GateType::Task {
-        return deliver_exception(bus, state, pending, Exception::GeneralProtection, saved_rip, Some(0));
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            saved_rip,
+            Some(0),
+        );
     }
 
     if is_interrupt && source == InterruptSource::Software {
@@ -646,7 +749,14 @@ fn deliver_long_mode<B: CpuBus>(
     }
 
     if !is_canonical(gate.offset) {
-        return deliver_exception(bus, state, pending, Exception::GeneralProtection, saved_rip, Some(0));
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            saved_rip,
+            Some(0),
+        );
     }
 
     let current_cpl = state.cpl();
@@ -661,24 +771,65 @@ fn deliver_long_mode<B: CpuBus>(
         let new_rsp = match pending.tss64 {
             Some(tss) => match tss.ist_stack(gate.ist) {
                 Some(rsp) => rsp,
-                None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                None => {
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    )
+                }
             },
             None => {
                 if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
-                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
                 }
                 let base = state.tables.tr.base;
                 let off = 0x24u64 + (gate.ist as u64 - 1) * 8;
                 let addr = match base.checked_add(off) {
                     Some(addr) => addr,
-                    None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                    None => {
+                        return deliver_exception(
+                            bus,
+                            state,
+                            pending,
+                            Exception::InvalidTss,
+                            saved_rip,
+                            Some(0),
+                        )
+                    }
                 };
                 let rsp = match bus.read_u64(addr) {
                     Ok(val) => val,
-                    Err(_) => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                    Err(_) => {
+                        return deliver_exception(
+                            bus,
+                            state,
+                            pending,
+                            Exception::InvalidTss,
+                            saved_rip,
+                            Some(0),
+                        )
+                    }
                 };
                 if rsp == 0 {
-                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
                 }
                 rsp
             }
@@ -688,27 +839,75 @@ fn deliver_long_mode<B: CpuBus>(
         let new_rsp = match pending.tss64 {
             Some(tss) => match tss.rsp_for_cpl(new_cpl) {
                 Some(rsp) if rsp != 0 => rsp,
-                _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                _ => {
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    )
+                }
             },
             None => {
                 if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
-                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
                 }
                 if new_cpl > 2 {
-                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
                 }
                 let base = state.tables.tr.base;
                 let off = 4u64 + (new_cpl as u64) * 8;
                 let addr = match base.checked_add(off) {
                     Some(addr) => addr,
-                    None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                    None => {
+                        return deliver_exception(
+                            bus,
+                            state,
+                            pending,
+                            Exception::InvalidTss,
+                            saved_rip,
+                            Some(0),
+                        )
+                    }
                 };
                 let rsp = match bus.read_u64(addr) {
                     Ok(val) => val,
-                    Err(_) => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                    Err(_) => {
+                        return deliver_exception(
+                            bus,
+                            state,
+                            pending,
+                            Exception::InvalidTss,
+                            saved_rip,
+                            Some(0),
+                        )
+                    }
                 };
                 if rsp == 0 {
-                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
                 }
                 rsp
             }
@@ -850,7 +1049,11 @@ fn iret_long<B: CpuBus>(
     Ok(())
 }
 
-fn read_idt_gate32<B: CpuBus>(bus: &mut B, state: &state::CpuState, vector: u8) -> Result<IdtGate32, ()> {
+fn read_idt_gate32<B: CpuBus>(
+    bus: &mut B,
+    state: &state::CpuState,
+    vector: u8,
+) -> Result<IdtGate32, ()> {
     let entry_size = 8u64;
     let offset = (vector as u64) * entry_size;
     if offset + (entry_size - 1) > state.tables.idtr.limit as u64 {
@@ -882,7 +1085,11 @@ fn read_idt_gate32<B: CpuBus>(bus: &mut B, state: &state::CpuState, vector: u8) 
     })
 }
 
-fn read_idt_gate64<B: CpuBus>(bus: &mut B, state: &state::CpuState, vector: u8) -> Result<IdtGate64, ()> {
+fn read_idt_gate64<B: CpuBus>(
+    bus: &mut B,
+    state: &state::CpuState,
+    vector: u8,
+) -> Result<IdtGate64, ()> {
     let entry_size = 16u64;
     let offset = (vector as u64) * entry_size;
     if offset + (entry_size - 1) > state.tables.idtr.limit as u64 {
@@ -929,7 +1136,14 @@ fn push16<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(sp as u64));
     match bus.write_u16(addr, value) {
         Ok(()) => Ok(()),
-        Err(_) => deliver_exception(bus, state, pending, Exception::StackFault, saved_rip, Some(0)),
+        Err(_) => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::StackFault,
+            saved_rip,
+            Some(0),
+        ),
     }
 }
 
@@ -945,7 +1159,14 @@ fn push32<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(esp as u64));
     match bus.write_u32(addr, value) {
         Ok(()) => Ok(()),
-        Err(_) => deliver_exception(bus, state, pending, Exception::StackFault, saved_rip, Some(0)),
+        Err(_) => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::StackFault,
+            saved_rip,
+            Some(0),
+        ),
     }
 }
 
@@ -961,7 +1182,14 @@ fn push64<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(rsp));
     match bus.write_u64(addr, value) {
         Ok(()) => Ok(()),
-        Err(_) => deliver_exception(bus, state, pending, Exception::StackFault, saved_rip, Some(0)),
+        Err(_) => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::StackFault,
+            saved_rip,
+            Some(0),
+        ),
     }
 }
 
@@ -997,5 +1225,9 @@ fn is_canonical(addr: u64) -> bool {
     // Canonical if bits 63:48 are sign-extension of bit 47.
     let sign = (addr >> 47) & 1;
     let upper = addr >> 48;
-    if sign == 0 { upper == 0 } else { upper == 0xFFFF }
+    if sign == 0 {
+        upper == 0
+    } else {
+        upper == 0xFFFF
+    }
 }

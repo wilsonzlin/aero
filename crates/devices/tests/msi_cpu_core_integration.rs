@@ -17,7 +17,8 @@ fn write_idt_gate32(
     mem.write_u16(entry_addr + 2, selector).unwrap();
     mem.write_u8(entry_addr + 4, 0).unwrap();
     mem.write_u8(entry_addr + 5, type_attr).unwrap();
-    mem.write_u16(entry_addr + 6, (offset >> 16) as u16).unwrap();
+    mem.write_u16(entry_addr + 6, (offset >> 16) as u16)
+        .unwrap();
 }
 
 struct PlatformCtrl<'a> {

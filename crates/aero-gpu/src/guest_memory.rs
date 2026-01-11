@@ -74,10 +74,15 @@ impl GuestMemory for VecGuestMemory {
             gpa,
             len: dst.len(),
         })?;
-        let end = start.checked_add(dst.len()).ok_or(GuestMemoryError { gpa, len: dst.len() })?;
-        let slice = self.mem.get(start..end).ok_or(GuestMemoryError { gpa, len: dst.len() })?;
+        let end = start.checked_add(dst.len()).ok_or(GuestMemoryError {
+            gpa,
+            len: dst.len(),
+        })?;
+        let slice = self.mem.get(start..end).ok_or(GuestMemoryError {
+            gpa,
+            len: dst.len(),
+        })?;
         dst.copy_from_slice(slice);
         Ok(())
     }
 }
-

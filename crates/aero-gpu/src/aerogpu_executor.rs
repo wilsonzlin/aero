@@ -11,7 +11,8 @@ use std::ops::Range;
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 
 const AEROGPU_CMD_STREAM_MAGIC: u32 = 0x444D_4341; // "ACMD" LE
-const AEROGPU_ALLOC_TABLE_MAGIC: u32 = aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
+const AEROGPU_ALLOC_TABLE_MAGIC: u32 =
+    aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
 
 // Selected opcodes from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
 const OP_CREATE_BUFFER: u32 = 0x100;
@@ -216,7 +217,9 @@ impl AllocTable {
             let gpa = u64::from_le_bytes(entry_bytes[8..16].try_into().unwrap());
             let size_bytes = u64::from_le_bytes(entry_bytes[16..24].try_into().unwrap());
 
-            table.entries.insert(alloc_id, AllocEntry { gpa, size_bytes });
+            table
+                .entries
+                .insert(alloc_id, AllocEntry { gpa, size_bytes });
         }
 
         Ok(table)
@@ -373,7 +376,10 @@ fn fs_main() -> @location(0) vec4<f32> {
         }];
 
         let mut pipelines = HashMap::new();
-        for fmt in [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Bgra8Unorm] {
+        for fmt in [
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Bgra8Unorm,
+        ] {
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("aerogpu.executor.pipeline"),
                 layout: Some(&pipeline_layout),
@@ -542,13 +548,17 @@ fn fs_main() -> @location(0) vec4<f32> {
         while offset < size_bytes_usize {
             let cmd_offset = offset;
             if offset + CMD_HDR_SIZE > size_bytes_usize {
-                return Err((cmd_offset, ExecutorError::TruncatedStream, packets_processed));
+                return Err((
+                    cmd_offset,
+                    ExecutorError::TruncatedStream,
+                    packets_processed,
+                ));
             }
 
-            let opcode = read_u32_le(bytes, offset)
-                .map_err(|e| (cmd_offset, e, packets_processed))?;
-            let cmd_size_bytes = read_u32_le(bytes, offset + 4)
-                .map_err(|e| (cmd_offset, e, packets_processed))?;
+            let opcode =
+                read_u32_le(bytes, offset).map_err(|e| (cmd_offset, e, packets_processed))?;
+            let cmd_size_bytes =
+                read_u32_le(bytes, offset + 4).map_err(|e| (cmd_offset, e, packets_processed))?;
             if cmd_size_bytes < CMD_HDR_SIZE as u32 {
                 return Err((
                     cmd_offset,
@@ -567,7 +577,11 @@ fn fs_main() -> @location(0) vec4<f32> {
             let cmd_size = cmd_size_bytes as usize;
             let end = offset + cmd_size;
             if end > size_bytes_usize {
-                return Err((cmd_offset, ExecutorError::TruncatedStream, packets_processed));
+                return Err((
+                    cmd_offset,
+                    ExecutorError::TruncatedStream,
+                    packets_processed,
+                ));
             }
 
             let cmd_bytes = &bytes[offset..end];
@@ -776,9 +790,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             let required_bytes = u64::from(row_pitch_bytes)
                 .checked_mul(u64::from(height))
                 .ok_or_else(|| ExecutorError::Validation("texture backing size overflow".into()))?;
-            let end = backing_offset
-                .checked_add(required_bytes)
-                .ok_or_else(|| ExecutorError::Validation("texture backing range overflow".into()))?;
+            let end = backing_offset.checked_add(required_bytes).ok_or_else(|| {
+                ExecutorError::Validation("texture backing range overflow".into())
+            })?;
             if end > entry.size_bytes {
                 return Err(ExecutorError::Validation(format!(
                     "CREATE_TEXTURE2D backing range out of bounds (offset=0x{backing_offset:x}, size=0x{required_bytes:x}, alloc_size=0x{:x})",
@@ -927,8 +941,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Ok(());
         }
 
-        let data_len = usize::try_from(size_bytes)
-            .map_err(|_| ExecutorError::Validation("UPLOAD_RESOURCE size_bytes too large".into()))?;
+        let data_len = usize::try_from(size_bytes).map_err(|_| {
+            ExecutorError::Validation("UPLOAD_RESOURCE size_bytes too large".into())
+        })?;
         let data_end = 32usize
             .checked_add(data_len)
             .ok_or_else(|| ExecutorError::Validation("UPLOAD_RESOURCE size overflow".into()))?;
@@ -954,8 +969,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 )));
             }
 
-            self.queue
-                .write_buffer(&buffer.buffer, offset_bytes, data);
+            self.queue.write_buffer(&buffer.buffer, offset_bytes, data);
             return Ok(());
         }
 
@@ -1102,7 +1116,9 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         let expected_size = 16usize
             .checked_add(buffer_count as usize * 16)
-            .ok_or_else(|| ExecutorError::Validation("vertex buffer binding size overflow".into()))?;
+            .ok_or_else(|| {
+                ExecutorError::Validation("vertex buffer binding size overflow".into())
+            })?;
         if cmd.len() < expected_size {
             return Err(ExecutorError::TruncatedPacket);
         }
@@ -1264,7 +1280,11 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    fn exec_draw(&mut self, cmd: &[u8], guest_memory: &dyn GuestMemory) -> Result<(), ExecutorError> {
+    fn exec_draw(
+        &mut self,
+        cmd: &[u8],
+        guest_memory: &dyn GuestMemory,
+    ) -> Result<(), ExecutorError> {
         if cmd.len() < 24 {
             return Err(ExecutorError::TruncatedPacket);
         }
@@ -1290,15 +1310,17 @@ fn fs_main() -> @location(0) vec4<f32> {
         self.flush_buffer_if_dirty(vb.buffer, guest_memory)?;
         self.flush_texture_if_dirty(tex0, guest_memory)?;
 
-        let rt_tex = self.textures.get(&rt).ok_or_else(|| {
-            ExecutorError::Validation(format!("DRAW render target {rt} missing"))
-        })?;
+        let rt_tex = self
+            .textures
+            .get(&rt)
+            .ok_or_else(|| ExecutorError::Validation(format!("DRAW render target {rt} missing")))?;
         let vb_res = self.buffers.get(&vb.buffer).ok_or_else(|| {
             ExecutorError::Validation(format!("DRAW vertex buffer {} missing", vb.buffer))
         })?;
-        let tex0_res = self.textures.get(&tex0).ok_or_else(|| {
-            ExecutorError::Validation(format!("DRAW texture {tex0} missing"))
-        })?;
+        let tex0_res = self
+            .textures
+            .get(&tex0)
+            .ok_or_else(|| ExecutorError::Validation(format!("DRAW texture {tex0} missing")))?;
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aerogpu.executor.bind_group"),
             layout: &self.bind_group_layout,
@@ -1411,16 +1433,10 @@ fn fs_main() -> @location(0) vec4<f32> {
             ExecutorError::Validation(format!("DRAW_INDEXED render target {rt} missing"))
         })?;
         let vb_res = self.buffers.get(&vb.buffer).ok_or_else(|| {
-            ExecutorError::Validation(format!(
-                "DRAW_INDEXED vertex buffer {} missing",
-                vb.buffer
-            ))
+            ExecutorError::Validation(format!("DRAW_INDEXED vertex buffer {} missing", vb.buffer))
         })?;
         let ib_res = self.buffers.get(&ib.buffer).ok_or_else(|| {
-            ExecutorError::Validation(format!(
-                "DRAW_INDEXED index buffer {} missing",
-                ib.buffer
-            ))
+            ExecutorError::Validation(format!("DRAW_INDEXED index buffer {} missing", ib.buffer))
         })?;
 
         let tex0_res = self.textures.get(&tex0).ok_or_else(|| {
@@ -1535,8 +1551,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         for range in &buffer.dirty_ranges {
             let mut data = vec![0u8; (range.end - range.start) as usize];
             guest_memory.read(backing.base_gpa + range.start, &mut data)?;
-            self.queue
-                .write_buffer(&buffer.buffer, range.start, &data);
+            self.queue.write_buffer(&buffer.buffer, range.start, &data);
         }
 
         buffer.dirty_ranges.clear();

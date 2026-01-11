@@ -67,4 +67,3 @@ fn iir_fifo_bits_reflect_fcr_enable() {
     let iir = uart.port_read(0x3F8 + 2, 1) as u8;
     assert_eq!(iir & 0xC0, 0xC0);
 }
-

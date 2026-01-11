@@ -38,7 +38,9 @@ impl Clock {
 
     #[inline]
     pub const fn save_state(&self) -> ClockState {
-        ClockState { now_ns: self.now_ns }
+        ClockState {
+            now_ns: self.now_ns,
+        }
     }
 
     #[inline]
@@ -51,4 +53,3 @@ impl Clock {
 pub struct ClockState {
     pub now_ns: u64,
 }
-

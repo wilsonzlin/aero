@@ -365,7 +365,8 @@ fn exec_movs<B: Bus>(
                             dst_start < src_start && src_start < dst_end
                         };
 
-                        if !hazard && bus.bulk_copy(dst_start, src_start, total_bytes_u64 as usize) {
+                        if !hazard && bus.bulk_copy(dst_start, src_start, total_bytes_u64 as usize)
+                        {
                             let si_new = advance_n(si, elem_size, count, df, addr_size);
                             let di_new = advance_n(di, elem_size, count, df, addr_size);
                             write_si(cpu, addr_size, si_new);

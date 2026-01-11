@@ -1,5 +1,7 @@
 use crate::io::state::codec::{Decoder, Encoder};
-use crate::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use crate::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HdaStreamState {

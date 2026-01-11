@@ -280,7 +280,13 @@ fn addr_mask(addr_size: AddrSize) -> u64 {
     }
 }
 
-fn offsets_contiguous_without_wrap(offset: u64, count: u64, elem_size: usize, df: bool, addr_size: AddrSize) -> bool {
+fn offsets_contiguous_without_wrap(
+    offset: u64,
+    count: u64,
+    elem_size: usize,
+    df: bool,
+    addr_size: AddrSize,
+) -> bool {
     // Address-size wrapping means offsets are only contiguous in linear memory if they do not wrap
     // within the repeated range. Only check this for 16/32-bit address sizes (64-bit wrap is
     // effectively impossible in practice).
@@ -404,7 +410,9 @@ fn exec_movs<B: CpuBus>(
             if let Some(total_bytes_u64) = (elem_size as u64).checked_mul(count) {
                 // `CpuBus::bulk_copy` takes a `usize` length, so only use it when the total size fits.
                 // This avoids truncation bugs on 32-bit hosts (e.g. wasm32).
-                if total_bytes_u64 >= BULK_THRESHOLD_BYTES as u64 && total_bytes_u64 <= usize::MAX as u64 {
+                if total_bytes_u64 >= BULK_THRESHOLD_BYTES as u64
+                    && total_bytes_u64 <= usize::MAX as u64
+                {
                     let back_count = count.saturating_sub(1);
                     let src_offset = if df {
                         advance_n(si, elem_size, back_count, true, addr_size)
@@ -440,7 +448,9 @@ fn exec_movs<B: CpuBus>(
                                 dst_start < src_start && src_start < dst_end
                             };
 
-                            if !hazard && bus.bulk_copy(dst_start, src_start, total_bytes_u64 as usize)? {
+                            if !hazard
+                                && bus.bulk_copy(dst_start, src_start, total_bytes_u64 as usize)?
+                            {
                                 let si_new = advance_n(si, elem_size, count, df, addr_size);
                                 let di_new = advance_n(di, elem_size, count, df, addr_size);
                                 write_si(state, addr_size, si_new);

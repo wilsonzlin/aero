@@ -1,5 +1,5 @@
-use std::collections::BTreeSet;
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 pub trait GsiSink {

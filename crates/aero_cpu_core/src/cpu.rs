@@ -508,7 +508,10 @@ impl Cpu {
                     {
                         let addr_size =
                             crate::interp::string::effective_addr_size(self.mode, &s.prefixes);
-                        Some((addr_size, crate::interp::string::read_count(self, addr_size)))
+                        Some((
+                            addr_size,
+                            crate::interp::string::read_count(self, addr_size),
+                        ))
                     }
                     _ => None,
                 };

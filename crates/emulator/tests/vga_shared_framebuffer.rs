@@ -37,7 +37,8 @@ fn vga_present_to_shared_framebuffer_updates_header_and_frame_counter() {
     program_minimal_palette(&mut vga);
     vga.write_vram_u8(0, 1);
 
-    let mut output = VgaSharedFramebufferOutput::new(1024, 768).expect("allocate shared framebuffer");
+    let mut output =
+        VgaSharedFramebufferOutput::new(1024, 768).expect("allocate shared framebuffer");
 
     {
         let view = output.view_mut();
@@ -49,7 +50,8 @@ fn vga_present_to_shared_framebuffer_updates_header_and_frame_counter() {
     }
 
     assert_eq!(
-        vga.present_to_shared_framebuffer(&mut output).expect("present 1"),
+        vga.present_to_shared_framebuffer(&mut output)
+            .expect("present 1"),
         true
     );
 
@@ -67,7 +69,8 @@ fn vga_present_to_shared_framebuffer_updates_header_and_frame_counter() {
     }
 
     assert_eq!(
-        vga.present_to_shared_framebuffer(&mut output).expect("present 2"),
+        vga.present_to_shared_framebuffer(&mut output)
+            .expect("present 2"),
         true
     );
 
@@ -78,4 +81,3 @@ fn vga_present_to_shared_framebuffer_updates_header_and_frame_counter() {
         assert_eq!(header.frame_counter.load(Ordering::Relaxed), 2);
     }
 }
-

@@ -76,4 +76,3 @@ pub enum StateError {
     #[error("buffer too small: need {need} bytes, got {got}")]
     BufferTooSmall { need: usize, got: usize },
 }
-

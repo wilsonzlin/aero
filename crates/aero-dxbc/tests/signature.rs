@@ -190,7 +190,9 @@ fn signature_chunk_missing_null_terminator_is_rejected() {
     let mut bytes = build_signature_chunk();
     // Overwrite the last byte (null terminator of the final string) so there's
     // no terminating `\0` in the remaining data.
-    *bytes.last_mut().expect("signature bytes should be non-empty") = b'X';
+    *bytes
+        .last_mut()
+        .expect("signature bytes should be non-empty") = b'X';
 
     let err = parse_signature_chunk(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::InvalidChunk { .. }));
@@ -238,7 +240,12 @@ fn signature_chunk_from_real_dxbc_fixture_parses() {
     assert_eq!(
         isgn.entries
             .iter()
-            .map(|e| (e.semantic_name.as_str(), e.semantic_index, e.register, e.mask))
+            .map(|e| (
+                e.semantic_name.as_str(),
+                e.semantic_index,
+                e.register,
+                e.mask
+            ))
             .collect::<Vec<_>>(),
         vec![("POSITION", 0, 0, 0xF), ("TEXCOORD", 0, 1, 0x3)]
     );
@@ -251,7 +258,12 @@ fn signature_chunk_from_real_dxbc_fixture_parses() {
     assert_eq!(
         osgn.entries
             .iter()
-            .map(|e| (e.semantic_name.as_str(), e.semantic_index, e.register, e.mask))
+            .map(|e| (
+                e.semantic_name.as_str(),
+                e.semantic_index,
+                e.register,
+                e.mask
+            ))
             .collect::<Vec<_>>(),
         vec![("POSITION", 0, 0, 0xF), ("TEXCOORD", 0, 1, 0x3)]
     );

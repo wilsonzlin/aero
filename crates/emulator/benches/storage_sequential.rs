@@ -1,7 +1,7 @@
+use criterion::{criterion_group, criterion_main, Criterion};
 use emulator::io::storage::cache::{BlockCache, BlockCacheConfig};
 use emulator::io::storage::disk::{ByteStorage, DiskBackend, WriteCachePolicy};
 use emulator::io::storage::formats::raw::RawDisk;
-use criterion::{criterion_group, criterion_main, Criterion};
 
 #[derive(Default)]
 struct MemStorage {

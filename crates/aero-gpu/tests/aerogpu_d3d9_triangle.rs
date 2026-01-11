@@ -306,7 +306,7 @@ fn d3d9_cmd_stream_renders_deterministic_triangle() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-            // c0 = green
+                              // c0 = green
             push_f32(out, 0.0);
             push_f32(out, 1.0);
             push_f32(out, 0.0);

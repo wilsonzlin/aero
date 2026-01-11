@@ -11,7 +11,9 @@ struct TestMem {
 
 impl TestMem {
     fn new(size: usize) -> Self {
-        Self { buf: vec![0u8; size] }
+        Self {
+            buf: vec![0u8; size],
+        }
     }
 }
 
@@ -43,7 +45,10 @@ impl SharedDisk {
         let sector_size = 512u32;
         Self {
             sector_size,
-            data: Arc::new(Mutex::new(vec![0u8; sectors as usize * sector_size as usize])),
+            data: Arc::new(Mutex::new(vec![
+                0u8;
+                sectors as usize * sector_size as usize
+            ])),
             flush_count: Arc::new(Mutex::new(0)),
         }
     }
@@ -67,11 +72,13 @@ impl DiskBackend for SharedDisk {
             });
         }
         let sectors = (buffer.len() / sector_size) as u64;
-        let end_lba = lba.checked_add(sectors).ok_or(aero_devices_nvme::DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors(),
-        })?;
+        let end_lba = lba
+            .checked_add(sectors)
+            .ok_or(aero_devices_nvme::DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors(),
+            })?;
         let capacity = self.total_sectors();
         if end_lba > capacity {
             return Err(aero_devices_nvme::DiskError::OutOfRange {
@@ -96,11 +103,13 @@ impl DiskBackend for SharedDisk {
             });
         }
         let sectors = (buffer.len() / sector_size) as u64;
-        let end_lba = lba.checked_add(sectors).ok_or(aero_devices_nvme::DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors(),
-        })?;
+        let end_lba = lba
+            .checked_add(sectors)
+            .ok_or(aero_devices_nvme::DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors(),
+            })?;
         let capacity = self.total_sectors();
         if end_lba > capacity {
             return Err(aero_devices_nvme::DiskError::OutOfRange {
@@ -353,4 +362,3 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     assert_eq!(cqe.status & 0x1, 0);
     assert_eq!(cqe.status & !0x1, 0);
 }
-

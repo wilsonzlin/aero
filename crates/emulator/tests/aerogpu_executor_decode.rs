@@ -13,7 +13,9 @@ struct VecMemory {
 
 impl VecMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -36,7 +38,15 @@ impl MemoryBus for VecMemory {
     }
 }
 
-fn write_ring(mem: &mut VecMemory, ring_gpa: u64, ring_size: u32, entry_count: u32, head: u32, tail: u32, abi_version: u32) {
+fn write_ring(
+    mem: &mut VecMemory,
+    ring_gpa: u64,
+    ring_size: u32,
+    entry_count: u32,
+    head: u32,
+    tail: u32,
+    abi_version: u32,
+) {
     mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
@@ -97,7 +107,13 @@ fn write_alloc_table(mem: &mut VecMemory, gpa: u64, abi_version: u32, magic: u32
     size_bytes
 }
 
-fn write_cmd_stream_header(mem: &mut VecMemory, gpa: u64, abi_version: u32, size_bytes: u32, magic: u32) -> u32 {
+fn write_cmd_stream_header(
+    mem: &mut VecMemory,
+    gpa: u64,
+    abi_version: u32,
+    size_bytes: u32,
+    magic: u32,
+) -> u32 {
     mem.write_u32(gpa + 0, magic);
     mem.write_u32(gpa + 4, abi_version);
     mem.write_u32(gpa + 8, size_bytes);
@@ -122,8 +138,12 @@ fn decodes_alloc_table_and_cmd_stream_header() {
     write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
 
     let alloc_table_gpa = 0x5000u64;
-    let alloc_table_size_bytes =
-        write_alloc_table(&mut mem, alloc_table_gpa, regs.abi_version, AEROGPU_ALLOC_TABLE_MAGIC);
+    let alloc_table_size_bytes = write_alloc_table(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        AEROGPU_ALLOC_TABLE_MAGIC,
+    );
 
     let cmd_gpa = 0x6000u64;
     let cmd_size_bytes = write_cmd_stream_header(
@@ -156,8 +176,15 @@ fn decodes_alloc_table_and_cmd_stream_header() {
     assert_eq!(regs.stats.malformed_submissions, 0);
     assert_eq!(regs.irq_status & irq_bits::ERROR, 0);
 
-    let record = exec.last_submissions.back().expect("missing submission record");
-    assert!(record.decode_errors.is_empty(), "unexpected decode errors: {:?}", record.decode_errors);
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record.decode_errors.is_empty(),
+        "unexpected decode errors: {:?}",
+        record.decode_errors
+    );
     assert_eq!(record.submission.allocs.len(), 1);
     let header = record
         .submission

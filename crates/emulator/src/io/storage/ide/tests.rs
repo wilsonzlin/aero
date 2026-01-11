@@ -1,4 +1,4 @@
-use super::{AtapiCdrom, AtaDevice, IdeController, IsoBackend, PRIMARY_PORTS};
+use super::{AtaDevice, AtapiCdrom, IdeController, IsoBackend, PRIMARY_PORTS};
 use crate::io::storage::disk::{DiskBackend, DiskError, DiskResult, MemDisk};
 use memory::MemoryBus;
 
@@ -9,7 +9,9 @@ struct VecMemory {
 
 impl VecMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -300,7 +302,12 @@ fn atapi_read_10_returns_correct_bytes() {
     // Select master.
     ide.io_write(sec.cmd_base + 6, 1, 0xA0);
 
-    fn send_packet(ide: &mut IdeController, sec: super::IdePortMap, pkt: &[u8; 12], byte_count: u16) {
+    fn send_packet(
+        ide: &mut IdeController,
+        sec: super::IdePortMap,
+        pkt: &[u8; 12],
+        byte_count: u16,
+    ) {
         // Clear FEATURES (PIO).
         ide.io_write(sec.cmd_base + 1, 1, 0);
         // Byte count registers.
@@ -369,7 +376,12 @@ fn atapi_dma_read_10_transfers_via_bus_master() {
     ide.io_write(bm_base + 8 + 4, 4, prd_addr as u32);
 
     // Helper: send an ATAPI PACKET command with DMA enabled.
-    fn send_packet_dma(ide: &mut IdeController, sec: super::IdePortMap, pkt: &[u8; 12], byte_count: u16) {
+    fn send_packet_dma(
+        ide: &mut IdeController,
+        sec: super::IdePortMap,
+        pkt: &[u8; 12],
+        byte_count: u16,
+    ) {
         ide.io_write(sec.cmd_base + 1, 1, 0x01); // FEATURES bit0 = DMA
         ide.io_write(sec.cmd_base + 4, 1, (byte_count & 0xFF) as u32);
         ide.io_write(sec.cmd_base + 5, 1, (byte_count >> 8) as u32);
@@ -425,7 +437,12 @@ fn atapi_get_event_status_notification_returns_media_event_header() {
 
     ide.io_write(sec.cmd_base + 6, 1, 0xA0);
 
-    fn send_packet(ide: &mut IdeController, sec: super::IdePortMap, pkt: &[u8; 12], byte_count: u16) {
+    fn send_packet(
+        ide: &mut IdeController,
+        sec: super::IdePortMap,
+        pkt: &[u8; 12],
+        byte_count: u16,
+    ) {
         ide.io_write(sec.cmd_base + 1, 1, 0);
         ide.io_write(sec.cmd_base + 4, 1, (byte_count & 0xFF) as u32);
         ide.io_write(sec.cmd_base + 5, 1, (byte_count >> 8) as u32);
@@ -475,7 +492,12 @@ fn atapi_read_disc_information_returns_valid_length_field() {
     let sec = super::SECONDARY_PORTS;
     ide.io_write(sec.cmd_base + 6, 1, 0xA0);
 
-    fn send_packet(ide: &mut IdeController, sec: super::IdePortMap, pkt: &[u8; 12], byte_count: u16) {
+    fn send_packet(
+        ide: &mut IdeController,
+        sec: super::IdePortMap,
+        pkt: &[u8; 12],
+        byte_count: u16,
+    ) {
         ide.io_write(sec.cmd_base + 1, 1, 0);
         ide.io_write(sec.cmd_base + 4, 1, (byte_count & 0xFF) as u32);
         ide.io_write(sec.cmd_base + 5, 1, (byte_count >> 8) as u32);

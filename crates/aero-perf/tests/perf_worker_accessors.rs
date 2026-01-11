@@ -13,10 +13,6 @@ fn frame_and_benchmark_deltas_use_unflushed_local_counts() {
 
     perf.begin_benchmark();
     perf.retire_instructions(10);
-    assert_eq!(
-        perf.benchmark_delta().unwrap().instructions_executed,
-        10
-    );
+    assert_eq!(perf.benchmark_delta().unwrap().instructions_executed, 10);
     assert_eq!(perf.end_benchmark().unwrap().instructions_executed, 10);
 }
-

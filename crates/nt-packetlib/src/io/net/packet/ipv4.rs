@@ -117,7 +117,9 @@ pub struct Ipv4PacketBuilder<'a> {
 impl<'a> Ipv4PacketBuilder<'a> {
     pub fn header_len(&self) -> Result<usize, PacketError> {
         if !self.options.is_empty() && self.options.len() % 4 != 0 {
-            return Err(PacketError::Malformed("IPv4 options length not multiple of 4"));
+            return Err(PacketError::Malformed(
+                "IPv4 options length not multiple of 4",
+            ));
         }
         let header_len = Ipv4Packet::MIN_HEADER_LEN + self.options.len();
         if header_len / 4 > 0x0f {

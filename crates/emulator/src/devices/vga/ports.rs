@@ -2,14 +2,14 @@ use core::cell::Cell;
 
 use crate::io::PortIO;
 
-use super::{modeset, LegacyBdaInfo};
 use super::regs::{
-    AC_REGS_INITIAL_LEN, CRTC_REGS_INITIAL_LEN, GC_REGS_INITIAL_LEN, POWER_ON_MISC_OUTPUT,
-    SEQ_REGS_INITIAL_LEN, VgaDerivedState, VgaPlanarShift,
+    VgaDerivedState, VgaPlanarShift, AC_REGS_INITIAL_LEN, CRTC_REGS_INITIAL_LEN,
+    GC_REGS_INITIAL_LEN, POWER_ON_MISC_OUTPUT, SEQ_REGS_INITIAL_LEN,
 };
 use super::timing::VgaTiming;
 use super::vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_LFB_SIZE};
 use super::VgaMemory;
+use super::{modeset, LegacyBdaInfo};
 
 // VGA I/O port block 0x3C0..=0x3DF.
 const PORT_MISC_OUTPUT_WRITE: u16 = 0x3C2;

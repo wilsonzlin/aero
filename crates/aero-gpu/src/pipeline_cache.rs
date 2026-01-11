@@ -1,15 +1,15 @@
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
-use std::collections::HashMap;
 
 use lru::LruCache;
 
-use crate::GpuCapabilities;
 use crate::error::GpuError;
 use crate::pipeline_key::{
     hash_wgsl, ComputePipelineKey, RenderPipelineKey, ShaderHash, ShaderModuleKey, ShaderStage,
 };
 use crate::stats::PipelineCacheStats;
+use crate::GpuCapabilities;
 
 #[derive(Clone, Debug)]
 pub struct PipelineCacheConfig {
@@ -186,10 +186,7 @@ impl PipelineCache {
 
         if self.shader_modules.peek(&key).is_some() {
             self.stats.shader_module_hits += 1;
-            let entry = self
-                .shader_modules
-                .get(&key)
-                .expect("peek reported Some");
+            let entry = self.shader_modules.get(&key).expect("peek reported Some");
             return (hash, entry.module.as_ref());
         }
 
@@ -248,10 +245,7 @@ impl PipelineCache {
     {
         if self.render_pipelines.peek(&key).is_some() {
             self.stats.render_pipeline_hits += 1;
-            let pipeline = self
-                .render_pipelines
-                .get(&key)
-                .expect("peek reported Some");
+            let pipeline = self.render_pipelines.get(&key).expect("peek reported Some");
             return Ok(pipeline);
         }
 

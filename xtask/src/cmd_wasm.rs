@@ -70,7 +70,16 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let wasm_crate_dir = paths::resolve_wasm_crate_dir(&repo_root, None)?;
     let mut cmd = Command::new("wasm-pack");
     cmd.current_dir(&repo_root)
-        .args(["build", "--target", "web", if mode_flag == "dev" { "--dev" } else { "--release" }])
+        .args([
+            "build",
+            "--target",
+            "web",
+            if mode_flag == "dev" {
+                "--dev"
+            } else {
+                "--release"
+            },
+        ])
         .arg(&wasm_crate_dir);
     runner.run_step(
         &format!(
@@ -108,4 +117,3 @@ fn parse_args(args: Vec<String>) -> Result<Option<(String, String)>> {
         )),
     }
 }
-

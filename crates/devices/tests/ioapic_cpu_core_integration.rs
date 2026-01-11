@@ -1,7 +1,9 @@
 use aero_cpu_core::interrupts::{CpuCore, CpuExit, InterruptController as CpuInterruptController};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{gpr, CpuMode};
-use aero_platform::interrupts::{InterruptInput, InterruptController, PlatformInterruptMode, PlatformInterrupts};
+use aero_platform::interrupts::{
+    InterruptController, InterruptInput, PlatformInterruptMode, PlatformInterrupts,
+};
 
 fn write_idt_gate32(
     mem: &mut impl CpuBus,
@@ -16,7 +18,8 @@ fn write_idt_gate32(
     mem.write_u16(entry_addr + 2, selector).unwrap();
     mem.write_u8(entry_addr + 4, 0).unwrap();
     mem.write_u8(entry_addr + 5, type_attr).unwrap();
-    mem.write_u16(entry_addr + 6, (offset >> 16) as u16).unwrap();
+    mem.write_u16(entry_addr + 6, (offset >> 16) as u16)
+        .unwrap();
 }
 
 struct PlatformCtrl<'a> {
@@ -78,7 +81,9 @@ fn ioapic_interrupt_delivers_to_cpu_core_idt() -> Result<(), CpuExit> {
     cpu.poll_and_deliver_external_interrupt(&mut mem, &mut ctrl)?;
     assert_eq!(cpu.state.rip(), handler as u64);
 
-    let delivered = ctrl.last_vector.expect("expected IOAPIC vector to be acknowledged");
+    let delivered = ctrl
+        .last_vector
+        .expect("expected IOAPIC vector to be acknowledged");
     assert_eq!(delivered, vector);
 
     // Typical level-triggered behaviour: device deasserts the line before EOI.

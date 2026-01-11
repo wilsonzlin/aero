@@ -276,7 +276,10 @@ mod tests {
     fn reset_returns_ack_self_test_ok_and_device_id() {
         let mut mouse = Ps2Mouse::new();
         mouse.receive_byte(0xFF);
-        assert_eq!(mouse.drain_output(), vec![MOUSE_ACK, MOUSE_SELF_TEST_OK, 0x00]);
+        assert_eq!(
+            mouse.drain_output(),
+            vec![MOUSE_ACK, MOUSE_SELF_TEST_OK, 0x00]
+        );
         assert!(!mouse.reporting_enabled());
     }
 
@@ -309,4 +312,3 @@ mod tests {
         assert_eq!(mouse.device_id(), 0x03);
     }
 }
-

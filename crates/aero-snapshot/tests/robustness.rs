@@ -3,7 +3,8 @@ use std::io::{Cursor, ErrorKind};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceState, DiskOverlayRefs, MmuState,
     RamMode, RamWriteOptions, Result, SaveOptions, SectionId, SnapshotError, SnapshotMeta,
-    SnapshotSource, SnapshotTarget, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
+    SnapshotSource, SnapshotTarget, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC,
+    SNAPSHOT_VERSION_V1,
 };
 
 #[derive(Default)]
@@ -222,5 +223,8 @@ fn restore_snapshot_rejects_dirty_ram_count_exceeding_max_pages() {
 
     let mut target = DummyTarget::new(total_len as usize);
     let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
-    assert!(matches!(err, SnapshotError::Corrupt("too many dirty pages")));
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("too many dirty pages")
+    ));
 }

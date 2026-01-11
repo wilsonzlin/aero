@@ -1,4 +1,6 @@
-use aero_cpu_core::{sse_state::SseState, state as core_state, state::CpuState as CanonicalCpuState};
+use aero_cpu_core::{
+    sse_state::SseState, state as core_state, state::CpuState as CanonicalCpuState,
+};
 use aero_jit::abi as jit_abi;
 use memoffset::offset_of;
 
@@ -106,7 +108,10 @@ fn cpu_state_layout_matches_abi_constants() {
         offset_of!(CanonicalCpuState, gpr) as u32,
         jit_abi::CPU_GPR_OFF[0]
     );
-    assert_eq!(offset_of!(CanonicalCpuState, rip) as u32, jit_abi::CPU_RIP_OFF);
+    assert_eq!(
+        offset_of!(CanonicalCpuState, rip) as u32,
+        jit_abi::CPU_RIP_OFF
+    );
     assert_eq!(
         offset_of!(CanonicalCpuState, rflags) as u32,
         jit_abi::CPU_RFLAGS_OFF
@@ -136,4 +141,3 @@ fn cpu_state_layout_matches_abi_constants() {
         jit_abi::CPU_STATE_ALIGN
     );
 }
-

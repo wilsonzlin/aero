@@ -52,7 +52,11 @@ impl Config {
             .images_root
             .or_else(|| env::var("AERO_IMAGE_ROOT").ok().map(PathBuf::from))
             .or_else(|| env::var("AERO_IMAGE_DIR").ok().map(PathBuf::from))
-            .or_else(|| env::var("AERO_STORAGE_SERVER_IMAGES_ROOT").ok().map(PathBuf::from))
+            .or_else(|| {
+                env::var("AERO_STORAGE_SERVER_IMAGES_ROOT")
+                    .ok()
+                    .map(PathBuf::from)
+            })
             .unwrap_or_else(|| PathBuf::from("./images"));
 
         let cors_origin = args

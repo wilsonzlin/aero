@@ -18,7 +18,10 @@ pub struct Sm4Module {
 /// A single SM4/SM5 instruction.
 #[derive(Debug, Clone)]
 pub enum Sm4Inst {
-    Mov { dst: DstOperand, src: SrcOperand },
+    Mov {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
     Add {
         dst: DstOperand,
         a: SrcOperand,
@@ -65,7 +68,9 @@ pub enum Sm4Inst {
     /// This allows the WGSL backend to fail with a precise opcode + instruction
     /// index, instead of the decoder having to reject the entire shader up
     /// front.
-    Unknown { opcode: u32 },
+    Unknown {
+        opcode: u32,
+    },
     Ret,
 }
 
@@ -139,7 +144,10 @@ pub struct SrcOperand {
 #[derive(Debug, Clone)]
 pub enum SrcKind {
     Register(RegisterRef),
-    ConstantBuffer { slot: u32, reg: u32 },
+    ConstantBuffer {
+        slot: u32,
+        reg: u32,
+    },
     /// Immediate 32-bit floats (IEEE bits).
     ImmediateF32([u32; 4]),
 }

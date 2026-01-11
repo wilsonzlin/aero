@@ -103,7 +103,13 @@ fn pci_config_ports_snapshot_roundtrip_preserves_state() {
     cfg_write(&mut ports, bdf, cap_offset + 0x08, 4, 0);
     cfg_write(&mut ports, bdf, cap_offset + 0x0c, 2, 0x0045);
     let ctrl = cfg_read(&mut ports, bdf, cap_offset + 0x02, 2) as u16;
-    cfg_write(&mut ports, bdf, cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+    cfg_write(
+        &mut ports,
+        bdf,
+        cap_offset + 0x02,
+        2,
+        u32::from(ctrl | 0x0001),
+    );
     cfg_write(&mut ports, bdf, cap_offset + 0x10, 4, 1); // mask vector 0
 
     {
@@ -144,7 +150,10 @@ fn pci_config_ports_snapshot_roundtrip_preserves_state() {
         assert_eq!(a, b, "config mismatch at offset {offset:#04x}");
     }
 
-    assert_eq!(ports.bus_mut().mapped_bars(), ports2.bus_mut().mapped_bars());
+    assert_eq!(
+        ports.bus_mut().mapped_bars(),
+        ports2.bus_mut().mapped_bars()
+    );
 
     let msi1 = ports
         .bus_mut()
@@ -165,4 +174,3 @@ fn pci_config_ports_snapshot_roundtrip_preserves_state() {
     assert_eq!(msi1.mask_bits(), msi2.mask_bits());
     assert_eq!(msi1.pending_bits(), msi2.pending_bits());
 }
-

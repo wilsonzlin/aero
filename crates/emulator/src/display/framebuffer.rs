@@ -60,7 +60,9 @@ pub fn required_framebuffer_bytes(width: u32, height: u32, stride_bytes: u32) ->
     if stride_bytes < width.checked_mul(4)? {
         return None;
     }
-    let pixels = usize::try_from(stride_bytes).ok()?.checked_mul(usize::try_from(height).ok()?)?;
+    let pixels = usize::try_from(stride_bytes)
+        .ok()?
+        .checked_mul(usize::try_from(height).ok()?)?;
     HEADER_BYTE_LENGTH.checked_add(pixels)
 }
 
@@ -102,22 +104,36 @@ impl<'a> SharedFramebuffer<'a> {
     }
 
     pub fn initialize_rgba8888(&self) {
-        self.header.magic.store(FRAMEBUFFER_MAGIC, Ordering::Relaxed);
-        self.header.version.store(FRAMEBUFFER_VERSION, Ordering::Relaxed);
-        self.header.format.store(FRAMEBUFFER_FORMAT_RGBA8888, Ordering::Relaxed);
+        self.header
+            .magic
+            .store(FRAMEBUFFER_MAGIC, Ordering::Relaxed);
+        self.header
+            .version
+            .store(FRAMEBUFFER_VERSION, Ordering::Relaxed);
+        self.header
+            .format
+            .store(FRAMEBUFFER_FORMAT_RGBA8888, Ordering::Relaxed);
         self.header.frame_counter.store(0, Ordering::Relaxed);
         self.header.config_counter.store(0, Ordering::Relaxed);
     }
 
-    pub fn set_mode(&self, width: u32, height: u32, stride_bytes: u32) -> Result<(), FramebufferError> {
+    pub fn set_mode(
+        &self,
+        width: u32,
+        height: u32,
+        stride_bytes: u32,
+    ) -> Result<(), FramebufferError> {
         if width == 0 || height == 0 {
             return Err(FramebufferError::InvalidDimensions);
         }
-        let min_stride = width.checked_mul(4).ok_or(FramebufferError::InvalidDimensions)?;
+        let min_stride = width
+            .checked_mul(4)
+            .ok_or(FramebufferError::InvalidDimensions)?;
         if stride_bytes < min_stride || stride_bytes % 4 != 0 {
             return Err(FramebufferError::InvalidDimensions);
         }
-        let required = required_framebuffer_bytes(width, height, stride_bytes).ok_or(FramebufferError::InvalidDimensions)?;
+        let required = required_framebuffer_bytes(width, height, stride_bytes)
+            .ok_or(FramebufferError::InvalidDimensions)?;
         if required - HEADER_BYTE_LENGTH > self.pixels_capacity_bytes() {
             return Err(FramebufferError::BufferTooSmall);
         }
@@ -131,16 +147,24 @@ impl<'a> SharedFramebuffer<'a> {
 
         self.header.width.store(width, Ordering::Relaxed);
         self.header.height.store(height, Ordering::Relaxed);
-        self.header.stride_bytes.store(stride_bytes, Ordering::Relaxed);
-
-        self.header.format.store(FRAMEBUFFER_FORMAT_RGBA8888, Ordering::Relaxed);
         self.header
-            .config_counter
-            .fetch_add(1, Ordering::Release);
+            .stride_bytes
+            .store(stride_bytes, Ordering::Relaxed);
+
+        self.header
+            .format
+            .store(FRAMEBUFFER_FORMAT_RGBA8888, Ordering::Relaxed);
+        self.header.config_counter.fetch_add(1, Ordering::Release);
         Ok(())
     }
 
-    pub fn present_rgba8888(&mut self, width: u32, height: u32, stride_bytes: u32, pixels: &[u8]) -> Result<(), FramebufferError> {
+    pub fn present_rgba8888(
+        &mut self,
+        width: u32,
+        height: u32,
+        stride_bytes: u32,
+        pixels: &[u8],
+    ) -> Result<(), FramebufferError> {
         if self.header.format.load(Ordering::Relaxed) != FRAMEBUFFER_FORMAT_RGBA8888 {
             return Err(FramebufferError::UnsupportedFormat);
         }
@@ -171,7 +195,12 @@ impl<'a> SharedFramebuffer<'a> {
     /// Note: the top byte in VBE 32bpp modes is typically documented as "reserved" and is often
     /// left as 0 by guest software. Since the shared framebuffer feeds `ImageData`, which treats
     /// alpha=0 as fully transparent, we force the output alpha to 0xFF (opaque).
-    pub fn present_bgra8888_u32(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), FramebufferError> {
+    pub fn present_bgra8888_u32(
+        &mut self,
+        width: u32,
+        height: u32,
+        pixels: &[u32],
+    ) -> Result<(), FramebufferError> {
         if self.header.format.load(Ordering::Relaxed) != FRAMEBUFFER_FORMAT_RGBA8888 {
             return Err(FramebufferError::UnsupportedFormat);
         }
@@ -197,8 +226,9 @@ impl<'a> SharedFramebuffer<'a> {
             return Err(FramebufferError::BufferTooSmall);
         }
 
-        let dst =
-            unsafe { core::slice::from_raw_parts_mut(self.pixels.as_mut_ptr() as *mut u32, expected) };
+        let dst = unsafe {
+            core::slice::from_raw_parts_mut(self.pixels.as_mut_ptr() as *mut u32, expected)
+        };
         for (d, &src) in dst.iter_mut().zip(&pixels[..expected]) {
             // Convert BGRA -> RGBA (swap R/B bytes).
             *d = (src & 0x0000FF00)
@@ -218,7 +248,8 @@ pub struct OwnedSharedFramebuffer {
 
 impl OwnedSharedFramebuffer {
     pub fn new(width: u32, height: u32, stride_bytes: u32) -> Result<Self, FramebufferError> {
-        let total_bytes = required_framebuffer_bytes(width, height, stride_bytes).ok_or(FramebufferError::InvalidDimensions)?;
+        let total_bytes = required_framebuffer_bytes(width, height, stride_bytes)
+            .ok_or(FramebufferError::InvalidDimensions)?;
         if total_bytes % 4 != 0 {
             return Err(FramebufferError::InvalidDimensions);
         }
@@ -233,7 +264,9 @@ impl OwnedSharedFramebuffer {
             header.width.store(width, Ordering::Relaxed);
             header.height.store(height, Ordering::Relaxed);
             header.stride_bytes.store(stride_bytes, Ordering::Relaxed);
-            header.format.store(FRAMEBUFFER_FORMAT_RGBA8888, Ordering::Relaxed);
+            header
+                .format
+                .store(FRAMEBUFFER_FORMAT_RGBA8888, Ordering::Relaxed);
             header.config_counter.store(1, Ordering::Relaxed);
         }
 
@@ -241,11 +274,18 @@ impl OwnedSharedFramebuffer {
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.words.as_ptr() as *const u8, self.words.len() * 4) }
+        unsafe {
+            core::slice::from_raw_parts(self.words.as_ptr() as *const u8, self.words.len() * 4)
+        }
     }
 
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.words.as_mut_ptr() as *mut u8, self.words.len() * 4) }
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.words.as_mut_ptr() as *mut u8,
+                self.words.len() * 4,
+            )
+        }
     }
 
     pub fn ptr(&self) -> *const u8 {
@@ -257,7 +297,8 @@ impl OwnedSharedFramebuffer {
     }
 
     pub fn view_mut(&mut self) -> SharedFramebuffer<'_> {
-        SharedFramebuffer::from_bytes(self.as_bytes_mut()).expect("owned framebuffer is always aligned and large enough")
+        SharedFramebuffer::from_bytes(self.as_bytes_mut())
+            .expect("owned framebuffer is always aligned and large enough")
     }
 }
 
@@ -281,13 +322,22 @@ mod tests {
         assert_eq!(offset(&header.height), HEADER_INDEX_HEIGHT * 4);
         assert_eq!(offset(&header.stride_bytes), HEADER_INDEX_STRIDE_BYTES * 4);
         assert_eq!(offset(&header.format), HEADER_INDEX_FORMAT * 4);
-        assert_eq!(offset(&header.frame_counter), HEADER_INDEX_FRAME_COUNTER * 4);
-        assert_eq!(offset(&header.config_counter), HEADER_INDEX_CONFIG_COUNTER * 4);
+        assert_eq!(
+            offset(&header.frame_counter),
+            HEADER_INDEX_FRAME_COUNTER * 4
+        );
+        assert_eq!(
+            offset(&header.config_counter),
+            HEADER_INDEX_CONFIG_COUNTER * 4
+        );
     }
 
     #[test]
     fn owned_framebuffer_allocates_expected_size() {
         let fb = OwnedSharedFramebuffer::new(320, 200, 320 * 4).unwrap();
-        assert_eq!(fb.len_bytes(), HEADER_BYTE_LENGTH + (320 * 4 * 200) as usize);
+        assert_eq!(
+            fb.len_bytes(),
+            HEADER_BYTE_LENGTH + (320 * 4 * 200) as usize
+        );
     }
 }

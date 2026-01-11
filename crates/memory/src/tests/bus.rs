@@ -17,10 +17,7 @@ impl MmioHandler for RecordingMmio {
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
         assert_eq!(size, 1);
-        self.writes
-            .lock()
-            .unwrap()
-            .push((offset, value as u8));
+        self.writes.lock().unwrap().push((offset, value as u8));
     }
 }
 

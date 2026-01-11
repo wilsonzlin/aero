@@ -34,8 +34,7 @@ fn parse_caps(dev: &VirtioPciDevice) -> Caps {
             VIRTIO_PCI_CAP_COMMON_CFG => caps.common = offset,
             VIRTIO_PCI_CAP_NOTIFY_CFG => {
                 caps.notify = offset;
-                caps.notify_mult =
-                    u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
+                caps.notify_mult = u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
             }
             VIRTIO_PCI_CAP_ISR_CFG => caps.isr = offset,
             VIRTIO_PCI_CAP_DEVICE_CFG => caps.device = offset,
@@ -69,7 +68,15 @@ fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8
     dev.bar0_write(off, &[val], mem);
 }
 
-fn write_desc(mem: &mut GuestRam, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
+fn write_desc(
+    mem: &mut GuestRam,
+    table: u64,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
     let base = table + u64::from(index) * 16;
     write_u64_le(mem, base, addr).unwrap();
     write_u32_le(mem, base + 8, len).unwrap();
@@ -97,7 +104,12 @@ fn virtio_input_posts_buffers_then_delivers_events() {
     let mut mem = GuestRam::new(0x10000);
 
     // Feature negotiation.
-    bar_write_u8(&mut dev, &mut mem, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
     bar_write_u8(
         &mut dev,
         &mut mem,
@@ -174,4 +186,3 @@ fn virtio_input_posts_buffers_then_delivers_events() {
         &[1, 0, 30, 0, 1, 0, 0, 0]
     );
 }
-

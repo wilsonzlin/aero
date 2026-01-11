@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ps2MouseButton {

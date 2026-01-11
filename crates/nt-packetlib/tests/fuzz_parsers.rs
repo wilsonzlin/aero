@@ -1,12 +1,6 @@
 use nt_packetlib::io::net::packet::{
-    arp::ArpPacket,
-    dhcp::DhcpMessage,
-    dns::parse_single_query,
-    ethernet::EthernetFrame,
-    icmp::Icmpv4Packet,
-    ipv4::Ipv4Packet,
-    tcp::TcpSegment,
-    udp::UdpPacket,
+    arp::ArpPacket, dhcp::DhcpMessage, dns::parse_single_query, ethernet::EthernetFrame,
+    icmp::Icmpv4Packet, ipv4::Ipv4Packet, tcp::TcpSegment, udp::UdpPacket,
 };
 
 struct XorShift64(u64);

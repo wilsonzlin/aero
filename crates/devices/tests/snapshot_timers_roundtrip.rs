@@ -142,7 +142,10 @@ fn rtc_snapshot_roundtrip_re_drives_irq_and_preserves_periodic_phase() {
     let c0 = rtc_read_reg(&mut rtc, RTC_REG_STATUS_C);
     let c1 = rtc_read_reg(&mut restored, RTC_REG_STATUS_C);
     assert_eq!(c0, c1);
-    assert_eq!(c1 & (RTC_REG_C_IRQF | RTC_REG_C_PF | RTC_REG_C_UF), RTC_REG_C_IRQF | RTC_REG_C_PF | RTC_REG_C_UF);
+    assert_eq!(
+        c1 & (RTC_REG_C_IRQF | RTC_REG_C_PF | RTC_REG_C_UF),
+        RTC_REG_C_IRQF | RTC_REG_C_PF | RTC_REG_C_UF
+    );
 
     // Time reads should match across snapshot/restore.
     let s0 = rtc_read_reg(&mut rtc, RTC_REG_SECONDS);
@@ -157,8 +160,17 @@ fn hpet_snapshot_roundtrip_edge_timer_produces_same_events() {
     let mut ioapic0 = IoApic::default();
     let mut hpet = Hpet::new_default(clock.clone());
 
-    hpet.mmio_write(HPET_REG_GENERAL_CONFIG, 8, HPET_GEN_CONF_ENABLE, &mut ioapic0);
-    let timer0_cfg = hpet.mmio_read(HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG, 8, &mut ioapic0);
+    hpet.mmio_write(
+        HPET_REG_GENERAL_CONFIG,
+        8,
+        HPET_GEN_CONF_ENABLE,
+        &mut ioapic0,
+    );
+    let timer0_cfg = hpet.mmio_read(
+        HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
+        8,
+        &mut ioapic0,
+    );
     hpet.mmio_write(
         HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
         8,
@@ -197,8 +209,17 @@ fn hpet_snapshot_roundtrip_level_pending_interrupt_reasserts_after_restore() {
     let mut ioapic0 = IoApic::default();
     let mut hpet = Hpet::new_default(clock.clone());
 
-    hpet.mmio_write(HPET_REG_GENERAL_CONFIG, 8, HPET_GEN_CONF_ENABLE, &mut ioapic0);
-    let timer0_cfg = hpet.mmio_read(HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG, 8, &mut ioapic0);
+    hpet.mmio_write(
+        HPET_REG_GENERAL_CONFIG,
+        8,
+        HPET_GEN_CONF_ENABLE,
+        &mut ioapic0,
+    );
+    let timer0_cfg = hpet.mmio_read(
+        HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
+        8,
+        &mut ioapic0,
+    );
     hpet.mmio_write(
         HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
         8,

@@ -180,7 +180,9 @@ pub enum StreamSourceFreqParseError {
     #[error("stream index {stream} is out of range")]
     InvalidStream { stream: u8 },
 
-    #[error("SetStreamSourceFreq value has both INDEXEDDATA and INSTANCEDATA set (raw=0x{raw:08x})")]
+    #[error(
+        "SetStreamSourceFreq value has both INDEXEDDATA and INSTANCEDATA set (raw=0x{raw:08x})"
+    )]
     BothFlagsSet { raw: u32 },
 
     #[error("SetStreamSourceFreq value has a zero frequency (raw=0x{raw:08x})")]
@@ -189,11 +191,7 @@ pub enum StreamSourceFreqParseError {
     #[error(
         "conflicting indexed instance counts: existing={existing} new={new} (stream={stream})"
     )]
-    ConflictingIndexedInstances {
-        existing: u32,
-        new: u32,
-        stream: u8,
-    },
+    ConflictingIndexedInstances { existing: u32, new: u32, stream: u8 },
 }
 
 /// Expand per-instance stream data to emulate a non-1 divisor.
@@ -216,7 +214,8 @@ pub fn expand_instance_data(
         return Err(InstanceDataExpandError::ZeroDivisor);
     }
 
-    let required_src_instances = ((draw_instances as u64) + (divisor as u64) - 1) / (divisor as u64);
+    let required_src_instances =
+        ((draw_instances as u64) + (divisor as u64) - 1) / (divisor as u64);
     let required_src_bytes = (required_src_instances as usize)
         .checked_mul(stride)
         .ok_or(InstanceDataExpandError::SizeOverflow)?;

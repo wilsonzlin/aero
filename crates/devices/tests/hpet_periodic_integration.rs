@@ -1,8 +1,6 @@
 use aero_devices::clock::ManualClock;
 use aero_devices::hpet::Hpet;
-use aero_platform::interrupts::{
-    InterruptController, PlatformInterruptMode, PlatformInterrupts,
-};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 
 const REG_GENERAL_CONFIG: u64 = 0x010;
 const REG_GENERAL_INT_STATUS: u64 = 0x020;

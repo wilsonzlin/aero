@@ -97,7 +97,8 @@ impl<S: ScanoutSink> VirtioGpu2d<S> {
         }
 
         // Parse the header so we can always reply with an error response on failures.
-        let ctrl = proto::parse_ctrl_hdr(&req).map_err(|_| VirtioDeviceError::BadDescriptorChain)?;
+        let ctrl =
+            proto::parse_ctrl_hdr(&req).map_err(|_| VirtioDeviceError::BadDescriptorChain)?;
 
         let mem_adapter = MemAdapter { mem: &*mem };
         let resp = match self.gpu.process_control_command(&req, &mem_adapter) {

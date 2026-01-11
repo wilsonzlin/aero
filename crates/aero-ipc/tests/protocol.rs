@@ -55,7 +55,10 @@ fn event_roundtrip() {
             id: 9,
             data: vec![0xAA, 0xBB],
         },
-        Event::PortReadResp { id: 10, value: 0x1234_5678 },
+        Event::PortReadResp {
+            id: 10,
+            value: 0x1234_5678,
+        },
         Event::MmioWriteResp { id: 11 },
         Event::PortWriteResp { id: 12 },
         Event::DiskReadResp {

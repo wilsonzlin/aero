@@ -1,6 +1,6 @@
 use aero_devices::pci::{
-    PciBarDefinition, PciBdf, PciBus, PciConfigMechanism1, PciConfigSpace, PciDevice,
-    PciPlatform, PciResourceAllocator, PciResourceAllocatorConfig,
+    PciBarDefinition, PciBdf, PciBus, PciConfigMechanism1, PciConfigSpace, PciDevice, PciPlatform,
+    PciResourceAllocator, PciResourceAllocatorConfig,
 };
 
 struct TestBarDevice {
@@ -11,8 +11,20 @@ impl TestBarDevice {
     fn new() -> Self {
         let mut config = PciConfigSpace::new(0x1234, 0x5678);
         config.set_class_code(0x02, 0x00, 0x00, 0x00);
-        config.set_bar_definition(0, PciBarDefinition::Mmio32 { size: 0x1000, prefetchable: false });
-        config.set_bar_definition(1, PciBarDefinition::Mmio32 { size: 0x2000, prefetchable: false });
+        config.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        config.set_bar_definition(
+            1,
+            PciBarDefinition::Mmio32 {
+                size: 0x2000,
+                prefetchable: false,
+            },
+        );
         config.set_bar_definition(2, PciBarDefinition::Io { size: 0x20 });
         Self { config }
     }
@@ -34,14 +46,24 @@ fn platform_devices_enumerate_via_config_mechanism_1() {
     let mut cfg = PciConfigMechanism1::new();
 
     // Read vendor/device of host bridge 00:00.0.
-    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_0000 | (0 << 16) | (0 << 11) | (0 << 8) | 0);
+    cfg.io_write(
+        &mut bus,
+        0xCF8,
+        4,
+        0x8000_0000 | (0 << 16) | (0 << 11) | (0 << 8) | 0,
+    );
     let id = cfg.io_read(&mut bus, 0xCFC, 4);
     // Note: low 16 bits are vendor, high 16 bits are device.
     assert_eq!(id & 0xFFFF, 0x8086);
     assert_ne!((id >> 16) & 0xFFFF, 0xFFFF);
 
     // Class code at 0x08: revision/prog_if/subclass/class.
-    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_0000 | (0 << 16) | (0 << 11) | (0 << 8) | 0x08);
+    cfg.io_write(
+        &mut bus,
+        0xCF8,
+        4,
+        0x8000_0000 | (0 << 16) | (0 << 11) | (0 << 8) | 0x08,
+    );
     let class = cfg.io_read(&mut bus, 0xCFC, 4);
     let class_code = (class >> 24) as u8;
     let subclass = (class >> 16) as u8;
@@ -49,11 +71,21 @@ fn platform_devices_enumerate_via_config_mechanism_1() {
     assert_eq!(subclass, 0x00);
 
     // ISA/LPC bridge at 00:1f.0.
-    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_0000 | (0 << 16) | (0x1f << 11) | (0 << 8) | 0);
+    cfg.io_write(
+        &mut bus,
+        0xCF8,
+        4,
+        0x8000_0000 | (0 << 16) | (0x1f << 11) | (0 << 8) | 0,
+    );
     let id = cfg.io_read(&mut bus, 0xCFC, 4);
     assert_eq!(id & 0xFFFF, 0x8086);
 
-    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_0000 | (0 << 16) | (0x1f << 11) | (0 << 8) | 0x08);
+    cfg.io_write(
+        &mut bus,
+        0xCF8,
+        4,
+        0x8000_0000 | (0 << 16) | (0x1f << 11) | (0 << 8) | 0x08,
+    );
     let class = cfg.io_read(&mut bus, 0xCFC, 4);
     let class_code = (class >> 24) as u8;
     let subclass = (class >> 16) as u8;
@@ -63,13 +95,19 @@ fn platform_devices_enumerate_via_config_mechanism_1() {
 
 #[test]
 fn bar_allocation_is_deterministic_and_non_overlapping() {
-    let cfg = PciResourceAllocatorConfig { mmio_base: 0xE000_0000, mmio_size: 0x10_0000, io_base: 0x1000, io_size: 0x1000 };
+    let cfg = PciResourceAllocatorConfig {
+        mmio_base: 0xE000_0000,
+        mmio_size: 0x10_0000,
+        io_base: 0x1000,
+        io_size: 0x1000,
+    };
     let mut allocator = PciResourceAllocator::new(cfg.clone());
 
     let mut bus = PciBus::new();
     bus.add_device(PciBdf::new(0, 2, 0), Box::new(TestBarDevice::new()));
 
-    bus.reset(&mut allocator).expect("reset should allocate BARs");
+    bus.reset(&mut allocator)
+        .expect("reset should allocate BARs");
     let first_ranges: [Option<_>; 6] = core::array::from_fn(|bar| {
         bus.device_config(PciBdf::new(0, 2, 0))
             .unwrap()
@@ -77,7 +115,8 @@ fn bar_allocation_is_deterministic_and_non_overlapping() {
     });
 
     // Reset again and ensure BAR bases match.
-    bus.reset(&mut allocator).expect("reset should allocate BARs");
+    bus.reset(&mut allocator)
+        .expect("reset should allocate BARs");
     let second_ranges: [Option<_>; 6] = core::array::from_fn(|bar| {
         bus.device_config(PciBdf::new(0, 2, 0))
             .unwrap()
@@ -86,8 +125,7 @@ fn bar_allocation_is_deterministic_and_non_overlapping() {
 
     for bar in 0u8..6u8 {
         assert_eq!(
-            first_ranges[bar as usize],
-            second_ranges[bar as usize],
+            first_ranges[bar as usize], second_ranges[bar as usize],
             "BAR{bar} should be deterministic"
         );
     }
@@ -114,13 +152,19 @@ fn bar_allocation_is_deterministic_and_non_overlapping() {
 
 #[test]
 fn bar_reprogramming_updates_decode_ranges() {
-    let cfg = PciResourceAllocatorConfig { mmio_base: 0xE000_0000, mmio_size: 0x10_0000, io_base: 0x1000, io_size: 0x1000 };
+    let cfg = PciResourceAllocatorConfig {
+        mmio_base: 0xE000_0000,
+        mmio_size: 0x10_0000,
+        io_base: 0x1000,
+        io_size: 0x1000,
+    };
     let mut allocator = PciResourceAllocator::new(cfg);
 
     let mut bus = PciBus::new();
     let dev_addr = PciBdf::new(0, 2, 0);
     bus.add_device(dev_addr, Box::new(TestBarDevice::new()));
-    bus.reset(&mut allocator).expect("reset should allocate BARs");
+    bus.reset(&mut allocator)
+        .expect("reset should allocate BARs");
 
     // Enable memory + I/O decoding.
     bus.write_config(dev_addr, 0x04, 2, 0x0003);

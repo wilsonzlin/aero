@@ -1,6 +1,6 @@
 use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};
-use aero_platform::Platform;
 use aero_platform::reset::ResetLatch;
+use aero_platform::Platform;
 
 #[test]
 fn i8042_output_port_toggles_a20_gate_in_platform_memory() {

@@ -542,7 +542,8 @@ impl SincResampler {
         if self.history_frames == 0 {
             return;
         }
-        let last_frame = &self.history[(self.history_frames - 1) * self.channels..self.history_frames * self.channels];
+        let last_frame = &self.history
+            [(self.history_frames - 1) * self.channels..self.history_frames * self.channels];
 
         // At end-of-stream we can extend the signal by repeating the last sample to
         // generate the final filter tail. Stop once the resample position moves

@@ -6,10 +6,10 @@ use aero_virtio::devices::snd::{
 };
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
-    InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
-    VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG,
-    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
-    VIRTIO_STATUS_FEATURES_OK, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1,
+    InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_F_RING_INDIRECT_DESC,
+    VIRTIO_F_VERSION_1, VIRTIO_PCI_CAP_COMMON_CFG, VIRTIO_PCI_CAP_DEVICE_CFG,
+    VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG, VIRTIO_STATUS_ACKNOWLEDGE,
+    VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
@@ -49,8 +49,7 @@ fn parse_caps(dev: &VirtioPciDevice) -> Caps {
             VIRTIO_PCI_CAP_COMMON_CFG => caps.common = offset,
             VIRTIO_PCI_CAP_NOTIFY_CFG => {
                 caps.notify = offset;
-                caps.notify_mult =
-                    u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
+                caps.notify_mult = u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
             }
             VIRTIO_PCI_CAP_ISR_CFG => caps.isr = offset,
             VIRTIO_PCI_CAP_DEVICE_CFG => caps.device = offset,
@@ -122,12 +121,7 @@ fn virtio_snd_pci_contract_v1_features_and_queue_sizes() {
     );
     assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), 64);
 
-    bar_write_u16(
-        &mut dev,
-        &mut mem,
-        caps.common + 0x16,
-        VIRTIO_SND_QUEUE_TX,
-    );
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, VIRTIO_SND_QUEUE_TX);
     assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), 256);
 
     bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, VIRTIO_SND_QUEUE_RX);
@@ -188,15 +182,7 @@ fn submit_chain(
     in_addr: u64,
     in_len: u32,
 ) {
-    write_desc(
-        mem,
-        desc_table,
-        0,
-        out_addr,
-        out_len,
-        VIRTQ_DESC_F_NEXT,
-        1,
-    );
+    write_desc(mem, desc_table, 0, out_addr, out_len, VIRTQ_DESC_F_NEXT, 1);
     write_desc(mem, desc_table, 1, in_addr, in_len, VIRTQ_DESC_F_WRITE, 0);
 
     // Add to avail ring.
@@ -233,7 +219,12 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
     let mut mem = GuestRam::new(0x20000);
 
     // Feature negotiation: accept everything the device offers.
-    bar_write_u8(&mut dev, &mut mem, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
     bar_write_u8(
         &mut dev,
         &mut mem,
@@ -400,17 +391,18 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
     );
 
     let status_bytes = mem.get_slice(tx_status, 8).unwrap();
-    assert_eq!(u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()), VIRTIO_SND_S_OK);
-    assert_eq!(u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()), 0);
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()),
+        0
+    );
 
     let got = samples.borrow().clone();
     assert_eq!(got.len(), 4);
-    let expect = [
-        0.0f32,
-        16_384.0f32 / 32_768.0,
-        -16_384.0f32 / 32_768.0,
-        0.0,
-    ];
+    let expect = [0.0f32, 16_384.0f32 / 32_768.0, -16_384.0f32 / 32_768.0, 0.0];
     for (g, e) in got.iter().zip(expect.iter()) {
         assert!((g - e).abs() < 1e-6, "got {g} expected {e}");
     }

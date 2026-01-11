@@ -120,8 +120,16 @@ fn hub_reset_clears_configuration_disables_ports_and_resets_downstream_addresses
     assert!(!port_enabled(&mut hub, 1));
 
     let (_, change) = port_status_and_change(&mut hub, 1);
-    assert_ne!(change & (1 << 0), 0, "connect_change should be set after reset");
-    assert_ne!(change & (1 << 1), 0, "enable_change should be set after reset");
+    assert_ne!(
+        change & (1 << 0),
+        0,
+        "connect_change should be set after reset"
+    );
+    assert_ne!(
+        change & (1 << 1),
+        0,
+        "enable_change should be set after reset"
+    );
 
     // Downstream device state must be reset (address returns to 0) even though the port is now
     // disabled and not routable.

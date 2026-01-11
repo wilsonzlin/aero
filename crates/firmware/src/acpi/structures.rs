@@ -160,4 +160,3 @@ pub fn as_bytes<T>(val: &T) -> &[u8] {
     // Safety: All table structs are plain old data with no padding (packed).
     unsafe { core::slice::from_raw_parts(val as *const T as *const u8, size_of::<T>()) }
 }
-

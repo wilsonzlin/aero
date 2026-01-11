@@ -69,12 +69,16 @@ impl Tlb {
     }
 
     pub fn lookup(&self, vaddr: u64) -> Option<TlbEntry> {
-        self.entries.iter().copied().find(|entry| entry.contains(vaddr))
+        self.entries
+            .iter()
+            .copied()
+            .find(|entry| entry.contains(vaddr))
     }
 
     pub fn insert(&mut self, entry: TlbEntry) {
-        self.entries
-            .retain(|existing| !(existing.vbase == entry.vbase && existing.page_size == entry.page_size));
+        self.entries.retain(|existing| {
+            !(existing.vbase == entry.vbase && existing.page_size == entry.page_size)
+        });
         self.entries.push(entry);
     }
 

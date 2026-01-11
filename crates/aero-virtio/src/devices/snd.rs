@@ -1,5 +1,5 @@
-use aero_audio::sink::AudioSink;
 use aero_audio::pcm::LinearResampler;
+use aero_audio::sink::AudioSink;
 
 use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
@@ -195,7 +195,10 @@ impl<O: AudioSink> VirtioSnd<O, NullCaptureSource> {
     }
 
     pub fn new_with_host_sample_rate(output: O, host_sample_rate_hz: u32) -> Self {
-        assert!(host_sample_rate_hz > 0, "host_sample_rate_hz must be non-zero");
+        assert!(
+            host_sample_rate_hz > 0,
+            "host_sample_rate_hz must be non-zero"
+        );
         Self::new_with_capture_and_host_sample_rate(output, NullCaptureSource, host_sample_rate_hz)
     }
 }
@@ -210,7 +213,10 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         capture_source: I,
         host_sample_rate_hz: u32,
     ) -> Self {
-        assert!(host_sample_rate_hz > 0, "host_sample_rate_hz must be non-zero");
+        assert!(
+            host_sample_rate_hz > 0,
+            "host_sample_rate_hz must be non-zero"
+        );
         Self {
             output,
             capture_source,
@@ -233,12 +239,16 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     }
 
     pub fn set_host_sample_rate_hz(&mut self, host_sample_rate_hz: u32) {
-        assert!(host_sample_rate_hz > 0, "host_sample_rate_hz must be non-zero");
+        assert!(
+            host_sample_rate_hz > 0,
+            "host_sample_rate_hz must be non-zero"
+        );
         if self.host_sample_rate_hz == host_sample_rate_hz {
             return;
         }
         self.host_sample_rate_hz = host_sample_rate_hz;
-        self.resampler.reset_rates(PCM_SAMPLE_RATE_HZ, host_sample_rate_hz);
+        self.resampler
+            .reset_rates(PCM_SAMPLE_RATE_HZ, host_sample_rate_hz);
         self.decoded_frames_scratch.clear();
         self.resampled_scratch.clear();
     }
@@ -418,11 +428,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             .map_err(|_| VirtioDeviceError::IoError)
     }
 
-    fn handle_tx_chain(
-        &mut self,
-        mem: &mut dyn GuestMemory,
-        chain: &DescriptorChain,
-    ) -> u32 {
+    fn handle_tx_chain(&mut self, mem: &mut dyn GuestMemory, chain: &DescriptorChain) -> u32 {
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
         let mut parsed_stream = false;
@@ -508,7 +514,8 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 // steady-state hot path once buffers have warmed up.
                 let queued_src = self.resampler.queued_source_frames() as u64;
                 let dst_rate = self.host_sample_rate_hz as u64;
-                let reserve_frames = queued_src.saturating_mul(dst_rate) / (PCM_SAMPLE_RATE_HZ as u64) + 2;
+                let reserve_frames =
+                    queued_src.saturating_mul(dst_rate) / (PCM_SAMPLE_RATE_HZ as u64) + 2;
                 self.resampled_scratch.reserve(reserve_frames as usize * 2);
                 let _ = self
                     .resampler
@@ -535,11 +542,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             .map_err(|_| VirtioDeviceError::IoError)
     }
 
-    fn handle_rx_chain(
-        &mut self,
-        mem: &mut dyn GuestMemory,
-        chain: &DescriptorChain,
-    ) -> u32 {
+    fn handle_rx_chain(&mut self, mem: &mut dyn GuestMemory, chain: &DescriptorChain) -> u32 {
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
         let out_bytes: usize = chain
@@ -617,7 +620,8 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             if samples_needed == 0 {
                 write_payload_silence(mem, payload_descs)
             } else {
-                self.capture_telemetry.dropped_samples += self.capture_source.take_dropped_samples();
+                self.capture_telemetry.dropped_samples +=
+                    self.capture_source.take_dropped_samples();
 
                 self.capture_samples_scratch.resize(samples_needed, 0.0);
                 let got = self
@@ -712,11 +716,7 @@ fn read_all_out(mem: &dyn GuestMemory, chain: &DescriptorChain) -> Vec<u8> {
     out
 }
 
-fn write_all_in(
-    mem: &mut dyn GuestMemory,
-    chain: &DescriptorChain,
-    data: &[u8],
-) -> u32 {
+fn write_all_in(mem: &mut dyn GuestMemory, chain: &DescriptorChain, data: &[u8]) -> u32 {
     let mut remaining = data;
     let mut written = 0usize;
     for d in chain.descriptors().iter().filter(|d| d.is_write_only()) {
@@ -735,10 +735,7 @@ fn write_all_in(
     written as u32
 }
 
-fn write_payload_silence(
-    mem: &mut dyn GuestMemory,
-    descs: &[crate::queue::Descriptor],
-) -> usize {
+fn write_payload_silence(mem: &mut dyn GuestMemory, descs: &[crate::queue::Descriptor]) -> usize {
     let mut written = 0usize;
     for d in descs {
         if d.len == 0 {

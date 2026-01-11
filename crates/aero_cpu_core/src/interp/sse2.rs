@@ -1,5 +1,5 @@
-use crate::{CpuState, Exception};
 use crate::bus::Bus;
+use crate::{CpuState, Exception};
 
 use super::{
     check_alignment, or_mxcsr_flags, read_xmm_operand_128, read_xmm_operand_u64, rounding_mode,
@@ -292,56 +292,31 @@ pub fn movq_mem_from_xmm(cpu: &CpuState, bus: &mut impl Bus, addr: u64, src: Xmm
     bus.write_u64(addr, cpu.sse.xmm[src.index()] as u64);
 }
 
-pub fn pand(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pand(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let s = read_xmm_operand_128(cpu, bus, src);
     cpu.sse.xmm[dst.index()] &= s;
     Ok(())
 }
 
-pub fn por(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn por(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let s = read_xmm_operand_128(cpu, bus, src);
     cpu.sse.xmm[dst.index()] |= s;
     Ok(())
 }
 
-pub fn pxor(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pxor(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let s = read_xmm_operand_128(cpu, bus, src);
     cpu.sse.xmm[dst.index()] ^= s;
     Ok(())
 }
 
-pub fn pandn(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pandn(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let s = read_xmm_operand_128(cpu, bus, src);
     cpu.sse.xmm[dst.index()] = !cpu.sse.xmm[dst.index()] & s;
     Ok(())
 }
 
-pub fn paddb(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn paddb(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_bytes(cpu.sse.xmm[dst.index()]);
     let b = u128_to_bytes(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u8; 16];
@@ -352,12 +327,7 @@ pub fn paddb(
     Ok(())
 }
 
-pub fn paddw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn paddw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
@@ -368,12 +338,7 @@ pub fn paddw(
     Ok(())
 }
 
-pub fn paddd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn paddd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u32x4(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u32x4(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u32; 4];
@@ -384,25 +349,14 @@ pub fn paddd(
     Ok(())
 }
 
-pub fn paddq(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn paddq(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u64x2(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u64x2(read_xmm_operand_128(cpu, bus, src));
-    cpu.sse.xmm[dst.index()] =
-        u64x2_to_u128([a[0].wrapping_add(b[0]), a[1].wrapping_add(b[1])]);
+    cpu.sse.xmm[dst.index()] = u64x2_to_u128([a[0].wrapping_add(b[0]), a[1].wrapping_add(b[1])]);
     Ok(())
 }
 
-pub fn psubb(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn psubb(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_bytes(cpu.sse.xmm[dst.index()]);
     let b = u128_to_bytes(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u8; 16];
@@ -413,12 +367,7 @@ pub fn psubb(
     Ok(())
 }
 
-pub fn psubw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn psubw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
@@ -429,12 +378,7 @@ pub fn psubw(
     Ok(())
 }
 
-pub fn psubd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn psubd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u32x4(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u32x4(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u32; 4];
@@ -445,25 +389,14 @@ pub fn psubd(
     Ok(())
 }
 
-pub fn psubq(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn psubq(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u64x2(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u64x2(read_xmm_operand_128(cpu, bus, src));
-    cpu.sse.xmm[dst.index()] =
-        u64x2_to_u128([a[0].wrapping_sub(b[0]), a[1].wrapping_sub(b[1])]);
+    cpu.sse.xmm[dst.index()] = u64x2_to_u128([a[0].wrapping_sub(b[0]), a[1].wrapping_sub(b[1])]);
     Ok(())
 }
 
-pub fn pmullw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pmullw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
@@ -475,12 +408,7 @@ pub fn pmullw(
     Ok(())
 }
 
-pub fn pmuludq(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pmuludq(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u32x4(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u32x4(read_xmm_operand_128(cpu, bus, src));
     let lo = (a[0] as u64) * (b[0] as u64);
@@ -489,12 +417,7 @@ pub fn pmuludq(
     Ok(())
 }
 
-pub fn paddsb(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn paddsb(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_bytes(cpu.sse.xmm[dst.index()]);
     let b = u128_to_bytes(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u8; 16];
@@ -506,12 +429,7 @@ pub fn paddsb(
     Ok(())
 }
 
-pub fn paddusb(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn paddusb(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_bytes(cpu.sse.xmm[dst.index()]);
     let b = u128_to_bytes(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u8; 16];
@@ -523,12 +441,7 @@ pub fn paddusb(
     Ok(())
 }
 
-pub fn psubsb(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn psubsb(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_bytes(cpu.sse.xmm[dst.index()]);
     let b = u128_to_bytes(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u8; 16];
@@ -540,12 +453,7 @@ pub fn psubsb(
     Ok(())
 }
 
-pub fn psubusb(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn psubusb(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_bytes(cpu.sse.xmm[dst.index()]);
     let b = u128_to_bytes(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u8; 16];
@@ -556,12 +464,7 @@ pub fn psubusb(
     Ok(())
 }
 
-pub fn paddsw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn paddsw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
@@ -573,12 +476,7 @@ pub fn paddsw(
     Ok(())
 }
 
-pub fn paddusw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn paddusw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
@@ -590,12 +488,7 @@ pub fn paddusw(
     Ok(())
 }
 
-pub fn psubsw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn psubsw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
@@ -607,12 +500,7 @@ pub fn psubsw(
     Ok(())
 }
 
-pub fn psubusw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn psubusw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
@@ -655,8 +543,10 @@ pub fn psllq(cpu: &mut CpuState, dst: XmmReg, count: u8) {
         return;
     }
     let a = u128_to_u64x2(cpu.sse.xmm[dst.index()]);
-    cpu.sse.xmm[dst.index()] =
-        u64x2_to_u128([a[0].wrapping_shl(count as u32), a[1].wrapping_shl(count as u32)]);
+    cpu.sse.xmm[dst.index()] = u64x2_to_u128([
+        a[0].wrapping_shl(count as u32),
+        a[1].wrapping_shl(count as u32),
+    ]);
 }
 
 pub fn psrlw(cpu: &mut CpuState, dst: XmmReg, count: u8) {
@@ -691,8 +581,10 @@ pub fn psrlq(cpu: &mut CpuState, dst: XmmReg, count: u8) {
         return;
     }
     let a = u128_to_u64x2(cpu.sse.xmm[dst.index()]);
-    cpu.sse.xmm[dst.index()] =
-        u64x2_to_u128([a[0].wrapping_shr(count as u32), a[1].wrapping_shr(count as u32)]);
+    cpu.sse.xmm[dst.index()] = u64x2_to_u128([
+        a[0].wrapping_shr(count as u32),
+        a[1].wrapping_shr(count as u32),
+    ]);
 }
 
 pub fn psraw(cpu: &mut CpuState, dst: XmmReg, count: u8) {
@@ -750,12 +642,7 @@ pub fn pshufd(
     Ok(())
 }
 
-pub fn pcmpeqb(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pcmpeqb(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_bytes(cpu.sse.xmm[dst.index()]);
     let b = u128_to_bytes(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u8; 16];
@@ -766,12 +653,7 @@ pub fn pcmpeqb(
     Ok(())
 }
 
-pub fn pcmpeqw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pcmpeqw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
@@ -782,12 +664,7 @@ pub fn pcmpeqw(
     Ok(())
 }
 
-pub fn pcmpeqd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pcmpeqd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u32x4(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u32x4(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u32; 4];
@@ -798,12 +675,7 @@ pub fn pcmpeqd(
     Ok(())
 }
 
-pub fn pcmpeqq(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pcmpeqq(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u64x2(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u64x2(read_xmm_operand_128(cpu, bus, src));
     cpu.sse.xmm[dst.index()] = u64x2_to_u128([
@@ -813,12 +685,7 @@ pub fn pcmpeqq(
     Ok(())
 }
 
-pub fn pcmpgtb(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pcmpgtb(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_bytes(cpu.sse.xmm[dst.index()]);
     let b = u128_to_bytes(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u8; 16];
@@ -829,71 +696,49 @@ pub fn pcmpgtb(
     Ok(())
 }
 
-pub fn pcmpgtw(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pcmpgtw(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u16x8(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u16x8(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u16; 8];
     for i in 0..8 {
-        out[i] = if (a[i] as i16) > (b[i] as i16) { 0xFFFF } else { 0 };
+        out[i] = if (a[i] as i16) > (b[i] as i16) {
+            0xFFFF
+        } else {
+            0
+        };
     }
     cpu.sse.xmm[dst.index()] = u16x8_to_u128(out);
     Ok(())
 }
 
-pub fn pcmpgtd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn pcmpgtd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let a = u128_to_u32x4(cpu.sse.xmm[dst.index()]);
     let b = u128_to_u32x4(read_xmm_operand_128(cpu, bus, src));
     let mut out = [0u32; 4];
     for i in 0..4 {
-        out[i] = if (a[i] as i32) > (b[i] as i32) { u32::MAX } else { 0 };
+        out[i] = if (a[i] as i32) > (b[i] as i32) {
+            u32::MAX
+        } else {
+            0
+        };
     }
     cpu.sse.xmm[dst.index()] = u32x4_to_u128(out);
     Ok(())
 }
 
-pub fn addsd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn addsd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     scalar_f64_op(cpu, bus, dst, src, |a, b| a + b)
 }
 
-pub fn subsd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn subsd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     scalar_f64_op(cpu, bus, dst, src, |a, b| a - b)
 }
 
-pub fn mulsd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn mulsd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     scalar_f64_op(cpu, bus, dst, src, |a, b| a * b)
 }
 
-pub fn divsd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn divsd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     scalar_f64_op(cpu, bus, dst, src, |a, b| a / b)
 }
 
@@ -914,39 +759,19 @@ fn scalar_f64_op(
     Ok(())
 }
 
-pub fn addpd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn addpd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     packed_f64_op(cpu, bus, dst, src, |a, b| a + b)
 }
 
-pub fn subpd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn subpd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     packed_f64_op(cpu, bus, dst, src, |a, b| a - b)
 }
 
-pub fn mulpd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn mulpd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     packed_f64_op(cpu, bus, dst, src, |a, b| a * b)
 }
 
-pub fn divpd(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn divpd(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     packed_f64_op(cpu, bus, dst, src, |a, b| a / b)
 }
 

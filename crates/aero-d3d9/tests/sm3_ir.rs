@@ -1,6 +1,6 @@
 use aero_d3d9::dxbc;
-use aero_d3d9::sm3::{build_ir, decode_u8_le_bytes, verify_ir};
 use aero_d3d9::sm3::types::ShaderStage;
+use aero_d3d9::sm3::{build_ir, decode_u8_le_bytes, verify_ir};
 
 fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
     let prefix = match stage {

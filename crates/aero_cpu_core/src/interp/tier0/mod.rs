@@ -6,8 +6,8 @@
 
 pub mod exec;
 
-mod ops_atomic;
 mod ops_alu;
+mod ops_atomic;
 mod ops_atomics;
 mod ops_cf;
 mod ops_data;

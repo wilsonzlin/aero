@@ -199,7 +199,12 @@ impl FlagSet {
     pub const OF: FlagSet = FlagSet(1 << 5);
 
     pub const ALU: FlagSet = FlagSet(
-        FlagSet::CF.0 | FlagSet::PF.0 | FlagSet::AF.0 | FlagSet::ZF.0 | FlagSet::SF.0 | FlagSet::OF.0,
+        FlagSet::CF.0
+            | FlagSet::PF.0
+            | FlagSet::AF.0
+            | FlagSet::ZF.0
+            | FlagSet::SF.0
+            | FlagSet::OF.0,
     );
 
     #[must_use]
@@ -381,4 +386,3 @@ impl fmt::Display for Cond {
         f.write_str(s)
     }
 }
-

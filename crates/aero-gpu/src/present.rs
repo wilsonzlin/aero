@@ -82,7 +82,10 @@ pub enum SurfaceFormat {
 
 impl SurfaceFormat {
     pub fn is_srgb(&self) -> bool {
-        matches!(*self, SurfaceFormat::Bgra8UnormSrgb | SurfaceFormat::Rgba8UnormSrgb)
+        matches!(
+            *self,
+            SurfaceFormat::Bgra8UnormSrgb | SurfaceFormat::Rgba8UnormSrgb
+        )
     }
 
     pub fn to_srgb(self) -> Option<Self> {
@@ -412,11 +415,11 @@ impl<W: TextureWriter> Presenter<W> {
 
             let src_end = src_offset.saturating_add(row_bytes);
             let dst_end = dst_offset.saturating_add(row_bytes);
-            self.scratch[dst_offset..dst_end]
-                .copy_from_slice(&frame_data[src_offset..src_end]);
+            self.scratch[dst_offset..dst_end].copy_from_slice(&frame_data[src_offset..src_end]);
         }
 
-        self.writer.write_texture(rect, bytes_per_row, &self.scratch);
+        self.writer
+            .write_texture(rect, bytes_per_row, &self.scratch);
         Ok(required_len)
     }
 }

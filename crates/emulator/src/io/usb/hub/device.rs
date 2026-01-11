@@ -335,7 +335,10 @@ impl UsbDeviceModel for UsbHubDevice {
         Ok(())
     }
 
-    fn hub_port_device_mut(&mut self, port: u8) -> Result<&mut AttachedUsbDevice, UsbTopologyError> {
+    fn hub_port_device_mut(
+        &mut self,
+        port: u8,
+    ) -> Result<&mut AttachedUsbDevice, UsbTopologyError> {
         let num_ports = self.ports.len();
         if port == 0 {
             return Err(UsbTopologyError::PortOutOfRange {
@@ -400,7 +403,10 @@ impl UsbDeviceModel for UsbHubDevice {
                     }
                     // USB 2.0 spec 9.4.5: bit1 is Remote Wakeup.
                     let status: u16 = u16::from(self.remote_wakeup_enabled) << 1;
-                    ControlResponse::Data(clamp_response(status.to_le_bytes().to_vec(), setup.w_length))
+                    ControlResponse::Data(clamp_response(
+                        status.to_le_bytes().to_vec(),
+                        setup.w_length,
+                    ))
                 }
                 USB_REQUEST_CLEAR_FEATURE => {
                     if setup.request_direction() != RequestDirection::HostToDevice
@@ -486,7 +492,9 @@ impl UsbDeviceModel for UsbHubDevice {
                     ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
                 }
                 USB_REQUEST_GET_INTERFACE => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_value != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_index != 0 {
@@ -495,7 +503,9 @@ impl UsbDeviceModel for UsbHubDevice {
                     ControlResponse::Data(clamp_response(vec![0], setup.w_length))
                 }
                 USB_REQUEST_SET_INTERFACE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_index != 0 || setup.w_value != 0 {
@@ -517,10 +527,15 @@ impl UsbDeviceModel for UsbHubDevice {
                         return ControlResponse::Stall;
                     }
                     let status: u16 = u16::from(self.interrupt_ep_halted);
-                    ControlResponse::Data(clamp_response(status.to_le_bytes().to_vec(), setup.w_length))
+                    ControlResponse::Data(clamp_response(
+                        status.to_le_bytes().to_vec(),
+                        setup.w_length,
+                    ))
                 }
                 USB_REQUEST_CLEAR_FEATURE | USB_REQUEST_SET_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_value != USB_FEATURE_ENDPOINT_HALT {
@@ -545,7 +560,10 @@ impl UsbDeviceModel for UsbHubDevice {
                     if setup.descriptor_type() != USB_DESCRIPTOR_TYPE_HUB {
                         return ControlResponse::Stall;
                     }
-                    ControlResponse::Data(clamp_response(self.hub_descriptor.clone(), setup.w_length))
+                    ControlResponse::Data(clamp_response(
+                        self.hub_descriptor.clone(),
+                        setup.w_length,
+                    ))
                 }
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
@@ -564,7 +582,9 @@ impl UsbDeviceModel for UsbHubDevice {
                         return ControlResponse::Stall;
                     }
                     match setup.w_value {
-                        HUB_FEATURE_C_HUB_LOCAL_POWER | HUB_FEATURE_C_HUB_OVER_CURRENT => ControlResponse::Ack,
+                        HUB_FEATURE_C_HUB_LOCAL_POWER | HUB_FEATURE_C_HUB_OVER_CURRENT => {
+                            ControlResponse::Ack
+                        }
                         _ => ControlResponse::Stall,
                     }
                 }
@@ -588,7 +608,9 @@ impl UsbDeviceModel for UsbHubDevice {
                     ))
                 }
                 USB_REQUEST_SET_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     let Some(port) = self.port_mut(setup.w_index) else {
@@ -611,7 +633,9 @@ impl UsbDeviceModel for UsbHubDevice {
                     }
                 }
                 USB_REQUEST_CLEAR_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     let Some(port) = self.port_mut(setup.w_index) else {
@@ -782,10 +806,10 @@ fn build_hub_config_descriptor(interrupt_bitmap_len: usize) -> Vec<u8> {
         0x07, // bLength
         USB_DESCRIPTOR_TYPE_ENDPOINT,
         HUB_INTERRUPT_IN_EP, // bEndpointAddress
-        0x03,               // bmAttributes (Interrupt)
+        0x03,                // bmAttributes (Interrupt)
         w_max_packet_size[0],
         w_max_packet_size[1], // wMaxPacketSize
-        0x0c, // bInterval
+        0x0c,                 // bInterval
     ]
 }
 

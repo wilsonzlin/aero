@@ -94,7 +94,9 @@ impl fmt::Display for ProtocolError {
             ProtocolError::BufferTooShort { want, got } => {
                 write!(f, "buffer too short (want {want}, got {got})")
             }
-            ProtocolError::UnknownCommand(ty) => write!(f, "unknown virtio-gpu command type 0x{ty:08x}"),
+            ProtocolError::UnknownCommand(ty) => {
+                write!(f, "unknown virtio-gpu command type 0x{ty:08x}")
+            }
             ProtocolError::InvalidParameter(msg) => write!(f, "invalid parameter: {msg}"),
         }
     }
@@ -104,7 +106,9 @@ impl std::error::Error for ProtocolError {}
 
 #[inline]
 pub fn read_u32_le(buf: &[u8], off: usize) -> Result<u32, ProtocolError> {
-    let end = off.checked_add(4).ok_or(ProtocolError::InvalidParameter("overflow"))?;
+    let end = off
+        .checked_add(4)
+        .ok_or(ProtocolError::InvalidParameter("overflow"))?;
     let bytes = buf.get(off..end).ok_or(ProtocolError::BufferTooShort {
         want: end,
         got: buf.len(),
@@ -114,7 +118,9 @@ pub fn read_u32_le(buf: &[u8], off: usize) -> Result<u32, ProtocolError> {
 
 #[inline]
 pub fn read_u64_le(buf: &[u8], off: usize) -> Result<u64, ProtocolError> {
-    let end = off.checked_add(8).ok_or(ProtocolError::InvalidParameter("overflow"))?;
+    let end = off
+        .checked_add(8)
+        .ok_or(ProtocolError::InvalidParameter("overflow"))?;
     let bytes = buf.get(off..end).ok_or(ProtocolError::BufferTooShort {
         want: end,
         got: buf.len(),

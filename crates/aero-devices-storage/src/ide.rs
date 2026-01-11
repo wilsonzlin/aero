@@ -10,8 +10,9 @@ use aero_storage::SECTOR_SIZE;
 
 use crate::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_SECTORS,
-    ATA_CMD_READ_SECTORS_EXT, ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_SECTORS, ATA_CMD_WRITE_SECTORS_EXT,
-    ATA_ERROR_ABRT, ATA_STATUS_BSY, ATA_STATUS_DRDY, ATA_STATUS_DRQ, ATA_STATUS_ERR,
+    ATA_CMD_READ_SECTORS_EXT, ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_SECTORS,
+    ATA_CMD_WRITE_SECTORS_EXT, ATA_ERROR_ABRT, ATA_STATUS_BSY, ATA_STATUS_DRDY, ATA_STATUS_DRQ,
+    ATA_STATUS_ERR,
 };
 use crate::IrqLine;
 
@@ -549,7 +550,9 @@ impl IdeController {
     }
 
     fn is_primary_port(port: u16) -> bool {
-        (PRIMARY_BASE..=PRIMARY_BASE + 7).contains(&port) || port == PRIMARY_CTRL || port == PRIMARY_CTRL + 1
+        (PRIMARY_BASE..=PRIMARY_BASE + 7).contains(&port)
+            || port == PRIMARY_CTRL
+            || port == PRIMARY_CTRL + 1
     }
 
     pub fn read_u8(&mut self, port: u16, irq14: &dyn IrqLine, irq15: &dyn IrqLine) -> u8 {

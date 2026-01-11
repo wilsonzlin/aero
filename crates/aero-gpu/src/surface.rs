@@ -17,8 +17,12 @@ pub enum GpuSurfaceError {
 impl GpuSurfaceError {
     fn severity_and_category(&self) -> (GpuErrorSeverityKind, GpuErrorCategory) {
         match self {
-            GpuSurfaceError::OutOfMemory => (GpuErrorSeverityKind::Fatal, GpuErrorCategory::OutOfMemory),
-            GpuSurfaceError::Lost | GpuSurfaceError::Outdated => (GpuErrorSeverityKind::Warning, GpuErrorCategory::Surface),
+            GpuSurfaceError::OutOfMemory => {
+                (GpuErrorSeverityKind::Fatal, GpuErrorCategory::OutOfMemory)
+            }
+            GpuSurfaceError::Lost | GpuSurfaceError::Outdated => {
+                (GpuErrorSeverityKind::Warning, GpuErrorCategory::Surface)
+            }
             GpuSurfaceError::Timeout => (GpuErrorSeverityKind::Warning, GpuErrorCategory::Surface),
             GpuSurfaceError::Other(_) => (GpuErrorSeverityKind::Error, GpuErrorCategory::Surface),
         }
@@ -89,13 +93,8 @@ impl GpuPresenter {
             return PresentOutcome::Dropped;
         }
 
-        let outcome = present_with_retry(
-            surface,
-            time_ms,
-            self.backend_kind,
-            &self.stats,
-            emit_event,
-        );
+        let outcome =
+            present_with_retry(surface, time_ms, self.backend_kind, &self.stats, emit_event);
         if matches!(outcome, PresentOutcome::FatalOutOfMemory) {
             self.rendering_enabled = false;
         }
@@ -220,13 +219,9 @@ mod tests {
         let stats = GpuStats::new();
         let mut surface = SimulatedSurface::new([Err(GpuSurfaceError::Lost), Ok(())]);
         let mut events = Vec::new();
-        let outcome = present_with_retry(
-            &mut surface,
-            1,
-            GpuBackendKind::WebGpu,
-            &stats,
-            |e| events.push(e),
-        );
+        let outcome = present_with_retry(&mut surface, 1, GpuBackendKind::WebGpu, &stats, |e| {
+            events.push(e)
+        });
 
         assert_eq!(outcome, PresentOutcome::Presented);
         assert_eq!(surface.reconfigure_calls, 1);
@@ -248,13 +243,9 @@ mod tests {
         let mut surface = SimulatedSurface::new([Err(GpuSurfaceError::OutOfMemory)]);
         let mut events = Vec::new();
 
-        let outcome = present_with_retry(
-            &mut surface,
-            1,
-            GpuBackendKind::WebGpu,
-            &stats,
-            |e| events.push(e),
-        );
+        let outcome = present_with_retry(&mut surface, 1, GpuBackendKind::WebGpu, &stats, |e| {
+            events.push(e)
+        });
 
         assert_eq!(outcome, PresentOutcome::FatalOutOfMemory);
         assert_eq!(surface.reconfigure_calls, 0);

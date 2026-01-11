@@ -16,7 +16,12 @@ impl Default for PciResourceAllocatorConfig {
         //
         // - I/O: keep clear of legacy 0x0000..0x0FFF and leave room for fixed-function devices.
         // - MMIO: put PCI devices high in the 32-bit space, away from RAM in typical setups.
-        Self { mmio_base: 0xE000_0000, mmio_size: 0x1000_0000, io_base: 0x1000, io_size: 0xE000 }
+        Self {
+            mmio_base: 0xE000_0000,
+            mmio_size: 0x1000_0000,
+            io_base: 0x1000,
+            io_size: 0xE000,
+        }
     }
 }
 
@@ -36,7 +41,11 @@ pub struct PciResourceAllocator {
 
 impl PciResourceAllocator {
     pub fn new(cfg: PciResourceAllocatorConfig) -> Self {
-        Self { next_mmio: cfg.mmio_base, next_io: cfg.io_base, cfg }
+        Self {
+            next_mmio: cfg.mmio_base,
+            next_io: cfg.io_base,
+            cfg,
+        }
     }
 
     pub fn reset(&mut self) {
@@ -54,8 +63,8 @@ impl PciResourceAllocator {
             PciBarDefinition::Io { .. } => {
                 let base = align_up_u64(u64::from(self.next_io), size);
                 let end = base.saturating_add(size);
-                let window_end = u64::from(self.cfg.io_base)
-                    .saturating_add(u64::from(self.cfg.io_size));
+                let window_end =
+                    u64::from(self.cfg.io_base).saturating_add(u64::from(self.cfg.io_size));
                 if end > window_end {
                     return Err(PciResourceError::OutOfIoSpace);
                 }
@@ -93,4 +102,3 @@ fn align_up_u64(value: u64, align: u64) -> u64 {
     debug_assert!(align.is_power_of_two());
     (value + (align - 1)) & !(align - 1)
 }
-

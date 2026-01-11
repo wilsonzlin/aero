@@ -374,12 +374,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
     );
 
     // Clear the IOC interrupt bit before testing interrupt endpoints.
-    ctrl.port_write(
-        io_base + REG_USBSTS,
-        2,
-        USBSTS_USBINT as u32,
-        &mut irq,
-    );
+    ctrl.port_write(io_base + REG_USBSTS, 2, USBSTS_USBINT as u32, &mut irq);
     assert!(!irq.raised);
 
     // GET_REPORT for each interface should return the current state, using the interface index in wIndex.
@@ -432,7 +427,10 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
             length: 8,
         },
     );
-    assert_eq!(gamepad_report, vec![0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    assert_eq!(
+        gamepad_report,
+        vec![0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
 
     // Fetch HID + report descriptors for each interface.
     for (iface, expected_prefix) in [
@@ -478,12 +476,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
     }
 
     // Clear interrupts set by descriptor reads.
-    ctrl.port_write(
-        io_base + REG_USBSTS,
-        2,
-        USBSTS_USBINT as u32,
-        &mut irq,
-    );
+    ctrl.port_write(io_base + REG_USBSTS, 2, USBSTS_USBINT as u32, &mut irq);
     assert!(!irq.raised);
 
     // Schedule interrupt IN transfers for endpoints 1 (kbd), 2 (mouse), 3 (gamepad).
@@ -556,12 +549,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
     assert_eq!(report[2], usage);
     assert!(irq.raised);
 
-    ctrl.port_write(
-        io_base + REG_USBSTS,
-        2,
-        USBSTS_USBINT as u32,
-        &mut irq,
-    );
+    ctrl.port_write(io_base + REG_USBSTS, 2, USBSTS_USBINT as u32, &mut irq);
     assert!(!irq.raised);
 
     // Inject mouse movement and ensure endpoint 2 report completes.
@@ -585,12 +573,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
     assert_eq!(report[3], 0); // wheel
     assert!(irq.raised);
 
-    ctrl.port_write(
-        io_base + REG_USBSTS,
-        2,
-        USBSTS_USBINT as u32,
-        &mut irq,
-    );
+    ctrl.port_write(io_base + REG_USBSTS, 2, USBSTS_USBINT as u32, &mut irq);
     assert!(!irq.raised);
 
     // Inject gamepad axes and ensure endpoint 3 report completes.

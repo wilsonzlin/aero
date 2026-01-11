@@ -82,7 +82,11 @@ pub struct ElementConversionPlan {
 impl StreamConversionPlan {
     /// Convert `vertex_count` vertices from `src` into a tightly packed stream described by this
     /// plan.
-    pub fn convert_vertices(&self, src: &[u8], vertex_count: usize) -> Result<Vec<u8>, VertexInputError> {
+    pub fn convert_vertices(
+        &self,
+        src: &[u8],
+        vertex_count: usize,
+    ) -> Result<Vec<u8>, VertexInputError> {
         let src_stride = self.src_stride as usize;
         let dst_stride = self.dst_stride as usize;
         if src.len() < src_stride * vertex_count {
@@ -130,11 +134,7 @@ pub fn translate_vertex_declaration(
         });
     }
 
-    let mut used_streams: Vec<u8> = decl
-        .elements
-        .iter()
-        .map(|e| e.stream)
-        .collect();
+    let mut used_streams: Vec<u8> = decl.elements.iter().map(|e| e.stream).collect();
     used_streams.sort_unstable();
     used_streams.dedup();
 

@@ -236,9 +236,10 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         .state
                         .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
                     let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
-                    let decoded =
-                        aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness()).expect("decode interrupt assist");
-                    let next_ip = ip.wrapping_add(decoded.len as u64) & cpu.cpu.state.mode.ip_mask();
+                    let decoded = aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness())
+                        .expect("decode interrupt assist");
+                    let next_ip =
+                        ip.wrapping_add(decoded.len as u64) & cpu.cpu.state.mode.ip_mask();
 
                     match decoded.instr.mnemonic() {
                         Mnemonic::Cli => {
@@ -262,18 +263,24 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         }
                         Mnemonic::Int3 => {
                             cpu.cpu.pending.raise_software_interrupt(3, next_ip);
-                            cpu.cpu.deliver_pending_event(&mut cpu.bus).expect("deliver INT3");
+                            cpu.cpu
+                                .deliver_pending_event(&mut cpu.bus)
+                                .expect("deliver INT3");
                             cpu.cpu.pending.retire_instruction();
                         }
                         Mnemonic::Int1 => {
                             cpu.cpu.pending.raise_software_interrupt(1, next_ip);
-                            cpu.cpu.deliver_pending_event(&mut cpu.bus).expect("deliver INT1");
+                            cpu.cpu
+                                .deliver_pending_event(&mut cpu.bus)
+                                .expect("deliver INT1");
                             cpu.cpu.pending.retire_instruction();
                         }
                         Mnemonic::Into => {
                             if cpu.cpu.state.get_flag(crate::state::RFLAGS_OF) {
                                 cpu.cpu.pending.raise_software_interrupt(4, next_ip);
-                                cpu.cpu.deliver_pending_event(&mut cpu.bus).expect("deliver INTO");
+                                cpu.cpu
+                                    .deliver_pending_event(&mut cpu.bus)
+                                    .expect("deliver INTO");
                             } else {
                                 cpu.cpu.state.set_rip(next_ip);
                             }

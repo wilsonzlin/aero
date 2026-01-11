@@ -1,8 +1,8 @@
 use crate::io::input::ps2_set2_bytes_for_key_event;
 use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
-use crate::io::usb::hid::hid_usage_from_js_code;
 use crate::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use crate::io::usb::hid::gamepad::{GamepadReport, UsbHidGamepadHandle};
+use crate::io::usb::hid::hid_usage_from_js_code;
 use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use crate::io::usb::hid::mouse::UsbHidMouseHandle;
 use crate::io::virtio::devices::input as vio_input;
@@ -80,7 +80,10 @@ impl InputPipeline {
                 if self.virtio.as_ref().is_some_and(|v| v.keyboard.driver_ok()) {
                     self.inject_key_virtio(mem, code, pressed)?
                 } else if self.usb_composite.as_ref().is_some_and(|d| d.configured())
-                    || self.usb_keyboard.as_ref().is_some_and(|kbd| kbd.configured())
+                    || self
+                        .usb_keyboard
+                        .as_ref()
+                        .is_some_and(|kbd| kbd.configured())
                 {
                     self.inject_key_usb(code, pressed)
                 } else {
@@ -105,7 +108,10 @@ impl InputPipeline {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_move_virtio(mem, dx, dy)?
                 } else if self.usb_composite.as_ref().is_some_and(|d| d.configured())
-                    || self.usb_mouse.as_ref().is_some_and(|mouse| mouse.configured())
+                    || self
+                        .usb_mouse
+                        .as_ref()
+                        .is_some_and(|mouse| mouse.configured())
                 {
                     self.inject_mouse_move_usb(dx, dy)
                 } else {
@@ -132,7 +138,10 @@ impl InputPipeline {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_button_virtio(mem, button, pressed)?
                 } else if self.usb_composite.as_ref().is_some_and(|d| d.configured())
-                    || self.usb_mouse.as_ref().is_some_and(|mouse| mouse.configured())
+                    || self
+                        .usb_mouse
+                        .as_ref()
+                        .is_some_and(|mouse| mouse.configured())
                 {
                     self.inject_mouse_button_usb(button, pressed)
                 } else {
@@ -156,7 +165,10 @@ impl InputPipeline {
                 if self.virtio.as_ref().is_some_and(|v| v.mouse.driver_ok()) {
                     self.inject_mouse_wheel_virtio(mem, delta)?
                 } else if self.usb_composite.as_ref().is_some_and(|d| d.configured())
-                    || self.usb_mouse.as_ref().is_some_and(|mouse| mouse.configured())
+                    || self
+                        .usb_mouse
+                        .as_ref()
+                        .is_some_and(|mouse| mouse.configured())
                 {
                     self.inject_mouse_wheel_usb(delta)
                 } else {
@@ -728,8 +740,8 @@ mod tests {
         let mut gamepad = UsbHidGamepadHandle::new();
         configure_usb_device(&mut gamepad);
 
-        let mut pipeline =
-            InputPipeline::new(None, None, InputRoutingPolicy::Auto).with_usb_gamepad(gamepad.clone());
+        let mut pipeline = InputPipeline::new(None, None, InputRoutingPolicy::Auto)
+            .with_usb_gamepad(gamepad.clone());
 
         pipeline.handle_gamepad_buttons(0x0001).unwrap();
         assert_eq!(
@@ -791,8 +803,8 @@ mod tests {
         let mut gamepad = UsbHidGamepadHandle::new();
         configure_usb_device(&mut gamepad);
 
-        let mut pipeline =
-            InputPipeline::new(None, None, InputRoutingPolicy::UsbOnly).with_usb_gamepad(gamepad.clone());
+        let mut pipeline = InputPipeline::new(None, None, InputRoutingPolicy::UsbOnly)
+            .with_usb_gamepad(gamepad.clone());
 
         let report = GamepadReport {
             buttons: 0x0003,

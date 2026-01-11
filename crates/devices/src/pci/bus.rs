@@ -4,7 +4,9 @@ use crate::pci::config::{
 use crate::pci::{PciBarKind, PciBarRange, PciBdf, PciDevice};
 use crate::pci::{PciResourceAllocator, PciResourceError};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -45,7 +47,11 @@ impl PciBus {
     pub fn mapped_bars(&self) -> Vec<PciMappedBar> {
         self.mapped_bars
             .iter()
-            .map(|((bdf, bar), range)| PciMappedBar { bdf: *bdf, bar: *bar, range: *range })
+            .map(|((bdf, bar), range)| PciMappedBar {
+                bdf: *bdf,
+                bar: *bar,
+                range: *range,
+            })
             .collect()
     }
 
@@ -138,7 +144,12 @@ impl PciBus {
         }
     }
 
-    fn refresh_device_decoding(&mut self, bdf: PciBdf, command: u16, bar_ranges: &[Option<PciBarRange>; 6]) {
+    fn refresh_device_decoding(
+        &mut self,
+        bdf: PciBdf,
+        command: u16,
+        bar_ranges: &[Option<PciBarRange>; 6],
+    ) {
         // Drop all existing mappings for this device, then re-add those that are enabled.
         let keys = self
             .mapped_bars
@@ -239,9 +250,13 @@ impl PciBusSnapshot {
             // a BDF for a different device, validate the PCI identity before applying the saved
             // config-space image.
             let current_id = dev.config().vendor_device_id();
-            let snapshot_vendor_id = u16::from_le_bytes([entry.config.bytes[0], entry.config.bytes[1]]);
-            let snapshot_device_id = u16::from_le_bytes([entry.config.bytes[2], entry.config.bytes[3]]);
-            if current_id.vendor_id != snapshot_vendor_id || current_id.device_id != snapshot_device_id {
+            let snapshot_vendor_id =
+                u16::from_le_bytes([entry.config.bytes[0], entry.config.bytes[1]]);
+            let snapshot_device_id =
+                u16::from_le_bytes([entry.config.bytes[2], entry.config.bytes[3]]);
+            if current_id.vendor_id != snapshot_vendor_id
+                || current_id.device_id != snapshot_device_id
+            {
                 continue;
             }
 
@@ -255,7 +270,10 @@ impl PciBusSnapshot {
                     continue;
                 };
                 let cfg = dev.config();
-                (cfg.command(), core::array::from_fn(|index| cfg.bar_range(index as u8)))
+                (
+                    cfg.command(),
+                    core::array::from_fn(|index| cfg.bar_range(index as u8)),
+                )
             };
 
             bus.refresh_device_decoding(bdf, command, &bar_ranges);
@@ -283,7 +301,9 @@ impl IoSnapshot for PciBusSnapshot {
                 .bytes(&entry.config.bytes);
 
             for i in 0..6 {
-                enc = enc.u64(entry.config.bar_base[i]).bool(entry.config.bar_probe[i]);
+                enc = enc
+                    .u64(entry.config.bar_base[i])
+                    .bool(entry.config.bar_probe[i]);
             }
         }
 

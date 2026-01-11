@@ -54,12 +54,18 @@ fn main() {
     let mut store = Store::new(&engine, ());
     let instance = Instance::new(&mut store, &module, &[]).unwrap();
     let memory = instance.get_memory(&mut store, "mem").unwrap();
-    let run = instance.get_typed_func::<(), ()>(&mut store, "run").unwrap();
+    let run = instance
+        .get_typed_func::<(), ()>(&mut store, "run")
+        .unwrap();
 
     let mut state_bytes = vec![0u8; aero_jit::simd::STATE_SIZE_BYTES];
     state.write_to_bytes(&mut state_bytes).unwrap();
     memory
-        .write(&mut store, DEFAULT_WASM_LAYOUT.state_base as usize, &state_bytes)
+        .write(
+            &mut store,
+            DEFAULT_WASM_LAYOUT.state_base as usize,
+            &state_bytes,
+        )
         .unwrap();
     memory
         .write(
@@ -87,4 +93,3 @@ fn pack_f32x4(lanes: [f32; 4]) -> u128 {
     }
     u128::from_le_bytes(bytes)
 }
-

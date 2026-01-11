@@ -121,22 +121,31 @@ impl SharedTextureState {
             runtime
                 .destroy_texture(underlying)
                 .map_err(|e| e.to_string())?;
-            self.shared_surface_by_token
-                .retain(|_, v| *v != underlying);
+            self.shared_surface_by_token.retain(|_, v| *v != underlying);
         }
 
         Ok(())
     }
 
-    fn export_shared_surface(&mut self, resource_handle: u32, share_token: u64) -> Result<(), String> {
-        let underlying = self.resolve_texture_handle(resource_handle).ok_or_else(|| {
-            format!("ExportSharedSurface references unknown texture handle {resource_handle}")
-        })?;
+    fn export_shared_surface(
+        &mut self,
+        resource_handle: u32,
+        share_token: u64,
+    ) -> Result<(), String> {
+        let underlying = self
+            .resolve_texture_handle(resource_handle)
+            .ok_or_else(|| {
+                format!("ExportSharedSurface references unknown texture handle {resource_handle}")
+            })?;
         self.shared_surface_by_token.insert(share_token, underlying);
         Ok(())
     }
 
-    fn import_shared_surface(&mut self, out_resource_handle: u32, share_token: u64) -> Result<(), String> {
+    fn import_shared_surface(
+        &mut self,
+        out_resource_handle: u32,
+        share_token: u64,
+    ) -> Result<(), String> {
         let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
             return Err(format!("unknown shared surface token 0x{share_token:016X}"));
         };
@@ -371,7 +380,9 @@ impl CommandProcessor {
                     return Err("ContextCreate payload must be exactly 8 bytes".into());
                 }
                 if !self.devices.contains_key(&device_id) {
-                    return Err(format!("ContextCreate references unknown device {device_id}"));
+                    return Err(format!(
+                        "ContextCreate references unknown device {device_id}"
+                    ));
                 }
                 if self.contexts.contains_key(&context_id) {
                     return Err(format!("context {context_id} already exists"));
@@ -616,11 +627,7 @@ impl CommandProcessor {
                                 .resolve_texture_handle(depth_id)
                                 .ok_or_else(|| format!("unknown texture handle {depth_id}"))?,
                         ),
-                        _ => {
-                            return Err(format!(
-                                "unknown depth-stencil target kind {depth_kind}"
-                            ))
-                        }
+                        _ => return Err(format!("unknown depth-stencil target kind {depth_kind}")),
                     };
 
                     runtime
@@ -761,7 +768,12 @@ impl CommandProcessor {
 
                 let stage = ShaderStage::from_u8(stage_raw)
                     .ok_or_else(|| format!("unknown shader stage {stage_raw}"))?;
-                runtime.set_sampler_state_u32(map_shader_stage(stage), slot as u32, state_id, value);
+                runtime.set_sampler_state_u32(
+                    map_shader_stage(stage),
+                    slot as u32,
+                    state_id,
+                    value,
+                );
                 Ok(())
             }
             Opcode::SetTexture => {
@@ -906,7 +918,9 @@ impl CommandProcessor {
             | Opcode::ContextCreate
             | Opcode::ContextDestroy
             | Opcode::ExportSharedSurface
-            | Opcode::ImportSharedSurface => Err(format!("opcode {opcode:?} dispatched incorrectly")),
+            | Opcode::ImportSharedSurface => {
+                Err(format!("opcode {opcode:?} dispatched incorrectly"))
+            }
         }
     }
 }
@@ -986,7 +1000,9 @@ fn map_swapchain_format(format: TextureFormat) -> Result<ColorFormat, String> {
     match format {
         TextureFormat::Rgba8Unorm => Ok(ColorFormat::Rgba8Unorm),
         TextureFormat::Rgba8UnormSrgb => Ok(ColorFormat::Rgba8UnormSrgb),
-        TextureFormat::Depth24PlusStencil8 => Err("swapchains cannot use depth-stencil formats".into()),
+        TextureFormat::Depth24PlusStencil8 => {
+            Err("swapchains cannot use depth-stencil formats".into())
+        }
     }
 }
 

@@ -65,4 +65,3 @@ pub trait Tier1Bus {
         buf
     }
 }
-

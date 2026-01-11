@@ -40,12 +40,7 @@ fn timer_route_selection_delivers_to_programmed_gsi() {
     );
 
     // Fire at main_counter == 1 (100ns at 100ns/tick).
-    hpet.mmio_write(
-        REG_TIMER0_BASE + REG_TIMER_COMPARATOR,
-        8,
-        1,
-        &mut ioapic,
-    );
+    hpet.mmio_write(REG_TIMER0_BASE + REG_TIMER_COMPARATOR, 8, 1, &mut ioapic);
 
     clock.advance_ns(100);
     hpet.poll(&mut ioapic);
@@ -85,12 +80,7 @@ fn legacy_replacement_forces_timer0_timer1_routes() {
     hpet.mmio_write(timer1_base + REG_TIMER_CONFIG, 8, timer1_cfg, &mut ioapic);
 
     // Fire timer0 at t=1 and timer1 at t=2.
-    hpet.mmio_write(
-        REG_TIMER0_BASE + REG_TIMER_COMPARATOR,
-        8,
-        1,
-        &mut ioapic,
-    );
+    hpet.mmio_write(REG_TIMER0_BASE + REG_TIMER_COMPARATOR, 8, 1, &mut ioapic);
     hpet.mmio_write(timer1_base + REG_TIMER_COMPARATOR, 8, 2, &mut ioapic);
 
     clock.advance_ns(200);
@@ -124,12 +114,7 @@ fn level_triggered_timer_does_not_storm_without_clear() {
 
     // First comparator write in periodic mode programs the period and schedules
     // comparator relative to current main_counter.
-    hpet.mmio_write(
-        REG_TIMER0_BASE + REG_TIMER_COMPARATOR,
-        8,
-        1,
-        &mut ioapic,
-    );
+    hpet.mmio_write(REG_TIMER0_BASE + REG_TIMER_COMPARATOR, 8, 1, &mut ioapic);
 
     clock.advance_ns(100);
     hpet.poll(&mut ioapic);
@@ -183,7 +168,12 @@ fn legacy_replacement_can_deliver_via_pic_in_legacy_mode() {
     let mut timer1_cfg = hpet.mmio_read(timer1_base + REG_TIMER_CONFIG, 8, &mut interrupts);
     timer1_cfg |= TIMER_CFG_INT_ENABLE;
     timer1_cfg = (timer1_cfg & !TIMER_CFG_INT_ROUTE_MASK) | (7u64 << TIMER_CFG_INT_ROUTE_SHIFT);
-    hpet.mmio_write(timer1_base + REG_TIMER_CONFIG, 8, timer1_cfg, &mut interrupts);
+    hpet.mmio_write(
+        timer1_base + REG_TIMER_CONFIG,
+        8,
+        timer1_cfg,
+        &mut interrupts,
+    );
 
     // Fire timer0 at t=1 and timer1 at t=2.
     hpet.mmio_write(

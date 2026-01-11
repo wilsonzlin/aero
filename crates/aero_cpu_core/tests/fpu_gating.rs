@@ -22,7 +22,10 @@ fn sse_ts_raises_nm_and_clearing_ts_allows_execution() {
     state.sse.xmm[1] = 0xff00;
 
     state.control.cr0 |= CR0_TS;
-    assert_eq!(step(&mut state, &mut bus), Err(Exception::DeviceNotAvailable));
+    assert_eq!(
+        step(&mut state, &mut bus),
+        Err(Exception::DeviceNotAvailable)
+    );
 
     state.control.cr0 &= !CR0_TS;
     assert_eq!(step(&mut state, &mut bus), Ok(StepExit::Continue));
@@ -35,7 +38,10 @@ fn wait_with_ts_and_mp_raises_nm() {
     let code = [0x9B];
     let (mut state, mut bus) = init(&code);
     state.control.cr0 |= CR0_TS | CR0_MP;
-    assert_eq!(step(&mut state, &mut bus), Err(Exception::DeviceNotAvailable));
+    assert_eq!(
+        step(&mut state, &mut bus),
+        Err(Exception::DeviceNotAvailable)
+    );
 }
 
 #[test]
@@ -66,7 +72,10 @@ fn x87_ts_raises_nm() {
     let code = [0xDB, 0xE3];
     let (mut state, mut bus) = init(&code);
     state.control.cr0 |= CR0_TS;
-    assert_eq!(step(&mut state, &mut bus), Err(Exception::DeviceNotAvailable));
+    assert_eq!(
+        step(&mut state, &mut bus),
+        Err(Exception::DeviceNotAvailable)
+    );
 }
 
 #[test]

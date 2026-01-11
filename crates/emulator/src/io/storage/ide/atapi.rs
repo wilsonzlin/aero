@@ -447,7 +447,7 @@ impl AtapiCdrom {
                     out[0..2].copy_from_slice(&mdl.to_be_bytes());
                     out[2] = 0; // medium type
                     out[3] = 0x80; // write protected
-                    // Block descriptor length = 0 (no descriptors).
+                                   // Block descriptor length = 0 (no descriptors).
                     out[6..8].copy_from_slice(&0u16.to_be_bytes());
                     out[8..].copy_from_slice(&page);
                     Some(out)

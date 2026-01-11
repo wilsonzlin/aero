@@ -76,8 +76,7 @@ impl Default for SegmentCache {
     }
 }
 
-impl SegmentCache {
-}
+impl SegmentCache {}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentRegister {
@@ -132,7 +131,6 @@ impl SegmentRegisters {
             gs: real_seg(0),
         }
     }
-
 }
 
 fn selector_index(selector: u16) -> u16 {
@@ -271,7 +269,9 @@ impl CpuState {
     ) -> Result<(), Exception> {
         match self.cpu_mode() {
             CpuMode::Real | CpuMode::Vm86 => self.load_seg_real(seg, selector),
-            CpuMode::Protected | CpuMode::Long => self.load_seg_protected(bus, seg, selector, reason),
+            CpuMode::Protected | CpuMode::Long => {
+                self.load_seg_protected(bus, seg, selector, reason)
+            }
         }
     }
 
@@ -338,7 +338,9 @@ impl CpuState {
         match seg {
             Seg::CS => self.validate_load_cs(selector, seg_desc, reason)?,
             Seg::SS => self.validate_load_ss(selector, seg_desc, reason)?,
-            Seg::DS | Seg::ES | Seg::FS | Seg::GS => self.validate_load_data_seg(selector, seg_desc, reason)?,
+            Seg::DS | Seg::ES | Seg::FS | Seg::GS => {
+                self.validate_load_data_seg(selector, seg_desc, reason)?
+            }
         }
 
         // Commit: visible selector + hidden cache.
@@ -445,7 +447,11 @@ impl CpuState {
     fn after_cs_load(&mut self, old_cpl: u8, attrs: DescriptorAttributes) {
         // Conforming code segments do not change CPL; non-conforming transfers set
         // CPL to the descriptor's DPL (direct far jumps/calls require equality).
-        let new_cpl = if attrs.code_conforming() { old_cpl } else { attrs.dpl };
+        let new_cpl = if attrs.code_conforming() {
+            old_cpl
+        } else {
+            attrs.dpl
+        };
 
         // Hardware forces CS.RPL == CPL.
         self.segments.cs.selector = (self.segments.cs.selector & !0x3) | (new_cpl as u16);

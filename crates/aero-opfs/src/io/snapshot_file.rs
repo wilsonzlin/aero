@@ -76,14 +76,18 @@ mod platform_handle {
             }
             DiskError::InUse => io::Error::new(io::ErrorKind::WouldBlock, err.to_string()),
             DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err.to_string()),
-            DiskError::InvalidState(_) => io::Error::new(io::ErrorKind::BrokenPipe, err.to_string()),
+            DiskError::InvalidState(_) => {
+                io::Error::new(io::ErrorKind::BrokenPipe, err.to_string())
+            }
             DiskError::OutOfBounds
             | DiskError::OutOfRange { .. }
             | DiskError::InvalidBufferLength
             | DiskError::UnalignedBuffer { .. } => {
                 io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
             }
-            DiskError::CorruptImage(_) => io::Error::new(io::ErrorKind::InvalidData, err.to_string()),
+            DiskError::CorruptImage(_) => {
+                io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+            }
             _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
         }
     }
@@ -93,7 +97,8 @@ mod platform_handle {
     }
 
     fn set_at(opts: &Object, at_key: &JsValue, at: u64) -> io::Result<()> {
-        Reflect::set(opts, at_key, &JsValue::from_f64(u64_to_f64_checked(at)?)).map_err(js_error_to_io)?;
+        Reflect::set(opts, at_key, &JsValue::from_f64(u64_to_f64_checked(at)?))
+            .map_err(js_error_to_io)?;
         Ok(())
     }
 
@@ -116,7 +121,11 @@ mod platform_handle {
             let at_key = JsValue::from_str("at");
             let rw_opts = Object::new();
             Reflect::set(&rw_opts, &at_key, &JsValue::from_f64(0.0)).map_err(js_error_to_io)?;
-            Ok(Self { handle, at_key, rw_opts })
+            Ok(Self {
+                handle,
+                at_key,
+                rw_opts,
+            })
         }
     }
 
@@ -365,10 +374,9 @@ where
         };
 
         let read = self.handle_mut()?.read_at(pos, buf)?;
-        self.pos = self
-            .pos
-            .checked_add(read as u64)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "stream position overflow"))?;
+        self.pos = self.pos.checked_add(read as u64).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "stream position overflow")
+        })?;
         Ok(read)
     }
 }
@@ -405,10 +413,9 @@ where
 
         let pos = self.pos;
         let wrote = self.handle_mut()?.write_at(pos, buf)?;
-        self.pos = self
-            .pos
-            .checked_add(wrote as u64)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "stream position overflow"))?;
+        self.pos = self.pos.checked_add(wrote as u64).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "stream position overflow")
+        })?;
         Ok(wrote)
     }
 

@@ -39,7 +39,9 @@ pub struct GuestRam {
 impl GuestRam {
     /// Allocate a new [`GuestRam`] of `size` bytes.
     pub fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     /// Borrow the entire backing store.
@@ -168,4 +170,3 @@ pub fn write_u64_le<M: GuestMemory + ?Sized>(
     mem.write(addr, &bytes)?;
     Ok(())
 }
-

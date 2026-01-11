@@ -216,4 +216,3 @@ mod tests {
         assert_eq!(out[4], 32767);
     }
 }
-

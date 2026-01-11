@@ -190,4 +190,3 @@ mod tests {
         assert_eq!(wheel_delta_y_to_step(0.0), 0);
     }
 }
-

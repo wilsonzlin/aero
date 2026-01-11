@@ -105,7 +105,9 @@ pub struct TestMemory {
 
 impl TestMemory {
     pub fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -114,7 +116,9 @@ impl TestMemory {
 
     fn check_range(&self, paddr: u64, len: usize) {
         let start = paddr as usize;
-        let end = start.checked_add(len).expect("guest memory address overflow");
+        let end = start
+            .checked_add(len)
+            .expect("guest memory address overflow");
         assert!(end <= self.data.len(), "guest memory OOB access");
     }
 }

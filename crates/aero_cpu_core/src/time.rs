@@ -68,11 +68,7 @@ impl TimeSource {
     pub fn set_tsc(&mut self, tsc: u64) {
         self.tsc = tsc;
 
-        if let TimeSourceMode::WallClock {
-            anchor,
-            anchor_tsc,
-        } = &mut self.mode
-        {
+        if let TimeSourceMode::WallClock { anchor, anchor_tsc } = &mut self.mode {
             *anchor = Instant::now();
             *anchor_tsc = tsc;
         }
@@ -81,10 +77,7 @@ impl TimeSource {
     pub fn read_tsc(&mut self) -> u64 {
         match &mut self.mode {
             TimeSourceMode::Deterministic => self.tsc,
-            TimeSourceMode::WallClock {
-                anchor,
-                anchor_tsc,
-            } => {
+            TimeSourceMode::WallClock { anchor, anchor_tsc } => {
                 let elapsed = Instant::now().saturating_duration_since(*anchor);
                 let ticks = duration_to_ticks(self.tsc_hz, elapsed);
                 self.tsc = anchor_tsc.wrapping_add(ticks);
@@ -114,4 +107,3 @@ fn duration_to_ticks(tsc_hz: u64, duration: Duration) -> u64 {
     let ticks = nanos.saturating_mul(tsc_hz as u128) / 1_000_000_000u128;
     ticks.min(u64::MAX as u128) as u64
 }
-

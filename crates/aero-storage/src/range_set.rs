@@ -60,10 +60,13 @@ impl RangeSet {
         if start >= end {
             return true;
         }
-        match self
-            .ranges
-            .binary_search_by(|r| if r.end <= start { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater })
-        {
+        match self.ranges.binary_search_by(|r| {
+            if r.end <= start {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        }) {
             Ok(_) => unreachable!("binary_search_by never returns Ok"),
             Err(idx) => {
                 if idx >= self.ranges.len() {
@@ -201,4 +204,3 @@ mod tests {
         assert!(rs.contains_range(20, 30));
     }
 }
-

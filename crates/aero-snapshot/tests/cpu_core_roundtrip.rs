@@ -590,7 +590,10 @@ fn cpu_core_long_mode_execute_snapshot_restore_continue() {
     assert_eq!(resumed.mem, expected_mem);
     assert_eq!(resumed.cpu.msr.fs_base, FS_BASE);
     assert_eq!(resumed.cpu_internal.interrupt_inhibit, 1);
-    assert_eq!(resumed.cpu_internal.pending_external_interrupts, vec![0x20, 0x21]);
+    assert_eq!(
+        resumed.cpu_internal.pending_external_interrupts,
+        vec![0x20, 0x21]
+    );
     assert_eq!(resumed.cpu.gpr[core_gpr::RAX] as u32, 4);
     assert_eq!(
         u32::from_le_bytes(

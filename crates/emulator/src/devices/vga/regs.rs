@@ -40,9 +40,9 @@ pub(crate) const SEQ_REGS_INITIAL_LEN: usize = 5; // 0..=4
 pub(crate) const GC_REGS_INITIAL_LEN: usize = 9; // 0..=8
 pub(crate) const AC_REGS_INITIAL_LEN: usize = 0x15; // 0..=0x14
 pub(crate) const CRTC_REGS_INITIAL_LEN: usize = 0x19; // 0..=0x18
-// ---------------------------------------------------------------------------
-// Reset / baseline register sets
-// ---------------------------------------------------------------------------
+                                                      // ---------------------------------------------------------------------------
+                                                      // Reset / baseline register sets
+                                                      // ---------------------------------------------------------------------------
 
 /// Minimal power-on defaults (not a full hardware reset image).
 pub(crate) const POWER_ON_MISC_OUTPUT: u8 = 0x01;

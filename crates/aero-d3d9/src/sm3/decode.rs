@@ -8,7 +8,11 @@ pub struct DecodeError {
 
 impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DX9 shader decode error at token {}: {}", self.token_index, self.message)
+        write!(
+            f,
+            "DX9 shader decode error at token {}: {}",
+            self.token_index, self.message
+        )
     }
 }
 
@@ -477,7 +481,11 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
         message: format!("unknown shader version token 0x{version_token:08x}"),
     })?;
 
-    let version = ShaderVersion { stage, major, minor };
+    let version = ShaderVersion {
+        stage,
+        major,
+        minor,
+    };
 
     let mut instructions = Vec::new();
     let mut token_index = 1usize;
@@ -496,12 +504,10 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
 
         if opcode == Opcode::Comment {
             let comment_len = ((opcode_token >> 16) & 0x7FFF) as usize;
-            let total_len = 1usize
-                .checked_add(comment_len)
-                .ok_or_else(|| DecodeError {
-                    token_index,
-                    message: "comment length overflow".to_owned(),
-                })?;
+            let total_len = 1usize.checked_add(comment_len).ok_or_else(|| DecodeError {
+                token_index,
+                message: "comment length overflow".to_owned(),
+            })?;
             if token_index + total_len > tokens.len() {
                 return Err(DecodeError {
                     token_index,
@@ -603,10 +609,10 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
 
         let (operands, dcl, comment_data) =
             decode_operands_and_extras(opcode_token, opcode, stage, major, operand_tokens)
-            .map_err(|mut err| {
-                err.token_index = location.token_index + 1 + err.token_index;
-                err
-            })?;
+                .map_err(|mut err| {
+                    err.token_index = location.token_index + 1 + err.token_index;
+                    err
+                })?;
 
         instructions.push(DecodedInstruction {
             location,
@@ -641,7 +647,12 @@ fn decode_operands_and_extras(
     let comment_data = None;
 
     match opcode {
-        Opcode::Nop | Opcode::Else | Opcode::EndIf | Opcode::EndLoop | Opcode::Break | Opcode::Ret => {
+        Opcode::Nop
+        | Opcode::Else
+        | Opcode::EndIf
+        | Opcode::EndLoop
+        | Opcode::Break
+        | Opcode::Ret => {
             if !operand_tokens.is_empty() {
                 return Err(DecodeError {
                     token_index: 0,
@@ -663,7 +674,17 @@ fn decode_operands_and_extras(
                 &mut operands,
             )?;
         }
-        Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Min | Opcode::Max | Opcode::Sge | Opcode::Slt | Opcode::Seq | Opcode::Sne | Opcode::Dp3 | Opcode::Dp4 => {
+        Opcode::Add
+        | Opcode::Sub
+        | Opcode::Mul
+        | Opcode::Min
+        | Opcode::Max
+        | Opcode::Sge
+        | Opcode::Slt
+        | Opcode::Seq
+        | Opcode::Sne
+        | Opcode::Dp3
+        | Opcode::Dp4 => {
             parse_fixed_operands(
                 opcode,
                 stage,
@@ -679,12 +700,24 @@ fn decode_operands_and_extras(
                 stage,
                 major,
                 operand_tokens,
-                &[OperandKind::Dst, OperandKind::Src, OperandKind::Src, OperandKind::Src],
+                &[
+                    OperandKind::Dst,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                ],
                 &mut operands,
             )?;
         }
         Opcode::If => {
-            parse_fixed_operands(opcode, stage, major, operand_tokens, &[OperandKind::Src], &mut operands)?;
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Src],
+                &mut operands,
+            )?;
         }
         Opcode::Ifc | Opcode::Breakc => {
             // Comparison type is encoded in opcode_token[16..20].
@@ -722,10 +755,24 @@ fn decode_operands_and_extras(
             )?;
         }
         Opcode::Call => {
-            parse_fixed_operands(opcode, stage, major, operand_tokens, &[OperandKind::Src], &mut operands)?;
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Src],
+                &mut operands,
+            )?;
         }
         Opcode::Dcl => {
-            parse_fixed_operands(opcode, stage, major, operand_tokens, &[OperandKind::Dst], &mut operands)?;
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Dst],
+                &mut operands,
+            )?;
             let usage_raw = ((opcode_token >> 16) & 0xF) as u8;
             let usage_index = ((opcode_token >> 20) & 0xF) as u8;
             let usage = decode_dcl_usage(usage_raw, operands.first())?;
@@ -850,7 +897,14 @@ fn decode_operands_and_extras(
             )?;
         }
         Opcode::TexKill => {
-            parse_fixed_operands(opcode, stage, major, operand_tokens, &[OperandKind::Src], &mut operands)?;
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Src],
+                &mut operands,
+            )?;
         }
         Opcode::Unknown(op) => {
             return Err(DecodeError {
@@ -876,20 +930,24 @@ fn parse_fixed_operands(
     for expected in pattern {
         match expected {
             OperandKind::Dst => {
-                let (dst, consumed) = decode_dst_operand(operand_tokens, token_cursor, stage, major)?;
+                let (dst, consumed) =
+                    decode_dst_operand(operand_tokens, token_cursor, stage, major)?;
                 out.push(Operand::Dst(dst));
                 token_cursor += consumed;
             }
             OperandKind::Src => {
-                let (src, consumed) = decode_src_operand(operand_tokens, token_cursor, stage, major)?;
+                let (src, consumed) =
+                    decode_src_operand(operand_tokens, token_cursor, stage, major)?;
                 out.push(Operand::Src(src));
                 token_cursor += consumed;
             }
             OperandKind::Imm32 => {
-                let token = operand_tokens.get(token_cursor).ok_or_else(|| DecodeError {
-                    token_index: token_cursor,
-                    message: format!("opcode {} missing immediate operand", opcode.name()),
-                })?;
+                let token = operand_tokens
+                    .get(token_cursor)
+                    .ok_or_else(|| DecodeError {
+                        token_index: token_cursor,
+                        message: format!("opcode {} missing immediate operand", opcode.name()),
+                    })?;
                 out.push(Operand::Imm32(*token));
                 token_cursor += 1;
             }
@@ -970,12 +1028,19 @@ fn decode_dst_operand(
         message: "unexpected end of operand tokens".to_owned(),
     })?;
 
-    let (reg, reg_consumed) = decode_register_ref(tokens, start, stage, major, RegDecodeContext::Dst)?;
+    let (reg, reg_consumed) =
+        decode_register_ref(tokens, start, stage, major, RegDecodeContext::Dst)?;
     let mut mask = ((token & WRITEMASK_MASK) >> WRITEMASK_SHIFT) as u8;
     if mask == 0 {
         mask = 0xF;
     }
-    Ok((DstOperand { reg, mask: WriteMask(mask) }, reg_consumed))
+    Ok((
+        DstOperand {
+            reg,
+            mask: WriteMask(mask),
+        },
+        reg_consumed,
+    ))
 }
 
 fn decode_src_operand(
@@ -989,13 +1054,21 @@ fn decode_src_operand(
         message: "unexpected end of operand tokens".to_owned(),
     })?;
 
-    let (reg, reg_consumed) = decode_register_ref(tokens, start, stage, major, RegDecodeContext::Src)?;
+    let (reg, reg_consumed) =
+        decode_register_ref(tokens, start, stage, major, RegDecodeContext::Src)?;
     let swizzle_raw = ((token & SWIZZLE_MASK) >> SWIZZLE_SHIFT) as u8;
     let swizzle = decode_swizzle(swizzle_raw);
     let modifier_raw = ((token & SRCMOD_MASK) >> SRCMOD_SHIFT) as u8;
     let modifier = decode_src_modifier(modifier_raw);
 
-    Ok((SrcOperand { reg, swizzle, modifier }, reg_consumed))
+    Ok((
+        SrcOperand {
+            reg,
+            swizzle,
+            modifier,
+        },
+        reg_consumed,
+    ))
 }
 
 fn decode_register_ref(
@@ -1024,12 +1097,19 @@ fn decode_register_ref(
             });
         }
         let relative_token_index = start + 1;
-        let rel_token = *tokens.get(relative_token_index).ok_or_else(|| DecodeError {
-            token_index: relative_token_index,
-            message: "relative addressing missing register token".to_owned(),
-        })?;
-        let (rel_reg, rel_consumed) =
-            decode_register_ref(tokens, relative_token_index, stage, major, RegDecodeContext::Relative)?;
+        let rel_token = *tokens
+            .get(relative_token_index)
+            .ok_or_else(|| DecodeError {
+                token_index: relative_token_index,
+                message: "relative addressing missing register token".to_owned(),
+            })?;
+        let (rel_reg, rel_consumed) = decode_register_ref(
+            tokens,
+            relative_token_index,
+            stage,
+            major,
+            RegDecodeContext::Relative,
+        )?;
         if rel_consumed != 1 {
             return Err(DecodeError {
                 token_index: relative_token_index,
@@ -1081,7 +1161,10 @@ fn decode_src_modifier(modifier: u8) -> SrcModifier {
     }
 }
 
-fn decode_dcl_usage(usage_raw: u8, first_operand: Option<&Operand>) -> Result<DclUsage, DecodeError> {
+fn decode_dcl_usage(
+    usage_raw: u8,
+    first_operand: Option<&Operand>,
+) -> Result<DclUsage, DecodeError> {
     let is_sampler_decl = match first_operand {
         Some(Operand::Dst(dst)) => dst.reg.file == RegisterFile::Sampler,
         _ => false,

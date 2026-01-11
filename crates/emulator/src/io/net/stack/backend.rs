@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use aero_net_stack::{Action, DnsResolved, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent};
+use aero_net_stack::{
+    Action, DnsResolved, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
+};
 
 use crate::io::net::NetworkBackend;
 
@@ -103,4 +105,3 @@ impl NetworkBackend for NetStackBackend {
         self.pending_frames.pop_front()
     }
 }
-

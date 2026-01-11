@@ -177,9 +177,12 @@ impl<'a, R: ResourceProvider> Encoder<'a, R> {
                         last_bind_groups.resize_with(slot_idx + 1, || None);
                     }
                     let offsets = dynamic_offsets.as_slice();
-                    let is_same = last_bind_groups[slot_idx]
-                        .as_ref()
-                        .is_some_and(|(id, last_offsets)| id == bind_group && *last_offsets == offsets);
+                    let is_same =
+                        last_bind_groups[slot_idx]
+                            .as_ref()
+                            .is_some_and(|(id, last_offsets)| {
+                                id == bind_group && *last_offsets == offsets
+                            });
                     if !is_same {
                         metrics.bind_group_changes = metrics.bind_group_changes.saturating_add(1);
                         last_bind_groups[slot_idx] = Some((*bind_group, offsets));

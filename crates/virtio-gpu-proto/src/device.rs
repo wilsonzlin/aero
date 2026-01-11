@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 
 use crate::protocol::{
-    encode_resp_hdr_from_req, parse_ctrl_hdr, parse_rect, read_u32_le, read_u64_le, CtrlHdr, ProtocolError,
-    Rect, VIRTIO_GPU_CMD_GET_DISPLAY_INFO, VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING, VIRTIO_GPU_CMD_RESOURCE_CREATE_2D,
-    VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING, VIRTIO_GPU_CMD_RESOURCE_FLUSH, VIRTIO_GPU_CMD_RESOURCE_UNREF,
-    VIRTIO_GPU_CMD_SET_SCANOUT, VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, VIRTIO_GPU_CMD_UPDATE_CURSOR,
-    VIRTIO_GPU_CMD_MOVE_CURSOR, VIRTIO_GPU_CMD_GET_EDID, VIRTIO_GPU_EDID_BLOB_SIZE,
-    VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM, VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM, VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM,
-    VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM, VIRTIO_GPU_MAX_SCANOUTS, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
-    VIRTIO_GPU_RESP_ERR_UNSPEC, VIRTIO_GPU_RESP_OK_DISPLAY_INFO, VIRTIO_GPU_RESP_OK_EDID,
-    VIRTIO_GPU_RESP_OK_NODATA,
+    encode_resp_hdr_from_req, parse_ctrl_hdr, parse_rect, read_u32_le, read_u64_le, CtrlHdr,
+    ProtocolError, Rect, VIRTIO_GPU_CMD_GET_DISPLAY_INFO, VIRTIO_GPU_CMD_GET_EDID,
+    VIRTIO_GPU_CMD_MOVE_CURSOR, VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING,
+    VIRTIO_GPU_CMD_RESOURCE_CREATE_2D, VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING,
+    VIRTIO_GPU_CMD_RESOURCE_FLUSH, VIRTIO_GPU_CMD_RESOURCE_UNREF, VIRTIO_GPU_CMD_SET_SCANOUT,
+    VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, VIRTIO_GPU_CMD_UPDATE_CURSOR, VIRTIO_GPU_EDID_BLOB_SIZE,
+    VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM, VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM,
+    VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM, VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM, VIRTIO_GPU_MAX_SCANOUTS,
+    VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER, VIRTIO_GPU_RESP_ERR_UNSPEC,
+    VIRTIO_GPU_RESP_OK_DISPLAY_INFO, VIRTIO_GPU_RESP_OK_EDID, VIRTIO_GPU_RESP_OK_NODATA,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +47,9 @@ impl Resource2D {
             | VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM
             | VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM
             | VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM => Ok(4),
-            _ => Err(ProtocolError::InvalidParameter("unsupported resource format")),
+            _ => Err(ProtocolError::InvalidParameter(
+                "unsupported resource format",
+            )),
         }
     }
 
@@ -77,14 +80,18 @@ impl Resource2D {
             return Ok(());
         }
         if self.backing.is_empty() {
-            return Err(ProtocolError::InvalidParameter("resource has no backing attached"));
+            return Err(ProtocolError::InvalidParameter(
+                "resource has no backing attached",
+            ));
         }
         if offset
             .checked_add(out.len() as u64)
             .filter(|end| *end <= self.backing_len)
             .is_none()
         {
-            return Err(ProtocolError::InvalidParameter("backing read out of bounds"));
+            return Err(ProtocolError::InvalidParameter(
+                "backing read out of bounds",
+            ));
         }
 
         for entry in &self.backing {
@@ -99,7 +106,9 @@ impl Resource2D {
             let addr = entry
                 .addr
                 .checked_add(offset)
-                .ok_or(ProtocolError::InvalidParameter("guest backing addr overflow"))?;
+                .ok_or(ProtocolError::InvalidParameter(
+                    "guest backing addr overflow",
+                ))?;
             mem.read(addr, &mut out[..take])
                 .map_err(|_| ProtocolError::InvalidParameter("guest memory read failed"))?;
             out = &mut out[take..];
@@ -139,12 +148,11 @@ pub struct VirtioGpuDevice {
 
 impl VirtioGpuDevice {
     pub fn new(display_width: u32, display_height: u32) -> Self {
-        let mut scanouts: [Scanout; VIRTIO_GPU_MAX_SCANOUTS] =
-            core::array::from_fn(|_| Scanout {
-                enabled: false,
-                rect: Rect::new(0, 0, 0, 0),
-                resource_id: 0,
-            });
+        let mut scanouts: [Scanout; VIRTIO_GPU_MAX_SCANOUTS] = core::array::from_fn(|_| Scanout {
+            enabled: false,
+            rect: Rect::new(0, 0, 0, 0),
+            resource_id: 0,
+        });
 
         // Provide a default enabled scanout mode (like QEMU does).
         scanouts[0].enabled = true;
@@ -182,9 +190,15 @@ impl VirtioGpuDevice {
             VIRTIO_GPU_CMD_GET_EDID => self.cmd_get_edid(&hdr, req_bytes),
             VIRTIO_GPU_CMD_RESOURCE_CREATE_2D => self.cmd_resource_create_2d(&hdr, req_bytes),
             VIRTIO_GPU_CMD_RESOURCE_UNREF => self.cmd_resource_unref(&hdr, req_bytes),
-            VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING => self.cmd_resource_attach_backing(&hdr, req_bytes),
-            VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING => self.cmd_resource_detach_backing(&hdr, req_bytes),
-            VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D => self.cmd_transfer_to_host_2d(&hdr, req_bytes, mem),
+            VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING => {
+                self.cmd_resource_attach_backing(&hdr, req_bytes)
+            }
+            VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING => {
+                self.cmd_resource_detach_backing(&hdr, req_bytes)
+            }
+            VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D => {
+                self.cmd_transfer_to_host_2d(&hdr, req_bytes, mem)
+            }
             VIRTIO_GPU_CMD_SET_SCANOUT => self.cmd_set_scanout(&hdr, req_bytes),
             VIRTIO_GPU_CMD_RESOURCE_FLUSH => self.cmd_resource_flush(&hdr, req_bytes),
             VIRTIO_GPU_CMD_UPDATE_CURSOR | VIRTIO_GPU_CMD_MOVE_CURSOR => {
@@ -209,7 +223,10 @@ impl VirtioGpuDevice {
         }
         let scanout_id = read_u32_le(req_bytes, base)? as usize;
         if scanout_id >= VIRTIO_GPU_MAX_SCANOUTS {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         // Return a minimal, valid EDID blob. Many guest drivers only need *some* EDID in order to
@@ -244,7 +261,11 @@ impl VirtioGpuDevice {
         Ok(out)
     }
 
-    fn cmd_resource_create_2d(&mut self, req: &CtrlHdr, req_bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    fn cmd_resource_create_2d(
+        &mut self,
+        req: &CtrlHdr,
+        req_bytes: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
         // struct virtio_gpu_resource_create_2d:
         // hdr + resource_id + format + width + height
         let want = CtrlHdr::WIREFORMAT_SIZE + 16;
@@ -260,7 +281,10 @@ impl VirtioGpuDevice {
         let height = read_u32_le(req_bytes, CtrlHdr::WIREFORMAT_SIZE + 12)?;
 
         if width == 0 || height == 0 {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
         if !matches!(
             format,
@@ -269,7 +293,10 @@ impl VirtioGpuDevice {
                 | VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM
                 | VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM
         ) {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         let size = width
@@ -292,7 +319,11 @@ impl VirtioGpuDevice {
         Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_OK_NODATA))
     }
 
-    fn cmd_resource_unref(&mut self, req: &CtrlHdr, req_bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    fn cmd_resource_unref(
+        &mut self,
+        req: &CtrlHdr,
+        req_bytes: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
         // hdr + resource_id + padding
         let want = CtrlHdr::WIREFORMAT_SIZE + 8;
         if req_bytes.len() < want {
@@ -306,7 +337,11 @@ impl VirtioGpuDevice {
         Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_OK_NODATA))
     }
 
-    fn cmd_resource_attach_backing(&mut self, req: &CtrlHdr, req_bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    fn cmd_resource_attach_backing(
+        &mut self,
+        req: &CtrlHdr,
+        req_bytes: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
         // struct virtio_gpu_resource_attach_backing:
         // hdr + resource_id + nr_entries + entries[nr_entries]
         let base = CtrlHdr::WIREFORMAT_SIZE;
@@ -323,10 +358,12 @@ impl VirtioGpuDevice {
         let entry_off = base + 8;
         let entry_size: usize = 16;
         let want2 = entry_off
-            .checked_add(entry_size.checked_mul(nr_entries).ok_or(ProtocolError::InvalidParameter(
+            .checked_add(entry_size.checked_mul(nr_entries).ok_or(
+                ProtocolError::InvalidParameter("attach_backing size overflow"),
+            )?)
+            .ok_or(ProtocolError::InvalidParameter(
                 "attach_backing size overflow",
-            ))?)
-            .ok_or(ProtocolError::InvalidParameter("attach_backing size overflow"))?;
+            ))?;
         if req_bytes.len() < want2 {
             return Err(ProtocolError::BufferTooShort {
                 want: want2,
@@ -335,7 +372,10 @@ impl VirtioGpuDevice {
         }
 
         if nr_entries == 0 {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         let res = self
@@ -359,7 +399,10 @@ impl VirtioGpuDevice {
 
         let required = res.required_backing_len()?;
         if total_len < required {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         res.backing = backing;
@@ -367,7 +410,11 @@ impl VirtioGpuDevice {
         Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_OK_NODATA))
     }
 
-    fn cmd_resource_detach_backing(&mut self, req: &CtrlHdr, req_bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    fn cmd_resource_detach_backing(
+        &mut self,
+        req: &CtrlHdr,
+        req_bytes: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
         // hdr + resource_id + padding
         let want = CtrlHdr::WIREFORMAT_SIZE + 8;
         if req_bytes.len() < want {
@@ -412,14 +459,20 @@ impl VirtioGpuDevice {
         let bpp = res.bytes_per_pixel()? as u64;
         let stride = res.width as u64 * bpp;
         if res.backing.is_empty() {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         // Bounds checks.
         if rect.x.checked_add(rect.width).unwrap_or(u32::MAX) > res.width
             || rect.y.checked_add(rect.height).unwrap_or(u32::MAX) > res.height
         {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         let row_bytes = rect.width as usize * bpp as usize;
@@ -428,9 +481,10 @@ impl VirtioGpuDevice {
 
         for row in 0..rect.height as u64 {
             let src_off = offset
-                .checked_add(row.checked_mul(stride).ok_or(ProtocolError::InvalidParameter(
-                    "guest src overflow",
-                ))?)
+                .checked_add(
+                    row.checked_mul(stride)
+                        .ok_or(ProtocolError::InvalidParameter("guest src overflow"))?,
+                )
                 .ok_or(ProtocolError::InvalidParameter("guest src overflow"))?;
             res.read_backing_linear(mem, src_off, &mut row_buf)?;
 
@@ -450,7 +504,11 @@ impl VirtioGpuDevice {
         Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_OK_NODATA))
     }
 
-    fn cmd_set_scanout(&mut self, req: &CtrlHdr, req_bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    fn cmd_set_scanout(
+        &mut self,
+        req: &CtrlHdr,
+        req_bytes: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
         // struct virtio_gpu_set_scanout:
         // hdr + rect + scanout_id(u32) + resource_id(u32)
         let base = CtrlHdr::WIREFORMAT_SIZE;
@@ -466,7 +524,10 @@ impl VirtioGpuDevice {
         let resource_id = read_u32_le(req_bytes, base + 20)?;
 
         if scanout_id >= VIRTIO_GPU_MAX_SCANOUTS {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
         if resource_id == 0 {
             // Disable scanout.
@@ -477,20 +538,32 @@ impl VirtioGpuDevice {
         }
         if scanout_id != 0 {
             // This prototype only exposes one scanout buffer.
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
         let Some(res) = self.resources.get(&resource_id) else {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         };
         if rect.x != 0 || rect.y != 0 || rect.width == 0 || rect.height == 0 {
             // Keep the prototype simple: we only support scanout 0 being mapped 1:1 to the
             // output buffer (no panning / multi-rect scanouts).
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         if res.width != rect.width || res.height != rect.height {
             // The resource must match the scanout rect for a 1:1 scanout mapping.
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         // Treat the requested rect as the "current mode" and resize the scanout buffer.
@@ -512,7 +585,11 @@ impl VirtioGpuDevice {
         Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_OK_NODATA))
     }
 
-    fn cmd_resource_flush(&mut self, req: &CtrlHdr, req_bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    fn cmd_resource_flush(
+        &mut self,
+        req: &CtrlHdr,
+        req_bytes: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
         // struct virtio_gpu_resource_flush:
         // hdr + rect + resource_id(u32) + padding(u32)
         let base = CtrlHdr::WIREFORMAT_SIZE;
@@ -528,14 +605,22 @@ impl VirtioGpuDevice {
 
         let res = match self.resources.get(&resource_id) {
             Some(r) => r,
-            None => return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER)),
+            None => {
+                return Ok(encode_resp_hdr_from_req(
+                    req,
+                    VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+                ))
+            }
         };
 
         // Bounds checks.
         if rect.x.checked_add(rect.width).unwrap_or(u32::MAX) > res.width
             || rect.y.checked_add(rect.height).unwrap_or(u32::MAX) > res.height
         {
-            return Ok(encode_resp_hdr_from_req(req, VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER));
+            return Ok(encode_resp_hdr_from_req(
+                req,
+                VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+            ));
         }
 
         // If this resource isn't currently bound to scanout 0, nothing to do.
@@ -630,16 +715,16 @@ fn default_edid_1024x768() -> [u8; 128] {
     edid[dtd + 2] = 0x00; // 1024 LSB
     edid[dtd + 3] = 0x40; // 320 LSB
     edid[dtd + 4] = 0x41; // 1024 MSB=4, 320 MSB=1
-    // V active/blanking: 768 / 38.
+                          // V active/blanking: 768 / 38.
     edid[dtd + 5] = 0x00; // 768 LSB
     edid[dtd + 6] = 0x26; // 38 LSB
     edid[dtd + 7] = 0x30; // 768 MSB=3, 38 MSB=0
-    // Sync offsets/pulse widths: hsync 24/136, vsync 3/6.
+                          // Sync offsets/pulse widths: hsync 24/136, vsync 3/6.
     edid[dtd + 8] = 0x18;
     edid[dtd + 9] = 0x88;
     edid[dtd + 10] = 0x36;
     edid[dtd + 11] = 0x00; // high bits
-    // Physical size (mm) - unknown.
+                           // Physical size (mm) - unknown.
     edid[dtd + 12] = 0;
     edid[dtd + 13] = 0;
     edid[dtd + 14] = 0;
@@ -651,15 +736,15 @@ fn default_edid_1024x768() -> [u8; 128] {
     // Descriptor 2: monitor name "AERO".
     let name = 72;
     edid[name + 0..name + 18].copy_from_slice(&[
-        0x00, 0x00, 0x00, 0xfc, 0x00, b'A', b'E', b'R', b'O', b'\n', 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xfc, 0x00, b'A', b'E', b'R', b'O', b'\n', 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00,
     ]);
 
     // Descriptors 3/4 unused.
     for base in [90usize, 108usize] {
         edid[base + 0..base + 18].copy_from_slice(&[
-            0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ]);
     }
 

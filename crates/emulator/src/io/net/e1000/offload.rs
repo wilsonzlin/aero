@@ -203,11 +203,12 @@ pub fn tso_segment(
     }
 
     let computed_hdr_len = ctx.tucss + tcp_header_len;
-    let hdr_len = if ctx.hdr_len != 0 && ctx.hdr_len <= frame.len() && ctx.hdr_len == computed_hdr_len {
-        ctx.hdr_len
-    } else {
-        computed_hdr_len
-    };
+    let hdr_len =
+        if ctx.hdr_len != 0 && ctx.hdr_len <= frame.len() && ctx.hdr_len == computed_hdr_len {
+            ctx.hdr_len
+        } else {
+            computed_hdr_len
+        };
     if hdr_len > frame.len() {
         return Err(OffloadError::FrameTooShort);
     }
@@ -261,4 +262,3 @@ pub fn tso_segment(
 
     Ok(out)
 }
-

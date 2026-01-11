@@ -8,7 +8,12 @@ use aero_x86::Register;
 const BUS_SIZE: usize = 0x10_000;
 const CODE_BASE: u64 = 0x1000;
 
-fn exec_steps(state: &mut CpuState, bus: &mut FlatTestBus, code: &[u8], steps: usize) -> Result<(), Exception> {
+fn exec_steps(
+    state: &mut CpuState,
+    bus: &mut FlatTestBus,
+    code: &[u8],
+    steps: usize,
+) -> Result<(), Exception> {
     bus.load(CODE_BASE, code);
     state.set_rip(CODE_BASE);
     for _ in 0..steps {
@@ -154,13 +159,7 @@ fn lock_cmpxchg_rmw_sizes_success_and_failure() {
         state.write_reg(Register::CX, 0xBEEF);
         bus.write_u16(addr, 0x1234).unwrap();
 
-        exec_steps(
-            &mut state,
-            &mut bus,
-            &[0xF0, 0x66, 0x0F, 0xB1, 0x0E],
-            1,
-        )
-        .unwrap();
+        exec_steps(&mut state, &mut bus, &[0xF0, 0x66, 0x0F, 0xB1, 0x0E], 1).unwrap();
 
         assert_eq!(bus.read_u16(addr).unwrap(), 0xBEEF);
         assert_eq!(state.read_reg(Register::AX), 0x1234);
@@ -178,13 +177,7 @@ fn lock_cmpxchg_rmw_sizes_success_and_failure() {
         state.write_reg(Register::CX, 0x2222);
         bus.write_u16(addr, 0x0001).unwrap();
 
-        exec_steps(
-            &mut state,
-            &mut bus,
-            &[0xF0, 0x66, 0x0F, 0xB1, 0x0E],
-            1,
-        )
-        .unwrap();
+        exec_steps(&mut state, &mut bus, &[0xF0, 0x66, 0x0F, 0xB1, 0x0E], 1).unwrap();
 
         assert_eq!(bus.read_u16(addr).unwrap(), 0x0001);
         assert_eq!(state.read_reg(Register::AX), 0x0001);
@@ -288,7 +281,10 @@ fn lock_cmpxchg8b_success_and_failure() {
         assert_eq!(bus.read_u64(addr).unwrap(), replacement);
         assert!(state.get_flag(FLAG_ZF));
         assert_eq!(state.read_reg(Register::EAX), expected as u32 as u64);
-        assert_eq!(state.read_reg(Register::EDX), (expected >> 32) as u32 as u64);
+        assert_eq!(
+            state.read_reg(Register::EDX),
+            (expected >> 32) as u32 as u64
+        );
     }
 
     // Failure.

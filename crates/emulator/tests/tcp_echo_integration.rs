@@ -8,7 +8,9 @@ use aero_net_stack::packet::{
     EtherType, EthernetFrame, Ipv4Packet, Ipv4Protocol, MacAddr, TcpFlags, TcpSegment, UdpDatagram,
 };
 use emulator::io::net::stack::{Action, StackConfig, TcpProxyEvent};
-use emulator::io::net::trace::{CaptureArtifactOnPanic, NetTraceConfig, NetTracer, TracedNetworkStack};
+use emulator::io::net::trace::{
+    CaptureArtifactOnPanic, NetTraceConfig, NetTracer, TracedNetworkStack,
+};
 
 fn wrap_udp_ipv4_eth(
     src_mac: MacAddr,
@@ -36,7 +38,9 @@ fn wrap_tcp_ipv4_eth(
     flags: u8,
     payload: &[u8],
 ) -> Vec<u8> {
-    let tcp = TcpSegment::serialize(src_ip, dst_ip, src_port, dst_port, seq, ack, flags, 65535, payload);
+    let tcp = TcpSegment::serialize(
+        src_ip, dst_ip, src_port, dst_port, seq, ack, flags, 65535, payload,
+    );
     let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::TCP, 1, 64, &tcp);
     EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
 }
@@ -55,7 +59,12 @@ fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
     out
 }
 
-fn build_dhcp_request(xid: u32, mac: MacAddr, requested_ip: Ipv4Addr, server_id: Ipv4Addr) -> Vec<u8> {
+fn build_dhcp_request(
+    xid: u32,
+    mac: MacAddr,
+    requested_ip: Ipv4Addr,
+    server_id: Ipv4Addr,
+) -> Vec<u8> {
     let mut out = vec![0u8; 240];
     out[0] = 1; // BOOTREQUEST
     out[1] = 1; // Ethernet
@@ -103,7 +112,10 @@ fn dhcp_handshake(stack: &mut TracedNetworkStack, cfg: &StackConfig, guest_mac: 
     stack.drain_frames();
     stack.drain_actions();
 
-    assert!(stack.inner().stack().is_ip_assigned(), "DHCP should assign guest IP");
+    assert!(
+        stack.inner().stack().is_ip_assigned(),
+        "DHCP should assign guest IP"
+    );
 }
 
 fn read_exact_or_panic(stream: &mut TcpStream, n: usize) -> Vec<u8> {
@@ -186,12 +198,17 @@ fn tcp_proxy_echo_end_to_end() {
     let eth = EthernetFrame::parse(&frames[0]).unwrap();
     let ip = Ipv4Packet::parse(eth.payload).unwrap();
     let synack = TcpSegment::parse(ip.payload).unwrap();
-    assert_eq!(synack.flags & (TcpFlags::SYN | TcpFlags::ACK), TcpFlags::SYN | TcpFlags::ACK);
+    assert_eq!(
+        synack.flags & (TcpFlags::SYN | TcpFlags::ACK),
+        TcpFlags::SYN | TcpFlags::ACK
+    );
     let stack_isn = synack.seq;
 
     // Host fulfills connect by opening a real socket, then notifies the stack.
     let stream = TcpStream::connect(addr).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     streams.insert(*connection_id, stream);
     stack.push_tcp_event(
         TcpProxyEvent::Connected {
@@ -351,4 +368,3 @@ fn tcp_proxy_echo_end_to_end() {
 
     server_handle.join().unwrap();
 }
-

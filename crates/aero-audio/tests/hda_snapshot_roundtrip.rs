@@ -1,8 +1,8 @@
 #![cfg(feature = "io-snapshot")]
 
+use aero_audio::capture::VecDequeCaptureSource;
 use aero_audio::hda::HdaController;
 use aero_audio::mem::{GuestMemory, MemoryAccess};
-use aero_audio::capture::VecDequeCaptureSource;
 use aero_io_snapshot::io::audio::state::AudioWorkletRingState;
 
 const REG_GCTL: u64 = 0x08;
@@ -289,9 +289,7 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     let output_frames = 240usize;
 
     let mut capture = VecDequeCaptureSource::new();
-    let samples: Vec<f32> = (0..2000)
-        .map(|i| (i as f32 / 2000.0) * 2.0 - 1.0)
-        .collect();
+    let samples: Vec<f32> = (0..2000).map(|i| (i as f32 / 2000.0) * 2.0 - 1.0).collect();
     capture.push_samples(&samples);
 
     hda.process_with_capture(&mut mem, output_frames, &mut capture);
@@ -324,12 +322,21 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     assert_eq!(expected_lpib, (220 + 221) as u32 * 2);
 
     // Verify codec capture state round-tripped via verbs.
-    assert_eq!(restored.codec_mut().execute_verb(4, verb_12(0xF06, 0)), 0x20);
+    assert_eq!(
+        restored.codec_mut().execute_verb(4, verb_12(0xF06, 0)),
+        0x20
+    );
     assert_eq!(
         restored.codec_mut().execute_verb(4, verb_12(0xA00, 0)),
         fmt_raw as u32
     );
     assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF01, 0)), 1);
-    assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF07, 0)), 0x55);
-    assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF05, 0)), 0x03);
+    assert_eq!(
+        restored.codec_mut().execute_verb(5, verb_12(0xF07, 0)),
+        0x55
+    );
+    assert_eq!(
+        restored.codec_mut().execute_verb(5, verb_12(0xF05, 0)),
+        0x03
+    );
 }

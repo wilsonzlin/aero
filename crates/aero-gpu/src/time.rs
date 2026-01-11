@@ -12,4 +12,3 @@ pub fn now_ms() -> u64 {
         .try_into()
         .unwrap_or(u64::MAX)
 }
-

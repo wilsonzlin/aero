@@ -8,10 +8,12 @@
 //! Timing is deterministic: time progresses only via [`Pit8254::advance_ns`], which
 //! converts nanoseconds into PIT input clock ticks (1.193182 MHz).
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
-use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 use core::fmt;
 use std::cell::RefCell;
 use std::rc::Rc;

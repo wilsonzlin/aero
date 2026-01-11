@@ -3,7 +3,8 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 fn fixture_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/aerogpu_cmd_triangle.aerogputrace")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/aerogpu_cmd_triangle.aerogputrace")
 }
 
 #[test]

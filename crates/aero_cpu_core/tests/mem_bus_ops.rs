@@ -71,12 +71,7 @@ impl CpuBus for ScalarOnlyBus {
         self.inner.io_read(port, size)
     }
 
-    fn io_write(
-        &mut self,
-        port: u16,
-        size: u32,
-        val: u64,
-    ) -> Result<(), aero_cpu_core::Exception> {
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), aero_cpu_core::Exception> {
         self.inner.io_write(port, size, val)
     }
 }
@@ -90,7 +85,9 @@ fn atomic_rmw_updates_value_and_returns_result() {
         let addr = 0x10;
         bus.write_u8(addr, 0x41).unwrap();
         let ret = bus
-            .atomic_rmw::<u8, _>(addr, |old| (old.wrapping_add(1), (old, old.wrapping_add(1))))
+            .atomic_rmw::<u8, _>(addr, |old| {
+                (old.wrapping_add(1), (old, old.wrapping_add(1)))
+            })
             .unwrap();
         assert_eq!(ret, (0x41, 0x42));
         assert_eq!(bus.read_u8(addr).unwrap(), 0x42);
@@ -223,7 +220,10 @@ fn read_write_bytes_oob_is_memory_fault() {
     let mut bus = FlatTestBus::new(16);
     let mut out = [0u8; 4];
     assert_eq!(bus.read_bytes(13, &mut out), Err(Exception::MemoryFault));
-    assert_eq!(bus.write_bytes(13, &[1, 2, 3, 4]), Err(Exception::MemoryFault));
+    assert_eq!(
+        bus.write_bytes(13, &[1, 2, 3, 4]),
+        Err(Exception::MemoryFault)
+    );
 }
 
 #[test]

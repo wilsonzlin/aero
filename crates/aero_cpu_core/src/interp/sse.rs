@@ -1,5 +1,5 @@
-use crate::{CpuState, Exception};
 use crate::bus::Bus;
+use crate::{CpuState, Exception};
 
 use super::{
     check_alignment, or_mxcsr_flags, read_xmm_operand_128, read_xmm_operand_u32, rounding_mode,
@@ -280,83 +280,43 @@ pub fn shufps(
     Ok(())
 }
 
-pub fn andps(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn andps(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let s = read_xmm_operand_128(cpu, bus, src);
     cpu.sse.xmm[dst.index()] &= s;
     Ok(())
 }
 
-pub fn orps(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn orps(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let s = read_xmm_operand_128(cpu, bus, src);
     cpu.sse.xmm[dst.index()] |= s;
     Ok(())
 }
 
-pub fn xorps(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn xorps(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let s = read_xmm_operand_128(cpu, bus, src);
     cpu.sse.xmm[dst.index()] ^= s;
     Ok(())
 }
 
-pub fn andnps(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn andnps(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     let s = read_xmm_operand_128(cpu, bus, src);
     cpu.sse.xmm[dst.index()] = !cpu.sse.xmm[dst.index()] & s;
     Ok(())
 }
 
-pub fn addss(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn addss(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     scalar_f32_op(cpu, bus, dst, src, |a, b| a + b)
 }
 
-pub fn subss(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn subss(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     scalar_f32_op(cpu, bus, dst, src, |a, b| a - b)
 }
 
-pub fn mulss(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn mulss(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     scalar_f32_op(cpu, bus, dst, src, |a, b| a * b)
 }
 
-pub fn divss(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn divss(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     scalar_f32_op(cpu, bus, dst, src, |a, b| a / b)
 }
 
@@ -377,39 +337,19 @@ fn scalar_f32_op(
     Ok(())
 }
 
-pub fn addps(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn addps(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     packed_f32_op(cpu, bus, dst, src, |a, b| a + b)
 }
 
-pub fn subps(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn subps(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     packed_f32_op(cpu, bus, dst, src, |a, b| a - b)
 }
 
-pub fn mulps(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn mulps(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     packed_f32_op(cpu, bus, dst, src, |a, b| a * b)
 }
 
-pub fn divps(
-    cpu: &mut CpuState,
-    bus: &mut impl Bus,
-    dst: XmmReg,
-    src: XmmOperand,
-) -> Result<()> {
+pub fn divps(cpu: &mut CpuState, bus: &mut impl Bus, dst: XmmReg, src: XmmOperand) -> Result<()> {
     packed_f32_op(cpu, bus, dst, src, |a, b| a / b)
 }
 

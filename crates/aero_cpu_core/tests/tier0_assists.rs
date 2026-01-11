@@ -1,8 +1,8 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
 use aero_cpu_core::mem::FlatTestBus;
-use aero_cpu_core::CpuBus;
 use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
+use aero_cpu_core::CpuBus;
 use aero_x86::Register;
 
 const BUS_SIZE: usize = 0x10000;
@@ -67,10 +67,15 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
             BatchExit::Completed | BatchExit::Branch => continue,
             BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
             BatchExit::BiosInterrupt(vector) => {
-                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+                panic!(
+                    "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
+                    state.rip()
+                )
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
-            BatchExit::Exception(e) => panic!("unexpected exception after {executed_total} insts: {e:?}"),
+            BatchExit::Exception(e) => {
+                panic!("unexpected exception after {executed_total} insts: {e:?}")
+            }
         }
     }
 

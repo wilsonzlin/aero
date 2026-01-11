@@ -575,7 +575,7 @@ fn repne_scasb_stops_on_match() {
     }
 
     exec_one(&mut state, &mut bus, 0, &[0xF2, 0xAE]); // REPNE SCASB
-    // Stops when ZF=1 at index 3, after 4 iterations executed.
+                                                      // Stops when ZF=1 at index 3, after 4 iterations executed.
     assert_eq!(state.read_reg(Register::EDI), 0x14);
     assert_eq!(state.read_reg(Register::ECX), 2);
     assert!(state.get_flag(FLAG_ZF));

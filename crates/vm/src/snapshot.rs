@@ -226,9 +226,7 @@ impl<D: BlockDevice> SnapshotSource for Vm<D> {
 impl<D: BlockDevice> SnapshotTarget for Vm<D> {
     fn restore_meta(&mut self, meta: SnapshotMeta) {
         self.last_snapshot_id = Some(meta.snapshot_id);
-        self.snapshot_seq = self
-            .snapshot_seq
-            .max(meta.snapshot_id.saturating_add(1));
+        self.snapshot_seq = self.snapshot_seq.max(meta.snapshot_id.saturating_add(1));
     }
 
     fn restore_cpu_state(&mut self, state: CpuState) {

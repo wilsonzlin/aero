@@ -116,4 +116,3 @@ fn batch_vs_single_step_randomized_regression() {
         assert_eq!(batch, step);
     }
 }
-

@@ -124,9 +124,7 @@ pub trait CpuBus {
     /// implementation safely falls back to scalar `read_u8` accesses.
     fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
         for (i, slot) in dst.iter_mut().enumerate() {
-            let addr = vaddr
-                .checked_add(i as u64)
-                .ok_or(Exception::MemoryFault)?;
+            let addr = vaddr.checked_add(i as u64).ok_or(Exception::MemoryFault)?;
             *slot = self.read_u8(addr)?;
         }
         Ok(())
@@ -138,9 +136,7 @@ pub trait CpuBus {
     /// back to scalar `write_u8` accesses.
     fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
         for (i, byte) in src.iter().copied().enumerate() {
-            let addr = vaddr
-                .checked_add(i as u64)
-                .ok_or(Exception::MemoryFault)?;
+            let addr = vaddr.checked_add(i as u64).ok_or(Exception::MemoryFault)?;
             self.write_u8(addr, byte)?;
         }
         Ok(())
@@ -222,7 +218,8 @@ pub trait CpuBus {
             .checked_mul(repeat)
             .ok_or(Exception::MemoryFault)?;
         // Bounds-check destination range without panicking on overflow.
-        dst.checked_add(total as u64).ok_or(Exception::MemoryFault)?;
+        dst.checked_add(total as u64)
+            .ok_or(Exception::MemoryFault)?;
         for i in 0..total {
             let byte = pattern[i % pattern.len()];
             self.write_u8(dst + i as u64, byte)?;

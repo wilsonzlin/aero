@@ -48,13 +48,21 @@ fn cpu_core_bus_routes_port_io_to_toggle_a20() {
     assert_eq!(bus.platform.memory.read_u8(0x1_00000), 0x33);
 }
 
-fn write_idt_gate32(mem: &mut impl CpuBus, idt_base: u64, vector: u8, selector: u16, offset: u32, type_attr: u8) {
+fn write_idt_gate32(
+    mem: &mut impl CpuBus,
+    idt_base: u64,
+    vector: u8,
+    selector: u16,
+    offset: u32,
+    type_attr: u8,
+) {
     let entry_addr = idt_base + (vector as u64) * 8;
     mem.write_u16(entry_addr, (offset & 0xffff) as u16).unwrap();
     mem.write_u16(entry_addr + 2, selector).unwrap();
     mem.write_u8(entry_addr + 4, 0).unwrap();
     mem.write_u8(entry_addr + 5, type_attr).unwrap();
-    mem.write_u16(entry_addr + 6, (offset >> 16) as u16).unwrap();
+    mem.write_u16(entry_addr + 6, (offset >> 16) as u16)
+        .unwrap();
 }
 
 #[test]

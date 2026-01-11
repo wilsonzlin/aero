@@ -4,8 +4,8 @@ use std::rc::Rc;
 use aero_devices::i8042::{register_i8042, PlatformIrqSink};
 use aero_devices_input::I8042Controller;
 use aero_platform::interrupts::InterruptController;
-use aero_platform::io::IoPortBus;
 use aero_platform::interrupts::PlatformInterrupts;
+use aero_platform::io::IoPortBus;
 
 #[test]
 fn i8042_keyboard_irq1_delivers_pic_vector_and_set1_scancode() {
@@ -83,4 +83,3 @@ fn i8042_mouse_irq12_delivers_pic_vector_and_mouse_status_bit() {
     assert_eq!(packet, vec![0x08, 0x01, 0x00]);
     assert_eq!(interrupts.borrow().get_pending(), None);
 }
-

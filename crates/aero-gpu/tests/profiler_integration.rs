@@ -38,7 +38,8 @@ fn gpu_profiler_reports_gpu_time_when_supported_otherwise_falls_back() {
         return;
     };
 
-    let supports_timestamp_query = GpuCapabilities::from_device(&device).supports_timestamp_queries();
+    let supports_timestamp_query =
+        GpuCapabilities::from_device(&device).supports_timestamp_queries();
 
     let mut profiler = GpuProfiler::new_wgpu_with_config(
         GpuBackendKind::WebGpu,

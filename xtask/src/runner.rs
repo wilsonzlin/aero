@@ -31,9 +31,10 @@ impl Runner {
         }
 
         let status = status.map_err(|err| match err.kind() {
-            io::ErrorKind::NotFound => {
-                XtaskError::Message(format!("missing required command: {}", display(cmd.get_program())))
-            }
+            io::ErrorKind::NotFound => XtaskError::Message(format!(
+                "missing required command: {}",
+                display(cmd.get_program())
+            )),
             _ => XtaskError::Message(format!(
                 "failed to run {}: {err}",
                 display(cmd.get_program())

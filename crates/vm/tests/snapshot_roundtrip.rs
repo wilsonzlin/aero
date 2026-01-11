@@ -195,7 +195,10 @@ fn snapshot_restore_rejects_dirty_snapshot_with_wrong_parent() {
     restored.reset();
 
     let err = restored.restore_snapshot(&diff).unwrap_err();
-    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("snapshot parent mismatch")
+    ));
 
     // Full snapshots ignore expected-parent validation and must still restore fine.
     restored.restore_snapshot(&base).unwrap();

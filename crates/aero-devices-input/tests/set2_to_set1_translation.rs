@@ -47,4 +47,3 @@ fn pause_translates_to_set1_make_sequence_only() {
         vec![0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5]
     );
 }
-

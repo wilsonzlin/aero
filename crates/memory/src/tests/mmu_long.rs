@@ -1,5 +1,5 @@
 use crate::bus::MemoryBus;
-use crate::mmu::{AccessType, TranslateError, PFEC_ID, PFEC_P, PFEC_RSVD, CR4_PGE};
+use crate::mmu::{AccessType, TranslateError, CR4_PGE, PFEC_ID, PFEC_P, PFEC_RSVD};
 
 use super::helpers::{new_bus, new_mmu_long, TlbMmu};
 
@@ -25,7 +25,9 @@ fn long_mode_minimal_4k_mapping_translation_and_ad_bits() {
     bus.write_u64(pt_base + 0 * 8, phys_page | 0x003);
 
     let mut mmu = new_mmu_long(cr3, true);
-    let paddr = mmu.translate(&mut bus, vaddr, AccessType::Write, mmu.cpl).unwrap();
+    let paddr = mmu
+        .translate(&mut bus, vaddr, AccessType::Write, mmu.cpl)
+        .unwrap();
     assert_eq!(paddr, phys_page + (vaddr & 0xFFF));
 
     let pml4e = bus.read_u64(cr3);
@@ -61,10 +63,14 @@ fn long_mode_large_pages_2mb_and_1gb() {
     bus.write_u64(pd_base + 0 * 8, phys_2m | 0x083);
 
     let mut mmu = new_mmu_long(cr3, true);
-    let paddr_1g = mmu.translate(&mut bus, vaddr_1g, AccessType::Read, mmu.cpl).unwrap();
+    let paddr_1g = mmu
+        .translate(&mut bus, vaddr_1g, AccessType::Read, mmu.cpl)
+        .unwrap();
     assert_eq!(paddr_1g, phys_1g + (vaddr_1g & 0x3FFF_FFFF));
 
-    let paddr_2m = mmu.translate(&mut bus, vaddr_2m, AccessType::Read, mmu.cpl).unwrap();
+    let paddr_2m = mmu
+        .translate(&mut bus, vaddr_2m, AccessType::Read, mmu.cpl)
+        .unwrap();
     assert_eq!(paddr_2m, phys_2m + (vaddr_2m & 0x1F_FFFF));
 }
 
@@ -110,7 +116,9 @@ fn long_mode_rsvd_fault_when_nx_disabled() {
     bus.write_u64(pt_base, phys_page | 0x8000_0000_0000_0003u64); // NX set but NXE disabled
 
     let mut mmu = new_mmu_long(cr3, false);
-    let err = mmu.translate(&mut bus, vaddr, AccessType::Read, mmu.cpl).unwrap_err();
+    let err = mmu
+        .translate(&mut bus, vaddr, AccessType::Read, mmu.cpl)
+        .unwrap_err();
 
     match err {
         TranslateError::PageFault(pf) => assert_eq!(pf.error_code, PFEC_P | PFEC_RSVD),
@@ -124,7 +132,12 @@ fn long_mode_non_canonical_address_is_gp() {
     let mut mmu = new_mmu_long(0x1000, true);
 
     let err = mmu
-        .translate(&mut bus, 0x0000_8000_0000_0000u64, AccessType::Read, mmu.cpl)
+        .translate(
+            &mut bus,
+            0x0000_8000_0000_0000u64,
+            AccessType::Read,
+            mmu.cpl,
+        )
         .unwrap_err();
     assert!(matches!(err, TranslateError::GeneralProtection { .. }));
 }
@@ -167,11 +180,13 @@ fn tlb_global_vs_non_global_flush_on_cr3_switch() {
     mmu.mmu.cr4 |= CR4_PGE;
 
     assert_eq!(
-        mmu.translate_with_tlb(&mut bus, v_global, AccessType::Read).unwrap(),
+        mmu.translate_with_tlb(&mut bus, v_global, AccessType::Read)
+            .unwrap(),
         p_global_a
     );
     assert_eq!(
-        mmu.translate_with_tlb(&mut bus, v_local, AccessType::Read).unwrap(),
+        mmu.translate_with_tlb(&mut bus, v_local, AccessType::Read)
+            .unwrap(),
         p_local_a
     );
     assert_eq!(mmu.tlb_len(), 2);
@@ -180,11 +195,13 @@ fn tlb_global_vs_non_global_flush_on_cr3_switch() {
     mmu.set_cr3(cr3_b);
 
     assert_eq!(
-        mmu.translate_with_tlb(&mut bus, v_global, AccessType::Read).unwrap(),
+        mmu.translate_with_tlb(&mut bus, v_global, AccessType::Read)
+            .unwrap(),
         p_global_a
     );
     assert_eq!(
-        mmu.translate_with_tlb(&mut bus, v_local, AccessType::Read).unwrap(),
+        mmu.translate_with_tlb(&mut bus, v_local, AccessType::Read)
+            .unwrap(),
         p_local_b
     );
 }

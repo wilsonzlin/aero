@@ -32,7 +32,10 @@ fn x87_em_raises_ud() {
     let code = [0xD9, 0xE8];
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_EM;
-    assert_eq!(exec_single(&code, &mut state), Err(Exception::InvalidOpcode));
+    assert_eq!(
+        exec_single(&code, &mut state),
+        Err(Exception::InvalidOpcode)
+    );
 }
 
 #[test]
@@ -41,7 +44,10 @@ fn x87_em_has_priority_over_ts() {
     let code = [0xD9, 0xE8];
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_EM | CR0_TS;
-    assert_eq!(exec_single(&code, &mut state), Err(Exception::InvalidOpcode));
+    assert_eq!(
+        exec_single(&code, &mut state),
+        Err(Exception::InvalidOpcode)
+    );
 }
 
 #[test]
@@ -62,7 +68,10 @@ fn wait_em_has_priority_over_nm() {
     let code = [0x9B];
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_EM | CR0_MP | CR0_TS;
-    assert_eq!(exec_single(&code, &mut state), Err(Exception::InvalidOpcode));
+    assert_eq!(
+        exec_single(&code, &mut state),
+        Err(Exception::InvalidOpcode)
+    );
 }
 
 #[test]

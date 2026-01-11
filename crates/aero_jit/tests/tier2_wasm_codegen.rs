@@ -17,9 +17,9 @@ use aero_jit::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit::tier2::trace::TraceBuilder;
 use aero_jit::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION};
 use aero_jit::wasm::{
-    IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MEMORY, IMPORT_MODULE,
+    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE,
 };
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
@@ -428,7 +428,14 @@ fn tier2_trace_wasm_matches_interpreter_on_memory_ops() {
 
     let mut interp_state = init_state.clone();
     let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
-    let res = run_trace_with_cached_regs(&trace, &env, &mut bus, &mut interp_state, 1, &opt.regalloc.cached);
+    let res = run_trace_with_cached_regs(
+        &trace,
+        &env,
+        &mut bus,
+        &mut interp_state,
+        1,
+        &opt.regalloc.cached,
+    );
     assert_eq!(res.exit, RunExit::Returned);
 
     assert_eq!(

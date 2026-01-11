@@ -89,8 +89,10 @@ impl AerogpuCmdRuntime {
                 .map(|v| v.is_empty())
                 .unwrap_or(true);
             if needs_runtime_dir {
-                let dir = std::env::temp_dir()
-                    .join(format!("aero-d3d11-aerogpu-xdg-runtime-{}", std::process::id()));
+                let dir = std::env::temp_dir().join(format!(
+                    "aero-d3d11-aerogpu-xdg-runtime-{}",
+                    std::process::id()
+                ));
                 let _ = std::fs::create_dir_all(&dir);
                 let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
                 std::env::set_var("XDG_RUNTIME_DIR", &dir);
@@ -235,18 +237,16 @@ impl AerogpuCmdRuntime {
             .wgsl;
 
         // Register into the shared PipelineCache shader-module cache.
-        let (hash, _module) = self
-            .pipelines
-            .get_or_create_shader_module(&self.device, stage, &wgsl, Some("aerogpu shader"));
-
-        self.resources.shaders.insert(
-            handle,
-            ShaderResource {
-                stage,
-                wgsl,
-                hash,
-            },
+        let (hash, _module) = self.pipelines.get_or_create_shader_module(
+            &self.device,
+            stage,
+            &wgsl,
+            Some("aerogpu shader"),
         );
+
+        self.resources
+            .shaders
+            .insert(handle, ShaderResource { stage, wgsl, hash });
         Ok(())
     }
 
@@ -319,14 +319,12 @@ impl AerogpuCmdRuntime {
         first_vertex: u32,
         first_instance: u32,
     ) -> Result<()> {
-        self.draw_internal(
-            DrawKind::NonIndexed {
-                vertex_count,
-                instance_count,
-                first_vertex,
-                first_instance,
-            },
-        )
+        self.draw_internal(DrawKind::NonIndexed {
+            vertex_count,
+            instance_count,
+            first_vertex,
+            first_instance,
+        })
     }
 
     pub fn draw_indexed(
@@ -347,8 +345,14 @@ impl AerogpuCmdRuntime {
     }
 
     fn draw_internal(&mut self, kind: DrawKind) -> Result<()> {
-        let vs_handle = self.state.vs.ok_or_else(|| anyhow!("draw without a bound VS"))?;
-        let ps_handle = self.state.ps.ok_or_else(|| anyhow!("draw without a bound PS"))?;
+        let vs_handle = self
+            .state
+            .vs
+            .ok_or_else(|| anyhow!("draw without a bound VS"))?;
+        let ps_handle = self
+            .state
+            .ps
+            .ok_or_else(|| anyhow!("draw without a bound PS"))?;
 
         let vs = self
             .resources
@@ -417,13 +421,12 @@ impl AerogpuCmdRuntime {
                 &self.device,
                 key,
                 move |device, vs_module, fs_module| {
-                    let pipeline_layout = device.create_pipeline_layout(
-                        &wgpu::PipelineLayoutDescriptor {
+                    let pipeline_layout =
+                        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                             label: Some("aero-d3d11 aerogpu pipeline layout"),
                             bind_group_layouts: &[],
                             push_constant_ranges: &[],
-                        },
-                    );
+                        });
 
                     let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
                         .iter()
@@ -532,7 +535,10 @@ impl AerogpuCmdRuntime {
                 first_vertex,
                 first_instance,
             } => {
-                pass.draw(first_vertex..first_vertex + vertex_count, first_instance..first_instance + instance_count);
+                pass.draw(
+                    first_vertex..first_vertex + vertex_count,
+                    first_instance..first_instance + instance_count,
+                );
             }
             DrawKind::Indexed {
                 index_count,
@@ -572,7 +578,10 @@ impl AerogpuCmdRuntime {
             .get(&handle)
             .ok_or_else(|| anyhow!("unknown texture {handle}"))?;
         if tex.desc.format != wgpu::TextureFormat::Rgba8Unorm {
-            bail!("read_texture_rgba8 only supports Rgba8Unorm (got {:?})", tex.desc.format);
+            bail!(
+                "read_texture_rgba8 only supports Rgba8Unorm (got {:?})",
+                tex.desc.format
+            );
         }
 
         let width = tex.desc.width;
@@ -672,7 +681,11 @@ enum DrawKind {
 fn build_vertex_state(
     resources: &AerogpuResources,
     state: &D3D11ShadowState,
-) -> Result<(Vec<OwnedVertexBufferLayout>, Vec<VertexBufferLayoutKey>, usize)> {
+) -> Result<(
+    Vec<OwnedVertexBufferLayout>,
+    Vec<VertexBufferLayoutKey>,
+    usize,
+)> {
     let Some(layout_handle) = state.input_layout else {
         return Ok((Vec::new(), Vec::new(), 0));
     };
@@ -710,8 +723,12 @@ fn build_vertex_state(
             );
         };
 
-        let slot_elements: Vec<InputElement> =
-            layout.elements.iter().copied().filter(|e| e.input_slot == slot).collect();
+        let slot_elements: Vec<InputElement> = layout
+            .elements
+            .iter()
+            .copied()
+            .filter(|e| e.input_slot == slot)
+            .collect();
 
         let step_mode = slot_elements[0].step_mode;
         if slot_elements.iter().any(|e| e.step_mode != step_mode) {
@@ -733,7 +750,11 @@ fn build_vertex_state(
         out_keys.push(VertexBufferLayoutKey {
             array_stride: vb.stride as u64,
             step_mode,
-            attributes: attrs.iter().copied().map(VertexAttributeKey::from).collect(),
+            attributes: attrs
+                .iter()
+                .copied()
+                .map(VertexAttributeKey::from)
+                .collect(),
         });
         out_layouts.push(OwnedVertexBufferLayout {
             array_stride: vb.stride as u64,

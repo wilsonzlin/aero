@@ -2,7 +2,7 @@ use aero_cpu_core::cpuid::bits;
 use aero_cpu_core::interp::tier0::exec::step_with_config;
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::mem::FlatTestBus;
-use aero_cpu_core::state::{CpuMode, CpuState, FLAG_CF, FLAG_OF, FLAG_SF, FLAG_ZF, CR4_OSFXSR};
+use aero_cpu_core::state::{CpuMode, CpuState, CR4_OSFXSR, FLAG_CF, FLAG_OF, FLAG_SF, FLAG_ZF};
 use aero_cpu_core::Exception;
 use aero_x86::Register;
 
@@ -322,9 +322,7 @@ fn pabsb_and_palignr_basic() {
     exec_once(&cfg, &mut state, &mut bus, &[0x66, 0x0F, 0x38, 0x1C, 0xC1]).unwrap(); // pabsb xmm0,xmm1
     assert_eq!(
         xmm_to_bytes(state.sse.xmm[0]),
-        [
-            0x00, 0x01, 0x01, 0x80, 0x7F, 0x10, 0x10, 0x56, 0, 0, 0, 0, 0, 0, 0, 0
-        ]
+        [0x00, 0x01, 0x01, 0x80, 0x7F, 0x10, 0x10, 0x56, 0, 0, 0, 0, 0, 0, 0, 0]
     );
 
     let mut dst = [0u8; 16];
@@ -363,10 +361,7 @@ fn pblendw_and_ptest() {
         &[0x66, 0x0F, 0x3A, 0x0E, 0xC1, 0xAA],
     )
     .unwrap(); // pblendw xmm0,xmm1,0xAA
-    assert_eq!(
-        xmm_to_i16x8(state.sse.xmm[0]),
-        [0, 11, 2, 13, 4, 15, 6, 17]
-    );
+    assert_eq!(xmm_to_i16x8(state.sse.xmm[0]), [0, 11, 2, 13, 4, 15, 6, 17]);
 
     state.sse.xmm[0] = 0;
     state.sse.xmm[1] = 1;

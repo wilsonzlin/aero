@@ -65,12 +65,11 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
         )));
     }
 
-    let table_bytes =
-        param_count_usize
-            .checked_mul(SIGNATURE_ENTRY_LEN)
-            .ok_or_else(|| {
-                DxbcError::invalid_chunk("signature parameter count overflows table size")
-            })?;
+    let table_bytes = param_count_usize
+        .checked_mul(SIGNATURE_ENTRY_LEN)
+        .ok_or_else(|| {
+            DxbcError::invalid_chunk("signature parameter count overflows table size")
+        })?;
 
     let table_end = param_offset_usize
         .checked_add(table_bytes)
@@ -84,25 +83,23 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
     }
 
     let mut entries = Vec::new();
-    entries
-        .try_reserve_exact(param_count_usize)
-        .map_err(|_| {
-            DxbcError::invalid_chunk(format!(
-                "signature entry count {param_count} is too large to allocate"
-            ))
-        })?;
+    entries.try_reserve_exact(param_count_usize).map_err(|_| {
+        DxbcError::invalid_chunk(format!(
+            "signature entry count {param_count} is too large to allocate"
+        ))
+    })?;
 
     for entry_index in 0..param_count_usize {
-        let entry_offset = entry_index.checked_mul(SIGNATURE_ENTRY_LEN).ok_or_else(|| {
-            DxbcError::invalid_chunk(format!(
-                "signature entry {entry_index} offset overflows"
-            ))
-        })?;
-        let entry_start = param_offset_usize.checked_add(entry_offset).ok_or_else(|| {
-            DxbcError::invalid_chunk(format!(
-                "signature entry {entry_index} start overflows"
-            ))
-        })?;
+        let entry_offset = entry_index
+            .checked_mul(SIGNATURE_ENTRY_LEN)
+            .ok_or_else(|| {
+                DxbcError::invalid_chunk(format!("signature entry {entry_index} offset overflows"))
+            })?;
+        let entry_start = param_offset_usize
+            .checked_add(entry_offset)
+            .ok_or_else(|| {
+                DxbcError::invalid_chunk(format!("signature entry {entry_index} start overflows"))
+            })?;
 
         let semantic_name_offset = read_u32_le(
             bytes,
@@ -205,8 +202,6 @@ fn read_cstring<'a>(bytes: &'a [u8], offset: usize, what: &str) -> Result<&'a st
 
     let str_bytes = &tail[..nul];
     core::str::from_utf8(str_bytes).map_err(|_| {
-        DxbcError::invalid_chunk(format!(
-            "{what} at offset {offset} is not valid UTF-8"
-        ))
+        DxbcError::invalid_chunk(format!("{what} at offset {offset} is not valid UTF-8"))
     })
 }

@@ -389,4 +389,3 @@ mod tests {
         assert_eq!(v, 0xAA01);
     }
 }
-

@@ -111,7 +111,10 @@ impl AeroGpuCommandProcessor {
     ///
     /// Note: destroyed handles are treated as unknown and return `handle` unchanged.
     pub fn resolve_shared_surface(&self, handle: u32) -> u32 {
-        self.shared_surface_handles.get(&handle).copied().unwrap_or(handle)
+        self.shared_surface_handles
+            .get(&handle)
+            .copied()
+            .unwrap_or(handle)
     }
 
     /// Returns the exported handle for `share_token` if known.
@@ -144,8 +147,7 @@ impl AeroGpuCommandProcessor {
         }
 
         self.shared_surface_refcounts.remove(&underlying);
-        self.shared_surface_by_token
-            .retain(|_, v| *v != underlying);
+        self.shared_surface_by_token.retain(|_, v| *v != underlying);
     }
 
     /// Process a single command buffer submission and update state.
@@ -183,13 +185,15 @@ impl AeroGpuCommandProcessor {
                     share_token,
                 } => {
                     // If the handle is itself an alias, normalize to the underlying surface.
-                    let Some(underlying) = self.resolve_shared_surface_handle(resource_handle) else {
+                    let Some(underlying) = self.resolve_shared_surface_handle(resource_handle)
+                    else {
                         return Err(CommandProcessorError::UnknownSharedSurfaceHandle(
                             resource_handle,
                         ));
                     };
 
-                    if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
+                    if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied()
+                    {
                         // Treat re-export of the same token as idempotent, but reject attempts to
                         // retarget a token to a different resource (would corrupt sharing tables).
                         if existing != underlying {
@@ -217,8 +221,10 @@ impl AeroGpuCommandProcessor {
                         return Err(CommandProcessorError::UnknownShareToken(share_token));
                     }
 
-                    if let Some(existing) =
-                        self.shared_surface_handles.get(&out_resource_handle).copied()
+                    if let Some(existing) = self
+                        .shared_surface_handles
+                        .get(&out_resource_handle)
+                        .copied()
                     {
                         // Idempotent re-import is allowed if it targets the same original.
                         if existing != underlying {

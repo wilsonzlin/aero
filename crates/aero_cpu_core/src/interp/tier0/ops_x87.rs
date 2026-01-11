@@ -67,7 +67,10 @@ pub fn exec<B: CpuBus>(
 
     super::check_fp_available(state, FpKind::X87)?;
 
-    if matches!(mnem, Mnemonic::Finit | Mnemonic::Fclex | Mnemonic::Fstcw | Mnemonic::Fstsw) {
+    if matches!(
+        mnem,
+        Mnemonic::Finit | Mnemonic::Fclex | Mnemonic::Fstcw | Mnemonic::Fstsw
+    ) {
         super::exec_wait(state)?;
     }
 
@@ -77,116 +80,114 @@ pub fn exec<B: CpuBus>(
     let mut x87 = X87::default();
     x87.load_from_fpu_state(&state.fpu);
 
-    let res = (|| {
-        match mnem {
-            Mnemonic::Finit | Mnemonic::Fninit => {
-                x87.fninit();
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fclex | Mnemonic::Fnclex => {
-                x87.fnclex();
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fincstp => {
-                x87.fincstp();
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fdecstp => {
-                x87.fdecstp();
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fld1 => {
-                x87.fld1().map_err(map_x87_fault)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fldz => {
-                x87.fldz().map_err(map_x87_fault)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fxch => {
-                exec_fxch(&mut x87, instr)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Ffree | Mnemonic::Ffreep => {
-                exec_ffree(&mut x87, instr)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fld => {
-                exec_fld(state, &mut x87, bus, instr, next_ip)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fst => {
-                exec_fst(state, &mut x87, bus, instr, next_ip, false)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fstp => {
-                exec_fst(state, &mut x87, bus, instr, next_ip, true)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fild => {
-                exec_fild(state, &mut x87, bus, instr, next_ip)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fistp => {
-                exec_fistp(state, &mut x87, bus, instr, next_ip)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fadd
-            | Mnemonic::Fsub
-            | Mnemonic::Fsubr
-            | Mnemonic::Fmul
-            | Mnemonic::Fdiv
-            | Mnemonic::Fdivr => {
-                exec_binop(state, &mut x87, bus, instr, next_ip)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Faddp
-            | Mnemonic::Fsubp
-            | Mnemonic::Fsubrp
-            | Mnemonic::Fmulp
-            | Mnemonic::Fdivp
-            | Mnemonic::Fdivrp => {
-                exec_binop_pop(&mut x87, instr)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fchs => {
-                x87.fchs().map_err(map_x87_fault)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fabs => {
-                x87.fabs().map_err(map_x87_fault)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fcom | Mnemonic::Fcomp => {
-                exec_compare(state, &mut x87, bus, instr, next_ip)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fcompp => {
-                x87.fcompp().map_err(map_x87_fault)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fcomi | Mnemonic::Fcomip | Mnemonic::Fucomi | Mnemonic::Fucomip => {
-                exec_comparei(state, &mut x87, instr)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fldcw => {
-                let addr = memory_addr(state, instr, next_ip)?;
-                let cw = bus.read_u16(addr)?;
-                x87.fldcw(cw);
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fnstcw | Mnemonic::Fstcw => {
-                let addr = memory_addr(state, instr, next_ip)?;
-                let cw = x87.fnstcw();
-                bus.write_u16(addr, cw)?;
-                Ok(ExecOutcome::Continue)
-            }
-            Mnemonic::Fnstsw | Mnemonic::Fstsw => {
-                exec_fnstsw(state, &mut x87, bus, instr, next_ip)?;
-                Ok(ExecOutcome::Continue)
-            }
-            _ => Err(Exception::InvalidOpcode),
+    let res = (|| match mnem {
+        Mnemonic::Finit | Mnemonic::Fninit => {
+            x87.fninit();
+            Ok(ExecOutcome::Continue)
         }
+        Mnemonic::Fclex | Mnemonic::Fnclex => {
+            x87.fnclex();
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fincstp => {
+            x87.fincstp();
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fdecstp => {
+            x87.fdecstp();
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fld1 => {
+            x87.fld1().map_err(map_x87_fault)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fldz => {
+            x87.fldz().map_err(map_x87_fault)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fxch => {
+            exec_fxch(&mut x87, instr)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Ffree | Mnemonic::Ffreep => {
+            exec_ffree(&mut x87, instr)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fld => {
+            exec_fld(state, &mut x87, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fst => {
+            exec_fst(state, &mut x87, bus, instr, next_ip, false)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fstp => {
+            exec_fst(state, &mut x87, bus, instr, next_ip, true)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fild => {
+            exec_fild(state, &mut x87, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fistp => {
+            exec_fistp(state, &mut x87, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fadd
+        | Mnemonic::Fsub
+        | Mnemonic::Fsubr
+        | Mnemonic::Fmul
+        | Mnemonic::Fdiv
+        | Mnemonic::Fdivr => {
+            exec_binop(state, &mut x87, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Faddp
+        | Mnemonic::Fsubp
+        | Mnemonic::Fsubrp
+        | Mnemonic::Fmulp
+        | Mnemonic::Fdivp
+        | Mnemonic::Fdivrp => {
+            exec_binop_pop(&mut x87, instr)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fchs => {
+            x87.fchs().map_err(map_x87_fault)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fabs => {
+            x87.fabs().map_err(map_x87_fault)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fcom | Mnemonic::Fcomp => {
+            exec_compare(state, &mut x87, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fcompp => {
+            x87.fcompp().map_err(map_x87_fault)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fcomi | Mnemonic::Fcomip | Mnemonic::Fucomi | Mnemonic::Fucomip => {
+            exec_comparei(state, &mut x87, instr)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fldcw => {
+            let addr = memory_addr(state, instr, next_ip)?;
+            let cw = bus.read_u16(addr)?;
+            x87.fldcw(cw);
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fnstcw | Mnemonic::Fstcw => {
+            let addr = memory_addr(state, instr, next_ip)?;
+            let cw = x87.fnstcw();
+            bus.write_u16(addr, cw)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Fnstsw | Mnemonic::Fstsw => {
+            exec_fnstsw(state, &mut x87, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        _ => Err(Exception::InvalidOpcode),
     })();
 
     x87.store_to_fpu_state(&mut state.fpu);
@@ -420,12 +421,48 @@ fn exec_binop_mem<B: CpuBus>(
 fn exec_binop_reg(x87: &mut X87, instr: &Instruction) -> Result<(), Exception> {
     let (dest, src) = x87_reg_pair(instr)?;
     match instr.mnemonic() {
-        Mnemonic::Fadd => exec_binop_reg_variants(x87, dest, src, |x87, i| x87.fadd_st0_sti(i), |x87, i| x87.fadd_sti_st0(i)),
-        Mnemonic::Fsub => exec_binop_reg_variants(x87, dest, src, |x87, i| x87.fsub_st0_sti(i), |x87, i| x87.fsub_sti_st0(i)),
-        Mnemonic::Fsubr => exec_binop_reg_variants(x87, dest, src, |x87, i| x87.fsubr_st0_sti(i), |x87, i| x87.fsubr_sti_st0(i)),
-        Mnemonic::Fmul => exec_binop_reg_variants(x87, dest, src, |x87, i| x87.fmul_st0_sti(i), |x87, i| x87.fmul_sti_st0(i)),
-        Mnemonic::Fdiv => exec_binop_reg_variants(x87, dest, src, |x87, i| x87.fdiv_st0_sti(i), |x87, i| x87.fdiv_sti_st0(i)),
-        Mnemonic::Fdivr => exec_binop_reg_variants(x87, dest, src, |x87, i| x87.fdivr_st0_sti(i), |x87, i| x87.fdivr_sti_st0(i)),
+        Mnemonic::Fadd => exec_binop_reg_variants(
+            x87,
+            dest,
+            src,
+            |x87, i| x87.fadd_st0_sti(i),
+            |x87, i| x87.fadd_sti_st0(i),
+        ),
+        Mnemonic::Fsub => exec_binop_reg_variants(
+            x87,
+            dest,
+            src,
+            |x87, i| x87.fsub_st0_sti(i),
+            |x87, i| x87.fsub_sti_st0(i),
+        ),
+        Mnemonic::Fsubr => exec_binop_reg_variants(
+            x87,
+            dest,
+            src,
+            |x87, i| x87.fsubr_st0_sti(i),
+            |x87, i| x87.fsubr_sti_st0(i),
+        ),
+        Mnemonic::Fmul => exec_binop_reg_variants(
+            x87,
+            dest,
+            src,
+            |x87, i| x87.fmul_st0_sti(i),
+            |x87, i| x87.fmul_sti_st0(i),
+        ),
+        Mnemonic::Fdiv => exec_binop_reg_variants(
+            x87,
+            dest,
+            src,
+            |x87, i| x87.fdiv_st0_sti(i),
+            |x87, i| x87.fdiv_sti_st0(i),
+        ),
+        Mnemonic::Fdivr => exec_binop_reg_variants(
+            x87,
+            dest,
+            src,
+            |x87, i| x87.fdivr_st0_sti(i),
+            |x87, i| x87.fdivr_sti_st0(i),
+        ),
         _ => Err(Exception::InvalidOpcode),
     }
 }
@@ -515,7 +552,11 @@ fn exec_compare<B: CpuBus>(
     Ok(())
 }
 
-fn exec_comparei(state: &mut CpuState, x87: &mut X87, instr: &Instruction) -> Result<(), Exception> {
+fn exec_comparei(
+    state: &mut CpuState,
+    x87: &mut X87,
+    instr: &Instruction,
+) -> Result<(), Exception> {
     let i = match instr.op_count() {
         1 => st_index(instr.op0_register()).ok_or(Exception::InvalidOpcode)?,
         2 => {

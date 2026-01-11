@@ -63,7 +63,8 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
         .map_err(|e| XtaskError::Message(format!("stat {path:?}: {e}")))?
         .len();
 
-    let mut file = fs::File::open(path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
+    let mut file =
+        fs::File::open(path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
     let index = aero_snapshot::inspect_snapshot(&mut file)
         .map_err(|e| XtaskError::Message(format!("inspect snapshot: {e}")))?;
 
@@ -183,7 +184,8 @@ fn cmd_validate(args: Vec<String>) -> Result<()> {
         XtaskError::Message("usage: cargo xtask snapshot validate [--deep] <path>".to_string())
     })?;
 
-    let mut file = fs::File::open(&path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
+    let mut file =
+        fs::File::open(&path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
     let index = aero_snapshot::inspect_snapshot(&mut file)
         .map_err(|e| XtaskError::Message(format!("inspect snapshot: {e}")))?;
 
@@ -203,9 +205,7 @@ fn validate_index(path: &str, index: &SnapshotIndex) -> Result<()> {
         .iter()
         .any(|s| s.id == SectionId::CPU || s.id == SectionId::CPUS);
     if !has_cpu {
-        return Err(XtaskError::Message(
-            "missing CPU/CPUS section".to_string(),
-        ));
+        return Err(XtaskError::Message("missing CPU/CPUS section".to_string()));
     }
 
     let has_ram = index.sections.iter().any(|s| s.id == SectionId::RAM);
@@ -218,7 +218,8 @@ fn validate_index(path: &str, index: &SnapshotIndex) -> Result<()> {
         ));
     }
 
-    let mut file = fs::File::open(path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
+    let mut file =
+        fs::File::open(path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
 
     for section in &index.sections {
         match section.id {
@@ -261,7 +262,8 @@ fn deep_validate(path: &str, index: &SnapshotIndex) -> Result<()> {
         .try_into()
         .map_err(|_| XtaskError::Message("snapshot RAM size does not fit in usize".to_string()))?;
 
-    let mut file = fs::File::open(path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
+    let mut file =
+        fs::File::open(path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
     let mut target = DeepValidateTarget { ram_len };
     aero_snapshot::restore_snapshot(&mut file, &mut target)
         .map_err(|e| XtaskError::Message(format!("restore snapshot: {e}")))?;
@@ -275,7 +277,10 @@ struct DeepValidateTarget {
 impl SnapshotTarget for DeepValidateTarget {
     fn restore_cpu_state(&mut self, _state: aero_snapshot::CpuState) {}
 
-    fn restore_cpu_states(&mut self, _states: Vec<aero_snapshot::VcpuSnapshot>) -> aero_snapshot::Result<()> {
+    fn restore_cpu_states(
+        &mut self,
+        _states: Vec<aero_snapshot::VcpuSnapshot>,
+    ) -> aero_snapshot::Result<()> {
         Ok(())
     }
 
@@ -328,7 +333,9 @@ fn validate_cpu_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> R
             .map_err(|e| XtaskError::Message(format!("decode CPU v2: {e}")))?;
         return Ok(());
     }
-    Err(XtaskError::Message("unsupported CPU section version".to_string()))
+    Err(XtaskError::Message(
+        "unsupported CPU section version".to_string(),
+    ))
 }
 
 fn validate_cpus_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> Result<()> {
@@ -379,11 +386,8 @@ fn validate_vcpu_entry(entry_reader: &mut impl Read, version: u16) -> Result<()>
         ));
     }
 
-    std::io::copy(
-        &mut entry_reader.take(internal_len),
-        &mut std::io::sink(),
-    )
-    .map_err(|e| XtaskError::Message(format!("read vCPU internal state: {e}")))?;
+    std::io::copy(&mut entry_reader.take(internal_len), &mut std::io::sink())
+        .map_err(|e| XtaskError::Message(format!("read vCPU internal state: {e}")))?;
 
     Ok(())
 }
@@ -402,7 +406,9 @@ fn validate_mmu_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> R
             .map_err(|e| XtaskError::Message(format!("decode MMU v2: {e}")))?;
         return Ok(());
     }
-    Err(XtaskError::Message("unsupported MMU section version".to_string()))
+    Err(XtaskError::Message(
+        "unsupported MMU section version".to_string(),
+    ))
 }
 
 fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> Result<()> {

@@ -49,4 +49,3 @@ async fn opfs_aerospar_roundtrip() {
     disk.read_sectors(7, &mut read_buf).unwrap();
     assert_eq!(read_buf, write_buf);
 }
-

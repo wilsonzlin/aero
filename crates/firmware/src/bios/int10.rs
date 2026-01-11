@@ -68,9 +68,9 @@ impl Bios {
                 let top_col = cpu.cl();
                 let bottom_row = cpu.dh();
                 let bottom_col = cpu.dl();
-                self.video
-                    .vga
-                    .scroll_up(memory, 0, lines, attr, top_row, top_col, bottom_row, bottom_col);
+                self.video.vga.scroll_up(
+                    memory, 0, lines, attr, top_row, top_col, bottom_row, bottom_col,
+                );
             }
             0x09 => {
                 // Write Character and Attribute at Cursor
@@ -78,7 +78,9 @@ impl Bios {
                 let page = cpu.bh();
                 let attr = cpu.bl();
                 let count = cpu.cx();
-                self.video.vga.write_char_attr(memory, page, ch, attr, count);
+                self.video
+                    .vga
+                    .write_char_attr(memory, page, ch, attr, count);
             }
             _ => {
                 // Unhandled INT 10h function.

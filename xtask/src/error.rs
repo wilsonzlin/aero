@@ -40,4 +40,3 @@ impl From<&str> for XtaskError {
 }
 
 pub type Result<T> = std::result::Result<T, XtaskError>;
-

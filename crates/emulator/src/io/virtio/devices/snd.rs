@@ -116,10 +116,7 @@ impl<S: AudioSink> VirtioSndDevice<S> {
             let response = self.handle_control_chain(mem, &chain)?;
             let written = write_in_chain(mem, &chain.descriptors, &response)?;
 
-            if self
-                .control_vq
-                .push_used(mem, &chain, written as u32)?
-            {
+            if self.control_vq.push_used(mem, &chain, written as u32)? {
                 should_interrupt = true;
             }
         }
@@ -912,7 +909,10 @@ mod tests {
 
         let mut resp = [0u8; 8];
         mem.read_into(resp_addr, &mut resp).unwrap();
-        assert_eq!(u32::from_le_bytes(resp[0..4].try_into().unwrap()), VIRTIO_SND_S_IO_ERR);
+        assert_eq!(
+            u32::from_le_bytes(resp[0..4].try_into().unwrap()),
+            VIRTIO_SND_S_IO_ERR
+        );
         assert_eq!(dev.sink.buffer_level_frames(), 0);
     }
 

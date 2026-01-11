@@ -128,13 +128,21 @@ impl TlbSet {
     fn lookup(&self, vaddr: u64, pcid: u16) -> Option<&TlbEntry> {
         // Try larger pages first so we don't miss a large-page entry due to
         // indexing differences.
-        for page_size in [PageSize::Size1G, PageSize::Size4M, PageSize::Size2M, PageSize::Size4K] {
+        for page_size in [
+            PageSize::Size1G,
+            PageSize::Size4M,
+            PageSize::Size2M,
+            PageSize::Size4K,
+        ] {
             let vbase = vaddr & !(page_size.bytes() - 1);
             let tag = vbase >> 12;
             let set = set_index(tag);
             for way in 0..WAYS {
                 let entry = &self.entries[set][way];
-                if entry.page_size == page_size && entry.vbase == vbase && entry.matches(vaddr, pcid) {
+                if entry.page_size == page_size
+                    && entry.vbase == vbase
+                    && entry.matches(vaddr, pcid)
+                {
                     return Some(entry);
                 }
             }
@@ -165,7 +173,12 @@ impl TlbSet {
     }
 
     fn invalidate_address_all(&mut self, vaddr: u64) {
-        for page_size in [PageSize::Size1G, PageSize::Size4M, PageSize::Size2M, PageSize::Size4K] {
+        for page_size in [
+            PageSize::Size1G,
+            PageSize::Size4M,
+            PageSize::Size2M,
+            PageSize::Size4K,
+        ] {
             let vbase = vaddr & !(page_size.bytes() - 1);
             let tag = vbase >> 12;
             let set = set_index(tag);
@@ -179,7 +192,12 @@ impl TlbSet {
     }
 
     fn invalidate_address_pcid(&mut self, vaddr: u64, pcid: u16, include_global: bool) {
-        for page_size in [PageSize::Size1G, PageSize::Size4M, PageSize::Size2M, PageSize::Size4K] {
+        for page_size in [
+            PageSize::Size1G,
+            PageSize::Size4M,
+            PageSize::Size2M,
+            PageSize::Size4K,
+        ] {
             let vbase = vaddr & !(page_size.bytes() - 1);
             let tag = vbase >> 12;
             let set = set_index(tag);
@@ -241,13 +259,21 @@ impl TlbSet {
     }
 
     fn set_dirty(&mut self, vaddr: u64, pcid: u16) -> bool {
-        for page_size in [PageSize::Size1G, PageSize::Size4M, PageSize::Size2M, PageSize::Size4K] {
+        for page_size in [
+            PageSize::Size1G,
+            PageSize::Size4M,
+            PageSize::Size2M,
+            PageSize::Size4K,
+        ] {
             let vbase = vaddr & !(page_size.bytes() - 1);
             let tag = vbase >> 12;
             let set = set_index(tag);
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
-                if entry.page_size == page_size && entry.vbase == vbase && entry.matches(vaddr, pcid) {
+                if entry.page_size == page_size
+                    && entry.vbase == vbase
+                    && entry.matches(vaddr, pcid)
+                {
                     entry.dirty = true;
                     return true;
                 }
@@ -302,8 +328,10 @@ impl Tlb {
     }
 
     pub(crate) fn invalidate_address_pcid(&mut self, vaddr: u64, pcid: u16, include_global: bool) {
-        self.itlb.invalidate_address_pcid(vaddr, pcid, include_global);
-        self.dtlb.invalidate_address_pcid(vaddr, pcid, include_global);
+        self.itlb
+            .invalidate_address_pcid(vaddr, pcid, include_global);
+        self.dtlb
+            .invalidate_address_pcid(vaddr, pcid, include_global);
     }
 
     pub(crate) fn set_dirty(&mut self, vaddr: u64, is_exec: bool, pcid: u16) -> bool {
@@ -319,7 +347,13 @@ impl Tlb {
         self.dtlb.flush_all();
     }
 
-    pub(crate) fn on_cr3_write(&mut self, pge: bool, pcid_enabled: bool, new_pcid: u16, no_flush: bool) {
+    pub(crate) fn on_cr3_write(
+        &mut self,
+        pge: bool,
+        pcid_enabled: bool,
+        new_pcid: u16,
+        no_flush: bool,
+    ) {
         if pcid_enabled {
             // If CR3[63] (no-flush) is clear, invalidate entries for the PCID
             // being loaded. (Entries for other PCIDs remain, and global entries

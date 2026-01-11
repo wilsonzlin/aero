@@ -1,11 +1,13 @@
 use aero_virtio::devices::blk::{
-    BlockBackend, VirtioBlk, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
+    BlockBackend, VirtioBlk, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_IN,
+    VIRTIO_BLK_T_OUT,
 };
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
     VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG,
-    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
+    VIRTIO_STATUS_FEATURES_OK,
 };
 
 use std::cell::{Cell, RefCell};
@@ -69,8 +71,7 @@ fn parse_caps(dev: &VirtioPciDevice) -> Caps {
             VIRTIO_PCI_CAP_COMMON_CFG => caps.common = offset,
             VIRTIO_PCI_CAP_NOTIFY_CFG => {
                 caps.notify = offset;
-                caps.notify_mult =
-                    u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
+                caps.notify_mult = u32::from_le_bytes(cfg[ptr + 16..ptr + 20].try_into().unwrap());
             }
             VIRTIO_PCI_CAP_ISR_CFG => caps.isr = offset,
             VIRTIO_PCI_CAP_DEVICE_CFG => caps.device = offset,
@@ -117,7 +118,15 @@ fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8
     dev.bar0_write(off, &[val], mem);
 }
 
-fn write_desc(mem: &mut GuestRam, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
+fn write_desc(
+    mem: &mut GuestRam,
+    table: u64,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
     let base = table + u64::from(index) * 16;
     write_u64_le(mem, base, addr).unwrap();
     write_u32_le(mem, base + 8, len).unwrap();
@@ -129,7 +138,13 @@ const DESC_TABLE: u64 = 0x4000;
 const AVAIL_RING: u64 = 0x5000;
 const USED_RING: u64 = 0x6000;
 
-fn setup() -> (VirtioPciDevice, Caps, GuestRam, Rc<RefCell<Vec<u8>>>, Rc<Cell<u32>>) {
+fn setup() -> (
+    VirtioPciDevice,
+    Caps,
+    GuestRam,
+    Rc<RefCell<Vec<u8>>>,
+    Rc<Cell<u32>>,
+) {
     let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
     let flushes = Rc::new(Cell::new(0u32));
     let backend = SharedDisk {
@@ -166,7 +181,12 @@ fn setup() -> (VirtioPciDevice, Caps, GuestRam, Rc<RefCell<Vec<u8>>>, Rc<Cell<u3
     let mut mem = GuestRam::new(0x10000);
 
     // Feature negotiation.
-    bar_write_u8(&mut dev, &mut mem, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
     bar_write_u8(
         &mut dev,
         &mut mem,
@@ -327,10 +347,7 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     write_u16_le(&mut mem, AVAIL_RING + 2, 4).unwrap();
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(
-        mem.get_slice(id_buf, 20).unwrap(),
-        b"aero-virtio-testdisk"
-    );
+    assert_eq!(mem.get_slice(id_buf, 20).unwrap(), b"aero-virtio-testdisk");
 }
 
 #[test]

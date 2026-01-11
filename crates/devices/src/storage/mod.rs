@@ -55,4 +55,3 @@ impl std::fmt::Debug for VirtualDrive {
             .finish()
     }
 }
-

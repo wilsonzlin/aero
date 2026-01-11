@@ -11,13 +11,12 @@ use super::{
     build_string_descriptor_utf16le, clamp_response, gamepad::GamepadReport,
     keyboard::KeyboardReport, mouse::MouseReport, HidProtocol, HID_REQUEST_GET_IDLE,
     HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE,
-    HID_REQUEST_SET_PROTOCOL, HID_REQUEST_SET_REPORT,
-    USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_HID,
-    USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP,
-    USB_FEATURE_ENDPOINT_HALT, USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION,
-    USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS,
-    USB_REQUEST_SET_ADDRESS, USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE,
-    USB_REQUEST_SET_INTERFACE,
+    HID_REQUEST_SET_PROTOCOL, HID_REQUEST_SET_REPORT, USB_DESCRIPTOR_TYPE_CONFIGURATION,
+    USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT,
+    USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP, USB_FEATURE_ENDPOINT_HALT,
+    USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR,
+    USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS,
+    USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
 };
 
 const KEYBOARD_INTERFACE: u8 = 0;
@@ -416,7 +415,10 @@ impl UsbCompositeHidInputHandle {
     }
 
     pub fn gamepad_button_event(&self, button_idx: u8, pressed: bool) {
-        self.0.borrow_mut().gamepad.button_event(button_idx, pressed);
+        self.0
+            .borrow_mut()
+            .gamepad
+            .button_event(button_idx, pressed);
     }
 
     pub fn gamepad_buttons_mask_event(&self, button_mask: u16, pressed: bool) {
@@ -639,9 +641,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_DEVICE => Some(DEVICE_DESCRIPTOR.to_vec()),
-                        USB_DESCRIPTOR_TYPE_CONFIGURATION => {
-                            Some(CONFIG_DESCRIPTOR.to_vec())
-                        }
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(CONFIG_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         _ => None,
                     };
@@ -681,8 +681,10 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         if setup.request_direction() != RequestDirection::DeviceToHost {
                             return ControlResponse::Stall;
                         }
-                        if !matches!(interface, KEYBOARD_INTERFACE | MOUSE_INTERFACE | GAMEPAD_INTERFACE)
-                        {
+                        if !matches!(
+                            interface,
+                            KEYBOARD_INTERFACE | MOUSE_INTERFACE | GAMEPAD_INTERFACE
+                        ) {
                             return ControlResponse::Stall;
                         }
                         ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
@@ -691,8 +693,10 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         if setup.request_direction() != RequestDirection::DeviceToHost {
                             return ControlResponse::Stall;
                         }
-                        if matches!(interface, KEYBOARD_INTERFACE | MOUSE_INTERFACE | GAMEPAD_INTERFACE)
-                        {
+                        if matches!(
+                            interface,
+                            KEYBOARD_INTERFACE | MOUSE_INTERFACE | GAMEPAD_INTERFACE
+                        ) {
                             ControlResponse::Data(clamp_response(vec![0], setup.w_length))
                         } else {
                             ControlResponse::Stall
@@ -702,8 +706,10 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         if setup.request_direction() != RequestDirection::HostToDevice {
                             return ControlResponse::Stall;
                         }
-                        if matches!(interface, KEYBOARD_INTERFACE | MOUSE_INTERFACE | GAMEPAD_INTERFACE)
-                            && setup.w_value == 0
+                        if matches!(
+                            interface,
+                            KEYBOARD_INTERFACE | MOUSE_INTERFACE | GAMEPAD_INTERFACE
+                        ) && setup.w_value == 0
                         {
                             ControlResponse::Ack
                         } else {
@@ -717,11 +723,11 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         let desc_type = setup.descriptor_type();
                         let data = match desc_type {
                             USB_DESCRIPTOR_TYPE_HID_REPORT => {
-                                Self::report_descriptor_for_interface(interface)
-                                    .map(|d| d.to_vec())
+                                Self::report_descriptor_for_interface(interface).map(|d| d.to_vec())
                             }
-                            USB_DESCRIPTOR_TYPE_HID => Self::hid_descriptor_for_interface(interface)
-                                .map(|d| d.to_vec()),
+                            USB_DESCRIPTOR_TYPE_HID => {
+                                Self::hid_descriptor_for_interface(interface).map(|d| d.to_vec())
+                            }
                             _ => None,
                         };
                         data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))
@@ -754,7 +760,8 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         return ControlResponse::Stall;
                     }
                     let ep = (setup.w_index & 0x00ff) as u8;
-                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT && self.set_interrupt_halted(ep, false)
+                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT
+                        && self.set_interrupt_halted(ep, false)
                     {
                         ControlResponse::Ack
                     } else {
@@ -768,7 +775,8 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         return ControlResponse::Stall;
                     }
                     let ep = (setup.w_index & 0x00ff) as u8;
-                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT && self.set_interrupt_halted(ep, true)
+                    if setup.w_value == USB_FEATURE_ENDPOINT_HALT
+                        && self.set_interrupt_halted(ep, true)
                     {
                         ControlResponse::Ack
                     } else {
@@ -907,10 +915,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                                 return ControlResponse::Stall;
                             }
                             ControlResponse::Data(clamp_response(
-                                self.gamepad
-                                    .current_input_report()
-                                    .to_bytes()
-                                    .to_vec(),
+                                self.gamepad.current_input_report().to_bytes().to_vec(),
                                 setup.w_length,
                             ))
                         }
@@ -1252,9 +1257,18 @@ mod tests {
         let mut dev = UsbCompositeHidInput::new();
 
         for (iface, expected) in [
-            (KEYBOARD_INTERFACE, &super::super::keyboard::HID_REPORT_DESCRIPTOR[..]),
-            (MOUSE_INTERFACE, &super::super::mouse::HID_REPORT_DESCRIPTOR[..]),
-            (GAMEPAD_INTERFACE, &super::super::gamepad::HID_REPORT_DESCRIPTOR[..]),
+            (
+                KEYBOARD_INTERFACE,
+                &super::super::keyboard::HID_REPORT_DESCRIPTOR[..],
+            ),
+            (
+                MOUSE_INTERFACE,
+                &super::super::mouse::HID_REPORT_DESCRIPTOR[..],
+            ),
+            (
+                GAMEPAD_INTERFACE,
+                &super::super::gamepad::HID_REPORT_DESCRIPTOR[..],
+            ),
         ] {
             let resp = dev.handle_control_request(
                 SetupPacket {

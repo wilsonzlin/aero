@@ -279,7 +279,10 @@ fn decodes_vex_encoded_instruction_via_iced_backend() {
     let bytes = [0xC4, 0xE3, 0xE9, 0x5C, 0x06, 0x00];
     let inst = decode(&bytes, DecodeMode::Bits32, 0).unwrap();
     assert_eq!(inst.length, 6);
-    assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+    assert!(inst
+        .operands
+        .iter()
+        .any(|op| matches!(op, Operand::Memory(_))));
     assert!(inst
         .operands
         .iter()

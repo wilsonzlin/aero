@@ -32,7 +32,7 @@ impl Default for AcpiPlacement {
             tables_base: 0x0010_0000, // 1MiB (common for firmware table blobs)
             nvs_base: 0x0011_0000,    // adjacent, but marked ACPI NVS (type 4)
             nvs_size: DEFAULT_ACPI_NVS_SIZE,
-            rsdp_addr: 0x000F_0000,   // within the BIOS search range
+            rsdp_addr: 0x000F_0000, // within the BIOS search range
             alignment: DEFAULT_ACPI_ALIGNMENT,
         }
     }
@@ -398,7 +398,10 @@ fn build_xsdt(cfg: &AcpiConfig, addrs: &[u64]) -> Vec<u8> {
 }
 
 fn build_mcfg(cfg: &AcpiConfig) -> Vec<u8> {
-    assert!(cfg.pcie_ecam_base != 0, "MCFG requested with pcie_ecam_base=0");
+    assert!(
+        cfg.pcie_ecam_base != 0,
+        "MCFG requested with pcie_ecam_base=0"
+    );
     assert_eq!(
         cfg.pcie_ecam_base & ((1u64 << 20) - 1),
         0,
@@ -417,12 +420,7 @@ fn build_mcfg(cfg: &AcpiConfig) -> Vec<u8> {
     // - one allocation structure (16 bytes)
     let total_len = 36 + 8 + 16;
     let mut out = Vec::with_capacity(total_len);
-    out.extend_from_slice(&build_sdt_header(
-        *b"MCFG",
-        1,
-        total_len as u32,
-        cfg,
-    ));
+    out.extend_from_slice(&build_sdt_header(*b"MCFG", 1, total_len as u32, cfg));
 
     out.extend_from_slice(&[0u8; 8]); // reserved
 
@@ -508,12 +506,7 @@ fn build_fadt(cfg: &AcpiConfig, dsdt_addr: u64, facs_addr: u64) -> Vec<u8> {
     // This is enough for Windows 7, and avoids newer fields introduced after ACPI 2.0.
     const FADT_LEN: usize = 244;
     let mut out = Vec::with_capacity(FADT_LEN);
-    out.extend_from_slice(&build_sdt_header(
-        *b"FACP",
-        3,
-        FADT_LEN as u32,
-        cfg,
-    ));
+    out.extend_from_slice(&build_sdt_header(*b"FACP", 3, FADT_LEN as u32, cfg));
 
     // Firmware Control / FACS
     out.extend_from_slice(&(facs_addr as u32).to_le_bytes());
@@ -633,12 +626,7 @@ fn build_madt(cfg: &AcpiConfig) -> Vec<u8> {
 
     let total_len = 36 + body.len();
     let mut out = Vec::with_capacity(total_len);
-    out.extend_from_slice(&build_sdt_header(
-        *b"APIC",
-        3,
-        total_len as u32,
-        cfg,
-    ));
+    out.extend_from_slice(&build_sdt_header(*b"APIC", 3, total_len as u32, cfg));
     out.extend_from_slice(&body);
     finalize_sdt(out)
 }
@@ -667,12 +655,7 @@ fn madt_lapic_nmi(acpi_processor_id: u8, flags: u16, lint: u8) -> [u8; 6] {
 fn build_hpet(cfg: &AcpiConfig) -> Vec<u8> {
     let total_len = 56;
     let mut out = Vec::with_capacity(total_len);
-    out.extend_from_slice(&build_sdt_header(
-        *b"HPET",
-        1,
-        total_len as u32,
-        cfg,
-    ));
+    out.extend_from_slice(&build_sdt_header(*b"HPET", 1, total_len as u32, cfg));
 
     // Event Timer Block ID:
     // - hardware rev id: 0x01
@@ -702,12 +685,7 @@ fn build_dsdt(cfg: &AcpiConfig) -> Vec<u8> {
     let aml = build_dsdt_aml(cfg);
     let total_len = 36 + aml.len();
     let mut out = Vec::with_capacity(total_len);
-    out.extend_from_slice(&build_sdt_header(
-        *b"DSDT",
-        2,
-        total_len as u32,
-        cfg,
-    ));
+    out.extend_from_slice(&build_sdt_header(*b"DSDT", 2, total_len as u32, cfg));
     out.extend_from_slice(&aml);
     finalize_sdt(out)
 }
@@ -1030,14 +1008,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     let end_bus = end_bus_raw.max(start_bus);
     let bus_len = end_bus - start_bus + 1;
     out.extend_from_slice(&word_addr_space_descriptor(
-        0x02,
-        0x0D, // producer + min/max fixed
-        0x00,
-        0x0000,
-        start_bus,
-        end_bus,
-        0x0000,
-        bus_len,
+        0x02, 0x0D, // producer + min/max fixed
+        0x00, 0x0000, start_bus, end_bus, 0x0000, bus_len,
     ));
 
     // I/O Port Descriptor for PCI config mechanism 1 (0xCF8..0xCFF).
@@ -1045,26 +1017,12 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
 
     // Word Address Space Descriptor (I/O): 0x0000..0x0CF7
     out.extend_from_slice(&word_addr_space_descriptor(
-        0x01,
-        0x0D,
-        0x00,
-        0x0000,
-        0x0000,
-        0x0CF7,
-        0x0000,
-        0x0CF8,
+        0x01, 0x0D, 0x00, 0x0000, 0x0000, 0x0CF7, 0x0000, 0x0CF8,
     ));
 
     // Word Address Space Descriptor (I/O): 0x0D00..0xFFFF
     out.extend_from_slice(&word_addr_space_descriptor(
-        0x01,
-        0x0D,
-        0x00,
-        0x0000,
-        0x0D00,
-        0xFFFF,
-        0x0000,
-        0xF300,
+        0x01, 0x0D, 0x00, 0x0000, 0x0D00, 0xFFFF, 0x0000, 0xF300,
     ));
 
     // DWord Address Space Descriptor (Memory): PCI MMIO window.

@@ -2,8 +2,7 @@ use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit, StepExit};
 use aero_cpu_core::mem::CpuBus as CoreCpuBus;
 use aero_cpu_core::state::{
-    gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF,
-    FLAG_ZF,
+    gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF, FLAG_ZF,
 };
 use firmware::bda::BiosDataArea;
 use firmware::bios::{
@@ -12,8 +11,8 @@ use firmware::bios::{
 };
 use firmware::rtc::{CmosRtc, DateTime};
 use machine::{
-    A20Gate, BlockDevice, CpuState as MachineCpuState, FirmwareMemory, MemoryAccess, PhysicalMemory,
-    Segment as MachineSegment,
+    A20Gate, BlockDevice, CpuState as MachineCpuState, FirmwareMemory, MemoryAccess,
+    PhysicalMemory, Segment as MachineSegment,
 };
 use std::time::Duration;
 
@@ -230,7 +229,12 @@ impl CoreCpuBus for BiosTestMemory {
         Ok(0)
     }
 
-    fn io_write(&mut self, _port: u16, _size: u32, _val: u64) -> Result<(), aero_cpu_core::Exception> {
+    fn io_write(
+        &mut self,
+        _port: u16,
+        _size: u32,
+        _val: u64,
+    ) -> Result<(), aero_cpu_core::Exception> {
         Ok(())
     }
 }

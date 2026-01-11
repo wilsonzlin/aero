@@ -70,7 +70,11 @@ impl<'a> UdpPacketBuilder<'a> {
     }
 
     #[cfg(feature = "alloc")]
-    pub fn build_vec(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr) -> Result<alloc::vec::Vec<u8>, PacketError> {
+    pub fn build_vec(
+        &self,
+        src_ip: Ipv4Addr,
+        dst_ip: Ipv4Addr,
+    ) -> Result<alloc::vec::Vec<u8>, PacketError> {
         let len = self.len()?;
         let mut buf = alloc::vec![0u8; len];
         let written = self.write(src_ip, dst_ip, &mut buf)?;
@@ -78,7 +82,12 @@ impl<'a> UdpPacketBuilder<'a> {
         Ok(buf)
     }
 
-    pub fn write(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr, out: &mut [u8]) -> Result<usize, PacketError> {
+    pub fn write(
+        &self,
+        src_ip: Ipv4Addr,
+        dst_ip: Ipv4Addr,
+        out: &mut [u8],
+    ) -> Result<usize, PacketError> {
         let len = self.len()?;
         ensure_out_buf_len(out, len)?;
         out[0..2].copy_from_slice(&self.src_port.to_be_bytes());
@@ -147,6 +156,9 @@ mod tests {
 
         assert_eq!(pkt.checksum(), 0xffff);
         assert!(pkt.checksum_valid_ipv4(src_ip, dst_ip));
-        assert_eq!(checksum::transport_checksum_ipv4(src_ip, dst_ip, 17, pkt.as_bytes()), 0);
+        assert_eq!(
+            checksum::transport_checksum_ipv4(src_ip, dst_ip, 17, pkt.as_bytes()),
+            0
+        );
     }
 }

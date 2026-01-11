@@ -32,8 +32,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn init_tracing(log_level: &str) -> Result<(), tracing_subscriber::filter::ParseError> {
-    let filter =
-        EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new(log_level))?;
+    let filter = EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new(log_level))?;
 
     tracing_subscriber::fmt()
         .json()
@@ -68,4 +67,3 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 }
-

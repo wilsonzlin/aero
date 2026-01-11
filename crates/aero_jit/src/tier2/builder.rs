@@ -4,11 +4,13 @@ use aero_types::{Cond, Flag, FlagSet, Width};
 
 use crate::Tier1Bus;
 
-use crate::tier1_ir::{BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId};
 use crate::t2_ir::{
     BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, ValueId,
 };
 use crate::tier1::{discover_block, translate_block, BlockLimits};
+use crate::tier1_ir::{
+    BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CfgBuildConfig {
@@ -106,24 +108,30 @@ impl LowerCtx {
 
         match cond {
             Cond::O => {
-                self.instrs
-                    .push(Instr::LoadFlag { dst, flag: Flag::Of });
+                self.instrs.push(Instr::LoadFlag {
+                    dst,
+                    flag: Flag::Of,
+                });
             }
             Cond::No => {
                 let of = load_flag(self, Flag::Of);
                 self.emit_not(dst, Operand::Value(of));
             }
             Cond::B => {
-                self.instrs
-                    .push(Instr::LoadFlag { dst, flag: Flag::Cf });
+                self.instrs.push(Instr::LoadFlag {
+                    dst,
+                    flag: Flag::Cf,
+                });
             }
             Cond::Ae => {
                 let cf = load_flag(self, Flag::Cf);
                 self.emit_not(dst, Operand::Value(cf));
             }
             Cond::E => {
-                self.instrs
-                    .push(Instr::LoadFlag { dst, flag: Flag::Zf });
+                self.instrs.push(Instr::LoadFlag {
+                    dst,
+                    flag: Flag::Zf,
+                });
             }
             Cond::Ne => {
                 let zf = load_flag(self, Flag::Zf);
@@ -156,16 +164,20 @@ impl LowerCtx {
                 });
             }
             Cond::S => {
-                self.instrs
-                    .push(Instr::LoadFlag { dst, flag: Flag::Sf });
+                self.instrs.push(Instr::LoadFlag {
+                    dst,
+                    flag: Flag::Sf,
+                });
             }
             Cond::Ns => {
                 let sf = load_flag(self, Flag::Sf);
                 self.emit_not(dst, Operand::Value(sf));
             }
             Cond::P => {
-                self.instrs
-                    .push(Instr::LoadFlag { dst, flag: Flag::Pf });
+                self.instrs.push(Instr::LoadFlag {
+                    dst,
+                    flag: Flag::Pf,
+                });
             }
             Cond::Np => {
                 let pf = load_flag(self, Flag::Pf);
@@ -305,8 +317,10 @@ impl LowerCtx {
             GuestReg::Gpr { reg, width, high8 } => {
                 match width {
                     Width::W64 if !high8 => {
-                        self.instrs
-                            .push(Instr::StoreReg { reg, src: Operand::Value(src) });
+                        self.instrs.push(Instr::StoreReg {
+                            reg,
+                            src: Operand::Value(src),
+                        });
                     }
                     Width::W32 if !high8 => {
                         // x86-64: 32-bit writes zero-extend into 64-bit.
@@ -477,7 +491,9 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     flags: map_flag_set(*flags),
                 });
             }
-            IrInst::CmpFlags { lhs, rhs, flags, .. } => {
+            IrInst::CmpFlags {
+                lhs, rhs, flags, ..
+            } => {
                 let tmp = ctx.fresh();
                 ctx.instrs.push(Instr::BinOp {
                     dst: tmp,
@@ -487,7 +503,9 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     flags: map_flag_set(*flags),
                 });
             }
-            IrInst::TestFlags { lhs, rhs, flags, .. } => {
+            IrInst::TestFlags {
+                lhs, rhs, flags, ..
+            } => {
                 let tmp = ctx.fresh();
                 ctx.instrs.push(Instr::BinOp {
                     dst: tmp,
@@ -604,7 +622,11 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
 
 /// Build a Tier-2 CFG by discovering x86 basic blocks starting at `entry_rip`,
 /// translating them through Tier-1 IR, and lowering into [`crate::t2_ir::Function`].
-pub fn build_function_from_x86<B: Tier1Bus>(bus: &B, entry_rip: u64, cfg: CfgBuildConfig) -> Function {
+pub fn build_function_from_x86<B: Tier1Bus>(
+    bus: &B,
+    entry_rip: u64,
+    cfg: CfgBuildConfig,
+) -> Function {
     let mut rip_to_id: HashMap<u64, BlockId> = HashMap::new();
     let mut drafts: Vec<DraftBlock> = Vec::new();
     let mut worklist: VecDeque<u64> = VecDeque::new();
@@ -629,9 +651,7 @@ pub fn build_function_from_x86<B: Tier1Bus>(bus: &B, entry_rip: u64, cfg: CfgBui
         match &draft.term {
             DraftTerminator::Jump(target) => worklist.push_back(*target),
             DraftTerminator::Branch {
-                then_rip,
-                else_rip,
-                ..
+                then_rip, else_rip, ..
             } => {
                 worklist.push_back(*then_rip);
                 worklist.push_back(*else_rip);
@@ -676,10 +696,7 @@ pub fn build_function_from_x86<B: Tier1Bus>(bus: &B, entry_rip: u64, cfg: CfgBui
         })
         .collect();
 
-    let entry = rip_to_id
-        .get(&entry_rip)
-        .copied()
-        .unwrap_or(BlockId(0));
+    let entry = rip_to_id.get(&entry_rip).copied().unwrap_or(BlockId(0));
 
     Function { blocks, entry }
 }

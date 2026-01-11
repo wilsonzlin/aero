@@ -245,7 +245,9 @@ mod tests {
         mmu.set_efer(EFER_LME);
 
         let mut bus = RecordingBus::default();
-        let paddr = mmu.translate(&mut bus, 0x1_0000_1234, AccessType::Read, 0).unwrap();
+        let paddr = mmu
+            .translate(&mut bus, 0x1_0000_1234, AccessType::Read, 0)
+            .unwrap();
         assert_eq!(paddr, 0x0000_1234);
         assert!(bus.reads.is_empty());
     }
@@ -264,7 +266,9 @@ mod tests {
         let expected_pde_addr = (mmu.cr3 & 0xFFFF_F000) + pde_index * 4;
 
         let mut bus = RecordingBus::default();
-        let _ = mmu.translate(&mut bus, vaddr, AccessType::Read, 0).unwrap_err();
+        let _ = mmu
+            .translate(&mut bus, vaddr, AccessType::Read, 0)
+            .unwrap_err();
         assert_first_read(&bus, expected_pde_addr, 4);
     }
 
@@ -282,7 +286,9 @@ mod tests {
         let expected_pdpte_addr = (mmu.cr3 & 0xFFFF_FFE0) + pdpt_index * 8;
 
         let mut bus = RecordingBus::default();
-        let _ = mmu.translate(&mut bus, vaddr, AccessType::Read, 0).unwrap_err();
+        let _ = mmu
+            .translate(&mut bus, vaddr, AccessType::Read, 0)
+            .unwrap_err();
         assert_first_read(&bus, expected_pdpte_addr, 8);
     }
 
@@ -299,7 +305,9 @@ mod tests {
         let expected_pml4e_addr = (mmu.cr3 & 0x000F_FFFF_FFFF_F000) + pml4_index * 8;
 
         let mut bus = RecordingBus::default();
-        let _ = mmu.translate(&mut bus, vaddr, AccessType::Read, 0).unwrap_err();
+        let _ = mmu
+            .translate(&mut bus, vaddr, AccessType::Read, 0)
+            .unwrap_err();
         assert_first_read(&bus, expected_pml4e_addr, 8);
     }
 }

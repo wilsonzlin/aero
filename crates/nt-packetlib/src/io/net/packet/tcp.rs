@@ -137,7 +137,13 @@ impl<'a> TcpSegmentBuilder<'a> {
         }
     }
 
-    pub fn ack(src_port: u16, dst_port: u16, seq_number: u32, ack_number: u32, window_size: u16) -> Self {
+    pub fn ack(
+        src_port: u16,
+        dst_port: u16,
+        seq_number: u32,
+        ack_number: u32,
+        window_size: u16,
+    ) -> Self {
         Self {
             src_port,
             dst_port,
@@ -151,7 +157,13 @@ impl<'a> TcpSegmentBuilder<'a> {
         }
     }
 
-    pub fn rst(src_port: u16, dst_port: u16, seq_number: u32, ack_number: u32, window_size: u16) -> Self {
+    pub fn rst(
+        src_port: u16,
+        dst_port: u16,
+        seq_number: u32,
+        ack_number: u32,
+        window_size: u16,
+    ) -> Self {
         Self {
             src_port,
             dst_port,
@@ -187,7 +199,9 @@ impl<'a> TcpSegmentBuilder<'a> {
 
     pub fn header_len(&self) -> Result<usize, PacketError> {
         if !self.options.is_empty() && self.options.len() % 4 != 0 {
-            return Err(PacketError::Malformed("TCP options length not multiple of 4"));
+            return Err(PacketError::Malformed(
+                "TCP options length not multiple of 4",
+            ));
         }
         let header_len = TcpSegment::MIN_HEADER_LEN + self.options.len();
         if header_len / 4 > 0x0f {
@@ -201,7 +215,11 @@ impl<'a> TcpSegmentBuilder<'a> {
     }
 
     #[cfg(feature = "alloc")]
-    pub fn build_vec(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr) -> Result<alloc::vec::Vec<u8>, PacketError> {
+    pub fn build_vec(
+        &self,
+        src_ip: Ipv4Addr,
+        dst_ip: Ipv4Addr,
+    ) -> Result<alloc::vec::Vec<u8>, PacketError> {
         let len = self.len()?;
         let mut buf = alloc::vec![0u8; len];
         let written = self.write(src_ip, dst_ip, &mut buf)?;
@@ -209,7 +227,12 @@ impl<'a> TcpSegmentBuilder<'a> {
         Ok(buf)
     }
 
-    pub fn write(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr, out: &mut [u8]) -> Result<usize, PacketError> {
+    pub fn write(
+        &self,
+        src_ip: Ipv4Addr,
+        dst_ip: Ipv4Addr,
+        out: &mut [u8],
+    ) -> Result<usize, PacketError> {
         let header_len = self.header_len()?;
         let len = self.len()?;
         ensure_out_buf_len(out, len)?;
@@ -220,7 +243,11 @@ impl<'a> TcpSegmentBuilder<'a> {
         out[8..12].copy_from_slice(&self.ack_number.to_be_bytes());
 
         let data_offset = (header_len / 4) as u8;
-        let ns = if self.flags.contains(TcpFlags::NS) { 1u8 } else { 0u8 };
+        let ns = if self.flags.contains(TcpFlags::NS) {
+            1u8
+        } else {
+            0u8
+        };
         out[12] = (data_offset << 4) | ns;
         out[13] = (self.flags.0 & 0xff) as u8;
 
@@ -298,6 +325,9 @@ mod tests {
 
         assert_eq!(seg.checksum(), 0);
         assert!(seg.checksum_valid_ipv4(src_ip, dst_ip));
-        assert_eq!(checksum::transport_checksum_ipv4(src_ip, dst_ip, 6, &buf[..len]), 0);
+        assert_eq!(
+            checksum::transport_checksum_ipv4(src_ip, dst_ip, 6, &buf[..len]),
+            0
+        );
     }
 }

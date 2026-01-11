@@ -1,3 +1,4 @@
+use emulator::devices::vga::vbe;
 use firmware::{
     bios::Bios,
     cpu::CpuState,
@@ -5,7 +6,6 @@ use firmware::{
     rtc::{CmosRtc, DateTime},
     video::vbe::VbeDevice,
 };
-use emulator::devices::vga::vbe;
 
 fn read_u16(buf: &[u8], off: usize) -> u16 {
     u16::from_le_bytes([buf[off], buf[off + 1]])

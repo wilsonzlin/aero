@@ -567,9 +567,9 @@ pub fn parse_cmd_stream(
             ));
         }
         let cmd_size_usize = cmd_size_bytes as usize;
-        let end = offset
-            .checked_add(cmd_size_usize)
-            .ok_or(AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(cmd_size_bytes))?;
+        let end = offset.checked_add(cmd_size_usize).ok_or(
+            AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(cmd_size_bytes),
+        )?;
         if end > size_bytes_usize {
             return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
         }
@@ -754,14 +754,18 @@ pub fn parse_cmd_stream(
                     return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
                 }
                 let input_layout_handle = get_u32(payload, 0)?;
-                AeroGpuCmd::DestroyInputLayout { input_layout_handle }
+                AeroGpuCmd::DestroyInputLayout {
+                    input_layout_handle,
+                }
             }
             Some(AeroGpuOpcode::SetInputLayout) => {
                 if payload.len() < 8 {
                     return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
                 }
                 let input_layout_handle = get_u32(payload, 0)?;
-                AeroGpuCmd::SetInputLayout { input_layout_handle }
+                AeroGpuCmd::SetInputLayout {
+                    input_layout_handle,
+                }
             }
             Some(AeroGpuOpcode::SetBlendState) => {
                 if payload.len() < 20 {

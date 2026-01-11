@@ -9,9 +9,9 @@ use crate::abi::{CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, RFLAGS_RESERVED1};
 use crate::opt::RegAllocPlan;
 use crate::t2_ir::{BinOp, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
 use crate::wasm::{
-    IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MEMORY, IMPORT_MODULE,
+    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE,
 };
 
 /// Export name for a compiled Tier-2 trace.
@@ -756,7 +756,8 @@ impl Emitter<'_> {
 
         match width {
             Width::W8 => {
-                self.f.instruction(&Instruction::Call(self.imported.mem_read_u8));
+                self.f
+                    .instruction(&Instruction::Call(self.imported.mem_read_u8));
                 self.f.instruction(&Instruction::I64ExtendI32U);
             }
             Width::W16 => {

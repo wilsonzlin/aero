@@ -1,8 +1,9 @@
 use virtio_gpu_proto::device::{GuestMemory, VirtioGpuDevice};
 use virtio_gpu_proto::protocol::{
-    write_u32_le, write_u64_le, Rect, CtrlHdr, VIRTIO_GPU_CMD_GET_DISPLAY_INFO, VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING,
-    VIRTIO_GPU_CMD_RESOURCE_CREATE_2D, VIRTIO_GPU_CMD_RESOURCE_FLUSH, VIRTIO_GPU_CMD_SET_SCANOUT,
-    VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM,
+    write_u32_le, write_u64_le, CtrlHdr, Rect, VIRTIO_GPU_CMD_GET_DISPLAY_INFO,
+    VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING, VIRTIO_GPU_CMD_RESOURCE_CREATE_2D,
+    VIRTIO_GPU_CMD_RESOURCE_FLUSH, VIRTIO_GPU_CMD_SET_SCANOUT, VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
+    VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM,
 };
 
 struct VecGuestMem {
@@ -26,9 +27,16 @@ impl VecGuestMem {
 
 impl GuestMemory for VecGuestMem {
     fn read(&self, addr: u64, out: &mut [u8]) -> Result<(), virtio_gpu_proto::device::MemError> {
-        let off = addr.checked_sub(self.base).ok_or(virtio_gpu_proto::device::MemError::OutOfBounds)? as usize;
-        let end = off.checked_add(out.len()).ok_or(virtio_gpu_proto::device::MemError::OutOfBounds)?;
-        let src = self.buf.get(off..end).ok_or(virtio_gpu_proto::device::MemError::OutOfBounds)?;
+        let off = addr
+            .checked_sub(self.base)
+            .ok_or(virtio_gpu_proto::device::MemError::OutOfBounds)? as usize;
+        let end = off
+            .checked_add(out.len())
+            .ok_or(virtio_gpu_proto::device::MemError::OutOfBounds)?;
+        let src = self
+            .buf
+            .get(off..end)
+            .ok_or(virtio_gpu_proto::device::MemError::OutOfBounds)?;
         out.copy_from_slice(src);
         Ok(())
     }
@@ -85,11 +93,11 @@ fn basic_2d_scanout_roundtrip() {
     let mut req = hdr(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING);
     write_u32_le(&mut req, 1); // resource_id
     write_u32_le(&mut req, 2); // nr_entries
-    // entry 0
+                               // entry 0
     write_u64_le(&mut req, 0x1000); // addr
     write_u32_le(&mut req, 32); // len
     write_u32_le(&mut req, 0); // padding
-    // entry 1
+                               // entry 1
     write_u64_le(&mut req, 0x2000); // addr
     write_u32_le(&mut req, 32); // len
     write_u32_le(&mut req, 0); // padding

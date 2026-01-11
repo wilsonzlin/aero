@@ -21,13 +21,8 @@ pub const USBCMD_MAXP: u16 = 1 << 7;
 ///
 /// Reset bits (`HCRESET`) are intentionally excluded since they are treated as self-clearing in
 /// hardware and are implemented via side-effects in the I/O handler.
-pub const USBCMD_WRITE_MASK: u16 = USBCMD_RS
-    | USBCMD_GRESET
-    | USBCMD_EGSM
-    | USBCMD_FGR
-    | USBCMD_SWDBG
-    | USBCMD_CF
-    | USBCMD_MAXP;
+pub const USBCMD_WRITE_MASK: u16 =
+    USBCMD_RS | USBCMD_GRESET | USBCMD_EGSM | USBCMD_FGR | USBCMD_SWDBG | USBCMD_CF | USBCMD_MAXP;
 
 // UHCI 1.1 spec, section 2.1.2 "USB Status (USBSTS)".
 pub const USBSTS_USBINT: u16 = 1 << 0;
@@ -38,11 +33,8 @@ pub const USBSTS_HCPROCESSERR: u16 = 1 << 4;
 pub const USBSTS_HCHALTED: u16 = 1 << 5;
 
 /// Bits which are write-1-to-clear in [`REG_USBSTS`].
-pub const USBSTS_W1C_MASK: u16 = USBSTS_USBINT
-    | USBSTS_USBERRINT
-    | USBSTS_RESUMEDETECT
-    | USBSTS_HSE
-    | USBSTS_HCPROCESSERR;
+pub const USBSTS_W1C_MASK: u16 =
+    USBSTS_USBINT | USBSTS_USBERRINT | USBSTS_RESUMEDETECT | USBSTS_HSE | USBSTS_HCPROCESSERR;
 
 pub const USBINTR_TIMEOUT_CRC: u16 = 1 << 0;
 pub const USBINTR_RESUME: u16 = 1 << 1;

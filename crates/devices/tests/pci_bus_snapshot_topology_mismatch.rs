@@ -40,4 +40,3 @@ fn pci_bus_snapshot_skips_restore_when_bdf_device_type_mismatches() {
     // Vendor/device ID read should remain the new device.
     assert_eq!(bus2.read_config(bdf, 0x00, 4), 0x0002_1234);
 }
-

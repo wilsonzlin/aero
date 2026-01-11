@@ -15,8 +15,8 @@ fn ensure_xdg_runtime_dir() {
             .unwrap_or(true);
 
         if needs_runtime_dir {
-            let dir = std::env::temp_dir()
-                .join(format!("aero-gpu-xdg-runtime-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("aero-gpu-xdg-runtime-{}", std::process::id()));
             std::fs::create_dir_all(&dir).expect("create XDG_RUNTIME_DIR");
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
                 .expect("chmod XDG_RUNTIME_DIR");
@@ -78,7 +78,13 @@ fn shared_surface_import_export_aliases_texture_handles() {
         );
         stream.set_shader_key(CONTEXT_ID, ShaderStage::Vertex, 1);
         stream.set_shader_key(CONTEXT_ID, ShaderStage::Fragment, 1);
-        stream.set_constants_f32(CONTEXT_ID, ShaderStage::Fragment, 0, 1, &[1.0, 0.0, 0.0, 1.0]);
+        stream.set_constants_f32(
+            CONTEXT_ID,
+            ShaderStage::Fragment,
+            0,
+            1,
+            &[1.0, 0.0, 0.0, 1.0],
+        );
 
         // Clockwise fullscreen triangle with UVs for the built-in vertex shader.
         let fullscreen_triangle: [f32; 12] = [

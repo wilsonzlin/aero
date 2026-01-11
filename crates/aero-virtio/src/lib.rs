@@ -7,4 +7,3 @@ pub mod devices;
 pub mod memory;
 pub mod pci;
 pub mod queue;
-

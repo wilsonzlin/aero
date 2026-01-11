@@ -89,9 +89,7 @@ pub fn build_and_write(
         return None;
     };
     if nvs_end > memory_size_bytes {
-        eprintln!(
-            "BIOS: ACPI NVS out of bounds (end=0x{nvs_end:x} mem=0x{memory_size_bytes:x})"
-        );
+        eprintln!("BIOS: ACPI NVS out of bounds (end=0x{nvs_end:x} mem=0x{memory_size_bytes:x})");
         return None;
     }
 

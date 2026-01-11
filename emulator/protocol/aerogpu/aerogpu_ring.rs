@@ -293,7 +293,10 @@ impl AerogpuFencePage {
 }
 
 /// Write the completed fence value into an existing fence page mapping.
-pub fn write_fence_page_completed_fence_le(buf: &mut [u8], fence_value: u64) -> Result<(), AerogpuRingEncodeError> {
+pub fn write_fence_page_completed_fence_le(
+    buf: &mut [u8],
+    fence_value: u64,
+) -> Result<(), AerogpuRingEncodeError> {
     if buf.len() < AerogpuFencePage::SIZE_BYTES {
         return Err(AerogpuRingEncodeError::BufferTooSmall);
     }

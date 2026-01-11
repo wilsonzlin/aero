@@ -29,7 +29,11 @@ pub fn convert_i16_stereo_to_f32_interleaved(pcm: &[i16]) -> Vec<f32> {
 /// 48kHz). A real-time emulator will likely want a higher-quality and
 /// stateful resampler, but this covers the basic requirement and is easy to
 /// validate.
-pub fn resample_linear_stereo_interleaved(input: &[f32], src_rate_hz: u32, dst_rate_hz: u32) -> Vec<f32> {
+pub fn resample_linear_stereo_interleaved(
+    input: &[f32],
+    src_rate_hz: u32,
+    dst_rate_hz: u32,
+) -> Vec<f32> {
     if src_rate_hz == 0 || dst_rate_hz == 0 {
         return Vec::new();
     }
@@ -85,4 +89,3 @@ mod tests {
         assert_eq!(out, input);
     }
 }
-

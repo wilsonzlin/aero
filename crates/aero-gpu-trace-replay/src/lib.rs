@@ -21,14 +21,18 @@ impl ReplayedFrame {
 #[derive(Debug)]
 pub enum ReplayError {
     Trace(TraceReadError),
-    MissingBlob { blob_id: u64 },
+    MissingBlob {
+        blob_id: u64,
+    },
     WrongBlobKind {
         blob_id: u64,
         expected: BlobKind,
         found: BlobKind,
     },
     CommandStream(String),
-    FrameNotPresented { frame_index: u32 },
+    FrameNotPresented {
+        frame_index: u32,
+    },
 }
 
 impl fmt::Display for ReplayError {
@@ -107,15 +111,13 @@ pub fn replay_trace<R: Read + Seek>(reader: R) -> Result<Vec<ReplayedFrame>, Rep
                     memory_ranges,
                     ..
                 } => {
-                    let cmd_stream = get_blob(&blobs, cmd_stream_blob_id, BlobKind::AerogpuCmdStream)?;
+                    let cmd_stream =
+                        get_blob(&blobs, cmd_stream_blob_id, BlobKind::AerogpuCmdStream)?;
 
                     let mut mem = SubmissionMemory::default();
                     if alloc_table_blob_id != 0 {
-                        let _alloc_table = get_blob(
-                            &blobs,
-                            alloc_table_blob_id,
-                            BlobKind::AerogpuAllocTable,
-                        )?;
+                        let _alloc_table =
+                            get_blob(&blobs, alloc_table_blob_id, BlobKind::AerogpuAllocTable)?;
                         // For now the replayer relies on the per-range entries, not the raw table.
                     }
 
@@ -309,7 +311,11 @@ impl AerogpuSoftwareExecutor {
         Ok(())
     }
 
-    fn cmd_create_texture2d(&mut self, payload: &[u8], _mem: &SubmissionMemory) -> Result<(), String> {
+    fn cmd_create_texture2d(
+        &mut self,
+        payload: &[u8],
+        _mem: &SubmissionMemory,
+    ) -> Result<(), String> {
         // struct aerogpu_cmd_create_texture2d (payload excludes hdr):
         // u32 handle; u32 usage; u32 format; u32 width; u32 height; u32 mip_levels; u32 array_layers;
         // u32 row_pitch; u32 backing_alloc_id; u32 backing_offset_bytes; u64 reserved0;

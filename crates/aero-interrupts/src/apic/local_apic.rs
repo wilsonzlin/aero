@@ -70,7 +70,9 @@ impl LapicState {
 
     fn ppr(&self) -> u8 {
         let tpr = self.tpr & 0xF0;
-        let isr_class = bitmap_highest_set_bit(&self.isr).map(vector_priority_class).unwrap_or(0);
+        let isr_class = bitmap_highest_set_bit(&self.isr)
+            .map(vector_priority_class)
+            .unwrap_or(0);
         tpr.max(isr_class)
     }
 
@@ -632,4 +634,3 @@ mod tests {
         assert_eq!(apic.get_pending_vector(), None);
     }
 }
-

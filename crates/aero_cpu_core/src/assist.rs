@@ -287,7 +287,12 @@ fn is_ctrl_reg(reg: Register) -> bool {
 fn is_debug_reg(reg: Register) -> bool {
     matches!(
         reg,
-        Register::DR0 | Register::DR1 | Register::DR2 | Register::DR3 | Register::DR6 | Register::DR7
+        Register::DR0
+            | Register::DR1
+            | Register::DR2
+            | Register::DR3
+            | Register::DR6
+            | Register::DR7
     )
 }
 
@@ -311,7 +316,12 @@ fn io_size_from_reg(reg: Register) -> Result<u32, Exception> {
     Ok(bits / 8)
 }
 
-fn calc_ea(state: &CpuState, instr: &Instruction, next_ip: u64, include_seg: bool) -> Result<u64, Exception> {
+fn calc_ea(
+    state: &CpuState,
+    instr: &Instruction,
+    next_ip: u64,
+    include_seg: bool,
+) -> Result<u64, Exception> {
     let base = instr.memory_base();
     let index = instr.memory_index();
     let scale = instr.memory_index_scale() as u64;
@@ -337,7 +347,11 @@ fn calc_ea(state: &CpuState, instr: &Instruction, next_ip: u64, include_seg: boo
 
     let mut offset: i128 = disp;
     if base != Register::None {
-        let base_val = if base == Register::RIP { next_ip } else { state.read_reg(base) };
+        let base_val = if base == Register::RIP {
+            next_ip
+        } else {
+            state.read_reg(base)
+        };
         offset += (base_val & mask_bits(addr_bits)) as i128;
     }
     if index != Register::None {
@@ -455,7 +469,12 @@ fn msr_read(ctx: &AssistContext, state: &CpuState, msr_index: u32) -> Result<u64
     }
 }
 
-fn msr_write(ctx: &mut AssistContext, state: &mut CpuState, msr_index: u32, value: u64) -> Result<(), Exception> {
+fn msr_write(
+    ctx: &mut AssistContext,
+    state: &mut CpuState,
+    msr_index: u32,
+    value: u64,
+) -> Result<(), Exception> {
     match msr_index {
         msr::IA32_EFER => {
             // Mirror `msr::MsrState` write semantics: keep CPUID/MSR coherent and
@@ -650,7 +669,11 @@ fn index_reg_for_mode(state: &CpuState, is_dest: bool) -> Register {
     }
 }
 
-fn instr_ins<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction) -> Result<(), Exception> {
+fn instr_ins<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+) -> Result<(), Exception> {
     require_iopl(state)?;
     let size = match instr.mnemonic() {
         Mnemonic::Insb => 1,
@@ -664,13 +687,21 @@ fn instr_ins<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction) 
     let step: i64 = if df { -(size as i64) } else { size as i64 };
 
     let count_reg = rep_count_reg(state);
-    let mut count = if instr.has_rep_prefix() { state.read_reg(count_reg) } else { 1 };
+    let mut count = if instr.has_rep_prefix() {
+        state.read_reg(count_reg)
+    } else {
+        1
+    };
     let mut di = state.read_reg(index_reg_for_mode(state, true));
     let addr_mask = mask_bits(state.bitness());
 
     while count != 0 {
         let val = bus.io_read(port, size)?;
-        let addr = state.apply_a20(state.seg_base_reg(Register::ES).wrapping_add(di & addr_mask));
+        let addr = state.apply_a20(
+            state
+                .seg_base_reg(Register::ES)
+                .wrapping_add(di & addr_mask),
+        );
         match size {
             1 => bus.write_u8(addr, val as u8)?,
             2 => bus.write_u16(addr, val as u16)?,
@@ -693,7 +724,11 @@ fn instr_ins<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction) 
     Ok(())
 }
 
-fn instr_outs<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction) -> Result<(), Exception> {
+fn instr_outs<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+) -> Result<(), Exception> {
     require_iopl(state)?;
     let size = match instr.mnemonic() {
         Mnemonic::Outsb => 1,
@@ -707,12 +742,20 @@ fn instr_outs<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction)
     let step: i64 = if df { -(size as i64) } else { size as i64 };
 
     let count_reg = rep_count_reg(state);
-    let mut count = if instr.has_rep_prefix() { state.read_reg(count_reg) } else { 1 };
+    let mut count = if instr.has_rep_prefix() {
+        state.read_reg(count_reg)
+    } else {
+        1
+    };
     let mut si = state.read_reg(index_reg_for_mode(state, false));
     let addr_mask = mask_bits(state.bitness());
 
     while count != 0 {
-        let addr = state.apply_a20(state.seg_base_reg(Register::DS).wrapping_add(si & addr_mask));
+        let addr = state.apply_a20(
+            state
+                .seg_base_reg(Register::DS)
+                .wrapping_add(si & addr_mask),
+        );
         let val: u64 = match size {
             1 => bus.read_u8(addr)? as u64,
             2 => bus.read_u16(addr)? as u64,
@@ -824,7 +867,11 @@ fn instr_int_real<B: CpuBus>(
     Ok(())
 }
 
-fn instr_iret<B: CpuBus>(state: &mut CpuState, bus: &mut B, _instr: &Instruction) -> Result<(), Exception> {
+fn instr_iret<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    _instr: &Instruction,
+) -> Result<(), Exception> {
     match state.mode {
         CpuMode::Real | CpuMode::Vm86 => instr_iret_real(state, bus),
         CpuMode::Protected => instr_iret_protected(state, bus, _instr),
@@ -861,7 +908,11 @@ struct IdtGate32 {
     present: bool,
 }
 
-fn read_idt_gate32<B: CpuBus>(state: &CpuState, bus: &mut B, vector: u8) -> Result<IdtGate32, Exception> {
+fn read_idt_gate32<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    vector: u8,
+) -> Result<IdtGate32, Exception> {
     let entry_size = 8u64;
     let offset = (vector as u64) * entry_size;
     if offset + (entry_size - 1) > state.tables.idtr.limit as u64 {
@@ -992,7 +1043,11 @@ fn instr_int_protected<B: CpuBus>(
     Ok(())
 }
 
-fn instr_iret_protected<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction) -> Result<(), Exception> {
+fn instr_iret_protected<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+) -> Result<(), Exception> {
     let op_bits = match instr.mnemonic() {
         Mnemonic::Iret => 16,
         Mnemonic::Iretd => 32,
@@ -1306,7 +1361,8 @@ fn instr_mov_privileged<B: CpuBus>(
     }
 
     // MOV to/from control/debug registers.
-    if instr.op_kind(0) == OpKind::Register && (is_ctrl_reg(instr.op0_register()) || is_debug_reg(instr.op0_register()))
+    if instr.op_kind(0) == OpKind::Register
+        && (is_ctrl_reg(instr.op0_register()) || is_debug_reg(instr.op0_register()))
         || instr.op_kind(1) == OpKind::Register
             && (is_ctrl_reg(instr.op1_register()) || is_debug_reg(instr.op1_register()))
     {
@@ -1477,7 +1533,12 @@ fn instr_retf<B: CpuBus>(
     far_jump(state, bus, cs, off)
 }
 
-fn push_sized<B: CpuBus>(state: &mut CpuState, bus: &mut B, val: u64, size: u32) -> Result<(), Exception> {
+fn push_sized<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    val: u64,
+    size: u32,
+) -> Result<(), Exception> {
     let sp_bits = state.stack_ptr_bits();
     let mut sp = state.stack_ptr();
     sp = sp.wrapping_sub(size as u64) & mask_bits(sp_bits);
@@ -1496,7 +1557,12 @@ fn pop_sized<B: CpuBus>(state: &mut CpuState, bus: &mut B, size: u32) -> Result<
     Ok(v)
 }
 
-fn far_jump<B: CpuBus>(state: &mut CpuState, bus: &mut B, selector: u16, offset: u64) -> Result<(), Exception> {
+fn far_jump<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    selector: u16,
+    offset: u64,
+) -> Result<(), Exception> {
     match state.mode {
         CpuMode::Real | CpuMode::Vm86 => {
             set_real_mode_seg(&mut state.segments.cs, selector);

@@ -51,9 +51,10 @@ fn parse_dns_a_env() -> Result<HashMap<String, Ipv4Addr>> {
             .split_once('=')
             .ok_or_else(|| anyhow!("invalid AERO_L2_DNS_A entry {entry:?}"))?;
         let name = name.trim().trim_end_matches('.').to_ascii_lowercase();
-        let ip: Ipv4Addr = ip.trim().parse().with_context(|| {
-            format!("invalid IPv4 address in AERO_L2_DNS_A entry {entry:?}")
-        })?;
+        let ip: Ipv4Addr = ip
+            .trim()
+            .parse()
+            .with_context(|| format!("invalid IPv4 address in AERO_L2_DNS_A entry {entry:?}"))?;
         out.insert(name, ip);
     }
 
@@ -101,8 +102,12 @@ fn parse_ipv4_socket(s: &str) -> Result<(Ipv4Addr, u16)> {
     let (ip, port) = s
         .rsplit_once(':')
         .ok_or_else(|| anyhow!("missing :port in {s:?}"))?;
-    let ip: Ipv4Addr = ip.parse().with_context(|| format!("invalid IPv4 addr {ip:?}"))?;
-    let port: u16 = port.parse().with_context(|| format!("invalid port {port:?}"))?;
+    let ip: Ipv4Addr = ip
+        .parse()
+        .with_context(|| format!("invalid IPv4 addr {ip:?}"))?;
+    let port: u16 = port
+        .parse()
+        .with_context(|| format!("invalid port {port:?}"))?;
     Ok((ip, port))
 }
 
@@ -114,14 +119,17 @@ fn parse_host_port(s: &str) -> Result<(String, u16)> {
         let port = rest
             .strip_prefix(':')
             .ok_or_else(|| anyhow!("missing :port suffix in {s:?}"))?;
-        let port: u16 = port.parse().with_context(|| format!("invalid port {port:?}"))?;
+        let port: u16 = port
+            .parse()
+            .with_context(|| format!("invalid port {port:?}"))?;
         return Ok((host.to_string(), port));
     }
 
     let (host, port) = s
         .rsplit_once(':')
         .ok_or_else(|| anyhow!("missing :port in {s:?}"))?;
-    let port: u16 = port.parse().with_context(|| format!("invalid port {port:?}"))?;
+    let port: u16 = port
+        .parse()
+        .with_context(|| format!("invalid port {port:?}"))?;
     Ok((host.to_string(), port))
 }
-

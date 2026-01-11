@@ -103,10 +103,10 @@ impl CpuState {
     fn set_reg8(&mut self, reg: u8, val: u8) {
         let val = val as u64;
         match reg {
-            0 => self.rax = (self.rax & !0xFF) | val, // AL
-            1 => self.rcx = (self.rcx & !0xFF) | val, // CL
-            2 => self.rdx = (self.rdx & !0xFF) | val, // DL
-            3 => self.rbx = (self.rbx & !0xFF) | val, // BL
+            0 => self.rax = (self.rax & !0xFF) | val,          // AL
+            1 => self.rcx = (self.rcx & !0xFF) | val,          // CL
+            2 => self.rdx = (self.rdx & !0xFF) | val,          // DL
+            3 => self.rbx = (self.rbx & !0xFF) | val,          // BL
             4 => self.rax = (self.rax & !0xFF00) | (val << 8), // AH
             5 => self.rcx = (self.rcx & !0xFF00) | (val << 8), // CH
             6 => self.rdx = (self.rdx & !0xFF00) | (val << 8), // DH

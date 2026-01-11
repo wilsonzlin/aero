@@ -1,8 +1,4 @@
-use std::{
-    collections::HashSet,
-    net::Ipv4Addr,
-    sync::LazyLock,
-};
+use std::{collections::HashSet, net::Ipv4Addr, sync::LazyLock};
 
 use anyhow::{Context, Result};
 
@@ -162,4 +158,3 @@ fn domain_matches(name: &str, suffix: &str) -> bool {
     }
     name.ends_with(&format!(".{suffix}"))
 }
-

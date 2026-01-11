@@ -1,7 +1,9 @@
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_platform::chipset::A20GateHandle;
 use aero_platform::io::PortIoDevice;
 use aero_platform::reset::{PlatformResetSink, ResetKind};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 
 pub struct A20Gate {
     a20: A20GateHandle,

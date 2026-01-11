@@ -72,4 +72,3 @@ impl FuncProfile {
         *self.call_edges.entry(callee).or_insert(0) += 1;
     }
 }
-

@@ -1,4 +1,6 @@
-use emulator::devices::vga::{VbeControllerInfo, VbeModeInfo, VBE_BIOS_DATA_PADDR, VBE_LFB_BASE, VgaDevice};
+use emulator::devices::vga::{
+    VbeControllerInfo, VbeModeInfo, VgaDevice, VBE_BIOS_DATA_PADDR, VBE_LFB_BASE,
+};
 use memory::{DenseMemory, GuestMemory};
 
 #[test]
@@ -38,7 +40,10 @@ fn vbe_info_signature_and_mode_list_termination() {
         }
     }
 
-    assert!(modes.len() >= 2, "mode list should contain at least one mode + terminator");
+    assert!(
+        modes.len() >= 2,
+        "mode list should contain at least one mode + terminator"
+    );
     assert_eq!(*modes.last().unwrap(), 0xFFFF);
 }
 
@@ -58,4 +63,3 @@ fn vbe_mode_info_phys_base_ptr_is_correct() {
     assert_eq!(info.reserved_mask_size(), 8);
     assert_eq!(info.reserved_field_position(), 24);
 }
-

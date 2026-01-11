@@ -42,4 +42,3 @@ fn out_of_range_accesses_return_error_without_panicking() {
         Err(GuestMemoryError::OutOfRange { .. })
     ));
 }
-

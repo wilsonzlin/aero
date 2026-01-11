@@ -1,5 +1,7 @@
 use super::{PciBus, PciBusSnapshot, PciConfigMechanism1, PciPlatform};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,7 +20,10 @@ impl PciConfigPorts {
     }
 
     pub fn with_bus(bus: PciBus) -> Self {
-        Self { cfg: PciConfigMechanism1::new(), bus }
+        Self {
+            cfg: PciConfigMechanism1::new(),
+            bus,
+        }
     }
 
     pub fn bus_mut(&mut self) -> &mut PciBus {
@@ -133,7 +138,13 @@ mod tests {
         }
 
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
-        cfg.set_bar_definition(0, PciBarDefinition::Mmio32 { size: 0x1000, prefetchable: false });
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
         cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
 
         cfg_ports

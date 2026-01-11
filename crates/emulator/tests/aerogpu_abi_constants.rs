@@ -20,7 +20,10 @@ fn aerogpu_abi_constants_match_aero_protocol() {
         emu::AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
         proto::AEROGPU_PCI_SUBSYSTEM_VENDOR_ID
     );
-    assert_eq!(emu::AEROGPU_PCI_SUBSYSTEM_ID, proto::AEROGPU_PCI_SUBSYSTEM_ID);
+    assert_eq!(
+        emu::AEROGPU_PCI_SUBSYSTEM_ID,
+        proto::AEROGPU_PCI_SUBSYSTEM_ID
+    );
 
     // PCI class identity.
     assert_eq!(
@@ -106,7 +109,10 @@ fn aerogpu_pci_config_space_uses_protocol_identity() {
     assert_eq!(read_u16(&dev, 0x2e), proto::AEROGPU_PCI_SUBSYSTEM_ID);
 
     assert_eq!(read_u8(&dev, 0x09), proto::AEROGPU_PCI_PROG_IF);
-    assert_eq!(read_u8(&dev, 0x0a), proto::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE);
+    assert_eq!(
+        read_u8(&dev, 0x0a),
+        proto::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE
+    );
     assert_eq!(
         read_u8(&dev, 0x0b),
         proto::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER

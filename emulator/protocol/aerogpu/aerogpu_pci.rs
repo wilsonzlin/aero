@@ -31,7 +31,9 @@ pub enum AerogpuAbiError {
 /// Parse an ABI version and validate it according to the protocol rules:
 /// - reject unsupported major versions
 /// - accept unknown minor versions (treat as extensions and ignore what we don't understand)
-pub fn parse_and_validate_abi_version_u32(version_u32: u32) -> Result<AerogpuAbiVersion, AerogpuAbiError> {
+pub fn parse_and_validate_abi_version_u32(
+    version_u32: u32,
+) -> Result<AerogpuAbiVersion, AerogpuAbiError> {
     let major = abi_major(version_u32);
     let minor = abi_minor(version_u32);
 

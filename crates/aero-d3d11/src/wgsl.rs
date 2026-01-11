@@ -242,4 +242,3 @@ fn parse_reg_operand(tokens: &[u32]) -> Result<RegRef, WgslError> {
         index: tokens[1],
     })
 }
-

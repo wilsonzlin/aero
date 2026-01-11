@@ -77,7 +77,9 @@ impl DhcpMessage {
 
         let op = buf[0];
         if op != DHCP_OP_BOOTREQUEST && op != DHCP_OP_BOOTREPLY {
-            return Err(PacketError::Malformed("DHCP op is not BOOTREQUEST/BOOTREPLY"));
+            return Err(PacketError::Malformed(
+                "DHCP op is not BOOTREQUEST/BOOTREPLY",
+            ));
         }
         let htype = buf[1];
         let hlen = buf[2];
@@ -92,7 +94,8 @@ impl DhcpMessage {
         mac.copy_from_slice(&buf[28..34]);
         let client_mac = MacAddr(mac);
 
-        if buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN..DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4] != DHCP_MAGIC_COOKIE
+        if buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN..DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4]
+            != DHCP_MAGIC_COOKIE
         {
             return Err(PacketError::Malformed("missing DHCP magic cookie"));
         }
@@ -124,7 +127,8 @@ impl DhcpMessage {
                             requested_ip = Some(Ipv4Addr::new(data[0], data[1], data[2], data[3]));
                         }
                         DHCP_OPT_SERVER_IDENTIFIER if len == 4 => {
-                            server_identifier = Some(Ipv4Addr::new(data[0], data[1], data[2], data[3]));
+                            server_identifier =
+                                Some(Ipv4Addr::new(data[0], data[1], data[2], data[3]));
                         }
                         _ => {}
                     }
@@ -137,7 +141,8 @@ impl DhcpMessage {
             transaction_id,
             flags,
             client_mac,
-            message_type: message_type.ok_or(PacketError::Malformed("missing DHCP message type option"))?,
+            message_type: message_type
+                .ok_or(PacketError::Malformed("missing DHCP message type option"))?,
             requested_ip,
             server_identifier,
         })
@@ -181,7 +186,9 @@ impl<'a> DhcpOfferAckBuilder<'a> {
         if !self.dns_servers.is_empty() {
             let dns_len = 4 * self.dns_servers.len();
             if dns_len > u8::MAX as usize {
-                return Err(PacketError::Malformed("too many DNS servers for DHCP option"));
+                return Err(PacketError::Malformed(
+                    "too many DNS servers for DHCP option",
+                ));
             }
             options_len = options_len
                 .checked_add(2 + dns_len)
@@ -253,7 +260,9 @@ impl<'a> DhcpOfferAckBuilder<'a> {
         if !self.dns_servers.is_empty() {
             let dns_len = 4 * self.dns_servers.len();
             if dns_len > u8::MAX as usize {
-                return Err(PacketError::Malformed("too many DNS servers for DHCP option"));
+                return Err(PacketError::Malformed(
+                    "too many DNS servers for DHCP option",
+                ));
             }
             out[off] = DHCP_OPT_DNS;
             out[off + 1] = dns_len as u8;
@@ -316,7 +325,10 @@ mod tests {
         assert_eq!(buf[4..8], 0x12345678u32.to_be_bytes());
         assert_eq!(buf[16..20], builder.your_ip.octets());
         assert_eq!(buf[28..34], builder.client_mac.0);
-        assert_eq!(buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN..DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4], DHCP_MAGIC_COOKIE);
+        assert_eq!(
+            buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN..DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4],
+            DHCP_MAGIC_COOKIE
+        );
 
         // Spot-check that T1/T2 are present and match our defaults.
         let opts = &buf[DhcpOfferAckBuilder::BOOTP_FIXED_LEN + 4..len];
@@ -347,8 +359,18 @@ mod tests {
             None
         }
 
-        let t1 = u32::from_be_bytes(find_opt(opts, DHCP_OPT_RENEWAL_TIME).unwrap().try_into().unwrap());
-        let t2 = u32::from_be_bytes(find_opt(opts, DHCP_OPT_REBINDING_TIME).unwrap().try_into().unwrap());
+        let t1 = u32::from_be_bytes(
+            find_opt(opts, DHCP_OPT_RENEWAL_TIME)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        let t2 = u32::from_be_bytes(
+            find_opt(opts, DHCP_OPT_REBINDING_TIME)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
         assert_eq!(t1, 1800);
         assert_eq!(t2, 3150);
     }

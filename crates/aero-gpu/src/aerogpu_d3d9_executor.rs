@@ -4,7 +4,7 @@ use aero_d3d9::shader;
 use aero_d3d9::vertex::VertexDeclaration;
 use thiserror::Error;
 
-use crate::protocol::{AeroGpuCmd, AeroGpuCmdStreamParseError, parse_cmd_stream};
+use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use crate::readback_rgba8;
 use crate::texture_manager::TextureRegion;
 

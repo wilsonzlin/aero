@@ -28,10 +28,18 @@ fn i8042_command_d2_writes_keyboard_output_buffer_and_raises_irq1() {
 
     let status = i8042.read_port(0x64);
     assert_ne!(status & 0x01, 0, "output buffer should be full");
-    assert_eq!(status & 0x20, 0, "AUX bit should be clear for keyboard data");
+    assert_eq!(
+        status & 0x20,
+        0,
+        "AUX bit should be clear for keyboard data"
+    );
 
     assert_eq!(i8042.read_port(0x60), 0xAA);
-    assert_eq!(i8042.read_port(0x64) & 0x01, 0, "output buffer should be empty after read");
+    assert_eq!(
+        i8042.read_port(0x64) & 0x01,
+        0,
+        "output buffer should be empty after read"
+    );
 }
 
 #[test]
@@ -43,7 +51,10 @@ fn i8042_command_d3_writes_mouse_output_buffer_and_can_raise_irq12() {
     // Default command byte enables IRQ1 but not IRQ12. Verify no IRQ is raised yet.
     i8042.write_port(0x64, 0xD3);
     i8042.write_port(0x60, 0xBB);
-    assert!(irqs.borrow().is_empty(), "IRQ12 should be gated by the command byte");
+    assert!(
+        irqs.borrow().is_empty(),
+        "IRQ12 should be gated by the command byte"
+    );
 
     let status = i8042.read_port(0x64);
     assert_ne!(status & 0x01, 0, "output buffer should be full");
@@ -61,4 +72,3 @@ fn i8042_command_d3_writes_mouse_output_buffer_and_can_raise_irq12() {
     assert_ne!(i8042.read_port(0x64) & 0x20, 0);
     assert_eq!(i8042.read_port(0x60), 0xCC);
 }
-

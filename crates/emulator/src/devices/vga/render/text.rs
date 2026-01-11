@@ -1,4 +1,4 @@
-use font8x8::{BASIC_FONTS, UnicodeFonts};
+use font8x8::{UnicodeFonts, BASIC_FONTS};
 
 use crate::devices::vga::dac::VgaDac;
 use crate::devices::vga::memory::{VgaMemory, VramPlane};
@@ -44,9 +44,8 @@ impl TextModeRenderer {
         let pel_mask = dac.pel_mask();
         let palette = dac.palette_rgba();
 
-        let cursor_pos =
-            ((regs.crtc_regs.get(0x0E).copied().unwrap_or(0) as u16) << 8)
-                | regs.crtc_regs.get(0x0F).copied().unwrap_or(0) as u16;
+        let cursor_pos = ((regs.crtc_regs.get(0x0E).copied().unwrap_or(0) as u16) << 8)
+            | regs.crtc_regs.get(0x0F).copied().unwrap_or(0) as u16;
         let cursor_start = regs.crtc_regs.get(0x0A).copied().unwrap_or(0) & 0x1F;
         let cursor_end = regs.crtc_regs.get(0x0B).copied().unwrap_or(0) & 0x1F;
         let cursor_disabled = (regs.crtc_regs.get(0x0A).copied().unwrap_or(0) & 0x20) != 0;
@@ -115,7 +114,11 @@ fn map_attribute_controller(regs: &VgaDevice, index: u8) -> u8 {
     const COLOR_SELECT: usize = 0x14;
 
     let mode_control = regs.ac_regs.get(MODE_CONTROL).copied().unwrap_or(0);
-    let color_plane_enable = regs.ac_regs.get(COLOR_PLANE_ENABLE).copied().unwrap_or(0x0F);
+    let color_plane_enable = regs
+        .ac_regs
+        .get(COLOR_PLANE_ENABLE)
+        .copied()
+        .unwrap_or(0x0F);
     let color_select = regs.ac_regs.get(COLOR_SELECT).copied().unwrap_or(0);
 
     let masked = index & (color_plane_enable & 0x0F);

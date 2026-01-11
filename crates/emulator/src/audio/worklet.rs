@@ -72,10 +72,7 @@ mod tests {
     #[test]
     fn ring_buffer_wraps_and_tracks_frames() {
         let mut rb = AudioWorkletRingBuffer::new(4);
-        assert_eq!(
-            rb.write_interleaved(&[1.0, 1.0, 2.0, 2.0, 3.0, 3.0]),
-            3
-        );
+        assert_eq!(rb.write_interleaved(&[1.0, 1.0, 2.0, 2.0, 3.0, 3.0]), 3);
         assert_eq!(rb.buffer_level_frames(), 3);
 
         let mut out = [0.0; 4];
@@ -83,10 +80,7 @@ mod tests {
         assert_eq!(out, [1.0, 1.0, 2.0, 2.0]);
         assert_eq!(rb.buffer_level_frames(), 1);
 
-        assert_eq!(
-            rb.write_interleaved(&[4.0, 4.0, 5.0, 5.0, 6.0, 6.0]),
-            3
-        );
+        assert_eq!(rb.write_interleaved(&[4.0, 4.0, 5.0, 5.0, 6.0, 6.0]), 3);
         assert_eq!(rb.buffer_level_frames(), 4);
 
         let mut out = [0.0; 8];

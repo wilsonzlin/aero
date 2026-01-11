@@ -74,7 +74,15 @@ fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8
     dev.bar0_write(off, &[val], mem);
 }
 
-fn write_desc(mem: &mut GuestRam, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
+fn write_desc(
+    mem: &mut GuestRam,
+    table: u64,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
     let base = table + u64::from(index) * 16;
     write_u64_le(mem, base, addr).unwrap();
     write_u32_le(mem, base + 8, len).unwrap();
@@ -227,15 +235,7 @@ fn virtio_snd_tx_invalid_out_buffer_does_not_stall_queue() {
         VIRTQ_DESC_F_NEXT,
         1,
     );
-    write_desc(
-        &mut mem,
-        tx_desc,
-        1,
-        status_addr,
-        8,
-        VIRTQ_DESC_F_WRITE,
-        0,
-    );
+    write_desc(&mut mem, tx_desc, 1, status_addr, 8, VIRTQ_DESC_F_WRITE, 0);
 
     write_u16_le(&mut mem, tx_avail + 4, 0).unwrap();
     write_u16_le(&mut mem, tx_avail + 2, 1).unwrap();
@@ -347,15 +347,7 @@ fn virtio_snd_rx_invalid_header_buffer_does_not_stall_queue() {
         VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
         2,
     );
-    write_desc(
-        &mut mem,
-        rx_desc,
-        2,
-        resp_addr,
-        8,
-        VIRTQ_DESC_F_WRITE,
-        0,
-    );
+    write_desc(&mut mem, rx_desc, 2, resp_addr, 8, VIRTQ_DESC_F_WRITE, 0);
 
     write_u16_le(&mut mem, rx_avail + 4, 0).unwrap();
     write_u16_le(&mut mem, rx_avail + 2, 1).unwrap();

@@ -1,13 +1,13 @@
-mod modeset;
-mod mmio;
-mod ports;
-mod regs;
-mod timing;
 pub mod dac;
 pub mod edid;
 pub mod memory;
+mod mmio;
+mod modeset;
 pub mod pci;
+mod ports;
+mod regs;
 pub mod render;
+mod timing;
 pub mod vbe;
 
 use crate::io::PortIO;
@@ -18,12 +18,15 @@ pub use memory::{VgaMemory, VramPlane, VGA_PLANE_SIZE};
 pub use mmio::{VgaMmio, VgaMmioRegion, VGA_BANK_WINDOW_PADDR, VGA_BANK_WINDOW_SIZE};
 pub use ports::VgaDevice;
 pub use regs::{VgaDerivedState, VgaPlanarShift};
-pub use vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_BIOS_DATA_PADDR, VBE_LFB_BASE, VBE_LFB_SIZE};
+pub use vbe::{
+    VbeControllerInfo, VbeModeInfo, VbeState, VBE_BIOS_DATA_PADDR, VBE_LFB_BASE, VBE_LFB_SIZE,
+};
 
 pub use render::mode13h::{Mode13hRenderer, MODE13H_HEIGHT, MODE13H_VRAM_SIZE, MODE13H_WIDTH};
 pub use render::planar16::{Mode12hRenderer, MODE12H_HEIGHT, MODE12H_WIDTH};
 pub use render::text::{
-    TextModeRenderer, TEXT_MODE_CHAR_HEIGHT, TEXT_MODE_CHAR_WIDTH, TEXT_MODE_HEIGHT, TEXT_MODE_WIDTH,
+    TextModeRenderer, TEXT_MODE_CHAR_HEIGHT, TEXT_MODE_CHAR_WIDTH, TEXT_MODE_HEIGHT,
+    TEXT_MODE_WIDTH,
 };
 
 /// VGA graphics memory base address (A000:0000).
@@ -116,11 +119,21 @@ impl VgaRenderer {
         dac: &mut VgaDac,
     ) -> Option<(usize, usize, &'a [u32])> {
         match VgaDetectedMode::detect(regs)? {
-            VgaDetectedMode::TextMode => {
-                Some((TEXT_MODE_WIDTH, TEXT_MODE_HEIGHT, self.text.render(regs, vram, dac)))
-            }
-            VgaDetectedMode::Mode13h => Some((MODE13H_WIDTH, MODE13H_HEIGHT, self.mode13h.render(vram, dac))),
-            VgaDetectedMode::Mode12h => Some((MODE12H_WIDTH, MODE12H_HEIGHT, self.mode12h.render(regs, vram, dac))),
+            VgaDetectedMode::TextMode => Some((
+                TEXT_MODE_WIDTH,
+                TEXT_MODE_HEIGHT,
+                self.text.render(regs, vram, dac),
+            )),
+            VgaDetectedMode::Mode13h => Some((
+                MODE13H_WIDTH,
+                MODE13H_HEIGHT,
+                self.mode13h.render(vram, dac),
+            )),
+            VgaDetectedMode::Mode12h => Some((
+                MODE12H_WIDTH,
+                MODE12H_HEIGHT,
+                self.mode12h.render(regs, vram, dac),
+            )),
         }
     }
 }
@@ -154,7 +167,8 @@ impl VgaSharedFramebufferOutput {
         let stride_bytes = max_width
             .checked_mul(4)
             .ok_or(FramebufferError::InvalidDimensions)?;
-        let mut shared_framebuffer = OwnedSharedFramebuffer::new(max_width, max_height, stride_bytes)?;
+        let mut shared_framebuffer =
+            OwnedSharedFramebuffer::new(max_width, max_height, stride_bytes)?;
         {
             // Mark the buffer as "uninitialized" until the first successful `present_*` call.
             // Consumers should ignore config_counter==0 and wait for a real mode to be set.
@@ -296,7 +310,8 @@ impl Vga {
     }
 
     pub fn render(&mut self) -> Option<(usize, usize, &[u32])> {
-        self.renderer.render(&self.regs, &mut self.vram, &mut self.dac)
+        self.renderer
+            .render(&self.regs, &mut self.vram, &mut self.dac)
     }
 
     /// Renders the current VGA mode (if supported) and publishes the resulting

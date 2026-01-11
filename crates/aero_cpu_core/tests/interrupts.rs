@@ -33,7 +33,8 @@ fn write_idt_gate64(
     mem.write_u16(addr + 2, selector).unwrap();
     mem.write_u8(addr + 4, ist & 0x7).unwrap();
     mem.write_u8(addr + 5, type_attr).unwrap();
-    mem.write_u16(addr + 6, ((offset >> 16) & 0xFFFF) as u16).unwrap();
+    mem.write_u16(addr + 6, ((offset >> 16) & 0xFFFF) as u16)
+        .unwrap();
     mem.write_u32(addr + 8, ((offset >> 32) & 0xFFFF_FFFF) as u32)
         .unwrap();
     mem.write_u32(addr + 12, 0).unwrap();
@@ -117,7 +118,10 @@ fn hlt_is_cleared_when_an_external_interrupt_is_delivered() -> Result<(), CpuExi
     cpu.pending.inject_external_interrupt(0x20);
     cpu.deliver_external_interrupt(&mut mem)?;
 
-    assert!(!cpu.state.halted, "CPU should wake on delivered external interrupt");
+    assert!(
+        !cpu.state.halted,
+        "CPU should wake on delivered external interrupt"
+    );
     assert_eq!(cpu.state.rip(), 0x2000);
 
     Ok(())

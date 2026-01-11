@@ -490,4 +490,3 @@ mod tests {
         assert_eq!(pic.get_pending_vector(), Some(0x28));
     }
 }
-

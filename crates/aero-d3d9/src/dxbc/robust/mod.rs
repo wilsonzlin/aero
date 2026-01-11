@@ -1,9 +1,9 @@
+mod byte_reader;
 mod chunks;
 mod container;
 mod disasm;
 mod reflection;
 mod signature;
-mod byte_reader;
 
 use std::fmt;
 

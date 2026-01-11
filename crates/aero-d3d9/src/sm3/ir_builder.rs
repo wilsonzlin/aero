@@ -1,9 +1,10 @@
 use crate::sm3::decode::{
-    DecodedInstruction, DecodedShader, DclInfo, DclUsage, Operand, Opcode, RegisterFile, ResultShift, SrcModifier,
+    DclInfo, DclUsage, DecodedInstruction, DecodedShader, Opcode, Operand, RegisterFile,
+    ResultShift, SrcModifier,
 };
 use crate::sm3::ir::{
-    Block, CompareOp, Cond, ConstDefF32, Dst, InstModifiers, IoDecl, IrOp, PredicateRef, RegFile, RegRef, RelativeRef, SamplerDecl,
-    Semantic, ShaderIr, Src, Stmt, TexSampleKind,
+    Block, CompareOp, Cond, ConstDefF32, Dst, InstModifiers, IoDecl, IrOp, PredicateRef, RegFile,
+    RegRef, RelativeRef, SamplerDecl, Semantic, ShaderIr, Src, Stmt, TexSampleKind,
 };
 use crate::sm3::types::ShaderStage;
 
@@ -42,7 +43,14 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
         match inst.opcode {
             Opcode::Dcl => {
                 if let Some(dcl) = &inst.dcl {
-                    handle_dcl(inst, &version, dcl, &mut inputs, &mut outputs, &mut samplers)?;
+                    handle_dcl(
+                        inst,
+                        &version,
+                        dcl,
+                        &mut inputs,
+                        &mut outputs,
+                        &mut samplers,
+                    )?;
                 }
             }
             Opcode::Def => {
@@ -86,7 +94,9 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 _ => return Err(err(inst, "else without matching if")),
             },
             Opcode::EndIf => {
-                let frame = stack.pop().ok_or_else(|| err(inst, "endif without matching if"))?;
+                let frame = stack
+                    .pop()
+                    .ok_or_else(|| err(inst, "endif without matching if"))?;
                 let (cond, then_block, else_block) = match frame {
                     Frame::If {
                         cond,
@@ -96,17 +106,22 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                     } => (cond, then_block, else_block),
                     _ => return Err(err(inst, "endif without matching if")),
                 };
-                push_stmt(&mut stack, Stmt::If {
-                    cond,
-                    then_block,
-                    else_block,
-                })?;
+                push_stmt(
+                    &mut stack,
+                    Stmt::If {
+                        cond,
+                        then_block,
+                        else_block,
+                    },
+                )?;
             }
             Opcode::Loop => {
                 stack.push(Frame::Loop { body: Block::new() });
             }
             Opcode::EndLoop => {
-                let frame = stack.pop().ok_or_else(|| err(inst, "endloop without matching loop"))?;
+                let frame = stack
+                    .pop()
+                    .ok_or_else(|| err(inst, "endloop without matching loop"))?;
                 let body = match frame {
                     Frame::Loop { body } => body,
                     _ => return Err(err(inst, "endloop without matching loop")),
@@ -127,7 +142,14 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 let dst = extract_dst(inst, 0)?;
                 let src = extract_src(inst, 1)?;
                 let modifiers = build_modifiers(inst)?;
-                push_stmt(&mut stack, Stmt::Op(IrOp::Mov { dst, src, modifiers }))?;
+                push_stmt(
+                    &mut stack,
+                    Stmt::Op(IrOp::Mov {
+                        dst,
+                        src,
+                        modifiers,
+                    }),
+                )?;
             }
             Opcode::Add => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Add {
                 dst,
@@ -213,10 +235,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             Opcode::Call | Opcode::Ret => return Err(err(inst, "call/ret not supported")),
 
             Opcode::Unknown(op) => {
-                return Err(err(
-                    inst,
-                    &format!("unsupported opcode 0x{op:04x}"),
-                ))
+                return Err(err(inst, &format!("unsupported opcode 0x{op:04x}")))
             }
         }
     }
@@ -274,13 +293,21 @@ fn handle_dcl(
         _ => {
             let semantic = map_semantic(&dcl.usage, dcl.usage_index, version.stage);
             match reg.file {
-                RegFile::Input | RegFile::Texture => inputs.push(IoDecl { reg, semantic, mask }),
+                RegFile::Input | RegFile::Texture => inputs.push(IoDecl {
+                    reg,
+                    semantic,
+                    mask,
+                }),
                 RegFile::RastOut
                 | RegFile::AttrOut
                 | RegFile::TexCoordOut
                 | RegFile::Output
                 | RegFile::ColorOut
-                | RegFile::DepthOut => outputs.push(IoDecl { reg, semantic, mask }),
+                | RegFile::DepthOut => outputs.push(IoDecl {
+                    reg,
+                    semantic,
+                    mask,
+                }),
                 _ => {
                     // Some decls apply to special register files; ignore them for now.
                 }
@@ -296,7 +323,10 @@ fn handle_def_f32(inst: &DecodedInstruction, out: &mut Vec<ConstDefF32>) -> Resu
         _ => return Err(err(inst, "def missing destination operand")),
     };
     if dst.reg.file != RegisterFile::Const {
-        return Err(err(inst, "def destination is not a float constant register"));
+        return Err(err(
+            inst,
+            "def destination is not a float constant register",
+        ));
     }
 
     let mut vals = [0f32; 4];
@@ -442,7 +472,11 @@ fn decode_compare_op(code: u8) -> CompareOp {
     }
 }
 
-fn push_binop<F>(stack: &mut Vec<Frame>, inst: &DecodedInstruction, ctor: F) -> Result<(), BuildError>
+fn push_binop<F>(
+    stack: &mut Vec<Frame>,
+    inst: &DecodedInstruction,
+    ctor: F,
+) -> Result<(), BuildError>
 where
     F: FnOnce(Dst, Src, Src, InstModifiers) -> IrOp,
 {
@@ -453,7 +487,11 @@ where
     push_stmt(stack, Stmt::Op(ctor(dst, src0, src1, modifiers)))
 }
 
-fn push_unop<F>(stack: &mut Vec<Frame>, inst: &DecodedInstruction, ctor: F) -> Result<(), BuildError>
+fn push_unop<F>(
+    stack: &mut Vec<Frame>,
+    inst: &DecodedInstruction,
+    ctor: F,
+) -> Result<(), BuildError>
 where
     F: FnOnce(Dst, Src, InstModifiers) -> IrOp,
 {
@@ -463,7 +501,11 @@ where
     push_stmt(stack, Stmt::Op(ctor(dst, src, modifiers)))
 }
 
-fn push_cmpop(stack: &mut Vec<Frame>, inst: &DecodedInstruction, op: CompareOp) -> Result<(), BuildError> {
+fn push_cmpop(
+    stack: &mut Vec<Frame>,
+    inst: &DecodedInstruction,
+    op: CompareOp,
+) -> Result<(), BuildError> {
     let dst = extract_dst(inst, 0)?;
     let src0 = extract_src(inst, 1)?;
     let src1 = extract_src(inst, 2)?;
@@ -537,7 +579,10 @@ fn push_texldl(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), 
     let coord = extract_src(inst, 1)?;
     let sampler_src = extract_src(inst, 2)?;
     if sampler_src.reg.file != RegFile::Sampler {
-        return Err(err(inst, "texldl sampler operand is not a sampler register"));
+        return Err(err(
+            inst,
+            "texldl sampler operand is not a sampler register",
+        ));
     }
     let modifiers = build_modifiers(inst)?;
     push_stmt(
@@ -561,7 +606,10 @@ fn push_texldd(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), 
     let ddy = extract_src(inst, 3)?;
     let sampler_src = extract_src(inst, 4)?;
     if sampler_src.reg.file != RegFile::Sampler {
-        return Err(err(inst, "texldd sampler operand is not a sampler register"));
+        return Err(err(
+            inst,
+            "texldd sampler operand is not a sampler register",
+        ));
     }
     let modifiers = build_modifiers(inst)?;
     push_stmt(
@@ -610,7 +658,10 @@ fn push_stmt(stack: &mut Vec<Frame>, stmt: Stmt) -> Result<(), BuildError> {
     Ok(())
 }
 
-fn to_ir_reg(inst: &DecodedInstruction, reg: &crate::sm3::decode::RegisterRef) -> Result<RegRef, BuildError> {
+fn to_ir_reg(
+    inst: &DecodedInstruction,
+    reg: &crate::sm3::decode::RegisterRef,
+) -> Result<RegRef, BuildError> {
     let (file, index) = match reg.file {
         RegisterFile::Temp => (RegFile::Temp, reg.index),
         RegisterFile::Input => (RegFile::Input, reg.index),

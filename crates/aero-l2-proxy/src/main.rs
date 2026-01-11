@@ -24,4 +24,3 @@ async fn main() -> std::io::Result<()> {
     handle.shutdown().await;
     Ok(())
 }
-

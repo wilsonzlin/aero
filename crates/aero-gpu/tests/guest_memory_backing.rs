@@ -172,7 +172,8 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
         guest.write(vb_gpa, &vb_bytes).expect("write vertex data");
 
         // 1x1 RGBA8 texture, solid red.
-        guest.write(tex_gpa, &[255, 0, 0, 255])
+        guest
+            .write(tex_gpa, &[255, 0, 0, 255])
             .expect("write texture data");
 
         // Build a minimal command stream that draws using the guest-backed resources.
@@ -280,9 +281,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
         });
 
         let cmd_gpa = 0x9000u64;
-        guest
-            .write(cmd_gpa, &stream)
-            .expect("write command stream");
+        guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
             &guest,
@@ -398,7 +397,8 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
         guest.write(ib_gpa, &ib_raw).expect("write index data");
 
         // 1x1 RGBA8 texture, solid red.
-        guest.write(tex_gpa, &[255, 0, 0, 255])
+        guest
+            .write(tex_gpa, &[255, 0, 0, 255])
             .expect("write texture data");
 
         let stream = build_stream(|out| {
@@ -530,9 +530,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
         });
 
         let cmd_gpa = 0x9000u64;
-        guest
-            .write(cmd_gpa, &stream)
-            .expect("write command stream");
+        guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
             &guest,
@@ -699,9 +697,7 @@ fn upload_resource_updates_host_owned_resources() {
         });
 
         let cmd_gpa = 0x9000u64;
-        guest
-            .write(cmd_gpa, &stream)
-            .expect("write command stream");
+        guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report =
             exec.process_submission_from_guest_memory(&guest, cmd_gpa, stream.len() as u32, 0, 0);
@@ -804,7 +800,9 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
         tex_bytes[4..8].copy_from_slice(&[9, 9, 9, 9]);
         tex_bytes[8..12].copy_from_slice(&[0, 255, 0, 255]);
         tex_bytes[12..16].copy_from_slice(&[7, 7, 7, 7]);
-        guest.write(tex_gpa, &tex_bytes).expect("write texture data");
+        guest
+            .write(tex_gpa, &tex_bytes)
+            .expect("write texture data");
 
         let stream = build_stream(|out| {
             // CREATE_BUFFER (handle=1) backed by ALLOC_VB.
@@ -1065,9 +1063,7 @@ fn draw_to_bgra_render_target_is_supported() {
         });
 
         let cmd_gpa = 0x9000u64;
-        guest
-            .write(cmd_gpa, &stream)
-            .expect("write command stream");
+        guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report =
             exec.process_submission_from_guest_memory(&guest, cmd_gpa, stream.len() as u32, 0, 0);

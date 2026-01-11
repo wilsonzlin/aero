@@ -1,4 +1,7 @@
-use crate::io::storage::{disk::{DiskBackend, DiskError, DiskResult}, SECTOR_SIZE};
+use crate::io::storage::{
+    disk::{DiskBackend, DiskError, DiskResult},
+    SECTOR_SIZE,
+};
 
 pub struct AtaDevice {
     backend: Box<dyn DiskBackend>,

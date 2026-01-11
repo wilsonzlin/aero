@@ -119,10 +119,7 @@ pub fn run(case: &TestCase) -> io::Result<QemuOutcome> {
         .arg("-m")
         .arg("16")
         .arg("-drive")
-        .arg(format!(
-            "if=floppy,format=raw,file={}",
-            img_path.display()
-        ))
+        .arg(format!("if=floppy,format=raw,file={}", img_path.display()))
         .arg("-boot")
         .arg("order=a")
         .arg("-monitor")
@@ -229,7 +226,9 @@ fn parse_output(out: &str) -> Result<QemuOutcome, String> {
     let mut mem_hash = None;
 
     for token in line.split_whitespace().skip(1) {
-        let Some((k, v)) = token.split_once('=') else { continue };
+        let Some((k, v)) = token.split_once('=') else {
+            continue;
+        };
         match k {
             "AX" => ax = Some(parse_hex_u16(v)?),
             "BX" => bx = Some(parse_hex_u16(v)?),

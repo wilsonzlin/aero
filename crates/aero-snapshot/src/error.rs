@@ -24,10 +24,7 @@ pub enum SnapshotError {
     #[error(
         "dirty page size mismatch (SaveOptions.ram.page_size={options} bytes, SnapshotSource::dirty_page_size()={dirty_page_size} bytes)"
     )]
-    DirtyPageSizeMismatch {
-        options: u32,
-        dirty_page_size: u32,
-    },
+    DirtyPageSizeMismatch { options: u32, dirty_page_size: u32 },
 
     #[error("guest RAM size mismatch (expected {expected} bytes, found {found} bytes)")]
     RamLenMismatch { expected: u64, found: u64 },

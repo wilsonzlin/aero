@@ -47,4 +47,3 @@ fn perf_monitor_tracks_window_stats() {
     assert!((s2.mips_avg - 1.5).abs() < 1e-9);
     assert!((s2.mips_p95 - 2.0).abs() < 1e-9);
 }
-

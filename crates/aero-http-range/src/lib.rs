@@ -129,7 +129,9 @@ pub fn parse_range_header(header_value: &str) -> Result<Vec<ByteRangeSpec>, Rang
     let mut specs = Vec::new();
     for part in rest.split(',') {
         if specs.len() >= MAX_RANGE_SPECS {
-            return Err(RangeParseError::TooManyRanges { max: MAX_RANGE_SPECS });
+            return Err(RangeParseError::TooManyRanges {
+                max: MAX_RANGE_SPECS,
+            });
         }
 
         let part = part.trim();
@@ -303,4 +305,3 @@ fn coalesce_sorted(mut ranges: Vec<ResolvedByteRange>) -> Vec<ResolvedByteRange>
     out.push(cur);
     out
 }
-

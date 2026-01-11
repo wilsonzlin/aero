@@ -325,10 +325,7 @@ pub fn exec<B: CpuBus>(
             exec_pshufb(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Phaddw
-        | Mnemonic::Phaddd
-        | Mnemonic::Phaddsw
-        | Mnemonic::Pmaddubsw => {
+        Mnemonic::Phaddw | Mnemonic::Phaddd | Mnemonic::Phaddsw | Mnemonic::Pmaddubsw => {
             check_xmm_available(state)?;
             require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSSE3)?;
             exec_ssse3_binop(state, bus, instr, next_ip)?;

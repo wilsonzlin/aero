@@ -20,4 +20,3 @@ impl ShaderVersion {
         self.major == 3
     }
 }
-

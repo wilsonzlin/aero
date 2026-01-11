@@ -17,7 +17,11 @@ impl StreamFormat {
         // 10:8  : rate divisor
         // 7:4   : bits per sample encoding
         // 3:0   : channels - 1
-        let base = if (fmt & (1 << 14)) != 0 { 44_100 } else { 48_000 };
+        let base = if (fmt & (1 << 14)) != 0 {
+            44_100
+        } else {
+            48_000
+        };
         let mult = match (fmt >> 11) & 0x7 {
             0 => 1,
             1 => 2,
@@ -97,7 +101,10 @@ pub fn decode_pcm_to_stereo_f32_into(input: &[u8], fmt: StreamFormat, out: &mut 
         let chan = |ch: u8| -> f32 {
             let ch = ch as usize;
             let off = frame_off + ch * fmt.bytes_per_sample();
-            decode_one_sample(&input[off..off + fmt.bytes_per_sample()], fmt.bits_per_sample)
+            decode_one_sample(
+                &input[off..off + fmt.bytes_per_sample()],
+                fmt.bits_per_sample,
+            )
         };
 
         let l = if fmt.channels > 0 { chan(0) } else { 0.0 };
@@ -292,7 +299,11 @@ impl LinearResampler {
     ///
     /// Returns the number of frames produced (which may be less than `dst_frames` if the source
     /// buffer does not contain enough data).
-    pub fn produce_interleaved_stereo_into(&mut self, dst_frames: usize, out: &mut Vec<f32>) -> usize {
+    pub fn produce_interleaved_stereo_into(
+        &mut self,
+        dst_frames: usize,
+        out: &mut Vec<f32>,
+    ) -> usize {
         out.clear();
         if dst_frames == 0 {
             return 0;
@@ -337,10 +348,7 @@ impl LinearResampler {
                 Some(v) => *v,
                 None => return false,
             };
-            (
-                lerp(a[0], b[0], frac as f32),
-                lerp(a[1], b[1], frac as f32),
-            )
+            (lerp(a[0], b[0], frac as f32), lerp(a[1], b[1], frac as f32))
         };
         out.push(l);
         out.push(r);

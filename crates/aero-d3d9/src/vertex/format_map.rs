@@ -24,14 +24,19 @@ pub enum ElementConversion {
     /// order expected by WebGPU `unorm8x4` vertex fetch.
     D3dColorBgraToRgbaUnorm8x4,
     /// Convert a half-float vector to 32-bit floats.
-    HalfToF32 { components: u8 },
+    HalfToF32 {
+        components: u8,
+    },
     /// Convert D3D9 `DEC3N` packed 10-10-10 to `float32x3`.
     Dec3NToF32x3,
     /// Convert D3D9 `UDEC3` packed 10-10-10 to `float32x3`.
     UDec3ToF32x3,
 }
 
-pub(super) fn map_element_format(ty: DeclType, caps: WebGpuVertexCaps) -> Result<ElementFormat, VertexInputError> {
+pub(super) fn map_element_format(
+    ty: DeclType,
+    caps: WebGpuVertexCaps,
+) -> Result<ElementFormat, VertexInputError> {
     let out = match ty {
         DeclType::Float1 => ElementFormat {
             format: VertexFormat::Float32,

@@ -1,4 +1,6 @@
-use aero_devices::acpi_pm::{register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, SLP_TYP_S5};
+use aero_devices::acpi_pm::{
+    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, SLP_TYP_S5,
+};
 use aero_devices::irq::IrqLine;
 use aero_platform::io::IoPortBus;
 use std::cell::{Cell, RefCell};

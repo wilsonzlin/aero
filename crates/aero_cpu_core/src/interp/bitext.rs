@@ -6,4 +6,3 @@ pub fn popcnt(val: u64, width_bits: u32) -> u32 {
         _ => unreachable!("unsupported popcnt width"),
     }
 }
-

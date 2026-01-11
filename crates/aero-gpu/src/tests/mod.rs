@@ -1,2 +1,2 @@
-mod shader_validation;
 mod protocol_parser;
+mod shader_validation;

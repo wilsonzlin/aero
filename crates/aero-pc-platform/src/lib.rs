@@ -187,10 +187,10 @@ impl PcPlatform {
 
         {
             let reset_events = reset_events.clone();
-            let sink = i8042::PlatformSystemControlSink::with_reset_sink(
-                chipset.a20(),
-                move |_kind| reset_events.borrow_mut().push(ResetEvent::System),
-            );
+            let sink =
+                i8042::PlatformSystemControlSink::with_reset_sink(chipset.a20(), move |_kind| {
+                    reset_events.borrow_mut().push(ResetEvent::System)
+                });
             i8042_ctrl
                 .borrow_mut()
                 .set_system_control_sink(Box::new(sink));
@@ -199,13 +199,10 @@ impl PcPlatform {
 
         io.register(
             0x92,
-            Box::new(A20Gate::with_reset_sink(
-                chipset.a20(),
-                {
-                    let reset_events = reset_events.clone();
-                    move |_kind| reset_events.borrow_mut().push(ResetEvent::System)
-                },
-            )),
+            Box::new(A20Gate::with_reset_sink(chipset.a20(), {
+                let reset_events = reset_events.clone();
+                move |_kind| reset_events.borrow_mut().push(ResetEvent::System)
+            })),
         );
 
         let sci_irq = PlatformIrqLine::isa(interrupts.clone(), 9);
@@ -250,30 +247,30 @@ impl PcPlatform {
 
         memory
             .map_mmio(
-            LAPIC_MMIO_BASE,
-            LAPIC_MMIO_SIZE,
-            Box::new(LapicMmio {
-                interrupts: interrupts.clone(),
-            }),
+                LAPIC_MMIO_BASE,
+                LAPIC_MMIO_SIZE,
+                Box::new(LapicMmio {
+                    interrupts: interrupts.clone(),
+                }),
             )
             .unwrap();
         memory
             .map_mmio(
-            IOAPIC_MMIO_BASE,
-            IOAPIC_MMIO_SIZE,
-            Box::new(IoApicMmio {
-                interrupts: interrupts.clone(),
-            }),
+                IOAPIC_MMIO_BASE,
+                IOAPIC_MMIO_SIZE,
+                Box::new(IoApicMmio {
+                    interrupts: interrupts.clone(),
+                }),
             )
             .unwrap();
         memory
             .map_mmio(
-            hpet::HPET_MMIO_BASE,
-            hpet::HPET_MMIO_SIZE,
-            Box::new(HpetMmio {
-                hpet: hpet.clone(),
-                interrupts: interrupts.clone(),
-            }),
+                hpet::HPET_MMIO_BASE,
+                hpet::HPET_MMIO_SIZE,
+                Box::new(HpetMmio {
+                    hpet: hpet.clone(),
+                    interrupts: interrupts.clone(),
+                }),
             )
             .unwrap();
 

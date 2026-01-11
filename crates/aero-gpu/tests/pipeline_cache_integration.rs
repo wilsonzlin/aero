@@ -1,5 +1,7 @@
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
-use aero_gpu::pipeline_key::{ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderStage};
+use aero_gpu::pipeline_key::{
+    ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderStage,
+};
 use aero_gpu::{GpuCapabilities, GpuError};
 
 fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -13,8 +15,10 @@ fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
             .unwrap_or(true);
 
         if needs_runtime_dir {
-            let dir = std::env::temp_dir()
-                .join(format!("aero-gpu-xdg-runtime-{}-pipeline-cache", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "aero-gpu-xdg-runtime-{}-pipeline-cache",
+                std::process::id()
+            ));
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
             std::env::set_var("XDG_RUNTIME_DIR", &dir);
@@ -49,7 +53,10 @@ fn render_pipeline_is_cached() {
         return;
     };
 
-    let mut cache = PipelineCache::new(PipelineCacheConfig::default(), GpuCapabilities::from_device(&device));
+    let mut cache = PipelineCache::new(
+        PipelineCacheConfig::default(),
+        GpuCapabilities::from_device(&device),
+    );
 
     const VS: &str = r#"
         @vertex

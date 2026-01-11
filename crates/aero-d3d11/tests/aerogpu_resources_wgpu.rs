@@ -61,7 +61,11 @@ async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
     Ok((device, queue))
 }
 
-async fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Result<Vec<u8>> {
+async fn read_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+) -> Result<Vec<u8>> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("aerogpu_resources read_buffer staging"),
         size: buffer.size(),
@@ -226,4 +230,3 @@ fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
         Ok(())
     })
 }
-

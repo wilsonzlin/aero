@@ -63,7 +63,9 @@ impl<W: Write> TraceWriter<W> {
         container_version: u32,
     ) -> Result<Self, TraceWriteError> {
         if container_version != CONTAINER_VERSION_V1 && container_version != CONTAINER_VERSION_V2 {
-            return Err(TraceWriteError::UnsupportedContainerVersion(container_version));
+            return Err(TraceWriteError::UnsupportedContainerVersion(
+                container_version,
+            ));
         }
 
         let meta_bytes = meta.to_json_bytes();

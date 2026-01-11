@@ -119,4 +119,3 @@ fn real_mode_payload_enables_a20_and_stops_aliasing() {
         "expected 0x1_00000 to contain 0x4444 after enabling A20"
     );
 }
-

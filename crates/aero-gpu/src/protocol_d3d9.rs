@@ -511,14 +511,7 @@ impl StreamEncoder {
         self.push_command(Opcode::SetViewport, &payload);
     }
 
-    pub fn set_scissor_rect(
-        &mut self,
-        context_id: u32,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-    ) {
+    pub fn set_scissor_rect(&mut self, context_id: u32, x: u32, y: u32, width: u32, height: u32) {
         let mut payload = Vec::with_capacity(20);
         payload.extend_from_slice(&context_id.to_le_bytes());
         payload.extend_from_slice(&x.to_le_bytes());

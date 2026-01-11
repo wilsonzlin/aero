@@ -65,8 +65,8 @@ fn parse_pkg_length(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
 
 fn parse_integer(bytes: &[u8], offset: usize) -> Option<(u64, usize)> {
     match *bytes.get(offset)? {
-        0x00 => Some((0, 1)), // ZeroOp
-        0x01 => Some((1, 1)), // OneOp
+        0x00 => Some((0, 1)),                              // ZeroOp
+        0x01 => Some((1, 1)),                              // OneOp
         0x0A => Some((*bytes.get(offset + 1)? as u64, 2)), // BytePrefix
         0x0B => Some((
             u16::from_le_bytes(bytes.get(offset + 1..offset + 3)?.try_into().ok()?) as u64,
@@ -237,7 +237,11 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
         found.push(read_u64_le(xsdt_blob, 36 + i * 8));
     }
     found.sort_unstable();
-    let mut expected = vec![tables.addresses.fadt, tables.addresses.madt, tables.addresses.hpet];
+    let mut expected = vec![
+        tables.addresses.fadt,
+        tables.addresses.madt,
+        tables.addresses.hpet,
+    ];
     expected.sort_unstable();
     assert_eq!(found, expected);
 
@@ -256,7 +260,10 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     assert_eq!(&fadt_hdr.signature, b"FACP");
     assert_eq!(fadt_hdr.revision, 3);
     assert_eq!(fadt_hdr.length as usize, tables.fadt.len());
-    assert_eq!(checksum(mem.read(tables.addresses.fadt, fadt_hdr.length as usize)), 0);
+    assert_eq!(
+        checksum(mem.read(tables.addresses.fadt, fadt_hdr.length as usize)),
+        0
+    );
 
     let fadt = mem.read(tables.addresses.fadt, fadt_hdr.length as usize);
     let dsdt32 = read_u32_le(fadt, 40) as u64;
@@ -270,7 +277,8 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     assert_eq!(x_facs, tables.addresses.facs);
     assert!(
         tables.addresses.facs >= placement.nvs_base
-            && tables.addresses.facs + tables.facs.len() as u64 <= placement.nvs_base + placement.nvs_size
+            && tables.addresses.facs + tables.facs.len() as u64
+                <= placement.nvs_base + placement.nvs_size
     );
 
     // PM blocks should match config and be internally consistent.
@@ -294,7 +302,10 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     let dsdt_hdr = parse_sdt_header(dsdt_hdr_raw);
     assert_eq!(&dsdt_hdr.signature, b"DSDT");
     assert_eq!(dsdt_hdr.revision, 2);
-    assert_eq!(checksum(mem.read(tables.addresses.dsdt, dsdt_hdr.length as usize)), 0);
+    assert_eq!(
+        checksum(mem.read(tables.addresses.dsdt, dsdt_hdr.length as usize)),
+        0
+    );
 
     // Minimal AML sanity check: should contain the device names we emit.
     let dsdt = mem.read(tables.addresses.dsdt, dsdt_hdr.length as usize);
@@ -344,7 +355,10 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     let madt_hdr = parse_sdt_header(madt_hdr_raw);
     assert_eq!(&madt_hdr.signature, b"APIC");
     assert_eq!(madt_hdr.revision, 3);
-    assert_eq!(checksum(mem.read(tables.addresses.madt, madt_hdr.length as usize)), 0);
+    assert_eq!(
+        checksum(mem.read(tables.addresses.madt, madt_hdr.length as usize)),
+        0
+    );
 
     let madt = mem.read(tables.addresses.madt, madt_hdr.length as usize);
     assert_eq!(read_u32_le(madt, 36), cfg.local_apic_addr);
@@ -398,7 +412,10 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     let hpet_hdr = parse_sdt_header(hpet_hdr_raw);
     assert_eq!(&hpet_hdr.signature, b"HPET");
     assert_eq!(hpet_hdr.revision, 1);
-    assert_eq!(checksum(mem.read(tables.addresses.hpet, hpet_hdr.length as usize)), 0);
+    assert_eq!(
+        checksum(mem.read(tables.addresses.hpet, hpet_hdr.length as usize)),
+        0
+    );
     let hpet = mem.read(tables.addresses.hpet, hpet_hdr.length as usize);
     let hpet_gas_addr = read_u64_le(hpet, 44);
     assert_eq!(hpet_gas_addr, cfg.hpet_addr);

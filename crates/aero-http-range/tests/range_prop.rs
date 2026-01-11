@@ -108,7 +108,10 @@ fn rejects_too_many_ranges() {
     };
 
     let err = parse_range_header(&header).unwrap_err();
-    assert!(matches!(err, RangeParseError::TooManyRanges { .. }), "{err:?}");
+    assert!(
+        matches!(err, RangeParseError::TooManyRanges { .. }),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -135,4 +138,3 @@ fn accepts_weird_whitespace() {
     assert_eq!(resolved[0].start, 0);
     assert_eq!(resolved[0].end, 3);
 }
-

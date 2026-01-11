@@ -404,7 +404,8 @@ impl AeroGpuExecutor {
                 decode_cmd_stream(mem, regs.abi_version, &desc, &mut decode_errors);
 
             if !decode_errors.is_empty() {
-                regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+                regs.stats.malformed_submissions =
+                    regs.stats.malformed_submissions.saturating_add(1);
                 regs.irq_status |= irq_bits::ERROR;
             }
 
@@ -518,7 +519,8 @@ impl AeroGpuExecutor {
                     };
 
                     if desc.signal_fence > regs.completed_fence {
-                        let already_completed = self.completed_before_submit.remove(&desc.signal_fence);
+                        let already_completed =
+                            self.completed_before_submit.remove(&desc.signal_fence);
                         self.in_flight.insert(
                             desc.signal_fence,
                             InFlightSubmission {
@@ -733,7 +735,8 @@ fn decode_alloc_table(
         ));
         return (Some(header), Vec::new());
     };
-    let Some(required) = u64::from(AeroGpuAllocTableHeader::SIZE_BYTES).checked_add(entry_bytes) else {
+    let Some(required) = u64::from(AeroGpuAllocTableHeader::SIZE_BYTES).checked_add(entry_bytes)
+    else {
         decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
             AeroGpuAllocTableDecodeError::AddressOverflow,
         ));
@@ -762,13 +765,15 @@ fn decode_alloc_table(
 
     let mut seen = HashSet::new();
     for idx in 0..header.entry_count {
-        let Some(entry_offset) = u64::from(idx).checked_mul(u64::from(header.entry_stride_bytes)) else {
+        let Some(entry_offset) = u64::from(idx).checked_mul(u64::from(header.entry_stride_bytes))
+        else {
             decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
                 AeroGpuAllocTableDecodeError::AddressOverflow,
             ));
             break;
         };
-        let Some(offset) = u64::from(AeroGpuAllocTableHeader::SIZE_BYTES).checked_add(entry_offset) else {
+        let Some(offset) = u64::from(AeroGpuAllocTableHeader::SIZE_BYTES).checked_add(entry_offset)
+        else {
             decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
                 AeroGpuAllocTableDecodeError::AddressOverflow,
             ));
@@ -884,8 +889,8 @@ fn cmd_stream_has_vsync_present_bytes(bytes: &[u8]) -> Result<bool, ()> {
         return Err(());
     }
 
-    let stream_hdr =
-        decode_cmd_stream_header_le(&bytes[..ProtocolCmdStreamHeader::SIZE_BYTES]).map_err(|_| ())?;
+    let stream_hdr = decode_cmd_stream_header_le(&bytes[..ProtocolCmdStreamHeader::SIZE_BYTES])
+        .map_err(|_| ())?;
     let declared_size = stream_hdr.size_bytes as usize;
     if declared_size > bytes.len() {
         return Err(());
@@ -898,8 +903,8 @@ fn cmd_stream_has_vsync_present_bytes(bytes: &[u8]) -> Result<bool, ()> {
             return Err(());
         }
 
-        let cmd_hdr =
-            decode_cmd_hdr_le(&bytes[offset..offset + AerogpuCmdHdr::SIZE_BYTES]).map_err(|_| ())?;
+        let cmd_hdr = decode_cmd_hdr_le(&bytes[offset..offset + AerogpuCmdHdr::SIZE_BYTES])
+            .map_err(|_| ())?;
 
         let cmd_size = cmd_hdr.size_bytes as usize;
         let end = offset.checked_add(cmd_size).ok_or(())?;
@@ -1187,7 +1192,10 @@ impl core::fmt::Debug for AerogpuSubmissionTrace {
 #[cfg(feature = "aerogpu-trace")]
 impl AerogpuSubmissionTrace {
     fn new_in_memory(emulator_version: impl Into<String>) -> Result<Self, TraceWriteError> {
-        let mut meta = TraceMeta::new(emulator_version, crate::devices::aerogpu_regs::AEROGPU_ABI_VERSION_U32);
+        let mut meta = TraceMeta::new(
+            emulator_version,
+            crate::devices::aerogpu_regs::AEROGPU_ABI_VERSION_U32,
+        );
         meta.notes = Some("raw aerogpu_ring submissions + aerogpu_cmd stream bytes".to_string());
         let writer = TraceWriter::new_v2(Vec::<u8>::new(), &meta)?;
         Ok(Self {
@@ -1272,7 +1280,8 @@ impl AerogpuSubmissionTrace {
                         let alloc_id = u32::from_le_bytes(table[off..off + 4].try_into().unwrap());
                         let flags = u32::from_le_bytes(table[off + 4..off + 8].try_into().unwrap());
                         let gpa = u64::from_le_bytes(table[off + 8..off + 16].try_into().unwrap());
-                        let size = u64::from_le_bytes(table[off + 16..off + 24].try_into().unwrap());
+                        let size =
+                            u64::from_le_bytes(table[off + 16..off + 24].try_into().unwrap());
 
                         if alloc_id != 0 && gpa != 0 && size != 0 {
                             let size_u32 = u32::try_from(size).unwrap_or(u32::MAX);

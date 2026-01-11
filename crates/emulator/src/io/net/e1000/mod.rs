@@ -1,14 +1,16 @@
 use std::collections::{HashMap, VecDeque};
 
+mod offload;
 mod regs;
 mod rx;
 mod tx;
-mod offload;
 
 pub use regs::*;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
 use offload::TxOffloadContext;
 
@@ -697,7 +699,10 @@ impl IoSnapshot for E1000Device {
             .finish();
         w.field_bytes(TAG_REGS, regs);
 
-        w.field_bytes(TAG_TX_PARTIAL, Encoder::new().vec_u8(&self.tx_partial).finish());
+        w.field_bytes(
+            TAG_TX_PARTIAL,
+            Encoder::new().vec_u8(&self.tx_partial).finish(),
+        );
         w.field_bytes(
             TAG_TX_CTX,
             Encoder::new()
@@ -720,7 +725,9 @@ impl IoSnapshot for E1000Device {
                 .u32(css as u32)
                 .u32(cso as u32)
                 .finish(),
-            Some(TxPacketState::Advanced { cmd, popts }) => Encoder::new().u8(2).u8(cmd).u8(popts).finish(),
+            Some(TxPacketState::Advanced { cmd, popts }) => {
+                Encoder::new().u8(2).u8(cmd).u8(popts).finish()
+            }
         };
         w.field_bytes(TAG_TX_STATE, tx_state);
         w.field_bytes(TAG_MAC, self.mac.to_vec());
@@ -967,8 +974,26 @@ mod tests {
         let total_len = (20 + 20 + payload_len) as u16;
         // IPv4 header (checksum filled by offload).
         frame.extend_from_slice(&[
-            0x45, 0x00, (total_len >> 8) as u8, total_len as u8, 0x12, 0x34, 0x00, 0x00, 64, 6, 0x00, 0x00, 192,
-            168, 0, 2, 192, 168, 0, 1,
+            0x45,
+            0x00,
+            (total_len >> 8) as u8,
+            total_len as u8,
+            0x12,
+            0x34,
+            0x00,
+            0x00,
+            64,
+            6,
+            0x00,
+            0x00,
+            192,
+            168,
+            0,
+            2,
+            192,
+            168,
+            0,
+            1,
         ]);
 
         // TCP header (checksum filled by offload).
@@ -998,8 +1023,26 @@ mod tests {
 
         let total_len = (20 + 8 + payload.len()) as u16;
         frame.extend_from_slice(&[
-            0x45, 0x00, (total_len >> 8) as u8, total_len as u8, 0x00, 0x10, 0x00, 0x00, 64, 17, 0x00, 0x00, 10, 0,
-            0, 1, 10, 0, 0, 2,
+            0x45,
+            0x00,
+            (total_len >> 8) as u8,
+            total_len as u8,
+            0x00,
+            0x10,
+            0x00,
+            0x00,
+            64,
+            17,
+            0x00,
+            0x00,
+            10,
+            0,
+            0,
+            1,
+            10,
+            0,
+            0,
+            2,
         ]);
 
         let udp_len = (8 + payload.len()) as u16;
@@ -1041,7 +1084,14 @@ mod tests {
         mem.write(addr + 14, &[hdr_len, 0]);
     }
 
-    fn write_tx_data_desc(mem: &mut TestMemory, addr: u64, buf_addr: u64, len: u16, cmd: u8, popts: u8) {
+    fn write_tx_data_desc(
+        mem: &mut TestMemory,
+        addr: u64,
+        buf_addr: u64,
+        len: u16,
+        cmd: u8,
+        popts: u8,
+    ) {
         mem.write(addr + 0, &buf_addr.to_le_bytes());
         mem.write(addr + 8, &len.to_le_bytes());
         mem.write(addr + 10, &[0x30]); // DTYP=3 (data)
@@ -1125,8 +1175,16 @@ mod tests {
 
         dev.poll(&mut mem, &mut backend);
 
-        assert_ne!(mem.read_u8(0x1000 + 12) & 0x01, 0, "context descriptor should be marked DD");
-        assert_ne!(mem.read_u8(0x1010 + 12) & 0x01, 0, "data descriptor should be marked DD");
+        assert_ne!(
+            mem.read_u8(0x1000 + 12) & 0x01,
+            0,
+            "context descriptor should be marked DD"
+        );
+        assert_ne!(
+            mem.read_u8(0x1010 + 12) & 0x01,
+            0,
+            "data descriptor should be marked DD"
+        );
         assert_eq!(dev.mmio_read(REG_TDH, 4), 2);
 
         assert_eq!(backend.frames.len(), 3);
@@ -1145,7 +1203,12 @@ mod tests {
             let expected_payload = if idx < 2 { 1460 } else { 4000 - 2 * 1460 };
             assert_eq!(total_len, 20 + 20 + expected_payload);
 
-            let seq = u32::from_be_bytes([seg[tcp_off + 4], seg[tcp_off + 5], seg[tcp_off + 6], seg[tcp_off + 7]]);
+            let seq = u32::from_be_bytes([
+                seg[tcp_off + 4],
+                seg[tcp_off + 5],
+                seg[tcp_off + 6],
+                seg[tcp_off + 7],
+            ]);
             assert_eq!(seq, base_seq + (idx as u32) * 1460);
 
             let psh_set = (seg[tcp_off + 13] & 0x08) != 0;
@@ -1193,8 +1256,16 @@ mod tests {
 
         dev.poll(&mut mem, &mut backend);
 
-        assert_ne!(mem.read_u8(0x2000 + 12) & 0x01, 0, "context descriptor should be marked DD");
-        assert_ne!(mem.read_u8(0x2010 + 12) & 0x01, 0, "data descriptor should be marked DD");
+        assert_ne!(
+            mem.read_u8(0x2000 + 12) & 0x01,
+            0,
+            "context descriptor should be marked DD"
+        );
+        assert_ne!(
+            mem.read_u8(0x2010 + 12) & 0x01,
+            0,
+            "data descriptor should be marked DD"
+        );
 
         assert_eq!(backend.frames.len(), 1);
         let out = &backend.frames[0];
@@ -1435,14 +1506,17 @@ mod tests {
         assert_eq!(mdic & MDIC_DATA_MASK, 0x0004 | 0x0020);
 
         // Write BMCR (reg 0) and read back.
-        let write_cmd =
-            (0 << MDIC_REG_SHIFT) | (1 << MDIC_PHY_SHIFT) | MDIC_OP_WRITE | 0x1234;
+        let write_cmd = (0 << MDIC_REG_SHIFT) | (1 << MDIC_PHY_SHIFT) | MDIC_OP_WRITE | 0x1234;
         dev.mmio_write(REG_MDIC, 4, write_cmd);
         let mdic = dev.mmio_read(REG_MDIC, 4);
         assert_ne!(mdic & MDIC_READY, 0);
         assert_eq!(mdic & MDIC_DATA_MASK, 0x1234);
 
-        dev.mmio_write(REG_MDIC, 4, (0 << MDIC_REG_SHIFT) | (1 << MDIC_PHY_SHIFT) | MDIC_OP_READ);
+        dev.mmio_write(
+            REG_MDIC,
+            4,
+            (0 << MDIC_REG_SHIFT) | (1 << MDIC_PHY_SHIFT) | MDIC_OP_READ,
+        );
         let mdic = dev.mmio_read(REG_MDIC, 4);
         assert_eq!(mdic & MDIC_DATA_MASK, 0x1234);
     }

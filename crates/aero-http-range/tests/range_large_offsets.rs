@@ -44,7 +44,8 @@ fn http_range_supports_offsets_beyond_4gb_and_suffix_ranges() {
     // Explicit range starting beyond 2^32.
     let high_len = SENTINEL_HIGH.len() as u64;
     let high_end = HIGH_OFFSET + high_len - 1;
-    let (status, headers, body) = http_get_range(server.port, &format!("bytes={HIGH_OFFSET}-{high_end}"));
+    let (status, headers, body) =
+        http_get_range(server.port, &format!("bytes={HIGH_OFFSET}-{high_end}"));
     assert_eq!(status, 206);
     assert_eq!(body, SENTINEL_HIGH);
 
@@ -161,9 +162,7 @@ fn http_get_range(port: u16, range: &str) -> (u16, Vec<(String, String)>, Vec<u8
 fn spawn_disk_image_server(file_path: PathBuf, expected_requests: usize) -> DiskImageServerHandle {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
     let port = listener.local_addr().expect("local addr").port();
-    listener
-        .set_nonblocking(true)
-        .expect("set non-blocking");
+    listener.set_nonblocking(true).expect("set non-blocking");
 
     let join = thread::spawn(move || {
         for request_idx in 0..expected_requests {
@@ -225,10 +224,11 @@ fn handle_connection(mut stream: TcpStream, file_path: &PathBuf) -> std::io::Res
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "missing Range"))?;
 
     let size = std::fs::metadata(file_path)?.len();
-    let specs =
-        parse_range_header(range).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Range header"))?;
-    let resolved =
-        resolve_ranges(&specs, size, true).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "unsatisfiable Range"))?;
+    let specs = parse_range_header(range).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Range header")
+    })?;
+    let resolved = resolve_ranges(&specs, size, true)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "unsatisfiable Range"))?;
     if resolved.len() != 1 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

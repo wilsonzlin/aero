@@ -34,9 +34,24 @@ fn assert_virtio_identity_matches_profile(dev: &VirtioPciDevice, profile: PciDev
     assert_eq!(read_u16(dev, 0x02), profile.device_id, "{}", profile.name);
     assert_eq!(read_u8(dev, 0x08), profile.revision_id, "{}", profile.name);
 
-    assert_eq!(read_u8(dev, 0x09), profile.class.prog_if, "{}", profile.name);
-    assert_eq!(read_u8(dev, 0x0a), profile.class.sub_class, "{}", profile.name);
-    assert_eq!(read_u8(dev, 0x0b), profile.class.base_class, "{}", profile.name);
+    assert_eq!(
+        read_u8(dev, 0x09),
+        profile.class.prog_if,
+        "{}",
+        profile.name
+    );
+    assert_eq!(
+        read_u8(dev, 0x0a),
+        profile.class.sub_class,
+        "{}",
+        profile.name
+    );
+    assert_eq!(
+        read_u8(dev, 0x0b),
+        profile.class.base_class,
+        "{}",
+        profile.name
+    );
 
     assert_eq!(read_u8(dev, 0x0e), profile.header_type, "{}", profile.name);
     assert_eq!(
@@ -45,7 +60,12 @@ fn assert_virtio_identity_matches_profile(dev: &VirtioPciDevice, profile: PciDev
         "{}",
         profile.name
     );
-    assert_eq!(read_u16(dev, 0x2e), profile.subsystem_id, "{}", profile.name);
+    assert_eq!(
+        read_u16(dev, 0x2e),
+        profile.subsystem_id,
+        "{}",
+        profile.name
+    );
 
     let status = read_u16(dev, 0x06);
     assert_ne!(
@@ -84,7 +104,9 @@ fn virtio_pci_device_ids_match_canonical_profile() {
     assert_virtio_identity_matches_profile(&input, VIRTIO_INPUT);
 
     let snd = VirtioPciDevice::new(
-        Box::new(VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8))),
+        Box::new(VirtioSnd::new(
+            aero_audio::ring::AudioRingBuffer::new_stereo(8),
+        )),
         Box::new(InterruptLog::default()),
     );
     assert_virtio_identity_matches_profile(&snd, VIRTIO_SND);

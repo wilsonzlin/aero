@@ -20,8 +20,7 @@ impl ManualClock {
     }
 
     pub fn advance_ns(&self, delta_ns: u64) {
-        self.now_ns
-            .set(self.now_ns.get().wrapping_add(delta_ns));
+        self.now_ns.set(self.now_ns.get().wrapping_add(delta_ns));
     }
 }
 
@@ -39,4 +38,3 @@ impl Clock for NullClock {
         0
     }
 }
-

@@ -74,7 +74,11 @@ async fn aerogpu_d3d9_triangle_smoke() {
 
     let mut processor = CommandProcessor::new(ProcessorConfig { validation: true });
     let report = processor.process(&bytes).await;
-    assert!(report.is_ok(), "unexpected processor events: {:?}", report.events);
+    assert!(
+        report.is_ok(),
+        "unexpected processor events: {:?}",
+        report.events
+    );
 
     let (width, height, pixels) = processor
         .readback_swapchain_rgba8(1, 1)

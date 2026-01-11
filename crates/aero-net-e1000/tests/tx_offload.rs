@@ -29,7 +29,9 @@ struct TestDma {
 
 impl TestDma {
     fn new(size: usize) -> Self {
-        Self { mem: vec![0u8; size] }
+        Self {
+            mem: vec![0u8; size],
+        }
     }
 
     fn write(&mut self, addr: u64, bytes: &[u8]) {
@@ -61,8 +63,26 @@ fn build_ipv4_tcp_frame(payload_len: usize) -> Vec<u8> {
     let total_len = (20 + 20 + payload_len) as u16;
     // IPv4 header (checksum filled by offload).
     frame.extend_from_slice(&[
-        0x45, 0x00, (total_len >> 8) as u8, total_len as u8, 0x12, 0x34, 0x00, 0x00, 64, 6, 0x00, 0x00, 192,
-        168, 0, 2, 192, 168, 0, 1,
+        0x45,
+        0x00,
+        (total_len >> 8) as u8,
+        total_len as u8,
+        0x12,
+        0x34,
+        0x00,
+        0x00,
+        64,
+        6,
+        0x00,
+        0x00,
+        192,
+        168,
+        0,
+        2,
+        192,
+        168,
+        0,
+        1,
     ]);
 
     // TCP header (checksum filled by offload).
@@ -92,8 +112,26 @@ fn build_ipv4_udp_frame(payload: &[u8]) -> Vec<u8> {
 
     let total_len = (20 + 8 + payload.len()) as u16;
     frame.extend_from_slice(&[
-        0x45, 0x00, (total_len >> 8) as u8, total_len as u8, 0x00, 0x10, 0x00, 0x00, 64, 17, 0x00, 0x00, 10, 0,
-        0, 1, 10, 0, 0, 2,
+        0x45,
+        0x00,
+        (total_len >> 8) as u8,
+        total_len as u8,
+        0x00,
+        0x10,
+        0x00,
+        0x00,
+        64,
+        17,
+        0x00,
+        0x00,
+        10,
+        0,
+        0,
+        1,
+        10,
+        0,
+        0,
+        2,
     ]);
 
     let udp_len = (8 + payload.len()) as u16;
@@ -106,7 +144,14 @@ fn build_ipv4_udp_frame(payload: &[u8]) -> Vec<u8> {
     frame
 }
 
-fn write_tx_ctx_desc(dma: &mut TestDma, addr: u64, frame_len: usize, mss: u16, hdr_len: u8, tcp: bool) {
+fn write_tx_ctx_desc(
+    dma: &mut TestDma,
+    addr: u64,
+    frame_len: usize,
+    mss: u16,
+    hdr_len: u8,
+    tcp: bool,
+) {
     let ipcss = 14u8;
     let ipcso = ipcss + 10;
     let ipcse = ipcss as u16 + 20 - 1;
@@ -168,8 +213,16 @@ fn tso_context_descriptor_segments_and_inserts_checksums() {
 
     dev.mmio_write_u32(&mut dma, REG_TDT, 2);
 
-    assert_ne!(dma.mem[0x1000 + 12] & 0x01, 0, "context descriptor should be marked DD");
-    assert_ne!(dma.mem[0x1010 + 12] & 0x01, 0, "data descriptor should be marked DD");
+    assert_ne!(
+        dma.mem[0x1000 + 12] & 0x01,
+        0,
+        "context descriptor should be marked DD"
+    );
+    assert_ne!(
+        dma.mem[0x1010 + 12] & 0x01,
+        0,
+        "data descriptor should be marked DD"
+    );
 
     let mut out = Vec::new();
     while let Some(frame) = dev.pop_tx_frame() {
@@ -192,7 +245,12 @@ fn tso_context_descriptor_segments_and_inserts_checksums() {
         let expected_payload = if idx < 2 { 1460 } else { 4000 - 2 * 1460 };
         assert_eq!(total_len, 20 + 20 + expected_payload);
 
-        let seq = u32::from_be_bytes([seg[tcp_off + 4], seg[tcp_off + 5], seg[tcp_off + 6], seg[tcp_off + 7]]);
+        let seq = u32::from_be_bytes([
+            seg[tcp_off + 4],
+            seg[tcp_off + 5],
+            seg[tcp_off + 6],
+            seg[tcp_off + 7],
+        ]);
         assert_eq!(seq, base_seq + (idx as u32) * 1460);
 
         let psh_set = (seg[tcp_off + 13] & 0x08) != 0;
@@ -239,8 +297,16 @@ fn checksum_offload_udp_inserts_checksums() {
 
     dev.mmio_write_u32(&mut dma, REG_TDT, 2);
 
-    assert_ne!(dma.mem[0x2000 + 12] & 0x01, 0, "context descriptor should be marked DD");
-    assert_ne!(dma.mem[0x2010 + 12] & 0x01, 0, "data descriptor should be marked DD");
+    assert_ne!(
+        dma.mem[0x2000 + 12] & 0x01,
+        0,
+        "context descriptor should be marked DD"
+    );
+    assert_ne!(
+        dma.mem[0x2010 + 12] & 0x01,
+        0,
+        "data descriptor should be marked DD"
+    );
 
     let out = dev.pop_tx_frame().expect("frame");
     assert!(dev.pop_tx_frame().is_none());

@@ -25,5 +25,8 @@ pub enum GpuError {
         "shader module not found in cache (stage={stage:?}, hash=0x{hash:032x}). \
          Ensure you called PipelineCache::get_or_create_shader_module for this WGSL."
     )]
-    MissingShaderModule { stage: ShaderStage, hash: ShaderHash },
+    MissingShaderModule {
+        stage: ShaderStage,
+        hash: ShaderHash,
+    },
 }

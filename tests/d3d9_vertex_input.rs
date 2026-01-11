@@ -251,7 +251,11 @@ fn create_pipeline(
     })
 }
 
-fn create_color_target(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_color_target(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("color target"),
         size: wgpu::Extent3d {
@@ -338,7 +342,11 @@ fn render_single_stream_position_color_uv() {
     let vertices: Vec<VertexPosColorUv> = positions
         .into_iter()
         .zip(uvs.into_iter())
-        .map(|(pos, uv)| VertexPosColorUv { pos, color: color_red, uv })
+        .map(|(pos, uv)| VertexPosColorUv {
+            pos,
+            color: color_red,
+            uv,
+        })
         .collect();
 
     let vb_bytes = if let Some(plan) = translated.conversions.get(&0) {
@@ -462,7 +470,10 @@ fn render_two_stream_position_uv_color() {
     let color_red: u32 = 0xffff_0000;
     let vertices_extra: Vec<VertexUvColor> = uvs
         .into_iter()
-        .map(|uv| VertexUvColor { uv, color: color_red })
+        .map(|uv| VertexUvColor {
+            uv,
+            color: color_red,
+        })
         .collect();
 
     let vb0_bytes = if let Some(plan) = translated.conversions.get(&0) {
@@ -610,8 +621,11 @@ fn render_instanced_draw_per_instance_color() {
         usage: wgpu::BufferUsages::VERTEX,
     });
     let vb1_bytes = if let Some(plan) = translated.conversions.get(&1) {
-        plan.convert_vertices(bytemuck::cast_slice(&instance_colors), instance_colors.len())
-            .unwrap()
+        plan.convert_vertices(
+            bytemuck::cast_slice(&instance_colors),
+            instance_colors.len(),
+        )
+        .unwrap()
     } else {
         bytemuck::cast_slice(&instance_colors).to_vec()
     };

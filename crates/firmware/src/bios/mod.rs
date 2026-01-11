@@ -34,12 +34,12 @@ use crate::rtc::{CmosRtc, DateTime};
 use crate::video::VideoDevice;
 use machine::{BlockDevice, CpuState, DiskError, FirmwareMemory, MemoryAccess, Segment};
 
-pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
 pub use acpi::{AcpiBuilder, AcpiInfo};
+pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
 pub use interrupts::E820Entry;
 pub use pci::{PciConfigSpace, PciDevice};
-pub use snapshot::BiosSnapshot;
 pub use rom::build_bios_rom;
+pub use snapshot::BiosSnapshot;
 
 pub use aero_acpi::AcpiPlacement;
 
@@ -307,10 +307,7 @@ mod tests {
         // Reset vector at F000:FFF0 should be a FAR JMP to F000:E000.
         let off = 0xFFF0usize;
         assert_eq!(rom_image[off + 0], 0xEA);
-        assert_eq!(
-            &rom_image[off + 1..off + 5],
-            &[0x00, 0xE0, 0x00, 0xF0]
-        );
+        assert_eq!(&rom_image[off + 1..off + 5], &[0x00, 0xE0, 0x00, 0xF0]);
 
         // Fallback stub at F000:E000: `cli; hlt; jmp $-2`.
         let stub = 0xE000usize;
@@ -403,10 +400,7 @@ mod tests {
         let rsdp = mem.read_bytes(rsdp_addr, 36);
         assert_eq!(&rsdp[0..8], b"RSD PTR ");
 
-        let checksum20 = rsdp[0..20]
-            .iter()
-            .copied()
-            .fold(0u8, u8::wrapping_add);
+        let checksum20 = rsdp[0..20].iter().copied().fold(0u8, u8::wrapping_add);
         assert_eq!(checksum20, 0);
         let checksum36 = rsdp.iter().copied().fold(0u8, u8::wrapping_add);
         assert_eq!(checksum36, 0);

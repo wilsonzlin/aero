@@ -288,9 +288,7 @@ impl UsbDeviceModel for UsbHidMouse {
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_DEVICE => Some(DEVICE_DESCRIPTOR.to_vec()),
-                        USB_DESCRIPTOR_TYPE_CONFIGURATION => {
-                            Some(CONFIG_DESCRIPTOR.to_vec())
-                        }
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(CONFIG_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         _ => None,
                     };
@@ -360,9 +358,7 @@ impl UsbDeviceModel for UsbHidMouse {
                     }
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_HID_REPORT => {
-                            Some(HID_REPORT_DESCRIPTOR.to_vec())
-                        }
+                        USB_DESCRIPTOR_TYPE_HID_REPORT => Some(HID_REPORT_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_HID => Some(self.hid_descriptor_bytes().to_vec()),
                         _ => None,
                     };

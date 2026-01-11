@@ -1,7 +1,9 @@
 //! Debug-only IR interpreter used for validating the x86→IR translation.
 
 use super::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator};
-use aero_cpu_core::state::{CpuState, RFLAGS_AF, RFLAGS_CF, RFLAGS_OF, RFLAGS_PF, RFLAGS_SF, RFLAGS_ZF};
+use aero_cpu_core::state::{
+    CpuState, RFLAGS_AF, RFLAGS_CF, RFLAGS_OF, RFLAGS_PF, RFLAGS_SF, RFLAGS_ZF,
+};
 use aero_types::{Cond, Flag, FlagSet, Width};
 
 use crate::abi;
@@ -229,7 +231,9 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                 let v = temps[src.0 as usize];
                 match *reg {
                     GuestReg::Rip => cpu.rip = v,
-                    GuestReg::Gpr { reg, width, high8 } => write_gpr_part(cpu, reg, width, high8, v),
+                    GuestReg::Gpr { reg, width, high8 } => {
+                        write_gpr_part(cpu, reg, width, high8, v)
+                    }
                     GuestReg::Flag(flag) => write_flag(cpu, flag, (v & 1) != 0),
                 }
             }
@@ -246,7 +250,14 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                 let v = temps[src.0 as usize];
                 bus.write(a, *width, v);
             }
-            IrInst::BinOp { dst, op, lhs, rhs, width, flags } => {
+            IrInst::BinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                width,
+                flags,
+            } => {
                 let l = temps[lhs.0 as usize];
                 let r = temps[rhs.0 as usize];
                 let w = *width;
@@ -296,14 +307,24 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                     }
                 }
             }
-            IrInst::CmpFlags { lhs, rhs, width, flags } => {
+            IrInst::CmpFlags {
+                lhs,
+                rhs,
+                width,
+                flags,
+            } => {
                 let l = temps[lhs.0 as usize];
                 let r = temps[rhs.0 as usize];
                 let w = *width;
                 let res = w.truncate(l.wrapping_sub(r));
                 write_flagset(cpu, *flags, compute_sub_flags(w, l, r, res));
             }
-            IrInst::TestFlags { lhs, rhs, width, flags } => {
+            IrInst::TestFlags {
+                lhs,
+                rhs,
+                width,
+                flags,
+            } => {
                 let l = temps[lhs.0 as usize];
                 let r = temps[rhs.0 as usize];
                 let w = *width;
@@ -313,7 +334,13 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
             IrInst::EvalCond { dst, cond } => {
                 temps[dst.0 as usize] = eval_cond(cpu, *cond) as u64;
             }
-            IrInst::Select { dst, cond, if_true, if_false, width } => {
+            IrInst::Select {
+                dst,
+                cond,
+                if_true,
+                if_false,
+                width,
+            } => {
                 let c = temps[cond.0 as usize] & 1;
                 let t = temps[if_true.0 as usize];
                 let e = temps[if_false.0 as usize];
@@ -330,7 +357,11 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
             cpu.rip = target;
             ExecResult::Continue
         }
-        IrTerminator::CondJump { cond, target, fallthrough } => {
+        IrTerminator::CondJump {
+            cond,
+            target,
+            fallthrough,
+        } => {
             let c = temps[cond.0 as usize] & 1;
             cpu.rip = if c != 0 { target } else { fallthrough };
             ExecResult::Continue
@@ -355,7 +386,10 @@ fn read_gpr_part(cpu: &TestCpu, reg: aero_types::Gpr, width: Width, high8: bool)
             if high8 {
                 debug_assert!(matches!(
                     reg,
-                    aero_types::Gpr::Rax | aero_types::Gpr::Rcx | aero_types::Gpr::Rdx | aero_types::Gpr::Rbx
+                    aero_types::Gpr::Rax
+                        | aero_types::Gpr::Rcx
+                        | aero_types::Gpr::Rdx
+                        | aero_types::Gpr::Rbx
                 ));
                 (val >> 8) & 0xff
             } else {
@@ -378,7 +412,10 @@ fn write_gpr_part(cpu: &mut TestCpu, reg: aero_types::Gpr, width: Width, high8: 
             if high8 {
                 debug_assert!(matches!(
                     reg,
-                    aero_types::Gpr::Rax | aero_types::Gpr::Rcx | aero_types::Gpr::Rdx | aero_types::Gpr::Rbx
+                    aero_types::Gpr::Rax
+                        | aero_types::Gpr::Rcx
+                        | aero_types::Gpr::Rdx
+                        | aero_types::Gpr::Rbx
                 ));
                 (prev & !0xff00) | ((masked & 0xff) << 8)
             } else {

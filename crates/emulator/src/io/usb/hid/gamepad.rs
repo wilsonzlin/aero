@@ -238,7 +238,13 @@ impl UsbHidGamepad {
         let rx = report.rx.clamp(-127, 127);
         let ry = report.ry.clamp(-127, 127);
 
-        if self.buttons == report.buttons && self.hat == hat && self.x == x && self.y == y && self.rx == rx && self.ry == ry {
+        if self.buttons == report.buttons
+            && self.hat == hat
+            && self.x == x
+            && self.y == y
+            && self.rx == rx
+            && self.ry == ry
+        {
             return;
         }
 
@@ -350,7 +356,8 @@ impl UsbDeviceModel for UsbHidGamepad {
                     _ => ControlResponse::Stall,
                 },
                 USB_REQUEST_SET_ADDRESS => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -368,9 +375,7 @@ impl UsbDeviceModel for UsbHidGamepad {
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_DEVICE => Some(DEVICE_DESCRIPTOR.to_vec()),
-                        USB_DESCRIPTOR_TYPE_CONFIGURATION => {
-                            Some(CONFIG_DESCRIPTOR.to_vec())
-                        }
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(CONFIG_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         _ => None,
                     };
@@ -378,7 +383,8 @@ impl UsbDeviceModel for UsbHidGamepad {
                         .unwrap_or(ControlResponse::Stall)
                 }
                 USB_REQUEST_SET_CONFIGURATION => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -393,7 +399,8 @@ impl UsbDeviceModel for UsbHidGamepad {
                     ControlResponse::Ack
                 }
                 USB_REQUEST_GET_CONFIGURATION => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -403,7 +410,8 @@ impl UsbDeviceModel for UsbHidGamepad {
             },
             (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -430,15 +438,14 @@ impl UsbDeviceModel for UsbHidGamepad {
                     }
                 }
                 USB_REQUEST_GET_DESCRIPTOR => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_HID_REPORT => {
-                            Some(HID_REPORT_DESCRIPTOR.to_vec())
-                        }
+                        USB_DESCRIPTOR_TYPE_HID_REPORT => Some(HID_REPORT_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_HID => Some(self.hid_descriptor_bytes().to_vec()),
                         _ => None,
                     };
@@ -449,7 +456,8 @@ impl UsbDeviceModel for UsbHidGamepad {
             },
             (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_value != 0
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -463,7 +471,8 @@ impl UsbDeviceModel for UsbHidGamepad {
                     ))
                 }
                 USB_REQUEST_CLEAR_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -477,7 +486,8 @@ impl UsbDeviceModel for UsbHidGamepad {
                     }
                 }
                 USB_REQUEST_SET_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -494,7 +504,8 @@ impl UsbDeviceModel for UsbHidGamepad {
             },
             (RequestType::Class, RequestRecipient::Interface) => match setup.b_request {
                 HID_REQUEST_GET_REPORT => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -508,14 +519,16 @@ impl UsbDeviceModel for UsbHidGamepad {
                     }
                 }
                 HID_REQUEST_GET_IDLE => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
                     ControlResponse::Data(clamp_response(vec![self.idle_rate], setup.w_length))
                 }
                 HID_REQUEST_SET_IDLE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -523,14 +536,16 @@ impl UsbDeviceModel for UsbHidGamepad {
                     ControlResponse::Ack
                 }
                 HID_REQUEST_GET_PROTOCOL => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }
                     ControlResponse::Data(clamp_response(vec![self.protocol as u8], setup.w_length))
                 }
                 HID_REQUEST_SET_PROTOCOL => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
                     }

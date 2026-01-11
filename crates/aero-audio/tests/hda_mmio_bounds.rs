@@ -22,4 +22,3 @@ fn hda_mmio_high_offsets_are_ignored_without_panicking() {
     // A write to an unimplemented register must not perturb real state (GCTL is 0x08).
     assert_eq!(hda.mmio_read(0x08, 4), 0);
 }
-

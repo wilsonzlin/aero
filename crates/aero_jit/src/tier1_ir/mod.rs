@@ -151,18 +151,70 @@ impl SideEffects {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrInst {
-    Const { dst: ValueId, value: u64, width: Width },
-    ReadReg { dst: ValueId, reg: GuestReg },
-    WriteReg { reg: GuestReg, src: ValueId },
-    Trunc { dst: ValueId, src: ValueId, width: Width },
-    Load { dst: ValueId, addr: ValueId, width: Width },
-    Store { addr: ValueId, src: ValueId, width: Width },
-    BinOp { dst: ValueId, op: BinOp, lhs: ValueId, rhs: ValueId, width: Width, flags: FlagSet },
-    CmpFlags { lhs: ValueId, rhs: ValueId, width: Width, flags: FlagSet },
-    TestFlags { lhs: ValueId, rhs: ValueId, width: Width, flags: FlagSet },
-    EvalCond { dst: ValueId, cond: Cond },
-    Select { dst: ValueId, cond: ValueId, if_true: ValueId, if_false: ValueId, width: Width },
-    CallHelper { helper: &'static str, args: Vec<ValueId>, ret: Option<(ValueId, Width)> },
+    Const {
+        dst: ValueId,
+        value: u64,
+        width: Width,
+    },
+    ReadReg {
+        dst: ValueId,
+        reg: GuestReg,
+    },
+    WriteReg {
+        reg: GuestReg,
+        src: ValueId,
+    },
+    Trunc {
+        dst: ValueId,
+        src: ValueId,
+        width: Width,
+    },
+    Load {
+        dst: ValueId,
+        addr: ValueId,
+        width: Width,
+    },
+    Store {
+        addr: ValueId,
+        src: ValueId,
+        width: Width,
+    },
+    BinOp {
+        dst: ValueId,
+        op: BinOp,
+        lhs: ValueId,
+        rhs: ValueId,
+        width: Width,
+        flags: FlagSet,
+    },
+    CmpFlags {
+        lhs: ValueId,
+        rhs: ValueId,
+        width: Width,
+        flags: FlagSet,
+    },
+    TestFlags {
+        lhs: ValueId,
+        rhs: ValueId,
+        width: Width,
+        flags: FlagSet,
+    },
+    EvalCond {
+        dst: ValueId,
+        cond: Cond,
+    },
+    Select {
+        dst: ValueId,
+        cond: ValueId,
+        if_true: ValueId,
+        if_false: ValueId,
+        width: Width,
+    },
+    CallHelper {
+        helper: &'static str,
+        args: Vec<ValueId>,
+        ret: Option<(ValueId, Width)>,
+    },
 }
 
 impl IrInst {
@@ -189,7 +241,11 @@ impl IrInst {
                 }
             }
             IrInst::CmpFlags { flags, .. } | IrInst::TestFlags { flags, .. } => {
-                if flags.is_empty() { SideEffects::NONE } else { SideEffects::WRITE_FLAG }
+                if flags.is_empty() {
+                    SideEffects::NONE
+                } else {
+                    SideEffects::WRITE_FLAG
+                }
             }
             IrInst::EvalCond { cond, .. } => {
                 if cond.uses_flags().is_empty() {
@@ -206,10 +262,20 @@ impl IrInst {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrTerminator {
-    Jump { target: u64 },
-    CondJump { cond: ValueId, target: u64, fallthrough: u64 },
-    IndirectJump { target: ValueId },
-    ExitToInterpreter { next_rip: u64 },
+    Jump {
+        target: u64,
+    },
+    CondJump {
+        cond: ValueId,
+        target: u64,
+        fallthrough: u64,
+    },
+    IndirectJump {
+        target: ValueId,
+    },
+    ExitToInterpreter {
+        next_rip: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,15 +326,27 @@ impl IrBlock {
 
         let use_val = |v: ValueId| -> Result<Width, String> {
             let idx = v.0 as usize;
-            types.get(idx).copied().ok_or_else(|| format!("use of out-of-range value {v}"))
+            types
+                .get(idx)
+                .copied()
+                .ok_or_else(|| format!("use of out-of-range value {v}"))
         };
 
         for inst in &self.insts {
             match *inst {
                 IrInst::Const { dst, width, .. } => define(dst, width)?,
-                IrInst::ReadReg { dst, reg: GuestReg::Gpr { width, .. } } => define(dst, width)?,
-                IrInst::ReadReg { dst, reg: GuestReg::Rip } => define(dst, Width::W64)?,
-                IrInst::ReadReg { dst, reg: GuestReg::Flag(_) } => define(dst, Width::W8)?,
+                IrInst::ReadReg {
+                    dst,
+                    reg: GuestReg::Gpr { width, .. },
+                } => define(dst, width)?,
+                IrInst::ReadReg {
+                    dst,
+                    reg: GuestReg::Rip,
+                } => define(dst, Width::W64)?,
+                IrInst::ReadReg {
+                    dst,
+                    reg: GuestReg::Flag(_),
+                } => define(dst, Width::W8)?,
                 IrInst::Trunc { dst, src, width } => {
                     let src_ty = use_val(src)?;
                     if width.bits() > src_ty.bits() {
@@ -276,19 +354,28 @@ impl IrBlock {
                     }
                     define(dst, width)?;
                 }
-                IrInst::WriteReg { reg: GuestReg::Gpr { width, .. }, src } => {
+                IrInst::WriteReg {
+                    reg: GuestReg::Gpr { width, .. },
+                    src,
+                } => {
                     let src_ty = use_val(src)?;
                     if src_ty != width {
                         return Err(format!("WriteReg width mismatch: {src_ty} -> {width}"));
                     }
                 }
-                IrInst::WriteReg { reg: GuestReg::Rip, src } => {
+                IrInst::WriteReg {
+                    reg: GuestReg::Rip,
+                    src,
+                } => {
                     let src_ty = use_val(src)?;
                     if src_ty != Width::W64 {
                         return Err(format!("WriteReg RIP expects i64, got {src_ty}"));
                     }
                 }
-                IrInst::WriteReg { reg: GuestReg::Flag(_), src } => {
+                IrInst::WriteReg {
+                    reg: GuestReg::Flag(_),
+                    src,
+                } => {
                     let src_ty = use_val(src)?;
                     if src_ty != Width::W8 {
                         return Err(format!("WriteReg flag expects i8, got {src_ty}"));
@@ -308,19 +395,36 @@ impl IrBlock {
                         return Err("Store width mismatch".to_string());
                     }
                 }
-                IrInst::BinOp { dst, lhs, rhs, width, .. } => {
+                IrInst::BinOp {
+                    dst,
+                    lhs,
+                    rhs,
+                    width,
+                    ..
+                } => {
                     if use_val(lhs)? != width || use_val(rhs)? != width {
                         return Err("BinOp width mismatch".to_string());
                     }
                     define(dst, width)?;
                 }
-                IrInst::CmpFlags { lhs, rhs, width, .. } | IrInst::TestFlags { lhs, rhs, width, .. } => {
+                IrInst::CmpFlags {
+                    lhs, rhs, width, ..
+                }
+                | IrInst::TestFlags {
+                    lhs, rhs, width, ..
+                } => {
                     if use_val(lhs)? != width || use_val(rhs)? != width {
                         return Err("Flag op width mismatch".to_string());
                     }
                 }
                 IrInst::EvalCond { dst, .. } => define(dst, Width::W8)?,
-                IrInst::Select { dst, cond, if_true, if_false, width } => {
+                IrInst::Select {
+                    dst,
+                    cond,
+                    if_true,
+                    if_false,
+                    width,
+                } => {
                     if use_val(cond)? != Width::W8 {
                         return Err("Select cond must be i8".to_string());
                     }
@@ -367,21 +471,38 @@ fn inst_to_text(inst: &IrInst) -> String {
         IrInst::Trunc { dst, src, width } => format!("{dst} = trunc.{width} {src}"),
         IrInst::Load { dst, addr, width } => format!("{dst} = load.{width} [{addr}]"),
         IrInst::Store { addr, src, width } => format!("store.{width} [{addr}], {src}"),
-        IrInst::BinOp { dst, op, lhs, rhs, width, flags } => {
+        IrInst::BinOp {
+            dst,
+            op,
+            lhs,
+            rhs,
+            width,
+            flags,
+        } => {
             if flags.is_empty() {
                 format!("{dst} = {op}.{width} {lhs}, {rhs}")
             } else {
                 format!("{dst} = {op}.{width} {lhs}, {rhs} ; flags={flags}")
             }
         }
-        IrInst::CmpFlags { lhs, rhs, width, flags } => {
+        IrInst::CmpFlags {
+            lhs,
+            rhs,
+            width,
+            flags,
+        } => {
             if flags.is_empty() {
                 format!("cmpflags.{width} {lhs}, {rhs}")
             } else {
                 format!("cmpflags.{width} {lhs}, {rhs} ; flags={flags}")
             }
         }
-        IrInst::TestFlags { lhs, rhs, width, flags } => {
+        IrInst::TestFlags {
+            lhs,
+            rhs,
+            width,
+            flags,
+        } => {
             if flags.is_empty() {
                 format!("testflags.{width} {lhs}, {rhs}")
             } else {
@@ -389,11 +510,21 @@ fn inst_to_text(inst: &IrInst) -> String {
             }
         }
         IrInst::EvalCond { dst, cond } => format!("{dst} = evalcond.{cond}"),
-        IrInst::Select { dst, cond, if_true, if_false, width } => {
+        IrInst::Select {
+            dst,
+            cond,
+            if_true,
+            if_false,
+            width,
+        } => {
             format!("{dst} = select.{width} {cond}, {if_true}, {if_false}")
         }
         IrInst::CallHelper { helper, args, ret } => {
-            let arg_list = args.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+            let arg_list = args
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
             match ret {
                 Some((dst, width)) => format!("{dst} = call.{width} {helper}({arg_list})"),
                 None => format!("call {helper}({arg_list})"),
@@ -405,7 +536,11 @@ fn inst_to_text(inst: &IrInst) -> String {
 fn term_to_text(term: &IrTerminator) -> String {
     match term {
         IrTerminator::Jump { target } => format!("jmp 0x{target:x}"),
-        IrTerminator::CondJump { cond, target, fallthrough } => {
+        IrTerminator::CondJump {
+            cond,
+            target,
+            fallthrough,
+        } => {
             format!("jcc {cond}, 0x{target:x}, 0x{fallthrough:x}")
         }
         IrTerminator::IndirectJump { target } => format!("jmp [{target}]"),
@@ -422,7 +557,11 @@ pub struct IrBuilder {
 impl IrBuilder {
     #[must_use]
     pub fn new(entry_rip: u64) -> Self {
-        Self { entry_rip, insts: Vec::new(), value_types: Vec::new() }
+        Self {
+            entry_rip,
+            insts: Vec::new(),
+            value_types: Vec::new(),
+        }
     }
 
     fn fresh(&mut self, width: Width) -> ValueId {
@@ -434,7 +573,11 @@ impl IrBuilder {
     #[must_use]
     pub fn const_int(&mut self, width: Width, value: u64) -> ValueId {
         let dst = self.fresh(width);
-        self.insts.push(IrInst::Const { dst, value: width.truncate(value), width });
+        self.insts.push(IrInst::Const {
+            dst,
+            value: width.truncate(value),
+            width,
+        });
         dst
     }
 
@@ -473,18 +616,42 @@ impl IrBuilder {
     }
 
     #[must_use]
-    pub fn binop(&mut self, op: BinOp, width: Width, lhs: ValueId, rhs: ValueId, flags: FlagSet) -> ValueId {
+    pub fn binop(
+        &mut self,
+        op: BinOp,
+        width: Width,
+        lhs: ValueId,
+        rhs: ValueId,
+        flags: FlagSet,
+    ) -> ValueId {
         let dst = self.fresh(width);
-        self.insts.push(IrInst::BinOp { dst, op, lhs, rhs, width, flags });
+        self.insts.push(IrInst::BinOp {
+            dst,
+            op,
+            lhs,
+            rhs,
+            width,
+            flags,
+        });
         dst
     }
 
     pub fn cmp_flags(&mut self, width: Width, lhs: ValueId, rhs: ValueId, flags: FlagSet) {
-        self.insts.push(IrInst::CmpFlags { lhs, rhs, width, flags });
+        self.insts.push(IrInst::CmpFlags {
+            lhs,
+            rhs,
+            width,
+            flags,
+        });
     }
 
     pub fn test_flags(&mut self, width: Width, lhs: ValueId, rhs: ValueId, flags: FlagSet) {
-        self.insts.push(IrInst::TestFlags { lhs, rhs, width, flags });
+        self.insts.push(IrInst::TestFlags {
+            lhs,
+            rhs,
+            width,
+            flags,
+        });
     }
 
     #[must_use]
@@ -495,21 +662,47 @@ impl IrBuilder {
     }
 
     #[must_use]
-    pub fn select(&mut self, width: Width, cond: ValueId, if_true: ValueId, if_false: ValueId) -> ValueId {
+    pub fn select(
+        &mut self,
+        width: Width,
+        cond: ValueId,
+        if_true: ValueId,
+        if_false: ValueId,
+    ) -> ValueId {
         let dst = self.fresh(width);
-        self.insts.push(IrInst::Select { dst, cond, if_true, if_false, width });
+        self.insts.push(IrInst::Select {
+            dst,
+            cond,
+            if_true,
+            if_false,
+            width,
+        });
         dst
     }
 
-    pub fn call_helper(&mut self, helper: &'static str, args: Vec<ValueId>, ret: Option<Width>) -> Option<ValueId> {
+    pub fn call_helper(
+        &mut self,
+        helper: &'static str,
+        args: Vec<ValueId>,
+        ret: Option<Width>,
+    ) -> Option<ValueId> {
         let ret_pair = ret.map(|w| (self.fresh(w), w));
-        self.insts.push(IrInst::CallHelper { helper, args, ret: ret_pair });
+        self.insts.push(IrInst::CallHelper {
+            helper,
+            args,
+            ret: ret_pair,
+        });
         ret_pair.map(|(v, _)| v)
     }
 
     #[must_use]
     pub fn finish(self, terminator: IrTerminator) -> IrBlock {
-        IrBlock { entry_rip: self.entry_rip, insts: self.insts, terminator, value_types: self.value_types }
+        IrBlock {
+            entry_rip: self.entry_rip,
+            insts: self.insts,
+            terminator,
+            value_types: self.value_types,
+        }
     }
 }
 

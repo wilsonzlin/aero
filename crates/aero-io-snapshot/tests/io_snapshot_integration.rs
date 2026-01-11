@@ -31,7 +31,11 @@ impl DiskBackend for InMemoryDiskBackend {
     fn flush(&mut self) {}
 }
 
-fn open_disk_backend(store: &Arc<Mutex<BTreeMap<String, Vec<u8>>>>, key: &str, size_bytes: u64) -> Box<dyn DiskBackend> {
+fn open_disk_backend(
+    store: &Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    key: &str,
+    size_bytes: u64,
+) -> Box<dyn DiskBackend> {
     let mut guard = store.lock().unwrap();
     guard
         .entry(key.to_string())

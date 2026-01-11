@@ -656,10 +656,16 @@ pub struct AerogpuCmdFlush {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuCmdDecodeError {
     BufferTooSmall,
-    BadMagic { found: u32 },
+    BadMagic {
+        found: u32,
+    },
     Abi(AerogpuAbiError),
-    BadSizeBytes { found: u32 },
-    SizeNotAligned { found: u32 },
+    BadSizeBytes {
+        found: u32,
+    },
+    SizeNotAligned {
+        found: u32,
+    },
     PacketOverrunsStream {
         offset: u32,
         packet_size_bytes: u32,
@@ -682,7 +688,9 @@ impl From<AerogpuAbiError> for AerogpuCmdDecodeError {
     }
 }
 
-pub fn decode_cmd_stream_header_le(buf: &[u8]) -> Result<AerogpuCmdStreamHeader, AerogpuCmdDecodeError> {
+pub fn decode_cmd_stream_header_le(
+    buf: &[u8],
+) -> Result<AerogpuCmdStreamHeader, AerogpuCmdDecodeError> {
     if buf.len() < AerogpuCmdStreamHeader::SIZE_BYTES {
         return Err(AerogpuCmdDecodeError::BufferTooSmall);
     }
@@ -707,7 +715,9 @@ pub fn decode_cmd_stream_header_le(buf: &[u8]) -> Result<AerogpuCmdStreamHeader,
     Ok(hdr)
 }
 
-pub fn validate_cmd_stream_header(hdr: &AerogpuCmdStreamHeader) -> Result<(), AerogpuCmdDecodeError> {
+pub fn validate_cmd_stream_header(
+    hdr: &AerogpuCmdStreamHeader,
+) -> Result<(), AerogpuCmdDecodeError> {
     if hdr.magic != AEROGPU_CMD_STREAM_MAGIC {
         return Err(AerogpuCmdDecodeError::BadMagic { found: hdr.magic });
     }
@@ -800,7 +810,9 @@ pub fn decode_cmd_set_shader_constants_f_payload_le(
         .checked_add(payload_size_bytes)
         .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
     if payload_end > packet_len {
-        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
+        return Err(AerogpuCmdDecodeError::BadSizeBytes {
+            found: hdr.size_bytes,
+        });
     }
 
     let cmd = AerogpuCmdSetShaderConstantsF {
@@ -963,7 +975,10 @@ fn align_up_4(size: usize) -> Result<usize, AerogpuCmdDecodeError> {
         .ok_or(AerogpuCmdDecodeError::CountOverflow)
 }
 
-fn validate_expected_payload_size(expected: usize, payload: &[u8]) -> Result<(), AerogpuCmdDecodeError> {
+fn validate_expected_payload_size(
+    expected: usize,
+    payload: &[u8],
+) -> Result<(), AerogpuCmdDecodeError> {
     if payload.len() != expected {
         return Err(AerogpuCmdDecodeError::PayloadSizeMismatch {
             expected,
@@ -1030,7 +1045,9 @@ impl<'a> AerogpuCmdPacket<'a> {
         let size_bytes = u64::from_le_bytes(self.payload[16..24].try_into().unwrap());
 
         let data_size =
-            usize::try_from(size_bytes).map_err(|_| AerogpuCmdDecodeError::BadSizeBytes { found: self.hdr.size_bytes })?;
+            usize::try_from(size_bytes).map_err(|_| AerogpuCmdDecodeError::BadSizeBytes {
+                found: self.hdr.size_bytes,
+            })?;
         let expected_payload_size = 24usize
             .checked_add(align_up_4(data_size)?)
             .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
@@ -1086,7 +1103,8 @@ impl<'a> AerogpuCmdPacket<'a> {
 
     pub fn decode_set_vertex_buffers_payload_le(
         &self,
-    ) -> Result<(AerogpuCmdSetVertexBuffers, &'a [AerogpuVertexBufferBinding]), AerogpuCmdDecodeError> {
+    ) -> Result<(AerogpuCmdSetVertexBuffers, &'a [AerogpuVertexBufferBinding]), AerogpuCmdDecodeError>
+    {
         if self.opcode != Some(AerogpuCmdOpcode::SetVertexBuffers) {
             return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
                 found: self.hdr.opcode,
@@ -1110,7 +1128,8 @@ impl<'a> AerogpuCmdPacket<'a> {
         validate_expected_payload_size(expected_payload_size, self.payload)?;
 
         let binding_bytes = &self.payload[8..];
-        let (prefix, bindings, suffix) = unsafe { binding_bytes.align_to::<AerogpuVertexBufferBinding>() };
+        let (prefix, bindings, suffix) =
+            unsafe { binding_bytes.align_to::<AerogpuVertexBufferBinding>() };
         if !prefix.is_empty() || !suffix.is_empty() || bindings.len() != buffer_count_usize {
             return Err(AerogpuCmdDecodeError::CountOverflow);
         }

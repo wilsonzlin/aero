@@ -1,5 +1,5 @@
-use aero_timers::LocalApicTimer;
 use aero_time::Tsc;
+use aero_timers::LocalApicTimer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuidResult {

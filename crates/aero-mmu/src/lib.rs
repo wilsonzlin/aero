@@ -246,7 +246,12 @@ impl Mmu {
 
     pub fn set_cr3(&mut self, value: u64) {
         self.cr3 = value;
-        self.tlb.on_cr3_write(self.cr4_pge(), self.pcid_enabled(), self.current_pcid(), self.cr3_no_flush());
+        self.tlb.on_cr3_write(
+            self.cr4_pge(),
+            self.pcid_enabled(),
+            self.current_pcid(),
+            self.cr3_no_flush(),
+        );
     }
 
     pub fn set_cr4(&mut self, value: u64) {
@@ -317,7 +322,10 @@ impl Mmu {
             return Err(TranslateFault::NonCanonical(vaddr));
         }
 
-        if let Some(entry) = self.tlb.lookup(vaddr, access.is_execute(), self.current_pcid()) {
+        if let Some(entry) = self
+            .tlb
+            .lookup(vaddr, access.is_execute(), self.current_pcid())
+        {
             match self.check_perms_from_tlb(vaddr, entry, access, is_user) {
                 Ok(()) => {
                     let paddr = entry.translate(vaddr);
@@ -333,7 +341,8 @@ impl Mmu {
                             let val = bus.read_u32(leaf_addr);
                             bus.write_u32(leaf_addr, val | (PTE_D as u32));
                         }
-                        self.tlb.set_dirty(vaddr, access.is_execute(), self.current_pcid());
+                        self.tlb
+                            .set_dirty(vaddr, access.is_execute(), self.current_pcid());
                     }
 
                     return Ok(paddr);
@@ -445,17 +454,26 @@ impl Mmu {
         is_user: bool,
     ) -> Result<(), PageFault> {
         if is_user && !user_ok {
-            return Err(PageFault::new(vaddr, pf_error_code(true, access, is_user, false)));
+            return Err(PageFault::new(
+                vaddr,
+                pf_error_code(true, access, is_user, false),
+            ));
         }
 
         if access.is_write() && !writable_ok {
             if is_user || self.wp_enabled() {
-                return Err(PageFault::new(vaddr, pf_error_code(true, access, is_user, false)));
+                return Err(PageFault::new(
+                    vaddr,
+                    pf_error_code(true, access, is_user, false),
+                ));
             }
         }
 
         if access.is_execute() && self.nx_enabled() && nx {
-            return Err(PageFault::new(vaddr, pf_error_code(true, access, is_user, false)));
+            return Err(PageFault::new(
+                vaddr,
+                pf_error_code(true, access, is_user, false),
+            ));
         }
 
         Ok(())
@@ -487,7 +505,9 @@ impl Mmu {
             }
         }
 
-        let pde = self.check_entry32(bus, pde_addr, pde_raw).expect("present already checked");
+        let pde = self
+            .check_entry32(bus, pde_addr, pde_raw)
+            .expect("present already checked");
 
         if pde_ps {
             let user_ok = pde & PTE_US != 0;
@@ -510,8 +530,19 @@ impl Mmu {
             let pbase = (pde & 0xffc0_0000) as u64;
             let global = self.cr4_pge() && (pde & PTE_G != 0);
             let dirty = new_pde & PTE_D != 0;
-            let entry =
-                TlbEntry::new(vbase, pbase, page_size, user_ok, writable_ok, nx, global, self.current_pcid(), pde_addr, false, dirty);
+            let entry = TlbEntry::new(
+                vbase,
+                pbase,
+                page_size,
+                user_ok,
+                writable_ok,
+                nx,
+                global,
+                self.current_pcid(),
+                pde_addr,
+                false,
+                dirty,
+            );
             let paddr = pbase + (vaddr - vbase);
             return Ok((entry, paddr));
         }
@@ -545,8 +576,19 @@ impl Mmu {
         let pbase = (pte & 0xffff_f000) as u64;
         let global = self.cr4_pge() && (pte & PTE_G != 0);
         let dirty = new_pte & PTE_D != 0;
-        let entry =
-            TlbEntry::new(vbase, pbase, page_size, user_ok, writable_ok, nx, global, self.current_pcid(), pte_addr, false, dirty);
+        let entry = TlbEntry::new(
+            vbase,
+            pbase,
+            page_size,
+            user_ok,
+            writable_ok,
+            nx,
+            global,
+            self.current_pcid(),
+            pte_addr,
+            false,
+            dirty,
+        );
         let paddr = pbase + (vaddr - vbase);
         Ok((entry, paddr))
     }
@@ -566,7 +608,15 @@ impl Mmu {
         let pdpte_addr = pdpt_base + pdpt_index * 8;
         let pdpte = bus.read_u64(pdpte_addr);
 
-        let pdpte = match self.check_entry64(bus, pdpte_addr, pdpte, vaddr, access, is_user, EntryKind64::PdptePae)? {
+        let pdpte = match self.check_entry64(
+            bus,
+            pdpte_addr,
+            pdpte,
+            vaddr,
+            access,
+            is_user,
+            EntryKind64::PdptePae,
+        )? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -583,7 +633,15 @@ impl Mmu {
         let pde_addr = pd_base + pd_index * 8;
         let pde = bus.read_u64(pde_addr);
 
-        let pde = match self.check_entry64(bus, pde_addr, pde, vaddr, access, is_user, EntryKind64::PdePae)? {
+        let pde = match self.check_entry64(
+            bus,
+            pde_addr,
+            pde,
+            vaddr,
+            access,
+            is_user,
+            EntryKind64::PdePae,
+        )? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -631,7 +689,15 @@ impl Mmu {
         let pte_addr = pt_base + pt_index * 8;
         let pte = bus.read_u64(pte_addr);
 
-        let pte = match self.check_entry64(bus, pte_addr, pte, vaddr, access, is_user, EntryKind64::PtePae)? {
+        let pte = match self.check_entry64(
+            bus,
+            pte_addr,
+            pte,
+            vaddr,
+            access,
+            is_user,
+            EntryKind64::PtePae,
+        )? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -687,7 +753,15 @@ impl Mmu {
         let pml4e_addr = pml4_base + pml4_index * 8;
         let pml4e = bus.read_u64(pml4e_addr);
 
-        let pml4e = match self.check_entry64(bus, pml4e_addr, pml4e, vaddr, access, is_user, EntryKind64::Pml4e)? {
+        let pml4e = match self.check_entry64(
+            bus,
+            pml4e_addr,
+            pml4e,
+            vaddr,
+            access,
+            is_user,
+            EntryKind64::Pml4e,
+        )? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -701,7 +775,15 @@ impl Mmu {
         let pdpte_addr = pdpt_base + pdpt_index * 8;
         let pdpte = bus.read_u64(pdpte_addr);
 
-        let pdpte = match self.check_entry64(bus, pdpte_addr, pdpte, vaddr, access, is_user, EntryKind64::PdpteLong)? {
+        let pdpte = match self.check_entry64(
+            bus,
+            pdpte_addr,
+            pdpte,
+            vaddr,
+            access,
+            is_user,
+            EntryKind64::PdpteLong,
+        )? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -749,7 +831,15 @@ impl Mmu {
         let pde_addr = pd_base + pd_index * 8;
         let pde = bus.read_u64(pde_addr);
 
-        let pde = match self.check_entry64(bus, pde_addr, pde, vaddr, access, is_user, EntryKind64::PdeLong)? {
+        let pde = match self.check_entry64(
+            bus,
+            pde_addr,
+            pde,
+            vaddr,
+            access,
+            is_user,
+            EntryKind64::PdeLong,
+        )? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -797,7 +887,15 @@ impl Mmu {
         let pte_addr = pt_base + pt_index * 8;
         let pte = bus.read_u64(pte_addr);
 
-        let pte = match self.check_entry64(bus, pte_addr, pte, vaddr, access, is_user, EntryKind64::PteLong)? {
+        let pte = match self.check_entry64(
+            bus,
+            pte_addr,
+            pte,
+            vaddr,
+            access,
+            is_user,
+            EntryKind64::PteLong,
+        )? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };

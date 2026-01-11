@@ -28,4 +28,3 @@ fn timers_advance_deterministically_without_wall_clock() {
     let counter = hpet.mmio_read(0x0F0, 8, &mut ioapic);
     assert_eq!(counter, 10_000_000);
 }
-

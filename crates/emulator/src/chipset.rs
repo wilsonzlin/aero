@@ -16,4 +16,3 @@ impl I8042Callbacks for ChipsetControl {
         self.reset_requested = true;
     }
 }
-

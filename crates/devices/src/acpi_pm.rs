@@ -11,43 +11,43 @@
 //!
 //! Note: Reset via the FADT `ResetReg` (commonly port `0xCF9`) is implemented by
 //! [`crate::reset_ctrl`], not this module.
- 
+
 use crate::irq::{IrqLine, NoIrq};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
- 
+
 /// `PM1a_CNT.SCI_EN` (ACPI spec).
 pub const PM1_CNT_SCI_EN: u16 = 1 << 0;
- 
+
 /// `PM1_STS.PWRBTN_STS` (ACPI spec).
 pub const PM1_STS_PWRBTN: u16 = 1 << 8;
- 
+
 /// DSDT `_S5` typically encodes `{ 0x05, 0x05 }` for `SLP_TYP`.
 pub const SLP_TYP_S5: u8 = 0x05;
- 
+
 pub const DEFAULT_PM1A_EVT_BLK: u16 = 0x0400;
 pub const DEFAULT_PM1A_CNT_BLK: u16 = 0x0404;
 pub const DEFAULT_PM_TMR_BLK: u16 = 0x0408;
 pub const DEFAULT_GPE0_BLK: u16 = 0x0420;
 pub const DEFAULT_GPE0_BLK_LEN: u8 = 0x08;
- 
+
 pub const DEFAULT_SMI_CMD_PORT: u16 = 0x00B2;
 pub const DEFAULT_ACPI_ENABLE: u8 = 0xA0;
 pub const DEFAULT_ACPI_DISABLE: u8 = 0xA1;
- 
+
 const PM1_EVT_LEN: u16 = 4;
 const PM1_CNT_LEN: u16 = 2;
 const PM_TMR_LEN: u16 = 4;
- 
+
 const PM1_CNT_SLP_TYP_SHIFT: u16 = 10;
 const PM1_CNT_SLP_TYP_MASK: u16 = 0b111 << PM1_CNT_SLP_TYP_SHIFT;
 const PM1_CNT_SLP_EN: u16 = 1 << 13;
- 
+
 const PM_TIMER_FREQUENCY_HZ: u128 = 3_579_545;
 const PM_TIMER_MASK_24BIT: u32 = 0x00FF_FFFF;
- 
+
 #[derive(Debug, Clone, Copy)]
 pub struct AcpiPmConfig {
     /// PM1a event block base address (PM1_STS at +0, PM1_EN at +2).
@@ -69,7 +69,7 @@ pub struct AcpiPmConfig {
     /// Whether ACPI starts enabled at reset.
     pub start_enabled: bool,
 }
- 
+
 impl Default for AcpiPmConfig {
     fn default() -> Self {
         Self {
@@ -85,20 +85,20 @@ impl Default for AcpiPmConfig {
         }
     }
 }
- 
+
 pub struct AcpiPmCallbacks {
     /// Driven whenever SCI should be asserted/deasserted.
     pub sci_irq: Box<dyn IrqLine>,
     /// Called when the guest requests S5 (soft-off).
     pub request_power_off: Option<Box<dyn FnMut()>>,
 }
- 
+
 impl AcpiPmCallbacks {
     pub fn new() -> Self {
         Self::default()
     }
 }
- 
+
 impl Default for AcpiPmCallbacks {
     fn default() -> Self {
         Self {
@@ -107,28 +107,28 @@ impl Default for AcpiPmCallbacks {
         }
     }
 }
- 
+
 /// ACPI PM I/O device model.
 pub struct AcpiPmIo {
     cfg: AcpiPmConfig,
     callbacks: AcpiPmCallbacks,
- 
+
     pm1_sts: u16,
     pm1_en: u16,
     pm1_cnt: u16,
- 
+
     gpe0_sts: Vec<u8>,
     gpe0_en: Vec<u8>,
- 
+
     sci_level: bool,
     timer_start: Instant,
 }
- 
+
 impl AcpiPmIo {
     pub fn new(cfg: AcpiPmConfig) -> Self {
         Self::new_with_callbacks(cfg, AcpiPmCallbacks::default())
     }
- 
+
     pub fn new_with_callbacks(cfg: AcpiPmConfig, callbacks: AcpiPmCallbacks) -> Self {
         let half = (cfg.gpe0_blk_len as usize) / 2;
         let mut dev = Self {
@@ -142,44 +142,44 @@ impl AcpiPmIo {
             sci_level: false,
             timer_start: Instant::now(),
         };
- 
+
         if dev.cfg.start_enabled {
             dev.pm1_cnt |= PM1_CNT_SCI_EN;
         }
         dev.update_sci();
         dev
     }
- 
+
     pub fn cfg(&self) -> AcpiPmConfig {
         self.cfg
     }
- 
+
     pub fn sci_level(&self) -> bool {
         self.sci_level
     }
- 
+
     pub fn pm1_cnt(&self) -> u16 {
         self.pm1_cnt
     }
- 
+
     pub fn pm1_status(&self) -> u16 {
         self.pm1_sts
     }
- 
+
     pub fn is_acpi_enabled(&self) -> bool {
         (self.pm1_cnt & PM1_CNT_SCI_EN) != 0
     }
- 
+
     /// Inject bits into `PM1_STS` and refresh SCI.
     pub fn trigger_pm1_event(&mut self, sts_bits: u16) {
         self.pm1_sts |= sts_bits;
         self.update_sci();
     }
- 
+
     pub fn trigger_power_button(&mut self) {
         self.trigger_pm1_event(PM1_STS_PWRBTN);
     }
- 
+
     fn drive_sci_level(&mut self, level: bool) {
         if level == self.sci_level {
             return;
@@ -187,11 +187,11 @@ impl AcpiPmIo {
         self.sci_level = level;
         self.callbacks.sci_irq.set_level(level);
     }
- 
+
     fn update_sci(&mut self) {
         let sci_en = (self.pm1_cnt & PM1_CNT_SCI_EN) != 0;
         let pm_pending = (self.pm1_sts & self.pm1_en) != 0;
- 
+
         let mut gpe_pending = false;
         for (sts, en) in self.gpe0_sts.iter().zip(self.gpe0_en.iter()) {
             if (sts & en) != 0 {
@@ -199,16 +199,16 @@ impl AcpiPmIo {
                 break;
             }
         }
- 
+
         self.drive_sci_level(sci_en && (pm_pending || gpe_pending));
     }
- 
+
     fn pm_timer_value(&self) -> u32 {
         let nanos = self.timer_start.elapsed().as_nanos();
         let ticks = nanos.saturating_mul(PM_TIMER_FREQUENCY_HZ) / 1_000_000_000u128;
         (ticks as u32) & PM_TIMER_MASK_24BIT
     }
- 
+
     fn set_acpi_enabled(&mut self, enabled: bool) {
         if enabled {
             self.pm1_cnt |= PM1_CNT_SCI_EN;
@@ -217,7 +217,7 @@ impl AcpiPmIo {
         }
         self.update_sci();
     }
- 
+
     fn maybe_trigger_sleep(&mut self) {
         if (self.pm1_cnt & PM1_CNT_SLP_EN) == 0 {
             return;
@@ -230,7 +230,7 @@ impl AcpiPmIo {
             cb();
         }
     }
- 
+
     fn port_read_u8(&mut self, port: u16) -> u8 {
         // PM1a_EVT: status @ +0..1, enable @ +2..3.
         if port >= self.cfg.pm1a_evt_blk && port < self.cfg.pm1a_evt_blk + PM1_EVT_LEN {
@@ -242,7 +242,7 @@ impl AcpiPmIo {
                 _ => ((self.pm1_en >> 8) & 0x00FF) as u8,
             };
         }
- 
+
         // PM1a_CNT: control @ +0..1.
         if port >= self.cfg.pm1a_cnt_blk && port < self.cfg.pm1a_cnt_blk + PM1_CNT_LEN {
             let off = port - self.cfg.pm1a_cnt_blk;
@@ -252,14 +252,14 @@ impl AcpiPmIo {
                 ((self.pm1_cnt >> 8) & 0x00FF) as u8
             };
         }
- 
+
         // PM_TMR: 32-bit free-running counter, low 24 bits valid.
         if port >= self.cfg.pm_tmr_blk && port < self.cfg.pm_tmr_blk + PM_TMR_LEN {
             let off = port - self.cfg.pm_tmr_blk;
             let v = self.pm_timer_value();
             return ((v >> (off * 8)) & 0xFF) as u8;
         }
- 
+
         // GPE0: status (first half) then enable (second half).
         if port >= self.cfg.gpe0_blk && port < self.cfg.gpe0_blk + self.cfg.gpe0_blk_len as u16 {
             let off = (port - self.cfg.gpe0_blk) as usize;
@@ -272,11 +272,11 @@ impl AcpiPmIo {
             }
             return self.gpe0_en.get(off - half).copied().unwrap_or(0);
         }
- 
+
         // SMI_CMD is write-only for our purposes.
         0
     }
- 
+
     fn port_write_u8(&mut self, port: u16, value: u8) {
         // PM1a_EVT.
         if port >= self.cfg.pm1a_evt_blk && port < self.cfg.pm1a_evt_blk + PM1_EVT_LEN {
@@ -290,7 +290,7 @@ impl AcpiPmIo {
             self.update_sci();
             return;
         }
- 
+
         // PM1a_CNT.
         if port >= self.cfg.pm1a_cnt_blk && port < self.cfg.pm1a_cnt_blk + PM1_CNT_LEN {
             let off = port - self.cfg.pm1a_cnt_blk;
@@ -303,12 +303,12 @@ impl AcpiPmIo {
             self.maybe_trigger_sleep();
             return;
         }
- 
+
         // PM_TMR: read-only.
         if port >= self.cfg.pm_tmr_blk && port < self.cfg.pm_tmr_blk + PM_TMR_LEN {
             return;
         }
- 
+
         // GPE0.
         if port >= self.cfg.gpe0_blk && port < self.cfg.gpe0_blk + self.cfg.gpe0_blk_len as u16 {
             let off = (port - self.cfg.gpe0_blk) as usize;
@@ -324,7 +324,7 @@ impl AcpiPmIo {
             self.update_sci();
             return;
         }
- 
+
         // SMI_CMD.
         if port == self.cfg.smi_cmd_port {
             if value == self.cfg.acpi_enable_cmd {
@@ -334,7 +334,7 @@ impl AcpiPmIo {
             }
         }
     }
- 
+
     fn port_read(&mut self, port: u16, size: u8) -> u32 {
         let size = size.clamp(1, 4);
         let mut out = 0u32;
@@ -344,7 +344,7 @@ impl AcpiPmIo {
         }
         out
     }
- 
+
     fn port_write(&mut self, port: u16, size: u8, value: u32) {
         let size = size.clamp(1, 4);
         for i in 0..(size as u32) {
@@ -352,7 +352,7 @@ impl AcpiPmIo {
             self.port_write_u8(port.wrapping_add(i as u16), b);
         }
     }
- 
+
     fn reset_state(&mut self) {
         self.pm1_sts = 0;
         self.pm1_en = 0;
@@ -370,55 +370,55 @@ impl AcpiPmIo {
         self.drive_sci_level(false);
     }
 }
- 
+
 impl PortIoDevice for AcpiPmIo {
     fn read(&mut self, port: u16, size: u8) -> u32 {
         self.port_read(port, size)
     }
- 
+
     fn write(&mut self, port: u16, size: u8, value: u32) {
         self.port_write(port, size, value);
     }
- 
+
     fn reset(&mut self) {
         self.reset_state();
     }
 }
- 
+
 pub type SharedAcpiPmIo = Rc<RefCell<AcpiPmIo>>;
- 
+
 #[derive(Clone)]
 pub struct AcpiPmPort {
     pm: SharedAcpiPmIo,
     port: u16,
 }
- 
+
 impl AcpiPmPort {
     fn new(pm: SharedAcpiPmIo, port: u16) -> Self {
         Self { pm, port }
     }
 }
- 
+
 impl PortIoDevice for AcpiPmPort {
     fn read(&mut self, port: u16, size: u8) -> u32 {
         debug_assert_eq!(port, self.port);
         self.pm.borrow_mut().read(port, size)
     }
- 
+
     fn write(&mut self, port: u16, size: u8, value: u32) {
         debug_assert_eq!(port, self.port);
         self.pm.borrow_mut().write(port, size, value);
     }
- 
+
     fn reset(&mut self) {
         self.pm.borrow_mut().reset();
     }
 }
- 
+
 /// Register the ACPI PM fixed-feature I/O ports on an [`IoPortBus`].
 pub fn register_acpi_pm(bus: &mut IoPortBus, pm: SharedAcpiPmIo) {
     let cfg = pm.borrow().cfg();
- 
+
     for port in cfg.pm1a_evt_blk..cfg.pm1a_evt_blk + PM1_EVT_LEN {
         bus.register(port, Box::new(AcpiPmPort::new(pm.clone(), port)));
     }
@@ -431,7 +431,7 @@ pub fn register_acpi_pm(bus: &mut IoPortBus, pm: SharedAcpiPmIo) {
     for port in cfg.gpe0_blk..cfg.gpe0_blk + cfg.gpe0_blk_len as u16 {
         bus.register(port, Box::new(AcpiPmPort::new(pm.clone(), port)));
     }
- 
+
     bus.register(
         cfg.smi_cmd_port,
         Box::new(AcpiPmPort::new(pm, cfg.smi_cmd_port)),

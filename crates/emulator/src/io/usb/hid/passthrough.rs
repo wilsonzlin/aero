@@ -7,6 +7,7 @@ use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
 
+use super::report_descriptor;
 use super::{
     build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
     HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE,
@@ -17,7 +18,6 @@ use super::{
     USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS,
     USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
 };
-use super::report_descriptor;
 
 const INTERRUPT_IN_EP: u8 = 0x81;
 const INTERRUPT_OUT_EP: u8 = 0x01;
@@ -181,26 +181,21 @@ impl UsbHidPassthrough {
             .map(build_string_descriptor_utf16le)
             .map(|v| Rc::<[u8]>::from(v.into_boxed_slice()));
 
-        let hid_report_descriptor: Rc<[u8]> =
-            Rc::from(hid_report_descriptor.into_boxed_slice());
+        let hid_report_descriptor: Rc<[u8]> = Rc::from(hid_report_descriptor.into_boxed_slice());
 
-        let i_serial = if serial_string_descriptor.is_some() { 3 } else { 0 };
+        let i_serial = if serial_string_descriptor.is_some() {
+            3
+        } else {
+            0
+        };
 
         let device_descriptor: Rc<[u8]> = Rc::from(
-            build_device_descriptor(
-                vendor_id,
-                product_id,
-                max_packet_size as u8,
-                1,
-                2,
-                i_serial,
-            )
-            .into_boxed_slice(),
+            build_device_descriptor(vendor_id, product_id, max_packet_size as u8, 1, 2, i_serial)
+                .into_boxed_slice(),
         );
 
-        let hid_descriptor: Rc<[u8]> = Rc::from(
-            build_hid_descriptor(hid_report_descriptor.as_ref()).into_boxed_slice(),
-        );
+        let hid_descriptor: Rc<[u8]> =
+            Rc::from(build_hid_descriptor(hid_report_descriptor.as_ref()).into_boxed_slice());
         let config_descriptor: Rc<[u8]> = Rc::from(
             build_config_descriptor(
                 hid_descriptor.as_ref(),
@@ -212,8 +207,12 @@ impl UsbHidPassthrough {
             .into_boxed_slice(),
         );
 
-        let (report_ids_in_use, input_report_lengths, output_report_lengths, feature_report_lengths) =
-            report_descriptor_report_lengths(hid_report_descriptor.as_ref());
+        let (
+            report_ids_in_use,
+            input_report_lengths,
+            output_report_lengths,
+            feature_report_lengths,
+        ) = report_descriptor_report_lengths(hid_report_descriptor.as_ref());
 
         Self {
             address: 0,
@@ -307,7 +306,9 @@ impl UsbHidPassthrough {
 
     fn default_report(&self, report_type: u8, report_id: u8, w_length: u16) -> Vec<u8> {
         let requested = w_length as usize;
-        let expected = self.report_length(report_type, report_id).unwrap_or(requested);
+        let expected = self
+            .report_length(report_type, report_id)
+            .unwrap_or(requested);
         let len = expected.min(requested);
         if len == 0 {
             return Vec::new();
@@ -418,7 +419,9 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.device_descriptor.as_ref().to_vec()),
+                        USB_DESCRIPTOR_TYPE_DEVICE => {
+                            Some(self.device_descriptor.as_ref().to_vec())
+                        }
                         USB_DESCRIPTOR_TYPE_CONFIGURATION => {
                             Some(self.config_descriptor.as_ref().to_vec())
                         }
@@ -583,17 +586,23 @@ impl UsbDeviceModel for UsbHidPassthrough {
                             .last_input_reports
                             .get(&report_id)
                             .cloned()
-                            .unwrap_or_else(|| self.default_report(report_type, report_id, setup.w_length)),
+                            .unwrap_or_else(|| {
+                                self.default_report(report_type, report_id, setup.w_length)
+                            }),
                         2 => self
                             .last_output_reports
                             .get(&report_id)
                             .cloned()
-                            .unwrap_or_else(|| self.default_report(report_type, report_id, setup.w_length)),
+                            .unwrap_or_else(|| {
+                                self.default_report(report_type, report_id, setup.w_length)
+                            }),
                         3 => self
                             .last_feature_reports
                             .get(&report_id)
                             .cloned()
-                            .unwrap_or_else(|| self.default_report(report_type, report_id, setup.w_length)),
+                            .unwrap_or_else(|| {
+                                self.default_report(report_type, report_id, setup.w_length)
+                            }),
                         _ => return ControlResponse::Stall,
                     };
                     ControlResponse::Data(clamp_response(data, setup.w_length))
@@ -755,10 +764,10 @@ fn build_device_descriptor(
         0x12, // bLength
         USB_DESCRIPTOR_TYPE_DEVICE,
         0x00,
-        0x02, // bcdUSB (2.00)
-        0x00, // bDeviceClass (per interface)
-        0x00, // bDeviceSubClass
-        0x00, // bDeviceProtocol
+        0x02,             // bcdUSB (2.00)
+        0x00,             // bDeviceClass (per interface)
+        0x00,             // bDeviceSubClass
+        0x00,             // bDeviceProtocol
         max_packet_size0, // bMaxPacketSize0
     ]);
     out.extend_from_slice(&vendor_id.to_le_bytes());
@@ -797,7 +806,8 @@ fn build_config_descriptor(
     interface_protocol: u8,
 ) -> Vec<u8> {
     // Config(9) + Interface(9) + HID(9) + Endpoint IN(7) + Endpoint OUT(7 optional)
-    let total_len = 9u16 + 9u16 + hid_descriptor.len() as u16 + 7u16 + if has_interrupt_out { 7 } else { 0 };
+    let total_len =
+        9u16 + 9u16 + hid_descriptor.len() as u16 + 7u16 + if has_interrupt_out { 7 } else { 0 };
     let num_endpoints = if has_interrupt_out { 2 } else { 1 };
 
     let mut out = Vec::with_capacity(total_len as usize);
@@ -815,8 +825,8 @@ fn build_config_descriptor(
         // Interface descriptor
         0x09, // bLength
         super::USB_DESCRIPTOR_TYPE_INTERFACE,
-        0x00, // bInterfaceNumber
-        0x00, // bAlternateSetting
+        0x00,          // bInterfaceNumber
+        0x00,          // bAlternateSetting
         num_endpoints, // bNumEndpoints
         0x03,          // bInterfaceClass (HID)
         interface_subclass,
@@ -850,7 +860,12 @@ fn build_config_descriptor(
 
 fn report_descriptor_report_lengths(
     report_descriptor_bytes: &[u8],
-) -> (bool, HashMap<u8, usize>, HashMap<u8, usize>, HashMap<u8, usize>) {
+) -> (
+    bool,
+    HashMap<u8, usize>,
+    HashMap<u8, usize>,
+    HashMap<u8, usize>,
+) {
     let Ok(parsed) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
         let (report_ids_in_use, input_bits, output_bits, feature_bits) =
             scan_report_descriptor_bits(report_descriptor_bytes);
@@ -1062,7 +1077,8 @@ fn scan_report_descriptor_bits(
                     report_ids_in_use = true;
                     continue;
                 };
-                let bits = u64::from(global.report_size).saturating_mul(u64::from(global.report_count));
+                let bits =
+                    u64::from(global.report_size).saturating_mul(u64::from(global.report_count));
                 match tag {
                     8 => add_bits(&mut input_bits, report_id, bits),
                     9 => add_bits(&mut output_bits, report_id, bits),
@@ -1546,7 +1562,10 @@ mod tests {
         while let Some(r) = dev.poll_interrupt_in(INTERRUPT_IN_EP) {
             last = Some(r);
         }
-        assert_eq!(last.unwrap(), vec![1, (DEFAULT_MAX_PENDING_INPUT_REPORTS + 49) as u8]);
+        assert_eq!(
+            last.unwrap(),
+            vec![1, (DEFAULT_MAX_PENDING_INPUT_REPORTS + 49) as u8]
+        );
 
         // Overflow output queue.
         for i in 0..(DEFAULT_MAX_PENDING_OUTPUT_REPORTS + 17) {

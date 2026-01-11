@@ -55,7 +55,9 @@ pub enum SignatureError {
 impl fmt::Display for SignatureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SignatureError::MissingChunk(fourcc) => write!(f, "DXBC missing {fourcc} signature chunk"),
+            SignatureError::MissingChunk(fourcc) => {
+                write!(f, "DXBC missing {fourcc} signature chunk")
+            }
             SignatureError::MalformedChunk { fourcc, reason } => {
                 write!(f, "malformed DXBC {fourcc} signature chunk: {reason}")
             }
@@ -63,7 +65,10 @@ impl fmt::Display for SignatureError {
                 write!(f, "DXBC {fourcc} signature chunk out of bounds: {reason}")
             }
             SignatureError::InvalidUtf8 { fourcc, reason } => {
-                write!(f, "DXBC {fourcc} signature chunk contains invalid UTF-8: {reason}")
+                write!(
+                    f,
+                    "DXBC {fourcc} signature chunk contains invalid UTF-8: {reason}"
+                )
             }
         }
     }
@@ -77,31 +82,40 @@ pub fn parse_signatures(dxbc: &DxbcFile<'_>) -> Result<ShaderSignatures, Signatu
     const PSGN: FourCC = FourCC(*b"PSGN");
 
     Ok(ShaderSignatures {
-        isgn: dxbc.get_chunk(ISGN).map(|c| parse_signature_chunk(ISGN, c.data)).transpose()?,
-        osgn: dxbc.get_chunk(OSGN).map(|c| parse_signature_chunk(OSGN, c.data)).transpose()?,
-        psgn: dxbc.get_chunk(PSGN).map(|c| parse_signature_chunk(PSGN, c.data)).transpose()?,
+        isgn: dxbc
+            .get_chunk(ISGN)
+            .map(|c| parse_signature_chunk(ISGN, c.data))
+            .transpose()?,
+        osgn: dxbc
+            .get_chunk(OSGN)
+            .map(|c| parse_signature_chunk(OSGN, c.data))
+            .transpose()?,
+        psgn: dxbc
+            .get_chunk(PSGN)
+            .map(|c| parse_signature_chunk(PSGN, c.data))
+            .transpose()?,
     })
 }
 
-pub fn parse_signature_chunk(fourcc: FourCC, bytes: &[u8]) -> Result<DxbcSignature, SignatureError> {
+pub fn parse_signature_chunk(
+    fourcc: FourCC,
+    bytes: &[u8],
+) -> Result<DxbcSignature, SignatureError> {
     let mut r = Reader::new(bytes, fourcc);
     let param_count = r.read_u32_le()?;
     let param_offset = r.read_u32_le()?;
 
     let entry_size = 24usize;
-    let table_bytes = (param_count as usize)
-        .checked_mul(entry_size)
-        .ok_or(SignatureError::MalformedChunk {
-            fourcc,
-            reason: "parameter count overflow",
-        })?;
+    let table_bytes =
+        (param_count as usize)
+            .checked_mul(entry_size)
+            .ok_or(SignatureError::MalformedChunk {
+                fourcc,
+                reason: "parameter count overflow",
+            })?;
 
     let table_start = param_offset as usize;
-    if table_start
-        .checked_add(table_bytes)
-        .is_none()
-        || table_start + table_bytes > bytes.len()
-    {
+    if table_start.checked_add(table_bytes).is_none() || table_start + table_bytes > bytes.len() {
         return Err(SignatureError::OutOfBounds {
             fourcc,
             reason: "signature parameter table out of bounds",
@@ -172,14 +186,20 @@ impl<'a> Reader<'a> {
     }
 
     fn read_bytes(&mut self, len: usize) -> Result<&'a [u8], SignatureError> {
-        let end = self.pos.checked_add(len).ok_or(SignatureError::OutOfBounds {
-            fourcc: self.fourcc,
-            reason: "read offset overflows",
-        })?;
-        let slice = self.bytes.get(self.pos..end).ok_or(SignatureError::OutOfBounds {
-            fourcc: self.fourcc,
-            reason: "read past end of chunk",
-        })?;
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or(SignatureError::OutOfBounds {
+                fourcc: self.fourcc,
+                reason: "read offset overflows",
+            })?;
+        let slice = self
+            .bytes
+            .get(self.pos..end)
+            .ok_or(SignatureError::OutOfBounds {
+                fourcc: self.fourcc,
+                reason: "read past end of chunk",
+            })?;
         self.pos = end;
         Ok(slice)
     }
@@ -201,10 +221,13 @@ impl<'a> Reader<'a> {
             });
         }
         let tail = &self.bytes[offset..];
-        let nul = tail.iter().position(|&b| b == 0).ok_or(SignatureError::MalformedChunk {
-            fourcc: self.fourcc,
-            reason: "unterminated cstring",
-        })?;
+        let nul = tail
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or(SignatureError::MalformedChunk {
+                fourcc: self.fourcc,
+                reason: "unterminated cstring",
+            })?;
         let s = std::str::from_utf8(&tail[..nul]).map_err(|_| SignatureError::InvalidUtf8 {
             fourcc: self.fourcc,
             reason: "cstring is not valid UTF-8",
@@ -212,4 +235,3 @@ impl<'a> Reader<'a> {
         Ok(s.to_owned())
     }
 }
-

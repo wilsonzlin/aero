@@ -110,8 +110,12 @@ pub fn exec<B: CpuBus>(
                     (res, old)
                 })?;
                 let (_, flags) = match instr.mnemonic() {
-                    Mnemonic::Add | Mnemonic::Adc => add_with_flags(state, old, src, carry_in, bits),
-                    Mnemonic::Sub | Mnemonic::Sbb => sub_with_flags(state, old, src, carry_in, bits),
+                    Mnemonic::Add | Mnemonic::Adc => {
+                        add_with_flags(state, old, src, carry_in, bits)
+                    }
+                    Mnemonic::Sub | Mnemonic::Sbb => {
+                        sub_with_flags(state, old, src, carry_in, bits)
+                    }
                     _ => unreachable!(),
                 };
                 state.set_rflags(flags);

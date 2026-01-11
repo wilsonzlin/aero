@@ -17,7 +17,9 @@ use fis::{build_reg_d2h_fis, RegH2dFis};
 use registers::*;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
 const ATA_CMD_IDENTIFY_DEVICE: u8 = 0xec;
 const ATA_CMD_SET_FEATURES: u8 = 0xef;

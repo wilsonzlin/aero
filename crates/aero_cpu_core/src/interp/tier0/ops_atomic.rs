@@ -109,8 +109,8 @@ fn exec_cmpxchg8b<B: CpuBus>(
     }
 
     let addr = calc_ea(state, instr, next_ip, true)?;
-    let expected =
-        ((state.read_reg(Register::EDX) as u64) << 32) | (state.read_reg(Register::EAX) as u32 as u64);
+    let expected = ((state.read_reg(Register::EDX) as u64) << 32)
+        | (state.read_reg(Register::EAX) as u32 as u64);
     let replacement = ((state.read_reg(Register::ECX) as u64) << 32)
         | (state.read_reg(Register::EBX) as u32 as u64);
     let lock = instr.has_lock_prefix();
@@ -156,7 +156,8 @@ fn exec_cmpxchg16b<B: CpuBus>(
         return Err(Exception::gp0());
     }
 
-    let expected = ((state.read_reg(Register::RDX) as u128) << 64) | state.read_reg(Register::RAX) as u128;
+    let expected =
+        ((state.read_reg(Register::RDX) as u128) << 64) | state.read_reg(Register::RAX) as u128;
     let replacement =
         ((state.read_reg(Register::RCX) as u128) << 64) | state.read_reg(Register::RBX) as u128;
     let lock = instr.has_lock_prefix();
@@ -186,4 +187,3 @@ fn exec_cmpxchg16b<B: CpuBus>(
     }
     Ok(ExecOutcome::Continue)
 }
-

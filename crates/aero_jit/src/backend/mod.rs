@@ -15,9 +15,9 @@ use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime, PA
 use aero_cpu_core::state::CpuState as CoreCpuState;
 
 use crate::compiler::tier1::compile_tier1_block_with_options;
-use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::tier1::wasm::Tier1WasmOptions;
 use crate::tier1::BlockLimits;
+use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::Tier1Bus;
 
 /// Minimal interface a host CPU type must expose to execute Tier-1 WASM blocks.

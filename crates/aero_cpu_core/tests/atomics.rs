@@ -195,7 +195,10 @@ fn lock_cmpxchg8b_success_and_failure() {
         assert_eq!(bus.read_u64(addr).unwrap(), replacement);
         assert!(state.get_flag(FLAG_ZF));
         assert_eq!(state.read_reg(Register::EAX) as u32, expected as u32);
-        assert_eq!(state.read_reg(Register::EDX) as u32, (expected >> 32) as u32);
+        assert_eq!(
+            state.read_reg(Register::EDX) as u32,
+            (expected >> 32) as u32
+        );
     }
 
     // Failure.

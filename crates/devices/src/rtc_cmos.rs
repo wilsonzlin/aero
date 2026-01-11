@@ -1,7 +1,9 @@
 use crate::clock::Clock;
 use crate::irq::IrqLine;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -243,7 +245,8 @@ impl<C: Clock, I: IrqLine> IoSnapshot for RtcCmos<C, I> {
                 let remaining = (remaining_lo as u128) | ((remaining_hi as u128) << 64);
 
                 self.periodic_interval_ns = Some(interval);
-                self.next_periodic_ns = Some((self.clock.now_ns() as u128).saturating_add(remaining));
+                self.next_periodic_ns =
+                    Some((self.clock.now_ns() as u128).saturating_add(remaining));
             } else {
                 d.finish()?;
                 self.periodic_interval_ns = None;
@@ -825,7 +828,9 @@ mod tests {
     use super::*;
     use crate::clock::ManualClock;
     use crate::irq::PlatformIrqLine;
-    use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+    use aero_platform::interrupts::{
+        InterruptController, PlatformInterruptMode, PlatformInterrupts,
+    };
     use std::cell::Cell;
     use std::cell::RefCell;
     use std::rc::Rc;

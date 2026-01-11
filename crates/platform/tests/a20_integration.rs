@@ -64,9 +64,9 @@ fn bios_int15(bios: &mut Bios, bus: &mut dyn BiosBus, cpu: &mut CpuState, ax: u1
 
     bus.write_u16(0x0100, 0); // return IP
     bus.write_u16(0x0102, 0); // return CS
-    // Return FLAGS from the interrupt frame. Real-mode BIOS callers typically have IF=1, and the
-    // dispatcher should preserve IF from this saved image (the CPU clears IF before entering the
-    // handler stub).
+                              // Return FLAGS from the interrupt frame. Real-mode BIOS callers typically have IF=1, and the
+                              // dispatcher should preserve IF from this saved image (the CPU clears IF before entering the
+                              // handler stub).
     bus.write_u16(0x0104, 0x0202); // return FLAGS (IF=1, bit1 always set)
 
     cpu.rax = ax as u64;

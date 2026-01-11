@@ -39,8 +39,10 @@ pub fn translate(
     let is_write = access == AccessType::Write;
     let is_user = cpl == 3;
 
-    let pf_not_present = || TranslateError::PageFault(PageFault::not_present(vaddr as u64, access, cpl));
-    let pf_protection = || TranslateError::PageFault(PageFault::protection(vaddr as u64, access, cpl));
+    let pf_not_present =
+        || TranslateError::PageFault(PageFault::not_present(vaddr as u64, access, cpl));
+    let pf_protection =
+        || TranslateError::PageFault(PageFault::protection(vaddr as u64, access, cpl));
     let pf_rsvd = || TranslateError::PageFault(PageFault::rsvd(vaddr as u64, access, cpl));
 
     let pd_base = cr3 & CR3_PD_MASK;
@@ -263,16 +265,7 @@ mod tests {
         let pde = (phys_base & PDE_ADDR_MASK_4M) | PTE_P | PTE_RW | PTE_US | PDE_PS;
         bus.write_u32_phys(pde_addr, pde);
 
-        let paddr = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Write,
-            3,
-            CR0_PG,
-            cr3,
-            CR4_PSE,
-        )
-        .unwrap();
+        let paddr = translate(&mut bus, vaddr, AccessType::Write, 3, CR0_PG, cr3, CR4_PSE).unwrap();
         assert_eq!(paddr, 0x0200_0000u64 + (vaddr & PAGE_OFFSET_MASK_4M as u64));
 
         let pde_after = bus.read_u32_phys(pde_addr);
@@ -322,21 +315,8 @@ mod tests {
         bus.write_u32_phys(pde_addr, pde);
         bus.write_u32_phys(pte_addr, pte);
 
-        let err = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Execute,
-            3,
-            CR0_PG,
-            cr3,
-            0,
-        )
-        .unwrap_err();
-        assert_pf(
-            err,
-            vaddr as u32,
-            PFEC_P | PFEC_US | PFEC_ID,
-        );
+        let err = translate(&mut bus, vaddr, AccessType::Execute, 3, CR0_PG, cr3, 0).unwrap_err();
+        assert_pf(err, vaddr as u32, PFEC_P | PFEC_US | PFEC_ID);
     }
 
     #[test]
@@ -347,16 +327,7 @@ mod tests {
         // PDE is not present (zeroed memory).
         let vaddr = 0x1234_5678u64;
 
-        let err = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Execute,
-            3,
-            CR0_PG,
-            cr3,
-            0,
-        )
-        .unwrap_err();
+        let err = translate(&mut bus, vaddr, AccessType::Execute, 3, CR0_PG, cr3, 0).unwrap_err();
 
         // P=0, U/S=1, I/D=1.
         assert_pf(err, vaddr as u32, PFEC_US | PFEC_ID);
@@ -377,16 +348,7 @@ mod tests {
         let pde = (pt as u32) | PTE_P | PTE_RW | PTE_US;
         bus.write_u32_phys(pde_addr, pde);
 
-        let err = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Write,
-            3,
-            CR0_PG,
-            cr3,
-            0,
-        )
-        .unwrap_err();
+        let err = translate(&mut bus, vaddr, AccessType::Write, 3, CR0_PG, cr3, 0).unwrap_err();
 
         // P=0, W/R=1, U/S=1.
         assert_pf(err, vaddr as u32, PFEC_WR | PFEC_US);
@@ -461,16 +423,7 @@ mod tests {
         bus.write_u32_phys(pde_addr, pde);
 
         // WP=0: supervisor writes succeed.
-        let out = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Write,
-            0,
-            CR0_PG,
-            cr3,
-            CR4_PSE,
-        )
-        .unwrap();
+        let out = translate(&mut bus, vaddr, AccessType::Write, 0, CR0_PG, cr3, CR4_PSE).unwrap();
         assert_eq!(out, 0x0200_0000u64 + (vaddr & PAGE_OFFSET_MASK_4M as u64));
 
         // WP=1: supervisor writes fault.
@@ -501,16 +454,8 @@ mod tests {
         let pde = (0x0200_0000u32 & PDE_ADDR_MASK_4M) | PTE_P | PDE_PS | (1 << 13);
         bus.write_u32_phys(pde_addr, pde);
 
-        let err = translate(
-            &mut bus,
-            vaddr,
-            AccessType::Read,
-            0,
-            CR0_PG,
-            cr3,
-            CR4_PSE,
-        )
-        .unwrap_err();
+        let err =
+            translate(&mut bus, vaddr, AccessType::Read, 0, CR0_PG, cr3, CR4_PSE).unwrap_err();
 
         assert_pf(err, vaddr as u32, PFEC_P | PFEC_RSVD);
     }

@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
 use crate::ps2_keyboard::Ps2Keyboard;
 use crate::ps2_mouse::{Ps2Mouse, Ps2MouseButton};
@@ -688,7 +690,13 @@ impl IoSnapshot for I8042Controller {
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
-        w.field_bytes(TAG_REGS, Encoder::new().u8(self.status).u8(self.command_byte).finish());
+        w.field_bytes(
+            TAG_REGS,
+            Encoder::new()
+                .u8(self.status)
+                .u8(self.command_byte)
+                .finish(),
+        );
         w.field_u8(TAG_OUTPUT_PORT, self.output_port);
 
         if let Some(out) = self.output_buffer {
@@ -697,7 +705,10 @@ impl IoSnapshot for I8042Controller {
                 OutputSource::Mouse => 2u8,
                 OutputSource::Controller => 3u8,
             };
-            w.field_bytes(TAG_OUTPUT_BUFFER, Encoder::new().u8(out.value).u8(source).finish());
+            w.field_bytes(
+                TAG_OUTPUT_BUFFER,
+                Encoder::new().u8(out.value).u8(source).finish(),
+            );
         }
 
         let pending: Vec<(u8, u8)> = self

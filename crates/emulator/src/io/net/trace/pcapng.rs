@@ -163,7 +163,11 @@ fn write_opt_u8(out: &mut Vec<u8>, code: u16, val: u8) {
 
 fn write_opt(out: &mut Vec<u8>, code: u16, val: &[u8]) {
     out.extend_from_slice(&code.to_le_bytes());
-    out.extend_from_slice(&u16::try_from(val.len()).expect("pcapng option too large").to_le_bytes());
+    out.extend_from_slice(
+        &u16::try_from(val.len())
+            .expect("pcapng option too large")
+            .to_le_bytes(),
+    );
     out.extend_from_slice(val);
     pad_to_32(out);
 }
@@ -186,7 +190,10 @@ mod tests {
         cursor += 4;
 
         assert!(total_len >= 28);
-        assert_eq!(&bytes[total_len - 4..total_len], &(total_len as u32).to_le_bytes());
+        assert_eq!(
+            &bytes[total_len - 4..total_len],
+            &(total_len as u32).to_le_bytes()
+        );
 
         let bom = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         assert_eq!(bom, 0x1A2B3C4D);
@@ -199,13 +206,15 @@ mod tests {
         let bytes = w.into_bytes();
 
         let mut offset = 0usize;
-        let shb_len = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let shb_len =
+            u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
         offset += shb_len;
 
         let block_type = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
         assert_eq!(block_type, 0x0000_0001);
 
-        let idb_len = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let idb_len =
+            u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
 
         let link_type = u16::from_le_bytes(bytes[offset + 8..offset + 10].try_into().unwrap());
         assert_eq!(link_type, 1);
@@ -215,7 +224,8 @@ mod tests {
         let mut found = false;
         while opt_off + 4 <= opts_end {
             let code = u16::from_le_bytes(bytes[opt_off..opt_off + 2].try_into().unwrap());
-            let len = u16::from_le_bytes(bytes[opt_off + 2..opt_off + 4].try_into().unwrap()) as usize;
+            let len =
+                u16::from_le_bytes(bytes[opt_off + 2..opt_off + 4].try_into().unwrap()) as usize;
             opt_off += 4;
             if code == 0 {
                 break;

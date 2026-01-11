@@ -307,7 +307,11 @@ pub enum VertexInputError {
     ZeroStreamStride { stream: u8 },
 
     #[error("vertex buffer stride for D3D stream {stream} ({stride} bytes) is smaller than required ({required} bytes)")]
-    StrideTooSmall { stream: u8, stride: u32, required: u32 },
+    StrideTooSmall {
+        stream: u8,
+        stride: u32,
+        required: u32,
+    },
 
     #[error("unknown D3DDECLTYPE value {ty}")]
     UnknownDeclType { ty: u8 },

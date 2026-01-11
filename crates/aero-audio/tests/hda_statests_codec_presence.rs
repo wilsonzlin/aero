@@ -18,4 +18,3 @@ fn statests_reports_codec_presence_after_leaving_reset() {
     hda.mmio_write(REG_STATESTS, 2, 0x1);
     assert_eq!(hda.mmio_read(REG_STATESTS, 2) as u16 & 0x1, 0);
 }
-

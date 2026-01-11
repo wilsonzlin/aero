@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode, PlatformInterrupts};
 
 use super::{PciBdf, PciConfigSpace, PciInterruptPin};

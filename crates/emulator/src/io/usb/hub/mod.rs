@@ -2,11 +2,11 @@ use crate::io::usb::core::AttachedUsbDevice;
 use crate::io::usb::UsbDeviceModel;
 use thiserror::Error;
 
-mod root;
 mod device;
+mod root;
 
-pub use root::RootHub;
 pub use device::UsbHubDevice;
+pub use root::RootHub;
 
 /// Object-safe traversal interface for USB hubs.
 ///
@@ -69,16 +69,18 @@ impl UsbTopologyError {
         match self {
             UsbTopologyError::EmptyPath => UsbTopologyError::EmptyPath,
             UsbTopologyError::PortOutOfRange {
-                port,
-                num_ports,
-                ..
+                port, num_ports, ..
             } => UsbTopologyError::PortOutOfRange {
                 depth,
                 port,
                 num_ports,
             },
-            UsbTopologyError::PortOccupied { port, .. } => UsbTopologyError::PortOccupied { depth, port },
-            UsbTopologyError::NoDeviceAtPort { port, .. } => UsbTopologyError::NoDeviceAtPort { depth, port },
+            UsbTopologyError::PortOccupied { port, .. } => {
+                UsbTopologyError::PortOccupied { depth, port }
+            }
+            UsbTopologyError::NoDeviceAtPort { port, .. } => {
+                UsbTopologyError::NoDeviceAtPort { depth, port }
+            }
             UsbTopologyError::NotAHub { port, .. } => UsbTopologyError::NotAHub { depth, port },
         }
     }

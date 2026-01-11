@@ -5,8 +5,8 @@ pub mod hub;
 pub mod passthrough;
 pub mod uhci;
 
-pub use core::{UsbInResult, UsbOutResult};
 use crate::io::usb::hub::UsbTopologyError;
+pub use core::{UsbInResult, UsbOutResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SetupPacket {

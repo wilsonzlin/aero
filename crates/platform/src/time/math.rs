@@ -67,7 +67,10 @@ mod tests {
         assert_eq!(gcd_u64(0, 5), 5);
         assert_eq!(gcd_u64(54, 24), 6);
         assert_eq!(reduce_fraction(10, 5), (2, 1));
-        assert_eq!(reduce_fraction(1_000_000_000, 3_579_545), (200_000_000, 715_909));
+        assert_eq!(
+            reduce_fraction(1_000_000_000, 3_579_545),
+            (200_000_000, 715_909)
+        );
     }
 
     #[test]
@@ -84,4 +87,3 @@ mod tests {
         assert_eq!(period_from_hz_ns(1_000_000_000), (1, 1));
     }
 }
-

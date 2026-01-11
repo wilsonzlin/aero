@@ -585,11 +585,13 @@ pub fn map_layout_to_shader_locations(
             });
         }
 
-        let end = offset.checked_add(fmt.size).ok_or(InputLayoutError::OffsetOverflow {
-            slot: elem.input_slot,
-            offset,
-            size: fmt.size,
-        })?;
+        let end = offset
+            .checked_add(fmt.size)
+            .ok_or(InputLayoutError::OffsetOverflow {
+                slot: elem.input_slot,
+                offset,
+                size: fmt.size,
+            })?;
         slot.next_offset = end;
         slot.required_stride = slot.required_stride.max(end);
 
@@ -924,11 +926,17 @@ mod tests {
         assert_eq!(mapped[0].attributes.len(), 2);
         assert_eq!(mapped[0].attributes[0].shader_location, 0);
         assert_eq!(mapped[0].attributes[0].offset, 0);
-        assert_eq!(mapped[0].attributes[0].format, wgpu::VertexFormat::Float32x3);
+        assert_eq!(
+            mapped[0].attributes[0].format,
+            wgpu::VertexFormat::Float32x3
+        );
 
         assert_eq!(mapped[0].attributes[1].shader_location, 1);
         assert_eq!(mapped[0].attributes[1].offset, 12);
-        assert_eq!(mapped[0].attributes[1].format, wgpu::VertexFormat::Float32x2);
+        assert_eq!(
+            mapped[0].attributes[1].format,
+            wgpu::VertexFormat::Float32x2
+        );
     }
 
     #[test]

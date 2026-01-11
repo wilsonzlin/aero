@@ -146,4 +146,3 @@ pub fn palignr(dst: u128, src: u128, imm: u8) -> u128 {
     }
     u128::from_le_bytes(out)
 }
-

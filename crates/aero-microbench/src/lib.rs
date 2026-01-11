@@ -52,9 +52,7 @@ pub fn bench_integer_alu(iters: u32) -> u64 {
 
     for i in 0..iters {
         x = x.wrapping_add(y).rotate_left(13);
-        y = y
-            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
-            .wrapping_add(i as u64);
+        y = y.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(i as u64);
         acc ^= x.wrapping_add(y);
         acc = acc.rotate_right(7) ^ y;
     }
@@ -154,7 +152,10 @@ mod tests {
 
     #[test]
     fn alu_is_deterministic() {
-        assert_eq!(bench_integer_alu(0), 0x1234_5678_9abc_def0 ^ 0xfedc_ba98_7654_3210);
+        assert_eq!(
+            bench_integer_alu(0),
+            0x1234_5678_9abc_def0 ^ 0xfedc_ba98_7654_3210
+        );
         assert_eq!(bench_integer_alu(10), 0x8966_833f_b068_df5b);
     }
 

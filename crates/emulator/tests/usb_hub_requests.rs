@@ -1,6 +1,6 @@
-use emulator::io::usb::hub::UsbHubDevice;
-use emulator::io::usb::hub::UsbHub;
 use emulator::io::usb::core::{UsbInResult, UsbOutResult};
+use emulator::io::usb::hub::UsbHub;
+use emulator::io::usb::hub::UsbHubDevice;
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
 const USB_REQUEST_GET_STATUS: u8 = 0x00;
@@ -34,7 +34,11 @@ const HUB_INTERRUPT_IN_EP: u8 = 0x81;
 struct DummyUsbDevice;
 
 impl UsbDeviceModel for DummyUsbDevice {
-    fn handle_control_request(&mut self, _setup: SetupPacket, _data_stage: Option<&[u8]>) -> ControlResponse {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
         ControlResponse::Stall
     }
 
@@ -80,11 +84,23 @@ fn standard_get_status_endpoint(ep: u8) -> SetupPacket {
 }
 
 fn standard_set_feature_endpoint_halt(ep: u8) -> SetupPacket {
-    setup(0x02, USB_REQUEST_SET_FEATURE, USB_FEATURE_ENDPOINT_HALT, ep as u16, 0)
+    setup(
+        0x02,
+        USB_REQUEST_SET_FEATURE,
+        USB_FEATURE_ENDPOINT_HALT,
+        ep as u16,
+        0,
+    )
 }
 
 fn standard_clear_feature_endpoint_halt(ep: u8) -> SetupPacket {
-    setup(0x02, USB_REQUEST_CLEAR_FEATURE, USB_FEATURE_ENDPOINT_HALT, ep as u16, 0)
+    setup(
+        0x02,
+        USB_REQUEST_CLEAR_FEATURE,
+        USB_FEATURE_ENDPOINT_HALT,
+        ep as u16,
+        0,
+    )
 }
 
 fn hub_get_status_port(port: u16) -> SetupPacket {
@@ -104,7 +120,8 @@ fn hub_clear_feature_device(feature: u16) -> SetupPacket {
 }
 
 fn get_port_status_and_change(hub: &mut UsbHubDevice, port: u16) -> (u16, u16) {
-    let ControlResponse::Data(data) = hub.handle_control_request(hub_get_status_port(port), None) else {
+    let ControlResponse::Data(data) = hub.handle_control_request(hub_get_status_port(port), None)
+    else {
         panic!("expected Data for hub port GET_STATUS");
     };
     assert_eq!(data.len(), 4);
@@ -182,7 +199,8 @@ fn usb_hub_standard_device_remote_wakeup_feature_roundtrips() {
 fn usb_hub_standard_get_set_interface_roundtrips_alt_setting_zero() {
     let mut hub = UsbHubDevice::new();
 
-    let ControlResponse::Data(data) = hub.handle_control_request(standard_get_interface(0), None) else {
+    let ControlResponse::Data(data) = hub.handle_control_request(standard_get_interface(0), None)
+    else {
         panic!("expected Data response");
     };
     assert_eq!(data, [0]);
@@ -210,7 +228,10 @@ fn usb_hub_class_clear_feature_device_accepts_hub_change_selectors() {
 
     let mut hub = UsbHubDevice::new();
 
-    for feature in [HUB_FEATURE_C_HUB_LOCAL_POWER, HUB_FEATURE_C_HUB_OVER_CURRENT] {
+    for feature in [
+        HUB_FEATURE_C_HUB_LOCAL_POWER,
+        HUB_FEATURE_C_HUB_OVER_CURRENT,
+    ] {
         assert_eq!(
             hub.handle_control_request(hub_clear_feature_device(feature), None),
             ControlResponse::Ack
@@ -246,11 +267,17 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     assert_ne!(bitmap[0] & 0x02, 0); // bit1 = port1 change
 
     assert_eq!(
-        hub.handle_control_request(standard_set_feature_endpoint_halt(HUB_INTERRUPT_IN_EP), None),
+        hub.handle_control_request(
+            standard_set_feature_endpoint_halt(HUB_INTERRUPT_IN_EP),
+            None
+        ),
         ControlResponse::Ack
     );
 
-    assert_eq!(hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP), UsbInResult::Stall);
+    assert_eq!(
+        hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP),
+        UsbInResult::Stall
+    );
 
     let ControlResponse::Data(st) =
         hub.handle_control_request(standard_get_status_endpoint(HUB_INTERRUPT_IN_EP), None)
@@ -262,7 +289,10 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     assert_eq!(hub.poll_interrupt_in(HUB_INTERRUPT_IN_EP), None);
 
     assert_eq!(
-        hub.handle_control_request(standard_clear_feature_endpoint_halt(HUB_INTERRUPT_IN_EP), None),
+        hub.handle_control_request(
+            standard_clear_feature_endpoint_halt(HUB_INTERRUPT_IN_EP),
+            None
+        ),
         ControlResponse::Ack
     );
 
@@ -438,7 +468,10 @@ fn usb_hub_port_enable_set_and_clear_feature() {
 
     // Clear enable-change and then disable.
     assert_eq!(
-        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE), None),
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE),
+            None
+        ),
         ControlResponse::Ack
     );
     assert_eq!(
@@ -451,7 +484,10 @@ fn usb_hub_port_enable_set_and_clear_feature() {
 
     // Clear enable-change and then re-enable.
     assert_eq!(
-        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE), None),
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE),
+            None
+        ),
         ControlResponse::Ack
     );
     assert_eq!(
@@ -473,7 +509,13 @@ fn usb_hub_hub_descriptor_fields_are_stable_and_correct_length() {
     let mut hub = UsbHubDevice::new();
 
     let ControlResponse::Data(desc) = hub.handle_control_request(
-        setup(0xa0, USB_REQUEST_GET_DESCRIPTOR, HUB_DESCRIPTOR_TYPE << 8, 0, 64),
+        setup(
+            0xa0,
+            USB_REQUEST_GET_DESCRIPTOR,
+            HUB_DESCRIPTOR_TYPE << 8,
+            0,
+            64,
+        ),
         None,
     ) else {
         panic!("expected Data response");
@@ -515,14 +557,26 @@ fn usb_hub_standard_get_descriptor_accepts_hub_descriptor_type() {
     let mut hub = UsbHubDevice::new();
 
     let ControlResponse::Data(class_desc) = hub.handle_control_request(
-        setup(0xa0, USB_REQUEST_GET_DESCRIPTOR, HUB_DESCRIPTOR_TYPE << 8, 0, 64),
+        setup(
+            0xa0,
+            USB_REQUEST_GET_DESCRIPTOR,
+            HUB_DESCRIPTOR_TYPE << 8,
+            0,
+            64,
+        ),
         None,
     ) else {
         panic!("expected Data response");
     };
 
     let ControlResponse::Data(std_desc) = hub.handle_control_request(
-        setup(0x80, USB_REQUEST_GET_DESCRIPTOR, HUB_DESCRIPTOR_TYPE << 8, 0, 64),
+        setup(
+            0x80,
+            USB_REQUEST_GET_DESCRIPTOR,
+            HUB_DESCRIPTOR_TYPE << 8,
+            0,
+            64,
+        ),
         None,
     ) else {
         panic!("expected Data response");
@@ -551,7 +605,13 @@ fn usb_hub_interrupt_bitmap_scales_with_port_count() {
     assert_ne!(bitmap[1] & 0x01, 0); // bit8 = port8 change.
 
     let ControlResponse::Data(desc) = hub.handle_control_request(
-        setup(0xa0, USB_REQUEST_GET_DESCRIPTOR, HUB_DESCRIPTOR_TYPE << 8, 0, 64),
+        setup(
+            0xa0,
+            USB_REQUEST_GET_DESCRIPTOR,
+            HUB_DESCRIPTOR_TYPE << 8,
+            0,
+            64,
+        ),
         None,
     ) else {
         panic!("expected Data response");

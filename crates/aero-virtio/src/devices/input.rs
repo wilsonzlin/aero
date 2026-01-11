@@ -1,7 +1,7 @@
 use crate::devices::{VirtioDevice, VirtioDeviceError};
+use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
-use crate::memory::GuestMemory;
 
 pub const VIRTIO_DEVICE_TYPE_INPUT: u16 = 18;
 

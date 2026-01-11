@@ -10,4 +10,3 @@
 // - position+color+uv
 // - multi-stream vertex fetch
 // - instanced rendering with per-instance color
-

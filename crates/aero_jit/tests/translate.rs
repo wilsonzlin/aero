@@ -173,7 +173,12 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
                 write_gpr_part(cpu, dst.gpr, *width, false, a);
                 cpu.rip = next;
             }
-            InstKind::Alu { op, dst, src, width } => {
+            InstKind::Alu {
+                op,
+                dst,
+                src,
+                width,
+            } => {
                 let l = read_op(inst, cpu, bus, dst, *width);
                 let r = read_op(inst, cpu, bus, src, *width);
                 let (res, flags) = match op {
@@ -252,7 +257,12 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
                 write_op(inst, cpu, bus, dst, Width::W8, v);
                 cpu.rip = next;
             }
-            InstKind::Cmovcc { cond, dst, src, width } => {
+            InstKind::Cmovcc {
+                cond,
+                dst,
+                src,
+                width,
+            } => {
                 if eval_cond(cpu, *cond) {
                     let v = read_op(inst, cpu, bus, src, *width);
                     write_gpr_part(cpu, dst.gpr, *width, false, v);
@@ -290,7 +300,13 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
     }
 }
 
-fn assert_block_ir(code: &[u8], entry_rip: u64, cpu: CpuState, mut bus: SimpleBus, expected_ir: &str) {
+fn assert_block_ir(
+    code: &[u8],
+    entry_rip: u64,
+    cpu: CpuState,
+    mut bus: SimpleBus,
+    expected_ir: &str,
+) {
     bus.load(entry_rip, code);
 
     let block = discover_block(&bus, entry_rip, BlockLimits::default());

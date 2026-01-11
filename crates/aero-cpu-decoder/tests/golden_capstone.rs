@@ -56,8 +56,12 @@ fn golden_decode_len_matches_capstone_x86_64() {
         let ours = decode_one(DecodeMode::Bits64, ip, &bytes);
         let cap = cs.disasm_count(&bytes, ip, 1);
 
-        let (Ok(ours), Ok(cap)) = (ours, cap) else { continue };
-        let Some(cap_ins) = cap.iter().next() else { continue };
+        let (Ok(ours), Ok(cap)) = (ours, cap) else {
+            continue;
+        };
+        let Some(cap_ins) = cap.iter().next() else {
+            continue;
+        };
 
         let our_len = ours.len() as usize;
         let cap_len = cap_ins.bytes().len();
@@ -79,4 +83,3 @@ fn golden_decode_len_matches_capstone_x86_64() {
         "only matched {matches} instructions after {attempts} attempts"
     );
 }
-

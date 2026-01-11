@@ -11,7 +11,8 @@ fn repo_root() -> PathBuf {
 }
 
 fn read_file(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_else(|err| panic!("{}: failed to read file: {err}", path.display()))
+    fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("{}: failed to read file: {err}", path.display()))
 }
 
 fn assert_file_contains(path: &Path, needle: &str) {
@@ -91,8 +92,10 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     // Legacy bring-up ABI PCI identity is defined in the Windows driver header.
     let legacy_header_path = repo_root.join("drivers/aerogpu/protocol/aerogpu_protocol.h");
     let legacy_header = read_file(&legacy_header_path);
-    let legacy_vendor_id = parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_VENDOR_ID");
-    let legacy_device_id = parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_DEVICE_ID");
+    let legacy_vendor_id =
+        parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_VENDOR_ID");
+    let legacy_device_id =
+        parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_DEVICE_ID");
     let legacy_hwid = format!("PCI\\VEN_{legacy_vendor_id:04X}&DEV_{legacy_device_id:04X}");
 
     for relative_path in [
@@ -113,12 +116,22 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     let devices = contract_json
         .get("devices")
         .and_then(|value| value.as_array())
-        .unwrap_or_else(|| panic!("{}: expected top-level `devices` array", contract_path.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: expected top-level `devices` array",
+                contract_path.display()
+            )
+        });
 
     let aero_gpu = devices
         .iter()
         .find(|device| device.get("device").and_then(|v| v.as_str()) == Some("aero-gpu"))
-        .unwrap_or_else(|| panic!("{}: missing device entry for `aero-gpu`", contract_path.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: missing device entry for `aero-gpu`",
+                contract_path.display()
+            )
+        });
 
     let expected_vendor_id = format!("0x{new_vendor_id:04X}");
     let expected_device_id = format!("0x{new_device_id:04X}");
@@ -126,9 +139,15 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     let contract_vendor_id = aero_gpu
         .get("pci_vendor_id")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| panic!("{}: aero-gpu entry missing `pci_vendor_id` string", contract_path.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: aero-gpu entry missing `pci_vendor_id` string",
+                contract_path.display()
+            )
+        });
     assert_eq!(
-        contract_vendor_id, expected_vendor_id,
+        contract_vendor_id,
+        expected_vendor_id,
         "{}: aero-gpu pci_vendor_id is `{contract_vendor_id}`, expected `{expected_vendor_id}`",
         contract_path.display()
     );
@@ -136,9 +155,15 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     let contract_device_id = aero_gpu
         .get("pci_device_id")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| panic!("{}: aero-gpu entry missing `pci_device_id` string", contract_path.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: aero-gpu entry missing `pci_device_id` string",
+                contract_path.display()
+            )
+        });
     assert_eq!(
-        contract_device_id, expected_device_id,
+        contract_device_id,
+        expected_device_id,
         "{}: aero-gpu pci_device_id is `{contract_device_id}`, expected `{expected_device_id}`",
         contract_path.display()
     );
@@ -146,7 +171,12 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     let patterns: Vec<String> = aero_gpu
         .get("hardware_id_patterns")
         .and_then(|v| v.as_array())
-        .unwrap_or_else(|| panic!("{}: aero-gpu entry missing `hardware_id_patterns` array", contract_path.display()))
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: aero-gpu entry missing `hardware_id_patterns` array",
+                contract_path.display()
+            )
+        })
         .iter()
         .map(|value| {
             value.as_str().unwrap_or_else(|| {

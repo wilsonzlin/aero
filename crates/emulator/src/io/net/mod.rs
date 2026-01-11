@@ -1,8 +1,8 @@
 pub mod e1000;
 pub mod e1000_aero;
 pub mod stack;
-pub mod tunnel_backend;
 pub mod trace;
+pub mod tunnel_backend;
 
 pub use tunnel_backend::{L2TunnelBackend, L2TunnelBackendStats};
 

@@ -113,11 +113,7 @@ pub struct RectMergeOutcome {
 /// - If the resulting list exceeds `cap`, rects are merged into larger bounding boxes until
 ///   `len <= cap`. This is done by sorting and grouping deterministically.
 #[must_use]
-pub fn merge_and_cap_rects(
-    rects: &[Rect],
-    bounds: (u32, u32),
-    cap: usize,
-) -> RectMergeOutcome {
+pub fn merge_and_cap_rects(rects: &[Rect], bounds: (u32, u32), cap: usize) -> RectMergeOutcome {
     let (width, height) = bounds;
 
     let mut clamped = Vec::with_capacity(rects.len());
@@ -160,8 +156,7 @@ fn merge_overlapping_and_adjacent(rects: &[Rect]) -> Vec<Rect> {
         }
     }
 
-    let mut bbox_by_root: std::collections::HashMap<usize, Rect> =
-        std::collections::HashMap::new();
+    let mut bbox_by_root: std::collections::HashMap<usize, Rect> = std::collections::HashMap::new();
     for (idx, &rect) in rects.iter().enumerate() {
         let root = uf.find(idx);
         bbox_by_root
@@ -284,4 +279,3 @@ mod tests {
         assert_eq!(out.rects.len(), 3);
     }
 }
-

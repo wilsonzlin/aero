@@ -26,7 +26,12 @@ async fn windows7_boot_placeholder() -> Result<()> {
         crop: None,
     };
     let shot = vm
-        .wait_for_stable_screenshot(Duration::from_secs(120), Duration::from_secs(5), 2, &stable_cfg)
+        .wait_for_stable_screenshot(
+            Duration::from_secs(120),
+            Duration::from_secs(5),
+            2,
+            &stable_cfg,
+        )
         .await?;
 
     let golden = resolve_windows_golden();
@@ -61,7 +66,10 @@ fn resolve_windows_image() -> Result<PathBuf> {
         if path.exists() {
             return Ok(path);
         }
-        return Err(anyhow!("AERO_WINDOWS7_IMAGE points to a missing path: {}", path.display()));
+        return Err(anyhow!(
+            "AERO_WINDOWS7_IMAGE points to a missing path: {}",
+            path.display()
+        ));
     }
 
     let path = harness::repo_root().join("test-images/local/windows7.img");

@@ -1,7 +1,9 @@
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
 
-use aero_net_stack::packet::{EtherType, EthernetFrame, Ipv4Packet, Ipv4Protocol, MacAddr, UdpDatagram};
+use aero_net_stack::packet::{
+    EtherType, EthernetFrame, Ipv4Packet, Ipv4Protocol, MacAddr, UdpDatagram,
+};
 use emulator::io::net::stack::{Action, NetStackBackend, StackConfig, UdpProxyEvent, UdpTransport};
 
 fn wrap_udp_ipv4_eth(
@@ -32,7 +34,12 @@ fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
     out
 }
 
-fn build_dhcp_request(xid: u32, mac: MacAddr, requested_ip: Ipv4Addr, server_id: Ipv4Addr) -> Vec<u8> {
+fn build_dhcp_request(
+    xid: u32,
+    mac: MacAddr,
+    requested_ip: Ipv4Addr,
+    server_id: Ipv4Addr,
+) -> Vec<u8> {
     let mut out = vec![0u8; 240];
     out[0] = 1; // BOOTREQUEST
     out[1] = 1; // Ethernet
@@ -80,13 +87,18 @@ fn dhcp_handshake(backend: &mut NetStackBackend, cfg: &StackConfig, guest_mac: M
     backend.drain_frames();
     backend.drain_actions();
 
-    assert!(backend.stack().is_ip_assigned(), "DHCP should assign guest IP");
+    assert!(
+        backend.stack().is_ip_assigned(),
+        "DHCP should assign guest IP"
+    );
 }
 
 #[test]
 fn udp_proxy_echo_end_to_end() {
     let server = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
-    server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     let server_addr = server.local_addr().unwrap();
     let server_handle = std::thread::spawn(move || {
         let mut buf = [0u8; 2048];
@@ -139,7 +151,9 @@ fn udp_proxy_echo_end_to_end() {
 
     // Fulfill the proxy send by talking to the real UDP echo server.
     let proxy = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
-    proxy.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    proxy
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     proxy.send_to(data, server_addr).unwrap();
     let mut buf = [0u8; 2048];
     let (n, from) = proxy.recv_from(&mut buf).unwrap();
@@ -171,4 +185,3 @@ fn udp_proxy_echo_end_to_end() {
 
     server_handle.join().unwrap();
 }
-

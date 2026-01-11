@@ -131,7 +131,10 @@ impl GpuProfiler {
         queue: Option<&wgpu::Queue>,
         config: GpuProfilerConfig,
     ) -> Self {
-        assert!(config.query_history_frames > 0, "query_history_frames must be > 0");
+        assert!(
+            config.query_history_frames > 0,
+            "query_history_frames must be > 0"
+        );
         assert!(
             config.readback_interval_frames > 0,
             "readback_interval_frames must be > 0"
@@ -141,9 +144,7 @@ impl GpuProfiler {
 
         let timestamps = match (device, queue) {
             (Some(device), Some(queue))
-                if device
-                    .features()
-                    .contains(wgpu::Features::TIMESTAMP_QUERY)
+                if device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
                     && device
                         .features()
                         .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS) =>
@@ -412,9 +413,7 @@ impl GpuProfiler {
                     let start = i * QUERY_SIZE_BYTES as usize;
                     let end = start + QUERY_SIZE_BYTES as usize;
                     *out = u64::from_le_bytes(
-                        data[start..end]
-                            .try_into()
-                            .expect("query readback slice"),
+                        data[start..end].try_into().expect("query readback slice"),
                     );
                 }
                 drop(data);
@@ -506,4 +505,3 @@ mod tests {
         );
     }
 }
-

@@ -122,7 +122,15 @@ mod tests {
             Self { devs: Vec::new() }
         }
 
-        fn add_dev(&mut self, bus: u8, device: u8, function: u8, vendor: u16, dev_id: u16, pin: u8) {
+        fn add_dev(
+            &mut self,
+            bus: u8,
+            device: u8,
+            function: u8,
+            vendor: u16,
+            dev_id: u16,
+            pin: u8,
+        ) {
             let id = u32::from(dev_id) << 16 | u32::from(vendor);
             let reg_3c = u32::from(pin) << 8;
             self.devs.push((

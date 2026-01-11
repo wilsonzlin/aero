@@ -12,7 +12,9 @@ struct BenchMem {
 
 impl BenchMem {
     fn new(size: usize) -> Self {
-        Self { buf: vec![0u8; size] }
+        Self {
+            buf: vec![0u8; size],
+        }
     }
 }
 
@@ -244,14 +246,26 @@ fn bench_device_read_4k(c: &mut Criterion) {
         let ctba = 0x12_000u64;
         let dst = 0x13_000u64;
 
-        ahci.mmio_write_u32(&mut mem, ahci_regs::HBA_GHC, ahci_regs::GHC_AE | ahci_regs::GHC_IE);
-        ahci.mmio_write_u32(&mut mem, ahci_regs::HBA_PORTS_BASE + ahci_regs::PX_CLB, clb as u32);
+        ahci.mmio_write_u32(
+            &mut mem,
+            ahci_regs::HBA_GHC,
+            ahci_regs::GHC_AE | ahci_regs::GHC_IE,
+        );
+        ahci.mmio_write_u32(
+            &mut mem,
+            ahci_regs::HBA_PORTS_BASE + ahci_regs::PX_CLB,
+            clb as u32,
+        );
         ahci.mmio_write_u32(
             &mut mem,
             ahci_regs::HBA_PORTS_BASE + ahci_regs::PX_CLBU,
             (clb >> 32) as u32,
         );
-        ahci.mmio_write_u32(&mut mem, ahci_regs::HBA_PORTS_BASE + ahci_regs::PX_FB, fb as u32);
+        ahci.mmio_write_u32(
+            &mut mem,
+            ahci_regs::HBA_PORTS_BASE + ahci_regs::PX_FB,
+            fb as u32,
+        );
         ahci.mmio_write_u32(
             &mut mem,
             ahci_regs::HBA_PORTS_BASE + ahci_regs::PX_FBU,

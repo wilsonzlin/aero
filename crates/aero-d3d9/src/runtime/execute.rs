@@ -362,19 +362,20 @@ impl D3D9Runtime {
             .await
             .map_err(|e| RuntimeError::RequestDevice(e.to_string()))?;
 
-        let constants_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("aero-d3d9-constants-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let constants_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("aero-d3d9-constants-bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let mut texture_entries = Vec::with_capacity(MAX_SAMPLERS * 2);
         for slot in 0..MAX_SAMPLERS {
@@ -396,10 +397,11 @@ impl D3D9Runtime {
             });
         }
 
-        let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("aero-d3d9-textures-bgl"),
-            entries: &texture_entries,
-        });
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("aero-d3d9-textures-bgl"),
+                entries: &texture_entries,
+            });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("aero-d3d9-pipeline-layout"),
@@ -462,7 +464,8 @@ impl D3D9Runtime {
                 depth_or_array_layers: 1,
             },
         );
-        let default_texture_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let default_texture_view =
+            default_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("aero-d3d9-default-sampler"),
@@ -537,7 +540,7 @@ impl D3D9Runtime {
         if self.swapchains.contains_key(&swapchain_id) {
             return Err(RuntimeError::SwapChainAlreadyExists(swapchain_id));
         }
- 
+
         let format = desc.format.to_wgpu();
         let view_formats = match format {
             wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
@@ -560,19 +563,23 @@ impl D3D9Runtime {
                 | wgpu::TextureUsages::COPY_DST,
             view_formats: &view_formats,
         });
- 
+
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let view_srgb = match format {
-            wgpu::TextureFormat::Rgba8Unorm => Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("aero-d3d9-swapchain-view-srgb"),
-                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-                ..Default::default()
-            })),
-            wgpu::TextureFormat::Bgra8Unorm => Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("aero-d3d9-swapchain-view-srgb"),
-                format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
-                ..Default::default()
-            })),
+            wgpu::TextureFormat::Rgba8Unorm => {
+                Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("aero-d3d9-swapchain-view-srgb"),
+                    format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                    ..Default::default()
+                }))
+            }
+            wgpu::TextureFormat::Bgra8Unorm => {
+                Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("aero-d3d9-swapchain-view-srgb"),
+                    format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                    ..Default::default()
+                }))
+            }
             _ => None,
         };
 
@@ -644,26 +651,30 @@ impl D3D9Runtime {
             aspect: wgpu::TextureAspect::All,
         });
         let view_mip0_srgb = match format {
-            wgpu::TextureFormat::Rgba8Unorm => Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("aero-d3d9-texture-mip0-srgb"),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                base_array_layer: 0,
-                array_layer_count: Some(1),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-                aspect: wgpu::TextureAspect::All,
-            })),
-            wgpu::TextureFormat::Bgra8Unorm => Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("aero-d3d9-texture-mip0-srgb"),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                base_array_layer: 0,
-                array_layer_count: Some(1),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
-                aspect: wgpu::TextureAspect::All,
-            })),
+            wgpu::TextureFormat::Rgba8Unorm => {
+                Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("aero-d3d9-texture-mip0-srgb"),
+                    base_mip_level: 0,
+                    mip_level_count: Some(1),
+                    base_array_layer: 0,
+                    array_layer_count: Some(1),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                    aspect: wgpu::TextureAspect::All,
+                }))
+            }
+            wgpu::TextureFormat::Bgra8Unorm => {
+                Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("aero-d3d9-texture-mip0-srgb"),
+                    base_mip_level: 0,
+                    mip_level_count: Some(1),
+                    base_array_layer: 0,
+                    array_layer_count: Some(1),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                    aspect: wgpu::TextureAspect::All,
+                }))
+            }
             _ => None,
         };
 
@@ -852,7 +863,10 @@ impl D3D9Runtime {
 
     pub fn set_render_state_u32(&mut self, state_id: u32, value: u32) {
         if state_id > MAX_REASONABLE_RENDER_STATE_ID {
-            debug!(state_id, value, "ignoring suspiciously large D3D9 render state id");
+            debug!(
+                state_id,
+                value, "ignoring suspiciously large D3D9 render state id"
+            );
             return;
         }
 
@@ -893,7 +907,9 @@ impl D3D9Runtime {
                 None => debug!(state_id, value, "unknown D3D9 stencil op"),
             },
             d3d9::D3DRS_STENCILREF => self.tracker.depth_stencil.stencil_ref = (value & 0xFF) as u8,
-            d3d9::D3DRS_STENCILMASK => self.tracker.depth_stencil.stencil_read_mask = (value & 0xFF) as u8,
+            d3d9::D3DRS_STENCILMASK => {
+                self.tracker.depth_stencil.stencil_read_mask = (value & 0xFF) as u8
+            }
             d3d9::D3DRS_STENCILWRITEMASK => {
                 self.tracker.depth_stencil.stencil_write_mask = (value & 0xFF) as u8
             }
@@ -979,7 +995,10 @@ impl D3D9Runtime {
         texture_id: Option<u32>,
     ) -> Result<(), RuntimeError> {
         if stage != ShaderStage::Fragment {
-            debug!(?stage, slot, texture_id, "ignoring non-fragment texture bind");
+            debug!(
+                ?stage,
+                slot, texture_id, "ignoring non-fragment texture bind"
+            );
             return Ok(());
         }
 
@@ -1013,12 +1032,18 @@ impl D3D9Runtime {
         value: u32,
     ) {
         if stage != ShaderStage::Fragment {
-            debug!(?stage, slot, state_id, value, "ignoring non-fragment sampler state");
+            debug!(
+                ?stage,
+                slot, state_id, value, "ignoring non-fragment sampler state"
+            );
             return;
         }
 
         if state_id > MAX_REASONABLE_SAMPLER_STATE_ID {
-            debug!(slot, state_id, value, "ignoring suspiciously large D3D9 sampler state id");
+            debug!(
+                slot,
+                state_id, value, "ignoring suspiciously large D3D9 sampler state id"
+            );
             return;
         }
 
@@ -1124,7 +1149,11 @@ impl D3D9Runtime {
 
     pub fn set_shader_key(&mut self, stage: ShaderStage, key: u32) -> Result<(), RuntimeError> {
         // Key 0 is treated as "unbind", matching D3D9 semantics.
-        let shader = if key == 0 { None } else { Some(ShaderKey(key as u64)) };
+        let shader = if key == 0 {
+            None
+        } else {
+            Some(ShaderKey(key as u64))
+        };
 
         match stage {
             ShaderStage::Vertex => {
@@ -1161,11 +1190,13 @@ impl D3D9Runtime {
 
         // Encode the update into the current command encoder so ordering with draws is preserved.
         self.ensure_encoder();
-        let staging = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("aero-d3d9-constants-staging"),
-            contents: bytemuck::cast_slice(vec4_data),
-            usage: wgpu::BufferUsages::COPY_SRC,
-        });
+        let staging = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("aero-d3d9-constants-staging"),
+                contents: bytemuck::cast_slice(vec4_data),
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
         let encoder = self
             .state
             .encoder
@@ -1354,16 +1385,14 @@ impl D3D9Runtime {
 
         // Apply dynamic viewport/scissor state. Ensure we always reset to a sensible default so
         // state doesn't leak between draws.
-        let viewport = dynamic
-            .viewport
-            .unwrap_or(Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: target_width as f32,
-                height: target_height as f32,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            });
+        let viewport = dynamic.viewport.unwrap_or(Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: target_width as f32,
+            height: target_height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        });
         let viewport = clamp_viewport(viewport, target_width, target_height);
 
         let scissor = if self.state.scissor_enable {
@@ -1561,16 +1590,14 @@ impl D3D9Runtime {
             None
         };
 
-        let viewport = dynamic
-            .viewport
-            .unwrap_or(Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: target_width as f32,
-                height: target_height as f32,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            });
+        let viewport = dynamic.viewport.unwrap_or(Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: target_width as f32,
+            height: target_height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        });
         let viewport = clamp_viewport(viewport, target_width, target_height);
 
         let scissor = if self.state.scissor_enable {
@@ -2034,9 +2061,7 @@ fn clamp_viewport(mut viewport: Viewport, target_width: u32, target_height: u32)
     let th = target_height as f32;
 
     viewport.min_depth = viewport.min_depth.clamp(0.0, 1.0);
-    viewport.max_depth = viewport
-        .max_depth
-        .clamp(viewport.min_depth, 1.0);
+    viewport.max_depth = viewport.max_depth.clamp(viewport.min_depth, 1.0);
 
     if viewport.width <= 0.0 || viewport.height <= 0.0 || tw == 0.0 || th == 0.0 {
         return Viewport {

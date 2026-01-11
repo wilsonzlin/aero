@@ -1,6 +1,8 @@
 use std::fmt;
 
-use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType, WriteMask};
+use crate::sm3::decode::{
+    ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType, WriteMask,
+};
 use crate::sm3::types::ShaderVersion;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,7 +245,9 @@ pub enum Semantic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cond {
     /// `src.x != 0.0`
-    NonZero { src: Src },
+    NonZero {
+        src: Src,
+    },
     Compare {
         op: CompareOp,
         src0: Src,
@@ -267,17 +271,33 @@ pub enum CompareOp {
 
 impl fmt::Display for ShaderIr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}_{}_{}", stage_prefix(self.version.stage), self.version.major, self.version.minor)?;
+        writeln!(
+            f,
+            "{}_{}_{}",
+            stage_prefix(self.version.stage),
+            self.version.major,
+            self.version.minor
+        )?;
         if !self.inputs.is_empty() {
             writeln!(f, "inputs:")?;
             for input in &self.inputs {
-                writeln!(f, "  {} = {}", format_reg(&input.reg), format_io_decl(input))?;
+                writeln!(
+                    f,
+                    "  {} = {}",
+                    format_reg(&input.reg),
+                    format_io_decl(input)
+                )?;
             }
         }
         if !self.outputs.is_empty() {
             writeln!(f, "outputs:")?;
             for output in &self.outputs {
-                writeln!(f, "  {} = {}", format_reg(&output.reg), format_io_decl(output))?;
+                writeln!(
+                    f,
+                    "  {} = {}",
+                    format_reg(&output.reg),
+                    format_io_decl(output)
+                )?;
             }
         }
         if !self.samplers.is_empty() {
@@ -403,18 +423,121 @@ fn fmt_stmt(f: &mut fmt::Formatter<'_>, stmt: &Stmt, indent: usize) -> fmt::Resu
 
 fn format_op(op: &IrOp) -> String {
     match op {
-        IrOp::Mov { dst, src, modifiers } => format!("{} {}", format_inst("mov", modifiers), format_dst_src(dst, &[src.clone()])),
-        IrOp::Add { dst, src0, src1, modifiers } => format!("{} {}", format_inst("add", modifiers), format_dst_src(dst, &[src0.clone(), src1.clone()])),
-        IrOp::Sub { dst, src0, src1, modifiers } => format!("{} {}", format_inst("sub", modifiers), format_dst_src(dst, &[src0.clone(), src1.clone()])),
-        IrOp::Mul { dst, src0, src1, modifiers } => format!("{} {}", format_inst("mul", modifiers), format_dst_src(dst, &[src0.clone(), src1.clone()])),
-        IrOp::Mad { dst, src0, src1, src2, modifiers } => format!("{} {}", format_inst("mad", modifiers), format_dst_src(dst, &[src0.clone(), src1.clone(), src2.clone()])),
-        IrOp::Dp3 { dst, src0, src1, modifiers } => format!("{} {}", format_inst("dp3", modifiers), format_dst_src(dst, &[src0.clone(), src1.clone()])),
-        IrOp::Dp4 { dst, src0, src1, modifiers } => format!("{} {}", format_inst("dp4", modifiers), format_dst_src(dst, &[src0.clone(), src1.clone()])),
-        IrOp::Rcp { dst, src, modifiers } => format!("{} {}", format_inst("rcp", modifiers), format_dst_src(dst, &[src.clone()])),
-        IrOp::Rsq { dst, src, modifiers } => format!("{} {}", format_inst("rsq", modifiers), format_dst_src(dst, &[src.clone()])),
-        IrOp::Min { dst, src0, src1, modifiers } => format!("{} {}", format_inst("min", modifiers), format_dst_src(dst, &[src0.clone(), src1.clone()])),
-        IrOp::Max { dst, src0, src1, modifiers } => format!("{} {}", format_inst("max", modifiers), format_dst_src(dst, &[src0.clone(), src1.clone()])),
-        IrOp::Cmp { op, dst, src0, src1, modifiers } => {
+        IrOp::Mov {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("mov", modifiers),
+            format_dst_src(dst, &[src.clone()])
+        ),
+        IrOp::Add {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("add", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Sub {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("sub", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Mul {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("mul", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Mad {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("mad", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone(), src2.clone()])
+        ),
+        IrOp::Dp3 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("dp3", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Dp4 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("dp4", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Rcp {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("rcp", modifiers),
+            format_dst_src(dst, &[src.clone()])
+        ),
+        IrOp::Rsq {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("rsq", modifiers),
+            format_dst_src(dst, &[src.clone()])
+        ),
+        IrOp::Min {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("min", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Max {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("max", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Cmp {
+            op,
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => {
             let name = match op {
                 CompareOp::Ge => "sge",
                 CompareOp::Lt => "slt",
@@ -431,7 +554,15 @@ fn format_op(op: &IrOp) -> String {
                 format_srcs(&[src0.clone(), src1.clone()])
             )
         }
-        IrOp::TexSample { kind, dst, coord, ddx, ddy, sampler, modifiers } => {
+        IrOp::TexSample {
+            kind,
+            dst,
+            coord,
+            ddx,
+            ddy,
+            sampler,
+            modifiers,
+        } => {
             let opname = match kind {
                 TexSampleKind::ImplicitLod { project: false } => "texld",
                 TexSampleKind::ImplicitLod { project: true } => "texldp",
@@ -467,7 +598,11 @@ fn format_inst(name: &str, modifiers: &InstModifiers) -> String {
         ResultShift::Unknown(v) => out.push_str(&format!("_shift{}", v)),
     }
     if let Some(pred) = &modifiers.predicate {
-        out.push_str(&format!(" ({}{})", if pred.negate { "!" } else { "" }, format_reg(&pred.reg)));
+        out.push_str(&format!(
+            " ({}{})",
+            if pred.negate { "!" } else { "" },
+            format_reg(&pred.reg)
+        ));
     }
     if modifiers.coissue {
         out.push_str(" [coissue]");
@@ -551,7 +686,12 @@ fn swizzle_to_string(swizzle: Swizzle) -> String {
 fn format_cond(cond: &Cond) -> String {
     match cond {
         Cond::NonZero { src } => format!("{} != 0", format_src(src)),
-        Cond::Compare { op, src0, src1 } => format!("{} {} {}", format_src(src0), op_to_str(*op), format_src(src1)),
+        Cond::Compare { op, src0, src1 } => format!(
+            "{} {} {}",
+            format_src(src0),
+            op_to_str(*op),
+            format_src(src1)
+        ),
         Cond::Predicate { pred } => format!(
             "{}{}.{:?}",
             if pred.negate { "!" } else { "" },

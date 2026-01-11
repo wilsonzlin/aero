@@ -77,7 +77,12 @@ impl<B> PagingBus<B> {
     }
 
     #[inline]
-    fn write_u8_access(&mut self, vaddr: u64, access: AccessType, value: u8) -> Result<(), Exception>
+    fn write_u8_access(
+        &mut self,
+        vaddr: u64,
+        access: AccessType,
+        value: u8,
+    ) -> Result<(), Exception>
     where
         B: MemoryBus,
     {
@@ -86,7 +91,12 @@ impl<B> PagingBus<B> {
         Ok(())
     }
 
-    fn read_bytes_access(&mut self, vaddr: u64, dst: &mut [u8], access: AccessType) -> Result<(), Exception>
+    fn read_bytes_access(
+        &mut self,
+        vaddr: u64,
+        dst: &mut [u8],
+        access: AccessType,
+    ) -> Result<(), Exception>
     where
         B: MemoryBus,
     {
@@ -113,7 +123,12 @@ impl<B> PagingBus<B> {
         Ok(())
     }
 
-    fn write_bytes_access(&mut self, vaddr: u64, src: &[u8], access: AccessType) -> Result<(), Exception>
+    fn write_bytes_access(
+        &mut self,
+        vaddr: u64,
+        src: &[u8],
+        access: AccessType,
+    ) -> Result<(), Exception>
     where
         B: MemoryBus,
     {

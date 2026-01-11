@@ -22,21 +22,39 @@ fn boot_sector_hello_via_int10() {
     let boot_addr = 0x7C00u64;
     let msg_off = boot_addr as u16 + 0x1B; // after the code below
     let boot = [
-        0x31, 0xC0, // xor ax,ax
-        0x8E, 0xD8, // mov ds,ax
-        0x8E, 0xC0, // mov es,ax
-        0x8E, 0xD0, // mov ss,ax
-        0xBC, 0x00, 0x7C, // mov sp,0x7c00
-        0xBE, (msg_off & 0xFF) as u8, (msg_off >> 8) as u8, // mov si,msg
-        0xFC, // cld
-        0xAC, // lodsb
-        0x0A, 0xC0, // or al,al
-        0x74, 0x06, // jz done
-        0xB4, 0x0E, // mov ah,0x0e
-        0xCD, 0x10, // int 0x10
-        0xEB, 0xF5, // jmp loop (back 11 bytes)
+        0x31,
+        0xC0, // xor ax,ax
+        0x8E,
+        0xD8, // mov ds,ax
+        0x8E,
+        0xC0, // mov es,ax
+        0x8E,
+        0xD0, // mov ss,ax
+        0xBC,
+        0x00,
+        0x7C, // mov sp,0x7c00
+        0xBE,
+        (msg_off & 0xFF) as u8,
+        (msg_off >> 8) as u8, // mov si,msg
+        0xFC,                 // cld
+        0xAC,                 // lodsb
+        0x0A,
+        0xC0, // or al,al
+        0x74,
+        0x06, // jz done
+        0xB4,
+        0x0E, // mov ah,0x0e
+        0xCD,
+        0x10, // int 0x10
+        0xEB,
+        0xF5, // jmp loop (back 11 bytes)
         0xF4, // done: hlt
-        b'H', b'e', b'l', b'l', b'o', 0,
+        b'H',
+        b'e',
+        b'l',
+        b'l',
+        b'o',
+        0,
     ];
     bus.load(boot_addr, &boot);
 
@@ -64,6 +82,8 @@ fn boot_sector_hello_via_int10() {
     let mut machine = Tier0Machine::new(cpu, bus);
     machine.run(10_000);
 
-    assert_eq!(std::str::from_utf8(machine.bus.debugcon()).unwrap(), "Hello");
+    assert_eq!(
+        std::str::from_utf8(machine.bus.debugcon()).unwrap(),
+        "Hello"
+    );
 }
-

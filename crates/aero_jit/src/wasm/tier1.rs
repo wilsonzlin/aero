@@ -12,10 +12,10 @@ use crate::abi::{
 use crate::tier1_ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 
 use super::abi::{
-    IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
-    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_MMU_TRANSLATE, IMPORT_PAGE_FAULT,
-    IMPORT_JIT_EXIT_MMIO, JIT_EXIT_SENTINEL_I64,
+    IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
+    IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
+    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
+    IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
 };
 
 /// WASM export name for Tier-1 blocks.
@@ -65,7 +65,11 @@ impl Tier1WasmCodegen {
     }
 
     #[must_use]
-    pub fn compile_block_with_options(&self, block: &IrBlock, options: Tier1WasmOptions) -> Vec<u8> {
+    pub fn compile_block_with_options(
+        &self,
+        block: &IrBlock,
+        options: Tier1WasmOptions,
+    ) -> Vec<u8> {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
@@ -322,10 +326,9 @@ impl Tier1WasmCodegen {
             .func
             .instruction(&Instruction::I64Const(abi::RFLAGS_RESERVED1 as i64));
         emitter.func.instruction(&Instruction::I64Or);
-        emitter.func.instruction(&Instruction::I64Store(memarg(
-            abi::CPU_RFLAGS_OFF,
-            3,
-        )));
+        emitter
+            .func
+            .instruction(&Instruction::I64Store(memarg(abi::CPU_RFLAGS_OFF, 3)));
 
         emitter
             .func
@@ -537,7 +540,8 @@ impl Emitter<'_> {
                 self.func
                     .instruction(&Instruction::I64Const(crate::PAGE_OFFSET_MASK as i64));
                 self.func.instruction(&Instruction::I64And);
-                self.func.instruction(&Instruction::I64Const(cross_limit as i64));
+                self.func
+                    .instruction(&Instruction::I64Const(cross_limit as i64));
                 self.func.instruction(&Instruction::I64GtU);
 
                 self.func.instruction(&Instruction::If(BlockType::Empty));
@@ -566,12 +570,12 @@ impl Emitter<'_> {
                     self.emit_compute_ram_addr();
                     match *width {
                         Width::W8 => self.func.instruction(&Instruction::I64Load8U(memarg(0, 0))),
-                        Width::W16 => {
-                            self.func.instruction(&Instruction::I64Load16U(memarg(0, 1)))
-                        }
-                        Width::W32 => {
-                            self.func.instruction(&Instruction::I64Load32U(memarg(0, 2)))
-                        }
+                        Width::W16 => self
+                            .func
+                            .instruction(&Instruction::I64Load16U(memarg(0, 1))),
+                        Width::W32 => self
+                            .func
+                            .instruction(&Instruction::I64Load32U(memarg(0, 2))),
                         Width::W64 => self.func.instruction(&Instruction::I64Load(memarg(0, 3))),
                     };
                     self.emit_trunc(*width);
@@ -636,7 +640,8 @@ impl Emitter<'_> {
                 self.func
                     .instruction(&Instruction::I64Const(crate::PAGE_OFFSET_MASK as i64));
                 self.func.instruction(&Instruction::I64And);
-                self.func.instruction(&Instruction::I64Const(cross_limit as i64));
+                self.func
+                    .instruction(&Instruction::I64Const(cross_limit as i64));
                 self.func.instruction(&Instruction::I64GtU);
 
                 self.func.instruction(&Instruction::If(BlockType::Empty));
@@ -667,12 +672,12 @@ impl Emitter<'_> {
                         .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
                     match *width {
                         Width::W8 => self.func.instruction(&Instruction::I64Store8(memarg(0, 0))),
-                        Width::W16 => {
-                            self.func.instruction(&Instruction::I64Store16(memarg(0, 1)))
-                        }
-                        Width::W32 => {
-                            self.func.instruction(&Instruction::I64Store32(memarg(0, 2)))
-                        }
+                        Width::W16 => self
+                            .func
+                            .instruction(&Instruction::I64Store16(memarg(0, 1))),
+                        Width::W32 => self
+                            .func
+                            .instruction(&Instruction::I64Store32(memarg(0, 2))),
                         Width::W64 => self.func.instruction(&Instruction::I64Store(memarg(0, 3))),
                     };
                 }
@@ -849,7 +854,8 @@ impl Emitter<'_> {
         //   `next_rip` from `CpuState.rip`
         match *term {
             IrTerminator::ExitToInterpreter { .. } => {
-                self.func.instruction(&Instruction::I64Const(JIT_EXIT_SENTINEL_I64));
+                self.func
+                    .instruction(&Instruction::I64Const(JIT_EXIT_SENTINEL_I64));
             }
             _ => {
                 self.func

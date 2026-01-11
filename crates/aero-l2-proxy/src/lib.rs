@@ -12,4 +12,3 @@ pub use policy::EgressPolicy;
 pub use server::{start_server, ServerHandle};
 
 pub const TUNNEL_SUBPROTOCOL: &str = "aero-l2-tunnel-v1";
-

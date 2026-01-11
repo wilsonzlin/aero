@@ -53,8 +53,8 @@ impl AudioFrameClock {
         let delta_ns = now_ns - self.last_time_ns;
         self.last_time_ns = now_ns;
 
-        let total = (self.frac_fp as u128)
-            + (delta_ns as u128).saturating_mul(self.sample_rate_hz as u128);
+        let total =
+            (self.frac_fp as u128) + (delta_ns as u128).saturating_mul(self.sample_rate_hz as u128);
         let frames = total / (Self::NS_PER_SEC as u128);
         self.frac_fp = (total % (Self::NS_PER_SEC as u128)) as u64;
 

@@ -76,13 +76,14 @@ impl AeroGpuRingHeader {
         if self.entry_stride_bytes < AeroGpuSubmitDesc::SIZE_BYTES {
             return false;
         }
-        let required = match u64::from(self.entry_count).checked_mul(u64::from(self.entry_stride_bytes)) {
-            Some(bytes) => match AEROGPU_RING_HEADER_SIZE_BYTES.checked_add(bytes) {
-                Some(total) => total,
+        let required =
+            match u64::from(self.entry_count).checked_mul(u64::from(self.entry_stride_bytes)) {
+                Some(bytes) => match AEROGPU_RING_HEADER_SIZE_BYTES.checked_add(bytes) {
+                    Some(total) => total,
+                    None => return false,
+                },
                 None => return false,
-            },
-            None => return false,
-        };
+            };
         let size_bytes = u64::from(self.size_bytes);
         let mmio_size = u64::from(mmio_ring_size_bytes);
         required <= size_bytes && size_bytes <= mmio_size

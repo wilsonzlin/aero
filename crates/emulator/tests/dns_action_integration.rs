@@ -1,6 +1,8 @@
 use std::net::Ipv4Addr;
 
-use aero_net_stack::packet::{EtherType, EthernetFrame, Ipv4Packet, Ipv4Protocol, MacAddr, UdpDatagram};
+use aero_net_stack::packet::{
+    EtherType, EthernetFrame, Ipv4Packet, Ipv4Protocol, MacAddr, UdpDatagram,
+};
 use emulator::io::net::stack::{Action, DnsResolved, IpCidr, NetStackBackend, StackConfig};
 
 fn wrap_udp_ipv4_eth(
@@ -161,4 +163,3 @@ fn dns_denied_ip_returns_nxdomain_and_is_not_cached() {
     let actions = backend.drain_actions();
     assert!(matches!(actions.as_slice(), [Action::DnsResolve { .. }]));
 }
-

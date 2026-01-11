@@ -38,7 +38,12 @@ impl TestHub {
             });
         }
 
-        (Self { ports }, TestHubControl { port_enabled: enabled })
+        (
+            Self { ports },
+            TestHubControl {
+                port_enabled: enabled,
+            },
+        )
     }
 }
 

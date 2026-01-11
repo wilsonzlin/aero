@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use aero_cpu_time::{CpuidModel, TimeInstructions};
-use aero_timers::{ApicTimerMode, DeviceTimer};
 use aero_time::{FakeHostClock, Interrupt, InterruptSink, TimeSource, TimerQueue};
+use aero_timers::{ApicTimerMode, DeviceTimer};
 
 #[derive(Default)]
 struct InterruptRecorder {

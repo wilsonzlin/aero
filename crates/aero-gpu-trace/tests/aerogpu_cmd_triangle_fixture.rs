@@ -28,7 +28,8 @@ const AEROGPU_CLEAR_COLOR: u32 = 1 << 0;
 const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = 4;
 
 fn fixture_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/aerogpu_cmd_triangle.aerogputrace")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/aerogpu_cmd_triangle.aerogputrace")
 }
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
@@ -173,7 +174,7 @@ fn generate_trace() -> Vec<u8> {
         emit_packet(out, CMD_SET_VERTEX_BUFFERS, |p| {
             push_u32(p, 0); // start_slot
             push_u32(p, 1); // buffer_count
-            // aerogpu_vertex_buffer_binding
+                            // aerogpu_vertex_buffer_binding
             push_u32(p, 1); // buffer
             push_u32(p, 24); // stride_bytes
             push_u32(p, 0); // offset_bytes
@@ -247,4 +248,3 @@ fn aerogpu_cmd_triangle_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

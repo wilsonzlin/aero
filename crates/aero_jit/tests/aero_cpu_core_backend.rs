@@ -136,7 +136,9 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let calls = Rc::new(Cell::new(0));
-    let interpreter = TestInterpreter { calls: calls.clone() };
+    let interpreter = TestInterpreter {
+        calls: calls.clone(),
+    };
     let mut dispatcher = ExecDispatcher::new(interpreter, jit);
 
     // Install both compiled blocks.
@@ -177,7 +179,11 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
         other => panic!("unexpected outcome: {other:?}"),
     }
     assert_eq!(cpu.state.gpr[Gpr::Rax.as_u8() as usize], 42);
-    assert_eq!(calls.get(), 0, "interpreter should not run for normal JIT exit");
+    assert_eq!(
+        calls.get(),
+        0,
+        "interpreter should not run for normal JIT exit"
+    );
 
     // Step 2: runs JIT block 2, which requests an interpreter step at entry3.
     match dispatcher.step(&mut cpu) {
@@ -228,12 +234,8 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
     );
     let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
 
-    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
-        &block,
-        Tier1WasmOptions {
-            inline_tlb: true,
-        },
-    );
+    let wasm = Tier1WasmCodegen::new()
+        .compile_block_with_options(&block, Tier1WasmOptions { inline_tlb: true });
 
     let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
     let idx = backend.add_compiled_block(&wasm);
@@ -261,8 +263,7 @@ fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
 
     // Load from an address outside the guest RAM window (0..cpu_ptr). The reference backend
     // classifies this as MMIO and should request an interpreter step via the sentinel ABI.
-    let mmio_addr =
-        (WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64).saturating_add(0x1000);
+    let mmio_addr = (WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64).saturating_add(0x1000);
 
     let mut builder = IrBuilder::new(entry);
     let addr = builder.const_int(Width::W64, mmio_addr);
@@ -277,12 +278,8 @@ fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
     );
     let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
 
-    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
-        &block,
-        Tier1WasmOptions {
-            inline_tlb: true,
-        },
-    );
+    let wasm = Tier1WasmCodegen::new()
+        .compile_block_with_options(&block, Tier1WasmOptions { inline_tlb: true });
 
     let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
     let idx = backend.add_compiled_block(&wasm);

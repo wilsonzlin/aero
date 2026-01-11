@@ -31,4 +31,3 @@ async fn healthz() -> Json<StatusResponse> {
 async fn readyz() -> Json<StatusResponse> {
     Json(StatusResponse { status: "ok" })
 }
-

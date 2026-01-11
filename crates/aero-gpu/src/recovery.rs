@@ -1,4 +1,6 @@
-use crate::{stats::GpuStats, GpuBackendKind, GpuErrorCategory, GpuErrorEvent, GpuErrorSeverityKind};
+use crate::{
+    stats::GpuStats, GpuBackendKind, GpuErrorCategory, GpuErrorEvent, GpuErrorSeverityKind,
+};
 
 fn backend_kind_as_str(kind: GpuBackendKind) -> &'static str {
     match kind {
@@ -225,7 +227,8 @@ mod tests {
     #[test]
     fn recovery_falls_back_to_other_backend() {
         let stats = GpuStats::new();
-        let mut machine = GpuRecoveryMachine::new(GpuBackendKind::WebGpu, BackendAvailability::both());
+        let mut machine =
+            GpuRecoveryMachine::new(GpuBackendKind::WebGpu, BackendAvailability::both());
 
         let mut events = Vec::new();
         let outcome = machine.handle_device_lost(
@@ -251,13 +254,16 @@ mod tests {
         assert_eq!(snap.recoveries_attempted, 2);
         assert_eq!(snap.recoveries_succeeded, 1);
 
-        assert!(events.iter().any(|e| e.message.contains("fallback succeeded")));
+        assert!(events
+            .iter()
+            .any(|e| e.message.contains("fallback succeeded")));
     }
 
     #[test]
     fn recovery_enters_failed_state_when_all_backends_fail() {
         let stats = GpuStats::new();
-        let mut machine = GpuRecoveryMachine::new(GpuBackendKind::WebGpu, BackendAvailability::both());
+        let mut machine =
+            GpuRecoveryMachine::new(GpuBackendKind::WebGpu, BackendAvailability::both());
         let mut events = Vec::new();
 
         let outcome = machine.handle_device_lost(
@@ -269,6 +275,8 @@ mod tests {
 
         assert_eq!(outcome, RecoveryOutcome::Failed);
         assert_eq!(machine.state(), RecoveryState::Failed);
-        assert!(events.iter().any(|e| e.severity == GpuErrorSeverityKind::Fatal));
+        assert!(events
+            .iter()
+            .any(|e| e.severity == GpuErrorSeverityKind::Fatal));
     }
 }

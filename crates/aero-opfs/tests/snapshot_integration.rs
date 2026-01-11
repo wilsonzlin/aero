@@ -15,9 +15,9 @@ struct MockHandle {
 
 impl OpfsSyncFileHandle for MockHandle {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+        let offset: usize = offset.try_into().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+        })?;
         if offset >= self.data.len() {
             return Ok(0);
         }
@@ -28,12 +28,12 @@ impl OpfsSyncFileHandle for MockHandle {
     }
 
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> std::io::Result<usize> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
-        let end = offset
-            .checked_add(buf.len())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow"))?;
+        let offset: usize = offset.try_into().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+        })?;
+        let end = offset.checked_add(buf.len()).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflow")
+        })?;
 
         if end > self.data.len() {
             self.data.resize(end, 0);
@@ -227,7 +227,9 @@ fn restore_snapshot_with_options_checks_parent_using_opfs_file() {
     // Applying the diff without having restored its base should fail fast during the prescan.
     let mut restored = DummyVm::new(64 * 1024);
     restored.ram.fill(0);
-    let mut diff_reader = OpfsSyncFile::from_handle(MockHandle { data: diff_bytes.clone() });
+    let mut diff_reader = OpfsSyncFile::from_handle(MockHandle {
+        data: diff_bytes.clone(),
+    });
     let err = aero_snapshot::restore_snapshot_with_options(
         &mut diff_reader,
         &mut restored,

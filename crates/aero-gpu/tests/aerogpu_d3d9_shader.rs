@@ -392,7 +392,10 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
         hash.to_hex().as_str(),
         "19090216277806527f728c6d47abb2566ebbc60c0d243f9198cf1f84b862b34a"
     );
-    assert_eq!(&rgba[(8 * 16 + 8) * 4..(8 * 16 + 8) * 4 + 4], &[255, 0, 0, 255]);
+    assert_eq!(
+        &rgba[(8 * 16 + 8) * 4..(8 * 16 + 8) * 4 + 4],
+        &[255, 0, 0, 255]
+    );
 }
 
 #[test]
@@ -404,7 +407,10 @@ fn dxbc_prefixed_payload_is_detected_and_translated() {
     let ps_token_stream = assemble_ps_tex_mad();
     let dxbc_blob = dxbc::build_container(&[(dxbc::FourCC::SHDR, &ps_token_stream)]);
 
-    assert_eq!(ShaderPayloadFormat::detect(&dxbc_blob), ShaderPayloadFormat::Dxbc);
+    assert_eq!(
+        ShaderPayloadFormat::detect(&dxbc_blob),
+        ShaderPayloadFormat::Dxbc
+    );
 
     let mut cache = D3d9ShaderCache::new();
     cache

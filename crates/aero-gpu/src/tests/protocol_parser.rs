@@ -1,5 +1,6 @@
 use crate::{
-    parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError, AeroGpuOpcode, AEROGPU_CMD_STREAM_MAGIC,
+    parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError, AeroGpuOpcode,
+    AEROGPU_CMD_STREAM_MAGIC,
 };
 
 use crate::protocol::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
@@ -71,7 +72,7 @@ fn protocol_parses_all_opcodes() {
     push_u32(&mut ilay_blob, 1); // version
     push_u32(&mut ilay_blob, 1); // element_count
     push_u32(&mut ilay_blob, 0); // reserved0
-    // aerogpu_input_layout_element_dxgi (1 element)
+                                 // aerogpu_input_layout_element_dxgi (1 element)
     push_u32(&mut ilay_blob, 0x1234_5678); // semantic_name_hash
     push_u32(&mut ilay_blob, 0); // semantic_index
     push_u32(&mut ilay_blob, 28); // dxgi_format (opaque numeric)
@@ -86,7 +87,7 @@ fn protocol_parses_all_opcodes() {
     push_u32(&mut expected_vb_bindings, 16); // stride_bytes
     push_u32(&mut expected_vb_bindings, 0); // offset_bytes
     push_u32(&mut expected_vb_bindings, 0); // reserved0
-    // binding[1]
+                                            // binding[1]
     push_u32(&mut expected_vb_bindings, 0xA1);
     push_u32(&mut expected_vb_bindings, 32);
     push_u32(&mut expected_vb_bindings, 64);
@@ -218,7 +219,7 @@ fn protocol_parses_all_opcodes() {
         emit_packet(out, AeroGpuOpcode::SetRenderTargets as u32, |out| {
             push_u32(out, 2); // color_count
             push_u32(out, 0x99); // depth_stencil
-            // colors[8]
+                                 // colors[8]
             push_u32(out, 1);
             push_u32(out, 2);
             for _ in 2..8 {
@@ -480,12 +481,16 @@ fn protocol_parses_all_opcodes() {
     }
 
     match cmds.next().unwrap() {
-        AeroGpuCmd::DestroyInputLayout { input_layout_handle } => assert_eq!(input_layout_handle, 0x44),
+        AeroGpuCmd::DestroyInputLayout {
+            input_layout_handle,
+        } => assert_eq!(input_layout_handle, 0x44),
         other => panic!("unexpected cmd: {other:?}"),
     }
 
     match cmds.next().unwrap() {
-        AeroGpuCmd::SetInputLayout { input_layout_handle } => assert_eq!(input_layout_handle, 0x44),
+        AeroGpuCmd::SetInputLayout {
+            input_layout_handle,
+        } => assert_eq!(input_layout_handle, 0x44),
         other => panic!("unexpected cmd: {other:?}"),
     }
 
@@ -558,7 +563,12 @@ fn protocol_parses_all_opcodes() {
     }
 
     match cmds.next().unwrap() {
-        AeroGpuCmd::SetScissor { x, y, width, height } => {
+        AeroGpuCmd::SetScissor {
+            x,
+            y,
+            width,
+            height,
+        } => {
             assert_eq!(x, 1);
             assert_eq!(y, 2);
             assert_eq!(width, 3);

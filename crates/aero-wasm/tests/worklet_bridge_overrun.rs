@@ -1,8 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_platform::audio::worklet_bridge::{
-    WorkletBridge, HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX,
-    WRITE_FRAME_INDEX,
+    HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX, WRITE_FRAME_INDEX,
+    WorkletBridge,
 };
 use js_sys::{Float32Array, Uint32Array};
 use wasm_bindgen::prelude::*;

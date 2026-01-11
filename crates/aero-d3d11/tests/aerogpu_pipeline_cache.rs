@@ -84,7 +84,10 @@ fn build_test_vs_dxbc() -> Vec<u8> {
     let ret = [opcode_token(OPCODE_RET, 1)];
 
     // Stage type 1 is vertex.
-    let tokens = make_sm5_program_tokens(1, &[mov0.as_slice(), mov1.as_slice(), ret.as_slice()].concat());
+    let tokens = make_sm5_program_tokens(
+        1,
+        &[mov0.as_slice(), mov1.as_slice(), ret.as_slice()].concat(),
+    );
     make_dxbc_with_single_chunk(*b"SHEX", &tokens_to_bytes(&tokens))
 }
 
@@ -167,7 +170,8 @@ fn aerogpu_render_pipeline_is_cached_across_draws() {
 
         rt.create_shader_dxbc(VS, &build_test_vs_dxbc()).unwrap();
         rt.create_shader_dxbc(PS, &build_test_ps_dxbc()).unwrap();
-        rt.create_input_layout(ILAY, &build_input_layout_blob()).unwrap();
+        rt.create_input_layout(ILAY, &build_input_layout_blob())
+            .unwrap();
 
         let vertices: [Vertex; 3] = [
             Vertex {
@@ -234,4 +238,3 @@ fn aerogpu_render_pipeline_is_cached_across_draws() {
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
     });
 }
-

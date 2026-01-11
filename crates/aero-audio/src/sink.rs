@@ -29,4 +29,3 @@ impl AudioSink for aero_platform::audio::worklet_bridge::WorkletBridge {
         let _ = self.write_f32_interleaved(samples);
     }
 }
-

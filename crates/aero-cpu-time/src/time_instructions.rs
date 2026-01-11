@@ -1,6 +1,6 @@
+use aero_time::{TimeSource, TimerQueue, Tsc};
 use aero_timers::DeviceTimer;
 use aero_timers::LocalApicTimer;
-use aero_time::{TimeSource, TimerQueue, Tsc};
 
 use crate::CpuRegs;
 

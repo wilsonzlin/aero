@@ -1,4 +1,6 @@
-use aero_cpu_decoder::{decode_instruction, DecodeMode, Instruction, OpKind, Register, MAX_INSTRUCTION_LEN};
+use aero_cpu_decoder::{
+    decode_instruction, DecodeMode, Instruction, OpKind, Register, MAX_INSTRUCTION_LEN,
+};
 use capstone::arch::x86::{X86Operand, X86OperandType};
 use capstone::prelude::*;
 
@@ -95,7 +97,11 @@ fn iced_mem_disp_i64(ins: &Instruction, ip: u64) -> i64 {
     }
 }
 
-fn iced_mem_fields(ins: &Instruction, ip: u64, op_kind: OpKind) -> (Option<String>, Option<String>, i32, i64) {
+fn iced_mem_fields(
+    ins: &Instruction,
+    ip: u64,
+    op_kind: OpKind,
+) -> (Option<String>, Option<String>, i32, i64) {
     match op_kind {
         OpKind::Memory => (
             iced_reg_name(ins.memory_base()),
@@ -148,8 +154,12 @@ fn golden_decode_operands_match_capstone_x86_64() {
         let ours = decode_instruction(DecodeMode::Bits64, ip, &bytes);
         let cap = cs.disasm_count(&bytes, ip, 1);
 
-        let (Ok(ours), Ok(cap)) = (ours, cap) else { continue };
-        let Some(cap_ins) = cap.iter().next() else { continue };
+        let (Ok(ours), Ok(cap)) = (ours, cap) else {
+            continue;
+        };
+        let Some(cap_ins) = cap.iter().next() else {
+            continue;
+        };
 
         assert_eq!(
             ours.len(),

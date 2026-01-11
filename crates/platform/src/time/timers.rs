@@ -56,7 +56,9 @@ pub struct TimerEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimerKind {
     OneShot,
-    Periodic { period_ns: u64 },
+    Periodic {
+        period_ns: u64,
+    },
     /// Periodic timer with a fractional nanosecond period, represented as
     /// `period_num_ns / period_denom`.
     ///
@@ -97,8 +99,13 @@ struct TimerSlot {
 
 #[derive(Clone, Copy, Debug)]
 enum TimerKindState {
-    OneShot { deadline_ns: u64 },
-    Periodic { next_deadline_ns: u64, period_ns: u64 },
+    OneShot {
+        deadline_ns: u64,
+    },
+    Periodic {
+        next_deadline_ns: u64,
+        period_ns: u64,
+    },
     PeriodicRational {
         base_deadline_ns: u64,
         next_index: u64,
@@ -443,9 +450,9 @@ impl TimerScheduler {
                 timer_id,
                 kind: match slot.kind {
                     None => None,
-                    Some(TimerKindState::OneShot { deadline_ns }) => Some(TimerKindStateRepr::OneShot {
-                        deadline_ns,
-                    }),
+                    Some(TimerKindState::OneShot { deadline_ns }) => {
+                        Some(TimerKindStateRepr::OneShot { deadline_ns })
+                    }
                     Some(TimerKindState::Periodic {
                         next_deadline_ns,
                         period_ns,
@@ -577,12 +584,9 @@ impl TimerScheduler {
                     next_index,
                     period_num_ns,
                     period_denom,
-                } => rational_deadline_ns(
-                    base_deadline_ns,
-                    period_num_ns,
-                    period_denom,
-                    next_index,
-                ),
+                } => {
+                    rational_deadline_ns(base_deadline_ns, period_num_ns, period_denom, next_index)
+                }
             };
 
             if active_deadline_ns != entry.deadline_ns {
@@ -609,8 +613,13 @@ pub struct TimerState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimerKindStateRepr {
-    OneShot { deadline_ns: u64 },
-    Periodic { next_deadline_ns: u64, period_ns: u64 },
+    OneShot {
+        deadline_ns: u64,
+    },
+    Periodic {
+        next_deadline_ns: u64,
+        period_ns: u64,
+    },
     PeriodicRational {
         base_deadline_ns: u64,
         next_index: u64,
@@ -624,7 +633,11 @@ mod tests {
     use super::*;
     use crate::time::Clock;
 
-    fn collect_events(mut scheduler: TimerScheduler, mut clock: Clock, steps: &[u64]) -> Vec<TimerEvent> {
+    fn collect_events(
+        mut scheduler: TimerScheduler,
+        mut clock: Clock,
+        steps: &[u64],
+    ) -> Vec<TimerEvent> {
         let mut events = Vec::new();
         for &step in steps {
             clock.advance(step);
@@ -697,7 +710,9 @@ mod tests {
         let mut sched = TimerScheduler::new();
         let t1 = sched.alloc_timer();
         let t2 = sched.alloc_timer();
-        sched.arm_periodic_rational_from_now_ns(t1, 0, 5, 2).unwrap();
+        sched
+            .arm_periodic_rational_from_now_ns(t1, 0, 5, 2)
+            .unwrap();
         sched.arm_one_shot(t2, 17).unwrap();
 
         let events_single = collect_events(sched.clone(), Clock::new(), &[40]);
@@ -714,7 +729,13 @@ mod tests {
 
         clock.advance(25);
         let events_before = sched.advance_to(clock.now_ns());
-        assert_eq!(events_before.iter().map(|e| e.deadline_ns).collect::<Vec<_>>(), vec![10, 20]);
+        assert_eq!(
+            events_before
+                .iter()
+                .map(|e| e.deadline_ns)
+                .collect::<Vec<_>>(),
+            vec![10, 20]
+        );
 
         let state = sched.save_state();
         let mut restored = TimerScheduler::restore_state(state);
@@ -722,7 +743,10 @@ mod tests {
         clock.advance(30); // Now at 55
         let events_after = restored.advance_to(clock.now_ns());
         assert_eq!(
-            events_after.iter().map(|e| e.deadline_ns).collect::<Vec<_>>(),
+            events_after
+                .iter()
+                .map(|e| e.deadline_ns)
+                .collect::<Vec<_>>(),
             vec![30, 40, 50]
         );
     }
@@ -872,7 +896,10 @@ mod tests {
         clock.advance(17);
         let events_before = sched.advance_to(clock.now_ns());
         assert_eq!(
-            events_before.iter().map(|e| e.deadline_ns).collect::<Vec<_>>(),
+            events_before
+                .iter()
+                .map(|e| e.deadline_ns)
+                .collect::<Vec<_>>(),
             vec![10, 12, 15, 17]
         );
 
@@ -882,7 +909,10 @@ mod tests {
         clock.advance(8); // now 25
         let events_after = restored.advance_to(clock.now_ns());
         assert_eq!(
-            events_after.iter().map(|e| e.deadline_ns).collect::<Vec<_>>(),
+            events_after
+                .iter()
+                .map(|e| e.deadline_ns)
+                .collect::<Vec<_>>(),
             vec![20, 22, 25]
         );
     }

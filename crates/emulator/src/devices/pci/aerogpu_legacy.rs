@@ -293,7 +293,8 @@ impl AeroGpuLegacyPciDevice {
         let mut fence_advanced = false;
 
         while head != tail && processed < entry_count {
-            let entry_gpa = self.regs.ring_base_gpa + u64::from(head) * LEGACY_RING_ENTRY_STRIDE_BYTES;
+            let entry_gpa =
+                self.regs.ring_base_gpa + u64::from(head) * LEGACY_RING_ENTRY_STRIDE_BYTES;
             let ty = mem.read_u32(entry_gpa + 0);
             if ty != ring_entry_type::SUBMIT {
                 self.regs.stats.malformed_submissions =

@@ -12,7 +12,10 @@ fn run_to_halt<B: CpuBus>(state: &mut CpuState, bus: &mut B, max: u64) {
             BatchExit::Completed | BatchExit::Branch => continue,
             BatchExit::Halted => return,
             BatchExit::BiosInterrupt(vector) => {
-                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+                panic!(
+                    "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
+                    state.rip()
+                )
             }
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
@@ -115,12 +118,7 @@ impl CpuBus for CountingBus {
         self.inner.io_read(port, size)
     }
 
-    fn io_write(
-        &mut self,
-        port: u16,
-        size: u32,
-        val: u64,
-    ) -> Result<(), aero_cpu_core::Exception> {
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), aero_cpu_core::Exception> {
         self.inner.io_write(port, size, val)
     }
 }
@@ -154,10 +152,7 @@ fn rep_movsb_df0_uses_bulk_copy_and_increments() {
     assert_eq!(state.read_reg(Register::EDI), 0x200 + count as u64);
 
     for i in 0..count as u64 {
-        assert_eq!(
-            bus.inner.read_u8(0x200 + i).unwrap(),
-            (i ^ 0x5A) as u8
-        );
+        assert_eq!(bus.inner.read_u8(0x200 + i).unwrap(), (i ^ 0x5A) as u8);
     }
 }
 
@@ -182,9 +177,7 @@ fn rep_movsb_df1_uses_bulk_copy_and_decrements() {
     state.write_reg(Register::ECX, count as u64);
 
     for i in 0..count as u64 {
-        bus.inner
-            .write_u8(src_start + i, (i ^ 0xA5) as u8)
-            .unwrap();
+        bus.inner.write_u8(src_start + i, (i ^ 0xA5) as u8).unwrap();
     }
 
     run_to_halt(&mut state, &mut bus, 100_000);
@@ -195,10 +188,7 @@ fn rep_movsb_df1_uses_bulk_copy_and_decrements() {
     assert_eq!(state.read_reg(Register::EDI), dst_start - 1);
 
     for i in 0..count as u64 {
-        assert_eq!(
-            bus.inner.read_u8(dst_start + i).unwrap(),
-            (i ^ 0xA5) as u8
-        );
+        assert_eq!(bus.inner.read_u8(dst_start + i).unwrap(), (i ^ 0xA5) as u8);
     }
 }
 

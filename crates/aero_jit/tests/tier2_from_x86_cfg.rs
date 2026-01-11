@@ -4,9 +4,9 @@ use aero_types::{Flag, Width};
 use tier1_common::SimpleBus;
 
 use aero_jit::profile::{ProfileData, TraceConfig};
-use aero_jit::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_jit::tier2::ir::{FlagMask, Function, Instr, Terminator, TraceKind};
 use aero_jit::tier2::trace::TraceBuilder;
+use aero_jit::tier2::{build_function_from_x86, CfgBuildConfig};
 
 // Tiny x86 program:
 //
@@ -76,7 +76,9 @@ fn builds_cfg_from_x86_bytes() {
     let exit = func.find_block_by_rip(5).unwrap();
 
     match &func.block(entry).term {
-        Terminator::Branch { then_bb, else_bb, .. } => {
+        Terminator::Branch {
+            then_bb, else_bb, ..
+        } => {
             assert_eq!(*then_bb, entry);
             assert_eq!(*else_bb, exit);
         }
@@ -140,8 +142,20 @@ fn lowers_tier1_load_store_into_tier2_memory_ops() {
     let entry = func.entry;
 
     let instrs = &func.block(entry).instrs;
-    assert!(instrs.iter().any(|i| matches!(i, Instr::StoreMem { width: Width::W8, .. })));
-    assert!(instrs.iter().any(|i| matches!(i, Instr::LoadMem { width: Width::W8, .. })));
+    assert!(instrs.iter().any(|i| matches!(
+        i,
+        Instr::StoreMem {
+            width: Width::W8,
+            ..
+        }
+    )));
+    assert!(instrs.iter().any(|i| matches!(
+        i,
+        Instr::LoadMem {
+            width: Width::W8,
+            ..
+        }
+    )));
 
     // Historically, Tier-2 would bail on Tier-1 memory ops by emitting an unconditional
     // side-exit at the *entry* RIP. We should only side-exit for the final `int3`
@@ -164,7 +178,9 @@ fn supports_parity_conditions_jp_and_jnp() {
         let exit = func.find_block_by_rip(4).unwrap();
 
         match &func.block(entry).term {
-            Terminator::Branch { then_bb, else_bb, .. } => {
+            Terminator::Branch {
+                then_bb, else_bb, ..
+            } => {
                 assert_eq!(*then_bb, entry);
                 assert_eq!(*else_bb, exit);
             }
@@ -172,9 +188,15 @@ fn supports_parity_conditions_jp_and_jnp() {
         }
 
         let instrs = &func.block(entry).instrs;
-        assert!(instrs.iter().any(|i| matches!(i, Instr::LoadFlag { flag: Flag::Pf, .. })));
-        assert!(instrs.iter().any(|i| matches!(i, Instr::BinOp { flags, .. } if flags.intersects(FlagMask::PF))));
-        assert!(instrs.iter().any(|i| matches!(i, Instr::BinOp { flags, .. } if flags.intersects(FlagMask::AF))));
+        assert!(instrs
+            .iter()
+            .any(|i| matches!(i, Instr::LoadFlag { flag: Flag::Pf, .. })));
+        assert!(instrs
+            .iter()
+            .any(|i| matches!(i, Instr::BinOp { flags, .. } if flags.intersects(FlagMask::PF))));
+        assert!(instrs
+            .iter()
+            .any(|i| matches!(i, Instr::BinOp { flags, .. } if flags.intersects(FlagMask::AF))));
 
         // Ensure we didn't deopt due to missing parity lowering.
         assert!(!instrs

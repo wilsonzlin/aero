@@ -263,7 +263,10 @@ impl Cpu {
     ///
     /// The [`Cpu`] model is used primarily by unit-test harnesses that run
     /// real-mode code, so this currently implements only real-mode IVT delivery.
-    pub fn deliver_pending_event<B: crate::CpuBus>(&mut self, bus: &mut B) -> Result<(), Exception> {
+    pub fn deliver_pending_event<B: crate::CpuBus>(
+        &mut self,
+        bus: &mut B,
+    ) -> Result<(), Exception> {
         let Some(event) = self.pending_event.take() else {
             return Ok(());
         };
@@ -311,14 +314,18 @@ impl Cpu {
                 self.rip = new_ip;
                 Ok(())
             }
-            _ => Err(Exception::Unimplemented("system::Cpu pending event delivery")),
+            _ => Err(Exception::Unimplemented(
+                "system::Cpu pending event delivery",
+            )),
         }
     }
 
     /// Execute an `IRET` return from an interrupt handler.
     pub fn iret<B: crate::CpuBus>(&mut self, bus: &mut B) -> Result<(), Exception> {
         if self.mode != CpuMode::Real {
-            return Err(Exception::Unimplemented("system::Cpu IRET outside real mode"));
+            return Err(Exception::Unimplemented(
+                "system::Cpu IRET outside real mode",
+            ));
         }
 
         fn pop_u16<B: crate::CpuBus>(cpu: &mut Cpu, bus: &mut B) -> Result<u16, Exception> {
@@ -527,11 +534,7 @@ impl Cpu {
     ) -> Result<(), Exception> {
         self.check_fp_available(FpKind::Sse)?;
         let src_val = *state.sse.xmm.get(src).ok_or(Exception::InvalidOpcode)?;
-        let dst_reg = state
-            .sse
-            .xmm
-            .get_mut(dst)
-            .ok_or(Exception::InvalidOpcode)?;
+        let dst_reg = state.sse.xmm.get_mut(dst).ok_or(Exception::InvalidOpcode)?;
         *dst_reg ^= src_val;
         Ok(())
     }

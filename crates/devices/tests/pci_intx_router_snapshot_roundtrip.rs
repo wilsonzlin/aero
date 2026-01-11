@@ -1,4 +1,6 @@
-use aero_devices::pci::{PciBdf, PciIntxRouter, PciIntxRouterConfig, PciInterruptPin, GsiLevelSink};
+use aero_devices::pci::{
+    GsiLevelSink, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+};
 use aero_io_snapshot::io::state::IoSnapshot;
 
 #[derive(Default)]
@@ -40,4 +42,3 @@ fn intx_router_snapshot_roundtrip_preserves_assert_counts() {
     router2.assert_intx(dev4, PciInterruptPin::IntA, &mut sink2);
     assert!(sink2.events.is_empty());
 }
-

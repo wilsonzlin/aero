@@ -3,17 +3,17 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::rc::Rc;
 
+use emulator::io::usb::core::{UsbInResult, UsbOutResult};
 use emulator::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
-use emulator::io::usb::core::{UsbInResult, UsbOutResult};
+use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
+use emulator::io::usb::uhci::regs::{USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
+use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
-use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
-use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
-use emulator::io::usb::uhci::regs::{USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
 use emulator::io::PortIO;
 use memory::MemoryBus;
 
@@ -589,8 +589,8 @@ fn uhci_control_get_descriptor_device_runtime_descriptor() {
 
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     let device_desc = vec![
-        0x12, 0x01, 0x00, 0x02, 0xff, 0x00, 0x00, 0x40, 0x34, 0x12, 0x02, 0x00, 0x00, 0x01,
-        0x01, 0x02, 0x00, 0x01,
+        0x12, 0x01, 0x00, 0x02, 0xff, 0x00, 0x00, 0x40, 0x34, 0x12, 0x02, 0x00, 0x00, 0x01, 0x01,
+        0x02, 0x00, 0x01,
     ];
     // Minimal config descriptor (total length 9).
     let config_desc = vec![0x09, 0x02, 0x09, 0x00, 0x00, 0x01, 0x00, 0x80, 50];
@@ -698,9 +698,13 @@ fn uhci_control_in_pending_naks_data_td_until_ready() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     let ready = Rc::new(RefCell::new(false));
     let response_data = vec![0x11, 0x22, 0x33, 0x44];
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(PendingControlInDevice::new(ready.clone(), response_data.clone())));
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(PendingControlInDevice::new(
+            ready.clone(),
+            response_data.clone(),
+        )),
+    );
     reset_port(&mut uhci, &mut mem, 0x10);
 
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);
@@ -781,7 +785,10 @@ fn uhci_control_out_pending_acks_data_stage_and_naks_status_in() {
     let received = Rc::new(RefCell::new(Vec::new()));
     uhci.controller.hub_mut().attach(
         0,
-        Box::new(PendingControlOutDevice::new(ready.clone(), received.clone())),
+        Box::new(PendingControlOutDevice::new(
+            ready.clone(),
+            received.clone(),
+        )),
     );
     reset_port(&mut uhci, &mut mem, 0x10);
 
@@ -856,7 +863,10 @@ fn uhci_bulk_in_out_smoke_test_with_nak() {
     let out_received = Rc::new(RefCell::new(Vec::new()));
     uhci.controller.hub_mut().attach(
         0,
-        Box::new(BulkEndpointDevice::new(in_queue.clone(), out_received.clone())),
+        Box::new(BulkEndpointDevice::new(
+            in_queue.clone(),
+            out_received.clone(),
+        )),
     );
     reset_port(&mut uhci, &mut mem, 0x10);
 
@@ -1333,9 +1343,10 @@ fn uhci_qh_does_not_skip_inactive_tds() {
     init_frame_list(&mut mem, QH_ADDR);
 
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(TestInterruptInDevice::new(0x81, vec![1, 2, 3, 4])));
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(TestInterruptInDevice::new(0x81, vec![1, 2, 3, 4])),
+    );
     reset_port(&mut uhci, &mut mem, 0x10);
 
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);
@@ -1385,7 +1396,10 @@ fn uhci_qh_does_not_skip_nak_tds() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     uhci.controller.hub_mut().attach(
         0,
-        Box::new(TestInterruptInDevice::new(0x82, vec![0x11, 0x22, 0x33, 0x44])),
+        Box::new(TestInterruptInDevice::new(
+            0x82,
+            vec![0x11, 0x22, 0x33, 0x44],
+        )),
     );
     reset_port(&mut uhci, &mut mem, 0x10);
 
@@ -1687,7 +1701,9 @@ fn uhci_interrupt_out_reaches_device_model() {
 
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     let device = DummyInterruptOutDevice::new();
-    uhci.controller.hub_mut().attach(0, Box::new(device.clone()));
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(device.clone()));
     reset_port(&mut uhci, &mut mem, 0x10);
 
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);

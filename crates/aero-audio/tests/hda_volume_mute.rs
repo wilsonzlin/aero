@@ -99,8 +99,7 @@ fn mute_left_silences_left_channel() {
 
     // Mute left channel; keep gain at unity.
     let payload = (1 << 13) | (1 << 7) | 0x7f;
-    hda.codec_mut()
-        .execute_verb(2, verb_4(0x3, payload as u16));
+    hda.codec_mut().execute_verb(2, verb_4(0x3, payload as u16));
 
     let out = render(&mut mem, &mut hda, 16);
     assert_eq!(out[0], 0.0);
@@ -115,8 +114,7 @@ fn mute_right_silences_right_channel() {
 
     // Mute right channel; keep gain at unity.
     let payload = (1 << 12) | (1 << 7) | 0x7f;
-    hda.codec_mut()
-        .execute_verb(2, verb_4(0x3, payload as u16));
+    hda.codec_mut().execute_verb(2, verb_4(0x3, payload as u16));
 
     let out = render(&mut mem, &mut hda, 16);
     assert!(out[0].abs() > 0.001);

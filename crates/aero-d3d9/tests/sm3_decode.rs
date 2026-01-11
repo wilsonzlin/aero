@@ -64,7 +64,10 @@ fn decode_basic_vs_instructions() {
     );
 
     assert_eq!(shader.instructions[0].opcode, Opcode::Dcl);
-    assert_eq!(shader.instructions[0].dcl.as_ref().unwrap().usage, DclUsage::Position);
+    assert_eq!(
+        shader.instructions[0].dcl.as_ref().unwrap().usage,
+        DclUsage::Position
+    );
 
     let dcl0_reg = match &shader.instructions[0].operands[0] {
         Operand::Dst(dst) => &dst.reg,
@@ -104,7 +107,11 @@ fn decode_relative_constant_addressing() {
     };
     assert_eq!(src.reg.file, RegisterFile::Const);
     assert_eq!(src.reg.index, 1);
-    let rel = src.reg.relative.as_ref().expect("expected relative addressing");
+    let rel = src
+        .reg
+        .relative
+        .as_ref()
+        .expect("expected relative addressing");
     assert_eq!(rel.reg.file, RegisterFile::Addr);
     assert_eq!(rel.reg.index, 0);
     assert_eq!(rel.component, SwizzleComponent::X);
@@ -130,7 +137,10 @@ fn decode_predicated_instruction() {
     assert_eq!(add.opcode, Opcode::Add);
     assert!(add.predicate.is_some());
     assert_eq!(add.operands.len(), 3);
-    assert_eq!(add.predicate.as_ref().unwrap().reg.file, RegisterFile::Predicate);
+    assert_eq!(
+        add.predicate.as_ref().unwrap().reg.file,
+        RegisterFile::Predicate
+    );
 }
 
 #[test]

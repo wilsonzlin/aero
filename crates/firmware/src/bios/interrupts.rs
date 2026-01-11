@@ -1,8 +1,6 @@
 use machine::{BlockDevice, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 
-use super::{
-    disk_err_to_int13_status, seg, Bios, BiosBus, BiosMemoryBus, EBDA_BASE, EBDA_SIZE,
-};
+use super::{disk_err_to_int13_status, seg, Bios, BiosBus, BiosMemoryBus, EBDA_BASE, EBDA_SIZE};
 use crate::cpu::CpuState as FirmwareCpuState;
 
 pub const E820_RAM: u32 = 1;
@@ -168,8 +166,7 @@ fn handle_int13(
                         let status = disk_err_to_int13_status(e);
                         bios.last_int13_status = status;
                         // AH=status, AL=sectors transferred.
-                        cpu.rax =
-                            (cpu.rax & !0xFFFF) | (i & 0xFF) | ((status as u64) << 8);
+                        cpu.rax = (cpu.rax & !0xFFFF) | (i & 0xFF) | ((status as u64) << 8);
                         return;
                     }
                 }
@@ -644,8 +641,8 @@ fn build_e820_map(
     // ACPI `MCFG` entry emitted by `bios::acpi`.
     const PCIE_ECAM_BASE: u64 = 0xB000_0000;
     const PCIE_ECAM_SIZE: u64 = 0x1000_0000; // 256MiB (buses 0..=255)
-    // Typical x86 systems reserve a PCI/MMIO window below 4GiB. This must be
-    // reported via E820 so OSes (notably Windows) do not treat device MMIO as RAM.
+                                             // Typical x86 systems reserve a PCI/MMIO window below 4GiB. This must be
+                                             // reported via E820 so OSes (notably Windows) do not treat device MMIO as RAM.
     const PCI_HOLE_START: u64 = 0xC000_0000;
     const PCI_HOLE_END: u64 = 0x1_0000_0000;
 
@@ -745,8 +742,8 @@ fn build_e820_map(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::BiosConfig;
+    use super::*;
     use machine::{CpuState, InMemoryDisk, MemoryAccess, PhysicalMemory, FLAG_CF};
 
     #[test]

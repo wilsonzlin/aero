@@ -17,4 +17,3 @@ pub const CC_EN: u32 = 1 << 0;
 
 pub const CSTS_RDY: u32 = 1 << 0;
 pub const CSTS_CFS: u32 = 1 << 1;
-

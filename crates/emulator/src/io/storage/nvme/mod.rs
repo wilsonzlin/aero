@@ -9,9 +9,9 @@ use crate::io::storage::disk::{DiskBackend, DiskError};
 use commands::{
     build_identify_controller, build_identify_namespace, NvmeCommand, NvmeStatus,
     FID_NUMBER_OF_QUEUES, OPC_ADMIN_ASYNC_EVENT_REQUEST, OPC_ADMIN_CREATE_IO_CQ,
-    OPC_ADMIN_CREATE_IO_SQ, OPC_ADMIN_DELETE_IO_CQ, OPC_ADMIN_DELETE_IO_SQ,
-    OPC_ADMIN_GET_FEATURES, OPC_ADMIN_GET_LOG_PAGE, OPC_ADMIN_IDENTIFY, OPC_ADMIN_KEEP_ALIVE,
-    OPC_ADMIN_SET_FEATURES, OPC_NVM_FLUSH, OPC_NVM_READ, OPC_NVM_WRITE,
+    OPC_ADMIN_CREATE_IO_SQ, OPC_ADMIN_DELETE_IO_CQ, OPC_ADMIN_DELETE_IO_SQ, OPC_ADMIN_GET_FEATURES,
+    OPC_ADMIN_GET_LOG_PAGE, OPC_ADMIN_IDENTIFY, OPC_ADMIN_KEEP_ALIVE, OPC_ADMIN_SET_FEATURES,
+    OPC_NVM_FLUSH, OPC_NVM_READ, OPC_NVM_WRITE,
 };
 use memory::MemoryBus;
 use queue::{
@@ -323,7 +323,11 @@ impl NvmeController {
         }
     }
 
-    fn execute_admin(&mut self, mem: &mut dyn MemoryBus, cmd: NvmeCommand) -> Option<(u32, NvmeStatus)> {
+    fn execute_admin(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        cmd: NvmeCommand,
+    ) -> Option<(u32, NvmeStatus)> {
         match cmd.opc {
             OPC_ADMIN_IDENTIFY => Some(self.cmd_identify(mem, cmd)),
             OPC_ADMIN_GET_LOG_PAGE => Some(self.cmd_get_log_page(mem, cmd)),

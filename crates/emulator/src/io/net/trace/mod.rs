@@ -128,7 +128,10 @@ impl NetTracer {
     }
 
     pub fn clear(&self) {
-        self.records.lock().expect("net trace lock poisoned").clear();
+        self.records
+            .lock()
+            .expect("net trace lock poisoned")
+            .clear();
     }
 
     pub fn record_ethernet(&self, direction: FrameDirection, frame: &[u8]) {
@@ -204,7 +207,9 @@ impl NetTracer {
         data: &[u8],
     ) {
         let ts = now_unix_timestamp_ns();
-        self.record_udp_proxy_at(ts, direction, transport, remote_ip, src_port, dst_port, data);
+        self.record_udp_proxy_at(
+            ts, direction, transport, remote_ip, src_port, dst_port, data,
+        );
     }
 
     pub fn record_udp_proxy_at(
@@ -405,8 +410,7 @@ impl TracedNetworkStack {
     pub fn drain_frames(&mut self) -> Vec<Vec<u8>> {
         let frames = self.inner.drain_frames();
         for frame in &frames {
-            self.tracer
-                .record_ethernet(FrameDirection::GuestRx, frame);
+            self.tracer.record_ethernet(FrameDirection::GuestRx, frame);
         }
         frames
     }
@@ -417,11 +421,8 @@ impl TracedNetworkStack {
                 connection_id,
                 data,
             } => {
-                self.tracer.record_tcp_proxy(
-                    ProxyDirection::GuestToRemote,
-                    *connection_id,
-                    data,
-                );
+                self.tracer
+                    .record_tcp_proxy(ProxyDirection::GuestToRemote, *connection_id, data);
             }
             Action::UdpProxySend {
                 transport,
@@ -452,11 +453,8 @@ impl TracedNetworkStack {
             data,
         } = event
         {
-            self.tracer.record_tcp_proxy(
-                ProxyDirection::RemoteToGuest,
-                *connection_id,
-                data,
-            );
+            self.tracer
+                .record_tcp_proxy(ProxyDirection::RemoteToGuest, *connection_id, data);
         }
     }
 
@@ -562,7 +560,11 @@ fn duration_to_ns(dur: Duration) -> u64 {
         .saturating_add(u64::from(dur.subsec_nanos()))
 }
 
-fn tcp_proxy_pseudo_packet(connection_id: u32, direction: ProxyDirection, payload: &[u8]) -> Vec<u8> {
+fn tcp_proxy_pseudo_packet(
+    connection_id: u32,
+    direction: ProxyDirection,
+    payload: &[u8],
+) -> Vec<u8> {
     const MAGIC: [u8; 4] = *b"ATCP";
 
     let dir = match direction {

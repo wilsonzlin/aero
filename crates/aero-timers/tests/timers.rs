@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use aero_timers::{ApicTimerMode, DeviceTimer, Hpet, HpetTimerConfig, LocalApicTimer, Pit};
 use aero_time::{FakeHostClock, Interrupt, InterruptSink, TimeSource, TimerQueue};
+use aero_timers::{ApicTimerMode, DeviceTimer, Hpet, HpetTimerConfig, LocalApicTimer, Pit};
 
 #[derive(Default)]
 struct InterruptRecorder {

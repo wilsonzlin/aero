@@ -43,4 +43,3 @@ fn decode_one_does_not_allocate_per_instruction() {
         "decoder allocated during hot-path decode"
     );
 }
-

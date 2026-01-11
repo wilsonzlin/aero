@@ -113,7 +113,8 @@ impl Bios {
                         {
                             let bpp = mode.bytes_per_pixel();
                             let pixels = if bpp == 0 { 0 } else { bytes / bpp };
-                            self.video.vbe.bytes_per_scan_line = bytes.max(mode.bytes_per_scan_line());
+                            self.video.vbe.bytes_per_scan_line =
+                                bytes.max(mode.bytes_per_scan_line());
                             self.video.vbe.logical_width_pixels = pixels.max(mode.width);
                             cpu.set_bx(self.video.vbe.bytes_per_scan_line);
                             cpu.set_cx(self.video.vbe.logical_width_pixels);

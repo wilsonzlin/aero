@@ -272,18 +272,18 @@ impl AerogpuResourceManager {
             other => bail!("CreateShaderDxbc: unsupported DXBC shader stage {other:?}"),
         };
         if parsed_stage != stage {
-            bail!(
-                "CreateShaderDxbc: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})"
-            );
+            bail!("CreateShaderDxbc: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
         let wgsl = translate_sm4_to_wgsl(&program)
             .map_err(|e| anyhow!("DXBC->WGSL translation failed: {e}"))?
             .wgsl;
 
-        let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("aerogpu shader module"),
-            source: wgpu::ShaderSource::Wgsl(wgsl.clone().into()),
-        });
+        let module = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aerogpu shader module"),
+                source: wgpu::ShaderSource::Wgsl(wgsl.clone().into()),
+            });
 
         self.shaders.insert(
             handle,
@@ -362,9 +362,17 @@ impl AerogpuResourceManager {
             .ok_or_else(|| anyhow!("unknown input layout handle {handle}"))
     }
 
-    pub fn upload_resource(&mut self, handle: AerogpuHandle, range: DirtyRange, bytes: &[u8]) -> Result<()> {
+    pub fn upload_resource(
+        &mut self,
+        handle: AerogpuHandle,
+        range: DirtyRange,
+        bytes: &[u8],
+    ) -> Result<()> {
         let _end = range.end_bytes()?;
-        let size_usize: usize = range.size_bytes.try_into().context("UploadResource: size too large")?;
+        let size_usize: usize = range
+            .size_bytes
+            .try_into()
+            .context("UploadResource: size too large")?;
         if bytes.len() != size_usize {
             bail!(
                 "UploadResource: payload size mismatch: cmd says {} bytes, payload has {}",
@@ -378,7 +386,8 @@ impl AerogpuResourceManager {
             if buf.backing.is_some() {
                 bail!("UploadResource: buffer {handle} is backed by a guest allocation");
             }
-            self.queue.write_buffer(&buf.buffer, range.offset_bytes, bytes);
+            self.queue
+                .write_buffer(&buf.buffer, range.offset_bytes, bytes);
             return Ok(());
         }
 
@@ -397,12 +406,7 @@ impl AerogpuResourceManager {
             shadow[start..start + bytes.len()].copy_from_slice(bytes);
 
             // For P0, conservatively re-upload the entire texture from the host shadow.
-            upload_texture_from_linear_bytes(
-                &self.queue,
-                &tex.texture,
-                &tex.desc,
-                shadow,
-            )?;
+            upload_texture_from_linear_bytes(&self.queue, &tex.texture, &tex.desc, shadow)?;
             return Ok(());
         }
 
@@ -430,9 +434,12 @@ impl AerogpuResourceManager {
         let Some(backing) = buf.backing else {
             return Ok(());
         };
-        let alloc = alloc_table
-            .get(&backing.alloc_id)
-            .ok_or_else(|| anyhow!("missing alloc entry {} for buffer {handle}", backing.alloc_id))?;
+        let alloc = alloc_table.get(&backing.alloc_id).ok_or_else(|| {
+            anyhow!(
+                "missing alloc entry {} for buffer {handle}",
+                backing.alloc_id
+            )
+        })?;
 
         let start = alloc
             .gpa
@@ -558,7 +565,10 @@ pub fn map_texture_usage_flags(usage_flags: u32) -> wgpu::TextureUsages {
     if (usage_flags & AEROGPU_RESOURCE_USAGE_TEXTURE) != 0 {
         out |= wgpu::TextureUsages::TEXTURE_BINDING;
     }
-    if (usage_flags & (AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL | AEROGPU_RESOURCE_USAGE_SCANOUT))
+    if (usage_flags
+        & (AEROGPU_RESOURCE_USAGE_RENDER_TARGET
+            | AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL
+            | AEROGPU_RESOURCE_USAGE_SCANOUT))
         != 0
     {
         out |= wgpu::TextureUsages::RENDER_ATTACHMENT;
@@ -778,7 +788,11 @@ fn parse_input_layout_blob(blob: &[u8]) -> Result<Vec<InputLayoutElementDxgi>> {
     let elems_start = 16usize;
     let elem_size = 28usize;
     let bytes_needed = elems_start
-        .checked_add(count.checked_mul(elem_size).ok_or_else(|| anyhow!("element_count overflow"))?)
+        .checked_add(
+            count
+                .checked_mul(elem_size)
+                .ok_or_else(|| anyhow!("element_count overflow"))?,
+        )
         .ok_or_else(|| anyhow!("input layout blob size overflow"))?;
     if blob.len() < bytes_needed {
         bail!(
@@ -877,7 +891,7 @@ mod tests {
         blob.extend_from_slice(&INPUT_LAYOUT_BLOB_VERSION.to_le_bytes());
         blob.extend_from_slice(&1u32.to_le_bytes()); // element_count
         blob.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        // element
+                                                     // element
         blob.extend_from_slice(&123u32.to_le_bytes()); // semantic_name_hash
         blob.extend_from_slice(&2u32.to_le_bytes()); // semantic_index
         blob.extend_from_slice(&28u32.to_le_bytes()); // dxgi_format

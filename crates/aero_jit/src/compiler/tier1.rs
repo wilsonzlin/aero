@@ -1,7 +1,7 @@
 use crate::Tier1Bus;
 
-use crate::tier1::{discover_block, translate_block, BlockLimits};
 use crate::tier1::wasm::Tier1WasmOptions;
+use crate::tier1::{discover_block, translate_block, BlockLimits};
 
 /// Output of the Tier-1 compilation pipeline.
 #[derive(Debug, Clone)]
@@ -34,7 +34,8 @@ pub fn compile_tier1_block_with_options<B: Tier1Bus>(
     let byte_len: u32 = block.insts.iter().map(|inst| inst.len as u32).sum();
     let ir = translate_block(&block);
 
-    let wasm_bytes = crate::tier1::wasm::Tier1WasmCodegen::new().compile_block_with_options(&ir, options);
+    let wasm_bytes =
+        crate::tier1::wasm::Tier1WasmCodegen::new().compile_block_with_options(&ir, options);
 
     Tier1Compilation {
         entry_rip,

@@ -6,9 +6,9 @@ use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime};
 use aero_x86::tier1::{decode_one, InstKind};
 use thiserror::Error;
 
-use crate::tier1_ir::{IrInst, IrTerminator};
 use crate::tier1::wasm::{Tier1WasmCodegen, Tier1WasmOptions};
 use crate::tier1::{translate_block, BasicBlock, BlockEndKind, BlockLimits};
+use crate::tier1_ir::{IrInst, IrTerminator};
 
 /// Source of guest code bytes for the Tier-1 compiler.
 pub trait CodeProvider {
@@ -59,10 +59,7 @@ impl Tier1CompileQueue {
 
     /// Pop a single pending compilation request.
     pub fn pop(&self) -> Option<u64> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("Tier1CompileQueue mutex poisoned");
+        let mut inner = self.inner.lock().expect("Tier1CompileQueue mutex poisoned");
         let rip = inner.queue.pop_front()?;
         inner.pending.remove(&rip);
         Some(rip)
@@ -70,10 +67,7 @@ impl Tier1CompileQueue {
 
     /// Drain all pending compilation requests.
     pub fn drain(&self) -> Vec<u64> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("Tier1CompileQueue mutex poisoned");
+        let mut inner = self.inner.lock().expect("Tier1CompileQueue mutex poisoned");
         let drained: Vec<u64> = inner.queue.drain(..).collect();
         inner.pending.clear();
         drained
@@ -82,10 +76,7 @@ impl Tier1CompileQueue {
 
 impl CompileRequestSink for Tier1CompileQueue {
     fn request_compile(&mut self, entry_rip: u64) {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("Tier1CompileQueue mutex poisoned");
+        let mut inner = self.inner.lock().expect("Tier1CompileQueue mutex poisoned");
         if inner.pending.insert(entry_rip) {
             inner.queue.push_back(entry_rip);
         }

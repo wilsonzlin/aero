@@ -138,4 +138,3 @@ fn inspect_reads_only_headers() -> Result<()> {
 
     Ok(())
 }
-

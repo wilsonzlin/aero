@@ -82,7 +82,8 @@ async fn handle_request(
                 .insert(CONTENT_LENGTH, total_size.to_string().parse().unwrap());
             resp.headers_mut()
                 .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
-            resp.headers_mut().insert(ETAG, "\"large-offset\"".parse().unwrap());
+            resp.headers_mut()
+                .insert(ETAG, "\"large-offset\"".parse().unwrap());
             return Ok(resp);
         }
         Method::GET => {}
@@ -130,7 +131,8 @@ async fn handle_request(
     );
     resp.headers_mut()
         .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
-    resp.headers_mut().insert(ETAG, "\"large-offset\"".parse().unwrap());
+    resp.headers_mut()
+        .insert(ETAG, "\"large-offset\"".parse().unwrap());
     resp.headers_mut().insert(
         CONTENT_RANGE,
         format!("bytes {start}-{end_inclusive}/{total_size}")

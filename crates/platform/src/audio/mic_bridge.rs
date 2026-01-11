@@ -137,8 +137,7 @@ impl MonoRingBuffer {
 
         let start_usize = start as usize;
         let first_usize = first_part as usize;
-        out[..first_usize]
-            .copy_from_slice(&self.storage[start_usize..start_usize + first_usize]);
+        out[..first_usize].copy_from_slice(&self.storage[start_usize..start_usize + first_usize]);
 
         if second_part > 0 {
             let second_usize = second_part as usize;
@@ -280,7 +279,8 @@ mod wasm {
                 ));
             }
 
-            let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+            let header =
+                Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
             let capacity_from_header = atomic_load_u32(&header, CAPACITY_SAMPLES_INDEX);
             let capacity_samples = if capacity_from_header != 0 {
                 if capacity_from_header != payload_samples {
@@ -345,16 +345,10 @@ mod wasm {
             }
             if second_part > 0 {
                 let src = self.samples.subarray(0, second_part);
-                src.copy_to(
-                    &mut out[first_part as usize..(first_part + second_part) as usize],
-                );
+                src.copy_to(&mut out[first_part as usize..(first_part + second_part) as usize]);
             }
 
-            atomic_store_u32(
-                &self.header,
-                READ_POS_INDEX,
-                read_pos.wrapping_add(to_read),
-            );
+            atomic_store_u32(&self.header, READ_POS_INDEX, read_pos.wrapping_add(to_read));
 
             to_read
         }

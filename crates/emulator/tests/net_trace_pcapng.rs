@@ -92,7 +92,9 @@ fn epb_payload_and_flags(body: &[u8]) -> (&[u8], Option<u32>) {
             break;
         }
         if code == 2 && len == 4 {
-            flags = Some(u32::from_le_bytes(body[opt_off..opt_off + 4].try_into().unwrap()));
+            flags = Some(u32::from_le_bytes(
+                body[opt_off..opt_off + 4].try_into().unwrap(),
+            ));
         }
         opt_off += len;
         opt_off = (opt_off + 3) & !3;
@@ -105,7 +107,8 @@ fn epb_payload_and_flags(body: &[u8]) -> (&[u8], Option<u32>) {
 fn synthetic_tcp_exchange_is_written_to_pcapng() {
     let tracer = NetTracer::new(NetTraceConfig::default());
     tracer.enable();
-    let _artifact = CaptureArtifactOnPanic::for_test(&tracer, "synthetic_tcp_exchange_is_written_to_pcapng");
+    let _artifact =
+        CaptureArtifactOnPanic::for_test(&tracer, "synthetic_tcp_exchange_is_written_to_pcapng");
 
     let guest_mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
     let remote_mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
@@ -139,7 +142,10 @@ fn synthetic_tcp_exchange_is_written_to_pcapng() {
     let pcapng = tracer.export_pcapng();
     let blocks = parse_blocks(&pcapng);
 
-    let epbs: Vec<_> = blocks.iter().filter(|b| b.block_type == 0x0000_0006).collect();
+    let epbs: Vec<_> = blocks
+        .iter()
+        .filter(|b| b.block_type == 0x0000_0006)
+        .collect();
     assert_eq!(epbs.len(), 2, "expected 2 Enhanced Packet Blocks");
 
     let (tx_payload, tx_flags) = epb_payload_and_flags(epbs[0].body);

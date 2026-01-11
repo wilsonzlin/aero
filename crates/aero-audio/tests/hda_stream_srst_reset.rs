@@ -21,7 +21,8 @@ fn clearing_srst_resets_stream_engine_state() {
 
     // 48kHz, 16-bit, 2ch.
     let fmt_raw: u16 = (1 << 4) | 0x1;
-    hda.codec_mut().execute_verb(2, (0x200u32 << 8) | (fmt_raw as u8 as u32));
+    hda.codec_mut()
+        .execute_verb(2, (0x200u32 << 8) | (fmt_raw as u8 as u32));
 
     let bdl_base = 0x1000u64;
     let pcm_base = 0x2000u64;
@@ -71,4 +72,3 @@ fn clearing_srst_resets_stream_engine_state() {
     assert_eq!(hda.mmio_read(REG_INTSTS, 4) as u32 & 1, 0);
     assert!(!hda.take_irq());
 }
-

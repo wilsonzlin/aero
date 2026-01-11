@@ -115,11 +115,7 @@ pub fn parse_xsdt_entries(xsdt_bytes: &[u8]) -> Option<Vec<u64>> {
 }
 
 /// Scan a memory region for an RSDP (v2) on 16-byte boundaries.
-pub fn find_rsdp_in_memory<M: GuestMemory>(
-    mem: &M,
-    start: u64,
-    end: u64,
-) -> Option<u64> {
+pub fn find_rsdp_in_memory<M: GuestMemory>(mem: &M, start: u64, end: u64) -> Option<u64> {
     let mut addr = (start + 15) & !15;
     let mut sig = [0u8; 8];
     while addr + (RSDP_V2_SIZE as u64) <= end {

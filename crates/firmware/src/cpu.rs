@@ -163,4 +163,3 @@ impl CpuState {
         self.rflags &= !FLAG_CF;
     }
 }
-

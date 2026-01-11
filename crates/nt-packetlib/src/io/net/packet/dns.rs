@@ -86,7 +86,9 @@ pub fn parse_single_query(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
             return Err(PacketError::Unsupported("compressed DNS QNAME"));
         }
         if (len_byte & 0xc0) != 0 {
-            return Err(PacketError::Malformed("DNS label length has reserved bits set"));
+            return Err(PacketError::Malformed(
+                "DNS label length has reserved bits set",
+            ));
         }
         let len = len_byte as usize;
         if len == 0 {
@@ -215,8 +217,8 @@ mod tests {
     fn build_and_parse_basic_query() {
         // Query for "a." (qname: 1,'a',0) type A class IN
         let query = [
-            0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-            b'a', 0x00, 0x00, 0x01, 0x00, 0x01,
+            0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, b'a',
+            0x00, 0x00, 0x01, 0x00, 0x01,
         ];
         let q = parse_single_query(&query).unwrap();
         assert_eq!(q.id, 0x1234);
@@ -244,7 +246,9 @@ mod tests {
 
     #[test]
     fn decode_qname_to_string() {
-        let qname = [0x07u8, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00];
+        let qname = [
+            0x07u8, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00,
+        ];
         assert_eq!(qname_to_string(&qname).unwrap(), "example.com");
     }
 

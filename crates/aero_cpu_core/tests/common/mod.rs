@@ -2,7 +2,9 @@
 
 use aero_cpu_core::interp::tier0::exec::{run_batch, step, BatchExit, StepExit};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
-use aero_cpu_core::state::{CpuMode, CpuState, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
+use aero_cpu_core::state::{
+    CpuMode, CpuState, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF,
+};
 use aero_x86::Register;
 
 pub mod machine;
@@ -18,8 +20,7 @@ pub const CODE_BASE: u64 = 0x0700;
 /// boot sector. For Aero we use an arbitrary sentinel and stop once `ret` returns to it.
 pub const RETURN_IP: u16 = 0xFFFF;
 
-pub const FLAG_MASK: u16 =
-    (FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF | 0x2) as u16;
+pub const FLAG_MASK: u16 = (FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF | 0x2) as u16;
 
 pub const MAX_INSTRUCTIONS: u64 = 100_000;
 
@@ -138,7 +139,10 @@ fn run_until_rip_batch(state: &mut CpuState, bus: &mut FlatTestBus, stop_rip: u6
             BatchExit::Completed | BatchExit::Branch => continue,
             BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
             BatchExit::BiosInterrupt(vector) => {
-                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+                panic!(
+                    "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
+                    state.rip()
+                )
             }
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
@@ -159,7 +163,10 @@ fn run_until_rip_single_step(state: &mut CpuState, bus: &mut FlatTestBus, stop_r
             StepExit::Continue | StepExit::Branch => continue,
             StepExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
             StepExit::BiosInterrupt(vector) => {
-                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+                panic!(
+                    "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
+                    state.rip()
+                )
             }
             StepExit::Assist(r) => panic!("unexpected assist: {r:?}"),
         }

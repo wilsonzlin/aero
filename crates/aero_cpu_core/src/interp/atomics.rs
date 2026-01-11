@@ -233,7 +233,9 @@ pub fn decode_atomics(
                 0x81 => match size {
                     2 => {
                         let lo = *bytes.get(cursor).ok_or(ExecError::TruncatedInstruction)?;
-                        let hi = *bytes.get(cursor + 1).ok_or(ExecError::TruncatedInstruction)?;
+                        let hi = *bytes
+                            .get(cursor + 1)
+                            .ok_or(ExecError::TruncatedInstruction)?;
                         i16::from_le_bytes([lo, hi]) as i64
                     }
                     4 => {
@@ -719,7 +721,9 @@ fn decode_modrm(
     let mut disp = 0i32;
 
     if mod_bits != 0b11 && (rm & 0b111) == 0b100 {
-        let sib_byte = *bytes.get(cursor + used).ok_or(ExecError::TruncatedInstruction)?;
+        let sib_byte = *bytes
+            .get(cursor + used)
+            .ok_or(ExecError::TruncatedInstruction)?;
         used += 1;
         let scale = (sib_byte >> 6) & 0b11;
         let index = ((sib_byte >> 3) & 0b111) | if prefixes.rex.x { 0b1000 } else { 0 };
@@ -746,7 +750,9 @@ fn decode_modrm(
             }
         }
         0b01 => {
-            disp = *bytes.get(cursor + used).ok_or(ExecError::TruncatedInstruction)? as i8 as i32;
+            disp = *bytes
+                .get(cursor + used)
+                .ok_or(ExecError::TruncatedInstruction)? as i8 as i32;
             used += 1;
         }
         0b10 => {
@@ -830,7 +836,9 @@ fn addr_size(mode: CpuMode, p: &PrefixState) -> AddrSize {
 fn effective_address(cpu: &Cpu, inst: &DecodedAtomicInst) -> Result<u64, ExecError> {
     let addr_size = addr_size(cpu.mode, &inst.prefixes);
     if addr_size == AddrSize::A16 {
-        return Err(ExecError::Exception(Exception::Unimplemented("16-bit addressing")));
+        return Err(ExecError::Exception(Exception::Unimplemented(
+            "16-bit addressing",
+        )));
     }
     let disp = inst.disp as i64;
     let disp_u64 = disp as u64;

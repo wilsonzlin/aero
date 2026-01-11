@@ -1,9 +1,7 @@
 use std::io::{Read, Seek, SeekFrom};
 
 use crate::error::{Result, SnapshotError};
-use crate::format::{
-    SectionId, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
-};
+use crate::format::{SectionId, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1};
 use crate::io::ReadLeExt;
 use crate::ram::{Compression, RamMode};
 use crate::types::SnapshotMeta;

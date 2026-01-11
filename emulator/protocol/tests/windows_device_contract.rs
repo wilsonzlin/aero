@@ -128,14 +128,18 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
 }
 
 fn contains_needle(haystack: &str, needle: &str) -> bool {
-    haystack.to_ascii_uppercase().contains(&needle.to_ascii_uppercase())
+    haystack
+        .to_ascii_uppercase()
+        .contains(&needle.to_ascii_uppercase())
 }
 
 #[test]
 fn windows_device_contract_is_located_in_docs() {
     let root = repo_root();
     assert!(
-        Path::new(&root).join("docs/windows-device-contract.json").is_file(),
+        Path::new(&root)
+            .join("docs/windows-device-contract.json")
+            .is_file(),
         "docs/windows-device-contract.json must exist relative to repo root"
     );
 }

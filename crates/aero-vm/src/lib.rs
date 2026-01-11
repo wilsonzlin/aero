@@ -3,8 +3,8 @@ use std::io::{Cursor, Read, Seek, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_snapshot::{
-    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RestoreOptions, Result, SaveOptions,
-    SnapshotMeta, SnapshotSource, SnapshotTarget,
+    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RestoreOptions, Result,
+    SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 
 const DEFAULT_PAGE_SIZE: u32 = 4096;
@@ -76,7 +76,11 @@ impl Vm {
         self.save_snapshot_to(w, options)
     }
 
-    pub fn save_snapshot_to<W: Write + Seek>(&mut self, w: &mut W, options: SaveOptions) -> Result<()> {
+    pub fn save_snapshot_to<W: Write + Seek>(
+        &mut self,
+        w: &mut W,
+        options: SaveOptions,
+    ) -> Result<()> {
         aero_snapshot::save_snapshot(w, self, options)
     }
 
@@ -406,4 +410,4 @@ mod tests {
             "unexpected error: {err}"
         );
     }
-} 
+}

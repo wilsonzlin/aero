@@ -1,9 +1,12 @@
 use aero_virtio::devices::gpu::{ScanoutSink, VirtioGpu2d};
-use aero_virtio::memory::{read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
+use aero_virtio::memory::{
+    read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
+};
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
     VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG,
-    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
+    VIRTIO_STATUS_FEATURES_OK,
 };
 use virtio_gpu_proto::protocol as proto;
 
@@ -85,7 +88,15 @@ fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8
     dev.bar0_write(off, &[val], mem);
 }
 
-fn write_desc(mem: &mut GuestRam, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
+fn write_desc(
+    mem: &mut GuestRam,
+    table: u64,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
     let base = table + u64::from(index) * 16;
     write_u64_le(mem, base, addr).unwrap();
     write_u32_le(mem, base + 8, len).unwrap();
@@ -179,7 +190,12 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     let mut mem = GuestRam::new(0x20000);
 
     // Feature negotiation (accept whatever the device offers).
-    bar_write_u8(&mut dev, &mut mem, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
     bar_write_u8(
         &mut dev,
         &mut mem,

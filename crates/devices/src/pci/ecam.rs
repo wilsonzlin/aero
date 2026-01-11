@@ -75,7 +75,11 @@ impl PciEcamMmio {
         // Our PCI model only implements the first 256 bytes of config space. For present devices,
         // treat the rest of the 4KiB ECAM function window as zero-filled; absent devices continue
         // to float high.
-        if bus.device_config(bdf).is_some() { 0 } else { 0xFF }
+        if bus.device_config(bdf).is_some() {
+            0
+        } else {
+            0xFF
+        }
     }
 
     fn write_u8(&mut self, offset: u64, value: u8) {
@@ -131,4 +135,3 @@ impl memory::MmioHandler for PciEcamMmio {
         }
     }
 }
-

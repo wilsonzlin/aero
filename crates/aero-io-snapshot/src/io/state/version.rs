@@ -7,9 +7,18 @@ pub type SnapshotResult<T> = Result<T, SnapshotError>;
 pub enum SnapshotError {
     UnexpectedEof,
     InvalidMagic,
-    UnsupportedFormatVersion { found: SnapshotVersion, supported: SnapshotVersion },
-    DeviceIdMismatch { expected: [u8; 4], found: [u8; 4] },
-    UnsupportedDeviceMajorVersion { found: u16, supported: u16 },
+    UnsupportedFormatVersion {
+        found: SnapshotVersion,
+        supported: SnapshotVersion,
+    },
+    DeviceIdMismatch {
+        expected: [u8; 4],
+        found: [u8; 4],
+    },
+    UnsupportedDeviceMajorVersion {
+        found: u16,
+        supported: u16,
+    },
     DuplicateFieldTag(u16),
     InvalidFieldEncoding(&'static str),
 }
@@ -35,7 +44,9 @@ impl fmt::Display for SnapshotError {
                 found, supported
             ),
             SnapshotError::DuplicateFieldTag(tag) => write!(f, "duplicate field tag {}", tag),
-            SnapshotError::InvalidFieldEncoding(msg) => write!(f, "invalid field encoding: {}", msg),
+            SnapshotError::InvalidFieldEncoding(msg) => {
+                write!(f, "invalid field encoding: {}", msg)
+            }
         }
     }
 }
@@ -229,7 +240,9 @@ impl<'a> SnapshotReader<'a> {
     }
 
     pub fn u8(&self, tag: u16) -> SnapshotResult<Option<u8>> {
-        let Some(bytes) = self.bytes(tag) else { return Ok(None) };
+        let Some(bytes) = self.bytes(tag) else {
+            return Ok(None);
+        };
         if bytes.len() != 1 {
             return Err(SnapshotError::InvalidFieldEncoding("u8"));
         }
@@ -237,7 +250,9 @@ impl<'a> SnapshotReader<'a> {
     }
 
     pub fn bool(&self, tag: u16) -> SnapshotResult<Option<bool>> {
-        let Some(v) = self.u8(tag)? else { return Ok(None) };
+        let Some(v) = self.u8(tag)? else {
+            return Ok(None);
+        };
         match v {
             0 => Ok(Some(false)),
             1 => Ok(Some(true)),
@@ -246,7 +261,9 @@ impl<'a> SnapshotReader<'a> {
     }
 
     pub fn u16(&self, tag: u16) -> SnapshotResult<Option<u16>> {
-        let Some(bytes) = self.bytes(tag) else { return Ok(None) };
+        let Some(bytes) = self.bytes(tag) else {
+            return Ok(None);
+        };
         if bytes.len() != 2 {
             return Err(SnapshotError::InvalidFieldEncoding("u16"));
         }
@@ -254,15 +271,21 @@ impl<'a> SnapshotReader<'a> {
     }
 
     pub fn u32(&self, tag: u16) -> SnapshotResult<Option<u32>> {
-        let Some(bytes) = self.bytes(tag) else { return Ok(None) };
+        let Some(bytes) = self.bytes(tag) else {
+            return Ok(None);
+        };
         if bytes.len() != 4 {
             return Err(SnapshotError::InvalidFieldEncoding("u32"));
         }
-        Ok(Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])))
+        Ok(Some(u32::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+        ])))
     }
 
     pub fn u64(&self, tag: u16) -> SnapshotResult<Option<u64>> {
-        let Some(bytes) = self.bytes(tag) else { return Ok(None) };
+        let Some(bytes) = self.bytes(tag) else {
+            return Ok(None);
+        };
         if bytes.len() != 8 {
             return Err(SnapshotError::InvalidFieldEncoding("u64"));
         }
@@ -272,11 +295,15 @@ impl<'a> SnapshotReader<'a> {
     }
 
     pub fn i32(&self, tag: u16) -> SnapshotResult<Option<i32>> {
-        let Some(bytes) = self.bytes(tag) else { return Ok(None) };
+        let Some(bytes) = self.bytes(tag) else {
+            return Ok(None);
+        };
         if bytes.len() != 4 {
             return Err(SnapshotError::InvalidFieldEncoding("i32"));
         }
-        Ok(Some(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])))
+        Ok(Some(i32::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+        ])))
     }
 }
 
@@ -427,4 +454,3 @@ pub mod codec {
         }
     }
 }
-

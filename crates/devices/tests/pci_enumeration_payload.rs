@@ -36,11 +36,15 @@ fn payload_sees_root_chipset_devices() {
     let devices = enumerate_bus0(&mut cfg, &mut bus);
 
     assert!(
-        devices.iter().any(|(bdf, vendor, _)| *bdf == PciBdf::new(0, 0, 0) && *vendor == 0x8086),
+        devices
+            .iter()
+            .any(|(bdf, vendor, _)| *bdf == PciBdf::new(0, 0, 0) && *vendor == 0x8086),
         "expected to find PCI host bridge at 00:00.0"
     );
     assert!(
-        devices.iter().any(|(bdf, vendor, _)| *bdf == PciBdf::new(0, 0x1f, 0) && *vendor == 0x8086),
+        devices
+            .iter()
+            .any(|(bdf, vendor, _)| *bdf == PciBdf::new(0, 0x1f, 0) && *vendor == 0x8086),
         "expected to find ISA/LPC bridge at 00:1f.0"
     );
 }

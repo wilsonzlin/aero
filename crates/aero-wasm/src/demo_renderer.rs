@@ -1,4 +1,10 @@
-pub fn render_rgba8888(dst: &mut [u8], width: u32, height: u32, stride_bytes: u32, now_ms: f64) -> u32 {
+pub fn render_rgba8888(
+    dst: &mut [u8],
+    width: u32,
+    height: u32,
+    stride_bytes: u32,
+    now_ms: f64,
+) -> u32 {
     const BYTES_PER_PIXEL: usize = 4;
 
     if width == 0 || height == 0 {

@@ -72,4 +72,3 @@ fn pci_bus_snapshot_leaves_devices_absent_in_snapshot_unchanged() {
     assert_eq!(bus2.read_config(bdf_c, 0x00, 4), 0x0003_1234);
     assert_eq!(bus2.read_config(bdf_c, 0x04, 2) as u16, 0x0000);
 }
-

@@ -74,7 +74,9 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
     cfg_ports
         .borrow_mut()
         .io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 2, 0, 0x04));
-    cfg_ports.borrow_mut().io_write(PCI_CFG_DATA_PORT, 2, 0x0005);
+    cfg_ports
+        .borrow_mut()
+        .io_write(PCI_CFG_DATA_PORT, 2, 0x0005);
     let cmd_ecam = mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x04), 2) as u16;
     assert_eq!(cmd_ecam, 0x0005);
 
@@ -94,4 +96,3 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
     let reg_ports = cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4);
     assert_eq!(reg_ports, 0x1122_3344);
 }
-

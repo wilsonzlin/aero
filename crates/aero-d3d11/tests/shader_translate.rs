@@ -162,7 +162,9 @@ fn translates_vertex_passthrough_signature_io() {
     assert!(translated.wgsl.contains("@vertex"));
     assert!(translated.wgsl.contains("fn vs_main"));
     assert!(translated.wgsl.contains("@location(0) v0: vec2<f32>"));
-    assert!(translated.wgsl.contains("@builtin(position) pos: vec4<f32>"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(position) pos: vec4<f32>"));
     assert!(translated.wgsl.contains("out.pos = o0;"));
     assert!(translated.wgsl.contains("out.o1 = o1;"));
 

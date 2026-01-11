@@ -414,19 +414,15 @@ impl UsbHidKeyboard {
                     None
                 }
             }
-            (0x81, REQ_GET_INTERFACE) => {
-                ((setup.index & 0xFF) == 0).then_some(vec![0u8])
-            }
+            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) == 0).then_some(vec![0u8]),
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
-                    1 => {
-                        Some(
-                            build_keyboard_report(self.modifiers, &self.pressed_keys)
-                                .to_bytes()
-                                .to_vec(),
-                        )
-                    }
+                    1 => Some(
+                        build_keyboard_report(self.modifiers, &self.pressed_keys)
+                            .to_bytes()
+                            .to_vec(),
+                    ),
                     2 => Some(vec![self.leds]),
                     _ => None,
                 }
@@ -895,9 +891,7 @@ impl UsbHidMouse {
                     None
                 }
             }
-            (0x81, REQ_GET_INTERFACE) => {
-                ((setup.index & 0xFF) == 0).then_some(vec![0u8])
-            }
+            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) == 0).then_some(vec![0u8]),
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
@@ -1425,9 +1419,7 @@ impl UsbHidGamepad {
                     None
                 }
             }
-            (0x81, REQ_GET_INTERFACE) => {
-                ((setup.index & 0xFF) == 0).then_some(vec![0u8])
-            }
+            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) == 0).then_some(vec![0u8]),
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
@@ -1579,7 +1571,10 @@ impl UsbDevice for UsbHidGamepad {
                 self.ep0.out_data.extend_from_slice(data);
                 if self.ep0.out_data.len() >= self.ep0.out_expected {
                     let setup = self.ep0.setup();
-                    if matches!((setup.request_type, setup.request), (0x21, REQ_HID_SET_REPORT)) {
+                    if matches!(
+                        (setup.request_type, setup.request),
+                        (0x21, REQ_HID_SET_REPORT)
+                    ) {
                         // Ignore output reports.
                     } else {
                         let _ = self.handle_no_data_request(setup);
@@ -1786,7 +1781,8 @@ impl UsbHidCompositeInput {
     }
 
     fn enqueue_keyboard_report(&mut self) {
-        let report = build_keyboard_report(self.keyboard_modifiers, &self.keyboard_pressed_keys).to_bytes();
+        let report =
+            build_keyboard_report(self.keyboard_modifiers, &self.keyboard_pressed_keys).to_bytes();
         if report == self.keyboard_last_report {
             return;
         }
@@ -2008,19 +2004,15 @@ impl UsbHidCompositeInput {
                 let status: u16 = if halted { 1 } else { 0 };
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_INTERFACE) => {
-                ((setup.index & 0xFF) <= 2).then_some(vec![0u8])
-            }
+            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) <= 2).then_some(vec![0u8]),
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match (interface, report_type) {
-                    (0, 1) => {
-                        Some(
-                            build_keyboard_report(self.keyboard_modifiers, &self.keyboard_pressed_keys)
-                                .to_bytes()
-                                .to_vec(),
-                        )
-                    }
+                    (0, 1) => Some(
+                        build_keyboard_report(self.keyboard_modifiers, &self.keyboard_pressed_keys)
+                            .to_bytes()
+                            .to_vec(),
+                    ),
                     (0, 2) => Some(vec![self.keyboard_leds]),
                     (1, 1) => {
                         if self.protocols[1] == 0 {
@@ -2033,8 +2025,16 @@ impl UsbHidCompositeInput {
                     _ => None,
                 }
             }
-            (0xA1, REQ_HID_GET_PROTOCOL) => self.protocols.get(interface as usize).copied().map(|v| vec![v]),
-            (0xA1, REQ_HID_GET_IDLE) => self.idle_rates.get(interface as usize).copied().map(|v| vec![v]),
+            (0xA1, REQ_HID_GET_PROTOCOL) => self
+                .protocols
+                .get(interface as usize)
+                .copied()
+                .map(|v| vec![v]),
+            (0xA1, REQ_HID_GET_IDLE) => self
+                .idle_rates
+                .get(interface as usize)
+                .copied()
+                .map(|v| vec![v]),
             _ => None,
         }
     }
@@ -2201,7 +2201,10 @@ impl UsbDevice for UsbHidCompositeInput {
                 self.ep0.out_data.extend_from_slice(data);
                 if self.ep0.out_data.len() >= self.ep0.out_expected {
                     let setup = self.ep0.setup();
-                    if matches!((setup.request_type, setup.request), (0x21, REQ_HID_SET_REPORT)) {
+                    if matches!(
+                        (setup.request_type, setup.request),
+                        (0x21, REQ_HID_SET_REPORT)
+                    ) {
                         // Store LED/output report value for the keyboard interface if present; keep
                         // the transfer successful regardless.
                         let interface = (setup.index & 0xFF) as u8;
@@ -2252,7 +2255,11 @@ impl UsbDevice for UsbHidCompositeInput {
                 let Some(report) = self.pending_mouse_reports.pop_front() else {
                     return UsbHandshake::Nak;
                 };
-                let report_len = if self.protocols[1] == 0 { 3 } else { report.len() };
+                let report_len = if self.protocols[1] == 0 {
+                    3
+                } else {
+                    report.len()
+                };
                 let len = buf.len().min(report_len);
                 buf[..len].copy_from_slice(&report[..len]);
                 return UsbHandshake::Ack { bytes: len };
@@ -2487,10 +2494,7 @@ mod tests {
         mouse.movement(1, -2);
 
         let mut buf = [0u8; 8];
-        assert_eq!(
-            mouse.handle_in(1, &mut buf),
-            UsbHandshake::Ack { bytes: 3 }
-        );
+        assert_eq!(mouse.handle_in(1, &mut buf), UsbHandshake::Ack { bytes: 3 });
         assert_eq!(&buf[..3], &[0x00, 0x01, 0xfe]);
     }
 

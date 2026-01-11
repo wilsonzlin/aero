@@ -184,4 +184,3 @@ fn extract_token_stream<'a>(
         }
     }
 }
-

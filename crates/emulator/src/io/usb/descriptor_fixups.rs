@@ -105,7 +105,7 @@ mod tests {
         let mut bytes = Vec::new();
 
         bytes.extend_from_slice(&[
-            9,  // bLength
+            9,    // bLength
             0x07, // bDescriptorType (OTHER_SPEED_CONFIGURATION)
         ]);
         bytes.extend_from_slice(&w_total_length.to_le_bytes()); // wTotalLength
@@ -137,7 +137,7 @@ mod tests {
             0x81, // bEndpointAddress
             0x02, // bmAttributes (bulk)
             64, 0, // wMaxPacketSize (64)
-            0,    // bInterval
+            0, // bInterval
         ]);
 
         assert_eq!(bytes.len(), w_total_length as usize);

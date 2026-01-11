@@ -60,7 +60,10 @@ fn parse_minimal_dxbc_and_iterate_chunks() {
     assert_eq!(junks.len(), 1);
     assert_eq!(junks[0].data, &[0xaa, 0xbb]);
 
-    assert_eq!(file.find_first_shader_chunk().unwrap().fourcc, FourCC(*b"SHDR"));
+    assert_eq!(
+        file.find_first_shader_chunk().unwrap().fourcc,
+        FourCC(*b"SHDR")
+    );
 
     let summary = file.debug_summary();
     assert!(summary.contains("SHDR"));

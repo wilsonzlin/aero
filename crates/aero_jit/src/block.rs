@@ -9,7 +9,10 @@ pub struct BlockLimits {
 
 impl Default for BlockLimits {
     fn default() -> Self {
-        Self { max_insts: 64, max_bytes: 1024 }
+        Self {
+            max_insts: 64,
+            max_bytes: 1024,
+        }
     }
 }
 
@@ -44,7 +47,11 @@ pub fn discover_block<B: Tier1Bus>(bus: &B, entry_rip: u64, limits: BlockLimits)
 
     loop {
         if insts.len() >= limits.max_insts || total_bytes >= limits.max_bytes {
-            return BasicBlock { entry_rip, insts, end_kind: BlockEndKind::Limit { next_rip: rip } };
+            return BasicBlock {
+                entry_rip,
+                insts,
+                end_kind: BlockEndKind::Limit { next_rip: rip },
+            };
         }
 
         let bytes = bus.fetch(rip, 15);
@@ -57,14 +64,20 @@ pub fn discover_block<B: Tier1Bus>(bus: &B, entry_rip: u64, limits: BlockLimits)
             InstKind::JccRel { .. } => Some(BlockEndKind::Jcc),
             InstKind::CallRel { .. } => Some(BlockEndKind::Call),
             InstKind::Ret => Some(BlockEndKind::Ret),
-            InstKind::Invalid => Some(BlockEndKind::ExitToInterpreter { next_rip: inst.next_rip() }),
+            InstKind::Invalid => Some(BlockEndKind::ExitToInterpreter {
+                next_rip: inst.next_rip(),
+            }),
             _ => None,
         };
 
         insts.push(inst);
 
         if let Some(kind) = end_kind {
-            return BasicBlock { entry_rip, insts, end_kind: kind };
+            return BasicBlock {
+                entry_rip,
+                insts,
+                end_kind: kind,
+            };
         }
     }
 }

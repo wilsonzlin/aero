@@ -85,9 +85,8 @@ impl<'de> Deserialize<'de> for HidCollectionType {
             {
                 let code = u8::try_from(value)
                     .map_err(|_| E::invalid_value(Unexpected::Unsigned(value), &self))?;
-                HidCollectionType::from_code(code).ok_or_else(|| {
-                    E::invalid_value(Unexpected::Unsigned(u64::from(code)), &self)
-                })
+                HidCollectionType::from_code(code)
+                    .ok_or_else(|| E::invalid_value(Unexpected::Unsigned(u64::from(code)), &self))
             }
 
             fn visit_i64<E>(self, value: i64) -> core::result::Result<Self::Value, E>
@@ -195,8 +194,10 @@ type Result<T> = core::result::Result<T, HidDescriptorSynthesisError>;
 /// used by [`crate::io::usb::hid::report_descriptor`] and then reuses the canonical
 /// short-item encoder.
 pub fn synthesize_report_descriptor(collections: &[HidCollectionInfo]) -> Result<Vec<u8>> {
-    let converted: Vec<report_descriptor::HidCollectionInfo> =
-        collections.iter().map(convert_collection).collect::<Result<_>>()?;
+    let converted: Vec<report_descriptor::HidCollectionInfo> = collections
+        .iter()
+        .map(convert_collection)
+        .collect::<Result<_>>()?;
     Ok(report_descriptor::synthesize_report_descriptor(&converted)?)
 }
 

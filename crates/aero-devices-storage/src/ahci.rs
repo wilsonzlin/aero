@@ -9,8 +9,8 @@
 //! - Command list parsing (command header + command table + PRDT)
 //! - ATA commands: IDENTIFY, READ DMA EXT, WRITE DMA EXT, FLUSH CACHE(_EXT), SET FEATURES
 
-use std::io;
 use std::fmt;
+use std::io;
 
 use aero_storage::SECTOR_SIZE;
 
@@ -77,7 +77,7 @@ impl HbaRegs {
         let np = (num_ports.saturating_sub(1) as u32) & 0x1F;
         // CAP.NCS is number of command slots minus 1.
         let ncs = 31u32 << 8; // 32 slots
-        // CAP.S64A indicates 64-bit addressing is supported.
+                              // CAP.S64A indicates 64-bit addressing is supported.
         let s64a = 1u32 << 31;
         Self {
             cap: np | ncs | s64a,
@@ -232,11 +232,8 @@ impl AhciController {
     }
 
     fn update_irq(&self) {
-        let any_enabled_pending = self.hba.ghc & GHC_IE != 0
-            && self
-                .ports
-                .iter()
-                .any(|p| p.regs.is & p.regs.ie != 0);
+        let any_enabled_pending =
+            self.hba.ghc & GHC_IE != 0 && self.ports.iter().any(|p| p.regs.is & p.regs.ie != 0);
         self.irq.set_level(any_enabled_pending);
     }
 
@@ -441,7 +438,10 @@ fn process_command_slot(
 
     // Register Host to Device FIS
     if cfis[0] != 0x27 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported FIS type"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported FIS type",
+        ));
     }
 
     let command = cfis[2];
@@ -657,7 +657,14 @@ mod tests {
         (ctl, irq, mem, drive)
     }
 
-    fn write_cmd_header(mem: &mut TestMemory, clb: u64, slot: usize, ctba: u64, prdtl: u16, write: bool) {
+    fn write_cmd_header(
+        mem: &mut TestMemory,
+        clb: u64,
+        slot: usize,
+        ctba: u64,
+        prdtl: u16,
+        write: bool,
+    ) {
         let cfl = 5u32;
         let w = if write { 1u32 << 6 } else { 0 };
         let flags = cfl | w | ((prdtl as u32) << 16);
@@ -725,7 +732,10 @@ mod tests {
 
         assert_eq!(irq.level(), true);
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_CI), 0);
-        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_IS) & PORT_IS_DHRS, PORT_IS_DHRS);
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_IS) & PORT_IS_DHRS,
+            PORT_IS_DHRS
+        );
 
         let mut out = [0u8; SECTOR_SIZE];
         mem.read(data_buf, &mut out);

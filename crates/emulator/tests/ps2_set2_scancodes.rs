@@ -57,7 +57,11 @@ fn extended_navigation_cluster() {
             "{code} should be an E0-extended key"
         );
         assert_eq!(sc.bytes(true), vec![0xE0, make], "{code} make bytes");
-        assert_eq!(sc.bytes(false), vec![0xE0, 0xF0, make], "{code} break bytes");
+        assert_eq!(
+            sc.bytes(false),
+            vec![0xE0, 0xF0, make],
+            "{code} break bytes"
+        );
     }
 }
 
@@ -96,8 +100,7 @@ fn right_modifiers_and_numpad_extended() {
 
 #[test]
 fn special_multi_byte_sequences() {
-    let print_screen =
-        ps2_set2_scancode_for_code("PrintScreen").expect("PrintScreen should map");
+    let print_screen = ps2_set2_scancode_for_code("PrintScreen").expect("PrintScreen should map");
     assert_eq!(
         print_screen,
         Ps2Set2Scancode::Sequence {

@@ -34,8 +34,8 @@ fn bios_publishes_mcfg_for_pcie_ecam() {
     let xsdt_addr = u64::from_le_bytes(rsdp[24..32].try_into().unwrap());
     assert_ne!(xsdt_addr, 0, "XSDT address should be non-zero");
 
-    let xsdt_len = u32::from_le_bytes(vm.mem.read_bytes(xsdt_addr + 4, 4).try_into().unwrap())
-        as usize;
+    let xsdt_len =
+        u32::from_le_bytes(vm.mem.read_bytes(xsdt_addr + 4, 4).try_into().unwrap()) as usize;
     let xsdt = vm.mem.read_bytes(xsdt_addr, xsdt_len);
     assert_eq!(&xsdt[0..4], b"XSDT");
 
@@ -50,8 +50,8 @@ fn bios_publishes_mcfg_for_pcie_ecam() {
     }
     let mcfg_addr = mcfg_addr.expect("MCFG should be listed in XSDT");
 
-    let mcfg_len = u32::from_le_bytes(vm.mem.read_bytes(mcfg_addr + 4, 4).try_into().unwrap())
-        as usize;
+    let mcfg_len =
+        u32::from_le_bytes(vm.mem.read_bytes(mcfg_addr + 4, 4).try_into().unwrap()) as usize;
     let mcfg = vm.mem.read_bytes(mcfg_addr, mcfg_len);
     assert_eq!(&mcfg[0..4], b"MCFG");
     assert!(
@@ -69,4 +69,3 @@ fn bios_publishes_mcfg_for_pcie_ecam() {
     assert_eq!(start_bus, 0);
     assert_eq!(end_bus, 0xFF);
 }
-

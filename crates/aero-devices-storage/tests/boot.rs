@@ -1,8 +1,8 @@
 use aero_devices_storage::ahci::AhciController;
-use aero_devices_storage::ide::{IdeChannelId, IdeController};
-use aero_devices_storage::bus::{TestIrqLine, TestMemory};
-use aero_devices_storage::{GuestMemory, GuestMemoryExt};
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_SECTORS};
+use aero_devices_storage::bus::{TestIrqLine, TestMemory};
+use aero_devices_storage::ide::{IdeChannelId, IdeController};
+use aero_devices_storage::{GuestMemory, GuestMemoryExt};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 
 #[test]
@@ -16,7 +16,11 @@ fn boot_sector_read_via_ide_pio() {
     disk.write_sectors(0, &sector0).unwrap();
 
     let mut ide = IdeController::new();
-    ide.attach_drive(IdeChannelId::Primary, 0, AtaDrive::new(Box::new(disk)).unwrap());
+    ide.attach_drive(
+        IdeChannelId::Primary,
+        0,
+        AtaDrive::new(Box::new(disk)).unwrap(),
+    );
 
     let irq14 = TestIrqLine::default();
     let irq15 = TestIrqLine::default();

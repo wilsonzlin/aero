@@ -3,7 +3,9 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 
-use aero_net_stack::{Action, DnsResolved, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent};
+use aero_net_stack::{
+    Action, DnsResolved, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
+};
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::{
@@ -237,15 +239,20 @@ async fn process_actions(
                     ip: remote_ip,
                     port: remote_port,
                 };
-                let forward = state.cfg.test_overrides.tcp_forward.get(&forward_key).cloned();
+                let forward = state
+                    .cfg
+                    .test_overrides
+                    .tcp_forward
+                    .get(&forward_key)
+                    .cloned();
                 if forward.is_none()
                     && (!state.cfg.policy.allows_ip(remote_ip)
                         || !state.cfg.policy.allows_tcp_port(remote_port))
                 {
-                    queue.extend(stack.handle_tcp_proxy_event(
-                        TcpProxyEvent::Error { connection_id },
-                        now_ms,
-                    ));
+                    queue.extend(
+                        stack
+                            .handle_tcp_proxy_event(TcpProxyEvent::Error { connection_id }, now_ms),
+                    );
                     continue;
                 }
 
@@ -263,7 +270,10 @@ async fn process_actions(
 
                 tcp_conns.insert(connection_id, TcpConnHandle { tx, task });
             }
-            Action::TcpProxySend { connection_id, data } => {
+            Action::TcpProxySend {
+                connection_id,
+                data,
+            } => {
                 let Some(handle) = tcp_conns.get(&connection_id) else {
                     continue;
                 };
@@ -272,10 +282,10 @@ async fn process_actions(
                     if let Some(handle) = tcp_conns.remove(&connection_id) {
                         handle.task.abort();
                     }
-                    queue.extend(stack.handle_tcp_proxy_event(
-                        TcpProxyEvent::Error { connection_id },
-                        now_ms,
-                    ));
+                    queue.extend(
+                        stack
+                            .handle_tcp_proxy_event(TcpProxyEvent::Error { connection_id }, now_ms),
+                    );
                 }
             }
             Action::TcpProxyClose { connection_id } => {
@@ -291,10 +301,19 @@ async fn process_actions(
                 dst_port,
                 data,
             } => {
-                let forward_key = ForwardKey { ip: dst_ip, port: dst_port };
-                let forward = state.cfg.test_overrides.udp_forward.get(&forward_key).cloned();
+                let forward_key = ForwardKey {
+                    ip: dst_ip,
+                    port: dst_port,
+                };
+                let forward = state
+                    .cfg
+                    .test_overrides
+                    .udp_forward
+                    .get(&forward_key)
+                    .cloned();
                 if forward.is_none()
-                    && (!state.cfg.policy.allows_ip(dst_ip) || !state.cfg.policy.allows_udp_port(dst_port))
+                    && (!state.cfg.policy.allows_ip(dst_ip)
+                        || !state.cfg.policy.allows_udp_port(dst_port))
                 {
                     continue;
                 }
@@ -403,7 +422,9 @@ async fn tcp_task(
     let (mut reader, mut writer) = stream.into_split();
 
     let _ = event_tx
-        .send(SessionEvent::Tcp(TcpProxyEvent::Connected { connection_id }))
+        .send(SessionEvent::Tcp(TcpProxyEvent::Connected {
+            connection_id,
+        }))
         .await;
 
     let mut buf = vec![0u8; 16 * 1024];
@@ -457,7 +478,11 @@ async fn tcp_task(
     }
 }
 
-async fn udp_task(key: UdpKey, socket: std::sync::Arc<UdpSocket>, event_tx: mpsc::Sender<SessionEvent>) {
+async fn udp_task(
+    key: UdpKey,
+    socket: std::sync::Arc<UdpSocket>,
+    event_tx: mpsc::Sender<SessionEvent>,
+) {
     let mut buf = vec![0u8; 2048];
     loop {
         let n = match socket.recv(&mut buf).await {
@@ -490,4 +515,3 @@ async fn resolve_host_port(host: &str, port: u16) -> std::io::Result<SocketAddr>
         .next()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses found"))
 }
-

@@ -192,10 +192,7 @@ fn fxsave64_fxrstor64_roundtrip_restores_state() {
 
     let mut bus = FlatTestBus::new(BUS_SIZE);
     // fxsave64 [rax]; fxrstor64 [rax]
-    bus.load(
-        CODE_BASE,
-        &[0x48, 0x0F, 0xAE, 0x00, 0x48, 0x0F, 0xAE, 0x08],
-    );
+    bus.load(CODE_BASE, &[0x48, 0x0F, 0xAE, 0x00, 0x48, 0x0F, 0xAE, 0x08]);
 
     step_ok(&mut state, &mut bus);
 
@@ -316,7 +313,10 @@ fn fx_instructions_enforce_control_register_gating() {
         let mut bus = FlatTestBus::new(BUS_SIZE);
         bus.load(CODE_BASE, &[0x0F, 0xAE, 0x00]); // fxsave [rax]
 
-        assert_eq!(step(&mut state, &mut bus), Err(Exception::DeviceNotAvailable));
+        assert_eq!(
+            step(&mut state, &mut bus),
+            Err(Exception::DeviceNotAvailable)
+        );
     }
 }
 

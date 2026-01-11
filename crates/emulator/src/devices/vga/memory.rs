@@ -291,13 +291,22 @@ impl VgaMemory {
 
                     let mut data = rotated;
                     if (enable_set_reset & plane.mask()) != 0 {
-                        data = if (set_reset & plane.mask()) != 0 { 0xff } else { 0x00 };
+                        data = if (set_reset & plane.mask()) != 0 {
+                            0xff
+                        } else {
+                            0x00
+                        };
                     }
 
                     data = apply_logical_op(logical_op, data, self.latches[plane_idx]);
                     data = (data & bit_mask) | (self.latches[plane_idx] & !bit_mask);
 
-                    self.store_plane_byte(plane, decoded.offset, data, decoded.chain4_linear_for_plane(plane));
+                    self.store_plane_byte(
+                        plane,
+                        decoded.offset,
+                        data,
+                        decoded.chain4_linear_for_plane(plane),
+                    );
                 }
             }
             1 => {
@@ -307,7 +316,12 @@ impl VgaMemory {
                         continue;
                     }
                     let data = self.latches[plane_idx];
-                    self.store_plane_byte(plane, decoded.offset, data, decoded.chain4_linear_for_plane(plane));
+                    self.store_plane_byte(
+                        plane,
+                        decoded.offset,
+                        data,
+                        decoded.chain4_linear_for_plane(plane),
+                    );
                 }
             }
             2 => {
@@ -320,11 +334,20 @@ impl VgaMemory {
                         continue;
                     }
 
-                    let mut data = if (rotated & plane.mask()) != 0 { 0xff } else { 0x00 };
+                    let mut data = if (rotated & plane.mask()) != 0 {
+                        0xff
+                    } else {
+                        0x00
+                    };
                     data = apply_logical_op(logical_op, data, self.latches[plane_idx]);
                     data = (data & bit_mask) | (self.latches[plane_idx] & !bit_mask);
 
-                    self.store_plane_byte(plane, decoded.offset, data, decoded.chain4_linear_for_plane(plane));
+                    self.store_plane_byte(
+                        plane,
+                        decoded.offset,
+                        data,
+                        decoded.chain4_linear_for_plane(plane),
+                    );
                 }
             }
             3 => {
@@ -338,11 +361,20 @@ impl VgaMemory {
                         continue;
                     }
 
-                    let mut data = if (set_reset & plane.mask()) != 0 { 0xff } else { 0x00 };
+                    let mut data = if (set_reset & plane.mask()) != 0 {
+                        0xff
+                    } else {
+                        0x00
+                    };
                     data = apply_logical_op(logical_op, data, self.latches[plane_idx]);
                     data = (data & bit_mask) | (self.latches[plane_idx] & !bit_mask);
 
-                    self.store_plane_byte(plane, decoded.offset, data, decoded.chain4_linear_for_plane(plane));
+                    self.store_plane_byte(
+                        plane,
+                        decoded.offset,
+                        data,
+                        decoded.chain4_linear_for_plane(plane),
+                    );
                 }
             }
             _ => unreachable!("write_mode must be 0..=3"),
@@ -358,7 +390,13 @@ impl VgaMemory {
     }
 
     #[inline]
-    fn store_plane_byte(&mut self, plane: VramPlane, offset: usize, value: u8, chain4_linear: Option<usize>) {
+    fn store_plane_byte(
+        &mut self,
+        plane: VramPlane,
+        offset: usize,
+        value: u8,
+        chain4_linear: Option<usize>,
+    ) {
         self.planes[plane.0][offset] = value;
         self.mark_dirty_plane(plane, offset);
 
@@ -388,8 +426,16 @@ impl VgaMemory {
             let plane_mask = 1u8 << plane_idx;
             // "Color Don't Care" is a *mask* of planes to compare; cleared bits are treated as
             // don't-care.
-            let care_mask = if (dont_care & plane_mask) != 0 { 0xff } else { 0x00 };
-            let compare_byte = if (compare & plane_mask) != 0 { 0xff } else { 0x00 };
+            let care_mask = if (dont_care & plane_mask) != 0 {
+                0xff
+            } else {
+                0x00
+            };
+            let compare_byte = if (compare & plane_mask) != 0 {
+                0xff
+            } else {
+                0x00
+            };
             diff |= (self.latches[plane_idx] ^ compare_byte) & care_mask;
         }
 

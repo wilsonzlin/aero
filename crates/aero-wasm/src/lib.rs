@@ -18,7 +18,7 @@ use aero_platform::audio::mic_bridge::MicBridge;
 use js_sys::{SharedArrayBuffer, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
-use aero_audio::pcm::{decode_pcm_to_stereo_f32_into, LinearResampler, StreamFormat};
+use aero_audio::pcm::{LinearResampler, StreamFormat, decode_pcm_to_stereo_f32_into};
 
 #[cfg(target_arch = "wasm32")]
 use aero_audio::hda::HdaController;
@@ -750,7 +750,8 @@ impl DemoVm {
             .save_snapshot_full_to(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
+        file.close()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(())
     }
 
@@ -764,7 +765,8 @@ impl DemoVm {
             .save_snapshot_dirty_to(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
+        file.close()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(())
     }
 
@@ -778,7 +780,8 @@ impl DemoVm {
             .restore_snapshot_from_checked(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
+        file.close()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(())
     }
 }

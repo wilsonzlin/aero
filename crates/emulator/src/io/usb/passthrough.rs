@@ -14,7 +14,11 @@ pub enum UsbHostAction {
     /// Control transfer, IN direction (device-to-host).
     ///
     /// `len` is the requested length from `wLength`.
-    ControlIn { id: u64, setup: SetupPacket, len: u16 },
+    ControlIn {
+        id: u64,
+        setup: SetupPacket,
+        len: u16,
+    },
     /// Control transfer, OUT direction (host-to-device).
     ControlOut {
         id: u64,
@@ -40,8 +44,12 @@ impl UsbHostAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsbHostResult {
-    OkIn { data: Vec<u8> },
-    OkOut { bytes_written: usize },
+    OkIn {
+        data: Vec<u8>,
+    },
+    OkOut {
+        bytes_written: usize,
+    },
     Stall,
     /// Host timed out waiting for the USB operation.
     ///
@@ -271,7 +279,8 @@ impl UsbDeviceModel for UsbPassthroughDevice {
         }
 
         let id = self.alloc_id();
-        self.actions.push_back(UsbHostAction::BulkIn { id, ep, len });
+        self.actions
+            .push_back(UsbHostAction::BulkIn { id, ep, len });
         self.ep_inflight.insert(ep, EpInflight { id });
         UsbInResult::Nak
     }
@@ -604,7 +613,9 @@ mod tests {
         // Stale completion must be ignored.
         dev.push_completion(UsbHostCompletion::Completed {
             id: id1,
-            result: UsbHostResult::OkIn { data: vec![1, 2, 3] },
+            result: UsbHostResult::OkIn {
+                data: vec![1, 2, 3],
+            },
         });
         assert_eq!(dev.pending_summary().queued_completions, 0);
 
@@ -662,7 +673,9 @@ mod tests {
         // Stale completion for the canceled request must be ignored.
         passthrough.push_completion(UsbHostCompletion::Completed {
             id: id1,
-            result: UsbHostResult::OkIn { data: vec![1, 2, 3] },
+            result: UsbHostResult::OkIn {
+                data: vec![1, 2, 3],
+            },
         });
         assert_eq!(passthrough.pending_summary().queued_completions, 0);
 

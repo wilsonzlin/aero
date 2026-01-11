@@ -1,8 +1,6 @@
 use crate::bus::MemoryBus;
 
-use super::{
-    AccessType, PageFault, PageSize, TranslateError, TranslateResult, CR0_WP, EFER_NXE,
-};
+use super::{AccessType, PageFault, PageSize, TranslateError, TranslateResult, CR0_WP, EFER_NXE};
 
 const CR3_PML4_BASE_MASK: u64 = 0x000F_FFFF_FFFF_F000;
 
@@ -330,17 +328,14 @@ mod tests {
     fn canonical_address_enforced() {
         let mut bus = TestBus::new(0x8000);
         let non_canonical = 0x0001_0000_0000_0000u64;
-        let err = translate_4level(
-            &mut bus,
-            non_canonical,
-            AccessType::Read,
-            0,
-            0,
-            0,
-            0,
-        )
-        .unwrap_err();
-        assert_eq!(err, TranslateError::GeneralProtection { vaddr: non_canonical });
+        let err =
+            translate_4level(&mut bus, non_canonical, AccessType::Read, 0, 0, 0, 0).unwrap_err();
+        assert_eq!(
+            err,
+            TranslateError::GeneralProtection {
+                vaddr: non_canonical
+            }
+        );
     }
 
     #[test]
@@ -354,16 +349,8 @@ mod tests {
             build_4k_mapping(&mut bus, vaddr, page_paddr, flags);
         let cr3 = pml4_base;
 
-        let res = translate_4level(
-            &mut bus,
-            vaddr,
-            AccessType::Read,
-            cr3,
-            CR0_WP,
-            EFER_NXE,
-            3,
-        )
-        .unwrap();
+        let res =
+            translate_4level(&mut bus, vaddr, AccessType::Read, cr3, CR0_WP, EFER_NXE, 3).unwrap();
         assert_eq!(res.paddr, page_paddr + (vaddr & 0xFFF));
         assert_eq!(res.page_size, PageSize::Size4K);
 
@@ -378,16 +365,8 @@ mod tests {
         assert!(pte & ENTRY_ACCESSED != 0);
         assert!(pte & ENTRY_DIRTY == 0);
 
-        let _ = translate_4level(
-            &mut bus,
-            vaddr,
-            AccessType::Write,
-            cr3,
-            CR0_WP,
-            EFER_NXE,
-            3,
-        )
-        .unwrap();
+        let _ =
+            translate_4level(&mut bus, vaddr, AccessType::Write, cr3, CR0_WP, EFER_NXE, 3).unwrap();
         let pte_after = bus.read_u64_at(pt_base + (((vaddr >> 12) & 0x1FF) * 8));
         assert!(pte_after & ENTRY_DIRTY != 0);
     }
@@ -540,9 +519,18 @@ mod tests {
 
         // Make the violation happen at the top level.
         bus.write_u64_at(pml4_base + pml4_index * 8, pdpt_base | flags_supervisor);
-        bus.write_u64_at(pdpt_base + pdpt_index * 8, pd_base | (ENTRY_PRESENT | ENTRY_RW | ENTRY_US));
-        bus.write_u64_at(pd_base + pd_index * 8, pt_base | (ENTRY_PRESENT | ENTRY_RW | ENTRY_US));
-        bus.write_u64_at(pt_base + pt_index * 8, page_paddr | (ENTRY_PRESENT | ENTRY_RW | ENTRY_US));
+        bus.write_u64_at(
+            pdpt_base + pdpt_index * 8,
+            pd_base | (ENTRY_PRESENT | ENTRY_RW | ENTRY_US),
+        );
+        bus.write_u64_at(
+            pd_base + pd_index * 8,
+            pt_base | (ENTRY_PRESENT | ENTRY_RW | ENTRY_US),
+        );
+        bus.write_u64_at(
+            pt_base + pt_index * 8,
+            page_paddr | (ENTRY_PRESENT | ENTRY_RW | ENTRY_US),
+        );
 
         let err = translate_4level(
             &mut bus,

@@ -249,7 +249,10 @@ impl CpuFeatureSet {
             leaf7_ecx: 0,
             leaf7_edx: 0,
             ext1_ecx: bits::EXT1_ECX_LAHF_LM,
-            ext1_edx: bits::EXT1_EDX_SYSCALL | bits::EXT1_EDX_NX | bits::EXT1_EDX_RDTSCP | bits::EXT1_EDX_LM,
+            ext1_edx: bits::EXT1_EDX_SYSCALL
+                | bits::EXT1_EDX_NX
+                | bits::EXT1_EDX_RDTSCP
+                | bits::EXT1_EDX_LM,
         }
     }
 
@@ -302,7 +305,9 @@ pub struct CpuTopology {
 
 impl CpuTopology {
     pub fn logical_per_package(self) -> u32 {
-        self.cores_per_package.saturating_mul(self.threads_per_core).max(1)
+        self.cores_per_package
+            .saturating_mul(self.threads_per_core)
+            .max(1)
     }
 }
 
@@ -403,7 +408,9 @@ pub fn cpuid(features: &CpuFeatures, leaf: u32, subleaf: u32) -> CpuidResult {
             CpuidResult {
                 eax: 0,
                 ebx: 0,
-                ecx: (l2_line_size & 0xFF) | ((l2_assoc & 0xF) << 12) | ((l2_size_kb & 0xFFFF) << 16),
+                ecx: (l2_line_size & 0xFF)
+                    | ((l2_assoc & 0xF) << 12)
+                    | ((l2_size_kb & 0xFFFF) << 16),
                 edx: 0,
             }
         }

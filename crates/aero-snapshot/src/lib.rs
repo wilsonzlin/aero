@@ -1,14 +1,18 @@
+mod cpu_core;
 mod error;
 mod format;
 mod inspect;
 mod io;
 mod ram;
-mod cpu_core;
 mod types;
 
 #[cfg(feature = "io-snapshot")]
 pub mod io_snapshot_bridge;
 
+pub use crate::cpu_core::{
+    apply_cpu_state_to_cpu_core, apply_mmu_state_to_cpu_core, cpu_core_from_snapshot,
+    cpu_state_from_cpu_core, mmu_state_from_cpu_core, snapshot_from_cpu_core,
+};
 pub use crate::error::{Result, SnapshotError};
 pub use crate::format::{
     DeviceId, SectionId, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
@@ -17,10 +21,6 @@ pub use crate::inspect::{
     inspect_snapshot, read_snapshot_meta, RamHeaderSummary, SnapshotIndex, SnapshotSectionInfo,
 };
 pub use crate::ram::{Compression, RamMode, RamWriteOptions};
-pub use crate::cpu_core::{
-    apply_cpu_state_to_cpu_core, apply_mmu_state_to_cpu_core, cpu_core_from_snapshot,
-    cpu_state_from_cpu_core, mmu_state_from_cpu_core, snapshot_from_cpu_core,
-};
 pub use crate::types::{
     CpuInternalState, CpuMode, CpuState, DeviceState, DiskOverlayRef, DiskOverlayRefs, FpuState,
     MmuState, SegmentState, SnapshotMeta, VcpuSnapshot,
@@ -854,7 +854,10 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+        assert!(matches!(
+            err,
+            SnapshotError::Corrupt("snapshot parent mismatch")
+        ));
 
         restore_snapshot_with_options(
             &mut Cursor::new(diff_bytes.as_slice()),

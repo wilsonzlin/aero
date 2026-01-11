@@ -41,10 +41,7 @@ fn try_main() -> Result<()> {
         "wasm" => cmd_wasm::cmd(args.collect()),
         "web" => cmd_web::cmd(args.collect()),
         "-h" | "--help" | "help" => help(),
-        other => Err(format!(
-            "unknown xtask subcommand `{other}` (run `cargo xtask help`)"
-        )
-        .into()),
+        other => Err(format!("unknown xtask subcommand `{other}` (run `cargo xtask help`)").into()),
     }
 }
 
@@ -93,11 +90,7 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
     let boot_sector = boot_sector_from_code(fixture_sources::boot_vga_serial::CODE)?;
 
     // Raw boot sector (exactly 512 bytes).
-    ensure_file(
-        &out_dir.join("boot_vga_serial.bin"),
-        &boot_sector,
-        check,
-    )?;
+    ensure_file(&out_dir.join("boot_vga_serial.bin"), &boot_sector, check)?;
 
     // Tiny "disk image" (8 sectors / 4KiB) whose first sector is the boot sector.
     let disk_img = disk_image_with_fill(&boot_sector, 8)?;
@@ -161,9 +154,7 @@ fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
             return Err(format!("{path:?} is missing (run `cargo xtask fixtures`)").into());
         };
         if existing != expected {
-            return Err(
-                format!("{path:?} is out of date (run `cargo xtask fixtures`)").into(),
-            );
+            return Err(format!("{path:?} is out of date (run `cargo xtask fixtures`)").into());
         }
         return Ok(());
     }

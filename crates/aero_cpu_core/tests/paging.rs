@@ -176,15 +176,7 @@ fn page_fault_error_codes_not_present_vs_protection() {
     let data_page = 0x5000u64;
 
     // PTE not present.
-    setup_long4_4k(
-        &mut phys,
-        pml4_base,
-        pdpt_base,
-        pd_base,
-        pt_base,
-        0,
-        0,
-    );
+    setup_long4_4k(&mut phys, pml4_base, pdpt_base, pd_base, pt_base, 0, 0);
 
     let mut bus = PagingBus::new(phys);
     let state = long_state(pml4_base, 0, 3);

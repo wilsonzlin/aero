@@ -1,5 +1,5 @@
-use firmware::smbios::{SmbiosConfig, SmbiosTables};
 use firmware::memory::{MemoryBus, VecMemory};
+use firmware::smbios::{SmbiosConfig, SmbiosTables};
 
 fn scan_for_eps(mem: &VecMemory) -> Option<u32> {
     // SMBIOS spec: search first KB of EBDA (if present), else scan 0xF0000-0xFFFFF.
