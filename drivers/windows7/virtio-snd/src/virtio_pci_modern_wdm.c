@@ -1,8 +1,6 @@
 #include "virtio_pci_modern_wdm.h"
 
-#ifndef PCI_WHICHSPACE_CONFIG
-#define PCI_WHICHSPACE_CONFIG 0
-#endif
+#include "pci_interface.h"
 
 #define AERO_VIRTIO_PCI_CONTRACT_REVISION_ID 0x01u
 
@@ -22,90 +20,6 @@
 /* Bounded reset poll (virtio status reset handshake). */
 #define VIRTIO_PCI_RESET_TIMEOUT_US    1000000u
 #define VIRTIO_PCI_RESET_POLL_DELAY_US 1000u
-
-static NTSTATUS
-VirtIoSndTransportIrpCompletionRoutine(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp, _In_ PVOID Context)
-{
-    PKEVENT event;
-
-    UNREFERENCED_PARAMETER(DeviceObject);
-    UNREFERENCED_PARAMETER(Irp);
-
-    event = (PKEVENT)Context;
-    KeSetEvent(event, IO_NO_INCREMENT, FALSE);
-    /*
-     * Stop IRP completion so the caller can safely read IoStatus and free the
-     * IRP it allocated (IoAllocateIrp). This avoids races where the waiting
-     * thread frees the IRP while the completing thread is still unwinding the
-     * stack.
-     */
-    return STATUS_MORE_PROCESSING_REQUIRED;
-}
-
-static NTSTATUS
-VirtIoSndTransportQueryPciBusInterface(_In_ PDEVICE_OBJECT LowerDeviceObject,
-                                       _Out_ PPCI_BUS_INTERFACE_STANDARD PciInterfaceOut)
-{
-    PIRP irp;
-    KEVENT event;
-    PIO_STACK_LOCATION stack;
-    NTSTATUS status;
-
-    if (LowerDeviceObject == NULL || PciInterfaceOut == NULL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    RtlZeroMemory(PciInterfaceOut, sizeof(*PciInterfaceOut));
-
-    KeInitializeEvent(&event, NotificationEvent, FALSE);
-
-    irp = IoAllocateIrp(LowerDeviceObject->StackSize, FALSE);
-    if (irp == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
-    irp->IoStatus.Information = 0;
-    irp->RequestorMode = KernelMode;
-
-    stack = IoGetNextIrpStackLocation(irp);
-    stack->MajorFunction = IRP_MJ_PNP;
-    stack->MinorFunction = IRP_MN_QUERY_INTERFACE;
-    stack->Parameters.QueryInterface.InterfaceType = (LPGUID)&GUID_PCI_BUS_INTERFACE_STANDARD;
-    stack->Parameters.QueryInterface.Size = sizeof(PCI_BUS_INTERFACE_STANDARD);
-    stack->Parameters.QueryInterface.Version = PCI_BUS_INTERFACE_STANDARD_VERSION;
-    stack->Parameters.QueryInterface.Interface = (PINTERFACE)PciInterfaceOut;
-    stack->Parameters.QueryInterface.InterfaceSpecificData = NULL;
-
-    IoSetCompletionRoutine(irp, VirtIoSndTransportIrpCompletionRoutine, &event, TRUE, TRUE, TRUE);
-
-    status = IoCallDriver(LowerDeviceObject, irp);
-    if (status == STATUS_PENDING) {
-        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, NULL);
-    }
-
-    status = irp->IoStatus.Status;
-    IoFreeIrp(irp);
-
-    return status;
-}
-
-static ULONG
-VirtIoSndTransportReadConfig(_In_ PPCI_BUS_INTERFACE_STANDARD PciInterface,
-                             _Out_writes_bytes_(Length) PVOID Buffer,
-                             _In_ ULONG Offset,
-                             _In_ ULONG Length)
-{
-    if (PciInterface == NULL || Buffer == NULL || Length == 0) {
-        return 0;
-    }
-
-    if (PciInterface->ReadConfig == NULL) {
-        return 0;
-    }
-
-    return PciInterface->ReadConfig(PciInterface->Context, PCI_WHICHSPACE_CONFIG, Buffer, Offset, Length);
-}
 
 static ULONG
 VirtIoSndReadLe32FromCfg(_In_reads_bytes_(256) const UCHAR *Cfg, _In_ ULONG Offset)
@@ -477,18 +391,13 @@ VirtIoSndTransportInit(_Out_ PVIRTIOSND_TRANSPORT Transport,
         goto Fail;
     }
 
-    status = VirtIoSndTransportQueryPciBusInterface(LowerDeviceObject, &Transport->PciInterface);
+    status = VirtIoSndAcquirePciBusInterface(LowerDeviceObject, &Transport->PciInterface, &Transport->PciInterfaceAcquired);
     if (!NT_SUCCESS(status)) {
         goto Fail;
     }
 
-    if (Transport->PciInterface.InterfaceReference != NULL) {
-        Transport->PciInterface.InterfaceReference(Transport->PciInterface.Context);
-        Transport->PciInterfaceAcquired = TRUE;
-    }
-
     RtlZeroMemory(cfg, sizeof(cfg));
-    bytesRead = VirtIoSndTransportReadConfig(&Transport->PciInterface, cfg, 0, sizeof(cfg));
+    bytesRead = VirtIoSndPciReadConfig(&Transport->PciInterface, cfg, 0, sizeof(cfg));
     if (bytesRead != sizeof(cfg)) {
         status = STATUS_DEVICE_DATA_ERROR;
         goto Fail;
@@ -616,12 +525,7 @@ VirtIoSndTransportUninit(_Inout_ PVIRTIOSND_TRANSPORT Transport)
     Transport->NotifyOffMultiplier = 0;
     Transport->NotifyLength = 0;
 
-    if (Transport->PciInterfaceAcquired && Transport->PciInterface.InterfaceDereference != NULL) {
-        Transport->PciInterface.InterfaceDereference(Transport->PciInterface.Context);
-        Transport->PciInterfaceAcquired = FALSE;
-    }
-
-    RtlZeroMemory(&Transport->PciInterface, sizeof(Transport->PciInterface));
+    VirtIoSndReleasePciBusInterface(&Transport->PciInterface, &Transport->PciInterfaceAcquired);
     Transport->LowerDeviceObject = NULL;
 
     Transport->Bar0Base = 0;
