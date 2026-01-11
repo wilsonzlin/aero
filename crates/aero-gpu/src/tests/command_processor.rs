@@ -1,11 +1,14 @@
-use crate::{AeroGpuCommandProcessor, AeroGpuOpcode, CommandProcessorError, AEROGPU_CMD_STREAM_MAGIC};
+use crate::{
+    AeroGpuCommandProcessor, AeroGpuOpcode, CommandProcessorError, AEROGPU_CMD_STREAM_MAGIC,
+};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
-const CMD_STREAM_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
@@ -135,4 +138,3 @@ fn command_processor_rejects_reusing_handle_with_different_texture_desc() {
         }
     ));
 }
-

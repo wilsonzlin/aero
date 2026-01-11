@@ -135,14 +135,15 @@ fn convert_dxbc_signature_chunk(
 ) -> Result<DxbcSignature, SignatureError> {
     let mut parameters = Vec::with_capacity(chunk.entries.len());
     for entry in chunk.entries {
-        let stream: u8 = entry
-            .stream
-            .unwrap_or(0)
-            .try_into()
-            .map_err(|_| SignatureError::MalformedChunk {
-                fourcc,
-                reason: "stream index out of range",
-            })?;
+        let stream: u8 =
+            entry
+                .stream
+                .unwrap_or(0)
+                .try_into()
+                .map_err(|_| SignatureError::MalformedChunk {
+                    fourcc,
+                    reason: "stream index out of range",
+                })?;
 
         parameters.push(DxbcSignatureParameter {
             semantic_name: entry.semantic_name,
