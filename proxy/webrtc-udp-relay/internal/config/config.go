@@ -36,6 +36,9 @@ const (
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
 	EnvL2BackendWSURL           = "L2_BACKEND_WS_URL"
+	// Preferred env vars for backend auth/header hardening.
+	EnvL2BackendOrigin          = "L2_BACKEND_ORIGIN"
+	EnvL2BackendToken           = "L2_BACKEND_TOKEN"
 	EnvL2BackendWSOrigin        = "L2_BACKEND_WS_ORIGIN"
 	EnvL2BackendWSToken         = "L2_BACKEND_WS_TOKEN"
 	EnvL2BackendForwardOrigin   = "L2_BACKEND_FORWARD_ORIGIN"
@@ -350,8 +353,8 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	l2BackendWSURL := envOrDefault(lookup, EnvL2BackendWSURL, "")
 	l2BackendWSOrigin := envOrDefault(lookup, EnvL2BackendWSOrigin, "")
-	l2BackendWSToken := envOrDefault(lookup, EnvL2BackendWSToken, "")
-	l2BackendOriginOverride := envOrDefault(lookup, EnvL2BackendOriginOverride, "")
+	l2BackendWSToken := envOrDefault(lookup, EnvL2BackendToken, envOrDefault(lookup, EnvL2BackendWSToken, ""))
+	l2BackendOriginOverride := envOrDefault(lookup, EnvL2BackendOrigin, envOrDefault(lookup, EnvL2BackendOriginOverride, ""))
 
 	l2BackendForwardOrigin := false
 	envForwardOrigin, envForwardOriginOK := lookup(EnvL2BackendForwardOrigin)
@@ -550,6 +553,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+EnvMaxDatagramPayloadBytes+")")
 	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+EnvL2BackendWSURL+")")
 	fs.StringVar(&l2BackendWSOrigin, "l2-backend-ws-origin", l2BackendWSOrigin, "Origin header value to send when dialing the L2 backend WebSocket (env "+EnvL2BackendWSOrigin+")")
+	fs.StringVar(&l2BackendWSToken, "l2-backend-token", l2BackendWSToken, "Optional token to present to the L2 backend via WebSocket subprotocol (sent as aero-l2-token.<token>; env "+EnvL2BackendToken+")")
 	fs.StringVar(
 		&l2BackendWSToken,
 		"l2-backend-ws-token",
@@ -558,6 +562,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	)
 	fs.BoolVar(&l2BackendForwardOrigin, "l2-backend-forward-origin", l2BackendForwardOrigin, "Forward Origin header when dialing the L2 backend WebSocket (env "+EnvL2BackendForwardOrigin+")")
 	fs.StringVar(&l2BackendAuthForwardModeFlag, "l2-backend-auth-forward-mode", l2BackendAuthForwardModeStr, "L2 backend auth forwarding mode: none, query, subprotocol (env "+EnvL2BackendAuthForwardMode+")")
+	fs.StringVar(&l2BackendOriginOverride, "l2-backend-origin", l2BackendOriginOverride, "Alias for --l2-backend-origin-override (env "+EnvL2BackendOrigin+")")
 	fs.StringVar(&l2BackendOriginOverride, "l2-backend-origin-override", l2BackendOriginOverride, "Override Origin header sent to the L2 backend WebSocket (env "+EnvL2BackendOriginOverride+")")
 	fs.IntVar(&l2MaxMessageBytes, "l2-max-message-bytes", l2MaxMessageBytes, "Max L2 tunnel message size in bytes (env "+EnvL2MaxMessageBytes+")")
 

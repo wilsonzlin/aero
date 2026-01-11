@@ -132,15 +132,23 @@ func (c Config) WithDefaults() Config {
 //   - UDP_READ_BUFFER_BYTES (int)
 //   - DATACHANNEL_SEND_QUEUE_BYTES (int)
 //   - L2_BACKEND_WS_URL (string)
-//   - L2_BACKEND_WS_ORIGIN (string)
-//   - L2_BACKEND_WS_TOKEN (string)
+//   - L2_BACKEND_ORIGIN (string; preferred)
+//   - L2_BACKEND_TOKEN (string; preferred)
+//   - L2_BACKEND_WS_ORIGIN (string; deprecated)
+//   - L2_BACKEND_WS_TOKEN (string; deprecated)
 //   - L2_MAX_MESSAGE_BYTES (int)
 func ConfigFromEnv() Config {
 	c := DefaultConfig()
 	c.PreferV2 = udpproto.PreferV2FromEnv()
 	c.L2BackendWSURL = os.Getenv("L2_BACKEND_WS_URL")
-	c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_WS_ORIGIN")
-	c.L2BackendWSToken = os.Getenv("L2_BACKEND_WS_TOKEN")
+	c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_ORIGIN")
+	if c.L2BackendWSOrigin == "" {
+		c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_WS_ORIGIN")
+	}
+	c.L2BackendWSToken = os.Getenv("L2_BACKEND_TOKEN")
+	if c.L2BackendWSToken == "" {
+		c.L2BackendWSToken = os.Getenv("L2_BACKEND_WS_TOKEN")
+	}
 	if v := os.Getenv("L2_MAX_MESSAGE_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
 			c.L2MaxMessageBytes = i
