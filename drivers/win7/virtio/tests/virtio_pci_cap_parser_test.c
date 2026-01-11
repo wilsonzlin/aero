@@ -306,7 +306,7 @@ static void test_cap_ptr_unaligned(void) {
     bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
-    expect_result("cap_ptr_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_OK);
+    expect_result("cap_ptr_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED);
 }
 
 static void test_cap_next_out_of_range(void) {
@@ -431,7 +431,7 @@ static void test_no_cap_list_status(void) {
     bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
-    expect_result("no_cap_list_status.res", res, VIRTIO_PCI_CAP_PARSE_OK);
+    expect_result("no_cap_list_status.res", res, VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST);
 }
 
 static void test_cap_ptr_out_of_range(void) {
@@ -491,7 +491,7 @@ static void test_cap_next_unaligned(void) {
     bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
-    expect_result("cap_next_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_OK);
+    expect_result("cap_next_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED);
 }
 
 static void test_bad_argument_null_cfg_space(void) {

@@ -15,6 +15,10 @@ static void virtio_pci_cap_parser_zero(void *ptr, size_t len) {
     }
 }
 
+static uint16_t virtio_pci_cap_parser_read_le16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
 static uint32_t virtio_pci_cap_parser_read_le32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
@@ -29,7 +33,11 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_sanitize_cap_ptr(
         return VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT;
     }
 
-    ptr = (uint8_t)(raw_ptr & 0xFCu);
+    if ((raw_ptr & 0x3u) != 0) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED;
+    }
+
+    ptr = raw_ptr;
     if (ptr == 0) {
         return VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST;
     }
@@ -56,7 +64,11 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_sanitize_cap_next(
         return VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT;
     }
 
-    next = (uint8_t)(raw_next & 0xFCu);
+    if ((raw_next & 0x3u) != 0) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED;
+    }
+
+    next = raw_next;
     if (next == 0) {
         *out_next = 0;
         return VIRTIO_PCI_CAP_PARSE_OK;
@@ -110,6 +122,7 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
     const uint64_t bar_addrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT],
     virtio_pci_parsed_caps_t *out_caps) {
     uint8_t cap_ptr;
+    uint16_t pci_status;
     uint8_t visited[256];
     size_t i;
     uint8_t current;
@@ -127,6 +140,11 @@ virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
 
     if (cfg_space_len < VIRTIO_PCI_CAP_PARSER_CFG_MIN_LEN) {
         return VIRTIO_PCI_CAP_PARSE_ERR_CFG_SPACE_TOO_SMALL;
+    }
+
+    pci_status = virtio_pci_cap_parser_read_le16(cfg_space + VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET);
+    if ((pci_status & VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST) == 0) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST;
     }
 
     {
