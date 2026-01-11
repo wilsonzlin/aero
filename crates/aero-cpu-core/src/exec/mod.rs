@@ -99,7 +99,7 @@ where
 // ---- Tier-0 glue ------------------------------------------------------------
 
 /// A simple vCPU wrapper that bundles the Tier-0/JIT [`crate::state::CpuState`],
-/// interrupt bookkeeping (`interrupts::CpuCore`), and a memory bus implementation.
+/// interrupt bookkeeping (`CpuCore`), and a memory bus implementation.
 ///
 /// This provides an [`ExecCpu`] implementation suitable for driving the tiered
 /// dispatcher (`ExecDispatcher`): [`ExecCpu::maybe_deliver_interrupt`] uses the
