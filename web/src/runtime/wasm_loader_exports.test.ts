@@ -125,6 +125,42 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.WebUsbUhciBridge).toBe(FakeWebUsbUhciBridge);
   });
 
+  it("surfaces UhciControllerBridge when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    class FakeUhciControllerBridge {
+      constructor(_guestBase: number, _guestSize?: number) {}
+
+      io_read(_offset: number, _size: number): number {
+        return 0;
+      }
+      io_write(_offset: number, _size: number, _value: number): void {}
+      tick_1ms(): void {}
+      irq_asserted(): boolean {
+        return false;
+      }
+      free(): void {}
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        UhciControllerBridge: FakeUhciControllerBridge,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.UhciControllerBridge).toBe(FakeUhciControllerBridge);
+  });
+
   it("surfaces UsbPassthroughDemo when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 

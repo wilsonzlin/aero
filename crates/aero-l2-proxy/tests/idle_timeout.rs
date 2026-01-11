@@ -55,6 +55,16 @@ fn metrics_url(addr: SocketAddr) -> String {
     format!("http://{addr}/metrics")
 }
 
+async fn fetch_metric(addr: SocketAddr, name: &str) -> u64 {
+    let body = reqwest::get(metrics_url(addr))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    parse_metric(&body, name).unwrap_or(0)
+}
+
 fn ws_request(addr: SocketAddr) -> tokio_tungstenite::tungstenite::http::Request<()> {
     let ws_url = format!("ws://{addr}/l2");
     let mut req = ws_url.into_client_request().unwrap();
@@ -81,6 +91,8 @@ async fn idle_timeout_closes_tunnel_and_increments_metric() {
     let proxy = start_server(cfg).await.unwrap();
     let addr = proxy.local_addr();
 
+    let start_metric = fetch_metric(addr, "aero_l2_idle_timeouts_total").await;
+
     let req = ws_request(addr);
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
 
@@ -102,14 +114,8 @@ async fn idle_timeout_closes_tunnel_and_increments_metric() {
 
     let metric_val = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            let body = reqwest::get(metrics_url(addr))
-                .await
-                .unwrap()
-                .text()
-                .await
-                .unwrap();
-            let val = parse_metric(&body, "aero_l2_idle_timeouts_total").unwrap_or(0);
-            if val >= 1 {
+            let val = fetch_metric(addr, "aero_l2_idle_timeouts_total").await;
+            if val >= start_metric.saturating_add(1) {
                 return val;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -118,7 +124,8 @@ async fn idle_timeout_closes_tunnel_and_increments_metric() {
     .await
     .unwrap();
     assert_eq!(
-        metric_val, 1,
+        metric_val,
+        start_metric.saturating_add(1),
         "expected idle timeout metric to increment once"
     );
 
@@ -140,6 +147,8 @@ async fn idle_timeout_resets_on_inbound_keepalive() {
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
     let addr = proxy.local_addr();
+
+    let start_metric = fetch_metric(addr, "aero_l2_idle_timeouts_total").await;
 
     let req = ws_request(addr);
     let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
@@ -197,14 +206,11 @@ async fn idle_timeout_resets_on_inbound_keepalive() {
     })
     .await;
 
-    let body = reqwest::get(metrics_url(addr))
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    let val = parse_metric(&body, "aero_l2_idle_timeouts_total").unwrap_or(0);
-    assert_eq!(val, 0, "expected no idle timeout closures");
+    let val = fetch_metric(addr, "aero_l2_idle_timeouts_total").await;
+    assert_eq!(
+        val, start_metric,
+        "expected no idle timeout closures"
+    );
 
     proxy.shutdown().await;
 }
