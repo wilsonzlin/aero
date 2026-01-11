@@ -8,7 +8,7 @@ primary question is where the “host-side” networking stack lives.
 
 ## Current recommended architecture (Option C: L2 tunnel to proxy)
 
-**Final decision:** [ADR 0005: Networking via L2 tunnel (Option C) to an unprivileged proxy](./adr/0005-networking-l2-tunnel.md).
+**Final decision:** [ADR 0013: Networking via L2 tunnel (Option C) to an unprivileged proxy](./adr/0013-networking-l2-tunnel.md).
 
 **Option C (L2 tunnel) is the recommended production architecture.** It keeps browser CPU usage low
 and avoids implementing a TCP/IP stack in WASM.
