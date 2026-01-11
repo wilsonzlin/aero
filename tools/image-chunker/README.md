@@ -22,6 +22,25 @@ Credentials are resolved via the standard AWS SDK chain (env vars, `~/.aws/confi
 
 Note: `--chunk-size` must be a multiple of **512 bytes** (ATA sector size). The default is **4 MiB** (`4194304`).
 
+### CDN-ready HTTP metadata (Cache-Control, Content-Encoding)
+
+`aero-image-chunker publish` sets object metadata so the uploaded artifacts are ready to serve through a CDN without extra configuration:
+
+- Chunks (`chunks/*.bin`):
+  - `Content-Type: application/octet-stream`
+  - `Content-Encoding: identity`
+  - `Cache-Control: public, max-age=31536000, immutable, no-transform`
+- JSON (`manifest.json`, `meta.json`):
+  - `Content-Type: application/json`
+  - `Cache-Control: public, max-age=31536000, immutable`
+
+These defaults match [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md) and can be overridden with:
+
+- `--cache-control-chunks <value>`
+- `--cache-control-manifest <value>`
+
+### Example
+
 Example:
 
 ```bash
@@ -36,13 +55,37 @@ Example:
   --concurrency 8
 ```
 
-`--image-id`/`--image-version` can be omitted if `--prefix` already ends with `/<imageId>/<version>/`.
+`--image-id` can be omitted if `--prefix` already ends with `/<imageId>/<version>/`.
+
+`--image-version` can be omitted in two cases:
+
+- When `--compute-version none` (default) and `--prefix` already ends with `/<imageId>/<version>/` (the version is inferred from the prefix).
+- When `--compute-version sha256` is enabled (the manifest `version` is computed as `sha256-<digest>` while streaming the input image).
+
+If you enable `--compute-version sha256` and also provide `--image-version`, the provided version is used and the computed hash is printed for reference.
 
 Artifacts uploaded under the given prefix:
 
 - `chunks/00000000.bin`, `chunks/00000001.bin`, …
 - `manifest.json`
 - `meta.json` (unless `--no-meta`)
+
+### Optional: publish a `latest.json` pointer
+
+For public/demo images, you can publish a short-lived pointer file:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker publish \
+  ... \
+  --publish-latest
+```
+
+This uploads `images/<imageId>/latest.json` with:
+
+- `Cache-Control: public, max-age=60`
+- `Content-Type: application/json`
+
+The JSON contains the version and the object key of the versioned `manifest.json`.
 
 ## Publish (MinIO)
 
@@ -83,6 +126,11 @@ curl -fSs http://localhost:9000/my-bucket/images/<imageId>/<version>/manifest.js
 curl -fSsI http://localhost:9000/my-bucket/images/<imageId>/<version>/chunks/00000000.bin
 curl -fSsI http://localhost:9000/my-bucket/images/<imageId>/<version>/chunks/00000001.bin
 ```
+
+In the `-I` output, check that the uploaded objects have the expected CDN-friendly metadata:
+
+- `Cache-Control: ...immutable...`
+- for chunks, `Content-Encoding: identity` and `Cache-Control: ...no-transform`
 
 If your objects are private, generate a presigned URL and `curl` that instead:
 

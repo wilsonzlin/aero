@@ -19,6 +19,12 @@ use tokio::io::AsyncReadExt;
 
 const MANIFEST_SCHEMA: &str = "aero.chunked-disk-image.v1";
 const CHUNK_MIME_TYPE: &str = "application/octet-stream";
+const JSON_MIME_TYPE: &str = "application/json";
+const LATEST_SCHEMA: &str = "aero.chunked-disk-image.latest.v1";
+const DEFAULT_CACHE_CONTROL_CHUNKS: &str = "public, max-age=31536000, immutable, no-transform";
+const DEFAULT_CACHE_CONTROL_MANIFEST: &str = "public, max-age=31536000, immutable";
+const DEFAULT_CACHE_CONTROL_LATEST: &str = "public, max-age=60";
+const CHUNK_CONTENT_ENCODING: &str = "identity";
 const DEFAULT_CHUNK_SIZE_BYTES: u64 = 4 * 1024 * 1024;
 const DEFAULT_CONCURRENCY: usize = 8;
 const DEFAULT_RETRIES: usize = 5;
@@ -61,9 +67,37 @@ struct PublishArgs {
 
     /// Version identifier written into the manifest (recommended: content hash, e.g. `sha256-...`).
     ///
-    /// If omitted, it is inferred from `--prefix` by taking the last non-empty path segment.
+    /// If omitted:
+    /// - with `--compute-version none` (default): inferred from `--prefix` by taking the last
+    ///   non-empty path segment.
+    /// - with `--compute-version sha256`: computed as `sha256-<digest>` over the entire input
+    ///   image stream.
     #[arg(long)]
     image_version: Option<String>,
+
+    /// Compute a full-image version identifier while streaming the input image.
+    ///
+    /// When set to `sha256`, the tool computes `sha256-<digest>` over the entire input stream
+    /// without performing a second read pass.
+    ///
+    /// If `--image-version` is omitted, the computed hash becomes the manifest `version`.
+    #[arg(long, value_enum, default_value_t = ComputeVersion::None)]
+    compute_version: ComputeVersion,
+
+    /// Upload `images/<imageId>/latest.json` (short TTL) pointing at the newly published manifest.
+    ///
+    /// This is intended for public/demo images where you want a stable "latest" pointer in
+    /// addition to immutable versioned manifests.
+    #[arg(long, default_value_t = false)]
+    publish_latest: bool,
+
+    /// Cache-Control value to set on chunk objects (`chunks/*.bin`).
+    #[arg(long, default_value = DEFAULT_CACHE_CONTROL_CHUNKS)]
+    cache_control_chunks: String,
+
+    /// Cache-Control value to set on JSON objects (`manifest.json`, `meta.json`).
+    #[arg(long, default_value = DEFAULT_CACHE_CONTROL_MANIFEST)]
+    cache_control_manifest: String,
 
     /// Chunk size in bytes.
     #[arg(long, default_value_t = DEFAULT_CHUNK_SIZE_BYTES)]
@@ -100,6 +134,12 @@ struct PublishArgs {
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
 enum ChecksumAlgorithm {
+    None,
+    Sha256,
+}
+
+#[derive(Debug, Copy, Clone, ValueEnum)]
+enum ComputeVersion {
     None,
     Sha256,
 }
@@ -158,6 +198,15 @@ struct Meta {
     checksum_algorithm: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LatestV1 {
+    schema: String,
+    image_id: String,
+    version: String,
+    manifest_key: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -184,11 +233,12 @@ async fn publish(args: PublishArgs) -> Result<()> {
 
     let s3 = build_s3_client(&args).await?;
 
+    let version_display = version.as_deref().unwrap_or("<computed (sha256)>");
     eprintln!(
         "Publishing {}\n  imageId: {}\n  version: {}\n  total size: {} bytes\n  chunk size: {} bytes\n  chunk count: {}\n  destination: s3://{}/{}",
         args.file.display(),
         image_id,
-        version,
+        version_display,
         total_size,
         args.chunk_size,
         chunk_count,
@@ -217,6 +267,7 @@ async fn publish(args: PublishArgs) -> Result<()> {
         let s3 = s3.clone();
         let bucket = args.bucket.clone();
         let prefix = prefix.clone();
+        let cache_control_chunks = args.cache_control_chunks.clone();
         let checksum = args.checksum;
         let retries = args.retries;
         let pb = pb.clone();
@@ -228,6 +279,7 @@ async fn publish(args: PublishArgs) -> Result<()> {
                 s3,
                 bucket,
                 prefix,
+                cache_control_chunks,
                 checksum,
                 retries,
                 pb,
@@ -243,6 +295,11 @@ async fn publish(args: PublishArgs) -> Result<()> {
         .await
         .with_context(|| format!("open {}", args.file.display()))?;
 
+    let mut full_image_hasher = match args.compute_version {
+        ComputeVersion::None => None,
+        ComputeVersion::Sha256 => Some(Sha256::new()),
+    };
+
     for index in 0..chunk_count {
         let offset = index
             .checked_mul(args.chunk_size)
@@ -257,6 +314,10 @@ async fn publish(args: PublishArgs) -> Result<()> {
             .await
             .with_context(|| format!("read chunk {index} at offset {offset}"))?;
 
+        if let Some(hasher) = full_image_hasher.as_mut() {
+            hasher.update(&buf);
+        }
+
         let bytes = Bytes::from(buf);
         work_tx
             .send(ChunkJob { index, bytes })
@@ -265,6 +326,10 @@ async fn publish(args: PublishArgs) -> Result<()> {
     }
 
     drop(work_tx);
+
+    let computed_version = full_image_hasher
+        .take()
+        .map(|hasher| sha256_version_from_digest(hasher.finalize()));
 
     for handle in workers {
         handle
@@ -291,6 +356,20 @@ async fn publish(args: PublishArgs) -> Result<()> {
 
     pb.finish_with_message(format!("{chunk_count}/{chunk_count} chunks"));
 
+    if let Some(computed_version) = &computed_version {
+        if args.image_version.is_some() {
+            eprintln!(
+                "Computed full-image version hash: {computed_version} (not used; --image-version was provided)"
+            );
+        } else {
+            eprintln!("Computed full-image version: {computed_version}");
+        }
+    }
+
+    let version = version
+        .or(computed_version)
+        .expect("image version must be resolved at this point");
+
     let manifest = build_manifest_v1(
         total_size,
         args.chunk_size,
@@ -304,6 +383,7 @@ async fn publish(args: PublishArgs) -> Result<()> {
         &args.bucket,
         &format!("{prefix}manifest.json"),
         &manifest,
+        &args.cache_control_manifest,
         args.retries,
     )
     .await?;
@@ -327,6 +407,25 @@ async fn publish(args: PublishArgs) -> Result<()> {
             &args.bucket,
             &format!("{prefix}meta.json"),
             &meta,
+            &args.cache_control_manifest,
+            args.retries,
+        )
+        .await?;
+    }
+
+    if args.publish_latest {
+        let latest = LatestV1 {
+            schema: LATEST_SCHEMA.to_string(),
+            image_id: image_id.clone(),
+            version: version.clone(),
+            manifest_key: format!("{prefix}manifest.json"),
+        };
+        upload_json_object(
+            &s3,
+            &args.bucket,
+            &format!("images/{image_id}/latest.json"),
+            &latest,
+            DEFAULT_CACHE_CONTROL_LATEST,
             args.retries,
         )
         .await?;
@@ -370,7 +469,7 @@ fn normalize_prefix(prefix: &str) -> String {
     }
 }
 
-fn resolve_image_id_and_version(args: &PublishArgs, prefix: &str) -> Result<(String, String)> {
+fn resolve_image_id_and_version(args: &PublishArgs, prefix: &str) -> Result<(String, Option<String>)> {
     let inferred = infer_image_id_and_version(prefix);
     let image_id = args
         .image_id
@@ -379,13 +478,20 @@ fn resolve_image_id_and_version(args: &PublishArgs, prefix: &str) -> Result<(Str
         .ok_or_else(|| {
             anyhow!("--image-id is required when it cannot be inferred from --prefix")
         })?;
-    let version = args
-        .image_version
-        .clone()
-        .or_else(|| inferred.as_ref().map(|(_, version)| version.clone()))
-        .ok_or_else(|| {
-            anyhow!("--image-version is required when it cannot be inferred from --prefix")
-        })?;
+    let version = if let Some(version) = &args.image_version {
+        Some(version.clone())
+    } else if matches!(args.compute_version, ComputeVersion::Sha256) {
+        None
+    } else {
+        Some(
+            inferred
+                .as_ref()
+                .map(|(_, version)| version.clone())
+                .ok_or_else(|| {
+                    anyhow!("--image-version is required when it cannot be inferred from --prefix")
+                })?,
+        )
+    };
     Ok((image_id, version))
 }
 
@@ -490,6 +596,7 @@ async fn worker_loop(
     s3: S3Client,
     bucket: String,
     prefix: String,
+    cache_control_chunks: String,
     checksum: ChecksumAlgorithm,
     retries: usize,
     pb: ProgressBar,
@@ -504,7 +611,17 @@ async fn worker_loop(
         };
 
         let key = format!("{}{}", prefix, chunk_object_key(job.index)?);
-        put_object_with_retry(&s3, &bucket, &key, job.bytes, CHUNK_MIME_TYPE, retries).await?;
+        put_object_with_retry(
+            &s3,
+            &bucket,
+            &key,
+            job.bytes,
+            CHUNK_MIME_TYPE,
+            &cache_control_chunks,
+            Some(CHUNK_CONTENT_ENCODING),
+            retries,
+        )
+        .await?;
 
         pb.inc(size);
         let uploaded = chunks_uploaded.fetch_add(1, Ordering::SeqCst) + 1;
@@ -524,11 +641,16 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn sha256_version_from_digest(digest: impl AsRef<[u8]>) -> String {
+    format!("sha256-{}", hex::encode(digest))
+}
+
 async fn upload_json_object<T: Serialize>(
     s3: &S3Client,
     bucket: &str,
     key: &str,
     value: &T,
+    cache_control: &str,
     retries: usize,
 ) -> Result<()> {
     let json = serde_json::to_vec_pretty(value).context("serialize json")?;
@@ -537,7 +659,9 @@ async fn upload_json_object<T: Serialize>(
         bucket,
         key,
         Bytes::from(json),
-        "application/json",
+        JSON_MIME_TYPE,
+        cache_control,
+        None,
         retries,
     )
     .await
@@ -549,19 +673,24 @@ async fn put_object_with_retry(
     key: &str,
     body: Bytes,
     content_type: &str,
+    cache_control: &str,
+    content_encoding: Option<&str>,
     retries: usize,
 ) -> Result<()> {
     let mut attempt = 0usize;
     loop {
         attempt += 1;
-        let result = s3
+        let mut request = s3
             .put_object()
             .bucket(bucket)
             .key(key)
             .content_type(content_type)
-            .body(ByteStream::from(body.clone()))
-            .send()
-            .await;
+            .cache_control(cache_control)
+            .body(ByteStream::from(body.clone()));
+        if let Some(content_encoding) = content_encoding {
+            request = request.content_encoding(content_encoding);
+        }
+        let result = request.send().await;
         match result {
             Ok(_) => return Ok(()),
             Err(err) if attempt < retries => {
@@ -593,6 +722,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_cache_control_values_match_docs() {
+        assert_eq!(
+            DEFAULT_CACHE_CONTROL_CHUNKS,
+            "public, max-age=31536000, immutable, no-transform"
+        );
+        assert_eq!(
+            DEFAULT_CACHE_CONTROL_MANIFEST,
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(DEFAULT_CACHE_CONTROL_LATEST, "public, max-age=60");
+    }
+
+    #[test]
     fn prefix_normalization_adds_trailing_slash() {
         assert_eq!(normalize_prefix("images/foo"), "images/foo/");
         assert_eq!(normalize_prefix("images/foo/"), "images/foo/");
@@ -619,6 +761,74 @@ mod tests {
         );
         assert_eq!(infer_image_id_and_version(""), None);
         assert_eq!(infer_image_id_and_version("onlyone/"), None);
+    }
+
+    #[test]
+    fn resolve_image_id_and_version_infers_from_prefix() -> Result<()> {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/sha256-abc/".to_string(),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::None,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            chunk_size: DEFAULT_CHUNK_SIZE_BYTES,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: DEFAULT_CONCURRENCY,
+            retries: DEFAULT_RETRIES,
+            no_meta: false,
+        };
+        let prefix = normalize_prefix(&args.prefix);
+        let (image_id, version) = resolve_image_id_and_version(&args, &prefix)?;
+        assert_eq!(image_id, "win7");
+        assert_eq!(version.as_deref(), Some("sha256-abc"));
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_image_id_and_version_defers_when_compute_version_enabled() -> Result<()> {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/sha256-abc/".to_string(),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::Sha256,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            chunk_size: DEFAULT_CHUNK_SIZE_BYTES,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: DEFAULT_CONCURRENCY,
+            retries: DEFAULT_RETRIES,
+            no_meta: false,
+        };
+        let prefix = normalize_prefix(&args.prefix);
+        let (image_id, version) = resolve_image_id_and_version(&args, &prefix)?;
+        assert_eq!(image_id, "win7");
+        assert_eq!(version, None);
+        Ok(())
+    }
+
+    #[test]
+    fn sha256_version_matches_expected() {
+        let mut hasher = Sha256::new();
+        hasher.update(b"hello ");
+        hasher.update(b"world");
+        let version = sha256_version_from_digest(hasher.finalize());
+        assert_eq!(
+            version,
+            "sha256-b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
     }
 
     #[test]
