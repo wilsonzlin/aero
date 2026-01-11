@@ -61,7 +61,11 @@ fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), i64>) 
             IMPORT_JIT_EXIT,
             Func::wrap(
                 &mut store,
-                |_caller: Caller<'_, ()>, _kind: i32, rip: i64| -> i64 { rip },
+                |_caller: Caller<'_, ()>, _kind: i32, rip: i64| -> i64 {
+                    // Return a shifted RIP so tests can assert that the Tier-1 codegen uses the
+                    // `jit_exit` return value (and doesn't simply re-use the input RIP).
+                    rip.wrapping_add(0x10)
+                },
             ),
         )
         .unwrap();
@@ -299,8 +303,8 @@ fn wasm_tier1_call_helper_bails_out_to_interpreter_without_trapping() {
     let bus = SimpleBus::new(0x10000);
 
     let (next_rip, out_cpu, _) = run_wasm(&ir, &cpu, &bus);
-    assert_eq!(next_rip, entry);
-    assert_eq!(out_cpu.rip, entry);
+    assert_eq!(next_rip, entry + 0x10);
+    assert_eq!(out_cpu.rip, entry + 0x10);
     assert_eq!(out_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234);
 }
 
