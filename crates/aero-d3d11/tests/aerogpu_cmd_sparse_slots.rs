@@ -88,7 +88,7 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         let pos_bytes = bytemuck::cast_slice(&positions);
         let color_bytes = bytemuck::cast_slice(&colors);
 
-        // ILAY blob with two elements in sparse D3D slots (0 and 15), intentionally declared out of
+        // ILAY blob with two elements in sparse D3D slots (0 and 31), intentionally declared out of
         // order (COLOR before POSITION). A correct implementation must:
         // 1) map elements to shader locations using (semantic_name, semantic_index) against VS ISGN
         // 2) compact sparse D3D IA slots into dense WebGPU vertex buffer slots.
@@ -107,11 +107,11 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class (per-vertex)
         ilay.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
 
-        // POSITION0: slot 15, offset 0
+        // POSITION0: slot 31, offset 0
         ilay.extend_from_slice(&fnv1a_32(b"POSITION").to_le_bytes());
         ilay.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
         ilay.extend_from_slice(&DXGI_FORMAT_R32G32B32_FLOAT.to_le_bytes());
-        ilay.extend_from_slice(&15u32.to_le_bytes()); // input_slot
+        ilay.extend_from_slice(&31u32.to_le_bytes()); // input_slot
         ilay.extend_from_slice(&0u32.to_le_bytes()); // aligned_byte_offset
         ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class (per-vertex)
         ilay.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
@@ -279,9 +279,9 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         end_cmd(&mut stream, start);
 
-        // SET_VERTEX_BUFFERS slot 15: position
+        // SET_VERTEX_BUFFERS slot 31: position
         let start = begin_cmd(&mut stream, OPCODE_SET_VERTEX_BUFFERS);
-        stream.extend_from_slice(&15u32.to_le_bytes()); // start_slot
+        stream.extend_from_slice(&31u32.to_le_bytes()); // start_slot
         stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
         stream.extend_from_slice(&VB_POS.to_le_bytes());
         stream.extend_from_slice(&12u32.to_le_bytes()); // stride_bytes
