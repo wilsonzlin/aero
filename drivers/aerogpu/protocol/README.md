@@ -1,6 +1,6 @@
 # AeroGPU Guest↔Emulator Protocol (PCI/MMIO + Rings + Command Stream)
 
-This directory defines the **stable ABI contract** between:
+This directory defines the **stable, versioned ABI contract** between:
 
 - the Windows 7 AeroGPU WDDM driver stack (KMD + UMD), and
 - the Aero emulator’s virtual GPU device model.
@@ -20,22 +20,33 @@ The contract is expressed as C/C++ headers suitable for **WDK** builds and for h
 - `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
-- `aerogpu_protocol.h` – legacy bring-up ABI (older BAR0/MMIO + ring layout; still supported via the legacy device model).
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
 - `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract for stable `alloc_id` / `share_token` exchange across CreateAllocation/OpenAllocation.
 - `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Currently layered on top of the legacy `aerogpu_protocol.h` Escape header.)
-- `aerogpu_protocol.h` – **legacy** (non-versioned) bring-up ABI (older MMIO + ring format, plus an older command stream). Kept only so the legacy Win7 KMD and legacy emulator device model can continue to function during migration.
+- `aerogpu_protocol.h` – **legacy bring-up ABI** (monolithic header; PCI `1AED:0001`).
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
+
+## ABI variants and PCI IDs
+
+This directory currently contains two PCI/MMIO ABIs:
+
+- **Versioned ABI (current)** – `aerogpu_pci.h` + `aerogpu_ring.h` + `aerogpu_cmd.h`, PCI `A3A0:0001` (`VEN_A3A0&DEV_0001`).
+  - Uses the major/minor compatibility model below (major breaking, minor forwards compatible).
+- **Legacy bring-up ABI** – `aerogpu_protocol.h`, PCI `1AED:0001` (`VEN_1AED&DEV_0001`).
+
+Both IDs are project-specific (not PCI-SIG assigned). Both identify as a display controller (`0x03`), VGA-compatible subclass (`0x00`).
+
+Both IDs may appear in Windows driver INFs during the migration period.
 
 For a quick overview of the canonical AeroGPU PCI IDs (new vs legacy) and which emulator device
 models implement each ABI, see: `docs/abi/aerogpu-pci-identity.md`.
 
 ## Versioning model
 
-The protocol uses a **major.minor** version:
+The versioned ABI uses a **major.minor** version:
 
 - `ABI_MAJOR` changes are **breaking**. A driver built for major *N* must not drive a device advertising major *N+1*.
-- `ABI_MINOR` changes are **backwards compatible**. Minor bumps may add:
+- `ABI_MINOR` changes are **forwards compatible** (drivers should accept a higher minor within the same major). Minor bumps may add:
   - new MMIO registers (in currently-reserved space),
   - new command opcodes,
   - new optional features bits,
@@ -48,16 +59,6 @@ The device reports `AEROGPU_ABI_VERSION_U32` via MMIO `AEROGPU_MMIO_REG_ABI_VERS
 - The guest is x86/x64 Windows: **little-endian**. All multi-byte fields are little-endian.
 - Command buffers and tables are sequences of packed structs. Headers use `#pragma pack(push, 1)` where layout must be exact.
 - Any structure that can vary in size uses an explicit `size_bytes` field, and/or a packet header with `size_bytes`.
-
-## PCI identity
-
-The device is exposed as a PCI function with project-specific IDs:
-
-- Vendor ID: `AEROGPU_PCI_VENDOR_ID`
-- Device ID: `AEROGPU_PCI_DEVICE_ID`
-- Class code: display controller (`0x03`), VGA-compatible subclass (`0x00`)
-
-These IDs are **not PCI-SIG assigned** and are intended only for use inside the Aero emulator.
 
 ## BAR / MMIO overview
 
