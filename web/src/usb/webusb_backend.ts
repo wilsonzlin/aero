@@ -320,6 +320,58 @@ export class WebUsbBackend {
   async execute(action: UsbHostAction): Promise<UsbHostCompletion> {
     assertWebUsbSupported();
 
+    if (action.kind === "controlOut") {
+      const setup = action.setup;
+      const emptyData = action.data.byteLength === 0;
+
+      if (
+        (setup.bmRequestType & 0xff) === BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_DEVICE &&
+        (setup.bRequest & 0xff) === SET_CONFIGURATION &&
+        (setup.wIndex & 0xffff) === 0 &&
+        (setup.wLength & 0xffff) === 0 &&
+        emptyData
+      ) {
+        if (!this.device.opened) {
+          try {
+            await this.device.open();
+          } catch (err) {
+            return errorCompletion(action.kind, action.id, formatThrownError(wrapWithCause("Failed to open USB device", err)));
+          }
+        }
+
+        try {
+          const configValue = setup.wValue & 0xff;
+
+          const existingConfiguration = this.device.configuration;
+          if (existingConfiguration) {
+            for (const iface of existingConfiguration.interfaces) {
+              if (!iface.claimed) continue;
+              try {
+                await this.device.releaseInterface(iface.interfaceNumber);
+              } catch (err) {
+                throw wrapWithCause(
+                  `Failed to release USB interface ${iface.interfaceNumber} before selecting configuration ${configValue}`,
+                  err,
+                );
+              }
+            }
+          }
+
+          try {
+            await this.device.selectConfiguration(configValue);
+          } catch (err) {
+            throw wrapWithCause(`Failed to select USB configuration ${configValue}`, err);
+          }
+          // Selecting a configuration resets all claims; keep our local cache coherent.
+          this.claimedInterfaces.clear();
+          this.claimedConfigurationValue = this.device.configuration?.configurationValue ?? configValue;
+          return { kind: "controlOut", id: action.id, status: "success", bytesWritten: 0 };
+        } catch (err) {
+          return errorCompletion(action.kind, action.id, formatThrownError(err));
+        }
+      }
+    }
+
     try {
       await this.ensureOpenAndClaimed();
     } catch (err) {
@@ -356,39 +408,6 @@ export class WebUsbBackend {
 
           const setup = action.setup;
           const emptyData = action.data.byteLength === 0;
-
-          if (
-            (setup.bmRequestType & 0xff) === BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_DEVICE &&
-            (setup.bRequest & 0xff) === SET_CONFIGURATION &&
-            (setup.wIndex & 0xffff) === 0 &&
-            (setup.wLength & 0xffff) === 0 &&
-            emptyData
-          ) {
-            const configValue = setup.wValue & 0xff;
-            const existingConfiguration = this.device.configuration;
-            if (existingConfiguration) {
-              for (const iface of existingConfiguration.interfaces) {
-                if (!iface.claimed) continue;
-                try {
-                  await this.device.releaseInterface(iface.interfaceNumber);
-                } catch (err) {
-                  throw wrapWithCause(
-                    `Failed to release USB interface ${iface.interfaceNumber} before selecting configuration ${configValue}`,
-                    err,
-                  );
-                }
-              }
-            }
-            try {
-              await this.device.selectConfiguration(configValue);
-            } catch (err) {
-              throw wrapWithCause(`Failed to select USB configuration ${configValue}`, err);
-            }
-            // Selecting a configuration resets all claims; keep our local cache coherent.
-            this.claimedInterfaces.clear();
-            this.claimedConfigurationValue = this.device.configuration?.configurationValue ?? null;
-            return { kind: "controlOut", id: action.id, status: "success", bytesWritten: 0 };
-          }
 
           if (
             (setup.bmRequestType & 0xff) === BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_INTERFACE &&

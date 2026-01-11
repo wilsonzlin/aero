@@ -259,6 +259,48 @@ describe("WebUsbBackend.execute controlOut translations", () => {
     });
   });
 
+  it("translates SET_CONFIGURATION even when interfaces cannot be claimed", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const iface1 = { interfaceNumber: 1, claimed: false, alternates: [], alternate: {} };
+      const config1 = { configurationValue: 1, interfaces: [iface1] };
+      const config2 = { configurationValue: 2, interfaces: [iface1] };
+
+      const device: Partial<USBDevice> = {
+        opened: true,
+        configuration: config1 as unknown as USBConfiguration,
+        configurations: [config1 as unknown as USBConfiguration, config2 as unknown as USBConfiguration],
+        open: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {
+          throw new Error("claimInterface should not be called");
+        }),
+        releaseInterface: vi.fn(async () => {
+          throw new Error("releaseInterface should not be called");
+        }),
+        selectConfiguration: vi.fn(async (value: number) => {
+          expect(value).toBe(2);
+          (device as any).configuration = config2;
+        }),
+        controlTransferOut: vi.fn(async () => {
+          throw new Error("controlTransferOut should not be called");
+        }),
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const res = await backend.execute({
+        kind: "controlOut",
+        id: 99,
+        setup: { bmRequestType: 0x00, bRequest: 0x09, wValue: 0x0002, wIndex: 0x0000, wLength: 0x0000 },
+        data: new Uint8Array(),
+      });
+
+      expect(device.selectConfiguration).toHaveBeenCalledTimes(1);
+      expect(device.claimInterface).not.toHaveBeenCalled();
+      expect(device.releaseInterface).not.toHaveBeenCalled();
+      expect(device.controlTransferOut).not.toHaveBeenCalled();
+      expect(res).toEqual({ kind: "controlOut", id: 99, status: "success", bytesWritten: 0 });
+    });
+  });
+
   it("translates SET_INTERFACE into device.selectAlternateInterface", async () => {
     await withFakeNavigatorUsb(async () => {
       const iface3 = { interfaceNumber: 3, claimed: true, alternates: [], alternate: {} };
