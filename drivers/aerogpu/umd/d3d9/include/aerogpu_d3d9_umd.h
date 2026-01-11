@@ -635,6 +635,14 @@ static_assert(offsetof(D3DDDI_DEVICECALLBACKS, pfnRenderCb) ==
 
 static_assert(offsetof(D3DDDIARG_CREATECONTEXT, pPrivateDriverData) == 16,
               "D3DDDIARG_CREATECONTEXT ABI mismatch: pPrivateDriverData offset drift");
+static_assert(offsetof(D3DDDIARG_CREATECONTEXT, hDevice) == 0,
+              "D3DDDIARG_CREATECONTEXT ABI mismatch: hDevice offset drift");
+static_assert(offsetof(D3DDDIARG_CREATECONTEXT, NodeOrdinal) == 4,
+              "D3DDDIARG_CREATECONTEXT ABI mismatch: NodeOrdinal offset drift");
+static_assert(offsetof(D3DDDIARG_CREATECONTEXT, EngineAffinity) == 8,
+              "D3DDDIARG_CREATECONTEXT ABI mismatch: EngineAffinity offset drift");
+static_assert(offsetof(D3DDDIARG_CREATECONTEXT, Flags) == 12,
+              "D3DDDIARG_CREATECONTEXT ABI mismatch: Flags offset drift");
 static_assert(offsetof(D3DDDIARG_CREATECONTEXT, PrivateDriverDataSize) ==
                   offsetof(D3DDDIARG_CREATECONTEXT, pPrivateDriverData) + sizeof(void*),
               "D3DDDIARG_CREATECONTEXT ABI mismatch: PrivateDriverDataSize offset drift");
