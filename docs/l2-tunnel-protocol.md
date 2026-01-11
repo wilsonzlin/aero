@@ -265,12 +265,11 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
   by the gateway `POST /session`.
   - Configure the cookie signing secret via `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET`).
 - `api_key`: requires `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`).
-  - Clients can provide credentials via `?apiKey=<value>` (or `?token=<value>` for compatibility), or
-    an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
-    `aero-l2-tunnel-v1`).
-- `jwt`: requires `AERO_L2_JWT_SECRET` and a JWT provided via `?token=<value>` or
-  an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
-  `aero-l2-tunnel-v1`; requires a header-safe token value).
+  - Clients can provide credentials via `?apiKey=<value>` / `?token=<value>` query params, or
+    `Sec-WebSocket-Protocol: aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`).
+- `jwt`: requires `AERO_L2_JWT_SECRET` and a JWT provided via `?token=<value>` / `?apiKey=<value>`
+  or `Sec-WebSocket-Protocol: aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`; requires a header-safe token value).
+  - Optional defense-in-depth claim enforcement: `AERO_L2_JWT_AUDIENCE` / `AERO_L2_JWT_ISSUER`.
 - `cookie_or_jwt`: accepts either a valid gateway session cookie or a valid JWT.
   - Requires both the cookie signing secret (`AERO_L2_SESSION_SECRET` or `SESSION_SECRET` /
     `AERO_GATEWAY_SESSION_SECRET`) and `AERO_L2_JWT_SECRET`.
@@ -283,6 +282,18 @@ Notes:
 - `AERO_L2_TOKEN` is a legacy alias for API-key auth when `AERO_L2_AUTH_MODE` is unset (and is also
   accepted as a fallback value for `AERO_L2_API_KEY`).
 
+Credential sources supported by `aero-l2-proxy` (WebSocket upgrade time):
+
+- Cookie header: `Cookie: aero_session=<token>` (cookie modes).
+- Query string token: both `?token=` and `?apiKey=` are accepted (some relays/clients use either).
+- Subprotocol token: include `aero-l2-token.<credential>` as an **offered** subprotocol in
+  `Sec-WebSocket-Protocol` while still requesting `aero-l2-tunnel-v1` (the server negotiates
+  `aero-l2-tunnel-v1`).
+
+Deprecated compatibility:
+
+- `AERO_L2_TOKEN` is treated as an alias for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE` is unset.
+
 Missing/incorrect credentials MUST reject the upgrade with **HTTP 401** (no WebSocket).
 
 ### Quotas
@@ -291,8 +302,9 @@ To bound abuse and accidental infinite loops, the proxy applies coarse, best-eff
 
 - `AERO_L2_MAX_CONNECTIONS` (default: `64`): process-wide concurrent tunnel cap (`0` disables).
   - When exceeded, upgrades are rejected with **HTTP 429**.
-- `AERO_L2_MAX_TUNNELS_PER_SESSION` (default: `1`): concurrent tunnel cap per authenticated gateway session (`aero_session`).
-  - Applies only to cookie-authenticated sessions; token-only connections rely on `AERO_L2_MAX_CONNECTIONS`.
+- `AERO_L2_MAX_CONNECTIONS_PER_SESSION` (default: `0` = disabled): concurrent tunnel cap per
+  authenticated session principal (cookie `sid`, JWT `sid`, or API-key identity).
+  - Legacy alias: `AERO_L2_MAX_TUNNELS_PER_SESSION`.
   - When exceeded, upgrades are rejected with **HTTP 429**.
 - `AERO_L2_MAX_BYTES_PER_CONNECTION` (default: `0` = unlimited): total bytes per connection (rx + tx).
 - `AERO_L2_MAX_FRAMES_PER_SECOND` (default: `0` = unlimited): inbound messages per second per connection.

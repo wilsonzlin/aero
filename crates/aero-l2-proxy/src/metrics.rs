@@ -3,6 +3,47 @@ use std::sync::{
     Arc,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthRejectReason {
+    MissingCredentials,
+    InvalidApiKey,
+    InvalidCookie,
+    InvalidJwt,
+    JwtOriginMismatch,
+}
+
+impl AuthRejectReason {
+    const COUNT: usize = 5;
+
+    const ALL: [AuthRejectReason; Self::COUNT] = [
+        AuthRejectReason::MissingCredentials,
+        AuthRejectReason::InvalidApiKey,
+        AuthRejectReason::InvalidCookie,
+        AuthRejectReason::InvalidJwt,
+        AuthRejectReason::JwtOriginMismatch,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            AuthRejectReason::MissingCredentials => "missing_credentials",
+            AuthRejectReason::InvalidApiKey => "invalid_api_key",
+            AuthRejectReason::InvalidCookie => "invalid_cookie",
+            AuthRejectReason::InvalidJwt => "invalid_jwt",
+            AuthRejectReason::JwtOriginMismatch => "jwt_origin_mismatch",
+        }
+    }
+
+    fn idx(self) -> usize {
+        match self {
+            AuthRejectReason::MissingCredentials => 0,
+            AuthRejectReason::InvalidApiKey => 1,
+            AuthRejectReason::InvalidCookie => 2,
+            AuthRejectReason::InvalidJwt => 3,
+            AuthRejectReason::JwtOriginMismatch => 4,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Metrics {
     inner: Arc<MetricsInner>,
@@ -13,6 +54,8 @@ struct MetricsInner {
 
     // WebSocket upgrade
     upgrade_rejected_total: AtomicU64,
+    upgrade_reject_max_connections_per_session_total: AtomicU64,
+    auth_reject_total: [AtomicU64; AuthRejectReason::COUNT],
 
     // Sessions
     sessions_active: AtomicU64,
@@ -68,6 +111,8 @@ impl Metrics {
             inner: Arc::new(MetricsInner {
                 next_session_id: AtomicU64::new(1),
                 upgrade_rejected_total: AtomicU64::new(0),
+                upgrade_reject_max_connections_per_session_total: AtomicU64::new(0),
+                auth_reject_total: std::array::from_fn(|_| AtomicU64::new(0)),
                 sessions_active: AtomicU64::new(0),
                 sessions_total: AtomicU64::new(0),
                 idle_timeouts_total: AtomicU64::new(0),
@@ -182,9 +227,22 @@ impl Metrics {
     }
 
     pub fn upgrade_reject_max_tunnels_per_session(&self) {
+        self.upgrade_rejected();
         self.inner
             .upgrade_reject_max_tunnels_per_session_total
             .fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .upgrade_reject_max_connections_per_session_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn auth_rejected(&self, reason: AuthRejectReason) {
+        self.inner.auth_reject_total[reason.idx()].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn upgrade_reject_max_connections_per_session(&self) {
+        // Kept as an alias for "tunnels per session" for historical naming reasons.
+        self.upgrade_reject_max_tunnels_per_session();
     }
 
     pub fn upgrade_ip_limit_exceeded(&self) {
@@ -293,6 +351,10 @@ impl Metrics {
 
     pub fn render_prometheus(&self) -> String {
         let upgrade_rejected_total = self.inner.upgrade_rejected_total.load(Ordering::Relaxed);
+        let upgrade_reject_max_connections_per_session_total = self
+            .inner
+            .upgrade_reject_max_connections_per_session_total
+            .load(Ordering::Relaxed);
         let sessions_active = self.inner.sessions_active.load(Ordering::Relaxed);
         let sessions_total = self.inner.sessions_total.load(Ordering::Relaxed);
         let idle_timeouts_total = self.inner.idle_timeouts_total.load(Ordering::Relaxed);
@@ -360,6 +422,12 @@ impl Metrics {
             "l2_upgrade_rejected_total",
             upgrade_rejected_total,
         );
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_max_connections_per_session_total",
+            upgrade_reject_max_connections_per_session_total,
+        );
+        push_auth_reject_counters(&mut out, &self.inner);
 
         push_gauge(&mut out, "l2_sessions_active", sessions_active);
         push_counter(&mut out, "l2_sessions_total", sessions_total);
@@ -445,6 +513,18 @@ impl Metrics {
         push_ping_rtt_histogram(&mut out, &self.inner);
 
         out
+    }
+}
+
+fn push_auth_reject_counters(out: &mut String, metrics: &MetricsInner) {
+    out.push_str("# TYPE l2_auth_reject_total counter\n");
+    for reason in AuthRejectReason::ALL {
+        let val = metrics.auth_reject_total[reason.idx()].load(Ordering::Relaxed);
+        out.push_str("l2_auth_reject_total{reason=\"");
+        out.push_str(reason.label());
+        out.push_str("\"} ");
+        out.push_str(&val.to_string());
+        out.push('\n');
     }
 }
 

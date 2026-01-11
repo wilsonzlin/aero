@@ -217,9 +217,11 @@ pub(crate) async fn run_session(
     socket: WebSocket,
     state: AppState,
     session_id: u64,
+    auth_sid: Option<String>,
 ) -> anyhow::Result<()> {
+    let auth_sid_span = auth_sid.unwrap_or_else(|| "none".to_string());
     run_session_inner(socket, state, session_id)
-        .instrument(tracing::info_span!("l2_session", session_id))
+        .instrument(tracing::info_span!("l2_session", session_id, auth_sid = %auth_sid_span))
         .await
 }
 

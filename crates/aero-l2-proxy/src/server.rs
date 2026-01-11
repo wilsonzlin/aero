@@ -23,27 +23,18 @@ use tokio::{
     task::JoinHandle,
 };
 
-use base64::Engine;
-use ring::hmac;
-use serde::Deserialize;
+use ring::digest;
 
 use crate::{
     capture::CaptureManager,
     dns::DnsService,
-    metrics::Metrics,
+    metrics::{AuthRejectReason, Metrics},
     session,
     session_limits::{SessionTunnelPermit, SessionTunnelTracker},
     ProxyConfig, TUNNEL_SUBPROTOCOL,
 };
 
 const SESSION_COOKIE_NAME: &str = "aero_session";
-
-#[derive(Debug, Deserialize)]
-struct SessionTokenPayload {
-    v: u8,
-    sid: String,
-    exp: u64,
-}
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -275,8 +266,8 @@ async fn l2_ws_handler(
     let (client_ip, client_ip_source) =
         derive_client_ip(state.cfg.security.trust_proxy, &headers, connect_info);
 
-    let session_id = match enforce_security(&state, &headers, &uri, client_ip) {
-        Ok(session_id) => session_id,
+    let auth_sid = match enforce_security(&state, &headers, &uri, client_ip) {
+        Ok(auth_sid) => auth_sid,
         Err(resp) => return *resp,
     };
 
@@ -312,6 +303,7 @@ async fn l2_ws_handler(
                     reason = "max_connections_exceeded",
                     origin = %origin_from_headers(&headers).unwrap_or("<missing>"),
                     auth_mode = %auth_mode(&state),
+                    auth_sid = auth_sid.as_deref().unwrap_or("none"),
                     token_present = token_present(state.cfg.security.auth_mode, &headers, &uri),
                     cookie_present = session_cookie_present(&headers),
                     client_ip = %client_ip,
@@ -327,17 +319,18 @@ async fn l2_ws_handler(
     };
 
     let session_tunnel_permit: Option<SessionTunnelPermit> =
-        match (session_id.as_deref(), state.session_tunnels.as_ref()) {
-            (Some(session_id), Some(tracker)) => tracker.try_acquire(session_id),
+        match (auth_sid.as_deref(), state.session_tunnels.as_ref()) {
+            (Some(auth_sid), Some(tracker)) => tracker.try_acquire(auth_sid),
             _ => None,
         };
 
-    if session_id.is_some() && state.session_tunnels.is_some() && session_tunnel_permit.is_none() {
-        state.metrics.upgrade_reject_max_tunnels_per_session();
-        tracing::info!(
-            reason = "max_tunnels_per_session_exceeded",
+    if auth_sid.is_some() && state.session_tunnels.is_some() && session_tunnel_permit.is_none() {
+        state.metrics.upgrade_reject_max_connections_per_session();
+        tracing::warn!(
+            reason = "max_connections_per_session_exceeded",
             origin = %origin_from_headers(&headers).unwrap_or("<missing>"),
             auth_mode = %auth_mode(&state),
+            auth_sid = auth_sid.as_deref().unwrap_or("none"),
             token_present = token_present(state.cfg.security.auth_mode, &headers, &uri),
             cookie_present = session_cookie_present(&headers),
             client_ip = %client_ip,
@@ -345,7 +338,7 @@ async fn l2_ws_handler(
         );
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            "max tunnels per session exceeded".to_string(),
+            "max connections per session exceeded".to_string(),
         )
             .into_response();
     }
@@ -363,15 +356,18 @@ async fn l2_ws_handler(
             let _permit = permit;
             let _ip_permit = ip_permit;
             let _session_tunnel_permit = session_tunnel_permit;
-            handle_l2_ws(socket, state).await;
+            handle_l2_ws(socket, state, auth_sid).await;
         })
 }
 
-async fn handle_l2_ws(socket: WebSocket, state: AppState) {
+async fn handle_l2_ws(socket: WebSocket, state: AppState, auth_sid: Option<String>) {
     let session_id = state.metrics.next_session_id();
-    if let Err(err) = session::run_session(socket, state, session_id).await {
-        tracing::debug!(session_id, "l2 session ended: {err:#}");
+    let auth_sid_log = auth_sid.as_deref().unwrap_or("none");
+    tracing::info!(session_id, auth_sid = auth_sid_log, "l2 session connected");
+    if let Err(err) = session::run_session(socket, state, session_id, auth_sid.clone()).await {
+        tracing::debug!(session_id, auth_sid = auth_sid_log, "l2 session ended: {err:#}");
     }
+    tracing::info!(session_id, auth_sid = auth_sid_log, "l2 session disconnected");
 }
 
 fn enforce_security(
@@ -384,26 +380,33 @@ fn enforce_security(
     // credentials, even if the request is also missing/invalid Origin (see tests/security.rs).
     let token_present = token_present(state.cfg.security.auth_mode, headers, uri);
     let cookie_present = session_cookie_present(headers);
-    let mut session_id = None;
+    let origin_normalized_for_jwt = origin_from_headers(headers).and_then(crate::origin::normalize_origin);
+
+    let mut auth_sid: Option<String> = None;
     match state.cfg.security.auth_mode {
         crate::config::AuthMode::None => {}
         crate::config::AuthMode::ApiKey => {
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
-            let provided = query_param(uri, "apiKey")
-                .or_else(|| query_param(uri, "token"))
-                .or_else(|| token_from_subprotocol(headers));
+            let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
             if provided.as_deref() != Some(expected) {
+                let reject_reason = if token_present {
+                    AuthRejectReason::InvalidApiKey
+                } else {
+                    AuthRejectReason::MissingCredentials
+                };
                 if token_present {
                     state.metrics.upgrade_reject_auth_invalid();
                 } else {
                     state.metrics.upgrade_reject_auth_missing();
                 }
+                state.metrics.auth_rejected(reject_reason);
                 tracing::warn!(
                     reason = if token_present {
                         "auth_invalid"
                     } else {
                         "auth_missing"
                     },
+                    auth_reject_reason = reject_reason.label(),
                     origin = %origin_from_headers(headers).unwrap_or("<missing>"),
                     auth_mode = %auth_mode(state),
                     token_present,
@@ -415,6 +418,7 @@ fn enforce_security(
                     (StatusCode::UNAUTHORIZED, "invalid api key".to_string()).into_response(),
                 ));
             }
+            auth_sid = Some(hash_api_key_principal(expected));
         }
         crate::config::AuthMode::Cookie => {
             let secret = state
@@ -430,21 +434,30 @@ fn enforce_security(
             let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
             let cookie_present = session_token.is_some();
             let now_ms = now_ms();
-            let sid = session_token
-                .as_deref()
-                .and_then(|token| verify_session_token(token, secret, now_ms));
+            let sid = session_token.as_deref().and_then(|token| {
+                crate::auth::verify_session_token(token, secret, now_ms)
+                    .ok()
+                    .map(|claims| claims.sid)
+            });
             if sid.is_none() {
+                let reject_reason = if cookie_present {
+                    AuthRejectReason::InvalidCookie
+                } else {
+                    AuthRejectReason::MissingCredentials
+                };
                 if cookie_present {
                     state.metrics.upgrade_reject_auth_invalid();
                 } else {
                     state.metrics.upgrade_reject_auth_missing();
                 }
+                state.metrics.auth_rejected(reject_reason);
                 tracing::warn!(
                     reason = if cookie_present {
                         "auth_invalid"
                     } else {
                         "auth_missing"
                     },
+                    auth_reject_reason = reject_reason.label(),
                     origin = %origin_from_headers(headers).unwrap_or("<missing>"),
                     auth_mode = %auth_mode(state),
                     token_present,
@@ -460,38 +473,15 @@ fn enforce_security(
                         .into_response(),
                 ));
             }
-            session_id = sid;
+            auth_sid = sid;
         }
         crate::config::AuthMode::Jwt => {
-            let secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
-            let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
-            let token_present = token.is_some();
-            let now_secs = now_unix_seconds();
-            let ok = token
-                .as_deref()
-                .is_some_and(|token| verify_jwt(token, secret, now_secs));
-            if !ok {
-                if token_present {
-                    state.metrics.upgrade_reject_auth_invalid();
-                } else {
-                    state.metrics.upgrade_reject_auth_missing();
+            let (sid, expected_origin) = verify_jwt_sid(state, headers, uri, &origin_normalized_for_jwt, token_present, cookie_present, client_ip)?;
+            auth_sid = Some(sid);
+            if let Some(expected_origin) = expected_origin {
+                if origin_claim_mismatch(state.cfg.security.open, origin_normalized_for_jwt.as_deref(), &expected_origin) {
+                    reject_jwt_origin_mismatch(state, headers, token_present, cookie_present, client_ip)?;
                 }
-                tracing::warn!(
-                    reason = if token_present {
-                        "auth_invalid"
-                    } else {
-                        "auth_missing"
-                    },
-                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                    auth_mode = %auth_mode(state),
-                    token_present,
-                    cookie_present,
-                    client_ip = %client_ip,
-                    "rejected l2 websocket upgrade",
-                );
-                return Err(Box::new(
-                    (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
-                ));
             }
         }
         crate::config::AuthMode::CookieOrJwt => {
@@ -501,7 +491,6 @@ fn enforce_security(
                 .session_secret
                 .as_deref()
                 .unwrap_or_default();
-            let jwt_secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
 
             let cookie = headers
                 .get(axum::http::header::COOKIE)
@@ -510,28 +499,34 @@ fn enforce_security(
             let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
             let cookie_present = session_token.is_some();
             let now_ms = now_ms();
-            let sid = session_token
-                .as_deref()
-                .and_then(|token| verify_session_token(token, cookie_secret, now_ms));
-            if sid.is_none() {
-                let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
-                let token_present = token.is_some();
-                let now_secs = now_unix_seconds();
-                let jwt_ok = token
-                    .as_deref()
-                    .is_some_and(|token| verify_jwt(token, jwt_secret, now_secs));
-                if !jwt_ok {
-                    if cookie_present || token_present {
+            let sid = session_token.as_deref().and_then(|token| {
+                crate::auth::verify_session_token(token, cookie_secret, now_ms)
+                    .ok()
+                    .map(|claims| claims.sid)
+            });
+
+            if let Some(sid) = sid {
+                auth_sid = Some(sid);
+            } else {
+                if !token_present {
+                    let reject_reason = if cookie_present {
+                        AuthRejectReason::InvalidCookie
+                    } else {
+                        AuthRejectReason::MissingCredentials
+                    };
+                    if cookie_present {
                         state.metrics.upgrade_reject_auth_invalid();
                     } else {
                         state.metrics.upgrade_reject_auth_missing();
                     }
+                    state.metrics.auth_rejected(reject_reason);
                     tracing::warn!(
-                        reason = if cookie_present || token_present {
+                        reason = if cookie_present {
                             "auth_invalid"
                         } else {
                             "auth_missing"
                         },
+                        auth_reject_reason = reject_reason.label(),
                         origin = %origin_from_headers(headers).unwrap_or("<missing>"),
                         auth_mode = %auth_mode(state),
                         token_present,
@@ -547,8 +542,21 @@ fn enforce_security(
                             .into_response(),
                     ));
                 }
-            } else {
-                session_id = sid;
+                let (sid, expected_origin) = verify_jwt_sid(
+                    state,
+                    headers,
+                    uri,
+                    &origin_normalized_for_jwt,
+                    token_present,
+                    cookie_present,
+                    client_ip,
+                )?;
+                auth_sid = Some(sid);
+                if let Some(expected_origin) = expected_origin {
+                    if origin_claim_mismatch(state.cfg.security.open, origin_normalized_for_jwt.as_deref(), &expected_origin) {
+                        reject_jwt_origin_mismatch(state, headers, token_present, cookie_present, client_ip)?;
+                    }
+                }
             }
         }
     }
@@ -730,7 +738,157 @@ fn enforce_security(
         }
     }
 
-    Ok(session_id)
+    Ok(auth_sid)
+}
+
+fn verify_jwt_sid(
+    state: &AppState,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    _origin_normalized_for_jwt: &Option<String>,
+    token_present: bool,
+    cookie_present: bool,
+    client_ip: IpAddr,
+) -> Result<(String, Option<String>), Box<axum::response::Response>> {
+    let secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
+    let token = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
+
+    let now_unix = now_unix_seconds();
+    let claims = token
+        .as_deref()
+        .map(|token| crate::auth::verify_relay_jwt_hs256(token, secret, now_unix));
+
+    let claims = match claims {
+        Some(Ok(claims)) => claims,
+        Some(Err(_)) | None => {
+            let reject_reason = if token_present {
+                AuthRejectReason::InvalidJwt
+            } else {
+                AuthRejectReason::MissingCredentials
+            };
+            if token_present {
+                state.metrics.upgrade_reject_auth_invalid();
+            } else {
+                state.metrics.upgrade_reject_auth_missing();
+            }
+            state.metrics.auth_rejected(reject_reason);
+            tracing::warn!(
+                reason = if token_present {
+                    "auth_invalid"
+                } else {
+                    "auth_missing"
+                },
+                auth_reject_reason = reject_reason.label(),
+                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                "rejected l2 websocket upgrade",
+            );
+            return Err(Box::new(
+                (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+            ));
+        }
+    };
+
+    if let Some(expected) = state.cfg.security.jwt_audience.as_deref() {
+        if claims.aud.as_deref() != Some(expected) {
+            state.metrics.upgrade_reject_auth_invalid();
+            state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
+            tracing::warn!(
+                reason = "auth_invalid",
+                auth_reject_reason = AuthRejectReason::InvalidJwt.label(),
+                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                "rejected l2 websocket upgrade (jwt audience mismatch)",
+            );
+            return Err(Box::new(
+                (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+            ));
+        }
+    }
+
+    if let Some(expected) = state.cfg.security.jwt_issuer.as_deref() {
+        if claims.iss.as_deref() != Some(expected) {
+            state.metrics.upgrade_reject_auth_invalid();
+            state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
+            tracing::warn!(
+                reason = "auth_invalid",
+                auth_reject_reason = AuthRejectReason::InvalidJwt.label(),
+                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                "rejected l2 websocket upgrade (jwt issuer mismatch)",
+            );
+            return Err(Box::new(
+                (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+            ));
+        }
+    }
+
+    let expected_origin = match claims.origin.as_deref() {
+        None => None,
+        Some(raw) => match crate::origin::normalize_origin(raw) {
+            Some(origin) => Some(origin),
+            None => {
+                state.metrics.upgrade_reject_auth_invalid();
+                state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
+                tracing::warn!(
+                    reason = "auth_invalid",
+                    auth_reject_reason = AuthRejectReason::InvalidJwt.label(),
+                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                    auth_mode = %auth_mode(state),
+                    token_present,
+                    cookie_present,
+                    client_ip = %client_ip,
+                    "rejected l2 websocket upgrade (jwt origin claim invalid)",
+                );
+                return Err(Box::new(
+                    (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+                ));
+            }
+        },
+    };
+
+    Ok((claims.sid, expected_origin))
+}
+
+fn origin_claim_mismatch(open: bool, actual: Option<&str>, expected: &str) -> bool {
+    match actual {
+        Some(actual) => actual != expected,
+        None => open,
+    }
+}
+
+fn reject_jwt_origin_mismatch(
+    state: &AppState,
+    headers: &HeaderMap,
+    token_present: bool,
+    cookie_present: bool,
+    client_ip: IpAddr,
+) -> Result<(), Box<axum::response::Response>> {
+    state.metrics.upgrade_reject_auth_invalid();
+    state.metrics
+        .auth_rejected(AuthRejectReason::JwtOriginMismatch);
+    tracing::warn!(
+        reason = "jwt_origin_mismatch",
+        auth_reject_reason = AuthRejectReason::JwtOriginMismatch.label(),
+        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+        auth_mode = %auth_mode(state),
+        token_present,
+        cookie_present,
+        client_ip = %client_ip,
+        "rejected l2 websocket upgrade",
+    );
+    Err(Box::new(
+        (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+    ))
 }
 
 fn auth_mode(state: &AppState) -> &'static str {
@@ -904,7 +1062,7 @@ fn token_present(
     uri: &axum::http::Uri,
 ) -> bool {
     match auth_mode {
-        crate::config::AuthMode::ApiKey => {
+        crate::config::AuthMode::ApiKey | crate::config::AuthMode::Jwt | crate::config::AuthMode::CookieOrJwt => {
             token_present_in_query(uri, "apiKey")
                 || token_present_in_query(uri, "token")
                 || token_present_in_subprotocol(headers)
@@ -969,6 +1127,10 @@ fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
     None
 }
 
+fn token_from_query(uri: &axum::http::Uri) -> Option<String> {
+    query_param(uri, "token").or_else(|| query_param(uri, "apiKey"))
+}
+
 fn cookie_value(cookie_header: &str, key: &str) -> Option<String> {
     for part in cookie_header.split(';') {
         let trimmed = part.trim();
@@ -983,79 +1145,6 @@ fn cookie_value(cookie_header: &str, key: &str) -> Option<String> {
         return (!v.is_empty()).then(|| percent_decode(v));
     }
     None
-}
-
-fn verify_session_token(token: &str, secret: &[u8], now_ms: u64) -> Option<String> {
-    let (payload_b64, sig_b64) = token.split_once('.')?;
-
-    let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(sig_b64.as_bytes())
-        .ok()?;
-
-    let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
-    hmac::verify(&key, payload_b64.as_bytes(), &sig).ok()?;
-
-    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64.as_bytes())
-        .ok()?;
-
-    let payload: SessionTokenPayload = serde_json::from_slice(&payload_bytes).ok()?;
-    if payload.v != 1 || payload.sid.trim().is_empty() {
-        return None;
-    }
-
-    let expires_at_ms = payload.exp.saturating_mul(1000);
-    if expires_at_ms <= now_ms {
-        return None;
-    }
-
-    Some(payload.sid)
-}
-
-fn verify_jwt(token: &str, secret: &[u8], now_secs: u64) -> bool {
-    let mut parts = token.split('.');
-    let Some(header_b64) = parts.next() else {
-        return false;
-    };
-    let Some(payload_b64) = parts.next() else {
-        return false;
-    };
-    let Some(sig_b64) = parts.next() else {
-        return false;
-    };
-    if parts.next().is_some() {
-        return false;
-    }
-
-    let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(sig_b64.as_bytes())
-        .ok();
-    let Some(sig) = sig else {
-        return false;
-    };
-
-    let signing_input = format!("{header_b64}.{payload_b64}");
-    let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
-    if hmac::verify(&key, signing_input.as_bytes(), &sig).is_err() {
-        return false;
-    }
-
-    // Best-effort `exp` check when present.
-    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64.as_bytes())
-        .ok();
-    let Some(payload_bytes) = payload_bytes else {
-        return true;
-    };
-    let payload: serde_json::Value = match serde_json::from_slice(&payload_bytes) {
-        Ok(v) => v,
-        Err(_) => return true,
-    };
-    let Some(exp) = payload.get("exp").and_then(|v| v.as_u64()) else {
-        return true;
-    };
-
-    exp > now_secs
 }
 
 fn now_ms() -> u64 {
@@ -1074,118 +1163,14 @@ fn now_unix_seconds() -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{verify_jwt, verify_session_token};
-    use serde::Deserialize;
-
-    const VECTORS_JSON: &str = include_str!("../../conformance/test-vectors/aero-vectors-v1.json");
-
-    #[derive(Debug, Deserialize)]
-    struct RootVectors {
-        version: u32,
-        aero_session: SessionVectors,
-        #[serde(rename = "aero-udp-relay-jwt-hs256")]
-        relay_jwt: JwtVectors,
+fn hash_api_key_principal(api_key: &str) -> String {
+    let digest = digest::digest(&digest::SHA256, api_key.as_bytes());
+    let mut prefix = String::with_capacity(8);
+    for b in digest.as_ref().iter().take(4) {
+        use std::fmt::Write;
+        let _ = write!(&mut prefix, "{:02x}", b);
     }
-
-    #[derive(Debug, Deserialize)]
-    struct SessionVectors {
-        secret: String,
-        #[serde(rename = "nowMs")]
-        now_ms: u64,
-        tokens: SessionTokenSet,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct SessionTokenSet {
-        valid: SessionTokenVector,
-        expired: SessionTokenVector,
-        #[serde(rename = "badSignature")]
-        bad_signature: SessionTokenVector,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct SessionTokenVector {
-        token: String,
-        claims: SessionClaims,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct SessionClaims {
-        sid: String,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct JwtVectors {
-        secret: String,
-        #[serde(rename = "nowUnix")]
-        now_unix: u64,
-        tokens: JwtTokenSet,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct JwtTokenSet {
-        valid: JwtTokenVector,
-        expired: JwtTokenVector,
-        #[serde(rename = "badSignature")]
-        bad_signature: JwtTokenVector,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct JwtTokenVector {
-        token: String,
-    }
-
-    #[test]
-    fn auth_verifiers_match_vectors() {
-        let vectors: RootVectors = serde_json::from_str(VECTORS_JSON).expect("parse vectors json");
-        assert_eq!(vectors.version, 1, "unexpected vector file version");
-
-        let secret = vectors.aero_session.secret.as_bytes();
-        let now_ms = vectors.aero_session.now_ms;
-
-        let sid = verify_session_token(&vectors.aero_session.tokens.valid.token, secret, now_ms)
-            .expect("expected valid session token");
-        assert_eq!(sid, vectors.aero_session.tokens.valid.claims.sid);
-        assert!(
-            verify_session_token(&vectors.aero_session.tokens.expired.token, secret, now_ms)
-                .is_none(),
-            "expected expired session token to be rejected"
-        );
-        assert!(
-            verify_session_token(
-                &vectors.aero_session.tokens.bad_signature.token,
-                secret,
-                now_ms
-            )
-            .is_none(),
-            "expected bad-signature session token to be rejected"
-        );
-
-        let jwt_secret = vectors.relay_jwt.secret.as_bytes();
-        let now_unix = vectors.relay_jwt.now_unix;
-        assert!(
-            verify_jwt(&vectors.relay_jwt.tokens.valid.token, jwt_secret, now_unix),
-            "expected valid jwt token"
-        );
-        assert!(
-            !verify_jwt(
-                &vectors.relay_jwt.tokens.expired.token,
-                jwt_secret,
-                now_unix
-            ),
-            "expected expired jwt token to be rejected"
-        );
-        assert!(
-            !verify_jwt(
-                &vectors.relay_jwt.tokens.bad_signature.token,
-                jwt_secret,
-                now_unix
-            ),
-            "expected bad-signature jwt token to be rejected"
-        );
-    }
+    format!("api_key:{prefix}")
 }
 
 fn percent_decode(input: &str) -> String {

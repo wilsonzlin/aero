@@ -6,6 +6,21 @@ use aero_net_stack::StackConfig;
 
 use crate::{overrides::TestOverrides, policy::EgressPolicy};
 
+impl AuthMode {
+    fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "none" => Ok(AuthMode::None),
+            "cookie" => Ok(AuthMode::Cookie),
+            "api_key" => Ok(AuthMode::ApiKey),
+            "jwt" => Ok(AuthMode::Jwt),
+            "cookie_or_jwt" => Ok(AuthMode::CookieOrJwt),
+            other => anyhow::bail!(
+                "unsupported AERO_L2_AUTH_MODE={other:?} (expected one of: none, cookie, api_key, jwt, cookie_or_jwt)"
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SecurityConfig {
     /// Disable Origin enforcement (trusted local development only).
@@ -35,12 +50,19 @@ pub struct SecurityConfig {
     pub api_key: Option<String>,
     /// HMAC secret for verifying JWTs (only used for `auth_mode=jwt` / `cookie_or_jwt`).
     pub jwt_secret: Option<Vec<u8>>,
+    /// Optional defense-in-depth: require `aud` to match for JWT auth.
+    pub jwt_audience: Option<String>,
+    /// Optional defense-in-depth: require `iss` to match for JWT auth.
+    pub jwt_issuer: Option<String>,
     /// HMAC secret shared with `backend/aero-gateway` for verifying the `aero_session` cookie.
     /// (Only used for `auth_mode=cookie` / `cookie_or_jwt`.)
     pub session_secret: Option<Vec<u8>>,
     /// Process-wide concurrent tunnel cap (`0` disables).
     pub max_connections: usize,
-    /// Concurrent tunnel cap per authenticated gateway session (`0` disables).
+    /// Concurrent tunnel cap per authenticated session principal (`0` disables).
+    ///
+    /// Prefer configuring this via `AERO_L2_MAX_CONNECTIONS_PER_SESSION`. The legacy env var
+    /// `AERO_L2_MAX_TUNNELS_PER_SESSION` is also accepted for backwards compatibility.
     pub max_tunnels_per_session: usize,
     /// Whether to trust proxy-provided client IP headers (`Forwarded`/`X-Forwarded-For`) for
     /// per-IP limits and logging.
@@ -75,9 +97,11 @@ impl Default for SecurityConfig {
             auth_mode: AuthMode::None,
             api_key: None,
             jwt_secret: None,
+            jwt_audience: None,
+            jwt_issuer: None,
             session_secret: None,
             max_connections: 64,
-            max_tunnels_per_session: 1,
+            max_tunnels_per_session: 0,
             trust_proxy: false,
             max_connections_per_ip: 0,
             max_bytes_per_connection: 0,
@@ -137,14 +161,15 @@ impl SecurityConfig {
         let auth_mode = match auth_mode_raw.as_deref() {
             None => legacy_token
                 .as_ref()
-                .map(|_| AuthMode::ApiKey)
+                .map(|_| {
+                    tracing::warn!(
+                        env = "AERO_L2_TOKEN",
+                        "AERO_L2_TOKEN is deprecated; use AERO_L2_AUTH_MODE=api_key + AERO_L2_API_KEY instead"
+                    );
+                    AuthMode::ApiKey
+                })
                 .unwrap_or(AuthMode::None),
-            Some("none") => AuthMode::None,
-            Some("cookie") => AuthMode::Cookie,
-            Some("api_key") => AuthMode::ApiKey,
-            Some("jwt") => AuthMode::Jwt,
-            Some("cookie_or_jwt") => AuthMode::CookieOrJwt,
-            Some(other) => return Err(anyhow!("invalid AERO_L2_AUTH_MODE {other:?}")),
+            Some(raw) => AuthMode::parse(raw)?,
         };
 
         let api_key = if auth_mode == AuthMode::ApiKey {
@@ -154,7 +179,14 @@ impl SecurityConfig {
                     let trimmed = v.trim();
                     (!trimmed.is_empty()).then(|| trimmed.to_string())
                 })
-                .or(legacy_token);
+                .or_else(|| {
+                    legacy_token.inspect(|_| {
+                        tracing::warn!(
+                            env = "AERO_L2_TOKEN",
+                            "AERO_L2_TOKEN is deprecated; use AERO_L2_API_KEY instead"
+                        );
+                    })
+                });
             if key.is_none() {
                 return Err(anyhow!(
                     "AERO_L2_API_KEY (or legacy AERO_L2_TOKEN) is required for AERO_L2_AUTH_MODE=api_key"
@@ -179,6 +211,15 @@ impl SecurityConfig {
         } else {
             None
         };
+
+        let jwt_audience = std::env::var("AERO_L2_JWT_AUDIENCE")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let jwt_issuer = std::env::var("AERO_L2_JWT_ISSUER")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
 
         let session_secret = if matches!(auth_mode, AuthMode::Cookie | AuthMode::CookieOrJwt) {
             let secret = std::env::var("AERO_L2_SESSION_SECRET")
@@ -237,9 +278,14 @@ impl SecurityConfig {
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(Self::default().max_connections);
 
-        let max_tunnels_per_session = std::env::var("AERO_L2_MAX_TUNNELS_PER_SESSION")
+        let max_tunnels_per_session = std::env::var("AERO_L2_MAX_CONNECTIONS_PER_SESSION")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
+            .or_else(|| {
+                std::env::var("AERO_L2_MAX_TUNNELS_PER_SESSION")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+            })
             .unwrap_or(Self::default().max_tunnels_per_session);
 
         let trust_proxy = std::env::var("AERO_L2_TRUST_PROXY")
@@ -275,6 +321,8 @@ impl SecurityConfig {
             auth_mode,
             api_key,
             jwt_secret,
+            jwt_audience,
+            jwt_issuer,
             session_secret,
             max_connections,
             max_tunnels_per_session,

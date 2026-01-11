@@ -49,34 +49,40 @@ impl Drop for EnvVarGuard {
 
 struct CommonL2Env {
     _max_connections: EnvVarGuard,
+    _max_connections_per_session: EnvVarGuard,
     _max_bytes: EnvVarGuard,
     _max_fps: EnvVarGuard,
     _ping_interval: EnvVarGuard,
-    _token: EnvVarGuard,
     _auth_mode: EnvVarGuard,
-    _api_key: EnvVarGuard,
-    _jwt_secret: EnvVarGuard,
     _session_secret: EnvVarGuard,
     _session_secret_fallback: EnvVarGuard,
     _gateway_session_secret: EnvVarGuard,
+    _api_key: EnvVarGuard,
+    _jwt_secret: EnvVarGuard,
+    _jwt_audience: EnvVarGuard,
+    _jwt_issuer: EnvVarGuard,
+    _legacy_token: EnvVarGuard,
 }
 
 impl CommonL2Env {
     fn new() -> Self {
         Self {
             _max_connections: EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0"),
+            _max_connections_per_session: EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0"),
             _max_bytes: EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0"),
             _max_fps: EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0"),
             _ping_interval: EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0"),
             // Auth-related env vars are intentionally unset so tests don't accidentally depend on
             // a developer's shell environment.
-            _token: EnvVarGuard::unset("AERO_L2_TOKEN"),
             _auth_mode: EnvVarGuard::unset("AERO_L2_AUTH_MODE"),
-            _api_key: EnvVarGuard::unset("AERO_L2_API_KEY"),
-            _jwt_secret: EnvVarGuard::unset("AERO_L2_JWT_SECRET"),
             _session_secret: EnvVarGuard::unset("AERO_L2_SESSION_SECRET"),
             _session_secret_fallback: EnvVarGuard::unset("SESSION_SECRET"),
             _gateway_session_secret: EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET"),
+            _api_key: EnvVarGuard::unset("AERO_L2_API_KEY"),
+            _jwt_secret: EnvVarGuard::unset("AERO_L2_JWT_SECRET"),
+            _jwt_audience: EnvVarGuard::unset("AERO_L2_JWT_AUDIENCE"),
+            _jwt_issuer: EnvVarGuard::unset("AERO_L2_JWT_ISSUER"),
+            _legacy_token: EnvVarGuard::unset("AERO_L2_TOKEN"),
         }
     }
 }
@@ -124,6 +130,27 @@ fn make_session_token(secret: &str, sid: &str, exp_secs: u64) -> String {
     let sig = hmac::sign(&key, payload_b64.as_bytes());
     let sig_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.as_ref());
     format!("{payload_b64}.{sig_b64}")
+}
+
+fn now_unix_seconds() -> u64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(dur) => dur.as_secs(),
+        Err(err) => err.duration().as_secs(),
+    }
+}
+
+fn make_relay_jwt(secret: &str, sid: &str, exp: u64, origin: Option<&str>) -> String {
+    let now = now_unix_seconds();
+    let claims = RelayJwtClaims {
+        iat: now.saturating_sub(1),
+        exp,
+        sid: sid.to_string(),
+        origin: origin.map(|s| s.to_string()),
+        aud: None,
+        iss: None,
+        nbf: None,
+    };
+    mint_relay_jwt_hs256(&claims, secret.as_bytes())
 }
 
 #[tokio::test]
@@ -454,6 +481,18 @@ async fn token_required_query_and_subprotocol() {
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
 
+    // Query param apiKey (alternate key name used by some clients).
+    let ws_url = format!("ws://{addr}/l2?apiKey=sekrit");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
     // Subprotocol token.
     let ws_url = format!("ws://{addr}/l2");
     let mut req = ws_url.into_client_request().unwrap();
@@ -484,7 +523,7 @@ async fn token_required_query_and_subprotocol() {
 }
 
 #[tokio::test]
-async fn api_key_auth_mode_query_and_subprotocol() {
+async fn api_key_auth_mode_accepts_query_and_subprotocol_tokens() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
@@ -497,31 +536,19 @@ async fn api_key_auth_mode_query_and_subprotocol() {
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "api_key");
     let _api_key = EnvVarGuard::set("AERO_L2_API_KEY", "sekrit");
-    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
-    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
     let addr = proxy.local_addr();
 
-    // Missing credential rejected.
+    // Missing token should be rejected (Origin is not required in open mode).
     let req = base_ws_request(addr);
     let err = tokio_tungstenite::connect_async(req)
         .await
         .expect_err("expected api_key auth to reject missing token");
     assert_http_status(err, StatusCode::UNAUTHORIZED);
 
-    // apiKey query param accepted.
-    let ws_url = format!("ws://{addr}/l2?apiKey=sekrit");
-    let mut req = ws_url.into_client_request().unwrap();
-    req.headers_mut().insert(
-        "sec-websocket-protocol",
-        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
-    );
-    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
-    let _ = ws.send(Message::Close(None)).await;
-
-    // token query param accepted as a compatibility alias.
+    // Query param token.
     let ws_url = format!("ws://{addr}/l2?token=sekrit");
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
@@ -531,7 +558,17 @@ async fn api_key_auth_mode_query_and_subprotocol() {
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
 
-    // Subprotocol token accepted.
+    // Query param apiKey.
+    let ws_url = format!("ws://{addr}/l2?apiKey=sekrit");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Subprotocol token.
     let ws_url = format!("ws://{addr}/l2");
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
@@ -540,6 +577,18 @@ async fn api_key_auth_mode_query_and_subprotocol() {
     );
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
+
+    // Wrong token rejected.
+    let ws_url = format!("ws://{addr}/l2?token=wrong");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected wrong api key to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
 
     proxy.shutdown().await;
 }
@@ -577,7 +626,7 @@ async fn api_key_auth_mode_falls_back_to_legacy_token_env() {
 }
 
 #[tokio::test]
-async fn jwt_auth_mode_requires_valid_jwt() {
+async fn jwt_auth_accepts_query_and_subprotocol_tokens() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
@@ -590,15 +639,13 @@ async fn jwt_auth_mode_requires_valid_jwt() {
     // Ensure legacy token settings never "accidentally" enable api_key mode.
     let _token = EnvVarGuard::set("AERO_L2_TOKEN", "sekrit");
     let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "jwt");
-    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
     let _jwt_secret = EnvVarGuard::set("AERO_L2_JWT_SECRET", "jwt-sekrit");
-    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
     let addr = proxy.local_addr();
 
-    // Missing token rejected.
+    // Missing token should be rejected (Origin is not required in open mode).
     let req = base_ws_request(addr);
     let err = tokio_tungstenite::connect_async(req)
         .await
@@ -617,25 +664,11 @@ async fn jwt_auth_mode_requires_valid_jwt() {
         .expect_err("expected jwt auth to reject non-jwt token");
     assert_http_status(err, StatusCode::UNAUTHORIZED);
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let jwt = mint_relay_jwt_hs256(
-        &RelayJwtClaims {
-            iat: now,
-            exp: now.saturating_add(60),
-            sid: "sid".to_string(),
-            origin: None,
-            aud: None,
-            iss: None,
-            nbf: None,
-        },
-        b"jwt-sekrit",
-    );
+    let exp = now_unix_seconds().saturating_add(60);
+    let token = make_relay_jwt("jwt-sekrit", "sid-jwt", exp, None);
 
-    // Query token accepted.
-    let ws_url = format!("ws://{addr}/l2?token={jwt}");
+    // Query param token.
+    let ws_url = format!("ws://{addr}/l2?token={token}");
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
         "sec-websocket-protocol",
@@ -644,12 +677,147 @@ async fn jwt_auth_mode_requires_valid_jwt() {
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
 
-    // Subprotocol token accepted.
+    // Query param apiKey (alternate key name).
+    let ws_url = format!("ws://{addr}/l2?apiKey={token}");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Subprotocol token.
     let ws_url = format!("ws://{addr}/l2");
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
         "sec-websocket-protocol",
-        HeaderValue::from_str(&format!("aero-l2-tunnel-v1, aero-l2-token.{jwt}")).unwrap(),
+        HeaderValue::from_str(&format!("aero-l2-tunnel-v1, aero-l2-token.{token}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Wrong token rejected.
+    let ws_url = format!("ws://{addr}/l2?token=wrong");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected invalid jwt to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn jwt_origin_claim_is_enforced() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "jwt");
+    let _jwt_secret = EnvVarGuard::set("AERO_L2_JWT_SECRET", "sekrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let exp = now_unix_seconds().saturating_add(60);
+
+    // Origin claim matches Origin header => success.
+    let ok_token = make_relay_jwt("sekrit", "sid-jwt", exp, Some("https://any.test"));
+    let ws_url = format!("ws://{addr}/l2?token={ok_token}");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Origin claim mismatch => rejected with 401.
+    let bad_token = make_relay_jwt("sekrit", "sid-jwt", exp, Some("https://other.test"));
+    let ws_url = format!("ws://{addr}/l2?token={bad_token}");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected jwt origin claim mismatch to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn cookie_or_jwt_accepts_either_auth_mechanism() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie_or_jwt");
+    let _session_secret = EnvVarGuard::set("AERO_L2_SESSION_SECRET", "cookie-sekrit");
+    let _jwt_secret = EnvVarGuard::set("AERO_L2_JWT_SECRET", "jwt-sekrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    // Cookie auth succeeds.
+    let exp = now_unix_seconds().saturating_add(60);
+    let cookie_token = make_session_token("cookie-sekrit", "sid-cookie", exp);
+    let mut req = base_ws_request(addr);
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={cookie_token}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // JWT auth also succeeds.
+    let jwt_token = make_relay_jwt("jwt-sekrit", "sid-jwt", exp, None);
+    let ws_url = format!("ws://{addr}/l2?token={jwt_token}");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Invalid cookie but valid JWT still succeeds.
+    let expired = exp.saturating_sub(120);
+    let bad_cookie = make_session_token("cookie-sekrit", "sid-cookie", expired);
+    let ws_url = format!("ws://{addr}/l2?token={jwt_token}");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={bad_cookie}")).unwrap(),
     );
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
@@ -923,7 +1091,7 @@ async fn max_connections_enforced() {
 }
 
 #[tokio::test]
-async fn max_tunnels_per_session_enforced() {
+async fn max_connections_per_session_enforced() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
@@ -936,7 +1104,7 @@ async fn max_tunnels_per_session_enforced() {
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie");
     let _secret = EnvVarGuard::set("AERO_L2_SESSION_SECRET", "sekrit");
-    let _max_tunnels = EnvVarGuard::set("AERO_L2_MAX_TUNNELS_PER_SESSION", "1");
+    let _max_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "1");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();

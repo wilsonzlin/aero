@@ -37,14 +37,17 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     std::env::remove_var("ALLOWED_ORIGINS");
     std::env::remove_var("AERO_L2_AUTH_MODE");
     std::env::remove_var("SESSION_SECRET");
-    std::env::remove_var("AERO_L2_TOKEN");
     std::env::remove_var("AERO_L2_SESSION_SECRET");
     std::env::remove_var("AERO_L2_API_KEY");
     std::env::remove_var("AERO_L2_JWT_SECRET");
+    std::env::remove_var("AERO_L2_JWT_AUDIENCE");
+    std::env::remove_var("AERO_L2_JWT_ISSUER");
+    std::env::remove_var("AERO_L2_TOKEN");
     std::env::remove_var("AERO_L2_ALLOWED_ORIGINS_EXTRA");
     std::env::remove_var("AERO_L2_ALLOWED_HOSTS");
     std::env::remove_var("AERO_L2_TRUST_PROXY_HOST");
     std::env::set_var("AERO_L2_MAX_CONNECTIONS", "0");
+    std::env::set_var("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     std::env::set_var("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     std::env::set_var("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
     std::env::set_var("AERO_L2_PING_INTERVAL_MS", "0");
