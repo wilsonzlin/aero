@@ -414,9 +414,29 @@ static void SetError(Device* dev, HRESULT hr) {
   }
 }
 
+static Device* DeviceFromHandle(D3D11DDI_HDEVICE hDevice) {
+  return hDevice.pDrvPrivate ? FromHandle<D3D11DDI_HDEVICE, Device>(hDevice) : nullptr;
+}
+
 static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuDeviceContext>(hCtx);
   return ctx ? ctx->dev : nullptr;
+}
+
+static Device* DeviceFromHandle(D3D11DDI_HDEVICECONTEXT hCtx) {
+  return DeviceFromContext(hCtx);
+}
+
+template <typename T>
+static Device* DeviceFromHandle(T) {
+  return nullptr;
+}
+
+static void ReportNotImpl() {}
+
+template <typename Handle0, typename... Rest>
+static void ReportNotImpl(Handle0 handle0, Rest...) {
+  SetError(DeviceFromHandle(handle0), E_NOTIMPL);
 }
 
 static void EmitBindShadersLocked(Device* dev) {
@@ -456,15 +476,17 @@ struct DdiStub;
 
 template <typename Ret, typename... Args>
 struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
-  static Ret AEROGPU_APIENTRY Call(Args...) {
-    if constexpr (std::is_same_v<Ret, HRESULT>) {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    ((void)args, ...);
+    if constexpr (std::is_same_v<Ret, void>) {
+      ReportNotImpl(args...);
+      return;
+    } else if constexpr (std::is_same_v<Ret, HRESULT>) {
       return E_NOTIMPL;
     } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
       // Size queries must not return 0 to avoid runtimes treating the object as
       // unsupported and then dereferencing null private memory.
       return sizeof(void*);
-    } else if constexpr (std::is_same_v<Ret, void>) {
-      return;
     } else {
       return Ret{};
     }
@@ -798,6 +820,28 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnFinishCommandList) {
     STUB_FIELD(pfnFinishCommandList);
+  }
+
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnStagingResourceMap) {
+    STUB_FIELD(pfnStagingResourceMap);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnStagingResourceUnmap) {
+    STUB_FIELD(pfnStagingResourceUnmap);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferMapDiscard) {
+    STUB_FIELD(pfnDynamicIABufferMapDiscard);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferMapNoOverwrite) {
+    STUB_FIELD(pfnDynamicIABufferMapNoOverwrite);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferUnmap) {
+    STUB_FIELD(pfnDynamicIABufferUnmap);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicConstantBufferMapDiscard) {
+    STUB_FIELD(pfnDynamicConstantBufferMapDiscard);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicConstantBufferUnmap) {
+    STUB_FIELD(pfnDynamicConstantBufferUnmap);
   }
 
   STUB_FIELD(pfnMap);
