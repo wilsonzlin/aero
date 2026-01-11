@@ -33,7 +33,7 @@ pub struct BatchResult {
 pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Exception> {
     bus.sync(state);
     let ip = state.rip();
-    let fetch_addr = state.seg_base_reg(Register::CS).wrapping_add(ip);
+    let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
     let bytes = match bus.fetch(fetch_addr, 15) {
         Ok(v) => v,
         Err(e) => {

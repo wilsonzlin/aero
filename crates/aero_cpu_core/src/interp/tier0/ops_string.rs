@@ -320,7 +320,7 @@ fn src_segment(instr: &Instruction) -> Register {
 }
 
 fn linear(state: &CpuState, seg: Register, offset: u64) -> u64 {
-    state.seg_base_reg(seg).wrapping_add(offset)
+    state.apply_a20(state.seg_base_reg(seg).wrapping_add(offset))
 }
 
 fn read_mem<B: CpuBus>(bus: &mut B, addr: u64, size: usize) -> Result<u64, Exception> {

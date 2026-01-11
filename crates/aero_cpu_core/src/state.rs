@@ -1220,6 +1220,16 @@ impl CpuState {
         self.write_reg(reg, v);
     }
 
+    /// Applies real-mode A20 address masking to `addr` when enabled.
+    #[inline]
+    pub fn apply_a20(&self, addr: u64) -> u64 {
+        if !self.a20_enabled && matches!(self.mode, CpuMode::Real | CpuMode::Vm86) {
+            addr & 0xFFFFF
+        } else {
+            addr
+        }
+    }
+
     // ---- FXSAVE/FXRSTOR and MXCSR -----------------------------------------
 
     /// Implements `STMXCSR m32`.

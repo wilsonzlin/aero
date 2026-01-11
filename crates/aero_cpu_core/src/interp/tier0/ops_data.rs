@@ -448,9 +448,11 @@ pub(crate) fn calc_ea(
 
     let addr = (offset as u64) & mask_bits(addr_bits);
     if include_seg {
-        Ok(state
-            .seg_base_reg(instr.memory_segment())
-            .wrapping_add(addr))
+        Ok(state.apply_a20(
+            state
+                .seg_base_reg(instr.memory_segment())
+                .wrapping_add(addr),
+        ))
     } else {
         Ok(addr)
     }
@@ -474,6 +476,31 @@ mod tests {
 
         // next_ip + disp32
         assert_eq!(addr, next_ip.wrapping_add(0x12345678));
+    }
+
+    #[test]
+    fn calc_ea_applies_a20_mask_in_real_mode_when_disabled() {
+        // mov al, byte ptr [0x0010]
+        let bytes = [0xA0, 0x10, 0x00];
+        let ip = 0u64;
+        let decoded = aero_x86::decode(&bytes, ip, 16).expect("decode");
+        let next_ip = ip + decoded.len as u64;
+
+        let mut state = CpuState::new(CpuMode::Bit16);
+        // Model DS=0xFFFF (base=0xFFFF0) so 0xFFFF:0x0010 => 0x100000.
+        state.segments.ds.base = 0xFFFF0;
+
+        state.a20_enabled = true;
+        assert_eq!(
+            calc_ea(&state, &decoded.instr, next_ip, true).expect("calc_ea"),
+            0x10_0000
+        );
+
+        state.a20_enabled = false;
+        assert_eq!(
+            calc_ea(&state, &decoded.instr, next_ip, true).expect("calc_ea"),
+            0
+        );
     }
 }
 
