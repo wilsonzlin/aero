@@ -10,7 +10,7 @@ This directory contains performance/telemetry tooling used for CI regression tra
 - `npm run bench:update-baseline` — re-record `bench/baseline.json` (PF-009).
 - `npm run bench:gpu` — GPU benchmark suite (`bench/gpu_bench.ts`).
 - `npm run bench:storage` — storage macrobench scenario (`bench/runner.ts storage_io`).
-- `npm -w backend/aero-gateway run bench` — backend networking benchmarks (TCP proxy RTT/throughput, DoH QPS/cache).
+- `npm run bench:gateway` — backend networking benchmarks (TCP proxy RTT/throughput, DoH QPS/cache).
 
 Note: `bench/run` also has a **legacy macro mode** (triggered by `--output`/`--results-dir`), but it overlaps with
 `tools/perf` and is considered deprecated for contributor workflows (see “Legacy browser macrobench harness” below).
