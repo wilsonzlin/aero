@@ -304,7 +304,7 @@ func TestL2BackendWSToken_RejectsInvalidToken(t *testing.T) {
 
 func TestL2BackendToken_EnvAlias_AcceptsHTTPToken(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:        "secret",
+		EnvAPIKey:         "secret",
 		EnvL2BackendToken: "jwt_like.token-123",
 	}), nil)
 	if err != nil {
@@ -317,8 +317,8 @@ func TestL2BackendToken_EnvAlias_AcceptsHTTPToken(t *testing.T) {
 
 func TestL2BackendOrigin_EnvAlias_NormalizesAndValidates(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:         "secret",
-		EnvL2BackendWSURL: "ws://127.0.0.1:8090/l2",
+		EnvAPIKey:          "secret",
+		EnvL2BackendWSURL:  "ws://127.0.0.1:8090/l2",
 		EnvL2BackendOrigin: "HTTPS://Example.COM:443/",
 	}), nil)
 	if err != nil {
@@ -331,7 +331,7 @@ func TestL2BackendOrigin_EnvAlias_NormalizesAndValidates(t *testing.T) {
 
 func TestL2BackendOrigin_EnvAlias_RejectsPath(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:         "secret",
+		EnvAPIKey:          "secret",
 		EnvL2BackendOrigin: "https://example.com/path",
 	}), nil)
 	if err == nil {
@@ -341,7 +341,7 @@ func TestL2BackendOrigin_EnvAlias_RejectsPath(t *testing.T) {
 
 func TestL2BackendToken_EnvAlias_RejectsComma(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:        "secret",
+		EnvAPIKey:         "secret",
 		EnvL2BackendToken: "abc,def",
 	}), nil)
 	if err == nil {

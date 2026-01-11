@@ -35,7 +35,7 @@ const (
 	EnvPreferV2                  = "PREFER_V2"
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
-	EnvL2BackendWSURL           = "L2_BACKEND_WS_URL"
+	EnvL2BackendWSURL = "L2_BACKEND_WS_URL"
 	// Preferred env vars for backend auth/header hardening.
 	EnvL2BackendOrigin          = "L2_BACKEND_ORIGIN"
 	EnvL2BackendToken           = "L2_BACKEND_TOKEN"
