@@ -1405,11 +1405,14 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
-        let Some((desc, row_pitch_bytes, shadow_len)) = self
-            .resources
-            .textures
-            .get(&handle)
-            .map(|tex| (tex.desc, tex.row_pitch_bytes, tex.host_shadow.as_ref().map(|v| v.len())))
+        let Some((desc, row_pitch_bytes, shadow_len)) =
+            self.resources.textures.get(&handle).map(|tex| {
+                (
+                    tex.desc,
+                    tex.row_pitch_bytes,
+                    tex.host_shadow.as_ref().map(|v| v.len()),
+                )
+            })
         else {
             return Ok(());
         };

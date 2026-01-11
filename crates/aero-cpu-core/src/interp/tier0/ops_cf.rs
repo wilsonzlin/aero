@@ -6,9 +6,7 @@ use crate::linear_mem::{
     write_u64_wrapped,
 };
 use crate::mem::CpuBus;
-use crate::state::{
-    mask_bits, CpuMode, CpuState, FLAG_ZF, RFLAGS_IF, RFLAGS_IOPL_MASK,
-};
+use crate::state::{mask_bits, CpuMode, CpuState, FLAG_ZF, RFLAGS_IF, RFLAGS_IOPL_MASK};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
 
 pub fn handles_mnemonic(m: Mnemonic) -> bool {

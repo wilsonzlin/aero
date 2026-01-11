@@ -904,7 +904,10 @@ mod tests {
         bus.write(0x1001, 8, 0x1122_3344_5566_7788);
 
         let state = mmio_state.lock().unwrap();
-        assert_eq!(&state.mem[1..9], &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]);
+        assert_eq!(
+            &state.mem[1..9],
+            &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
+        );
     }
 }
 
@@ -1031,20 +1034,20 @@ impl Bus {
                     if (offset % size as u64) != 0 {
                         // Fall through to byte-wise reads below.
                     } else {
-                    return match &mut region.kind {
-                        RegionKind::Mmio(handler) => {
-                            handler.read(offset, size) & mask_for_size(size)
-                        }
-                        RegionKind::Rom(bytes) => {
-                            let base = offset as usize;
-                            let mut out = 0u64;
-                            for i in 0..size {
-                                let byte = bytes.get(base + i).copied().unwrap_or(0xff);
-                                out |= (byte as u64) << (i * 8);
+                        return match &mut region.kind {
+                            RegionKind::Mmio(handler) => {
+                                handler.read(offset, size) & mask_for_size(size)
                             }
-                            out
-                        }
-                    };
+                            RegionKind::Rom(bytes) => {
+                                let base = offset as usize;
+                                let mut out = 0u64;
+                                for i in 0..size {
+                                    let byte = bytes.get(base + i).copied().unwrap_or(0xff);
+                                    out |= (byte as u64) << (i * 8);
+                                }
+                                out
+                            }
+                        };
                     }
                 }
             }
@@ -1076,13 +1079,13 @@ impl Bus {
                     if (offset % size as u64) != 0 {
                         // Fall through to byte-wise writes below.
                     } else {
-                    match &mut region.kind {
-                        RegionKind::Rom(_) => {}
-                        RegionKind::Mmio(handler) => {
-                            handler.write(offset, size, value & mask_for_size(size));
+                        match &mut region.kind {
+                            RegionKind::Rom(_) => {}
+                            RegionKind::Mmio(handler) => {
+                                handler.write(offset, size, value & mask_for_size(size));
+                            }
                         }
-                    }
-                    return;
+                        return;
                     }
                 }
             }

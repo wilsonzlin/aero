@@ -148,17 +148,10 @@ fn aerogpu_cmd_preserves_upload_copy_ordering() {
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
-        let got_dst1 = exec
-            .read_texture_rgba8(DST1)
-            .await
-            .expect("read back dst1");
-        let got_dst2 = exec
-            .read_texture_rgba8(DST2)
-            .await
-            .expect("read back dst2");
+        let got_dst1 = exec.read_texture_rgba8(DST1).await.expect("read back dst1");
+        let got_dst2 = exec.read_texture_rgba8(DST2).await.expect("read back dst2");
 
         assert_eq!(got_dst1, pattern_a, "dst1 should match first upload");
         assert_eq!(got_dst2, pattern_b, "dst2 should match second upload");
     });
 }
-
