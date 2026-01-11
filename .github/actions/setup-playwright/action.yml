@@ -128,18 +128,31 @@ runs:
            lockfile = resolvedLockfile;
            if (path.isAbsolute(lockfile)) lockfile = path.relative(workspace, lockfile);
            lockfile = lockfile.replace(/\\/g, '/');
-         } else {
-           const candidates = [
-             path.join(workingDirAbs, 'package-lock.json'),
-             path.join(workingDirAbs, 'npm-shrinkwrap.json'),
-           ];
-          for (const candidate of candidates) {
-            if (fs.existsSync(candidate)) {
-              lockfile = path.relative(workspace, candidate).replace(/\\/g, '/');
-              break;
+          } else {
+            // Walk up from the working directory to find the nearest npm lockfile.
+            // This allows monorepo/workspace layouts where only the repo root has
+            // package-lock.json (and multi-checkout workflows where checkouts live
+            // under `head/` + `base/`).
+            const workspaceAbs = path.resolve(workspace);
+            const candidates = ['package-lock.json', 'npm-shrinkwrap.json'];
+            let cursor = workingDirAbs;
+            while (true) {
+              for (const name of candidates) {
+                const candidate = path.join(cursor, name);
+                if (fs.existsSync(candidate)) {
+                  lockfile = path.relative(workspaceAbs, candidate).replace(/\\/g, '/');
+                  break;
+                }
+              }
+              if (lockfile) break;
+              if (path.resolve(cursor) === workspaceAbs) break;
+              const parent = path.dirname(cursor);
+              if (parent === cursor) break;
+              const rel = path.relative(workspaceAbs, parent);
+              if (rel.startsWith('..') || path.isAbsolute(rel)) break;
+              cursor = parent;
             }
           }
-        }
         
         let cacheKeyFile = lockfile;
         if (!cacheKeyFile) {
