@@ -35,7 +35,8 @@ fn canonical_ids_and_class_codes() {
 
     assert_eq!(VIRTIO_NET.class.as_u32(), 0x020000);
     assert_eq!(VIRTIO_BLK.class.as_u32(), 0x010000);
-    assert_eq!(VIRTIO_INPUT.class.as_u32(), 0x098000);
+    assert_eq!(VIRTIO_INPUT_KEYBOARD.class.as_u32(), 0x098000);
+    assert_eq!(VIRTIO_INPUT_MOUSE.class.as_u32(), 0x098000);
     assert_eq!(VIRTIO_SND.class.as_u32(), 0x040100);
 }
 

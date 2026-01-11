@@ -365,21 +365,6 @@ pub const VIRTIO_BLK: PciDeviceProfile = PciDeviceProfile {
     capabilities: &VIRTIO_CAPS,
 };
 
-pub const VIRTIO_INPUT: PciDeviceProfile = PciDeviceProfile {
-    name: "virtio-input (deprecated: use VIRTIO_INPUT_KEYBOARD/VIRTIO_INPUT_MOUSE)",
-    bdf: PciBdf::new(0, 10, 0),
-    vendor_id: PCI_VENDOR_ID_VIRTIO,
-    device_id: PCI_DEVICE_ID_VIRTIO_INPUT_MODERN,
-    subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
-    subsystem_id: 0x0010,
-    revision_id: 1,
-    class: PciClassCode::new(0x09, 0x80, 0x00),
-    header_type: 0x00,
-    interrupt_pin: Some(PciInterruptPin::IntA),
-    bars: &VIRTIO_BARS,
-    capabilities: &VIRTIO_CAPS,
-};
-
 pub const VIRTIO_INPUT_KEYBOARD: PciDeviceProfile = PciDeviceProfile {
     name: "virtio-input-keyboard",
     bdf: PciBdf::new(0, 10, 0),
@@ -389,7 +374,22 @@ pub const VIRTIO_INPUT_KEYBOARD: PciDeviceProfile = PciDeviceProfile {
     subsystem_id: 0x0010,
     revision_id: 1,
     class: PciClassCode::new(0x09, 0x80, 0x00),
-    header_type: 0x00,
+    header_type: 0x80,
+    interrupt_pin: Some(PciInterruptPin::IntA),
+    bars: &VIRTIO_BARS,
+    capabilities: &VIRTIO_CAPS,
+};
+
+pub const VIRTIO_INPUT: PciDeviceProfile = PciDeviceProfile {
+    name: "virtio-input (deprecated: use VIRTIO_INPUT_KEYBOARD/VIRTIO_INPUT_MOUSE)",
+    bdf: PciBdf::new(0, 10, 0),
+    vendor_id: PCI_VENDOR_ID_VIRTIO,
+    device_id: PCI_DEVICE_ID_VIRTIO_INPUT_MODERN,
+    subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
+    subsystem_id: 0x0010,
+    revision_id: 1,
+    class: PciClassCode::new(0x09, 0x80, 0x00),
+    header_type: 0x80,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &VIRTIO_BARS,
     capabilities: &VIRTIO_CAPS,
@@ -397,7 +397,7 @@ pub const VIRTIO_INPUT_KEYBOARD: PciDeviceProfile = PciDeviceProfile {
 
 pub const VIRTIO_INPUT_MOUSE: PciDeviceProfile = PciDeviceProfile {
     name: "virtio-input-mouse",
-    bdf: PciBdf::new(0, 12, 0),
+    bdf: PciBdf::new(0, 10, 1),
     vendor_id: PCI_VENDOR_ID_VIRTIO,
     device_id: PCI_DEVICE_ID_VIRTIO_INPUT_MODERN,
     subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,

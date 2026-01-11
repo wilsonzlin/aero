@@ -8,6 +8,11 @@ on:
       - "README*"
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
+      - "crates/devices/src/pci/profile.rs"
+      - "crates/aero-virtio/src/devices/blk.rs"
+      - "crates/aero-virtio/src/devices/net.rs"
+      - "crates/aero-virtio/src/devices/input.rs"
+      - "crates/aero-virtio/src/devices/snd.rs"
       - ".github/workflows/docs.yml"
   push:
     branches: ["main"]
@@ -17,6 +22,11 @@ on:
       - "README*"
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
+      - "crates/devices/src/pci/profile.rs"
+      - "crates/aero-virtio/src/devices/blk.rs"
+      - "crates/aero-virtio/src/devices/net.rs"
+      - "crates/aero-virtio/src/devices/input.rs"
+      - "crates/aero-virtio/src/devices/snd.rs"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
