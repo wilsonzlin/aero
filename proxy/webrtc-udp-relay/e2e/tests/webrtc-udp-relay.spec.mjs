@@ -11,6 +11,62 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+  });
+}
+
+function waitForChildClose(child) {
+  if (child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onDone = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      child.off("exit", onDone);
+      child.off("close", onDone);
+      child.off("error", onDone);
+    };
+    child.once("exit", onDone);
+    child.once("close", onDone);
+    child.once("error", onDone);
+
+    // Handle races where the process exits between checking exitCode and
+    // registering event listeners.
+    if (child.exitCode !== null) onDone();
+  });
+}
+
+async function stopChildProcess(child, { timeoutMs = 5_000 } = {}) {
+  if (!child || child.exitCode !== null) return;
+
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // ignore
+  }
+
+  try {
+    await Promise.race([waitForChildClose(child), sleep(timeoutMs).then(() => null)]);
+  } catch {
+    // ignore
+  }
+
+  if (child.exitCode !== null) return;
+
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // ignore
+  }
+
+  // Best-effort: don't hang teardown forever.
+  await Promise.race([waitForChildClose(child), sleep(2_000)]);
+}
+
 async function startUdpEchoServer(socketType, host) {
   const socket = dgram.createSocket(socketType);
   socket.on("message", (msg, rinfo) => {
@@ -76,6 +132,7 @@ async function spawnGoReadyServer({ name, pkg, env }) {
 
   const port = await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`${name} did not start`)), 10_000);
+    timeout.unref?.();
     let buffer = "";
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString("utf8");
@@ -92,7 +149,13 @@ async function spawnGoReadyServer({ name, pkg, env }) {
       }
     });
 
-    child.on("exit", (code) => {
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      reject(err);
+    });
+
+    child.on("close", (code) => {
       clearTimeout(timeout);
       fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       reject(new Error(`${name} exited early (${code ?? "unknown"})`));
@@ -102,10 +165,7 @@ async function spawnGoReadyServer({ name, pkg, env }) {
   return {
     port,
     kill: async () => {
-      if (child.exitCode === null) {
-        child.kill("SIGTERM");
-        await new Promise((resolve) => child.once("exit", resolve));
-      }
+      await stopChildProcess(child);
       await fs.rm(tmpDir, { recursive: true, force: true });
     },
   };
@@ -159,7 +219,7 @@ async function waitForRelayReady(port, child, timeoutMs) {
       throw new Error("relay did not become ready");
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await sleep(100);
   }
 }
 
@@ -242,18 +302,12 @@ async function spawnRelayServer(extraEnv = {}) {
       return {
         port,
         kill: async () => {
-          if (child.exitCode === null) {
-            child.kill("SIGTERM");
-            await new Promise((resolve) => child.once("exit", resolve));
-          }
+          await stopChildProcess(child);
         },
       };
     } catch (err) {
       lastErr = err;
-      if (child.exitCode === null) {
-        child.kill("SIGTERM");
-        await new Promise((resolve) => child.once("exit", resolve));
-      }
+      await stopChildProcess(child);
     }
   }
 
