@@ -5,7 +5,7 @@
 #include "backend.h"
 #include "trace.h"
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-#include "aeroviosnd.h"
+#include "aero_virtio_snd_ioport.h"
 #else
 #include "virtiosnd.h"
 #endif

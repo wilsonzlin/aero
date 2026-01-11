@@ -7,7 +7,7 @@
 #include "portcls_compat.h"
 
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-#include "aeroviosnd.h"
+#include "aero_virtio_snd_ioport.h"
 typedef PAEROVIOSND_DEVICE_EXTENSION VIRTIOSND_PORTCLS_DX;
 #else
 #include "virtiosnd.h"

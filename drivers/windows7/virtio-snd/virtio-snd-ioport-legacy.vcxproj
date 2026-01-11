@@ -121,7 +121,7 @@
     <ClCompile Include="src\adapter_context.c" />
     <ClCompile Include="src\backend_null.c" />
     <ClCompile Include="src\backend_virtio_legacy.c" />
-    <ClCompile Include="src\aeroviosnd_hw.c" />
+    <ClCompile Include="src\aero_virtio_snd_ioport_hw.c" />
     <ClCompile Include="src\topology.c" />
     <ClCompile Include="src\wavert.c" />
     <ClCompile Include="src\virtiosnd_dma.c" />
@@ -142,4 +142,3 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>
-

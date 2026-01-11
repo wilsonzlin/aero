@@ -5,7 +5,7 @@
 #include "adapter_context.h"
 #include "backend.h"
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-#include "aeroviosnd_backend.h"
+#include "aero_virtio_snd_ioport_backend.h"
 #endif
 #include "portcls_compat.h"
 #include "trace.h"

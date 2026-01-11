@@ -7,7 +7,7 @@
 #include <ntddk.h>
 
 #include "trace.h"
-#include "aeroviosnd.h"
+#include "aero_virtio_snd_ioport.h"
 
 #define VIRTIO_SND_R_PCM_INFO 0x0100u
 #define VIRTIO_SND_R_PCM_SET_PARAMS 0x0101u

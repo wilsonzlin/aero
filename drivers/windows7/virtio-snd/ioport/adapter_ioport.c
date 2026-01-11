@@ -5,7 +5,7 @@
 #include "portcls_compat.h"
 
 #include "adapter_context.h"
-#include "aeroviosnd.h"
+#include "aero_virtio_snd_ioport.h"
 #include "topology.h"
 #include "trace.h"
 #include "wavert.h"
@@ -334,4 +334,3 @@ Exit:
 
     return status;
 }
-

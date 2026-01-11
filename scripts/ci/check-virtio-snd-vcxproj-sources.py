@@ -57,7 +57,7 @@ REQUIRED_REPO_SOURCES = {
 
 # These are project-relative paths (relative to drivers/windows7/virtio-snd/).
 FORBIDDEN_PROJECT_SOURCES = {
-    "src/aeroviosnd_hw.c",
+    "src/aero_virtio_snd_ioport_hw.c",
     "src/backend_virtio_legacy.c",
 }
 

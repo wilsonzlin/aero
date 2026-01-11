@@ -6,8 +6,8 @@
 
 #include <ntddk.h>
 
-#include "aeroviosnd.h"
-#include "aeroviosnd_backend.h"
+#include "aero_virtio_snd_ioport.h"
+#include "aero_virtio_snd_ioport_backend.h"
 #include "trace.h"
 
 typedef struct _AEROVIOSND_BACKEND_LEGACY {

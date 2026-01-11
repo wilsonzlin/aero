@@ -51,7 +51,7 @@ feature flags and is not suitable for contract v1 devices (`VIRTIO_F_VERSION_1` 
 ### Legacy virtio-pci I/O-port bring-up (not shipped)
 
 The repository also contains an older legacy/transitional virtio-pci I/O-port path (for example
-`src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). It is
+`src/backend_virtio_legacy.c`, `src/aero_virtio_snd_ioport_hw.c`, and `drivers/windows7/virtio/common`). It is
 kept for historical bring-up and ad-hoc compatibility testing only.
 
 CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.

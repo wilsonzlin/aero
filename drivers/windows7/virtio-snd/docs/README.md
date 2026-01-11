@@ -195,7 +195,7 @@ Notes:
 ## Legacy / transitional virtio-pci paths (opt-in bring-up)
 
 The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example
-`src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`).
+`src/backend_virtio_legacy.c`, `src/aero_virtio_snd_ioport_hw.c`, and `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`).
 That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only
 negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the default
 contract INF (`inf/aero_virtio_snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for
