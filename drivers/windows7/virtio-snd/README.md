@@ -56,10 +56,21 @@ Build outputs are staged under:
 - `out/drivers/windows7/virtio-snd/x86/virtiosnd.sys`
 - `out/drivers/windows7/virtio-snd/x64/virtiosnd.sys`
 
+Optional (QEMU/transitional) build outputs:
+
+- `out/drivers/windows7/virtio-snd/x86/virtiosnd_legacy.sys`
+- `out/drivers/windows7/virtio-snd/x64/virtiosnd_legacy.sys`
+
 To stage an installable/signable package, copy the appropriate `virtiosnd.sys` into:
 
 ```text
 drivers/windows7/virtio-snd/inf/virtiosnd.sys
+```
+
+For the optional QEMU/transitional package, stage the legacy binary instead:
+
+```text
+drivers/windows7/virtio-snd/inf/virtiosnd_legacy.sys
 ```
 
 ### Legacy/deprecated: WDK 7.1 `build.exe`
@@ -82,10 +93,20 @@ Instead of copying manually, you can use:
 powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
 ```
 
+For the optional transitional/QEMU package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64 -Variant legacy
+```
+
 To build a signed `release/` package in one step (stages SYS → Inf2Cat → sign → package):
 
 ```powershell
+# Contract v1 (default):
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <build-output-root>
+
+# Transitional/QEMU:
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -Variant legacy -InputDir <build-output-root>
 ```
 
 Add `-Zip` to also create deterministic `release/out/*.zip` bundles.
@@ -161,6 +182,11 @@ inf\aero-virtio-snd.cat
 
 `virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present (rename from `virtio-snd.inf.disabled` to enable the legacy alias).
 
+To generate the optional QEMU/transitional catalog, run:
+```cmd
+.\scripts\make-cat.cmd legacy
+```
+
 ## Signing (SYS + CAT)
 
 From `drivers/windows7/virtio-snd/`:
@@ -175,6 +201,8 @@ This signs:
 
 - `inf\virtiosnd.sys`
 - `inf\aero-virtio-snd.cat`
+- `inf\virtiosnd_legacy.sys` (if present)
+- `inf\aero-virtio-snd-legacy.cat` (if present)
 - `inf\virtio-snd.cat` (if `inf\virtio-snd.inf` is present)
 
 ## Installation (Device Manager → “Have Disk…”)
@@ -184,6 +212,7 @@ This signs:
 3. **Let me pick** → **Have Disk…**
 4. Browse to `drivers/windows7/virtio-snd/inf/`
 5. Select `aero-virtio-snd.inf` (recommended for Aero contract v1)
+   - For stock QEMU (transitional `DEV_1018`), select `aero-virtio-snd-legacy.inf`
 
 `virtio-snd.inf` is a legacy filename alias kept for compatibility with older workflows/tools.
 It installs the same driver/service and matches the same contract-v1 HWIDs as `aero-virtio-snd.inf`,

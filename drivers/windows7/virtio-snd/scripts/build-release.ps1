@@ -13,7 +13,8 @@
 
   It can run the workflow for a single architecture or for both architectures
   sequentially (x86 then amd64). This matters because the binary name is the same
-  (`virtiosnd.sys`) on both architectures, and `Inf2Cat` hashes the staged SYS.
+  (`virtiosnd.sys` / `virtiosnd_legacy.sys`) on both architectures, and `Inf2Cat`
+  hashes the staged SYS.
 
   Run this from a WDK Developer Command Prompt so `Inf2Cat.exe` and `signtool.exe`
   are in `PATH`.
@@ -23,6 +24,9 @@
 param(
   [ValidateSet('x86', 'amd64', 'both')]
   [string]$Arch = 'both',
+
+  [ValidateSet('contract', 'legacy')]
+  [string]$Variant = 'contract',
 
   [ValidateNotNullOrEmpty()]
   [string]$InputDir = (Join-Path $PSScriptRoot '..'),
@@ -85,19 +89,29 @@ $env:PFX_PASSWORD = $PfxPassword
 try {
   foreach ($a in $archList) {
     Invoke-CheckedCommand ("stage-built-sys.ps1 ({0})" -f $a) {
-      & $stageSys -Arch $a -InputDir $InputDir
+      & $stageSys -Arch $a -Variant $Variant -InputDir $InputDir
     }
 
     Invoke-CheckedCommand "make-cat.cmd" {
-      & $makeCat
+      if ($Variant -eq 'legacy') {
+        & $makeCat legacy
+      }
+      else {
+        & $makeCat
+      }
     }
 
     Invoke-CheckedCommand "sign-driver.cmd" {
-      & $signDriver
+      if ($Variant -eq 'legacy') {
+        & $signDriver legacy
+      }
+      else {
+        & $signDriver
+      }
     }
 
     Invoke-CheckedCommand ("package-release.ps1 ({0})" -f $a) {
-      & $packageRelease -Arch $a -Zip:$Zip
+      & $packageRelease -Arch $a -Variant $Variant -Zip:$Zip
     }
   }
 }
@@ -107,8 +121,9 @@ finally {
 
 Write-Host ""
 Write-Host "Done. Output staged under:"
+$folderName = if ($Variant -eq 'legacy') { 'virtio-snd-legacy' } else { 'virtio-snd' }
 foreach ($a in $archList) {
-  Write-Host ("  release\\{0}\\virtio-snd\\" -f $a)
+  Write-Host ("  release\\{0}\\{1}\\" -f $a, $folderName)
 }
 if ($Zip) {
   Write-Host "  release\\out\\"

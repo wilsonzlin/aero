@@ -80,14 +80,32 @@ The current shipped PortCls miniports expose **stream 0 only** as a Windows rend
 
 Because the INF requires `DEV_1059&REV_01`, stock QEMU defaults often will **not** bind without additional configuration.
 
-Supported QEMU configuration (only if your QEMU build exposes these properties):
+To test the strict Aero contract v1 identity under QEMU (only if your QEMU build exposes these properties):
 
 ```bash
 -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
 ```
 
-If your QEMU build cannot set the PCI revision to `0x01`, the stock INF will not bind.
+If your QEMU build cannot set the PCI revision to `0x01`, the stock INF will not bind. In that case, use the
+opt-in transitional package instead:
+
+- `inf/aero-virtio-snd-legacy.inf`
+- `virtiosnd_legacy.sys` (MSBuild `Configuration=Legacy`)
+
 See the manual QEMU test plan for details: [`../tests/qemu/README.md`](../tests/qemu/README.md).
+
+## Build variants (Aero contract vs QEMU)
+
+The driver sources support two *packaging* variants so that QEMU testing can be enabled without
+weakening the default Aero contract-v1 INF:
+
+| Variant | MSBuild config | SYS | INF | Binds to |
+| --- | --- | --- | --- | --- |
+| **Aero contract v1 (default)** | `Release` | `virtiosnd.sys` | `inf/aero-virtio-snd.inf` | `PCI\\VEN_1AF4&DEV_1059&REV_01` |
+| **QEMU transitional (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | `PCI\\VEN_1AF4&DEV_1018` |
+
+The two INFs intentionally have **no overlapping hardware IDs**, so they do not compete for the
+same device.
 
 ## Architecture (what’s built by default)
 
@@ -148,7 +166,7 @@ Notes:
 
 ## Legacy / transitional virtio-pci path (not shipped)
 
-The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the shipped INF does not bind to transitional IDs.
+The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the default contract INF (`inf/aero-virtio-snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for QEMU defaults).
 
 CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj.py`.
 
@@ -382,8 +400,12 @@ Configuration notes:
 
 Build outputs are staged under:
 
-- `out/drivers/windows7/virtio-snd/x86/virtiosnd.sys`
-- `out/drivers/windows7/virtio-snd/x64/virtiosnd.sys`
+- `Release` (default):
+  - `out/drivers/windows7/virtio-snd/x86/virtiosnd.sys`
+  - `out/drivers/windows7/virtio-snd/x64/virtiosnd.sys`
+- `Legacy` (optional QEMU/transitional package):
+  - `out/drivers/windows7/virtio-snd/x86/virtiosnd_legacy.sys`
+  - `out/drivers/windows7/virtio-snd/x64/virtiosnd_legacy.sys`
 
 ### Legacy: WDK 7600 / WDK 7.1 `build.exe` (deprecated)
 
@@ -420,10 +442,21 @@ Instead of copying manually, you can use:
 powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
 ```
 
+For the optional transitional/QEMU package:
+
+```powershell
+# Stage into inf\virtiosnd_legacy.sys
+powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64 -Variant legacy
+```
+
 To build a signed `release/` package in one step (stages SYS → Inf2Cat → sign → package):
 
 ```powershell
+# Contract v1 (default):
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <build-output-root>
+
+# Transitional/QEMU:
+powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -Variant legacy -InputDir <build-output-root>
 ```
 
 Add `-Zip` to also create deterministic `release/out/*.zip` bundles.
@@ -470,7 +503,15 @@ From `drivers/windows7/virtio-snd/`:
 .\scripts\make-cat.cmd
 ```
 
-Expected output:
+This generates catalogs for the **contract v1** package.
+
+To generate the optional transitional/QEMU catalog, run:
+
+```cmd
+.\scripts\make-cat.cmd legacy
+```
+
+Expected output (`make-cat.cmd`):
 
 ```text
 inf\aero-virtio-snd.cat
@@ -488,11 +529,17 @@ From `drivers/windows7/virtio-snd/`:
 .\scripts\sign-driver.cmd
 ```
 
-This signs:
+This signs (contract v1):
 
 - `inf\virtiosnd.sys`
 - `inf\aero-virtio-snd.cat`
 - `inf\virtio-snd.cat` (if `inf\virtio-snd.inf` is present)
+
+To sign the transitional/QEMU package, run:
+
+```cmd
+.\scripts\sign-driver.cmd legacy
+```
 
 ## Windows 7 guest setup
 
@@ -527,6 +574,13 @@ After building + signing, stage a per-arch driver folder under `release/`:
 powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
 ```
 
+For the transitional/QEMU package:
+
+```powershell
+# Auto-detect arch from inf\virtiosnd_legacy.sys and stage into release\<arch>\virtio-snd-legacy\
+powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Variant legacy
+```
+
 To force a specific architecture label (and validate the SYS matches it):
 
 ```powershell
@@ -541,16 +595,24 @@ guest-tools\drivers\<arch>\virtio-snd\
 
 ## Installing (development/testing)
 
-1. Ensure the package directory contains:
-   - `aero-virtio-snd.inf`
-   - `virtiosnd.sys`
-   - `aero-virtio-snd.cat` (signed)
-   - (Optional) `virtio-snd.inf` + `virtio-snd.cat` (signed; rename `virtio-snd.inf.disabled` to enable)
+1. Ensure the package directory contains the files for the variant you want to install:
+   
+   - Contract v1 (default):
+     - `aero-virtio-snd.inf`
+     - `virtiosnd.sys`
+     - `aero-virtio-snd.cat` (signed)
+   - Transitional/QEMU (optional):
+     - `aero-virtio-snd-legacy.inf`
+     - `virtiosnd_legacy.sys`
+     - `aero-virtio-snd-legacy.cat` (signed)
+   - Optional legacy filename alias:
+     - `virtio-snd.inf` + `virtio-snd.cat` (signed; rename `virtio-snd.inf.disabled` to enable)
 2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
 
 INF selection note:
 
 - `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `DEV_1059&REV_01` and installs service `aeroviosnd`).
+- `aero-virtio-snd-legacy.inf` is an opt-in transitional/QEMU package (matches `DEV_1018` with no revision gate and installs service `aeroviosnd_legacy`).
 - `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows.
   It installs the same driver/service as `aero-virtio-snd.inf` and matches the same contract-v1 HWID,
   but uses `CatalogFile = virtio-snd.cat`.

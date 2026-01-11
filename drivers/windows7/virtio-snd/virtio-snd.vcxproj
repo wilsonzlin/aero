@@ -10,6 +10,14 @@
       <Configuration>Release</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Legacy|Win32">
+      <Configuration>Legacy</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Legacy|x64">
+      <Configuration>Legacy</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
   </ItemGroup>
 
   <PropertyGroup Label="Globals">
@@ -39,6 +47,24 @@
     <SignMode>Off</SignMode>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Legacy|Win32'" Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>WDM</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <SignMode>Off</SignMode>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Legacy|x64'" Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>WDM</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <SignMode>Off</SignMode>
+  </PropertyGroup>
+
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
 
   <PropertyGroup Label="UserMacros" />
@@ -47,6 +73,11 @@
     <!-- Match the binary name referenced by inf/aero-virtio-snd.inf. -->
     <TargetName>virtiosnd</TargetName>
     <TargetExt>.sys</TargetExt>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='Legacy'">
+    <!-- Transitional/QEMU build: use a distinct SYS name so it can be packaged independently. -->
+    <TargetName>virtiosnd_legacy</TargetName>
   </PropertyGroup>
 
   <ItemDefinitionGroup>
@@ -79,6 +110,11 @@
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
       <PreprocessorDefinitions>DBG=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Legacy'">
+    <ClCompile>
+      <PreprocessorDefinitions>DBG=0;AERO_VIRTIO_SND_LEGACY=1;AERO_VIRTIO_PCI_ENFORCE_REVISION_ID=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
 
@@ -131,6 +167,7 @@
 
   <ItemGroup>
     <None Include="inf\aero-virtio-snd.inf" />
+    <None Include="inf\aero-virtio-snd-legacy.inf" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

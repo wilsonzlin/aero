@@ -8,6 +8,10 @@
 
     release\<arch>\virtio-snd\
 
+  For the optional transitional/QEMU package, pass `-Variant legacy` to stage into:
+
+    release\<arch>\virtio-snd-legacy\
+
   This output can be copied directly into Guest Tools (guest-tools\drivers\<arch>\virtio-snd\)
   or used via Device Manager "Have Disk...".
 
@@ -19,6 +23,9 @@
 param(
   [ValidateSet('auto', 'x86', 'amd64')]
   [string]$Arch = 'auto',
+
+  [ValidateSet('contract', 'legacy')]
+  [string]$Variant = 'contract',
 
   [ValidateNotNullOrEmpty()]
   [string]$ReleaseRoot = (Join-Path $PSScriptRoot "..\\release"),
@@ -32,8 +39,8 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:DriverId = 'aero-virtio-snd'
-$script:SysFileName = 'virtiosnd.sys'
+$script:DriverId = if ($Variant -eq 'legacy') { 'aero-virtio-snd-legacy' } else { 'aero-virtio-snd' }
+$script:SysFileName = if ($Variant -eq 'legacy') { 'virtiosnd_legacy.sys' } else { 'virtiosnd.sys' }
 $script:TargetOs = 'win7'
 $script:FixedZipTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
 
@@ -175,37 +182,35 @@ if (-not (Test-Path -LiteralPath $infDir -PathType Container)) {
   throw "INF directory not found: $infDir"
 }
 
-$infFiles = @(
-  Get-ChildItem -LiteralPath $infDir -File -Filter '*.inf' | Sort-Object -Property Name
-)
-if ($infFiles.Count -eq 0) {
-  throw "INF not found under: $infDir"
+$infFiles = @()
+switch ($Variant) {
+  'legacy' {
+    $preferred = @(
+      (Join-Path $infDir 'aero-virtio-snd-legacy.inf')
+    )
+  }
+  default {
+    $preferred = @(
+      (Join-Path $infDir 'aero-virtio-snd.inf'),
+      (Join-Path $infDir 'virtio-snd.inf')
+    )
+  }
 }
 
-$preferred = @(
-  (Join-Path $infDir 'aero-virtio-snd.inf'),
-  (Join-Path $infDir 'virtio-snd.inf')
-)
-$infPath = $null
 foreach ($p in $preferred) {
   if (Test-Path -LiteralPath $p -PathType Leaf) {
-    $infPath = $p
-    break
+    $infFiles += (Get-Item -LiteralPath $p)
   }
 }
-if ($null -eq $infPath) {
-  if ($infFiles.Count -eq 1) {
-    $infPath = $infFiles[0].FullName
-  }
-  else {
-    $list = $infFiles | ForEach-Object { "  - $($_.Name)" } | Out-String
-    throw ("Multiple INF files found under {0}. Expected aero-virtio-snd.inf (preferred) or virtio-snd.inf.`r`nFound:`r`n{1}" -f $infDir, $list.TrimEnd())
-  }
+if ($infFiles.Count -eq 0) {
+  throw "INF not found for variant '$Variant' under: $infDir"
 }
+
+$infPath = $infFiles[0].FullName
 
 $sysPath = Join-Path $infDir $script:SysFileName
 if (-not (Test-Path -LiteralPath $sysPath -PathType Leaf)) {
-  throw "SYS not found: $sysPath`r`nBuild the driver and copy virtiosnd.sys into the inf\\ directory before packaging."
+  throw "SYS not found: $sysPath`r`nBuild the driver and copy $($script:SysFileName) into the inf\\ directory before packaging."
 }
 
 $detectedArch = Get-ArchFromSys -SysPath $sysPath
@@ -223,38 +228,37 @@ $excludeNames = @(
   'README.md'
 )
 
+$payload = @()
+
+# Always include the selected SYS + INF(s).
+$payload += (Get-Item -LiteralPath $sysPath)
+$payload += $infFiles
+
+# Include the catalog(s) referenced by the selected INF(s).
+foreach ($inf in $infFiles) {
+  $catNames = Get-CatalogFileNamesFromInf -InfPath $inf.FullName
+  foreach ($catName in $catNames) {
+    $catPath = Join-Path $infDir $catName
+    if (-not (Test-Path -LiteralPath $catPath -PathType Leaf)) {
+      throw ("Missing catalog file referenced by {0}: {1}`r`nRun scripts\\make-cat.cmd (and scripts\\sign-driver.cmd) for the selected variant." -f $inf.Name, $catName)
+    }
+    $payload += (Get-Item -LiteralPath $catPath)
+  }
+}
+
 $payload = @(
-  Get-ChildItem -LiteralPath $infDir -File |
+  $payload |
     Where-Object { $excludeNames -notcontains $_.Name } |
-    Sort-Object -Property Name
+    Sort-Object -Property Name -Unique
 )
 
 if ($payload.Count -eq 0) {
   throw "No payload files found to stage under: $infDir"
 }
 
-$missingCatalogs = @()
-foreach ($inf in $infFiles) {
-  $catNames = Get-CatalogFileNamesFromInf -InfPath $inf.FullName
-  foreach ($catName in $catNames) {
-    $catPath = Join-Path $infDir $catName
-    if (-not (Test-Path -LiteralPath $catPath -PathType Leaf)) {
-      $missingCatalogs += [pscustomobject]@{
-        Inf = $inf.Name
-        Cat = $catName
-      }
-    }
-  }
-}
-
-if ($missingCatalogs.Count -gt 0) {
-  $lines = $missingCatalogs | ForEach-Object { "  - {0} -> {1}" -f $_.Inf, $_.Cat }
-  $detail = ($lines -join "`r`n")
-  throw ("Missing catalog file(s) referenced by INF(s) under {0}:`r`n{1}`r`n`r`nRun scripts\\make-cat.cmd, then scripts\\sign-driver.cmd." -f $infDir, $detail)
-}
-
 $releaseRootResolved = Resolve-OrCreateDirectory -Path $ReleaseRoot -ArgName '-ReleaseRoot'
-$stageDir = Join-Path $releaseRootResolved (Join-Path $resolvedArch 'virtio-snd')
+$folderName = if ($Variant -eq 'legacy') { 'virtio-snd-legacy' } else { 'virtio-snd' }
+$stageDir = Join-Path $releaseRootResolved (Join-Path $resolvedArch $folderName)
 
 if (Test-Path -LiteralPath $stageDir) {
   Remove-Item -LiteralPath $stageDir -Recurse -Force

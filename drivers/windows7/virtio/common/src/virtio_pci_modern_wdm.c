@@ -5,6 +5,10 @@
 #include "../../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.h"
 #include "../../../../win7/virtio/virtio-core/portable/virtio_pci_aero_layout.h"
 
+#ifndef AERO_VIRTIO_PCI_ENFORCE_REVISION_ID
+#define AERO_VIRTIO_PCI_ENFORCE_REVISION_ID 1
+#endif
+
 #ifndef PCI_WHICHSPACE_CONFIG
 #define PCI_WHICHSPACE_CONFIG 0
 #endif
@@ -427,11 +431,13 @@ VirtioPciModernWdmInit(_In_ PDEVICE_OBJECT LowerDeviceObject, _Out_ PVIRTIO_PCI_
     }
     Dev->PciRevisionId = revId;
 
+#if AERO_VIRTIO_PCI_ENFORCE_REVISION_ID
     if (Dev->PciRevisionId != 0x01) {
         VIRTIO_PCI_MODERN_WDM_PRINT("Unsupported PCI Revision ID 0x%02X (expected 0x01)\n", Dev->PciRevisionId);
         VirtioPciModernWdmUninit(Dev);
         return STATUS_NOT_SUPPORTED;
     }
+#endif
 
     status = VirtioPciModernWdmReadBarsFromConfig(Dev);
     if (!NT_SUCCESS(status)) {

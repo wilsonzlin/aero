@@ -10,20 +10,25 @@ The directory contains a clean-room Windows 7 WDM audio adapter driver that
 integrates PortCls **WaveRT** + **Topology** miniports so Windows 7 can enumerate
 an audio endpoint.
 
-There are currently **two virtio transport implementations** in-tree:
+There are currently two **build/packaging variants** supported:
 
-1. **Shipped/default driver package:** `AERO-W7-VIRTIO` v1 **virtio-pci modern**
-   transport (PCI vendor-specific capabilities + MMIO) with split-ring virtqueues.
-2. **Legacy/transitional bring-up code (not shipped):** legacy virtio-pci
-   **I/O-port** register layout for transitional devices (e.g. `DEV_1018`). This exists for
-   historical bring-up, but it is **not** part of the `AERO-W7-VIRTIO` contract.
-   This path only negotiates the low 32 bits of virtio feature flags and is not
-   suitable for contract v1 devices (`VIRTIO_F_VERSION_1` is bit 32). The shipped/CI
-   INF (`aero-virtio-snd.inf`) does not bind to transitional IDs.
+1. **Aero contract v1 (default CI artifact):** strict PCI identity enforcement
+   (`DEV_1059` + `REV_01`) as encoded by `inf/aero-virtio-snd.inf`.
+2. **QEMU transitional (optional):** transitional virtio-snd identity (`DEV_1018`,
+   typically `REV_00`) as encoded by `inf/aero-virtio-snd-legacy.inf`.
+
+The two INFs intentionally have **no overlapping hardware IDs** so they do not
+compete for the same PCI function.
+
+Both variants use the same **virtio-pci modern** transport path (PCI vendor-specific
+capabilities + MMIO). The optional QEMU build only relaxes the contract identity
+checks so the driver can start on stock QEMU defaults.
+
+Note: the repository also contains older legacy/transitional virtio-pci **I/O-port**
+bring-up code (for example `src/backend_virtio_legacy.c`) for historical bring-up
+only; it is not built/shipped.
 
 ## Code organization
-
-### Default build (AERO-W7-VIRTIO v1, virtio-pci modern)
 
 - PortCls adapter + miniports: `src/adapter.c`, `src/adapter_context.c`, `src/wavert.c`, `src/topology.c`
 - WaveRT backend interface: `include/backend.h`
@@ -33,7 +38,6 @@ There are currently **two virtio transport implementations** in-tree:
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
   - `src/virtiosnd_hw.c` (`VirtIoSndStartHardware`/`VirtIoSndStopHardware`)
   - `src/virtiosnd_queue_split.c`
-  - `drivers/windows/virtio/common/virtqueue_split.c` (shared split-ring implementation)
   - `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
   - `src/virtiosnd_intx.c`
 - Shared virtio support code linked in from:
@@ -61,6 +65,10 @@ CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
 - **Protocol:** PCM control + TX/RX protocol engines for streams 0/1 (PortCls integration is render-only today).
 - **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
   entries are treated as resource reclamation rather than timing.
+
+The optional `aero-virtio-snd-legacy.inf` package uses the same virtio-pci modern
+transport stack but relaxes PCI identity/version gating so it can be used with
+stock QEMU defaults (transitional `DEV_1018`, typically `REV_00`).
 
 ## High-level architecture
 

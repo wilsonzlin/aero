@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 <#
 .SYNOPSIS
-  Copies a built virtiosnd.sys from a WDK/MSBuild output directory into inf/.
+  Copies a built virtio-snd SYS from a WDK/MSBuild output directory into inf/.
 
 .DESCRIPTION
   The signing workflow expects the driver binary to be staged next to the INF(s):
 
     drivers\windows7\virtio-snd\inf\virtiosnd.sys
+    drivers\windows7\virtio-snd\inf\virtiosnd_legacy.sys
 
-  This helper searches recursively for `virtiosnd.sys` under an input directory
+  This helper searches recursively for the expected SYS file under an input directory
   (by default the driver root) and selects the one that matches the requested
   architecture based on the PE header machine field.
 
@@ -21,6 +22,9 @@ param(
   [Parameter(Mandatory = $true)]
   [ValidateSet('x86', 'amd64')]
   [string]$Arch,
+
+  [ValidateSet('contract', 'legacy')]
+  [string]$Variant = 'contract',
 
   [ValidateNotNullOrEmpty()]
   [string]$InputDir = (Join-Path $PSScriptRoot '..'),
@@ -86,12 +90,14 @@ $infDirResolved = Resolve-ExistingDirectory -Path $InfDir -ArgName '-InfDir'
 
 $expectedMachine = Get-ExpectedPeMachine -ArchValue $Arch
 
+$sysName = if ($Variant -eq 'legacy') { 'virtiosnd_legacy.sys' } else { 'virtiosnd.sys' }
+
 $candidates = @(
-  Get-ChildItem -LiteralPath $inputDirResolved -Recurse -File -Filter 'virtiosnd.sys' -ErrorAction SilentlyContinue
+  Get-ChildItem -LiteralPath $inputDirResolved -Recurse -File -Filter $sysName -ErrorAction SilentlyContinue
 )
 
 if ($candidates.Count -eq 0) {
-  throw "Could not find virtiosnd.sys under -InputDir '$inputDirResolved'. Build the driver first."
+  throw "Could not find $sysName under -InputDir '$inputDirResolved'. Build the driver first."
 }
 
 function Is-UnderDirectory([string]$Path, [string]$Dir) {
@@ -124,16 +130,16 @@ foreach ($c in $candidates) {
 
 if ($archMatches.Count -eq 0) {
   $paths = $candidates | ForEach-Object { $_.FullName }
-  throw ("Found virtiosnd.sys under -InputDir '{0}', but none match architecture '{1}'. Candidates:`r`n{2}" -f $inputDirResolved, $Arch, (Format-PathList $paths))
+  throw ("Found {0} under -InputDir '{1}', but none match architecture '{2}'. Candidates:`r`n{3}" -f $sysName, $inputDirResolved, $Arch, (Format-PathList $paths))
 }
 
 if ($archMatches.Count -gt 1) {
   $paths = $archMatches | ForEach-Object { $_.FullName }
-  throw ("Found multiple virtiosnd.sys builds matching architecture '{0}'. Clean old builds or point -InputDir at a single build output.`r`n{1}" -f $Arch, (Format-PathList $paths))
+  throw ("Found multiple {0} builds matching architecture '{1}'. Clean old builds or point -InputDir at a single build output.`r`n{2}" -f $sysName, $Arch, (Format-PathList $paths))
 }
 
 $srcPath = $archMatches[0].FullName
-$dstPath = Join-Path $infDirResolved 'virtiosnd.sys'
+$dstPath = Join-Path $infDirResolved $sysName
 
 Copy-Item -LiteralPath $srcPath -Destination $dstPath -Force
 

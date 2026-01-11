@@ -172,6 +172,84 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
     return PcDispatchIrp(DeviceObject, Irp);
 }
 
+#if defined(AERO_VIRTIO_SND_LEGACY)
+/*
+ * Legacy/transitional validation for the optional QEMU build:
+ * - Bind via INF to the transitional virtio-snd PCI ID (DEV_1018).
+ * - Do not require the Aero contract Revision ID (REV_01).
+ *
+ * This keeps the default (contract) build strict while allowing bring-up on
+ * stock QEMU defaults.
+ */
+static NTSTATUS
+VirtIoSndValidateTransitionalPciPdo(_In_ PDEVICE_OBJECT PhysicalDeviceObject)
+{
+    NTSTATUS status;
+    ULONG len;
+    ULONG busNumber;
+    ULONG slotNumber;
+    UCHAR cfg[0x30];
+    ULONG cfgLen;
+    ULONG bytesRead;
+    USHORT vendorId;
+    USHORT deviceId;
+    UCHAR revisionId;
+
+    if (PhysicalDeviceObject == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    busNumber = 0;
+    len = 0;
+    status = IoGetDeviceProperty(PhysicalDeviceObject, DevicePropertyBusNumber, (ULONG)sizeof(busNumber), &busNumber, &len);
+    if (!NT_SUCCESS(status) || len != (ULONG)sizeof(busNumber)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+                   DPFLTR_ERROR_LEVEL,
+                   "[aero-virtio] failed to query PCI bus number for transitional identity check: %!STATUS!\n",
+                   status);
+        return STATUS_DEVICE_DATA_ERROR;
+    }
+
+    slotNumber = 0;
+    len = 0;
+    status = IoGetDeviceProperty(PhysicalDeviceObject, DevicePropertyAddress, (ULONG)sizeof(slotNumber), &slotNumber, &len);
+    if (!NT_SUCCESS(status) || len != (ULONG)sizeof(slotNumber)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+                   DPFLTR_ERROR_LEVEL,
+                   "[aero-virtio] failed to query PCI slot number for transitional identity check: %!STATUS!\n",
+                   status);
+        return STATUS_DEVICE_DATA_ERROR;
+    }
+
+    RtlZeroMemory(cfg, sizeof(cfg));
+    cfgLen = (ULONG)sizeof(cfg);
+    bytesRead = HalGetBusDataByOffset(PCIConfiguration, busNumber, slotNumber, cfg, 0, cfgLen);
+    if (bytesRead != cfgLen) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+                   DPFLTR_ERROR_LEVEL,
+                   "[aero-virtio] HalGetBusDataByOffset(PCI) failed for transitional identity check (%lu/%lu)\n",
+                   bytesRead,
+                   cfgLen);
+        return STATUS_DEVICE_DATA_ERROR;
+    }
+
+    vendorId = *(const USHORT *)(cfg + 0x00);
+    deviceId = *(const USHORT *)(cfg + 0x02);
+    revisionId = *(const UCHAR *)(cfg + 0x08);
+
+    if (vendorId != 0x1af4u || deviceId != 0x1018u) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+                   DPFLTR_ERROR_LEVEL,
+                   "[aero-virtio] unexpected PCI ID for transitional virtio-snd build: vendor=%04x device=%04x rev=%02x\n",
+                   (UINT)vendorId,
+                   (UINT)deviceId,
+                   (UINT)revisionId);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    return STATUS_SUCCESS;
+}
+#endif
 _Use_decl_annotations_
 static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRESOURCELIST ResourceList)
 {
@@ -251,10 +329,18 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     }
 
     {
+#if defined(AERO_VIRTIO_SND_LEGACY)
+        status = VirtIoSndValidateTransitionalPciPdo(dx->Pdo);
+#else
         static const USHORT allowedIds[] = {0x1059u};
         status = AeroVirtioPciValidateContractV1Pdo(dx->Pdo, allowedIds, RTL_NUMBER_OF(allowedIds));
+#endif
         if (!NT_SUCCESS(status)) {
+#if defined(AERO_VIRTIO_SND_LEGACY)
+            VIRTIOSND_TRACE_ERROR("virtio-snd PCI identity check failed: 0x%08X\n", (UINT)status);
+#else
             VIRTIOSND_TRACE_ERROR("AERO-W7-VIRTIO contract identity check failed: 0x%08X\n", (UINT)status);
+#endif
             goto Exit;
         }
     }

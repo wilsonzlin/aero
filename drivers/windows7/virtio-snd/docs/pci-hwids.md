@@ -67,11 +67,14 @@ The virtio-snd INF is intentionally strict and requires `REV_01`. CI packaging
 stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping
 multiple INFs that match the same contract-v1 device IDs.
 
-The repository also contains an optional **legacy filename alias** INF
-(`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf` (and
-regenerate/sign `virtio-snd.cat`), it installs the same driver/service as
-`aero-virtio-snd.inf` and matches the same contract-v1 HWID, but provides the
-legacy filename for compatibility with older tooling/workflows.
+For QEMU bring-up (which is typically transitional by default), use the opt-in legacy package:
+
+* `inf/aero-virtio-snd-legacy.inf` → `PCI\VEN_1AF4&DEV_1018` (no `REV_01` requirement) + `virtiosnd_legacy.sys`
+
+The repository also contains an optional **legacy filename alias** INF (`inf/virtio-snd.inf.disabled`).
+If you rename it back to `virtio-snd.inf` (and regenerate/sign `virtio-snd.cat`), it installs the same
+driver/service as `aero-virtio-snd.inf` and matches the same contract-v1 HWID, but provides the legacy
+filename for compatibility with older tooling/workflows.
 
 ## QEMU mapping
 
@@ -84,12 +87,15 @@ QEMU may expose the virtio-snd PCI frontend under one of these device names:
 
 Many QEMU virtio PCI devices enumerate as **transitional** by default. For virtio-snd this typically
 means Windows will see `DEV_1018` unless you explicitly disable legacy mode. The
-shipped Aero virtio-snd INF requires the modern ID space (`DEV_1059`), so you
-must use:
+shipped Aero virtio-snd contract INF requires the modern ID space (`DEV_1059`), so to bind the **contract v1**
+package you must use:
 
 ```bash
 -device virtio-sound-pci,disable-legacy=on
 ```
+
+If you just want to run with stock QEMU defaults (transitional `DEV_1018`), install the legacy package
+(`inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`) instead.
 
 ### QEMU vs Aero contract v1 (REV_01)
 
@@ -112,8 +118,8 @@ If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
   -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
   ```
   (You can confirm supported properties with `qemu-system-x86_64 -device virtio-sound-pci,help`.)
-* If your QEMU build does **not** support overriding the PCI Revision ID, the stock Aero INF will
-  not bind. Use a contract-v1-capable device model/hypervisor (or patch QEMU) for testing.
+* If your QEMU build does **not** support overriding the PCI Revision ID (or you just want stock QEMU
+  defaults), install the legacy package (`inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 
 ### Verify the emitted PCI ID (no guest required)
 
@@ -132,8 +138,5 @@ Audio: PCI device 1af4:1059
 ## Windows 7 caveats
 
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with `SUBSYS_...` and
-  `REV_...`). `aero-virtio-snd.inf` requires a `REV_01` match; if your device reports `REV_00`, that
-  strict contract-v1 INF will not bind (use `x-pci-revision=0x01` in QEMU).
-* The transitional ID `PCI\VEN_1AF4&DEV_1018` exists in the virtio spec.
-  - `aero-virtio-snd.inf` (contract v1) does **not** match it; if Windows shows `DEV_1018`, configure the hypervisor to expose a
-    modern-only device (e.g. QEMU `disable-legacy=on`) so Windows enumerates `DEV_1059`.
+  `REV_...`). The Aero contract-v1 INF is strict and requires `DEV_1059&REV_01`.
+* For transitional QEMU devices (`DEV_1018`, typically `REV_00`), use the legacy INF/package.
