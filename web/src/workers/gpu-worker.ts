@@ -24,10 +24,10 @@ import {
   FRAME_PRESENTING,
   FRAME_SEQ_INDEX,
   FRAME_STATUS_INDEX,
-  type DirtyRect,
 } from "../shared/frameProtocol";
 
 import {
+  type DirtyRect,
   layoutFromHeader,
   SHARED_FRAMEBUFFER_HEADER_U32_LEN,
   SHARED_FRAMEBUFFER_MAGIC,

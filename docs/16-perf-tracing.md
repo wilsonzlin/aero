@@ -65,7 +65,7 @@ Current placeholder instrumentation points:
 
 - Main thread: requestAnimationFrame present loops (`web/src/display/vga_presenter.ts`, plus any callers of `startFrameScheduler`)
 - Main thread: `wasm:init` span for runtime WASM loader (`web/src/main.ts`)
-- Workers: `wasm:init` + `worker:init` spans (`web/src/workers/*.worker.ts`, `web/src/workers/gpu-worker.ts`, `web/src/workers/aero-gpu-worker.ts`)
+- Workers: `wasm:init` + `worker:init` spans (`web/src/workers/*.worker.ts`, `web/src/workers/gpu-worker.ts`)
 
 ## Audio telemetry (ring buffer health)
 
