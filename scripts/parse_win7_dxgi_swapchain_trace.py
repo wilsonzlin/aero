@@ -50,6 +50,7 @@ class CreateResourceDesc:
     alloc_info: str = ""
     primary_desc: str = ""
     created_kind: str = ""
+    created_alloc_id: int = 0
     created_width: int = 0
     created_height: int = 0
     created_row_pitch: int = 0
@@ -505,8 +506,16 @@ def main(argv: List[str]) -> int:
     rotate_handle_set: Set[int] = set()
     presents: List[Tuple[str, int, int]] = []  # (api, sync, src_handle)
 
-    re_created_tex = re.compile(r"trace_resources:\s+=> created tex2d handle=(\d+) size=(\d+)x(\d+) row_pitch=(\d+)")
-    re_created_buf = re.compile(r"trace_resources:\s+=> created buffer handle=(\d+) size=(\d+)")
+    re_created_tex = re.compile(
+        r"trace_resources:\s+=> created tex2d handle=(?P<handle>\d+)"
+        r"(?:\s+alloc_id=(?P<alloc_id>\d+))?"
+        r"\s+size=(?P<w>\d+)x(?P<h>\d+)\s+row_pitch=(?P<pitch>\d+)"
+    )
+    re_created_buf = re.compile(
+        r"trace_resources:\s+=> created buffer handle=(?P<handle>\d+)"
+        r"(?:\s+alloc_id=(?P<alloc_id>\d+))?"
+        r"\s+size=(?P<size>\d+)"
+    )
     re_rotate_slot = re.compile(r"trace_resources:\s+[+\\-]>?\s*slot\[(\d+)\]=(\d+)")
     # WDK-backed DDIs include an explicit API prefix and use `src_handle`.
     re_present_wdk = re.compile(r"trace_resources:\s+(D3D10\\.1|D3D10|D3D11)\s+Present sync=(\d+)\s+src_handle=(\d+)")
@@ -521,22 +530,28 @@ def main(argv: List[str]) -> int:
 
         m = re_created_tex.search(line)
         if m:
-            handle = int(m.group(1), 10)
+            handle = int(m.group("handle"), 10)
             desc = pending or CreateResourceDesc()
             desc.created_kind = "tex2d"
-            desc.created_width = int(m.group(2), 10)
-            desc.created_height = int(m.group(3), 10)
-            desc.created_row_pitch = int(m.group(4), 10)
+            alloc_id = m.group("alloc_id")
+            if alloc_id:
+                desc.created_alloc_id = int(alloc_id, 10)
+            desc.created_width = int(m.group("w"), 10)
+            desc.created_height = int(m.group("h"), 10)
+            desc.created_row_pitch = int(m.group("pitch"), 10)
             resources[handle] = desc
             pending = None
             continue
 
         m = re_created_buf.search(line)
         if m:
-            handle = int(m.group(1), 10)
+            handle = int(m.group("handle"), 10)
             desc = pending or CreateResourceDesc()
             desc.created_kind = "buffer"
-            desc.created_size = int(m.group(2), 10)
+            alloc_id = m.group("alloc_id")
+            if alloc_id:
+                desc.created_alloc_id = int(alloc_id, 10)
+            desc.created_size = int(m.group("size"), 10)
             resources[handle] = desc
             pending = None
             continue
@@ -620,13 +635,21 @@ def main(argv: List[str]) -> int:
             d = resources.get(h)
             if not d:
                 continue
-            expected = _expected_alloc_size(d)
-            if expected is None:
-                continue
-            expected_pitch = _expected_pitch_bytes(d)
-            candidates = [e for e in createalloc.entries if e.size_bytes == expected]
-            if expected_pitch is not None:
-                candidates = [e for e in candidates if e.pitch_bytes in (0, expected_pitch)]
+            candidates: List[CreateAllocationDesc] = []
+            if d.created_alloc_id:
+                candidates = [e for e in createalloc.entries if e.alloc_id == d.created_alloc_id]
+
+            # Fallback to size/pitch matching when the CreateResource-created alloc_id is missing
+            # (older logs) or when the CreateAllocation trace did not include that allocation.
+            if not candidates:
+                expected = _expected_alloc_size(d)
+                if expected is None:
+                    continue
+                expected_pitch = _expected_pitch_bytes(d)
+                candidates = [e for e in createalloc.entries if e.size_bytes == expected]
+                if expected_pitch is not None:
+                    candidates = [e for e in candidates if e.pitch_bytes in (0, expected_pitch)]
+
             matched = [_createalloc_entry_dict(e, wdk_masks) for e in candidates]
             if matched:
                 matches[str(h)] = matched
@@ -680,7 +703,7 @@ def main(argv: List[str]) -> int:
             f"cpu=0x{d.cpu:08X} misc=0x{d.misc:08X} w={d.width} h={d.height} mips={d.mips} array={d.array} "
             f"sample=({d.sample_count},{d.sample_quality}) rflags=0x{d.rflags:X} rflags_size={d.rflags_size} "
             f"num_alloc={d.num_alloc} primary_desc={d.primary_desc or 'n/a'} "
-            f"created={d.created_kind or '?'}"
+            f"alloc_id={(d.created_alloc_id if d.created_alloc_id else 'n/a')} created={d.created_kind or '?'}"
         )
         if d.created_kind == "tex2d":
             print(f"  row_pitch={d.created_row_pitch}")
@@ -689,17 +712,33 @@ def main(argv: List[str]) -> int:
         print(f"  raw: {d.raw_line}")
 
         if createalloc is not None:
-            expected = _expected_alloc_size(d)
-            if expected is not None:
-                expected_pitch = _expected_pitch_bytes(d)
-                matched = [e for e in createalloc.entries if e.size_bytes == expected]
-                if expected_pitch is not None:
-                    matched = [e for e in matched if e.pitch_bytes in (0, expected_pitch)]
-                if matched:
+            matched: List[CreateAllocationDesc] = []
+            if d.created_alloc_id:
+                matched = [e for e in createalloc.entries if e.alloc_id == d.created_alloc_id]
+
+            if not matched:
+                expected = _expected_alloc_size(d)
+                if expected is None:
+                    matched = []
+                else:
+                    expected_pitch = _expected_pitch_bytes(d)
+                    matched = [e for e in createalloc.entries if e.size_bytes == expected]
                     if expected_pitch is not None:
+                        matched = [e for e in matched if e.pitch_bytes in (0, expected_pitch)]
+
+            if matched:
+                if d.created_alloc_id:
+                    print(f"  createalloc candidates (alloc_id={d.created_alloc_id}):")
+                else:
+                    expected = _expected_alloc_size(d)
+                    expected_pitch = _expected_pitch_bytes(d)
+                    if expected is not None and expected_pitch is not None:
                         print(f"  createalloc candidates (size_bytes={expected}, pitch={expected_pitch}):")
-                    else:
+                    elif expected is not None:
                         print(f"  createalloc candidates (size_bytes={expected}):")
+                    else:
+                        print("  createalloc candidates:")
+                if matched:
                     for e in matched:
                         line = (
                             f"    call={e.call_seq} alloc_id={e.alloc_id} size={e.size_bytes} pitch={e.pitch_bytes} "
@@ -727,7 +766,7 @@ def main(argv: List[str]) -> int:
                                 line += f" out_unknown=0x{out_unknown:08X}"
                         print(line)
                 else:
-                    print(f"  createalloc candidates: (none match size_bytes={expected})")
+                    print("  createalloc candidates: (none)")
         print("")
 
     if presents:

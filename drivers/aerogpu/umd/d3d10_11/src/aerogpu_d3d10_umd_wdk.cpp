@@ -1845,8 +1845,9 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
-    AEROGPU_D3D10_11_LOG("trace_resources:  => created buffer handle=%u size=%llu",
+    AEROGPU_D3D10_11_LOG("trace_resources:  => created buffer handle=%u alloc_id=%u size=%llu",
                          static_cast<unsigned>(res->handle),
+                         static_cast<unsigned>(res->backing_alloc_id),
                          static_cast<unsigned long long>(res->size_bytes));
 #endif
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
@@ -1989,8 +1990,9 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
-    AEROGPU_D3D10_11_LOG("trace_resources:  => created tex2d handle=%u size=%ux%u row_pitch=%u",
+    AEROGPU_D3D10_11_LOG("trace_resources:  => created tex2d handle=%u alloc_id=%u size=%ux%u row_pitch=%u",
                          static_cast<unsigned>(res->handle),
+                         static_cast<unsigned>(res->backing_alloc_id),
                          static_cast<unsigned>(res->width),
                          static_cast<unsigned>(res->height),
                          static_cast<unsigned>(res->row_pitch_bytes));

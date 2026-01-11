@@ -96,6 +96,10 @@ To identify *which* `CreateResource` calls are swapchain backbuffers:
 1. Find the handles printed by `RotateResourceIdentities`.
 2. Match those handles to the immediately preceding `CreateResource => created tex2d handle=...` lines.
 
+For WDK-backed UMD builds, the `=> created` lines also include `alloc_id=<u32>`, which should match the
+`alloc_id` field in `aerogpu_dbgctl --dump-createalloc` output (useful for direct UMD↔KMD correlation without
+relying on size matching).
+
 > Note: some swapchains (notably single-buffer `DXGI_SWAP_EFFECT_DISCARD`) may not call
 > `RotateResourceIdentities`. In that case, use the handle printed in the `Present`
 > trace line (`src_handle=` / `backbuffer_handle=`) and/or the `primary=1` marker.

@@ -2152,11 +2152,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       res->backing_offset_bytes = 0;
     }
 
-  #if defined(AEROGPU_UMD_TRACE_RESOURCES)
-    AEROGPU_D3D10_11_LOG("trace_resources:  => created buffer handle=%u size=%llu",
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+    AEROGPU_D3D10_11_LOG("trace_resources:  => created buffer handle=%u alloc_id=%u size=%llu",
                          static_cast<unsigned>(res->handle),
+                         static_cast<unsigned>(res->backing_alloc_id),
                          static_cast<unsigned long long>(res->size_bytes));
-  #endif
+#endif
 
     auto copy_initial_data = [&](auto init_data) -> HRESULT {
       if (!init_data) {
@@ -2314,13 +2315,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       res->backing_offset_bytes = 0;
     }
 
-  #if defined(AEROGPU_UMD_TRACE_RESOURCES)
-    AEROGPU_D3D10_11_LOG("trace_resources:  => created tex2d handle=%u size=%ux%u row_pitch=%u",
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+    AEROGPU_D3D10_11_LOG("trace_resources:  => created tex2d handle=%u alloc_id=%u size=%ux%u row_pitch=%u",
                          static_cast<unsigned>(res->handle),
+                         static_cast<unsigned>(res->backing_alloc_id),
                          static_cast<unsigned>(res->width),
                          static_cast<unsigned>(res->height),
                          static_cast<unsigned>(res->row_pitch_bytes));
-  #endif
+#endif
 
     auto copy_initial_data = [&](auto init_data) -> HRESULT {
       if (!init_data) {
