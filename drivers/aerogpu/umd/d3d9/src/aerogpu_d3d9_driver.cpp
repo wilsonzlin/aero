@@ -3825,7 +3825,11 @@ HRESULT invoke_submit_callback(Device* dev,
   using ArgPtr = typename fn_first_param<CallbackFn>::type;
   using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
 
-  Arg args{};
+  // Zero-initialize the entire callback struct (including any padding). The D3D9
+  // runtime may copy these bytes into kernel mode; leaving padding uninitialized
+  // can leak stack bytes and make submission behavior nondeterministic.
+  Arg args;
+  std::memset(&args, 0, sizeof(args));
   fill_submit_args(args, dev, command_length_bytes, is_present);
 
   if constexpr (has_member_NewFenceValue<Arg>::value) {
@@ -4020,7 +4024,8 @@ void wddm_deallocate_buffers_impl(Device* dev,
 
   using ArgPtr = typename fn_first_param<CallbackFn>::type;
   using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
-  Arg args{};
+  Arg args;
+  std::memset(&args, 0, sizeof(args));
 
   if constexpr (has_member_hContext<Arg>::value) {
     args.hContext = dev->wddm_context.hContext;
@@ -4105,7 +4110,8 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   using ArgPtr = typename fn_first_param<CallbackFn>::type;
   using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
 
-  Arg args{};
+  Arg args;
+  std::memset(&args, 0, sizeof(args));
   if constexpr (has_member_hContext<Arg>::value) {
     args.hContext = dev->wddm_context.hContext;
   }
@@ -4257,7 +4263,8 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   using ArgPtr = typename fn_first_param<CallbackFn>::type;
   using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
 
-  Arg args{};
+  Arg args;
+  std::memset(&args, 0, sizeof(args));
   if constexpr (has_member_hContext<Arg>::value) {
     args.hContext = dev->wddm_context.hContext;
   }
