@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 
+#include <initguid.h>
+
 #include "topology_miniport.h"
 
 #include "trace.h"
@@ -271,7 +273,7 @@ STDMETHODIMP_(NTSTATUS) TopologyMiniport::GetDescription(_Out_ PPCFILTER_DESCRIP
 } // namespace
 
 _Use_decl_annotations_
-extern "C" NTSTATUS CreateMiniportTopology(PUNKNOWN* Unknown, REFCLSID RefClassId, PUNKNOWN OuterUnknown, POOL_TYPE PoolType)
+extern "C" NTSTATUS NTAPI CreateMiniportTopology(PUNKNOWN* Unknown, REFCLSID RefClassId, PUNKNOWN OuterUnknown, POOL_TYPE PoolType)
 {
     UNREFERENCED_PARAMETER(RefClassId);
 

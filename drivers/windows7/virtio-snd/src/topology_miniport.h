@@ -27,7 +27,7 @@ enum VIRTIO_SND_TOPOLOGY_PIN {
     VIRTIO_SND_TOPOLOGY_PIN_COUNT
 };
 
-extern "C" NTSTATUS CreateMiniportTopology(
+extern "C" NTSTATUS NTAPI CreateMiniportTopology(
     _Out_ PUNKNOWN* Unknown,
     _In_ REFCLSID RefClassId,
     _In_opt_ PUNKNOWN OuterUnknown,
