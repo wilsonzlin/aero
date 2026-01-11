@@ -104,6 +104,26 @@ static inline bool StrIContainsW(const wchar_t* haystack, const wchar_t* needle)
   return false;
 }
 
+static inline bool StrIEndsWithW(const std::wstring& s, const wchar_t* suffix) {
+  if (!suffix) {
+    return false;
+  }
+  const size_t nlen = wcslen(suffix);
+  if (nlen == 0) {
+    return true;
+  }
+  if (s.size() < nlen) {
+    return false;
+  }
+  const wchar_t* tail = s.c_str() + (s.size() - nlen);
+  for (size_t i = 0; i < nlen; ++i) {
+    if (towlower(tail[i]) != towlower(suffix[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static inline bool StrIStartsWith(const char* s, const char* prefix) {
   if (!s || !prefix) {
     return false;
@@ -466,16 +486,18 @@ static inline int RequireAeroGpuUmdLoaded(const char* test_name,
     }
 
     const wchar_t* expected_dir = ExpectedWindowsSystemDirSubstringForCurrentProcess();
-    if (!StrIContainsW(path.c_str(), expected_dir)) {
+    if (!StrIContainsW(path.c_str(), expected_dir) || !StrIEndsWithW(path, expected_module_base_name)) {
       DumpLoadedAeroGpuUmdModules(test_name);
       return Fail(test_name,
-                  "expected AeroGPU %s UMD DLL %ls to be loaded from %ls (process=%s%s), but got: %ls",
+                  "expected AeroGPU %s UMD DLL %ls to be loaded from %ls (process=%s%s), but got: %ls. "
+                  "Check INF CopyFiles/DestinationDirs and registry keys (%s).",
                   api_label,
                   expected_module_base_name,
                   expected_dir,
                   GetProcessBitnessString(),
                   GetWow64SuffixString(),
-                  path.c_str());
+                  path.c_str(),
+                  reg_key_hint);
     }
 
     PrintfStdout("INFO: %s: loaded AeroGPU %s UMD (%s%s): %ls",
