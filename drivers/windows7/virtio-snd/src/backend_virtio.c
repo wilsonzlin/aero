@@ -13,90 +13,95 @@ typedef struct _VIRTIOSND_BACKEND_VIRTIO {
     ULONG PeriodBytes;
 } VIRTIOSND_BACKEND_VIRTIO, *PVIRTIOSND_BACKEND_VIRTIO;
 
+static __forceinline PVIRTIOSND_BACKEND_VIRTIO
+VirtIoSndBackendVirtioFromContext(_In_ PVOID Context)
+{
+    return (PVIRTIOSND_BACKEND_VIRTIO)Context;
+}
+
 static NTSTATUS
 VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
 {
-    PVIRTIOSND_BACKEND_VIRTIO ctx = (PVIRTIOSND_BACKEND_VIRTIO)Context;
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
     NTSTATUS status;
-    VIRTIO_SND_PCM_INFO info;
+    ULONG txBuffers;
+    USHORT qsz;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
     if (ctx == NULL || ctx->Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    dx = ctx->Dx;
 
-    if (ctx->Dx->Removed) {
+    if (dx->Removed) {
         return STATUS_DEVICE_REMOVED;
     }
-
-    if (!ctx->Dx->Started) {
+    if (!dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    if (PeriodBytes == 0 || BufferBytes == 0 || (PeriodBytes % VirtioSndTxFrameSizeBytes()) != 0) {
+    /*
+     * virtio-snd uses byte counts, but the device requires PCM payloads to be
+     * frame-aligned. Clamp to S16_LE stereo framing.
+     */
+    BufferBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
+    PeriodBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
+    if (BufferBytes == 0 || PeriodBytes == 0) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    status = VirtioSndCtrlPcmInfo(&ctx->Dx->Control, &info);
-    if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("backend(virtio): PCM_INFO failed: 0x%08X\n", (UINT)status);
-        return status;
-    }
-
-    status = VirtioSndCtrlSetParams(&ctx->Dx->Control, BufferBytes, PeriodBytes);
+    status = VirtioSndCtrlSetParams(&dx->Control, BufferBytes, PeriodBytes);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("backend(virtio): SET_PARAMS failed: 0x%08X\n", (UINT)status);
         return status;
     }
 
-    if (ctx->Dx->Tx.Buffers == NULL || ctx->Dx->Tx.MaxPeriodBytes != PeriodBytes) {
-        /*
-         * TxInit is re-entrant (called when the WaveRT pin format changes). Clear
-         * the dispatch flag before tearing down the engine so DPC/Write paths
-         * don't attempt to submit against a partially uninitialized context.
-         */
-        InterlockedExchange(&ctx->Dx->TxEngineInitialized, 0);
-
-        VirtioSndTxUninit(&ctx->Dx->Tx);
-
-         status = VirtioSndTxInit(
-              &ctx->Dx->Tx,
-              &ctx->Dx->DmaCtx,
-             &ctx->Dx->Queues[VIRTIOSND_QUEUE_TX],
-             PeriodBytes,
-             8,
-              FALSE);
-         if (!NT_SUCCESS(status)) {
-             VIRTIOSND_TRACE_ERROR("backend(virtio): TxInit failed: 0x%08X\n", (UINT)status);
-             return status;
-         }
-      }
-
     /*
-     * Allow the INTx DPC to drain and dispatch txq used entries to the TX engine.
-     * Without this, completions will never be processed and the buffer pool will
-     * eventually exhaust.
+     * The tx engine is stream-specific (depends on period size and pool depth),
+     * so bring it up on the first SetParams and re-create it if the period size
+     * changes.
      */
-    InterlockedExchange(&ctx->Dx->TxEngineInitialized, 1);
+    if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0 && dx->Tx.MaxPeriodBytes != PeriodBytes) {
+        VirtIoSndUninitTxEngine(dx);
+    }
+
+    if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) == 0) {
+        qsz = dx->QueueSplit[VIRTIOSND_QUEUE_TX].QueueSize;
+        txBuffers = 64;
+        if (qsz != 0 && txBuffers > (ULONG)qsz / 2u) {
+            txBuffers = (ULONG)qsz / 2u;
+        }
+        if (txBuffers == 0) {
+            txBuffers = 1;
+        }
+
+        status = VirtIoSndInitTxEngine(dx, PeriodBytes, txBuffers, FALSE);
+        if (!NT_SUCCESS(status)) {
+            VIRTIOSND_TRACE_ERROR("backend(virtio): Tx engine init failed: 0x%08X\n", (UINT)status);
+            return status;
+        }
+    }
 
     ctx->BufferBytes = BufferBytes;
     ctx->PeriodBytes = PeriodBytes;
-
-    VIRTIOSND_TRACE("backend(virtio): SetParams buffer=%lu period=%lu\n", BufferBytes, PeriodBytes);
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS VirtIoSndBackendVirtio_Prepare(_In_ PVOID Context)
+static NTSTATUS
+VirtIoSndBackendVirtio_Prepare(_In_ PVOID Context)
 {
-    PVIRTIOSND_BACKEND_VIRTIO ctx = (PVIRTIOSND_BACKEND_VIRTIO)Context;
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
     if (ctx == NULL || ctx->Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -104,7 +109,6 @@ static NTSTATUS VirtIoSndBackendVirtio_Prepare(_In_ PVOID Context)
     if (ctx->Dx->Removed) {
         return STATUS_DEVICE_REMOVED;
     }
-
     if (!ctx->Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
@@ -112,14 +116,16 @@ static NTSTATUS VirtIoSndBackendVirtio_Prepare(_In_ PVOID Context)
     return VirtioSndCtrlPrepare(&ctx->Dx->Control);
 }
 
-static NTSTATUS VirtIoSndBackendVirtio_Start(_In_ PVOID Context)
+static NTSTATUS
+VirtIoSndBackendVirtio_Start(_In_ PVOID Context)
 {
-    PVIRTIOSND_BACKEND_VIRTIO ctx = (PVIRTIOSND_BACKEND_VIRTIO)Context;
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
     if (ctx == NULL || ctx->Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -127,7 +133,6 @@ static NTSTATUS VirtIoSndBackendVirtio_Start(_In_ PVOID Context)
     if (ctx->Dx->Removed) {
         return STATUS_DEVICE_REMOVED;
     }
-
     if (!ctx->Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
@@ -135,14 +140,16 @@ static NTSTATUS VirtIoSndBackendVirtio_Start(_In_ PVOID Context)
     return VirtioSndCtrlStart(&ctx->Dx->Control);
 }
 
-static NTSTATUS VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
+static NTSTATUS
+VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
 {
-    PVIRTIOSND_BACKEND_VIRTIO ctx = (PVIRTIOSND_BACKEND_VIRTIO)Context;
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
     if (ctx == NULL || ctx->Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -150,7 +157,6 @@ static NTSTATUS VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
     if (ctx->Dx->Removed) {
         return STATUS_DEVICE_REMOVED;
     }
-
     if (!ctx->Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
@@ -158,78 +164,102 @@ static NTSTATUS VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
     return VirtioSndCtrlStop(&ctx->Dx->Control);
 }
 
-static NTSTATUS VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
+static NTSTATUS
+VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
 {
-    PVIRTIOSND_BACKEND_VIRTIO ctx = (PVIRTIOSND_BACKEND_VIRTIO)Context;
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
     NTSTATUS status;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
     if (ctx == NULL || ctx->Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!ctx->Dx->Started || ctx->Dx->Removed) {
-        // Device is gone/stopped; just discard local TX buffers.
+    if (ctx->Dx->Removed || !ctx->Dx->Started) {
+        /*
+         * Device is already stopped/removed (STOP_DEVICE / REMOVE_DEVICE path).
+         * Tear down the local tx engine best-effort so buffers are not leaked.
+         */
         InterlockedExchange(&ctx->Dx->TxEngineInitialized, 0);
         VirtioSndTxUninit(&ctx->Dx->Tx);
+
         ctx->BufferBytes = 0;
         ctx->PeriodBytes = 0;
         return STATUS_SUCCESS;
     }
 
     status = VirtioSndCtrlRelease(&ctx->Dx->Control);
-
     ctx->BufferBytes = 0;
     ctx->PeriodBytes = 0;
-
     return status;
 }
 
 static NTSTATUS
 VirtIoSndBackendVirtio_Write(_In_ PVOID Context, _In_reads_bytes_(Bytes) const VOID *Pcm, _In_ SIZE_T Bytes)
 {
-    PVIRTIOSND_BACKEND_VIRTIO ctx = (PVIRTIOSND_BACKEND_VIRTIO)Context;
-    ULONG periodBytes;
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+    ULONG pcmBytes;
+    ULONG maxPeriod;
     NTSTATUS status;
 
-    if (ctx == NULL || ctx->Dx == NULL) {
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
+    if (ctx == NULL || ctx->Dx == NULL || Pcm == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    dx = ctx->Dx;
+
+    if (dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+    if (!dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (Bytes > MAXULONG) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (ctx->Dx->Removed) {
-        return STATUS_DEVICE_REMOVED;
+    pcmBytes = (ULONG)Bytes;
+    pcmBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
+    if (pcmBytes == 0) {
+        return STATUS_SUCCESS;
     }
 
-    if (!ctx->Dx->Started) {
-        return STATUS_INVALID_DEVICE_STATE;
-    }
-
-    periodBytes = ctx->PeriodBytes;
-    if (periodBytes == 0) {
-        return STATUS_INVALID_DEVICE_STATE;
-    }
-
-    if (Bytes > periodBytes) {
+    maxPeriod = ctx->PeriodBytes;
+    if (maxPeriod != 0 && pcmBytes > maxPeriod) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    // Poll used entries to recycle TX buffers even if interrupts are delayed.
-    VirtioSndTxProcessCompletions(&ctx->Dx->Tx);
+    /*
+     * Opportunistically recycle completed TX buffers; the INTx DPC is expected to
+     * do this normally, but draining here helps forward progress if interrupts
+     * are delayed or suppressed.
+     */
+    (VOID)VirtIoSndHwDrainTxCompletions(dx);
 
-    status = VirtioSndTxSubmitPeriod(&ctx->Dx->Tx, Pcm, (ULONG)Bytes, NULL, 0, TRUE);
-    if (!NT_SUCCESS(status)) {
-        return status;
+    status = VirtIoSndHwSubmitTx(dx, Pcm, pcmBytes, NULL, 0, FALSE);
+    if (status == STATUS_INSUFFICIENT_RESOURCES) {
+        return STATUS_DEVICE_BUSY;
     }
 
-    return STATUS_SUCCESS;
+    return status;
 }
 
-static VOID VirtIoSndBackendVirtio_Destroy(_In_ PVOID Context)
+static VOID
+VirtIoSndBackendVirtio_Destroy(_In_ PVOID Context)
 {
-    PVIRTIOSND_BACKEND_VIRTIO ctx = (PVIRTIOSND_BACKEND_VIRTIO)Context;
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
+
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
+    if (ctx == NULL) {
+        return;
+    }
+
     ExFreePoolWithTag(ctx, VIRTIOSND_POOL_TAG);
 }
 
@@ -243,15 +273,15 @@ static const VIRTIOSND_BACKEND_OPS g_VirtIoSndBackendVirtioOps = {
     VirtIoSndBackendVirtio_Destroy,
 };
 
+_Use_decl_annotations_
 NTSTATUS
-VirtIoSndBackendVirtio_Create(_In_ PVIRTIOSND_DEVICE_EXTENSION Dx, _Outptr_result_maybenull_ PVIRTIOSND_BACKEND *OutBackend)
+VirtIoSndBackendVirtio_Create(PVIRTIOSND_DEVICE_EXTENSION Dx, PVIRTIOSND_BACKEND *OutBackend)
 {
     PVIRTIOSND_BACKEND_VIRTIO backend;
 
     if (OutBackend == NULL || Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
-
     *OutBackend = NULL;
 
     backend = (PVIRTIOSND_BACKEND_VIRTIO)ExAllocatePoolWithTag(NonPagedPool, sizeof(*backend), VIRTIOSND_POOL_TAG);
@@ -267,3 +297,4 @@ VirtIoSndBackendVirtio_Create(_In_ PVIRTIOSND_DEVICE_EXTENSION Dx, _Outptr_resul
     *OutBackend = &backend->Backend;
     return STATUS_SUCCESS;
 }
+

@@ -814,7 +814,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
         if (stream->Miniport->Backend != NULL) {
             (VOID)VirtIoSndBackend_Stop(stream->Miniport->Backend);
-            (VOID)VirtIoSndBackend_Release(stream->Miniport->Backend);
         }
         break;
 
