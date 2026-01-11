@@ -256,6 +256,32 @@ VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, P
             VirtioSndTxProcessCompletions(&dx->Tx);
 
             /*
+             * Fallback draining: some queues may be active before the corresponding
+             * protocol engine is initialized (or in future, may be used by a path
+             * outside the engine). In that case, ensure we still drain the used ring
+             * so the virtqueue does not wedge.
+             */
+            if (dx->Control.ControlQ == NULL && dx->Queues[VIRTIOSND_QUEUE_CONTROL].Ops != NULL) {
+                VOID* cookie;
+                UINT32 usedLen;
+
+                while (VirtioSndQueuePopUsed(&dx->Queues[VIRTIOSND_QUEUE_CONTROL], &cookie, &usedLen)) {
+                    UNREFERENCED_PARAMETER(cookie);
+                    UNREFERENCED_PARAMETER(usedLen);
+                }
+            }
+
+            if (dx->Tx.Queue == NULL && dx->Queues[VIRTIOSND_QUEUE_TX].Ops != NULL) {
+                VOID* cookie;
+                UINT32 usedLen;
+
+                while (VirtioSndQueuePopUsed(&dx->Queues[VIRTIOSND_QUEUE_TX], &cookie, &usedLen)) {
+                    UNREFERENCED_PARAMETER(cookie);
+                    UNREFERENCED_PARAMETER(usedLen);
+                }
+            }
+
+            /*
              * eventq is device->driver notifications; we do not submit receive
              * buffers yet, so there should be no used entries. Drain defensively in
              * case a future path does submit buffers.
