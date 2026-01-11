@@ -1543,9 +1543,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         }
       }
       usbDemo?.onUsbSelected(msg);
-      // Drain immediately so the demo request reaches the main-thread broker without waiting for the next IO tick.
-      usbDemo?.tick();
-      usbDemo?.pollResults();
       emitWebUsbGuestStatus();
 
       // Dev-only smoke test: once a device is selected on the main thread, request the

@@ -170,8 +170,8 @@ export class UsbPassthroughDemoRuntime {
       this.reset();
       return;
     }
-    this.reset();
-    this.#demo.queue_get_device_descriptor(18);
+    // Auto-run the device descriptor request when a new WebUSB device is selected.
+    this.run("deviceDescriptor", 18);
   }
 
   onUsbCompletion(msg: UsbCompletionMessage): void {
