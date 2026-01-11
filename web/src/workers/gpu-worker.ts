@@ -2226,23 +2226,66 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           const tryPostWebgl2WgpuFramebufferScreenshot = (): boolean => {
             if (!presenter || presenter.backend !== "webgl2_wgpu") return false;
             if (aerogpuLastOutputSource !== "framebuffer") return false;
-            const frame = getCurrentFrameInfo();
-            if (!frame) return false;
+            refreshFramebufferViews();
 
-            const rowBytes = frame.width * BYTES_PER_PIXEL_RGBA8;
-            const out = new Uint8Array(rowBytes * frame.height);
-            for (let y = 0; y < frame.height; y += 1) {
-              const srcStart = y * frame.strideBytes;
+            let width = 0;
+            let height = 0;
+            let strideBytes = 0;
+            let pixels: Uint8Array | null = null;
+            let frameSeq: number | null = typeof seq === "number" ? seq : null;
+
+            if (sharedFramebufferViews) {
+              const layout = sharedFramebufferViews.layout;
+              width = layout.width;
+              height = layout.height;
+              strideBytes = layout.strideBytes;
+              const header = sharedFramebufferViews.header;
+
+              const activeIndex = Atomics.load(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
+              const activePixels = activeIndex === 0 ? sharedFramebufferViews.slot0 : sharedFramebufferViews.slot1;
+
+              const desiredSeq = frameSeq;
+              if (desiredSeq != null) {
+                const buf0Seq = Atomics.load(header, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ);
+                const buf1Seq = Atomics.load(header, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ);
+                if (buf0Seq === desiredSeq) {
+                  pixels = sharedFramebufferViews.slot0;
+                } else if (buf1Seq === desiredSeq) {
+                  pixels = sharedFramebufferViews.slot1;
+                } else {
+                  pixels = activePixels;
+                  frameSeq = activeIndex === 0 ? buf0Seq : buf1Seq;
+                }
+              } else {
+                pixels = activePixels;
+                frameSeq = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+              }
+            } else {
+              const frame = getCurrentFrameInfo();
+              if (!frame) return false;
+              width = frame.width;
+              height = frame.height;
+              strideBytes = frame.strideBytes;
+              pixels = frame.pixels;
+              if (frameSeq == null) frameSeq = frame.frameSeq;
+            }
+
+            if (!pixels) return false;
+
+            const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
+            const out = new Uint8Array(rowBytes * height);
+            for (let y = 0; y < height; y += 1) {
+              const srcStart = y * strideBytes;
               const dstStart = y * rowBytes;
-              out.set(frame.pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
+              out.set(pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
             }
 
             if (includeCursor) {
               try {
                 compositeCursorOverRgba8(
                   out,
-                  frame.width,
-                  frame.height,
+                  width,
+                  height,
                   cursorEnabled,
                   cursorImage,
                   cursorWidth,
@@ -2261,15 +2304,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               {
                 type: "screenshot",
                 requestId: req.requestId,
-                width: frame.width,
-                height: frame.height,
+                width,
+                height,
                 rgba8: out.buffer,
                 origin: "top-left",
-                ...(typeof frame.frameSeq === "number"
-                  ? { frameSeq: frame.frameSeq }
-                  : typeof seq === "number"
-                    ? { frameSeq: seq }
-                    : {}),
+                ...(typeof frameSeq === "number" ? { frameSeq } : {}),
               },
               [out.buffer],
             );
