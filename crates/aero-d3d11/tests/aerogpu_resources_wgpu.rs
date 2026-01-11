@@ -87,7 +87,11 @@ async fn read_buffer(
     slice.map_async(wgpu::MapMode::Read, move |v| {
         sender.send(v).ok();
     });
+    #[cfg(not(target_arch = "wasm32"))]
     device.poll(wgpu::Maintain::Wait);
+
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
     receiver
         .receive()
         .await
@@ -150,7 +154,11 @@ async fn read_texture_rgba8(
     slice.map_async(wgpu::MapMode::Read, move |v| {
         sender.send(v).ok();
     });
+    #[cfg(not(target_arch = "wasm32"))]
     device.poll(wgpu::Maintain::Wait);
+
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
     receiver
         .receive()
         .await
