@@ -53,7 +53,7 @@ on:
 
 jobs:
   virtio-snd-vcxproj-guardrail:
-    name: Guardrails (virtio-snd.vcxproj + virtqueue_split headers)
+    name: Guardrails (Win7 virtio build wiring + header collisions)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
