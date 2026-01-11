@@ -3,6 +3,7 @@ use std::ops::Range;
 use emulator::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
+use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::PortIO;
 use memory::MemoryBus;
@@ -159,6 +160,18 @@ fn uhci_root_hub_portsc_reset_enables_port() {
     assert_eq!(st & PORTSC_PR, 0);
     assert_ne!(st & PORTSC_PED, 0);
     assert_ne!(st & PORTSC_PEDC, 0);
+}
+
+#[test]
+fn uhci_usbcmd_default_enables_max_packet_and_roundtrips() {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    let usbcmd = uhci.port_read(REG_USBCMD, 2) as u16;
+    assert!(usbcmd & USBCMD_MAXP != 0);
+
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_MAXP | USBCMD_RS) as u32);
+    let usbcmd = uhci.port_read(REG_USBCMD, 2) as u16;
+    assert_eq!(usbcmd & (USBCMD_MAXP | USBCMD_RS), USBCMD_MAXP | USBCMD_RS);
 }
 
 #[test]

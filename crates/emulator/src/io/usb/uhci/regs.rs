@@ -9,7 +9,12 @@ pub const REG_PORTSC2: u16 = 0x12;
 
 pub const USBCMD_RS: u16 = 1 << 0;
 pub const USBCMD_HCRESET: u16 = 1 << 1;
+pub const USBCMD_GRESET: u16 = 1 << 2;
+pub const USBCMD_EGSM: u16 = 1 << 3;
+pub const USBCMD_FGR: u16 = 1 << 4;
+pub const USBCMD_SWDBG: u16 = 1 << 5;
 pub const USBCMD_CF: u16 = 1 << 6;
+pub const USBCMD_MAXP: u16 = 1 << 7;
 
 pub const USBSTS_USBINT: u16 = 1 << 0;
 pub const USBSTS_USBERRINT: u16 = 1 << 1;
@@ -34,7 +39,7 @@ pub struct UhciRegs {
 impl UhciRegs {
     pub fn new() -> Self {
         let mut regs = Self {
-            usbcmd: 0,
+            usbcmd: USBCMD_MAXP,
             usbsts: 0,
             usbintr: 0,
             frnum: 0,

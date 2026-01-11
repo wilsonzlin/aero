@@ -92,7 +92,7 @@ impl UhciController {
                     self.reset();
                     return;
                 }
-                self.regs.usbcmd = value & (USBCMD_RS | USBCMD_CF);
+                self.regs.usbcmd = value & (USBCMD_RS | USBCMD_CF | USBCMD_MAXP);
                 self.regs.update_halted();
             }
             (REG_USBSTS, 2) => {
