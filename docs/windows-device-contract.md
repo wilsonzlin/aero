@@ -69,7 +69,6 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
   - Windows hardware IDs:
     - `PCI\VEN_A3A0&DEV_0001`
     - `PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0` (optional; only if the INF matches it)
-
 Legacy bring-up ABI note:
 
 - The Win7 KMD supports a legacy bring-up AeroGPU ABI (`PCI\VEN_1AED&DEV_0001`, protocol header `drivers/aerogpu/protocol/aerogpu_protocol.h`).

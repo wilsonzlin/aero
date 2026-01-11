@@ -29,11 +29,14 @@ The Win7 AeroGPU KMD supports two AeroGPU PCI/MMIO ABIs:
   * Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`
   * This ABI is retained for compatibility during migration and is expected to be removed once Task 530 completes.
 
-The Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) intentionally bind to **both**:
-* `PCI\\VEN_A3A0&DEV_0001` (versioned ABI)
-* `PCI\\VEN_1AED&DEV_0001` (legacy bring-up ABI)
+The Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the canonical, versioned device:
 
-Using the legacy device ID still requires the emulator to expose the legacy device model (`emulator` feature `aerogpu-legacy`), but it does **not** require a custom INF.
+* `PCI\\VEN_A3A0&DEV_0001` (versioned ABI)
+
+The legacy bring-up device ID (`PCI\\VEN_1AED&DEV_0001`) is still supported by the KMD for bring-up/compatibility, but requires:
+
+* enabling the emulator legacy device model (`emulator` feature `aerogpu-legacy`), and
+* installing with a custom INF that matches `PCI\\VEN_1AED&DEV_0001`.
 
 During `DxgkDdiStartDevice`, the KMD reads BAR0 `AEROGPU_MMIO_REG_MAGIC`:
 
