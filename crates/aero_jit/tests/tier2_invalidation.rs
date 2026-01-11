@@ -29,6 +29,7 @@ use aero_jit::wasm::{
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
 const CPU_PTR: i32 = 0x1_0000;
+const JIT_CTX_PTR: i32 = CPU_PTR + (abi::CPU_STATE_SIZE as i32);
 const GUEST_MEM_SIZE: usize = 0x1_0000; // one wasm page
 
 #[derive(Clone, Default)]
@@ -189,7 +190,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
 struct WasmiTraceBackend {
     store: Store<()>,
     memory: Memory,
-    trace: TypedFunc<i32, i64>,
+    trace: TypedFunc<(i32, i32), i64>,
 }
 
 impl WasmiTraceBackend {
@@ -210,7 +211,7 @@ impl WasmiTraceBackend {
             .instantiate_and_start(&mut store, &module)
             .expect("instantiate");
         let trace = instance
-            .get_typed_func::<i32, i64>(&store, EXPORT_TRACE_FN)
+            .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TRACE_FN)
             .expect("trace export");
 
         Self { store, memory, trace }
@@ -233,7 +234,10 @@ impl JitBackend for WasmiTraceBackend {
             .write(&mut self.store, CPU_PTR as usize, &cpu_bytes)
             .unwrap();
 
-        let next_rip = self.trace.call(&mut self.store, CPU_PTR).unwrap() as u64;
+        let next_rip = self
+            .trace
+            .call(&mut self.store, (CPU_PTR, JIT_CTX_PTR))
+            .unwrap() as u64;
 
         self.memory
             .read(&self.store, CPU_PTR as usize, &mut cpu_bytes)

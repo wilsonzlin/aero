@@ -23,6 +23,7 @@ use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, Typ
 use wasmparser::Validator;
 
 const CPU_PTR: i32 = 0x1_0000;
+const JIT_CTX_PTR: i32 = CPU_PTR + (abi::CPU_STATE_SIZE as i32);
 const GUEST_MEM_SIZE: usize = 0x1_0000; // 1 page
 
 fn validate_wasm(bytes: &[u8]) {
@@ -30,7 +31,7 @@ fn validate_wasm(bytes: &[u8]) {
     validator.validate_all(bytes).unwrap();
 }
 
-fn instantiate_trace(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<i32, i64>) {
+fn instantiate_trace(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), i64>) {
     let engine = Engine::default();
     let module = Module::new(&engine, bytes).unwrap();
 
@@ -47,7 +48,7 @@ fn instantiate_trace(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<i32, i64>) {
 
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
     let trace = instance
-        .get_typed_func::<i32, i64>(&store, EXPORT_TRACE_FN)
+        .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TRACE_FN)
         .unwrap();
     (store, memory, trace)
 }
@@ -339,7 +340,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
         .write(&mut store, CPU_PTR as usize, &cpu_bytes)
         .unwrap();
 
-    let got_rip = func.call(&mut store, CPU_PTR).unwrap() as u64;
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
     assert_eq!(got_rip, 100);
 
     let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
@@ -425,7 +426,7 @@ fn tier2_trace_wasm_matches_interpreter_on_memory_ops() {
         .write(&mut store, CPU_PTR as usize, &cpu_bytes)
         .unwrap();
 
-    let got_rip = func.call(&mut store, CPU_PTR).unwrap() as u64;
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
     assert_eq!(got_rip, interp_state.cpu.rip);
 
     let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
