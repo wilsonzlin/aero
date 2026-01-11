@@ -72,6 +72,13 @@ export function encodePong(
   return encodeMessage(L2_TUNNEL_TYPE_PONG, payload, maxPayload);
 }
 
+export function encodeError(
+  payload: Uint8Array = new Uint8Array(),
+  { maxPayload = L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD }: { maxPayload?: number } = {},
+): Uint8Array {
+  return encodeMessage(L2_TUNNEL_TYPE_ERROR, payload, maxPayload);
+}
+
 export function decodeL2Message(
   buf: Uint8Array,
   {
@@ -104,4 +111,3 @@ export function decodeL2Message(
 
   return { version, type, flags, payload };
 }
-

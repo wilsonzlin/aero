@@ -1,65 +1,113 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
-  L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
-  L2_TUNNEL_MAGIC,
+  L2_TUNNEL_TYPE_ERROR,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_VERSION,
+  L2TunnelDecodeError,
   decodeL2Message,
+  encodeError,
   encodeL2Frame,
   encodePing,
   encodePong,
 } from "./l2TunnelProtocol";
 
+type L2ValidVector = {
+  name: string;
+  msgType: number;
+  flags: number;
+  payloadHex: string;
+  wireHex: string;
+};
+
+type L2InvalidVector = {
+  name: string;
+  wireHex: string;
+  errorCode: L2TunnelDecodeError["code"];
+};
+
+type RootVectors = {
+  version: number;
+  "aero-l2-tunnel-v1": {
+    valid: L2ValidVector[];
+    invalid: L2InvalidVector[];
+  };
+};
+
+function decodeHex(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) throw new Error(`hex string length must be even, got ${hex.length}`);
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    if (!Number.isFinite(byte)) throw new Error(`invalid hex at ${i}`);
+    out[i] = byte;
+  }
+  return out;
+}
+
+function encodeHex(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+function loadVectors(): RootVectors {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const vectorPath = join(here, "../../../crates/conformance/test-vectors/aero-vectors-v1.json");
+  return JSON.parse(readFileSync(vectorPath, "utf8")) as RootVectors;
+}
+
 describe("l2TunnelProtocol", () => {
-  it("roundtrips FRAME", () => {
-    const payload = Uint8Array.from([0, 1, 2, 3, 4, 5]);
-    const encoded = encodeL2Frame(payload);
-    const decoded = decodeL2Message(encoded);
+  it("matches the canonical l2 tunnel framing vectors", () => {
+    const vectors = loadVectors();
+    expect(vectors.version).toBe(1);
 
-    expect(decoded.version).toBe(L2_TUNNEL_VERSION);
-    expect(decoded.type).toBe(L2_TUNNEL_TYPE_FRAME);
-    expect(decoded.flags).toBe(0);
-    expect(Array.from(decoded.payload)).toEqual(Array.from(payload));
-  });
+    for (const v of vectors["aero-l2-tunnel-v1"].valid) {
+      const payload = decodeHex(v.payloadHex);
+      const expectedWire = decodeHex(v.wireHex);
 
-  it("roundtrips PING and PONG", () => {
-    const payload = Uint8Array.from([9, 8, 7, 6]);
+      const decoded = decodeL2Message(expectedWire);
+      expect(decoded.version).toBe(L2_TUNNEL_VERSION);
+      expect(decoded.type).toBe(v.msgType);
+      expect(decoded.flags).toBe(v.flags);
+      expect(encodeHex(decoded.payload)).toBe(v.payloadHex);
 
-    const ping = decodeL2Message(encodePing(payload));
-    expect(ping.type).toBe(L2_TUNNEL_TYPE_PING);
-    expect(Array.from(ping.payload)).toEqual(Array.from(payload));
+      let encoded: Uint8Array;
+      switch (v.msgType) {
+        case L2_TUNNEL_TYPE_FRAME:
+          encoded = encodeL2Frame(payload);
+          break;
+        case L2_TUNNEL_TYPE_PING:
+          encoded = encodePing(payload);
+          break;
+        case L2_TUNNEL_TYPE_PONG:
+          encoded = encodePong(payload);
+          break;
+        case L2_TUNNEL_TYPE_ERROR:
+          encoded = encodeError(payload);
+          break;
+        default:
+          throw new Error(`unsupported msgType in vectors: ${v.msgType}`);
+      }
 
-    const pong = decodeL2Message(encodePong(payload));
-    expect(pong.type).toBe(L2_TUNNEL_TYPE_PONG);
-    expect(Array.from(pong.payload)).toEqual(Array.from(payload));
-  });
+      expect(encodeHex(encoded)).toBe(v.wireHex);
+    }
 
-  it("rejects wrong magic and version", () => {
-    const ok = encodeL2Frame(Uint8Array.from([1, 2, 3]));
-
-    const wrongMagic = ok.slice();
-    wrongMagic[0] = 0x00;
-    expect(() => decodeL2Message(wrongMagic)).toThrow();
-
-    const wrongVersion = ok.slice();
-    wrongVersion[1] = 0xff;
-    expect(() => decodeL2Message(wrongVersion)).toThrow();
-  });
-
-  it("rejects oversized payloads", () => {
-    const payload = new Uint8Array(L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD + 1);
-    expect(() => encodeL2Frame(payload)).toThrow(RangeError);
-
-    const wire = new Uint8Array(4 + payload.length);
-    wire[0] = L2_TUNNEL_MAGIC;
-    wire[1] = L2_TUNNEL_VERSION;
-    wire[2] = L2_TUNNEL_TYPE_FRAME;
-    wire[3] = 0;
-    wire.set(payload, 4);
-    expect(() => decodeL2Message(wire)).toThrow();
+    for (const v of vectors["aero-l2-tunnel-v1"].invalid) {
+      const wire = decodeHex(v.wireHex);
+      try {
+        decodeL2Message(wire);
+        throw new Error(`expected decode to throw (${v.name})`);
+      } catch (err) {
+        expect(err).toBeInstanceOf(L2TunnelDecodeError);
+        expect((err as L2TunnelDecodeError).code).toBe(v.errorCode);
+      }
+    }
   });
 });
-

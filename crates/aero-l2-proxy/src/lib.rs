@@ -4,6 +4,8 @@ mod capture;
 mod metrics;
 mod pcapng;
 
+pub mod auth;
+
 mod config;
 mod dns;
 mod origin;
