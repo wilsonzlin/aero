@@ -3778,6 +3778,12 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilView = &CreateDepthStencilView;
   pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilView = &DestroyDepthStencilView;
   pCreateDevice->pDeviceFuncs->pfnClearDepthStencilView = &ClearDepthStencilView;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateShaderResourceViewSize = &CalcPrivateShaderResourceViewSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateShaderResourceView = &CreateShaderResourceView;
+  pCreateDevice->pDeviceFuncs->pfnDestroyShaderResourceView = &DestroyShaderResourceView;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateSamplerSize = &CalcPrivateSamplerSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateSampler = &CreateSampler;
+  pCreateDevice->pDeviceFuncs->pfnDestroySampler = &DestroySampler;
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateBlendStateSize = &CalcPrivateBlendStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateBlendState = &CreateBlendState;
@@ -3809,10 +3815,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
       &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers)>::Call;
   pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers =
       &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources = &VsSetShaderResources;
+  pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources = &PsSetShaderResources;
   pCreateDevice->pDeviceFuncs->pfnVsSetSamplers =
       &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetSamplers)>::Call;
   pCreateDevice->pDeviceFuncs->pfnPsSetSamplers =
