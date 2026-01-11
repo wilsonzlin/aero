@@ -2679,6 +2679,54 @@ HRESULT track_render_targets_locked(Device* dev) {
     return S_OK;
   }
 
+#if defined(_WIN32)
+  const size_t min_packet = align_up(sizeof(aerogpu_cmd_hdr), 4);
+  if (!wddm_ensure_recording_buffers(dev, min_packet)) {
+    return E_FAIL;
+  }
+#endif
+
+  std::array<UINT, 4 + 1> unique_allocs{};
+  size_t unique_alloc_len = 0;
+  auto add_alloc = [&unique_allocs, &unique_alloc_len](const Resource* res) {
+    if (!res) {
+      return;
+    }
+    if (res->backing_alloc_id == 0) {
+      return;
+    }
+    if (res->wddm_hAllocation == 0) {
+      return;
+    }
+    const UINT alloc_id = res->backing_alloc_id;
+    for (size_t i = 0; i < unique_alloc_len; ++i) {
+      if (unique_allocs[i] == alloc_id) {
+        return;
+      }
+    }
+    unique_allocs[unique_alloc_len++] = alloc_id;
+  };
+
+  for (uint32_t i = 0; i < 4; ++i) {
+    add_alloc(dev->render_targets[i]);
+  }
+  add_alloc(dev->depth_stencil);
+
+  const UINT needed = static_cast<UINT>(unique_alloc_len);
+  if (needed != 0) {
+    const UINT cap = dev->alloc_list_tracker.list_capacity();
+    if (needed > cap) {
+      logf("aerogpu-d3d9: render target bindings require %u allocations but allocation list capacity is %u\n",
+           static_cast<unsigned>(needed),
+           static_cast<unsigned>(cap));
+      return E_FAIL;
+    }
+
+    if (dev->alloc_list_tracker.list_len() + needed > cap) {
+      (void)submit(dev);
+    }
+  }
+
   for (uint32_t i = 0; i < 4; i++) {
     if (dev->render_targets[i]) {
       HRESULT hr = track_resource_allocation_locked(dev, dev->render_targets[i], /*write=*/true);

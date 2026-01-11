@@ -3333,6 +3333,162 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
   return Check(alloc_list[1].WriteOperation == 0, "allocation list marks draw texture as read");
 }
 
+bool TestRenderTargetTrackingPreSplitRetainsAllocs() {
+  // Similar to TestDrawStateTrackingPreSplitRetainsAllocs, but for Clear(): the
+  // render-target tracking helper must not drop earlier tracked render targets
+  // if allocation-list tracking needs to split.
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hDummy{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_dummy = false;
+
+    ~Cleanup() {
+      if (has_dummy && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hDummy);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnClear != nullptr, "Clear must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
+  dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
+  dev->alloc_list_tracker.reset();
+
+  aerogpu_wddm_alloc_priv priv{};
+  std::memset(&priv, 0, sizeof(priv));
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 6u; // D3DRTYPE_VERTEXBUFFER
+  create_res.format = 0;
+  create_res.width = 0;
+  create_res.height = 0;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 64;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pKmdAllocPrivateData = &priv;
+  create_res.KmdAllocPrivateDataSize = sizeof(priv);
+  create_res.wddm_hAllocation = 0x1111u;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(dummy alloc-backed VB)")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned resource handle")) {
+    return false;
+  }
+  cleanup.hDummy = create_res.hResource;
+  cleanup.has_dummy = true;
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->alloc_list_tracker.list_len() == 1, "allocation list has 1 entry after CreateResource")) {
+      return false;
+    }
+  }
+
+  Resource rt0{};
+  rt0.kind = ResourceKind::Texture2D;
+  rt0.handle = 0x2000u;
+  rt0.backing_alloc_id = 1;
+  rt0.share_token = 0;
+  rt0.wddm_hAllocation = 0x2000u;
+
+  Resource rt1{};
+  rt1.kind = ResourceKind::Texture2D;
+  rt1.handle = 0x2001u;
+  rt1.backing_alloc_id = 2;
+  rt1.share_token = 0;
+  rt1.wddm_hAllocation = 0x2001u;
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->render_targets[0] = &rt0;
+    dev->render_targets[1] = &rt1;
+    dev->render_targets[2] = nullptr;
+    dev->render_targets[3] = nullptr;
+    dev->depth_stencil = nullptr;
+  }
+
+  hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
+                                     /*flags=*/0x1u,
+                                     /*color_rgba8=*/0xFF0000FFu,
+                                     /*depth=*/1.0f,
+                                     /*stencil=*/0);
+  if (!Check(hr == S_OK, "Clear")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->alloc_list_tracker.list_len() == 2, "allocation list contains MRT deps after split")) {
+      return false;
+    }
+  }
+  if (!Check(alloc_list[0].hAllocation == rt0.wddm_hAllocation, "allocation list contains RT0 mapping")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].WriteOperation == 1, "allocation list marks RT0 as write")) {
+    return false;
+  }
+  if (!Check(alloc_list[1].hAllocation == rt1.wddm_hAllocation, "allocation list contains RT1 mapping")) {
+    return false;
+  }
+  return Check(alloc_list[1].WriteOperation == 1, "allocation list marks RT1 as write");
+}
+
 bool TestDrawStateTrackingDedupsSharedAllocIds() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -6893,6 +7049,7 @@ int main() {
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestDrawStateTrackingPreSplitRetainsAllocs();
+  failures += !aerogpu::TestRenderTargetTrackingPreSplitRetainsAllocs();
   failures += !aerogpu::TestDrawStateTrackingDedupsSharedAllocIds();
   failures += !aerogpu::TestOpenResourceCapturesWddmAllocationForTracking();
   failures += !aerogpu::TestOpenResourceAcceptsAllocPrivV2();
