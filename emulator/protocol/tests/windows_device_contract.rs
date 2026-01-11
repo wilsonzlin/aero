@@ -129,24 +129,29 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", contract_md_path.display()));
     let aerogpu_row = contract_md_text
         .lines()
-        .find(|line| line.contains("| Aero GPU |"))
+        .find(|line| line.trim_start().starts_with("| Aero GPU |"))
         .unwrap_or_else(|| panic!("missing Aero GPU row in {}", contract_md_path.display()));
-    assert!(
-        aerogpu_row.contains("A3A0:0001"),
-        "Aero GPU row must contain `A3A0:0001` (got: {aerogpu_row:?})"
+    let aerogpu_cells: Vec<&str> = aerogpu_row
+        .trim()
+        .trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .collect();
+    assert_eq!(
+        aerogpu_cells.len(),
+        6,
+        "expected 6 columns in Aero GPU markdown table row, got {aerogpu_cells:?}"
     );
+    assert_eq!(aerogpu_cells[0], "Aero GPU");
+    assert_eq!(aerogpu_cells[1], "`A3A0:0001`");
+    assert_eq!(aerogpu_cells[2], "`A3A0:0001`");
     assert!(
-        aerogpu_row.contains("03/00/00"),
-        "Aero GPU row must contain `03/00/00` (got: {aerogpu_row:?})"
+        aerogpu_cells[3].contains("`03/00/00`"),
+        "Aero GPU class code must contain `03/00/00` (got: {:?})",
+        aerogpu_cells[3]
     );
-    assert!(
-        aerogpu_row.contains("aerogpu.inf"),
-        "Aero GPU row must contain `aerogpu.inf` (got: {aerogpu_row:?})"
-    );
-    assert!(
-        aerogpu_row.contains("aerogpu"),
-        "Aero GPU row must contain the `aerogpu` service name (got: {aerogpu_row:?})"
-    );
+    assert_eq!(aerogpu_cells[4], "`aerogpu`");
+    assert_eq!(aerogpu_cells[5], "`aerogpu.inf`");
 
     // Make sure we don't keep stale contract text around under a different name.
     assert!(!contains_needle(&contract_text, "A0E0"));

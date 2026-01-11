@@ -84,7 +84,7 @@ impl AerogpuCmdWriter {
         let offset = self.buf.len();
         self.buf.resize(offset + aligned_size, 0);
 
-        self.write_u32_at(offset + 0, opcode as u32);
+        self.write_u32_at(offset, opcode as u32);
         self.write_u32_at(offset + 4, aligned_size as u32);
         offset
     }
@@ -108,6 +108,7 @@ impl AerogpuCmdWriter {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_texture2d(
         &mut self,
         texture_handle: AerogpuHandle,
@@ -285,7 +286,7 @@ impl AerogpuCmdWriter {
 
     pub fn set_vertex_buffers(&mut self, start_slot: u32, bindings: &[AerogpuVertexBufferBinding]) {
         assert!(bindings.len() <= u32::MAX as usize);
-        let unpadded_size = size_of::<AerogpuCmdSetVertexBuffers>() + size_of::<AerogpuVertexBufferBinding>() * bindings.len();
+        let unpadded_size = size_of::<AerogpuCmdSetVertexBuffers>() + core::mem::size_of_val(bindings);
         let base = self.append_raw(AerogpuCmdOpcode::SetVertexBuffers, unpadded_size);
         self.write_u32_at(base + offset_of!(AerogpuCmdSetVertexBuffers, start_slot), start_slot);
         self.write_u32_at(
