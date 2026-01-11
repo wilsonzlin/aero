@@ -306,13 +306,14 @@ For Aero disk streaming, cross-origin `GET` requests typically include:
 * `Range` (not CORS-safelisted) → triggers an `OPTIONS` preflight.
 * Optionally `If-Range` (also not safelisted) → preflight.
 * Optionally `Authorization` → preflight.
+* Optionally `If-None-Match` / `If-Modified-Since` for conditional revalidation → preflight.
 
 ### Required `OPTIONS` handling
 
 The disk bytes endpoint MUST respond to `OPTIONS` (preflight) with at least:
 
 * `Access-Control-Allow-Methods: GET, HEAD, OPTIONS`
-* `Access-Control-Allow-Headers: Range, If-Range, Authorization` (include only those you actually use, but `Range` is required)
+* `Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since, Authorization` (include only those you actually use, but `Range` is required)
 * `Access-Control-Max-Age: <seconds>` (recommended; see below)
 
 Origin handling:

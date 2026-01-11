@@ -178,7 +178,7 @@ Recommended **preflight response** headers:
 HTTP/1.1 204 No Content
 Access-Control-Allow-Origin: https://app.example.com
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
-Access-Control-Allow-Headers: Range, If-Range, Authorization
+Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since, Authorization
 Access-Control-Max-Age: 600
 Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 ```
@@ -195,6 +195,7 @@ Accept-Ranges: bytes
 Important details:
 
 - `Content-Range`, `Accept-Ranges`, and `Content-Length` are **not** CORS-safelisted response headers. If they are not listed in `Access-Control-Expose-Headers`, the fetch may succeed but the browser will hide these headers from JS.
+- Request headers like `If-None-Match` and `If-Modified-Since` are **not** CORS-safelisted. If you use conditional requests (for metadata revalidation or full-body reads), ensure your preflight response allows them.
 - If you need cookies or other credentials, you must **not** use `Access-Control-Allow-Origin: *`; instead echo a specific origin and also include `Access-Control-Allow-Credentials: true`.
 
 ### Cross-origin isolation: COOP/COEP vs CORS/CORP
