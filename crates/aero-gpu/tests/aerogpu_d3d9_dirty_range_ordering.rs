@@ -217,6 +217,7 @@ fn d3d9_dirty_range_flush_respects_ordering_with_interleaved_draws() {
         vb
     };
 
+    // D3D9 defaults to back-face culling with clockwise front faces.
     let vb_data_a = make_vb(&[
         (-0.9, -0.9, 0.0, 1.0),
         (-0.5, 0.9, 0.0, 1.0),

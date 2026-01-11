@@ -172,6 +172,7 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_renders_triangle() {
 
     // Vertex buffer: float4 position (clip space) + D3DCOLOR (ARGB, stored as BGRA bytes in LE).
     let green_argb: u32 = 0xFF00_FF00u32;
+    // D3D9 defaults to back-face culling with clockwise front faces.
     let verts = [
         (-0.5f32, -0.5f32, 0.0f32, 1.0f32, green_argb),
         (0.0f32, 0.5f32, 0.0f32, 1.0f32, green_argb),

@@ -122,6 +122,7 @@ fn d3d9_destroy_resource_invalidates_bind_groups_for_all_contexts() {
     let height = 64u32;
 
     let mut vb_data = Vec::new();
+    // D3D9 defaults to back-face culling with clockwise front faces.
     let verts = [
         (-0.8f32, -0.2f32, 0.0f32, 1.0f32),
         (0.0f32, 0.8f32, 0.0f32, 1.0f32),
@@ -269,6 +270,7 @@ fn d3d9_import_shared_surface_invalidates_bind_groups_for_all_contexts() {
     let height = 64u32;
 
     let mut vb_data = Vec::new();
+    // D3D9 defaults to back-face culling with clockwise front faces.
     let verts = [
         (-0.8f32, -0.2f32, 0.0f32, 1.0f32),
         (0.0f32, 0.8f32, 0.0f32, 1.0f32),
