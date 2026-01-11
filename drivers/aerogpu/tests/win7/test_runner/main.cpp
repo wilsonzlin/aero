@@ -526,6 +526,7 @@ int main(int argc, char** argv) {
   const char* const kFallbackTests[] = {
       "d3d9ex_dwm_probe",
       "d3d9ex_event_query",
+      "d3d9ex_dwm_ddi_sanity",
       "vblank_wait_sanity",
       "vblank_wait",
       "wait_vblank_pacing",

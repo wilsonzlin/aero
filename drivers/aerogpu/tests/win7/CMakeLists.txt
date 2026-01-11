@@ -53,6 +53,11 @@ aerogpu_add_win7_test(d3d9ex_event_query
 )
 target_link_libraries(d3d9ex_event_query PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9ex_dwm_ddi_sanity
+  d3d9ex_dwm_ddi_sanity/main.cpp
+)
+target_link_libraries(d3d9ex_dwm_ddi_sanity PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(vblank_wait_sanity
   vblank_wait_sanity/main.cpp
 )
