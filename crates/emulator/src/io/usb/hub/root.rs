@@ -210,42 +210,32 @@ impl RootHub {
         let Some((&root_port, rest)) = path.split_first() else {
             return Err(UsbTopologyError::EmptyPath);
         };
-        let Some(p) = self.ports.get_mut(root_port as usize) else {
+        let root_port = root_port as usize;
+        if root_port >= self.ports.len() {
             return Err(UsbTopologyError::PortOutOfRange {
                 depth: 0,
-                port: root_port as usize,
+                port: root_port,
                 num_ports: self.ports.len(),
             });
         };
 
         // If only a root port is provided, attach directly to the root hub.
         if rest.is_empty() {
-            if p.device.is_some() {
+            if self.ports[root_port].device.is_some() {
                 return Err(UsbTopologyError::PortOccupied {
                     depth: 0,
-                    port: root_port as usize,
+                    port: root_port,
                 });
             }
-            p.device = Some(AttachedUsbDevice::new(model));
-            p.suspended = false;
-            p.resuming = false;
-            if !p.connected {
-                p.connected = true;
-            }
-            p.connect_change = true;
-            // Connecting a new device effectively disables the port until the host performs
-            // the reset/enable sequence.
-            if p.enabled {
-                p.enabled = false;
-                p.enable_change = true;
-            }
+            self.attach(root_port, model);
             return Ok(());
         }
 
+        let p = &mut self.ports[root_port];
         let Some(root_dev) = p.device.as_mut() else {
             return Err(UsbTopologyError::NoDeviceAtPort {
                 depth: 0,
-                port: root_port as usize,
+                port: root_port,
             });
         };
 
@@ -272,40 +262,32 @@ impl RootHub {
         let Some((&root_port, rest)) = path.split_first() else {
             return Err(UsbTopologyError::EmptyPath);
         };
-        let Some(p) = self.ports.get_mut(root_port as usize) else {
+        let root_port = root_port as usize;
+        if root_port >= self.ports.len() {
             return Err(UsbTopologyError::PortOutOfRange {
                 depth: 0,
-                port: root_port as usize,
+                port: root_port,
                 num_ports: self.ports.len(),
             });
         };
 
         // If only a root port is provided, detach directly from the root hub.
         if rest.is_empty() {
-            if p.device.is_none() {
+            if self.ports[root_port].device.is_none() {
                 return Err(UsbTopologyError::NoDeviceAtPort {
                     depth: 0,
-                    port: root_port as usize,
+                    port: root_port,
                 });
             }
-            p.device = None;
-            p.suspended = false;
-            p.resuming = false;
-            if p.connected {
-                p.connected = false;
-                p.connect_change = true;
-            }
-            if p.enabled {
-                p.enabled = false;
-                p.enable_change = true;
-            }
+            self.detach(root_port);
             return Ok(());
         }
 
+        let p = &mut self.ports[root_port];
         let Some(root_dev) = p.device.as_mut() else {
             return Err(UsbTopologyError::NoDeviceAtPort {
                 depth: 0,
-                port: root_port as usize,
+                port: root_port,
             });
         };
 
