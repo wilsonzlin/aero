@@ -25,6 +25,13 @@ on:
       - ".github/workflows/virtio-win-packaging-smoke.yml"
   workflow_dispatch:
 
+concurrency:
+  group: virtio-win-packaging-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: windows-2022
