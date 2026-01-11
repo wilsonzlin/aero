@@ -100,6 +100,12 @@ class PciIdentity:
     def subsys_str(self) -> str:
         return f"{self.subsystem_vendor_id:04X}:{self.subsystem_device_id:04X}"
 
+@dataclass(frozen=True)
+class WindowsDeviceContractRow:
+    identity: PciIdentity
+    driver_service_name: str
+    inf_name: str
+
 
 def parse_contract_revision_id(md: str) -> int:
     m = re.search(
@@ -344,7 +350,7 @@ def parse_w7_contract_queue_sizes(md: str) -> Mapping[str, dict[int, int]]:
     return out
 
 
-def parse_windows_device_contract_table(md: str) -> Mapping[str, PciIdentity]:
+def parse_windows_device_contract_table(md: str) -> Mapping[str, WindowsDeviceContractRow]:
     expected_rows = {
         "virtio-blk",
         "virtio-net",
@@ -352,34 +358,53 @@ def parse_windows_device_contract_table(md: str) -> Mapping[str, PciIdentity]:
         "virtio-input (keyboard)",
         "virtio-input (mouse)",
     }
-    out: dict[str, PciIdentity] = {}
+    out: dict[str, WindowsDeviceContractRow] = {}
     extra: list[str] = []
     for line in md.splitlines():
         if not line.lstrip().startswith("|"):
             continue
         if line.strip().startswith("| Device |"):
             continue
-        # | virtio-blk | `1AF4:1042` (REV `0x01`) | `1AF4:0002` | ...
-        m = re.match(
-            r"^\|\s*(?P<name>[^|]+?)\s*\|\s*`(?P<pci>[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})`\s*\(REV\s*`0x(?P<rev>[0-9A-Fa-f]{2})`\)\s*\|\s*`(?P<subsys>[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})`\s*\|",
-            line,
-        )
-        if not m:
+        parts = [p.strip() for p in line.strip().strip("|").split("|")]
+        if len(parts) < 6:
             continue
-        name = m.group("name").strip()
+
+        name = parts[0]
         if name.startswith("virtio-") and name not in expected_rows:
             extra.append(name)
             continue
         if name not in expected_rows:
             continue
-        pci_vendor_s, pci_device_s = m.group("pci").split(":")
-        subsys_vendor_s, subsys_device_s = m.group("subsys").split(":")
-        out[name] = PciIdentity(
-            vendor_id=parse_hex(pci_vendor_s),
-            device_id=parse_hex(pci_device_s),
-            subsystem_vendor_id=parse_hex(subsys_vendor_s),
-            subsystem_device_id=parse_hex(subsys_device_s),
-            revision_id=int(m.group("rev"), 16),
+
+        def backticked(cell: str, *, context: str) -> str:
+            m = re.search(r"`([^`]+)`", cell)
+            if not m:
+                fail(f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: could not parse {context} from row {name!r}")
+            return m.group(1).strip()
+
+        pci_col = parts[1]
+        subsys_col = parts[2]
+        service_col = parts[4]
+        inf_col = parts[5]
+
+        pci_vendor_s, pci_device_s = backticked(pci_col, context="PCI Vendor:Device").split(":")
+        subsys_vendor_s, subsys_device_s = backticked(subsys_col, context="Subsystem Vendor:Device").split(":")
+        rev_m = re.search(r"REV\s*`0x(?P<rev>[0-9A-Fa-f]{2})`", pci_col)
+        if not rev_m:
+            fail(
+                f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: could not parse revision ID from row {name!r} "
+                "(expected '(REV `0x01`)')"
+            )
+        out[name] = WindowsDeviceContractRow(
+            identity=PciIdentity(
+                vendor_id=parse_hex(pci_vendor_s),
+                device_id=parse_hex(pci_device_s),
+                subsystem_vendor_id=parse_hex(subsys_vendor_s),
+                subsystem_device_id=parse_hex(subsys_device_s),
+                revision_id=int(rev_m.group("rev"), 16),
+            ),
+            driver_service_name=backticked(service_col, context="Windows service"),
+            inf_name=backticked(inf_col, context="INF name"),
         )
 
     if extra:
@@ -415,12 +440,22 @@ def _parse_manifest_hex_u16(entry: Mapping[str, object], field: str, *, device: 
             f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} must be a hex string like '0x1AF4'"
         )
     try:
+        if not raw.lower().startswith("0x"):
+            fail(
+                f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} must be a 0x-prefixed hex string "
+                f"like '0x1AF4' (got {raw!r})"
+            )
         return int(raw, 16)
     except ValueError:
         fail(
             f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} has invalid hex string: {raw!r}"
         )
 
+def _require_str(entry: Mapping[str, object], field: str, *, device: str) -> str:
+    raw = entry.get(field)
+    if not isinstance(raw, str) or not raw.strip():
+        fail(f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} must be a non-empty string")
+    return raw.strip()
 
 def _require_str_list(entry: Mapping[str, object], field: str, *, device: str) -> list[str]:
     raw = entry.get(field)
@@ -813,17 +848,17 @@ def main() -> None:
         doc = table_ids.get(row_name)
         if not doc:
             continue
-        if (doc.vendor_id, doc.device_id) != (contract.vendor_id, contract.device_id):
+        if (doc.identity.vendor_id, doc.identity.device_id) != (contract.vendor_id, contract.device_id):
             errors.append(
                 format_error(
                     f"{row_name}: Vendor/Device ID mismatch between docs:",
                     [
                         f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: {contract.vendor_device_str()}",
-                        f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: {doc.vendor_device_str()}",
+                        f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: {doc.identity.vendor_device_str()}",
                     ],
                 )
             )
-        if (doc.subsystem_vendor_id, doc.subsystem_device_id) != (
+        if (doc.identity.subsystem_vendor_id, doc.identity.subsystem_device_id) != (
             contract.subsystem_vendor_id,
             contract.subsystem_device_id,
         ):
@@ -832,17 +867,17 @@ def main() -> None:
                     f"{row_name}: Subsystem Vendor/Device ID mismatch between docs:",
                     [
                         f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: {contract.subsys_str()}",
-                        f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: {doc.subsys_str()}",
+                        f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: {doc.identity.subsys_str()}",
                     ],
                 )
             )
-        if doc.revision_id != contract.revision_id or contract.revision_id != contract_rev:
+        if doc.identity.revision_id != contract.revision_id or contract.revision_id != contract_rev:
             errors.append(
                 format_error(
                     f"{row_name}: Revision ID mismatch (contract major version is encoded in PCI Revision ID):",
                     [
                         f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: 0x{contract.revision_id:02X} (header says 0x{contract_rev:02X})",
-                        f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: 0x{doc.revision_id:02X}",
+                        f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: 0x{doc.identity.revision_id:02X}",
                     ],
                 )
             )
@@ -876,6 +911,8 @@ def main() -> None:
         entry = _find_manifest_device(devices, device_name)
         vendor = _parse_manifest_hex_u16(entry, "pci_vendor_id", device=device_name)
         dev_id = _parse_manifest_hex_u16(entry, "pci_device_id", device=device_name)
+        service_name = _require_str(entry, "driver_service_name", device=device_name)
+        inf_name = _require_str(entry, "inf_name", device=device_name)
         expected_type = VIRTIO_DEVICE_TYPE_IDS[device_name]
         expected_modern_id = VIRTIO_PCI_DEVICE_ID_BASE + expected_type
         if vendor != VIRTIO_PCI_VENDOR_ID:
@@ -918,6 +955,48 @@ def main() -> None:
                     [
                         f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: {contract_any.vendor_device_str()}",
                         f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {vendor:04X}:{dev_id:04X}",
+                    ],
+                )
+            )
+
+        # Service/INF names must match the human-readable device contract.
+        if device_name == "virtio-input":
+            kbd_row = table_ids["virtio-input (keyboard)"]
+            mouse_row = table_ids["virtio-input (mouse)"]
+            if kbd_row.driver_service_name != mouse_row.driver_service_name or kbd_row.inf_name != mouse_row.inf_name:
+                errors.append(
+                    format_error(
+                        "virtio-input: windows-device-contract.md rows disagree on service/INF name:",
+                        [
+                            f"keyboard row: service={kbd_row.driver_service_name!r} inf={kbd_row.inf_name!r}",
+                            f"mouse row:    service={mouse_row.driver_service_name!r} inf={mouse_row.inf_name!r}",
+                        ],
+                    )
+                )
+            expected_service = kbd_row.driver_service_name
+            expected_inf = kbd_row.inf_name
+        else:
+            row = table_ids[device_name]
+            expected_service = row.driver_service_name
+            expected_inf = row.inf_name
+
+        if service_name != expected_service:
+            errors.append(
+                format_error(
+                    f"{device_name}: driver_service_name mismatch between windows-device-contract.md and manifest:",
+                    [
+                        f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: {expected_service!r}",
+                        f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {service_name!r}",
+                    ],
+                )
+            )
+        if inf_name != expected_inf:
+            errors.append(
+                format_error(
+                    f"{device_name}: inf_name mismatch between windows-device-contract.md and manifest:",
+                    [
+                        f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: {expected_inf!r}",
+                        f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {inf_name!r}",
                     ],
                 )
             )
