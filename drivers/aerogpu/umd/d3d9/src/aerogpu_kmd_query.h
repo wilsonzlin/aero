@@ -54,6 +54,11 @@ class AerogpuKmdQuery {
   // open failure, or escape failure).
   bool QueryFence(uint64_t* last_submitted, uint64_t* last_completed);
 
+  // Returns the D3DKMT adapter handle opened by InitFromLuid/InitFromHdc, or 0
+  // if the helper is not initialized. This can be used with other D3DKMT calls
+  // like D3DKMTWaitForSynchronizationObject.
+  uint32_t GetKmtAdapterHandle();
+
   // Waits until the completed fence is >= `fence`, or until `timeout_ms`
   // elapses. Uses cooperative polling (Sleep(0/1)), not a busy spin.
   bool WaitForFence(uint64_t fence, uint32_t timeout_ms);

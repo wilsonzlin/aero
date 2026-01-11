@@ -323,6 +323,7 @@ constexpr AerogpuNtStatus kStatusSuccess = 0x00000000L;
 constexpr AerogpuNtStatus kStatusTimeout = 0x00000102L;
 
 struct AerogpuD3DKMTWaitForSynchronizationObject {
+  WddmHandle hAdapter;
   UINT ObjectCount;
   const WddmHandle* ObjectHandleArray;
   const uint64_t* FenceValueArray;
@@ -373,26 +374,30 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
     if (sync_object != 0) {
       auto* wait_fn = load_d3dkmt_wait_for_sync_object();
       if (wait_fn) {
-        const WddmHandle handles[1] = {sync_object};
-        const uint64_t fences[1] = {fence_value};
+        const WddmHandle kmt_adapter = static_cast<WddmHandle>(adapter->kmd_query.GetKmtAdapterHandle());
+        if (kmt_adapter != 0) {
+          const WddmHandle handles[1] = {sync_object};
+          const uint64_t fences[1] = {fence_value};
 
-        AerogpuD3DKMTWaitForSynchronizationObject args{};
-        args.ObjectCount = 1;
-        args.ObjectHandleArray = handles;
-        args.FenceValueArray = fences;
-        args.Timeout = timeout_ms;
+          AerogpuD3DKMTWaitForSynchronizationObject args{};
+          args.hAdapter = kmt_adapter;
+          args.ObjectCount = 1;
+          args.ObjectHandleArray = handles;
+          args.FenceValueArray = fences;
+          args.Timeout = timeout_ms;
 
-        const AerogpuNtStatus st = wait_fn(&args);
-        if (st == kStatusSuccess) {
-          {
-            std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-            adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
+          const AerogpuNtStatus st = wait_fn(&args);
+          if (st == kStatusSuccess) {
+            {
+              std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+              adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
+            }
+            adapter->fence_cv.notify_all();
+            return FenceWaitResult::Complete;
           }
-          adapter->fence_cv.notify_all();
-          return FenceWaitResult::Complete;
-        }
-        if (st == kStatusTimeout) {
-          return FenceWaitResult::NotReady;
+          if (st == kStatusTimeout) {
+            return FenceWaitResult::NotReady;
+          }
         }
       }
     }
@@ -416,23 +421,27 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
       if (sync_object != 0) {
         auto* wait_fn = load_d3dkmt_wait_for_sync_object();
         if (wait_fn) {
-          const WddmHandle handles[1] = {sync_object};
-          const uint64_t fences[1] = {fence_value};
+          const WddmHandle kmt_adapter = static_cast<WddmHandle>(adapter->kmd_query.GetKmtAdapterHandle());
+          if (kmt_adapter != 0) {
+            const WddmHandle handles[1] = {sync_object};
+            const uint64_t fences[1] = {fence_value};
 
-          AerogpuD3DKMTWaitForSynchronizationObject args{};
-          args.ObjectCount = 1;
-          args.ObjectHandleArray = handles;
-          args.FenceValueArray = fences;
-          args.Timeout = 0; // poll
+            AerogpuD3DKMTWaitForSynchronizationObject args{};
+            args.hAdapter = kmt_adapter;
+            args.ObjectCount = 1;
+            args.ObjectHandleArray = handles;
+            args.FenceValueArray = fences;
+            args.Timeout = 0; // poll
 
-          const AerogpuNtStatus st = wait_fn(&args);
-          if (st == kStatusSuccess) {
-            {
-              std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-              adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
+            const AerogpuNtStatus st = wait_fn(&args);
+            if (st == kStatusSuccess) {
+              {
+                std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+                adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
+              }
+              adapter->fence_cv.notify_all();
+              return FenceWaitResult::Complete;
             }
-            adapter->fence_cv.notify_all();
-            return FenceWaitResult::Complete;
           }
         }
       }

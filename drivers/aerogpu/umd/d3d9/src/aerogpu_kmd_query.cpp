@@ -360,6 +360,11 @@ bool AerogpuKmdQuery::QueryFence(uint64_t* last_submitted, uint64_t* last_comple
   return true;
 }
 
+uint32_t AerogpuKmdQuery::GetKmtAdapterHandle() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return adapter_;
+}
+
 bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1* out) {
   if (!out) {
     return false;
@@ -482,6 +487,10 @@ void AerogpuKmdQuery::Shutdown() {}
 
 bool AerogpuKmdQuery::QueryFence(uint64_t*, uint64_t*) {
   return false;
+}
+
+uint32_t AerogpuKmdQuery::GetKmtAdapterHandle() {
+  return 0;
 }
 
 bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1*) {
