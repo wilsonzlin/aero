@@ -2,6 +2,8 @@
 //!
 //! This module implements the Rust-side half of the WebUSB passthrough contract described in
 //! `docs/webusb-passthrough.md`.
+//! For canonical stack selection and deprecation of parallel USB stacks, see
+//! `docs/adr/0015-canonical-usb-stack.md`.
 //!
 //! The device model queues host actions (`UsbHostAction`) when the guest attempts a USB
 //! transfer, and consumes host completions (`UsbHostCompletion`) to finish those transfers.
