@@ -552,6 +552,8 @@ For each allocation created by the KMD:
 - For each submission, KMD sends the emulator a sideband table mapping **`alloc_id` → guest physical address + size** so the emulator can read textures/buffers and write render targets.
 
 `alloc_id` must be stable across shared-handle opens. The KMD persists it in **WDDM allocation private driver data** and returns it to the UMD on both allocation create and open (`DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`), so multiple guest processes can compute consistent IDs for the same underlying shared allocation.
+
+See `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` for the concrete private-data layout (`aerogpu_wddm_alloc_priv`).
   
 ### 5.3 Avoiding complex patch lists
   

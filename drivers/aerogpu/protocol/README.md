@@ -125,6 +125,8 @@ the recommended scheme is:
 
 - `share_token = (uint64_t)alloc_id`
 
+See `aerogpu_wddm_alloc.h` for the exact private-data layout used to persist `alloc_id`/`share_token` across CreateAllocation/OpenAllocation.
+
 ## Fence / completion model
 
 Fences are **monotonic 64-bit** values chosen by the guest.

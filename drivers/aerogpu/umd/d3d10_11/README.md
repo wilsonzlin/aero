@@ -49,7 +49,7 @@ The core emission happens in `src/aerogpu_d3d10_11_umd.cpp` by building a linear
 
 ### Shared surface note
 
-DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token`.
+DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` (provided by the KMD; see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
 
 ## Build
 
