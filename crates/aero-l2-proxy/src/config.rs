@@ -127,10 +127,9 @@ impl SecurityConfig {
         }
 
         let allowed_origins = {
-            let base: Option<(&'static str, String)> =
-                env_non_empty_csv("AERO_L2_ALLOWED_ORIGINS")
-                    .map(|v| ("AERO_L2_ALLOWED_ORIGINS", v))
-                    .or_else(|| env_non_empty_csv("ALLOWED_ORIGINS").map(|v| ("ALLOWED_ORIGINS", v)));
+            let base: Option<(&'static str, String)> = env_non_empty_csv("AERO_L2_ALLOWED_ORIGINS")
+                .map(|v| ("AERO_L2_ALLOWED_ORIGINS", v))
+                .or_else(|| env_non_empty_csv("ALLOWED_ORIGINS").map(|v| ("ALLOWED_ORIGINS", v)));
             let extra = env_non_empty_csv("AERO_L2_ALLOWED_ORIGINS_EXTRA")
                 .map(|v| ("AERO_L2_ALLOWED_ORIGINS_EXTRA", v));
 

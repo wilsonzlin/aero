@@ -1338,9 +1338,12 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_BUFFER: missing staging buffer for writeback".into(),
                 ));
             };
-            let dst_gpa = dst_backing.base_gpa.checked_add(dst_offset_bytes).ok_or_else(|| {
-                ExecutorError::Validation("COPY_BUFFER: dst backing GPA overflow".into())
-            })?;
+            let dst_gpa = dst_backing
+                .base_gpa
+                .checked_add(dst_offset_bytes)
+                .ok_or_else(|| {
+                    ExecutorError::Validation("COPY_BUFFER: dst backing GPA overflow".into())
+                })?;
             let data = self.read_buffer_to_vec_blocking(&staging, size_bytes, "COPY_BUFFER")?;
             if data.len() != size_usize {
                 return Err(ExecutorError::Validation(
@@ -1520,7 +1523,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             let bytes_per_row = align_to(row_bytes, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
             let size_bytes = u64::from(bytes_per_row)
                 .checked_mul(u64::from(height))
-                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: staging size overflow".into()))?;
+                .ok_or_else(|| {
+                    ExecutorError::Validation("COPY_TEXTURE2D: staging size overflow".into())
+                })?;
             let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu.executor.copy_texture2d.writeback"),
                 size: size_bytes,
@@ -1565,24 +1570,29 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ));
             };
 
-            let row_bytes = width
-                .checked_mul(dst_bpp)
-                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: row size overflow".into()))?;
+            let row_bytes = width.checked_mul(dst_bpp).ok_or_else(|| {
+                ExecutorError::Validation("COPY_TEXTURE2D: row size overflow".into())
+            })?;
             let staging_size = u64::from(bytes_per_row)
                 .checked_mul(u64::from(height))
-                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: staging size overflow".into()))?;
+                .ok_or_else(|| {
+                    ExecutorError::Validation("COPY_TEXTURE2D: staging size overflow".into())
+                })?;
             let staging_bytes =
                 self.read_buffer_to_vec_blocking(&staging, staging_size, "COPY_TEXTURE2D")?;
 
-            let row_bytes_usize = usize::try_from(row_bytes)
-                .map_err(|_| ExecutorError::Validation("COPY_TEXTURE2D: row size out of range".into()))?;
+            let row_bytes_usize = usize::try_from(row_bytes).map_err(|_| {
+                ExecutorError::Validation("COPY_TEXTURE2D: row size out of range".into())
+            })?;
             let bytes_per_row_usize = usize::try_from(bytes_per_row).map_err(|_| {
                 ExecutorError::Validation("COPY_TEXTURE2D: bytes_per_row out of range".into())
             })?;
 
             let dst_x_bytes = u64::from(dst_x)
                 .checked_mul(u64::from(dst_bpp))
-                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into()))?;
+                .ok_or_else(|| {
+                    ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into())
+                })?;
 
             let row_pitch = u64::from(dst_backing.row_pitch_bytes);
             if row_pitch == 0 {
@@ -1594,22 +1604,27 @@ fn fs_main() -> @location(0) vec4<f32> {
             for row in 0..height {
                 let src_off = row as usize * bytes_per_row_usize;
                 let src_end = src_off + row_bytes_usize;
-                let row_bytes_slice = staging_bytes
-                    .get(src_off..src_end)
-                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: staging OOB".into()))?;
+                let row_bytes_slice = staging_bytes.get(src_off..src_end).ok_or_else(|| {
+                    ExecutorError::Validation("COPY_TEXTURE2D: staging OOB".into())
+                })?;
 
                 let row_y = u64::from(dst_y)
                     .checked_add(u64::from(row))
-                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst_y overflow".into()))?;
-                let row_offset = row_y
-                    .checked_mul(row_pitch)
-                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: row offset overflow".into()))?;
-                let write_offset = row_offset
-                    .checked_add(dst_x_bytes)
-                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: write offset overflow".into()))?;
-                let write_end = write_offset
-                    .checked_add(u64::from(row_bytes))
-                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: write end overflow".into()))?;
+                    .ok_or_else(|| {
+                        ExecutorError::Validation("COPY_TEXTURE2D: dst_y overflow".into())
+                    })?;
+                let row_offset = row_y.checked_mul(row_pitch).ok_or_else(|| {
+                    ExecutorError::Validation("COPY_TEXTURE2D: row offset overflow".into())
+                })?;
+                let write_offset = row_offset.checked_add(dst_x_bytes).ok_or_else(|| {
+                    ExecutorError::Validation("COPY_TEXTURE2D: write offset overflow".into())
+                })?;
+                let write_end =
+                    write_offset
+                        .checked_add(u64::from(row_bytes))
+                        .ok_or_else(|| {
+                            ExecutorError::Validation("COPY_TEXTURE2D: write end overflow".into())
+                        })?;
                 if write_end > dst_backing.size_bytes {
                     return Err(ExecutorError::Validation(
                         "COPY_TEXTURE2D: writeback out of bounds".into(),
@@ -1618,7 +1633,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                 let dst_gpa = dst_backing
                     .base_gpa
                     .checked_add(write_offset)
-                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst GPA overflow".into()))?;
+                    .ok_or_else(|| {
+                        ExecutorError::Validation("COPY_TEXTURE2D: dst GPA overflow".into())
+                    })?;
 
                 guest_memory.write(dst_gpa, row_bytes_slice)?;
             }
