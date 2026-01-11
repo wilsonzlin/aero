@@ -7,6 +7,7 @@
       "device": "virtio-blk",
       "pci_vendor_id": "0x1AF4",
       "pci_device_id": "0x1042",
+      "pci_device_id_transitional": "0x1001",
       "hardware_id_patterns": [
         "PCI\\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01",
         "PCI\\VEN_1AF4&DEV_1042&SUBSYS_00021AF4",
@@ -21,6 +22,7 @@
       "device": "virtio-net",
       "pci_vendor_id": "0x1AF4",
       "pci_device_id": "0x1041",
+      "pci_device_id_transitional": "0x1000",
       "hardware_id_patterns": [
         "PCI\\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01",
         "PCI\\VEN_1AF4&DEV_1041&SUBSYS_00011AF4",
@@ -35,6 +37,7 @@
       "device": "virtio-snd",
       "pci_vendor_id": "0x1AF4",
       "pci_device_id": "0x1059",
+      "pci_device_id_transitional": "0x1018",
       "hardware_id_patterns": [
         "PCI\\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01",
         "PCI\\VEN_1AF4&DEV_1059&SUBSYS_00191AF4",
@@ -49,6 +52,7 @@
       "device": "virtio-input",
       "pci_vendor_id": "0x1AF4",
       "pci_device_id": "0x1052",
+      "pci_device_id_transitional": "0x1011",
       "hardware_id_patterns": [
         "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01",
         "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4",

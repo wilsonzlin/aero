@@ -135,9 +135,18 @@ Notes:
  - Windows service names are case-insensitive. The canonical AeroGPU INFs install the `aerogpu` service (`AddService = aerogpu, ...`).
    The legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` use different casing (for example `AeroGPU`), but this contract normalizes the name to `aerogpu`.
 
-Compatibility note (non-canonical virtio PCI Device IDs):
+Compatibility note (transitional virtio PCI Device IDs):
 
-Transitional virtio-pci IDs (e.g. `1AF4:1000`, `1AF4:1001`) are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.
+`AERO-W7-VIRTIO` v1 is modern-only (emulator-visible PCI IDs + `REV_01`). The older virtio-pci **transitional** PCI
+Device ID space exists for ecosystem compatibility, but is intentionally out of scope for the contract.
+
+For reference, this repository records the corresponding transitional IDs as `pci_device_id_transitional` in
+`docs/windows-device-contract{,-virtio-win}.json`:
+
+ - virtio-net: `1AF4:1000`
+ - virtio-blk: `1AF4:1001`
+ - virtio-input: `1AF4:1011`
+ - virtio-snd: `1AF4:1018`
 
 ## Windows hardware IDs and driver binding
 
