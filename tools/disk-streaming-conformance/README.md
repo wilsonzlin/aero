@@ -8,7 +8,7 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
   - `Cache-Control` includes `no-transform`
   - `Content-Encoding` is absent or `identity`
 - Unsatisfiable ranges fail correctly (`416` + `Content-Range: bytes */<size>`)
-- CORS preflight (`OPTIONS`) allows the `Range` and `Authorization` headers
+- CORS preflight (`OPTIONS`) allows the `Range` + `If-Range` headers (and `Authorization` when testing private images)
 - CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`)
 - (Private images) unauthenticated requests are denied, authenticated requests succeed
 
@@ -66,7 +66,7 @@ PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (
 PASS GET: valid Range (first byte) returns 206 with correct Content-Range and body length - Content-Range='bytes 0-0/2147483648'
 PASS GET: valid Range (mid-file) returns 206 with correct Content-Range and body length - Content-Range='bytes 1073741824-1073741824/2147483648'
 PASS GET: unsatisfiable Range returns 416 and Content-Range bytes */<size> - Content-Range='bytes */2147483648'
-PASS OPTIONS: CORS preflight allows Range + Authorization headers - status=204
+PASS OPTIONS: CORS preflight allows Range + If-Range headers - status=204
 
 Summary: 5 passed, 0 failed, 0 warned, 0 skipped
 ```

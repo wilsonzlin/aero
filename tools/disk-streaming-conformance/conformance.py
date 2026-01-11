@@ -452,9 +452,16 @@ def _test_options_preflight(
     *,
     base_url: str,
     origin: str | None,
+    authorization: str | None,
     timeout_s: float,
 ) -> TestResult:
-    name = "OPTIONS: CORS preflight allows Range + Authorization headers"
+    required_headers = {"range", "if-range"}
+    req_header_value = "range,if-range"
+    name = "OPTIONS: CORS preflight allows Range + If-Range headers"
+    if authorization is not None:
+        required_headers.add("authorization")
+        req_header_value += ",authorization"
+        name = "OPTIONS: CORS preflight allows Range + If-Range + Authorization headers"
     if origin is None:
         return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
     try:
@@ -465,7 +472,7 @@ def _test_options_preflight(
                 "Accept-Encoding": "identity",
                 "Origin": origin,
                 "Access-Control-Request-Method": "GET",
-                "Access-Control-Request-Headers": "range,authorization",
+                "Access-Control-Request-Headers": req_header_value,
             },
             timeout_s=timeout_s,
             follow_redirects=False,
@@ -488,8 +495,8 @@ def _test_options_preflight(
         _require(allow_headers is not None, "missing Access-Control-Allow-Headers")
         allowed = _csv_tokens(allow_headers)
         _require(
-            "*" in allowed or {"range", "authorization"}.issubset(allowed),
-            f"expected Allow-Headers to include range,authorization; got {allow_headers!r}",
+            "*" in allowed or required_headers.issubset(allowed),
+            f"expected Allow-Headers to include {sorted(required_headers)}; got {allow_headers!r}",
         )
 
         return TestResult(name=name, status="PASS", details=f"status={resp.status}")
@@ -605,7 +612,14 @@ def main(argv: Sequence[str]) -> int:
             size=size,
         )
     )
-    results.append(_test_options_preflight(base_url=base_url, origin=origin, timeout_s=timeout_s))
+    results.append(
+        _test_options_preflight(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+        )
+    )
 
     for result in results:
         _print_result(result)
