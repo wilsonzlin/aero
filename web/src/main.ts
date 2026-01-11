@@ -27,6 +27,7 @@ import { createDefaultDiskImageStore } from "./storage/default_disk_image_store"
 import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
 import { formatByteSize } from "./storage/disk_image_store";
 import { IoWorkerClient } from "./workers/io_worker_client";
+import { type JitCompileRequest, type JitWorkerResponse, isJitWorkerResponse } from "./workers/jit_protocol";
 import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./shared/frameProtocol";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
@@ -1646,6 +1647,100 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const frameLine = el("div", { class: "mono", text: "" });
   const error = el("pre", { text: "" });
   const guestRamValue = el("span", { class: "mono", text: "" });
+  const jitDemoLine = el("div", { class: "mono", text: "jit: (idle)" });
+  const jitDemoError = el("pre", { text: "" });
+
+  const JIT_DEMO_WASM_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+  let nextJitDemoRequestId = 1;
+  let jitDemoInFlight = false;
+
+  async function runJitCompileDemo(): Promise<void> {
+    const jitWorker = workerCoordinator.getWorker("jit");
+    if (!jitWorker) {
+      jitDemoError.textContent = "JIT worker is not running.";
+      return;
+    }
+
+    jitDemoError.textContent = "";
+    jitDemoLine.textContent = "jit: compiling…";
+    jitDemoInFlight = true;
+    update();
+
+    const id = nextJitDemoRequestId++;
+    const wasmBytes = JIT_DEMO_WASM_BYTES.slice().buffer;
+    const req: JitCompileRequest = { type: "jit:compile", id, wasmBytes };
+
+    let response: JitWorkerResponse;
+    try {
+      response = await new Promise<JitWorkerResponse>((resolve, reject) => {
+        let timeoutId = 0;
+
+        const onMessage = (event: MessageEvent) => {
+          const data = event.data as unknown;
+          if (!isJitWorkerResponse(data)) return;
+          if (data.id !== id) return;
+          window.clearTimeout(timeoutId);
+          jitWorker.removeEventListener("message", onMessage);
+          resolve(data);
+        };
+
+        timeoutId = window.setTimeout(() => {
+          jitWorker.removeEventListener("message", onMessage);
+          reject(new Error("Timed out waiting for JIT worker response."));
+        }, 5000);
+
+        jitWorker.addEventListener("message", onMessage);
+        try {
+          jitWorker.postMessage(req, [wasmBytes]);
+        } catch (err) {
+          window.clearTimeout(timeoutId);
+          jitWorker.removeEventListener("message", onMessage);
+          reject(err);
+        }
+      });
+    } catch (err) {
+      jitDemoError.textContent = err instanceof Error ? err.message : String(err);
+      jitDemoLine.textContent = "jit: demo failed";
+      return;
+    } finally {
+      jitDemoInFlight = false;
+      update();
+    }
+
+    // Expose for Playwright / devtools.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroJitDemo = response;
+
+    if (response.type === "jit:error") {
+      jitDemoLine.textContent = `jit: error (${response.code ?? "unknown"}) in ${response.durationMs ?? 0}ms`;
+      jitDemoError.textContent = response.message;
+      return;
+    }
+
+    // Verify that the module is usable in this realm (compilation happens in the JIT worker).
+    try {
+      if (!(response.module instanceof WebAssembly.Module)) {
+        throw new Error("Response module is not a WebAssembly.Module.");
+      }
+      // Instantiation is cheap for the empty module, but keep it async.
+      await WebAssembly.instantiate(response.module, {});
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      jitDemoLine.textContent = "jit: compiled, but validation failed";
+      jitDemoError.textContent = message;
+      return;
+    }
+
+    const cached = response.cached ? " (cached)" : "";
+    jitDemoLine.textContent = `jit: compiled demo module in ${response.durationMs.toFixed(2)}ms${cached}`;
+  }
+
+  const jitDemoButton = el("button", {
+    text: "Test JIT compile",
+    onclick: () => {
+      void runJitCompileDemo();
+    },
+  }) as HTMLButtonElement;
 
   const startButton = el("button", {
     text: "Start workers",
@@ -1736,6 +1831,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
     startButton.disabled = !support.ok || !report.wasmThreads || !config.enableWorkers || anyActive;
     stopButton.disabled = !anyActive;
+    jitDemoButton.disabled = statuses.jit.state !== "ready" || jitDemoInFlight;
 
     statusList.replaceChildren(
       ...Object.entries(statuses).map(([role, status]) => {
@@ -1790,11 +1886,21 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     { class: "panel" },
     el("h2", { text: "Workers" }),
     hint,
-    el("div", { class: "row" }, el("label", { text: "Guest RAM:" }), guestRamValue, startButton, stopButton),
+    el(
+      "div",
+      { class: "row" },
+      el("label", { text: "Guest RAM:" }),
+      guestRamValue,
+      startButton,
+      stopButton,
+      jitDemoButton,
+    ),
     el("div", { class: "row" }, vgaCanvas),
     vgaInfoLine,
     heartbeatLine,
     frameLine,
+    jitDemoLine,
+    jitDemoError,
     statusList,
     error,
   );
