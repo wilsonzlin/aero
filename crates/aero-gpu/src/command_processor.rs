@@ -670,6 +670,16 @@ impl AeroGpuCommandProcessor {
                             });
                         }
                     } else {
+                        // Shared surface alias handles live in the same global handle namespace as
+                        // normal resources. Reject importing into a handle that is already used by
+                        // another resource (including an underlying ID kept alive by aliases).
+                        if self.resources.contains_key(&out_resource_handle)
+                            || self.shared_surface_refcounts.contains_key(&out_resource_handle)
+                        {
+                            return Err(CommandProcessorError::SharedSurfaceHandleInUse(
+                                out_resource_handle,
+                            ));
+                        }
                         self.shared_surface_handles
                             .insert(out_resource_handle, underlying);
                         *self.shared_surface_refcounts.entry(underlying).or_insert(0) += 1;
