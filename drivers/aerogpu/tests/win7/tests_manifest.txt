@@ -10,6 +10,8 @@
 # Notes:
 #   - `timeout_runner` is a helper (produces `aerogpu_timeout_runner.exe`) and is
 #     intentionally NOT listed here because it is not a test.
+#   - `test_runner` is a suite runner (produces `aerogpu_test_runner.exe`) and is
+#     intentionally NOT listed here because it is not a test.
 #
 
 # D3D9 / DWM / vblank / scanline
