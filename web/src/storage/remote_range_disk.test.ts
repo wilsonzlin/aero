@@ -352,6 +352,44 @@ describe("RemoteRangeDisk", () => {
     expect(b).toEqual(data.subarray(0, b.byteLength));
   });
 
+  it("reports cachedBytes in remote (unpadded) bytes when the final chunk is partial", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(chunkSize + 512);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      imageKey: "test-image",
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    // Fetch only the final partial chunk (512 bytes).
+    const lastLba = chunkSize / 512;
+    const tail = new Uint8Array(512);
+    await disk.readSectors(lastLba, tail);
+    expect(tail).toEqual(data.subarray(chunkSize, chunkSize + 512));
+
+    const snap1 = disk.getTelemetrySnapshot();
+    expect(snap1.cachedBytes).toBe(512);
+    expect(snap1.cachedBytes).toBeLessThanOrEqual(snap1.totalSize);
+    expect(snap1.bytesDownloaded).toBe(512);
+
+    // Now fetch the first full chunk; cachedBytes should equal totalSize (not 2 * chunkSize).
+    const head = new Uint8Array(512);
+    await disk.readSectors(0, head);
+    expect(head).toEqual(data.subarray(0, 512));
+    const snap2 = disk.getTelemetrySnapshot();
+    expect(snap2.cachedBytes).toBe(data.byteLength);
+    expect(snap2.bytesDownloaded).toBe(chunkSize + 512);
+  });
+
   it("concurrent reads to the same chunk dedupe into a single fetch", async () => {
     const chunkSize = 1024 * 1024;
     const data = makeTestData(2 * chunkSize);

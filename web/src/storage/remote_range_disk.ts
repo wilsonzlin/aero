@@ -454,12 +454,28 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   getTelemetrySnapshot(): RemoteDiskTelemetrySnapshot {
+    const cache = this.cache;
+    const totalSize = this.capacityBytesValue;
+    const blockSize = this.opts.chunkSize;
+    // The sparse cache stores fixed-size blocks, so its "allocated bytes" can exceed the
+    // remote image size when the final block is partial. Convert back to remote bytes so
+    // telemetry is consistent with other remote disk implementations.
+    let cachedBytes = cache ? cache.getAllocatedBytes() : 0;
+    const remainder = totalSize % blockSize;
+    if (cache && remainder !== 0 && totalSize > 0) {
+      const lastBlockIndex = Math.floor((totalSize - 1) / blockSize);
+      if (cache.isBlockAllocated(lastBlockIndex)) {
+        cachedBytes -= blockSize - remainder;
+      }
+    }
+    if (cachedBytes < 0) cachedBytes = 0;
+    if (cachedBytes > totalSize) cachedBytes = totalSize;
     return {
       url: this.url,
-      totalSize: this.capacityBytesValue,
-      blockSize: this.opts.chunkSize,
+      totalSize,
+      blockSize,
       cacheLimitBytes: null,
-      cachedBytes: this.cache ? this.cache.getAllocatedBytes() : 0,
+      cachedBytes,
 
       blockRequests: this.blockRequests,
       cacheHits: this.telemetry.cacheHitChunks,
