@@ -227,6 +227,9 @@ The canonical browser USB/UHCI stack is `crates/aero-usb` (see [ADR 0015](./adr/
 Keep correctness locked down with:
 
 - Rust unit/integration tests under `crates/aero-usb` (including UHCI schedule + passthrough mapping tests)
+- TypeScript unit/integration tests under `web/src/usb/*test.ts` (including coverage for the
+  SharedArrayBuffer ring fast path negotiated by `usb.ringAttach` in
+  `web/src/usb/usb_proxy_ring_integration.test.ts`)
 - Web smoke panels (manual) described in [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
 
 ### GPU Persistent Cache Tests
