@@ -139,8 +139,33 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
   }
 
   auto slot_it = alloc_id_to_handle_.find(alloc_id);
-  if (slot_it != alloc_id_to_handle_.end() && slot_it->second != key) {
-    out.status = AllocRefStatus::kAllocIdCollision;
+  if (slot_it != alloc_id_to_handle_.end()) {
+    // Another handle already claimed this alloc_id in the current submission.
+    //
+    // This can legitimately happen for shared resources (same kernel allocation
+    // opened multiple times, yielding distinct per-process handles). We treat it
+    // as an alias and deduplicate by alloc_id.
+    const uint64_t existing_key = slot_it->second;
+    auto existing_it = handle_to_entry_.find(existing_key);
+    if (existing_it == handle_to_entry_.end()) {
+      out.status = AllocRefStatus::kInvalidArgument;
+      return out;
+    }
+    const Entry& existing = existing_it->second;
+    if (existing.alloc_id != alloc_id) {
+      out.status = AllocRefStatus::kAllocIdMismatch;
+      return out;
+    }
+
+    handle_to_entry_.emplace(key, existing);
+
+    out.alloc_id = alloc_id;
+    out.list_index = existing.list_index;
+    out.status = AllocRefStatus::kOk;
+
+    if (write) {
+      set_write_operation(list_base_[existing.list_index], true);
+    }
     return out;
   }
 
