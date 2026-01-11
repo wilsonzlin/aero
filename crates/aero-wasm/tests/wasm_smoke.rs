@@ -8,6 +8,8 @@ use aero_wasm::{UsbHidPassthroughBridge, WebUsbUhciBridge};
 use aero_wasm::{add, demo_render_rgba8888};
 use wasm_bindgen_test::wasm_bindgen_test;
 
+mod common;
+
 // UHCI register offsets / bits (mirrors `crates/aero-usb/src/uhci.rs` tests).
 const REG_USBCMD: u16 = 0x00;
 const REG_USBSTS: u16 = 0x02;
@@ -116,11 +118,15 @@ fn webusb_uhci_harness_queues_actions_without_host() {
 
 #[wasm_bindgen_test]
 fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
-    // Synthetic guest memory region: back it with a Rust Vec so the test can inspect writes.
-    let mut guest = vec![0u8; 0x9000];
-    let guest_base = guest.as_mut_ptr() as u32;
+    // Synthetic guest memory region: allocate outside the wasm heap to keep wasm-pack tests from
+    // exhausting the bounded `runtime_alloc` heap.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x9000);
+    // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting at
+    // `guest_base` and the region is private to this test.
+    let guest =
+        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
-    let mut ctrl = UhciControllerBridge::new(guest_base, guest.len() as u32)
+    let mut ctrl = UhciControllerBridge::new(guest_base, guest_size)
         .expect("new UhciControllerBridge");
 
     // Attach a trivial device at root port 0 so we can complete a single IN TD.
@@ -133,21 +139,21 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
 
     // Frame list: terminate everything, then set frame 0 to point at our QH.
     for i in 0..1024u32 {
-        write_u32(&mut guest, 0x1000 + i * 4, LINK_PTR_T);
+        write_u32(guest, 0x1000 + i * 4, LINK_PTR_T);
     }
-    write_u32(&mut guest, 0x1000, 0x2000 | LINK_PTR_Q);
+    write_u32(guest, 0x1000, 0x2000 | LINK_PTR_Q);
 
     // Queue head -> TD.
-    write_u32(&mut guest, 0x2000, LINK_PTR_T);
-    write_u32(&mut guest, 0x2004, 0x3000);
+    write_u32(guest, 0x2000, LINK_PTR_T);
+    write_u32(guest, 0x2004, 0x3000);
 
     // TD: IN to addr0/ep0, 4 bytes.
     let maxlen_field = (4u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
     let token = 0x69u32 | maxlen_field; // IN, addr0/ep0
-    write_u32(&mut guest, 0x3000, LINK_PTR_T);
-    write_u32(&mut guest, 0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
-    write_u32(&mut guest, 0x3008, token);
-    write_u32(&mut guest, 0x300C, 0x4000);
+    write_u32(guest, 0x3000, LINK_PTR_T);
+    write_u32(guest, 0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
+    write_u32(guest, 0x3008, token);
+    write_u32(guest, 0x300C, 0x4000);
 
     // Verify register read/write wiring.
     let usbcmd_before = ctrl.io_read(REG_USBCMD, 2) as u16;
@@ -166,9 +172,9 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
 
     assert_eq!(&guest[0x4000..0x4004], b"ABCD");
     // Hardware should advance the QH element pointer as TDs complete.
-    assert_eq!(read_u32(&guest, 0x2004), LINK_PTR_T);
+    assert_eq!(read_u32(guest, 0x2004), LINK_PTR_T);
 
-    let ctrl_sts = read_u32(&guest, 0x3004);
+    let ctrl_sts = read_u32(guest, 0x3004);
     assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
     assert_eq!(ctrl_sts & TD_CTRL_ACTLEN_MASK, 3);
 

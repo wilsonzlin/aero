@@ -90,36 +90,87 @@ impl InterruptController for DummyIrq {
     fn lower_irq(&mut self, _irq: u8) {}
 }
 
+#[derive(Clone, Copy)]
 struct VecMemory {
-    data: Vec<u8>,
+    base: u32,
+    len: u32,
 }
 
 impl VecMemory {
     fn new(size: usize) -> Self {
+        const WASM_PAGE_BYTES: u32 = 64 * 1024;
+
+        let size_u32: u32 = size
+            .try_into()
+            .expect("VecMemory size must fit in u32 for wasm32");
+        let pages = size_u32.div_ceil(WASM_PAGE_BYTES).max(1);
+        let before_pages = core::arch::wasm32::memory_size(0) as u32;
+        let prev = core::arch::wasm32::memory_grow(0, pages as usize);
+        assert_ne!(
+            prev,
+            usize::MAX,
+            "wasm memory.grow failed (requested {pages} pages)"
+        );
+
         Self {
-            data: vec![0; size],
+            base: before_pages * WASM_PAGE_BYTES,
+            len: pages * WASM_PAGE_BYTES,
         }
     }
 
+    fn clear(&mut self) {
+        // Safety: `base`/`len` describe an allocated region in wasm linear memory.
+        unsafe {
+            core::ptr::write_bytes(self.base as *mut u8, 0, self.len as usize);
+        }
+    }
+
+    fn linear_addr(&self, addr: u32, len: usize) -> u32 {
+        let addr_u64 = addr as u64;
+        let len_u64 = len as u64;
+        let end = addr_u64
+            .checked_add(len_u64)
+            .expect("VecMemory address overflow");
+        assert!(
+            end <= self.len as u64,
+            "VecMemory OOB: addr=0x{addr:x} len=0x{len:x} mem_len=0x{:x}",
+            self.len
+        );
+
+        let linear = (self.base as u64)
+            .checked_add(addr_u64)
+            .expect("VecMemory linear address overflow");
+        u32::try_from(linear).expect("VecMemory linear address must fit in u32")
+    }
+
     fn read_u32(&self, addr: u32) -> u32 {
-        let addr = addr as usize;
-        u32::from_le_bytes(self.data[addr..addr + 4].try_into().unwrap())
+        let linear = self.linear_addr(addr, 4);
+        // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
+        unsafe { core::ptr::read_unaligned(linear as *const u32) }
     }
 
     fn write_u32(&mut self, addr: u32, value: u32) {
-        self.write(addr, &value.to_le_bytes());
+        let linear = self.linear_addr(addr, 4);
+        // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
+        unsafe { core::ptr::write_unaligned(linear as *mut u32, value) }
     }
 }
 
 impl GuestMemory for VecMemory {
     fn read(&self, addr: u32, buf: &mut [u8]) {
-        let addr = addr as usize;
-        buf.copy_from_slice(&self.data[addr..addr + buf.len()]);
+        let linear = self.linear_addr(addr, buf.len());
+        // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
+        unsafe {
+            core::ptr::copy_nonoverlapping(linear as *const u8, buf.as_mut_ptr(), buf.len());
+        }
     }
 
     fn write(&mut self, addr: u32, buf: &[u8]) {
-        let addr = addr as usize;
-        self.data[addr..addr + buf.len()].copy_from_slice(buf);
+        let linear = self.linear_addr(addr, buf.len());
+        // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
+        unsafe {
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), linear as *mut u8, buf.len());
+        }
     }
 }
 
@@ -413,18 +464,14 @@ impl WebUsbUhciPassthroughHarness {
             .downcast_mut::<UsbWebUsbPassthroughDevice>()
             .expect("UHCI port 0 device is UsbWebUsbPassthroughDevice")
     }
-}
 
-#[wasm_bindgen]
-impl WebUsbUhciPassthroughHarness {
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
+    fn init_with_mem(mut mem: VecMemory) -> Self {
         let io_base = 0x5000;
         let mut ctrl = UhciController::new(io_base, 11);
 
         ctrl.connect_device(0, Box::new(UsbWebUsbPassthroughDevice::new()));
 
-        let mut mem = VecMemory::new(0x40000);
+        mem.clear();
         let mut irq = DummyIrq::default();
         let alloc = Alloc::new(0x3000);
 
@@ -464,6 +511,14 @@ impl WebUsbUhciPassthroughHarness {
             config_value: 1,
         }
     }
+}
+
+#[wasm_bindgen]
+impl WebUsbUhciPassthroughHarness {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::init_with_mem(VecMemory::new(0x40000))
+    }
 
     /// Human-readable state for UI debugging.
     pub fn state(&self) -> String {
@@ -471,7 +526,9 @@ impl WebUsbUhciPassthroughHarness {
     }
 
     pub fn reset(&mut self) {
-        *self = Self::new();
+        // Reuse the backing guest-memory region so repeated resets don't keep growing the wasm
+        // linear memory (which cannot be shrunk).
+        *self = Self::init_with_mem(self.mem);
     }
 
     pub fn status(&self) -> JsValue {

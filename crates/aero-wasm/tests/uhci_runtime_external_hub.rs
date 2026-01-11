@@ -4,13 +4,11 @@ use aero_usb::hid::webhid::HidCollectionInfo;
 use aero_wasm::UhciRuntime;
 use wasm_bindgen_test::wasm_bindgen_test;
 
+mod common;
+
 #[wasm_bindgen_test]
 fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
-    // Back the guest RAM region with a Rust Vec so we can hand its linear-memory address to the
-    // runtime constructor.
-    let mut guest = vec![0u8; 0x20_000];
-    let guest_base = guest.as_mut_ptr() as u32;
-    let guest_size = guest.len() as u32;
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20_000);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
 

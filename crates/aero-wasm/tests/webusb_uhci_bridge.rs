@@ -5,6 +5,8 @@ use aero_wasm::UhciControllerBridge;
 use aero_wasm::WebUsbUhciBridge;
 use wasm_bindgen_test::wasm_bindgen_test;
 
+mod common;
+
 const REG_USBCMD: u32 = 0x00;
 const REG_USBINTR: u32 = 0x04;
 const REG_FRBASEADD: u32 = 0x08;
@@ -49,27 +51,12 @@ fn td_ctrl(active: bool, ioc: bool) -> u32 {
     v
 }
 
-unsafe fn write_u32(addr: u32, value: u32) {
-    unsafe {
-        core::ptr::write_unaligned(addr as *mut u32, value);
-    }
-}
-
-unsafe fn write_bytes(addr: u32, bytes: &[u8]) {
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as *mut u8, bytes.len());
-    }
-}
-
 #[wasm_bindgen_test]
 fn bridge_emits_host_actions_from_guest_frame_list() {
-    // Allocate a chunk of linear memory that we treat as guest RAM.
-    // `guest_base=0` means guest physical addresses map directly to linear offsets.
-    let mut backing = vec![0u8; 0x50_000];
-    let base = backing.as_mut_ptr() as u32;
-    let fl_base = (base + 0x0fff) & !0x0fff; // 4KiB-align for FRBASEADD.
+    let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x8000);
 
     // Layout (all 16-byte aligned).
+    let fl_base = 0x1000u32;
     let qh_addr = fl_base + 0x1000;
     let setup_td = qh_addr + 0x20;
     let data_td = setup_td + 0x20;
@@ -80,12 +67,12 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
     // Install frame list pointing at our single QH.
     unsafe {
         for i in 0..1024u32 {
-            write_u32(fl_base + i * 4, qh_addr | LINK_PTR_Q);
+            common::write_u32(guest_base + fl_base + i * 4, qh_addr | LINK_PTR_Q);
         }
 
         // QH: head=terminate, element=SETUP TD.
-        write_u32(qh_addr + 0x00, LINK_PTR_T);
-        write_u32(qh_addr + 0x04, setup_td);
+        common::write_u32(guest_base + qh_addr + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + qh_addr + 0x04, setup_td);
 
         // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
         let setup_packet = [
@@ -95,28 +82,28 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
             0x00, 0x00, // wIndex
             0x08, 0x00, // wLength: 8
         ];
-        write_bytes(setup_buf, &setup_packet);
+        common::write_bytes(guest_base + setup_buf, &setup_packet);
 
         // SETUP TD.
-        write_u32(setup_td + 0x00, data_td);
-        write_u32(setup_td + 0x04, td_ctrl(true, false));
-        write_u32(setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
-        write_u32(setup_td + 0x0C, setup_buf);
+        common::write_u32(guest_base + setup_td + 0x00, data_td);
+        common::write_u32(guest_base + setup_td + 0x04, td_ctrl(true, false));
+        common::write_u32(guest_base + setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
+        common::write_u32(guest_base + setup_td + 0x0C, setup_buf);
 
         // DATA IN TD (will NAK until host completion is pushed).
-        write_u32(data_td + 0x00, status_td);
-        write_u32(data_td + 0x04, td_ctrl(true, false));
-        write_u32(data_td + 0x08, td_token(0x69, 0, 0, true, 8));
-        write_u32(data_td + 0x0C, data_buf);
+        common::write_u32(guest_base + data_td + 0x00, status_td);
+        common::write_u32(guest_base + data_td + 0x04, td_ctrl(true, false));
+        common::write_u32(guest_base + data_td + 0x08, td_token(0x69, 0, 0, true, 8));
+        common::write_u32(guest_base + data_td + 0x0C, data_buf);
 
         // STATUS OUT TD (0-length, IOC).
-        write_u32(status_td + 0x00, LINK_PTR_T);
-        write_u32(status_td + 0x04, td_ctrl(true, true));
-        write_u32(status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
-        write_u32(status_td + 0x0C, 0);
+        common::write_u32(guest_base + status_td + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + status_td + 0x04, td_ctrl(true, true));
+        common::write_u32(guest_base + status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
+        common::write_u32(guest_base + status_td + 0x0C, 0);
     }
 
-    let mut bridge = WebUsbUhciBridge::new(0);
+    let mut bridge = WebUsbUhciBridge::new(guest_base);
     bridge.set_connected(true);
 
     bridge.io_write(REG_FRBASEADD, 4, fl_base);
@@ -145,13 +132,9 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
 
 #[wasm_bindgen_test]
 fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
-    // Allocate a chunk of linear memory that we treat as guest RAM.
-    let mut backing = vec![0u8; 0x50_000];
-    let base = backing.as_mut_ptr() as u32;
-
-    // Pick a 4KiB-aligned region inside the buffer for the frame list.
-    let fl_linear = (base + 0x0fff) & !0x0fff;
-    let fl_guest = fl_linear - base;
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
+    let fl_guest = 0x1000u32;
+    let fl_linear = guest_base + fl_guest;
 
     // Layout (guest physical addresses, all 16-byte aligned).
     let qh_guest = fl_guest + 0x1000;
@@ -161,21 +144,20 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
     let setup_buf = status_td + 0x20;
     let data_buf = setup_buf + 0x10;
 
-    let qh_linear = base + qh_guest;
-    let setup_td_linear = base + setup_td;
-    let data_td_linear = base + data_td;
-    let status_td_linear = base + status_td;
-    let setup_buf_linear = base + setup_buf;
-    let _data_buf_linear = base + data_buf;
+    let qh_linear = guest_base + qh_guest;
+    let setup_td_linear = guest_base + setup_td;
+    let data_td_linear = guest_base + data_td;
+    let status_td_linear = guest_base + status_td;
+    let setup_buf_linear = guest_base + setup_buf;
 
     unsafe {
         for i in 0..1024u32 {
-            write_u32(fl_linear + i * 4, qh_guest | LINK_PTR_Q);
+            common::write_u32(fl_linear + i * 4, qh_guest | LINK_PTR_Q);
         }
 
         // QH: head=terminate, element=SETUP TD.
-        write_u32(qh_linear + 0x00, LINK_PTR_T);
-        write_u32(qh_linear + 0x04, setup_td);
+        common::write_u32(qh_linear + 0x00, LINK_PTR_T);
+        common::write_u32(qh_linear + 0x04, setup_td);
 
         // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
         let setup_packet = [
@@ -185,28 +167,28 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
             0x00, 0x00, // wIndex
             0x08, 0x00, // wLength: 8
         ];
-        write_bytes(setup_buf_linear, &setup_packet);
+        common::write_bytes(setup_buf_linear, &setup_packet);
 
         // SETUP TD.
-        write_u32(setup_td_linear + 0x00, data_td);
-        write_u32(setup_td_linear + 0x04, td_ctrl(true, false));
-        write_u32(setup_td_linear + 0x08, td_token(0x2D, 0, 0, false, 8));
-        write_u32(setup_td_linear + 0x0C, setup_buf);
+        common::write_u32(setup_td_linear + 0x00, data_td);
+        common::write_u32(setup_td_linear + 0x04, td_ctrl(true, false));
+        common::write_u32(setup_td_linear + 0x08, td_token(0x2D, 0, 0, false, 8));
+        common::write_u32(setup_td_linear + 0x0C, setup_buf);
 
         // DATA IN TD (will NAK until host completion is pushed).
-        write_u32(data_td_linear + 0x00, status_td);
-        write_u32(data_td_linear + 0x04, td_ctrl(true, false));
-        write_u32(data_td_linear + 0x08, td_token(0x69, 0, 0, true, 8));
-        write_u32(data_td_linear + 0x0C, data_buf);
+        common::write_u32(data_td_linear + 0x00, status_td);
+        common::write_u32(data_td_linear + 0x04, td_ctrl(true, false));
+        common::write_u32(data_td_linear + 0x08, td_token(0x69, 0, 0, true, 8));
+        common::write_u32(data_td_linear + 0x0C, data_buf);
 
         // STATUS OUT TD (0-length, IOC).
-        write_u32(status_td_linear + 0x00, LINK_PTR_T);
-        write_u32(status_td_linear + 0x04, td_ctrl(true, true));
-        write_u32(status_td_linear + 0x08, td_token(0xE1, 0, 0, true, 0));
-        write_u32(status_td_linear + 0x0C, 0);
+        common::write_u32(status_td_linear + 0x00, LINK_PTR_T);
+        common::write_u32(status_td_linear + 0x04, td_ctrl(true, true));
+        common::write_u32(status_td_linear + 0x08, td_token(0xE1, 0, 0, true, 0));
+        common::write_u32(status_td_linear + 0x0C, 0);
     }
 
-    let mut bridge = UhciControllerBridge::new(base, backing.len() as u32)
+    let mut bridge = UhciControllerBridge::new(guest_base, guest_size)
         .expect("UhciControllerBridge::new ok");
     bridge.set_connected(true);
 

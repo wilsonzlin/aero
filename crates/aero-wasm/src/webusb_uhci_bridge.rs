@@ -354,9 +354,13 @@ impl WebUsbUhciBridge {
     /// Format: top-level `aero-io-snapshot` TLV with:
     /// - tag 1: `aero_usb::uhci::UhciController` snapshot bytes
     /// - tag 2: IRQ latch (`irq_level`)
+    /// - tag 3: external hub (`UsbHubDevice`) snapshot bytes
+    /// - tag 4: WebUSB passthrough device (`UsbWebUsbPassthroughDevice`) snapshot bytes
     pub fn save_state(&self) -> Vec<u8> {
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_ASSERTED: u16 = 2;
+        const TAG_EXTERNAL_HUB: u16 = 3;
+        const TAG_WEBUSB_DEVICE: u16 = 4;
 
         let mut w = SnapshotWriter::new(
             WEBUSB_UHCI_BRIDGE_DEVICE_ID,
@@ -364,6 +368,12 @@ impl WebUsbUhciBridge {
         );
         w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
         w.field_bool(TAG_IRQ_ASSERTED, self.irq.asserted);
+        if let Some(hub) = self.external_hub() {
+            w.field_bytes(TAG_EXTERNAL_HUB, hub.save_state());
+        }
+        if let Some(dev) = self.passthrough_device() {
+            w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
+        }
         w.finish()
     }
 
@@ -376,11 +386,19 @@ impl WebUsbUhciBridge {
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_ASSERTED: u16 = 2;
+        const TAG_EXTERNAL_HUB: u16 = 3;
+        const TAG_WEBUSB_DEVICE: u16 = 4;
 
         let r = SnapshotReader::parse(bytes, WEBUSB_UHCI_BRIDGE_DEVICE_ID)
             .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB UHCI bridge snapshot: {e}")))?;
         r.ensure_device_major(WEBUSB_UHCI_BRIDGE_DEVICE_VERSION.major)
             .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB UHCI bridge snapshot: {e}")))?;
+
+        // Ensure the topology exists before restoring port-connected state. The controller snapshot
+        // includes per-port connected/enabled bits but does not create USB device instances.
+        if r.bytes(TAG_WEBUSB_DEVICE).is_some() {
+            self.set_connected(true);
+        }
 
         let controller_bytes = r.bytes(TAG_CONTROLLER).ok_or_else(|| {
             JsValue::from_str("WebUSB UHCI bridge snapshot missing controller state")
@@ -393,6 +411,22 @@ impl WebUsbUhciBridge {
             .bool(TAG_IRQ_ASSERTED)
             .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB UHCI bridge snapshot: {e}")))?
             .unwrap_or(false);
+
+        if let Some(buf) = r.bytes(TAG_EXTERNAL_HUB) {
+            let hub = self.external_hub_mut().ok_or_else(|| {
+                JsValue::from_str("WebUSB UHCI bridge missing external hub device")
+            })?;
+            hub.load_state(buf)
+                .map_err(|e| JsValue::from_str(&format!("Invalid external hub snapshot: {e}")))?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_WEBUSB_DEVICE) {
+            let dev = self.passthrough_device_mut().ok_or_else(|| {
+                JsValue::from_str("WebUSB UHCI bridge missing passthrough device")
+            })?;
+            dev.load_state(buf)
+                .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB device snapshot: {e}")))?;
+        }
 
         if let Some(dev) = self.passthrough_device_mut() {
             dev.reset_host_state_for_restore();
@@ -564,6 +598,18 @@ impl WebUsbUhciBridge {
         let dev = port.device.as_mut()?;
         dev.as_any_mut()
             .downcast_mut::<UsbWebUsbPassthroughDevice>()
+    }
+
+    fn external_hub(&self) -> Option<&UsbHubDevice> {
+        let port = self.controller.bus().port(ROOT_PORT_EXTERNAL_HUB)?;
+        let dev = port.device.as_ref()?;
+        dev.as_any().downcast_ref::<UsbHubDevice>()
+    }
+
+    fn external_hub_mut(&mut self) -> Option<&mut UsbHubDevice> {
+        let port = self.controller.bus_mut().port_mut(ROOT_PORT_EXTERNAL_HUB)?;
+        let dev = port.device.as_mut()?;
+        dev.as_any_mut().downcast_mut::<UsbHubDevice>()
     }
 }
 

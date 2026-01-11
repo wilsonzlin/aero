@@ -763,13 +763,18 @@ impl UhciControllerBridge {
     /// The returned bytes use the canonical `aero-io-snapshot` TLV format:
     /// - tag 1: `aero_usb::uhci::UhciController` snapshot bytes
     /// - tag 2: bridge-side IRQ latch (`irq_asserted`)
+    /// - tag 3: WebUSB passthrough device (`UsbWebUsbPassthroughDevice`) snapshot bytes (when connected)
     pub fn save_state(&self) -> Vec<u8> {
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_ASSERTED: u16 = 2;
+        const TAG_WEBUSB_DEVICE: u16 = 3;
 
         let mut w = SnapshotWriter::new(UHCI_BRIDGE_DEVICE_ID, UHCI_BRIDGE_DEVICE_VERSION);
         w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
         w.field_bool(TAG_IRQ_ASSERTED, self.irq.asserted);
+        if let Some(dev) = self.webusb_device() {
+            w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
+        }
         w.finish()
     }
 
@@ -777,11 +782,19 @@ impl UhciControllerBridge {
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_ASSERTED: u16 = 2;
+        const TAG_WEBUSB_DEVICE: u16 = 3;
 
         let r = SnapshotReader::parse(bytes, UHCI_BRIDGE_DEVICE_ID)
             .map_err(|e| js_error(format!("Invalid UHCI bridge snapshot: {e}")))?;
         r.ensure_device_major(UHCI_BRIDGE_DEVICE_VERSION.major)
             .map_err(|e| js_error(format!("Invalid UHCI bridge snapshot: {e}")))?;
+
+        // Ensure the WebUSB passthrough device is connected before restoring port-connected state.
+        // The UHCI controller snapshot includes connected/enabled bits but does not create USB
+        // device instances.
+        if r.bytes(TAG_WEBUSB_DEVICE).is_some() {
+            self.set_connected(true);
+        }
 
         let ctrl_bytes = r
             .bytes(TAG_CONTROLLER)
@@ -799,6 +812,15 @@ impl UhciControllerBridge {
         } else {
             None
         };
+
+        if let Some(buf) = r.bytes(TAG_WEBUSB_DEVICE) {
+            let dev = self
+                .webusb_device_mut()
+                .ok_or_else(|| js_error("UHCI bridge snapshot missing WebUSB passthrough device"))?;
+            dev.load_state(buf)
+                .map_err(|e| js_error(format!("Invalid WebUSB device snapshot: {e}")))?;
+            dev.reset_host_state_for_restore();
+        }
 
         Ok(())
     }
