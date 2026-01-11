@@ -47,10 +47,19 @@ function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
 
   // CORS for Range reads.
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Range");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Range, If-Range, If-None-Match, If-Modified-Since"
+  );
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   res.setHeader(
     "Access-Control-Expose-Headers",
-    "Accept-Ranges, Content-Range, Content-Length"
+    "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified"
+  );
+  res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader(
+    "Vary",
+    "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
   );
 
   if (args.coopCoep) {
@@ -60,7 +69,12 @@ function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
 
   // Lightweight content-type; raw images are typically `application/octet-stream`.
   res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("Cache-Control", "no-transform");
   res.setHeader("Last-Modified", stat.mtime.toUTCString());
+  res.setHeader(
+    "ETag",
+    `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`
+  );
 }
 
 function parseRange(rangeHeader, size) {
@@ -77,6 +91,32 @@ function parseRange(rangeHeader, size) {
 }
 
 const server = http.createServer((req, res) => {
+  if (req.method === "OPTIONS") {
+    // CORS preflight for cross-origin Range requests.
+    res.statusCode = 204;
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Range, If-Range, If-None-Match, If-Modified-Since"
+    );
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified"
+    );
+    res.setHeader("Access-Control-Max-Age", "86400");
+    res.setHeader(
+      "Vary",
+      "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+    );
+    if (args.coopCoep) {
+      res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+      res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+    }
+    res.end();
+    return;
+  }
+
   const url = new URL(req.url ?? "/", "http://localhost");
   const filePath = safeJoin(root, url.pathname);
   if (!filePath) {
@@ -107,13 +147,13 @@ const server = http.createServer((req, res) => {
     const rangeHeader = req.headers["range"];
     if (typeof rangeHeader === "string") {
       const parsed = parseRange(rangeHeader, stat.size);
-      if (!parsed) {
-        res.statusCode = 400;
-        res.end("Bad Range");
-        return;
-      }
-      if (parsed.error) {
-        res.statusCode = 416;
+      if (!parsed || parsed.error) {
+        // For unsatisfiable/invalid ranges, return 416 + Content-Range bytes */<size>.
+        sendHeaders(res, stat, {
+          statusCode: 416,
+          contentLength: 0,
+          contentRange: `bytes */${stat.size}`,
+        });
         res.end();
         return;
       }
