@@ -2,9 +2,50 @@ use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
 use aero_cpu_core::interrupts::{CpuCore, CpuExit};
 use aero_cpu_core::mem::CpuBus;
-use aero_cpu_core::state::{gpr, CpuMode, CpuState};
+use aero_cpu_core::state::{gpr, CpuMode, CpuState, CR0_PE, CR0_PG, CR4_PAE, EFER_LME};
+use aero_cpu_core::Exception;
 use aero_pc_platform::{PcCpuBus, PcPlatform};
 use aero_platform::interrupts::InterruptInput;
+
+const PTE_P: u64 = 1 << 0;
+const PTE_RW: u64 = 1 << 1;
+const PTE_US: u64 = 1 << 2;
+
+fn write_u64(mem: &mut aero_platform::memory::MemoryBus, paddr: u64, value: u64) {
+    mem.write_physical(paddr, &value.to_le_bytes());
+}
+
+fn setup_long4_4k(
+    mem: &mut aero_platform::memory::MemoryBus,
+    pml4_base: u64,
+    pdpt_base: u64,
+    pd_base: u64,
+    pt_base: u64,
+    pte0: u64,
+    pte1: u64,
+) {
+    // PML4E[0] -> PDPT
+    write_u64(mem, pml4_base, pdpt_base | PTE_P | PTE_RW | PTE_US);
+    // PDPTE[0] -> PD
+    write_u64(mem, pdpt_base, pd_base | PTE_P | PTE_RW | PTE_US);
+    // PDE[0] -> PT
+    write_u64(mem, pd_base, pt_base | PTE_P | PTE_RW | PTE_US);
+
+    // PTE[0] and PTE[1]
+    write_u64(mem, pt_base + 0 * 8, pte0);
+    write_u64(mem, pt_base + 1 * 8, pte1);
+}
+
+fn long_state(pml4_base: u64, cpl: u8) -> CpuState {
+    let mut state = CpuState::new(CpuMode::Long);
+    state.segments.cs.selector = (state.segments.cs.selector & !0b11) | (cpl as u16 & 0b11);
+    state.control.cr0 = CR0_PE | CR0_PG;
+    state.control.cr3 = pml4_base;
+    state.control.cr4 = CR4_PAE;
+    state.msr.efer = EFER_LME;
+    state.update_mode();
+    state
+}
 
 #[test]
 fn cpu_core_bus_routes_port_io_to_toggle_a20() {
@@ -98,4 +139,95 @@ fn cpu_core_can_deliver_pic_interrupt_through_pc_platform_bus() -> Result<(), Cp
     assert_eq!(cpu.state.rip(), handler as u64);
 
     Ok(())
+}
+
+#[test]
+fn pc_cpu_bus_multi_byte_writes_are_atomic_wrt_page_faults() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page0 = 0x5000u64;
+
+    // Only the first page is present; the next page is not present.
+    setup_long4_4k(
+        &mut bus.platform.memory,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page0 | PTE_P | PTE_RW | PTE_US,
+        0,
+    );
+
+    // Sentinel values at the end of the first page.
+    bus.platform.memory.write_u8(data_page0 + 0xffe, 0xaa);
+    bus.platform.memory.write_u8(data_page0 + 0xfff, 0xbb);
+
+    let state = long_state(pml4_base, 0);
+    bus.sync(&state);
+
+    // Writing a 16-bit value at 0xFFF crosses into the unmapped page at 0x1000.
+    // The write must not partially commit to the mapped page.
+    assert_eq!(
+        bus.write_u16(0xfff, 0x1234),
+        Err(Exception::PageFault {
+            addr: 0x1000,
+            error_code: 1 << 1, // W=1, P=0, U=0
+        })
+    );
+
+    assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xffe), 0xaa);
+    assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xfff), 0xbb);
+
+    // Same property for `write_bytes`.
+    assert_eq!(
+        bus.write_bytes(0xffe, &[1, 2, 3]),
+        Err(Exception::PageFault {
+            addr: 0x1000,
+            error_code: 1 << 1,
+        })
+    );
+    assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xffe), 0xaa);
+    assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xfff), 0xbb);
+}
+
+#[test]
+fn pc_cpu_bus_atomic_rmw_faults_on_user_read_only_pages() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page = 0x5000u64;
+
+    // User-accessible but read-only page.
+    setup_long4_4k(
+        &mut bus.platform.memory,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page | PTE_P | PTE_US,
+        0,
+    );
+
+    bus.platform.memory.write_u8(data_page, 0x7b);
+
+    let state = long_state(pml4_base, 3);
+    bus.sync(&state);
+
+    // Atomic RMWs are write-intent operations, even if the update is a no-op.
+    assert_eq!(
+        bus.atomic_rmw::<u8, _>(0, |old| (old, old)),
+        Err(Exception::PageFault {
+            addr: 0,
+            error_code: (1 << 0) | (1 << 1) | (1 << 2),
+        })
+    );
 }
