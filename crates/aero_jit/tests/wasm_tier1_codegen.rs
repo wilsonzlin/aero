@@ -262,14 +262,16 @@ fn assert_ir_wasm_matches_interp(code: &[u8], entry_rip: u64, cpu: CpuState, mut
     let block = discover_block(&bus, entry_rip, BlockLimits::default());
     let ir = translate_block(&block);
 
-    let mut interp_cpu = cpu.clone();
     let mut interp_bus = bus.clone();
-    let _ = execute_block(&ir, &mut interp_cpu, &mut interp_bus);
+    let mut interp_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut interp_cpu_bytes);
+    let _ = execute_block(&ir, &mut interp_cpu_bytes, &mut interp_bus);
+    let interp_cpu = CpuSnapshot::from_wasm_bytes(&interp_cpu_bytes);
 
     let (next_rip, out_cpu, out_mem) = run_wasm(&ir, &cpu, &bus);
 
     assert_eq!(next_rip, interp_cpu.rip);
-    assert_eq!(out_cpu, CpuSnapshot::from_cpu(&interp_cpu));
+    assert_eq!(out_cpu, interp_cpu);
     assert_eq!(out_mem, interp_bus.mem());
 }
 

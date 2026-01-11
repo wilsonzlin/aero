@@ -3,13 +3,14 @@
 mod tier1_common;
 
 use aero_cpu_core::state::CpuState;
+use aero_jit::abi;
 use aero_jit::tier1::{discover_block, translate_block, BlockLimits};
 use aero_jit::Tier1Bus;
 use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
 use aero_x86::tier1::{AluOp, DecodedInst, InstKind, Operand};
 use tier1_common::{
-    read_flag, read_gpr, read_gpr_part, write_flag, write_gpr, write_gpr_part, CpuSnapshot,
-    SimpleBus,
+    read_flag, read_gpr, read_gpr_part, write_cpu_to_wasm_bytes, write_flag, write_gpr,
+    write_gpr_part, CpuSnapshot, SimpleBus,
 };
 
 fn parity_even(byte: u8) -> bool {
@@ -296,16 +297,18 @@ fn assert_block_ir(code: &[u8], entry_rip: u64, cpu: CpuState, mut bus: SimpleBu
     let ir = translate_block(&block);
     assert_eq!(ir.to_text(), expected_ir);
 
-    let mut cpu_x86 = cpu.clone();
+    let cpu_initial = cpu;
+    let mut cpu_x86 = cpu_initial.clone();
     let mut bus_x86 = bus.clone();
     exec_x86_block(&block.insts, &mut cpu_x86, &mut bus_x86);
 
-    let mut cpu_ir = cpu;
     let mut bus_ir = bus;
-    let _ = aero_jit::tier1::ir::interp::execute_block(&ir, &mut cpu_ir, &mut bus_ir);
+    let mut cpu_ir_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu_initial, &mut cpu_ir_bytes);
+    let _ = aero_jit::tier1::ir::interp::execute_block(&ir, &mut cpu_ir_bytes, &mut bus_ir);
 
     assert_eq!(
-        CpuSnapshot::from_cpu(&cpu_ir),
+        CpuSnapshot::from_wasm_bytes(&cpu_ir_bytes),
         CpuSnapshot::from_cpu(&cpu_x86),
         "CPU state mismatch\nIR:\n{}\n",
         ir.to_text()

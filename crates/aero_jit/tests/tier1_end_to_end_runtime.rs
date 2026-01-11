@@ -6,6 +6,7 @@ use std::rc::Rc;
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit, JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
+use aero_jit::abi;
 use aero_jit::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit::tier1::ir::interp as tier1_interp;
 use aero_jit::tier1::pipeline::{Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry};
@@ -86,7 +87,10 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
         let entry = cpu.rip();
         let block = discover_block(&self.bus, entry, BlockLimits::default());
         let ir = translate_block(&block);
-        let _ = tier1_interp::execute_block(&ir, &mut cpu.state, &mut self.bus);
+        let mut cpu_mem = vec![0u8; abi::CPU_STATE_SIZE as usize];
+        tier1_interp::TestCpu::from_cpu_state(&cpu.state).write_to_abi_mem(&mut cpu_mem);
+        let _ = tier1_interp::execute_block(&ir, &mut cpu_mem, &mut self.bus);
+        tier1_interp::TestCpu::from_abi_mem(&cpu_mem).write_to_cpu_state(&mut cpu.state);
         cpu.state.rip
     }
 }

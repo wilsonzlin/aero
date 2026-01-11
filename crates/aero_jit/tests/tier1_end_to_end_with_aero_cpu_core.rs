@@ -3,9 +3,10 @@
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
+use aero_jit::abi;
 use aero_jit::backend::{compile_and_install_with_options, CompileQueue, Tier1Cpu, WasmBackend};
 use aero_jit::Tier1Bus;
-use aero_jit::tier1::ir::interp::execute_block;
+use aero_jit::tier1::ir::interp as tier1_interp;
 use aero_jit::tier1::wasm::Tier1WasmOptions;
 use aero_jit::tier1::{discover_block, translate_block, BlockLimits};
 use aero_types::Gpr;
@@ -48,7 +49,10 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
         let entry_rip = cpu.rip();
         let block = discover_block(&self.bus, entry_rip, BlockLimits::default());
         let ir = translate_block(&block);
-        let _ = execute_block(&ir, &mut cpu.state, &mut self.bus);
+        let mut cpu_mem = vec![0u8; abi::CPU_STATE_SIZE as usize];
+        tier1_interp::TestCpu::from_cpu_state(&cpu.state).write_to_abi_mem(&mut cpu_mem);
+        let _ = tier1_interp::execute_block(&ir, &mut cpu_mem, &mut self.bus);
+        tier1_interp::TestCpu::from_abi_mem(&cpu_mem).write_to_cpu_state(&mut cpu.state);
         cpu.state.rip
     }
 }

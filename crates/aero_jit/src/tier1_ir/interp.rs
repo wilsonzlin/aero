@@ -1,11 +1,10 @@
 //! Debug-only IR interpreter used for validating the x86→IR translation.
 
 use super::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator};
-use aero_cpu_core::state::{
-    CpuState, RFLAGS_AF, RFLAGS_CF, RFLAGS_OF, RFLAGS_PF, RFLAGS_SF, RFLAGS_ZF,
-};
+use aero_cpu_core::state::{CpuState, RFLAGS_AF, RFLAGS_CF, RFLAGS_OF, RFLAGS_PF, RFLAGS_SF, RFLAGS_ZF};
 use aero_types::{Cond, Flag, FlagSet, Width};
 
+use crate::abi;
 use crate::Tier1Bus;
 
 #[derive(Debug, Clone, Copy)]
@@ -78,7 +77,7 @@ fn compute_sub_flags(width: Width, lhs: u64, rhs: u64, result: u64) -> FlagVals 
     }
 }
 
-fn write_flagset(cpu: &mut CpuState, mask: FlagSet, vals: FlagVals) {
+fn write_flagset(cpu: &mut TestCpu, mask: FlagSet, vals: FlagVals) {
     if mask.contains(FlagSet::CF) {
         write_flag(cpu, Flag::Cf, vals.cf);
     }
@@ -99,7 +98,7 @@ fn write_flagset(cpu: &mut CpuState, mask: FlagSet, vals: FlagVals) {
     }
 }
 
-fn eval_cond(cpu: &CpuState, cond: Cond) -> bool {
+fn eval_cond(cpu: &TestCpu, cond: Cond) -> bool {
     cond.eval(
         read_flag(cpu, Flag::Cf),
         read_flag(cpu, Flag::Pf),
@@ -115,7 +114,102 @@ pub enum ExecResult {
     ExitToInterpreter { next_rip: u64 },
 }
 
-pub fn execute_block<B: Tier1Bus>(block: &IrBlock, cpu: &mut CpuState, bus: &mut B) -> ExecResult {
+/// Minimal CPU state subset used by the debug Tier-1 IR interpreter.
+///
+/// This intentionally matches the stable `aero_cpu_core::state::CpuState` *in-memory ABI* that
+/// Tier-1 WASM blocks operate on (as defined by [`crate::abi`]), but only models the architectural
+/// registers and flags that the Tier-1 IR can currently touch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TestCpu {
+    pub gpr: [u64; abi::GPR_COUNT],
+    pub rip: u64,
+    pub rflags: u64,
+}
+
+impl Default for TestCpu {
+    fn default() -> Self {
+        Self {
+            gpr: [0; abi::GPR_COUNT],
+            rip: 0,
+            rflags: abi::RFLAGS_RESERVED1,
+        }
+    }
+}
+
+impl TestCpu {
+    /// Loads a [`TestCpu`] from a canonical `CpuState` ABI byte buffer.
+    #[must_use]
+    pub fn from_abi_mem(mem: &[u8]) -> Self {
+        assert!(
+            mem.len() >= abi::CPU_STATE_SIZE as usize,
+            "CpuState ABI buffer too small"
+        );
+
+        let mut gpr = [0u64; abi::GPR_COUNT];
+        for (i, slot) in gpr.iter_mut().enumerate() {
+            let off = abi::CPU_GPR_OFF[i] as usize;
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&mem[off..off + 8]);
+            *slot = u64::from_le_bytes(buf);
+        }
+
+        let mut buf = [0u8; 8];
+        let rip_off = abi::CPU_RIP_OFF as usize;
+        buf.copy_from_slice(&mem[rip_off..rip_off + 8]);
+        let rip = u64::from_le_bytes(buf);
+
+        let rflags_off = abi::CPU_RFLAGS_OFF as usize;
+        buf.copy_from_slice(&mem[rflags_off..rflags_off + 8]);
+        let rflags = u64::from_le_bytes(buf);
+
+        Self { gpr, rip, rflags }
+    }
+
+    /// Writes this [`TestCpu`] into a canonical `CpuState` ABI byte buffer.
+    pub fn write_to_abi_mem(&self, mem: &mut [u8]) {
+        assert!(
+            mem.len() >= abi::CPU_STATE_SIZE as usize,
+            "CpuState ABI buffer too small"
+        );
+
+        for (i, val) in self.gpr.iter().enumerate() {
+            let off = abi::CPU_GPR_OFF[i] as usize;
+            mem[off..off + 8].copy_from_slice(&val.to_le_bytes());
+        }
+
+        let rip_off = abi::CPU_RIP_OFF as usize;
+        mem[rip_off..rip_off + 8].copy_from_slice(&self.rip.to_le_bytes());
+
+        // Bit 1 always reads as 1 on real hardware.
+        let rflags = self.rflags | abi::RFLAGS_RESERVED1;
+        let rflags_off = abi::CPU_RFLAGS_OFF as usize;
+        mem[rflags_off..rflags_off + 8].copy_from_slice(&rflags.to_le_bytes());
+    }
+
+    #[must_use]
+    pub fn from_cpu_state(cpu: &CpuState) -> Self {
+        Self {
+            gpr: cpu.gpr,
+            rip: cpu.rip,
+            rflags: cpu.rflags_snapshot(),
+        }
+    }
+
+    pub fn write_to_cpu_state(&self, cpu: &mut CpuState) {
+        cpu.gpr = self.gpr;
+        cpu.rip = self.rip;
+        cpu.set_rflags(self.rflags);
+    }
+}
+
+pub fn execute_block<B: Tier1Bus>(block: &IrBlock, cpu_mem: &mut [u8], bus: &mut B) -> ExecResult {
+    let mut cpu = TestCpu::from_abi_mem(cpu_mem);
+    let res = execute_block_cpu(block, &mut cpu, bus);
+    cpu.write_to_abi_mem(cpu_mem);
+    res
+}
+
+fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut B) -> ExecResult {
     let mut temps = vec![0u64; block.value_types.len()];
 
     for inst in &block.insts {
@@ -253,7 +347,7 @@ pub fn execute_block<B: Tier1Bus>(block: &IrBlock, cpu: &mut CpuState, bus: &mut
 }
 
 #[inline]
-fn read_gpr_part(cpu: &CpuState, reg: aero_types::Gpr, width: Width, high8: bool) -> u64 {
+fn read_gpr_part(cpu: &TestCpu, reg: aero_types::Gpr, width: Width, high8: bool) -> u64 {
     let idx = reg.as_u8() as usize;
     let val = cpu.gpr[idx];
     match width {
@@ -275,7 +369,7 @@ fn read_gpr_part(cpu: &CpuState, reg: aero_types::Gpr, width: Width, high8: bool
 }
 
 #[inline]
-fn write_gpr_part(cpu: &mut CpuState, reg: aero_types::Gpr, width: Width, high8: bool, value: u64) {
+fn write_gpr_part(cpu: &mut TestCpu, reg: aero_types::Gpr, width: Width, high8: bool, value: u64) {
     let idx = reg.as_u8() as usize;
     let prev = cpu.gpr[idx];
     let masked = width.truncate(value);
@@ -311,11 +405,17 @@ fn flag_mask(flag: Flag) -> u64 {
 }
 
 #[inline]
-fn read_flag(cpu: &CpuState, flag: Flag) -> bool {
-    cpu.get_flag(flag_mask(flag))
+fn read_flag(cpu: &TestCpu, flag: Flag) -> bool {
+    (cpu.rflags & flag_mask(flag)) != 0
 }
 
 #[inline]
-fn write_flag(cpu: &mut CpuState, flag: Flag, value: bool) {
-    cpu.set_flag(flag_mask(flag), value);
+fn write_flag(cpu: &mut TestCpu, flag: Flag, value: bool) {
+    let mask = flag_mask(flag);
+    if value {
+        cpu.rflags |= mask;
+    } else {
+        cpu.rflags &= !mask;
+    }
+    cpu.rflags |= abi::RFLAGS_RESERVED1;
 }
