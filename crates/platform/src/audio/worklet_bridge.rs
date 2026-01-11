@@ -5,6 +5,8 @@
 //! counters (wrapping naturally at `2^32`) to avoid the classic "read == write"
 //! ambiguity.
 
+use aero_io_snapshot::io::audio::state::AudioWorkletRingState;
+
 /// Header layout (`Uint32Array`) in the SharedArrayBuffer.
 pub const HEADER_U32_LEN: usize = 4;
 
@@ -70,6 +72,32 @@ impl InterleavedRingBuffer {
 
     pub fn buffer_level_frames(&self) -> u32 {
         frames_available_clamped(self.read_idx, self.write_idx, self.capacity_frames)
+    }
+
+    pub fn snapshot_state(&self) -> AudioWorkletRingState {
+        AudioWorkletRingState {
+            capacity_frames: self.capacity_frames,
+            write_pos: self.write_idx,
+            read_pos: self.read_idx,
+        }
+    }
+
+    /// Restore ring buffer indices from snapshot state.
+    ///
+    /// The ring's sample contents are not restored; storage is cleared to silence.
+    pub fn restore_state(&mut self, state: &AudioWorkletRingState) {
+        if state.capacity_frames != 0 && state.capacity_frames != self.capacity_frames {
+            self.capacity_frames = state.capacity_frames;
+            let samples = self
+                .capacity_frames
+                .saturating_mul(self.channel_count)
+                .min(u32::MAX) as usize;
+            self.storage.resize(samples, 0.0);
+        }
+        self.storage.fill(0.0);
+
+        self.read_idx = state.read_pos;
+        self.write_idx = state.write_pos;
     }
 
     pub fn write_interleaved(&mut self, samples: &[f32]) -> u32 {
@@ -176,6 +204,52 @@ mod tests {
         assert_eq!(read, 4);
         assert_eq!(out, [2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0]);
         assert_eq!(rb.buffer_level_frames(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_restore_preserves_indices_and_capacity() {
+        let mut rb = InterleavedRingBuffer::new(8, 2);
+        let written = rb.write_interleaved(&vec![1.0f32; 6 * 2]);
+        assert_eq!(written, 6);
+
+        let mut out = vec![0.0f32; 2 * 2];
+        let read = rb.read_interleaved(&mut out);
+        assert_eq!(read, 2);
+
+        let state = rb.snapshot_state();
+        assert_eq!(
+            state,
+            AudioWorkletRingState {
+                capacity_frames: 8,
+                write_pos: 6,
+                read_pos: 2,
+            }
+        );
+
+        // Restore into a ring with a different capacity; restore should resize to match.
+        let mut restored = InterleavedRingBuffer::new(4, 2);
+        restored.restore_state(&state);
+        assert_eq!(restored.snapshot_state(), state);
+        assert_eq!(restored.buffer_level_frames(), 4);
+
+        // Verify that subsequent writes see the same free space as the original at snapshot time.
+        let write_req = vec![2.0f32; 10 * 2];
+        assert_eq!(restored.write_interleaved(&write_req), 4);
+        assert_eq!(restored.buffer_level_frames(), 8);
+    }
+
+    #[test]
+    fn test_snapshot_restore_handles_wrapping_indices() {
+        let state = AudioWorkletRingState {
+            capacity_frames: 8,
+            read_pos: u32::MAX - 2,
+            write_pos: (u32::MAX - 2).wrapping_add(5),
+        };
+
+        let mut rb = InterleavedRingBuffer::new(8, 2);
+        rb.restore_state(&state);
+        assert_eq!(rb.buffer_level_frames(), 5);
+        assert_eq!(rb.snapshot_state(), state);
     }
 }
 
@@ -388,6 +462,31 @@ mod wasm {
         /// This is a wrapping `u32` counter (wraps naturally at `2^32`).
         pub fn overrun_count(&self) -> u32 {
             atomic_load_u32(&self.header, OVERRUN_COUNT_INDEX)
+        }
+    }
+
+    impl WorkletBridge {
+        pub fn snapshot_state(&self) -> AudioWorkletRingState {
+            AudioWorkletRingState {
+                capacity_frames: self.capacity_frames,
+                write_pos: atomic_load_u32(&self.header, WRITE_FRAME_INDEX),
+                read_pos: atomic_load_u32(&self.header, READ_FRAME_INDEX),
+            }
+        }
+
+        /// Restore ring indices from snapshot state.
+        ///
+        /// This does not restore the ring's sample contents.
+        pub fn restore_state(&self, state: &AudioWorkletRingState) {
+            if state.capacity_frames != 0 {
+                debug_assert_eq!(
+                    state.capacity_frames, self.capacity_frames,
+                    "AudioWorklet ring capacity mismatch during restore"
+                );
+            }
+
+            atomic_store_u32(&self.header, READ_FRAME_INDEX, state.read_pos);
+            atomic_store_u32(&self.header, WRITE_FRAME_INDEX, state.write_pos);
         }
     }
 }
