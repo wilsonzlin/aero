@@ -8,9 +8,42 @@ The chart includes:
 - `Ingress` example (defaults to `ingress-nginx`) that:
   - terminates TLS (optional in dev; recommended in prod)
   - supports WebSocket upgrades (Aero uses `wss://<host>/tcp?v=1&host=<dst>&port=<dstPort>`)
+  - for the Option C L2 tunnel (`wss://<host>/l2`, subprotocol `aero-l2-tunnel-v1`), you must deploy
+    `aero-l2-proxy` separately and route `/l2` to it (see below)
   - can inject security headers (COOP/COEP/CORP/OAC + CSP) required for `SharedArrayBuffer` / `crossOriginIsolated`
 - Optional in-cluster Redis (useful when running multiple gateway replicas)
 - Optional `NetworkPolicy` template to help restrict ingress/egress
+
+## L2 tunnel proxy (`/l2`)
+
+This chart deploys **only** `aero-gateway`. If you are using the recommended Option C networking path
+(tunneling raw Ethernet frames over WebSocket), you also need to deploy:
+
+- `aero-l2-proxy` (Rust service under `crates/aero-l2-proxy`)
+
+And configure your Ingress to route:
+
+- `/l2` → `aero-l2-proxy` Service (port 8090)
+
+Example nginx Ingress path addition (snippet; adapt to your chart/Ingress structure):
+
+```yaml
+paths:
+  - path: /l2
+    pathType: Prefix
+    backend:
+      service:
+        name: aero-l2-proxy
+        port:
+          number: 8090
+  - path: /
+    pathType: Prefix
+    backend:
+      service:
+        name: aero-gateway
+        port:
+          number: 80
+```
 
 ## Prerequisites
 
