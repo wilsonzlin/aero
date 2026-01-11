@@ -917,3 +917,120 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
         .copy_from_slice(&src_tex_data[bpr as usize..bpr as usize * 2]);
     assert_eq!(out, expected);
 }
+
+#[test]
+fn d3d9_copy_texture2d_writeback_respects_copy_region() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+
+    const SRC_TEX: u32 = 1;
+    const DST_TEX: u32 = 2;
+
+    const DST_ALLOC_ID: u32 = 1;
+    const DST_GPA: u64 = 0x1000;
+
+    let width = 2u32;
+    let height = 2u32;
+    let row_pitch = 12u32;
+    let backing_len = (row_pitch as usize) * (height as usize);
+
+    let src_tex_data: Vec<u8> = vec![
+        // row 0: red, green
+        255, 0, 0, 255, 0, 255, 0, 255, // row 1: blue, white
+        0, 0, 255, 255, 255, 255, 255, 255,
+    ];
+    let pixel = [255u8, 0, 0, 255];
+
+    let guest_memory = VecGuestMemory::new(0x4000);
+    guest_memory.write(DST_GPA, &vec![0xEEu8; backing_len]).unwrap();
+    let alloc_table = AllocTable::new([(
+        DST_ALLOC_ID,
+        AllocEntry {
+            gpa: DST_GPA,
+            size_bytes: 0x1000,
+        },
+    )]);
+
+    let dst_x = 1u32;
+    let dst_y = 1u32;
+    let copy_width = 1u32;
+    let copy_height = 1u32;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes (use tight packing)
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, src_tex_data.len() as u64); // size_bytes
+            out.extend_from_slice(&src_tex_data);
+        });
+
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, row_pitch);
+            push_u32(out, DST_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, dst_x);
+            push_u32(out, dst_y);
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, copy_width);
+            push_u32(out, copy_height);
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+        .expect("execute should succeed");
+
+    let mut out = vec![0u8; backing_len];
+    guest_memory.read(DST_GPA, &mut out).expect("read dst backing");
+    let mut expected = vec![0xEEu8; backing_len];
+    let dst_off =
+        (dst_y as usize) * (row_pitch as usize) + (dst_x as usize) * pixel.len();
+    expected[dst_off..dst_off + pixel.len()].copy_from_slice(&pixel);
+    assert_eq!(out, expected);
+}
