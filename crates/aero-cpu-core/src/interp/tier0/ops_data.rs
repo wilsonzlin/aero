@@ -1,5 +1,6 @@
 use super::ExecOutcome;
 use crate::exception::{AssistReason, Exception};
+use crate::linear_mem::{read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped, write_u32_wrapped, write_u64_wrapped};
 use crate::mem::CpuBus;
 use crate::state::{mask_bits, CpuState};
 use aero_x86::{DecodedInst, Instruction, MemorySize, Mnemonic, OpKind, Register};
@@ -352,7 +353,7 @@ pub(crate) fn read_op_sized<B: CpuBus>(
         OpKind::Register => Ok(state.read_reg(instr.op_register(op as u32)) & mask_bits(bits)),
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            read_mem(bus, addr, bits)
+            read_mem(state, bus, addr, bits)
         }
         OpKind::Immediate8 => Ok(instr.immediate8() as u64 & mask_bits(bits)),
         OpKind::Immediate16 => Ok(instr.immediate16() as u64 & mask_bits(bits)),
@@ -395,7 +396,7 @@ pub(crate) fn write_op_sized<B: CpuBus>(
         }
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            write_mem(bus, addr, bits, v)
+            write_mem(state, bus, addr, bits, v)
         }
         _ => Err(Exception::InvalidOpcode),
     }
@@ -527,27 +528,33 @@ mod tests {
     }
 }
 
-pub(crate) fn read_mem<B: CpuBus>(bus: &mut B, addr: u64, bits: u32) -> Result<u64, Exception> {
+pub(crate) fn read_mem<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    addr: u64,
+    bits: u32,
+) -> Result<u64, Exception> {
     match bits {
-        8 => Ok(bus.read_u8(addr)? as u64),
-        16 => Ok(bus.read_u16(addr)? as u64),
-        32 => Ok(bus.read_u32(addr)? as u64),
-        64 => Ok(bus.read_u64(addr)?),
+        8 => Ok(bus.read_u8(state.apply_a20(addr))? as u64),
+        16 => Ok(read_u16_wrapped(state, bus, addr)? as u64),
+        32 => Ok(read_u32_wrapped(state, bus, addr)? as u64),
+        64 => Ok(read_u64_wrapped(state, bus, addr)?),
         _ => Err(Exception::InvalidOpcode),
     }
 }
 
 pub(crate) fn write_mem<B: CpuBus>(
+    state: &CpuState,
     bus: &mut B,
     addr: u64,
     bits: u32,
     val: u64,
 ) -> Result<(), Exception> {
     match bits {
-        8 => bus.write_u8(addr, val as u8),
-        16 => bus.write_u16(addr, val as u16),
-        32 => bus.write_u32(addr, val as u32),
-        64 => bus.write_u64(addr, val),
+        8 => bus.write_u8(state.apply_a20(addr), val as u8),
+        16 => write_u16_wrapped(state, bus, addr, val as u16),
+        32 => write_u32_wrapped(state, bus, addr, val as u32),
+        64 => write_u64_wrapped(state, bus, addr, val),
         _ => Err(Exception::InvalidOpcode),
     }
 }

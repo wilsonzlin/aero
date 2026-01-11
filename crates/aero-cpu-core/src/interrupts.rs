@@ -11,6 +11,10 @@ use std::collections::VecDeque;
 use aero_x86::Register;
 
 use crate::exceptions::{Exception, InterruptSource, PendingEvent};
+use crate::linear_mem::{
+    read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped, write_u32_wrapped,
+    write_u64_wrapped,
+};
 use crate::mem::CpuBus;
 use crate::state::{
     self, gpr, CpuMode, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_RESERVED1, RFLAGS_TF, RFLAGS_VIF,
@@ -1116,7 +1120,7 @@ fn push16<B: CpuBus>(
     let sp = state.read_gpr16(gpr::RSP).wrapping_sub(2);
     state.write_gpr16(gpr::RSP, sp);
     let addr = state.apply_a20(stack_base(state).wrapping_add(sp as u64));
-    match bus.write_u16(addr, value) {
+    match write_u16_wrapped(state, bus, addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
         Err(crate::exception::Exception::PageFault { addr, error_code }) => {
             state.control.cr2 = addr;
@@ -1152,7 +1156,7 @@ fn push32<B: CpuBus>(
     let esp = state.read_gpr32(gpr::RSP).wrapping_sub(4);
     state.write_gpr32(gpr::RSP, esp);
     let addr = state.apply_a20(stack_base(state).wrapping_add(esp as u64));
-    match bus.write_u32(addr, value) {
+    match write_u32_wrapped(state, bus, addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
         Err(crate::exception::Exception::PageFault { addr, error_code }) => {
             state.control.cr2 = addr;
@@ -1188,7 +1192,7 @@ fn push64<B: CpuBus>(
     let rsp = state.read_gpr64(gpr::RSP).wrapping_sub(8);
     state.write_gpr64(gpr::RSP, rsp);
     let addr = state.apply_a20(stack_base(state).wrapping_add(rsp));
-    match bus.write_u64(addr, value) {
+    match write_u64_wrapped(state, bus, addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
         Err(crate::exception::Exception::PageFault { addr, error_code }) => {
             state.control.cr2 = addr;
@@ -1217,7 +1221,7 @@ fn push64<B: CpuBus>(
 fn pop16<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u16, CpuExit> {
     let sp = state.read_gpr16(gpr::RSP);
     let addr = state.apply_a20(stack_base(state).wrapping_add(sp as u64));
-    let value = bus.read_u16(addr).map_err(|_| CpuExit::TripleFault)?;
+    let value = read_u16_wrapped(state, bus, addr).map_err(|_| CpuExit::TripleFault)?;
     state.write_gpr16(gpr::RSP, sp.wrapping_add(2));
     Ok(value)
 }
@@ -1225,7 +1229,7 @@ fn pop16<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u16, Cpu
 fn pop32<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u32, CpuExit> {
     let esp = state.read_gpr32(gpr::RSP);
     let addr = state.apply_a20(stack_base(state).wrapping_add(esp as u64));
-    let value = bus.read_u32(addr).map_err(|_| CpuExit::TripleFault)?;
+    let value = read_u32_wrapped(state, bus, addr).map_err(|_| CpuExit::TripleFault)?;
     state.write_gpr32(gpr::RSP, esp.wrapping_add(4));
     Ok(value)
 }
@@ -1233,7 +1237,7 @@ fn pop32<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u32, Cpu
 fn pop64<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u64, CpuExit> {
     let rsp = state.read_gpr64(gpr::RSP);
     let addr = state.apply_a20(stack_base(state).wrapping_add(rsp));
-    let value = bus.read_u64(addr).map_err(|_| CpuExit::TripleFault)?;
+    let value = read_u64_wrapped(state, bus, addr).map_err(|_| CpuExit::TripleFault)?;
     state.write_gpr64(gpr::RSP, rsp.wrapping_add(8));
     Ok(value)
 }

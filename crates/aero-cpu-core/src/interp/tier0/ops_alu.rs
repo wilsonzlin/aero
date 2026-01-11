@@ -987,7 +987,7 @@ fn exec_bit_test<B: CpuBus>(
                 state.set_flag(FLAG_CF, old_bit);
                 Ok(ExecOutcome::Continue)
             } else {
-                let val = super::ops_data::read_mem(bus, addr, bits)?;
+                let val = super::ops_data::read_mem(state, bus, addr, bits)?;
                 let old = ((val >> bit) & 1) != 0;
                 state.set_flag(FLAG_CF, old);
                 let new_val = match instr.mnemonic() {
@@ -998,7 +998,7 @@ fn exec_bit_test<B: CpuBus>(
                     _ => val,
                 };
                 if instr.mnemonic() != Mnemonic::Bt {
-                    super::ops_data::write_mem(bus, addr, bits, new_val)?;
+                    super::ops_data::write_mem(state, bus, addr, bits, new_val)?;
                 }
                 Ok(ExecOutcome::Continue)
             }

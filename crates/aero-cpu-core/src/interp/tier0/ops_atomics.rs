@@ -93,9 +93,9 @@ fn exec_cmpxchg<B: CpuBus>(
                     }
                 })?
             } else {
-                let old = read_mem(bus, addr, bits)?;
+                let old = read_mem(state, bus, addr, bits)?;
                 if old == expected {
-                    write_mem(bus, addr, bits, src)?;
+                    write_mem(state, bus, addr, bits, src)?;
                     (old, true)
                 } else {
                     (old, false)

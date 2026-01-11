@@ -1,3 +1,4 @@
+use crate::linear_mem::{read_u16_wrapped, read_u32_wrapped, read_u64_wrapped};
 use crate::state::{CpuState, EFER_LMA, EFER_LME, SEG_ACCESS_PRESENT, SEG_ACCESS_UNUSABLE};
 use crate::{CpuBus, Exception};
 
@@ -230,16 +231,16 @@ impl CpuState {
     pub(crate) fn with_supervisor_access<B: CpuBus, R>(
         &mut self,
         bus: &mut B,
-        f: impl FnOnce(&mut B) -> R,
+        f: impl FnOnce(&mut B, &CpuState) -> R,
     ) -> R {
         if self.cpl() != 3 {
-            return f(bus);
+            return f(bus, self);
         }
 
         let old_cs = self.segments.cs.selector;
         self.segments.cs.selector &= !0b11;
         bus.sync(self);
-        let res = f(bus);
+        let res = f(bus, self);
         self.segments.cs.selector = old_cs;
         bus.sync(self);
         res
@@ -310,8 +311,9 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        let raw_low =
-            self.with_supervisor_access(bus, |bus| bus.read_u64(table.base + byte_off))?;
+        let raw_low = self.with_supervisor_access(bus, |bus, state| {
+            read_u64_wrapped(state, bus, table.base.wrapping_add(byte_off))
+        })?;
         Ok(parse_descriptor_8(raw_low))
     }
 
@@ -330,14 +332,15 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        let raw_low =
-            self.with_supervisor_access(bus, |bus| bus.read_u64(table.base + byte_off))?;
+        let raw_low = self.with_supervisor_access(bus, |bus, state| {
+            read_u64_wrapped(state, bus, table.base.wrapping_add(byte_off))
+        })?;
         let desc = parse_descriptor_8(raw_low);
         match desc {
             Descriptor::System(sys) => {
                 if long_mode {
-                    let raw_high = self.with_supervisor_access(bus, |bus| {
-                        bus.read_u64(table.base + byte_off + 8)
+                    let raw_high = self.with_supervisor_access(bus, |bus, state| {
+                        read_u64_wrapped(state, bus, table.base.wrapping_add(byte_off + 8))
                     })?;
                     Ok(parse_system_descriptor_16(raw_low, raw_high))
                 } else {
@@ -416,8 +419,12 @@ impl CpuState {
             return Err(Exception::ts(0));
         }
         // 32-bit TSS: ESP0 at +4, SS0 at +8.
-        let esp0 = self.with_supervisor_access(bus, |bus| bus.read_u32(base + 4))?;
-        let ss0 = self.with_supervisor_access(bus, |bus| bus.read_u16(base + 8))?;
+        let esp0 = self.with_supervisor_access(bus, |bus, state| {
+            read_u32_wrapped(state, bus, base.wrapping_add(4))
+        })?;
+        let ss0 = self.with_supervisor_access(bus, |bus, state| {
+            read_u16_wrapped(state, bus, base.wrapping_add(8))
+        })?;
         if (ss0 >> 3) == 0 {
             return Err(Exception::ts(0));
         }
@@ -440,7 +447,9 @@ impl CpuState {
             return Err(Exception::ts(0));
         }
         // 64-bit TSS: RSP0 at +4.
-        let rsp0 = self.with_supervisor_access(bus, |bus| bus.read_u64(base + 4))?;
+        let rsp0 = self.with_supervisor_access(bus, |bus, state| {
+            read_u64_wrapped(state, bus, base.wrapping_add(4))
+        })?;
         if rsp0 == 0 || !is_canonical(rsp0) {
             return Err(Exception::ts(0));
         }
@@ -466,7 +475,9 @@ impl CpuState {
         if off.checked_add(7).map_or(true, |end| end > limit) {
             return Err(Exception::ts(0));
         }
-        let rsp = self.with_supervisor_access(bus, |bus| bus.read_u64(base + off))?;
+        let rsp = self.with_supervisor_access(bus, |bus, state| {
+            read_u64_wrapped(state, bus, base.wrapping_add(off))
+        })?;
         if rsp == 0 || !is_canonical(rsp) {
             return Err(Exception::ts(0));
         }
@@ -488,7 +499,9 @@ impl CpuState {
         if 0x66u64.checked_add(1).map_or(true, |end| end > limit) {
             return Err(Exception::ts(0));
         }
-        self.with_supervisor_access(bus, |bus| bus.read_u16(base + 0x66))
+        self.with_supervisor_access(bus, |bus, state| {
+            read_u16_wrapped(state, bus, base.wrapping_add(0x66))
+        })
     }
 }
 

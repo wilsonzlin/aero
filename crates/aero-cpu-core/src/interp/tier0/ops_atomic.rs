@@ -83,11 +83,11 @@ fn exec_cmpxchg<B: CpuBus>(
                     state.write_reg(expected_reg, old);
                 }
             } else {
-                let old = super::ops_data::read_mem(bus, addr, bits)? & mask;
+                let old = super::ops_data::read_mem(state, bus, addr, bits)? & mask;
                 let (_, flags) = super::ops_alu::sub_with_flags(state, expected, old, 0, bits);
                 state.set_rflags(flags);
                 if old == expected {
-                    super::ops_data::write_mem(bus, addr, bits, src)?;
+                    super::ops_data::write_mem(state, bus, addr, bits, src)?;
                 } else {
                     state.write_reg(expected_reg, old);
                 }

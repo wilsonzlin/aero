@@ -1,6 +1,10 @@
 use super::ops_data::{calc_ea, op_bits, read_op_sized};
 use super::ExecOutcome;
 use crate::exception::{AssistReason, Exception};
+use crate::linear_mem::{
+    read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped, write_u32_wrapped,
+    write_u64_wrapped,
+};
 use crate::mem::CpuBus;
 use crate::state::{
     mask_bits, CpuMode, CpuState, FLAG_OF, FLAG_ZF, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_TF,
@@ -432,7 +436,7 @@ fn branch_target<B: CpuBus>(
         OpKind::Memory => {
             let bits = op_bits(state, instr, 0)?;
             let addr = calc_ea(state, instr, next_ip, true)?;
-            let v = super::ops_data::read_mem(bus, addr, bits)?;
+            let v = super::ops_data::read_mem(state, bus, addr, bits)?;
             Ok(v & state.mode.ip_mask())
         }
         _ => Err(Exception::InvalidOpcode),
@@ -451,9 +455,9 @@ fn push<B: CpuBus>(
     state.set_stack_ptr(sp);
     let addr = state.apply_a20(state.seg_base_reg(Register::SS).wrapping_add(sp));
     match size {
-        2 => bus.write_u16(addr, val as u16),
-        4 => bus.write_u32(addr, val as u32),
-        8 => bus.write_u64(addr, val),
+        2 => write_u16_wrapped(state, bus, addr, val as u16),
+        4 => write_u32_wrapped(state, bus, addr, val as u32),
+        8 => write_u64_wrapped(state, bus, addr, val),
         _ => Err(Exception::InvalidOpcode),
     }
 }
@@ -463,9 +467,9 @@ fn pop<B: CpuBus>(state: &mut CpuState, bus: &mut B, size: u32) -> Result<u64, E
     let sp = state.stack_ptr();
     let addr = state.apply_a20(state.seg_base_reg(Register::SS).wrapping_add(sp));
     let v = match size {
-        2 => bus.read_u16(addr)? as u64,
-        4 => bus.read_u32(addr)? as u64,
-        8 => bus.read_u64(addr)?,
+        2 => read_u16_wrapped(state, bus, addr)? as u64,
+        4 => read_u32_wrapped(state, bus, addr)? as u64,
+        8 => read_u64_wrapped(state, bus, addr)?,
         _ => return Err(Exception::InvalidOpcode),
     };
     let new_sp = sp.wrapping_add(size as u64) & mask_bits(sp_bits);

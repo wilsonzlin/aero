@@ -1,5 +1,6 @@
 use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext};
 use crate::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitRuntime};
+use crate::linear_mem::fetch_wrapped;
 
 mod exception_bridge;
 
@@ -292,7 +293,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         .cpu
                         .state
                         .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
-                    let bytes = match cpu.bus.fetch(fetch_addr, 15) {
+                    let bytes = match fetch_wrapped(&cpu.cpu.state, &mut cpu.bus, fetch_addr, 15) {
                         Ok(bytes) => bytes,
                         Err(e) => {
                             cpu.cpu.state.apply_exception_side_effects(&e);
@@ -434,7 +435,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         .cpu
                         .state
                         .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
-                    let bytes = match cpu.bus.fetch(fetch_addr, 15) {
+                    let bytes = match fetch_wrapped(&cpu.cpu.state, &mut cpu.bus, fetch_addr, 15) {
                         Ok(bytes) => bytes,
                         Err(e) => {
                             cpu.cpu.state.apply_exception_side_effects(&e);

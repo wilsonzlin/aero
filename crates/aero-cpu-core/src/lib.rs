@@ -27,6 +27,7 @@ pub mod fpu;
 pub mod interp;
 pub mod interrupts;
 pub mod jit;
+pub mod linear_mem;
 pub mod mem;
 pub mod mode;
 pub mod msr;

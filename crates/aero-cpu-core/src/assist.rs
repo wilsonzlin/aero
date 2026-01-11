@@ -2,6 +2,10 @@ use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
 
 use crate::cpuid::{self, CpuFeatures};
 use crate::exception::{AssistReason, Exception};
+use crate::linear_mem::{
+    fetch_wrapped, read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped,
+    write_u32_wrapped, write_u64_wrapped,
+};
 use crate::mem::CpuBus;
 use crate::msr;
 use crate::segmentation::{LoadReason, Seg};
@@ -51,7 +55,7 @@ pub fn handle_assist<B: CpuBus>(
     bus.sync(state);
     let ip = state.rip();
     let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
-    let bytes = bus.fetch(fetch_addr, 15).map_err(|e| {
+    let bytes = fetch_wrapped(state, bus, fetch_addr, 15).map_err(|e| {
         state.apply_exception_side_effects(&e);
         e
     })?;
@@ -389,22 +393,28 @@ fn calc_ea(
     }
 }
 
-fn read_mem<B: CpuBus>(bus: &mut B, addr: u64, bits: u32) -> Result<u64, Exception> {
+fn read_mem<B: CpuBus>(state: &CpuState, bus: &mut B, addr: u64, bits: u32) -> Result<u64, Exception> {
     match bits {
-        8 => Ok(bus.read_u8(addr)? as u64),
-        16 => Ok(bus.read_u16(addr)? as u64),
-        32 => Ok(bus.read_u32(addr)? as u64),
-        64 => Ok(bus.read_u64(addr)?),
+        8 => Ok(bus.read_u8(state.apply_a20(addr))? as u64),
+        16 => Ok(read_u16_wrapped(state, bus, addr)? as u64),
+        32 => Ok(read_u32_wrapped(state, bus, addr)? as u64),
+        64 => Ok(read_u64_wrapped(state, bus, addr)?),
         _ => Err(Exception::InvalidOpcode),
     }
 }
 
-fn write_mem<B: CpuBus>(bus: &mut B, addr: u64, bits: u32, val: u64) -> Result<(), Exception> {
+fn write_mem<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    addr: u64,
+    bits: u32,
+    val: u64,
+) -> Result<(), Exception> {
     match bits {
-        8 => bus.write_u8(addr, val as u8),
-        16 => bus.write_u16(addr, val as u16),
-        32 => bus.write_u32(addr, val as u32),
-        64 => bus.write_u64(addr, val),
+        8 => bus.write_u8(state.apply_a20(addr), val as u8),
+        16 => write_u16_wrapped(state, bus, addr, val as u16),
+        32 => write_u32_wrapped(state, bus, addr, val as u32),
+        64 => write_u64_wrapped(state, bus, addr, val),
         _ => Err(Exception::InvalidOpcode),
     }
 }
@@ -420,7 +430,7 @@ fn read_op_u16<B: CpuBus>(
         OpKind::Register => Ok(state.read_reg(instr.op_register(op)) as u16),
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            Ok(bus.read_u16(addr)?)
+            read_u16_wrapped(state, bus, addr)
         }
         OpKind::Immediate16 => Ok(instr.immediate16()),
         OpKind::Immediate8to16 => Ok(instr.immediate8to16() as u16),
@@ -443,7 +453,7 @@ fn write_op_u16<B: CpuBus>(
         }
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            bus.write_u16(addr, value)
+            write_u16_wrapped(state, bus, addr, value)
         }
         _ => Err(Exception::InvalidOpcode),
     }
@@ -787,8 +797,8 @@ fn instr_ins<B: CpuBus>(
         let addr = state.apply_a20(seg_base.wrapping_add(di & addr_mask));
         match size {
             1 => bus.write_u8(addr, val as u8)?,
-            2 => bus.write_u16(addr, val as u16)?,
-            4 => bus.write_u32(addr, val as u32)?,
+            2 => write_u16_wrapped(state, bus, addr, val as u16)?,
+            4 => write_u32_wrapped(state, bus, addr, val as u32)?,
             _ => unreachable!(),
         }
         di = (di as i64).wrapping_add(step) as u64;
@@ -852,8 +862,8 @@ fn instr_outs<B: CpuBus>(
         let addr = state.apply_a20(seg_base.wrapping_add(si & addr_mask));
         let val: u64 = match size {
             1 => bus.read_u8(addr)? as u64,
-            2 => bus.read_u16(addr)? as u64,
-            4 => bus.read_u32(addr)? as u64,
+            2 => read_u16_wrapped(state, bus, addr)? as u64,
+            4 => read_u32_wrapped(state, bus, addr)? as u64,
             _ => unreachable!(),
         };
         bus.io_write(port, size, val)?;
@@ -953,8 +963,8 @@ fn instr_int_real<B: CpuBus>(
     state.set_flag(RFLAGS_TF, false);
 
     let ivt = (vector as u64) * 4;
-    let new_ip = bus.read_u16(ivt)?;
-    let new_cs = bus.read_u16(ivt + 2)?;
+    let new_ip = read_u16_wrapped(state, bus, ivt)?;
+    let new_cs = read_u16_wrapped(state, bus, ivt.wrapping_add(2))?;
 
     set_real_mode_seg(&mut state.segments.cs, new_cs);
     state.set_rip(new_ip as u64);
@@ -1014,11 +1024,11 @@ fn read_idt_gate32<B: CpuBus>(
     }
     let addr = state.tables.idtr.base + offset;
     // IDT reads are system-structure accesses and ignore paging U/S restrictions.
-    state.with_supervisor_access(bus, |bus| {
-        let offset_low = bus.read_u16(addr)? as u32;
-        let selector = bus.read_u16(addr + 2)?;
-        let type_attr = bus.read_u8(addr + 5)?;
-        let offset_high = bus.read_u16(addr + 6)? as u32;
+    state.with_supervisor_access(bus, |bus, state| {
+        let offset_low = read_u16_wrapped(state, bus, addr)? as u32;
+        let selector = read_u16_wrapped(state, bus, addr.wrapping_add(2))?;
+        let type_attr = bus.read_u8(state.apply_a20(addr.wrapping_add(5)))?;
+        let offset_high = read_u16_wrapped(state, bus, addr.wrapping_add(6))? as u32;
         let offset = offset_low | (offset_high << 16);
 
         let present = (type_attr & 0x80) != 0;
@@ -1054,7 +1064,9 @@ fn read_descriptor_low_for_selector<B: CpuBus>(
         return Err(Exception::gp(selector));
     }
     // Descriptor fetches are system-structure reads and ignore paging U/S restrictions.
-    let raw = state.with_supervisor_access(bus, |bus| bus.read_u64(table_base + byte_off))?;
+    let raw = state.with_supervisor_access(bus, |bus, state| {
+        read_u64_wrapped(state, bus, table_base.wrapping_add(byte_off))
+    })?;
     Ok(parse_descriptor_low(raw))
 }
 
@@ -1078,12 +1090,11 @@ fn tss32_ring0_stack<B: CpuBus>(
         return Err(Exception::ts(0));
     }
     // TSS reads are system-structure accesses and ignore paging U/S restrictions.
-    let (ss0, esp0) =
-        state.with_supervisor_access(bus, |bus| -> Result<(u16, u32), Exception> {
-            let esp0 = bus.read_u32(base + 4)?;
-            let ss0 = bus.read_u16(base + 8)?;
-            Ok((ss0, esp0))
-        })?;
+    let (ss0, esp0) = state.with_supervisor_access(bus, |bus, state| -> Result<(u16, u32), Exception> {
+        let esp0 = read_u32_wrapped(state, bus, base.wrapping_add(4))?;
+        let ss0 = read_u16_wrapped(state, bus, base.wrapping_add(8))?;
+        Ok((ss0, esp0))
+    })?;
     if (ss0 >> 3) == 0 {
         return Err(Exception::ts(0));
     }
@@ -1304,7 +1315,9 @@ fn load_segment_descriptor<B: CpuBus>(
         return Err(Exception::gp(selector));
     }
     // Descriptor fetches are system-structure reads and ignore paging U/S restrictions.
-    let raw = state.with_supervisor_access(bus, |bus| bus.read_u64(table_base + byte_off))?;
+    let raw = state.with_supervisor_access(bus, |bus, state| {
+        read_u64_wrapped(state, bus, table_base.wrapping_add(byte_off))
+    })?;
     let desc = parse_descriptor_low(raw);
     if !desc.s {
         return Err(Exception::gp(selector));
@@ -1589,14 +1602,14 @@ fn push_sized<B: CpuBus>(
     sp = sp.wrapping_sub(size as u64) & mask_bits(sp_bits);
     state.set_stack_ptr(sp);
     let addr = state.apply_a20(state.seg_base_reg(Register::SS).wrapping_add(sp));
-    write_mem(bus, addr, size * 8, val)
+    write_mem(state, bus, addr, size * 8, val)
 }
 
 fn pop_sized<B: CpuBus>(state: &mut CpuState, bus: &mut B, size: u32) -> Result<u64, Exception> {
     let sp_bits = state.stack_ptr_bits();
     let sp = state.stack_ptr();
     let addr = state.apply_a20(state.seg_base_reg(Register::SS).wrapping_add(sp));
-    let v = read_mem(bus, addr, size * 8)?;
+    let v = read_mem(state, bus, addr, size * 8)?;
     let next = sp.wrapping_add(size as u64) & mask_bits(sp_bits);
     state.set_stack_ptr(next);
     Ok(v)
@@ -1652,11 +1665,11 @@ fn instr_lgdt_lidt<B: CpuBus>(
         return Err(Exception::InvalidOpcode);
     }
     let addr = calc_ea(state, instr, next_ip, true)?;
-    let limit = bus.read_u16(addr)?;
+    let limit = read_u16_wrapped(state, bus, addr)?;
     let base = match state.bitness() {
-        64 => bus.read_u64(addr + 2)?,
-        16 => (bus.read_u32(addr + 2)? & 0x00FF_FFFF) as u64,
-        _ => bus.read_u32(addr + 2)? as u64,
+        64 => read_u64_wrapped(state, bus, addr.wrapping_add(2))?,
+        16 => (read_u32_wrapped(state, bus, addr.wrapping_add(2))? & 0x00FF_FFFF) as u64,
+        _ => read_u32_wrapped(state, bus, addr.wrapping_add(2))? as u64,
     };
     match instr.mnemonic() {
         Mnemonic::Lgdt => {
@@ -1687,11 +1700,11 @@ fn instr_sgdt_sidt<B: CpuBus>(
         Mnemonic::Sidt => (state.tables.idtr.limit, state.tables.idtr.base),
         _ => return Err(Exception::InvalidOpcode),
     };
-    bus.write_u16(addr, limit)?;
+    write_u16_wrapped(state, bus, addr, limit)?;
     match state.bitness() {
-        64 => bus.write_u64(addr + 2, base)?,
-        16 => bus.write_u32(addr + 2, base as u32 & 0x00FF_FFFF)?,
-        _ => bus.write_u32(addr + 2, base as u32)?,
+        64 => write_u64_wrapped(state, bus, addr.wrapping_add(2), base)?,
+        16 => write_u32_wrapped(state, bus, addr.wrapping_add(2), base as u32 & 0x00FF_FFFF)?,
+        _ => write_u32_wrapped(state, bus, addr.wrapping_add(2), base as u32)?,
     }
     Ok(())
 }
@@ -1755,7 +1768,7 @@ fn instr_lmsw_smsw<B: CpuBus>(
                 }
                 OpKind::Memory => {
                     let addr = calc_ea(state, instr, next_ip, true)?;
-                    bus.write_u16(addr, msw)
+                    write_u16_wrapped(state, bus, addr, msw)
                 }
                 _ => Err(Exception::InvalidOpcode),
             }

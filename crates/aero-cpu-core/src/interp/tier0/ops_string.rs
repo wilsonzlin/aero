@@ -1,5 +1,6 @@
 use super::ExecOutcome;
 use crate::exception::Exception;
+use crate::linear_mem::{read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped, write_u32_wrapped, write_u64_wrapped};
 use crate::mem::CpuBus;
 use crate::state::{CpuMode, CpuState, FLAG_DF, FLAG_ZF};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
@@ -363,22 +364,33 @@ fn linear(state: &CpuState, seg: Register, offset: u64) -> u64 {
     state.apply_a20(state.seg_base_reg(seg).wrapping_add(offset))
 }
 
-fn read_mem<B: CpuBus>(bus: &mut B, addr: u64, size: usize) -> Result<u64, Exception> {
+fn read_mem<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    addr: u64,
+    size: usize,
+) -> Result<u64, Exception> {
     match size {
-        1 => Ok(bus.read_u8(addr)? as u64),
-        2 => Ok(bus.read_u16(addr)? as u64),
-        4 => Ok(bus.read_u32(addr)? as u64),
-        8 => Ok(bus.read_u64(addr)?),
+        1 => Ok(bus.read_u8(state.apply_a20(addr))? as u64),
+        2 => Ok(read_u16_wrapped(state, bus, addr)? as u64),
+        4 => Ok(read_u32_wrapped(state, bus, addr)? as u64),
+        8 => Ok(read_u64_wrapped(state, bus, addr)?),
         _ => Err(Exception::InvalidOpcode),
     }
 }
 
-fn write_mem<B: CpuBus>(bus: &mut B, addr: u64, size: usize, value: u64) -> Result<(), Exception> {
+fn write_mem<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    addr: u64,
+    size: usize,
+    value: u64,
+) -> Result<(), Exception> {
     match size {
-        1 => bus.write_u8(addr, value as u8),
-        2 => bus.write_u16(addr, value as u16),
-        4 => bus.write_u32(addr, value as u32),
-        8 => bus.write_u64(addr, value),
+        1 => bus.write_u8(state.apply_a20(addr), value as u8),
+        2 => write_u16_wrapped(state, bus, addr, value as u16),
+        4 => write_u32_wrapped(state, bus, addr, value as u32),
+        8 => write_u64_wrapped(state, bus, addr, value),
         _ => Err(Exception::InvalidOpcode),
     }
 }
@@ -487,8 +499,8 @@ fn exec_movs<B: CpuBus>(
         let src_addr = linear(state, src_seg, si);
         let dst_addr = linear(state, Register::ES, di);
 
-        let value = read_mem(bus, src_addr, elem_size)?;
-        write_mem(bus, dst_addr, elem_size, value)?;
+        let value = read_mem(state, bus, src_addr, elem_size)?;
+        write_mem(state, bus, dst_addr, elem_size, value)?;
 
         let si_new = add_wrapping(si, delta, addr_size);
         let di_new = add_wrapping(di, delta, addr_size);
@@ -568,7 +580,7 @@ fn exec_stos<B: CpuBus>(
             8 => state.read_reg(Register::RAX),
             _ => return Err(Exception::InvalidOpcode),
         };
-        write_mem(bus, dst_addr, elem_size, value)?;
+        write_mem(state, bus, dst_addr, elem_size, value)?;
 
         let di_new = add_wrapping(di, delta, addr_size);
         write_di(state, addr_size, di_new);
@@ -607,7 +619,7 @@ fn exec_lods<B: CpuBus>(
     while count != 0 {
         let si = read_si(state, addr_size);
         let src_addr = linear(state, src_seg, si);
-        let value = read_mem(bus, src_addr, elem_size)?;
+        let value = read_mem(state, bus, src_addr, elem_size)?;
 
         match elem_size {
             1 => state.write_reg(Register::AL, value),
@@ -657,8 +669,8 @@ fn exec_cmps<B: CpuBus>(
         let src_addr = linear(state, src_seg, si);
         let dst_addr = linear(state, Register::ES, di);
 
-        let src_val = read_mem(bus, src_addr, elem_size)?;
-        let dst_val = read_mem(bus, dst_addr, elem_size)?;
+        let src_val = read_mem(state, bus, src_addr, elem_size)?;
+        let dst_val = read_mem(state, bus, dst_addr, elem_size)?;
 
         // CMPS sets flags as if computing SRC - DEST.
         let (_res, flags) =
@@ -715,7 +727,7 @@ fn exec_scas<B: CpuBus>(
     while count != 0 {
         let di = read_di(state, addr_size);
         let mem_addr = linear(state, Register::ES, di);
-        let mem_val = read_mem(bus, mem_addr, elem_size)?;
+        let mem_val = read_mem(state, bus, mem_addr, elem_size)?;
 
         let acc_val = match elem_size {
             1 => state.read_reg(Register::AL),
