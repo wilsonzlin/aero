@@ -64,6 +64,7 @@ CI enforces this wiring via:
 
 - `scripts/ci/check-win7-virtqueue-split-headers.py` (header-name ambiguity)
 - `scripts/ci/check-virtqueue-split-driver-builds.py` (per-driver build files)
+- `scripts/ci/check-win7-virtio-header-collisions.py` (prevent include-order header collisions across shared include roots)
 
 Related (outside this directory):
 
