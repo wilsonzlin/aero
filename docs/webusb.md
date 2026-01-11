@@ -2,6 +2,9 @@
 
 This document describes what **WebUSB can and cannot do** in Chromium-based browsers, and how those constraints shape Aero’s planned **“non-HID USB passthrough”** feature.
 
+> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB stack
+> selection for the browser runtime (`aero-usb` + `aero-wasm` + `web/`).
+
 The important takeaway is that WebUSB is **not a general-purpose “attach any USB device to the VM”** mechanism. It is usable primarily for **vendor-specific bulk/interrupt devices** that can be driven via **WinUSB/libusb** without the host OS binding a native class driver.
 
 In practice, WebUSB failures are dominated by two constraints:
