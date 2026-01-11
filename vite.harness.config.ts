@@ -5,7 +5,7 @@
 // - Importing source modules across the repo (e.g. `/web/src/...`) in a browser context
 //
 // The production/canonical browser host lives in `web/` (see ADR 0001).
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
 import {
   baselineSecurityHeaders,
@@ -16,10 +16,30 @@ import {
 const coopCoepSetting = (process.env.VITE_DISABLE_COOP_COEP ?? '').toLowerCase();
 const coopCoepDisabled = coopCoepSetting === '1' || coopCoepSetting === 'true';
 
+function wasmMimeTypePlugin(): Plugin {
+  const setWasmHeader: Plugin['configureServer'] = (server) => {
+    server.middlewares.use((req, res, next) => {
+      // `instantiateStreaming` requires the correct MIME type.
+      const pathname = req.url?.split('?', 1)[0];
+      if (pathname?.endsWith('.wasm')) {
+        res.setHeader('Content-Type', 'application/wasm');
+      }
+      next();
+    });
+  };
+
+  return {
+    name: 'wasm-mime-type',
+    configureServer: setWasmHeader,
+    configurePreviewServer: setWasmHeader,
+  };
+}
+
 export default defineConfig({
   // Reuse `web/public` across the repo so test assets and `_headers` templates
   // are consistently available in `vite preview` runs.
   publicDir: 'web/public',
+  plugins: [wasmMimeTypePlugin()],
   // The repo heavily relies on module workers (`type: 'module'` + `import.meta.url`).
   // Keep the harness build aligned with `web/vite.config.ts` so worker bundling
   // supports code-splitting.
