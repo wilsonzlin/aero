@@ -78,8 +78,10 @@ When running against the **versioned** AGPU device, treat BAR0 as the canonical 
 
 ## Scanline / raster status (`DxgkDdiGetScanLine`)
 
-The KMD implements `DxgkDdiGetScanLine` for **versioned ABI** devices that advertise
-`AEROGPU_FEATURE_VBLANK`.
+The KMD implements `DxgkDdiGetScanLine` for devices that advertise
+`AEROGPU_FEATURE_VBLANK` and expose the scanout0 vblank timing registers.
+This includes legacy (`"ARGP"`) devices if the device model also mirrors the
+`aerogpu_pci.h` vblank register block (`FEATURES_LO/HI` + `SCANOUT0_VBLANK_*`).
 
 This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` callers):
 
@@ -218,3 +220,7 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 - `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
 
 These are intended for a small user-mode tool to validate KMD↔emulator communication early.
+
+Note: `AEROGPU_ESCAPE_OP_QUERY_VBLANK` is feature-gated; it returns `STATUS_NOT_SUPPORTED`
+unless `AEROGPU_FEATURE_VBLANK` is present in `FEATURES_LO/HI` (works for both legacy and
+versioned devices that expose those registers).
