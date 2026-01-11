@@ -5,8 +5,10 @@ use std::collections::{HashMap, VecDeque};
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::{GuestMemory, GuestMemoryError};
-use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AerogpuAllocTableHeader};
-use anyhow::{anyhow, bail, Result};
+use aero_protocol::aerogpu::aerogpu_ring::{
+    decode_alloc_table_le, AerogpuAllocEntry, AerogpuAllocTableDecodeError,
+};
+use anyhow::{anyhow, Result};
 use memory::MemoryBus;
 
 use crate::gpu_worker::aerogpu_backend::{
@@ -65,51 +67,25 @@ impl GuestMemory for MemoryBusGuestMemory<'_> {
 }
 
 fn decode_alloc_table_bytes(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
-    let header = AerogpuAllocTableHeader::decode_from_le_bytes(bytes)
-        .map_err(|e| anyhow!("alloc table header decode failed: {e:?}"))?;
-    header
-        .validate_prefix()
-        .map_err(|e| anyhow!("alloc table header validation failed: {e:?}"))?;
+    match decode_alloc_table_le(bytes) {
+        Ok(view) => Ok(view.entries.to_vec()),
+        Err(AerogpuAllocTableDecodeError::Misaligned) => {
+            // `decode_alloc_table_le` requires the entry array to be aligned. The guest allocation
+            // itself is naturally aligned, but a `Vec<u8>` copy is not required to preserve that
+            // alignment. Retry using an 8-byte aligned buffer.
+            let words = (bytes.len() + 7) / 8;
+            let mut aligned = vec![0u64; words];
+            let aligned_bytes = unsafe {
+                core::slice::from_raw_parts_mut(aligned.as_mut_ptr() as *mut u8, aligned.len() * 8)
+            };
+            aligned_bytes[..bytes.len()].copy_from_slice(bytes);
 
-    let size_bytes = header.size_bytes as usize;
-    if size_bytes > bytes.len() {
-        bail!(
-            "alloc table size_bytes={} exceeds buffer length={}",
-            size_bytes,
-            bytes.len()
-        );
-    }
-
-    let entry_count = header.entry_count as usize;
-    let stride = header.entry_stride_bytes as usize;
-    let header_size = AerogpuAllocTableHeader::SIZE_BYTES;
-
-    let mut entries = Vec::with_capacity(entry_count);
-    for idx in 0..entry_count {
-        let off = header_size
-            .checked_add(
-                idx.checked_mul(stride)
-                    .ok_or_else(|| anyhow!("alloc table index overflow"))?,
-            )
-            .ok_or_else(|| anyhow!("alloc table index overflow"))?;
-        let end = off
-            .checked_add(AerogpuAllocEntry::SIZE_BYTES)
-            .ok_or_else(|| anyhow!("alloc table entry overflow"))?;
-        if end > size_bytes {
-            bail!(
-                "alloc table entry {} out of bounds: entry_end={} size_bytes={}",
-                idx,
-                end,
-                size_bytes
-            );
+            decode_alloc_table_le(&aligned_bytes[..bytes.len()])
+                .map(|view| view.entries.to_vec())
+                .map_err(|e| anyhow!("alloc table decode failed: {e:?}"))
         }
-        entries.push(
-            AerogpuAllocEntry::decode_from_le_bytes(&bytes[off..end])
-                .map_err(|e| anyhow!("alloc table entry {idx} decode failed: {e:?}"))?,
-        );
+        Err(err) => Err(anyhow!("alloc table decode failed: {err:?}")),
     }
-
-    Ok(entries)
 }
 
 impl AeroGpuCommandBackend for AerogpuWgpuBackend {
