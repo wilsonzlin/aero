@@ -62,6 +62,13 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
+      <!--
+        WDK 10+ headers deprecate some Win7-era kernel APIs / pool types (e.g. NonPagedPool),
+        which we must keep for Win7 runtime compatibility. Don’t let those warnings fail the
+        build when /WX is enabled by default/tooling.
+      -->
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <AdditionalIncludeDirectories>$(ProjectDir)kmd\include;$(ProjectDir)protocol;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
