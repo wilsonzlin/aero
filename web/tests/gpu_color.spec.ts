@@ -8,30 +8,48 @@ import { expect, test } from "@playwright/test";
 // such that `/src/...` maps to `web/src/...` (e.g. via Vite).
 
 async function renderHash(page: any, opts: any): Promise<string> {
-  // Ensure module imports use the static test server origin.
   await page.goto("/blank.html");
-  await page.setContent(`
-    <style>
-      html, body { margin: 0; padding: 0; background: #000; }
-      canvas { width: ${opts.width ?? 256}px; height: ${opts.height ?? 256}px; }
-    </style>
-    <canvas id="c"></canvas>
-    <script type="module">
-      import { renderGpuColorTestCardAndHash } from "/src/gpu/validation-scene.ts";
-      const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
-      window.__GPU_HASH__ = await renderGpuColorTestCardAndHash(canvas, ${JSON.stringify(opts)});
-    </script>
-  `);
+  return await page.evaluate(async (opts: any) => {
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    const mod = await import("/src/gpu/validation-scene.ts");
+    return await mod.renderGpuColorTestCardAndHash(canvas, opts);
+  }, opts);
+}
 
-  await page.waitForFunction(() => (window as any).__GPU_HASH__);
-  return await page.evaluate(() => (window as any).__GPU_HASH__);
+async function webGpuIsUsable(page: any): Promise<boolean> {
+  await page.goto("/blank.html");
+  return await page.evaluate(async () => {
+    if (!navigator.gpu) return false;
+
+    const withTimeout = async <T>(promise: Promise<T>, ms: number): Promise<T | null> => {
+      return await Promise.race([
+        promise,
+        new Promise<null>((resolve) => {
+          setTimeout(() => resolve(null), ms);
+        }),
+      ]);
+    };
+
+    const adapter = await withTimeout(navigator.gpu.requestAdapter({ powerPreference: "high-performance" }), 1000);
+    if (!adapter) return false;
+
+    const device = await withTimeout(adapter.requestDevice(), 1000);
+    if (!device) return false;
+
+    try {
+      device.destroy?.();
+    } catch {
+      // Ignore: destroy is optional in older implementations.
+    }
+
+    return true;
+  });
 }
 
 test.describe("gpu color policy", () => {
   test("webgpu and webgl2 match (sRGB + opaque)", async ({ page }) => {
-    await page.goto("/blank.html");
-    const hasWebGpu = await page.evaluate(() => !!navigator.gpu);
-    test.skip(!hasWebGpu, "WebGPU is not available in this Playwright environment.");
+    test.skip(!(await webGpuIsUsable(page)), "WebGPU is not available/usable in this Playwright environment.");
 
     const common = { width: 128, height: 128, outputColorSpace: "srgb", alphaMode: "opaque" };
     const webgpu = await renderHash(page, { backend: "webgpu", ...common });
@@ -40,9 +58,7 @@ test.describe("gpu color policy", () => {
   });
 
   test("webgpu and webgl2 match (linear + opaque)", async ({ page }) => {
-    await page.goto("/blank.html");
-    const hasWebGpu = await page.evaluate(() => !!navigator.gpu);
-    test.skip(!hasWebGpu, "WebGPU is not available in this Playwright environment.");
+    test.skip(!(await webGpuIsUsable(page)), "WebGPU is not available/usable in this Playwright environment.");
 
     const common = { width: 128, height: 128, outputColorSpace: "linear", alphaMode: "opaque" };
     const webgpu = await renderHash(page, { backend: "webgpu", ...common });

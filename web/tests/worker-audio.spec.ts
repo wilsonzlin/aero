@@ -1,7 +1,18 @@
 import { expect, test } from "@playwright/test";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 test("worker audio fills the shared ring buffer (no postMessage audio copies)", async ({ page }) => {
   await page.goto("/blank.html");
+
+  // Runtime worker audio depends on the threaded WASM bundle being built into
+  // `web/src/wasm/pkg-threaded`. When running Playwright in environments that
+  // don't build WASM (e.g. `npx vite` without `npm run wasm:build`), skip instead
+  // of hanging on an unfilled ring buffer.
+  const webDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const threadedWasmPath = join(webDir, "src", "wasm", "pkg-threaded", "aero_wasm_bg.wasm");
+  test.skip(!existsSync(threadedWasmPath), "Threaded WASM bundle is missing (run `cd web && npm run wasm:build:threaded`).");
 
   const support = await page.evaluate(() => {
     const AudioContextCtor =

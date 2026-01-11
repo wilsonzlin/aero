@@ -161,7 +161,7 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
           const headerBytes = 8 * 4;
           const sharedFramebuffer = new SharedArrayBuffer(headerBytes + strideBytes * H);
           const header = new Int32Array(sharedFramebuffer, 0, 8);
-          // Header fields from `src/display/framebuffer_protocol.ts` (inlined).
+          // Header fields from src/display/framebuffer_protocol.ts (inlined).
           header[0] = 0x4f524541; // FRAMEBUFFER_MAGIC ("AERO")
           header[1] = 1; // FRAMEBUFFER_VERSION
           header[2] = W;

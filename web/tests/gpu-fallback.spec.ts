@@ -3,6 +3,9 @@ import { expect, test } from "@playwright/test";
 test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page }) => {
   await page.goto("/blank.html");
 
+  // Expected hash for a solid-white 64x64 RGBA8 frame (SHA-256 over raw bytes).
+  const expectedWhiteHash = "0fbba07a833d4dcfc7024eaf313661a0ba8f80a05c6d29b8801c612e10e60dee";
+
   const result = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
     document.body.appendChild(canvas);
@@ -77,10 +80,15 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
       worker.postMessage({ type: "screenshot", requestId: 1 });
     });
 
+    const digest = await crypto.subtle.digest("SHA-256", screenshot.rgba8);
+    const hash = Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
     worker.postMessage({ type: "shutdown" });
     worker.terminate();
 
-    return { readyMsg, screenshot };
+    return { readyMsg, screenshot: { width: screenshot.width, height: screenshot.height, hash } };
   });
 
   expect(result.readyMsg.backendKind).toBe("webgl2_raw");
@@ -88,5 +96,5 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
   expect(result.readyMsg.fallback?.to).toBe("webgl2_raw");
   expect(result.screenshot.width).toBeGreaterThan(0);
   expect(result.screenshot.height).toBeGreaterThan(0);
-  expect(result.screenshot.rgba8.byteLength).toBe(result.screenshot.width * result.screenshot.height * 4);
+  expect(result.screenshot.hash).toBe(expectedWhiteHash);
 });

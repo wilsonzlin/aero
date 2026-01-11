@@ -112,11 +112,13 @@ export function computeSharedFramebufferLayout(
 }
 
 export function layoutFromHeader(header: Int32Array): SharedFramebufferLayout {
-  const width = Atomics.load(header, SharedFramebufferHeaderIndex.WIDTH);
-  const height = Atomics.load(header, SharedFramebufferHeaderIndex.HEIGHT);
-  const strideBytes = Atomics.load(header, SharedFramebufferHeaderIndex.STRIDE_BYTES);
-  const format = Atomics.load(header, SharedFramebufferHeaderIndex.FORMAT) as FramebufferFormat;
-  const tileSize = Atomics.load(header, SharedFramebufferHeaderIndex.TILE_SIZE);
+  // The header is defined as `u32[]` in Rust. When read through an `Int32Array`,
+  // values with the high bit set appear negative—always reinterpret as unsigned.
+  const width = Atomics.load(header, SharedFramebufferHeaderIndex.WIDTH) >>> 0;
+  const height = Atomics.load(header, SharedFramebufferHeaderIndex.HEIGHT) >>> 0;
+  const strideBytes = Atomics.load(header, SharedFramebufferHeaderIndex.STRIDE_BYTES) >>> 0;
+  const format = (Atomics.load(header, SharedFramebufferHeaderIndex.FORMAT) >>> 0) as FramebufferFormat;
+  const tileSize = Atomics.load(header, SharedFramebufferHeaderIndex.TILE_SIZE) >>> 0;
   return computeSharedFramebufferLayout(width, height, strideBytes, format, tileSize);
 }
 
