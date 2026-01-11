@@ -1122,6 +1122,11 @@ function renderAudioPanel(): HTMLElement {
 
       try {
         workerCoordinator.start(workerConfig);
+        // io.worker waits for the first `setBootDisks` message before reporting READY.
+        // This harness does not mount any disks, but sending an explicit empty selection
+        // keeps the worker lifecycle consistent and avoids the CPU demo busy-waiting on
+        // `StatusIndex.IoReady`.
+        workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
@@ -1389,6 +1394,7 @@ function renderAudioPanel(): HTMLElement {
       let workerError: string | null = null;
       try {
         workerCoordinator.start(workerConfig);
+        workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
         workerCoordinator.setMicrophoneRingBuffer(syntheticMic.ringBuffer, syntheticMic.sampleRate);
         workerCoordinator.setAudioOutputRingBuffer(
           output.ringBuffer.buffer,
