@@ -1,5 +1,15 @@
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use emulator::devices::aerogpu_regs as emu;
+use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
+use emulator::io::pci::PciDevice;
+
+fn read_u8(dev: &dyn PciDevice, offset: u16) -> u8 {
+    dev.config_read(offset, 1) as u8
+}
+
+fn read_u16(dev: &dyn PciDevice, offset: u16) -> u16 {
+    dev.config_read(offset, 2) as u16
+}
 
 #[test]
 fn aerogpu_abi_constants_match_aero_protocol() {
@@ -11,6 +21,17 @@ fn aerogpu_abi_constants_match_aero_protocol() {
         proto::AEROGPU_PCI_SUBSYSTEM_VENDOR_ID
     );
     assert_eq!(emu::AEROGPU_PCI_SUBSYSTEM_ID, proto::AEROGPU_PCI_SUBSYSTEM_ID);
+
+    // PCI class identity.
+    assert_eq!(
+        emu::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
+        proto::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER
+    );
+    assert_eq!(
+        emu::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE,
+        proto::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE
+    );
+    assert_eq!(emu::AEROGPU_PCI_PROG_IF, proto::AEROGPU_PCI_PROG_IF);
 
     // BAR sizing.
     assert_eq!(
@@ -72,4 +93,22 @@ fn aerogpu_abi_constants_match_aero_protocol() {
     assert_eq!(emu::FEATURE_FENCE_PAGE, proto::AEROGPU_FEATURE_FENCE_PAGE);
     assert_eq!(emu::FEATURE_SCANOUT, proto::AEROGPU_FEATURE_SCANOUT);
     assert_eq!(emu::FEATURE_VBLANK, proto::AEROGPU_FEATURE_VBLANK);
+}
+
+#[test]
+fn aerogpu_pci_config_space_uses_protocol_identity() {
+    let dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+    assert_eq!(read_u16(&dev, 0x00), proto::AEROGPU_PCI_VENDOR_ID);
+    assert_eq!(read_u16(&dev, 0x02), proto::AEROGPU_PCI_DEVICE_ID);
+
+    assert_eq!(read_u16(&dev, 0x2c), proto::AEROGPU_PCI_SUBSYSTEM_VENDOR_ID);
+    assert_eq!(read_u16(&dev, 0x2e), proto::AEROGPU_PCI_SUBSYSTEM_ID);
+
+    assert_eq!(read_u8(&dev, 0x09), proto::AEROGPU_PCI_PROG_IF);
+    assert_eq!(read_u8(&dev, 0x0a), proto::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE);
+    assert_eq!(
+        read_u8(&dev, 0x0b),
+        proto::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER
+    );
 }
