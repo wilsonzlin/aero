@@ -1000,7 +1000,13 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
             {
                 KIRQL oldIrql;
                 KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-                adapter->IrqEnableMask = AEROGPU_IRQ_FENCE | AEROGPU_IRQ_ERROR;
+                /*
+                 * Only enable device IRQ generation when we have successfully
+                 * registered an ISR with dxgkrnl. If RegisterInterrupt fails,
+                 * leaving the device IRQ line asserted could trigger an
+                 * unhandled interrupt storm.
+                 */
+                adapter->IrqEnableMask = interruptRegistered ? (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_ERROR) : 0;
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->IrqEnableMask);
                 KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
             }
