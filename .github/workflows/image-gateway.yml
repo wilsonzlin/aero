@@ -30,15 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node workspace
+        uses: ./.github/actions/setup-node-workspace
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 

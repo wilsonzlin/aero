@@ -37,18 +37,18 @@ jobs:
 
       - name: Setup Node workspace (candidate)
         id: node-workspace-head
-        uses: ./head/.github/actions/setup-node-workspace
+        uses: ./base/.github/actions/setup-node-workspace
         with:
           working-directory: head
 
       - name: Setup Node workspace (baseline)
         id: node-workspace-base
-        uses: ./head/.github/actions/setup-node-workspace
+        uses: ./base/.github/actions/setup-node-workspace
         with:
           working-directory: base
 
       - name: Setup Playwright (cached)
-        uses: ./head/.github/actions/setup-playwright
+        uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
           working-directory: ${{ steps.node-workspace-head.outputs.dir }}

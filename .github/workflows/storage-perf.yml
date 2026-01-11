@@ -35,47 +35,42 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Node workspace (candidate)
+        id: node-workspace-head
+        uses: ./base/.github/actions/setup-node-workspace
         with:
-          node-version-file: head/.nvmrc
-          cache: npm
-          cache-dependency-path: |
-            head/package-lock.json
-            base/package-lock.json
+          working-directory: head
 
-      - name: Install dependencies (baseline)
-        working-directory: base
-        run: npm ci
-
-      - name: Install dependencies (candidate)
-        working-directory: head
-        run: npm ci
+      - name: Setup Node workspace (baseline)
+        id: node-workspace-base
+        uses: ./base/.github/actions/setup-node-workspace
+        with:
+          working-directory: base
 
       - name: Setup Playwright (cached)
-        uses: ./head/.github/actions/setup-playwright
+        uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
-          working-directory: head
-          lockfile: head/package-lock.json
+          working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+          lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
 
       - name: Setup Playwright (cached, baseline)
-        uses: ./head/.github/actions/setup-playwright
+        uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
-          working-directory: base
+          working-directory: ${{ steps.node-workspace-base.outputs.dir }}
           # Use the candidate lockfile for caching so we restore once per job (the baseline
           # invocation will still install any additional browser revisions it needs).
-          lockfile: head/package-lock.json
+          lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
 
       - name: Run storage perf (baseline)
-        working-directory: base
+        working-directory: ${{ steps.node-workspace-base.outputs.dir }}
         run: |
           node --experimental-strip-types bench/runner.ts storage_io \
             --out-dir ../head/storage-perf-results/base
 
       - name: Run storage perf (candidate)
-        working-directory: head
+        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: |
           node --experimental-strip-types bench/runner.ts storage_io \
             --out-dir storage-perf-results/head

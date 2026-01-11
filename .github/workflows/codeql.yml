@@ -74,39 +74,9 @@ jobs:
           toolchain: stable
           locked: always
 
-      - name: Determine Node workspace directory
+      - name: Setup Node workspace
         if: matrix.language == 'javascript-typescript'
-        id: node-dir
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/ci/detect-node-dir.mjs --github-output "$GITHUB_OUTPUT"
-
-      - name: Setup Node
-        if: matrix.language == 'javascript-typescript' && steps.node-dir.outputs.lockfile == ''
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-
-      - name: Setup Node (npm cache)
-        if: matrix.language == 'javascript-typescript' && steps.node-dir.outputs.lockfile != ''
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
-
-      - name: Install dependencies (npm ci)
-        if: matrix.language == 'javascript-typescript' && steps.node-dir.outputs.lockfile != ''
-        working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npm ci
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-
-      - name: Install dependencies (npm install)
-        if: matrix.language == 'javascript-typescript' && steps.node-dir.outputs.lockfile == ''
-        working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npm install --no-audit --no-fund
+        uses: ./.github/actions/setup-node-workspace
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
