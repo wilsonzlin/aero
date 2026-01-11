@@ -292,6 +292,8 @@ To exercise virtio-snd, make sure you:
 - attach a virtio-snd device when running the harness (`-WithVirtioSnd` / `--with-virtio-snd`).
 
 To disable the guest selftest's virtio-snd section even if a device is present (adds `--disable-snd` to the scheduled task):
+Note: If you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects the virtio-snd test to run
+and PASS (not SKIP).
 
 ```powershell
 pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `

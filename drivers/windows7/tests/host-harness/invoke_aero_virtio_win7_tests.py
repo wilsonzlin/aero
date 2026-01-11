@@ -409,14 +409,25 @@ def main() -> int:
                             _print_tail(serial_log)
                             result_code = 1
                             break
-                        if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
-                            print(
-                                "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
-                                file=sys.stderr,
-                            )
-                            _print_tail(serial_log)
-                            result_code = 1
-                            break
+
+                        if args.enable_virtio_snd:
+                            if not saw_virtio_snd_pass:
+                                msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                if saw_virtio_snd_skip:
+                                    msg = "FAIL: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd was enabled"
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                        else:
+                            if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
+                                print(
+                                    "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
@@ -466,14 +477,25 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
-                            if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
-                                print(
-                                    "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
-                                    file=sys.stderr,
-                                )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
+
+                            if args.enable_virtio_snd:
+                                if not saw_virtio_snd_pass:
+                                    msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                    if saw_virtio_snd_skip:
+                                        msg = "FAIL: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd was enabled"
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            else:
+                                if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                             result_code = 0
                             break

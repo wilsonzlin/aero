@@ -196,7 +196,10 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $true)] [int]$TimeoutSeconds,
     [Parameter(Mandatory = $true)] $HttpListener,
     [Parameter(Mandatory = $true)] [string]$HttpPath,
-    [Parameter(Mandatory = $true)] [bool]$FollowSerial
+    [Parameter(Mandatory = $true)] [bool]$FollowSerial,
+    # If true, a virtio-snd device was attached, so the virtio-snd selftest must actually run and pass
+    # (not be skipped via --disable-snd).
+    [Parameter(Mandatory = $true)] [bool]$RequireVirtioSndPass
   )
 
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -251,7 +254,13 @@ function Wait-AeroSelftestResult {
         if ($sawVirtioSndFail) {
           return @{ Result = "FAIL"; Tail = $tail }
         }
-        if ($sawVirtioSndPass -or $sawVirtioSndSkip) {
+        if ($sawVirtioSndPass) {
+          return @{ Result = "PASS"; Tail = $tail }
+        }
+        if ($sawVirtioSndSkip) {
+          if ($RequireVirtioSndPass) {
+            return @{ Result = "VIRTIO_SND_SKIPPED"; Tail = $tail }
+          }
           return @{ Result = "PASS"; Tail = $tail }
         }
         return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
@@ -596,7 +605,7 @@ try {
   $scriptExitCode = 0
 
   try {
-    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial)
+    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequireVirtioSndPass ([bool]$WithVirtioSnd)
   } finally {
     if (-not $proc.HasExited) {
       Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue
@@ -654,6 +663,14 @@ try {
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
       $scriptExitCode = 1
+    }
+    "VIRTIO_SND_SKIPPED" {
+      Write-Host "FAIL: virtio-snd test was skipped (--disable-snd) but -WithVirtioSnd was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      exit 1
     }
     default {
       Write-Host "FAIL: unexpected harness result: $($result.Result)"
