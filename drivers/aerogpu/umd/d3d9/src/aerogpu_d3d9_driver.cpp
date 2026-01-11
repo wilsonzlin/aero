@@ -2037,6 +2037,11 @@ uint64_t submit(Device* dev, bool is_present) {
 #endif
 
   uint64_t fence = 0;
+  // Fence value associated with this specific submission (as returned by the
+  // runtime callback, or (rarely) the KMD query fallback). Keep this separate
+  // from adapter-wide tracking so concurrent submissions cannot cause us to
+  // return a "too-new" fence.
+  uint64_t per_submission_fence = 0;
   bool updated = false;
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
   if (submitted_to_kmd) {
@@ -2060,6 +2065,8 @@ uint64_t submit(Device* dev, bool is_present) {
       }
     }
 
+    per_submission_fence = fence;
+
     if (kmd_ok) {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
       const uint64_t prev_submitted = adapter->last_submitted_fence;
@@ -2071,10 +2078,10 @@ uint64_t submit(Device* dev, bool is_present) {
       updated = (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
     }
 
-    if (fence) {
+    if (per_submission_fence) {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
       const uint64_t prev_submitted = adapter->last_submitted_fence;
-      adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
+      adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, per_submission_fence);
       adapter->next_fence = std::max(adapter->next_fence, adapter->last_submitted_fence + 1);
       updated = updated || (adapter->last_submitted_fence != prev_submitted);
     }
@@ -2101,7 +2108,12 @@ uint64_t submit(Device* dev, bool is_present) {
       updated = updated || (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
     }
   }
+  per_submission_fence = fence;
 #endif
+
+  if (per_submission_fence == 0) {
+    per_submission_fence = fence;
+  }
 
   if (updated) {
     adapter->fence_cv.notify_all();
@@ -2112,13 +2124,13 @@ uint64_t submit(Device* dev, bool is_present) {
        is_present ? "present" : "render",
        static_cast<unsigned long long>(cmd_bytes),
        static_cast<unsigned>(dev->alloc_list_tracker.list_len()),
-       static_cast<unsigned long long>(fence));
+       static_cast<unsigned long long>(per_submission_fence));
 
-  dev->last_submission_fence = fence;
+  dev->last_submission_fence = per_submission_fence;
   dev->cmd.reset();
   dev->alloc_list_tracker.reset();
   dev->wddm_context.reset_submission_buffers();
-  return fence;
+  return per_submission_fence;
 }
 
 HRESULT flush_locked(Device* dev) {
