@@ -31,6 +31,7 @@ If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterfa
 - **Worker transferability:** if you see `DataCloneError` (e.g. “could not be cloned”), your browser cannot structured-clone a `USBDevice` to a worker. Keep WebUSB I/O on the main thread and proxy requests to workers, or have the worker call `navigator.usb.getDevices()` after permission is granted.
 - **Protected interface classes:** WebUSB cannot access some interface classes (HID, mass storage, audio/video, etc.). Prefer a vendor-specific interface (class `0xFF`) or a more appropriate Web API (e.g. WebHID/WebSerial).
 - **Isochronous endpoints (audio/video):** if you see `NotSupportedError` mentioning isochronous transfers, the device likely can't be used via WebUSB (WebUSB is generally control/bulk/interrupt only).
+- **Endpoint / transfer errors:** if you see `InvalidAccessError` / `OperationError`, double-check that you're using the correct interface and endpoint numbers (and that the interface is claimed). If transfers fail intermittently, try unplug/replug and consider `device.reset()` / close+reopen.
 - **Windows (WinUSB):** WebUSB typically requires the relevant interface to be bound to **WinUSB**.
   - For development: tools like **Zadig** can install WinUSB for a specific VID/PID/interface.
   - For production devices: ship **Microsoft OS 2.0 descriptors** / WinUSB Compatible ID descriptors so Windows binds WinUSB automatically.
