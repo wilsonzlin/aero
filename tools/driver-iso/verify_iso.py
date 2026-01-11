@@ -48,6 +48,8 @@ def main() -> int:
     files = _list_iso_files_with_xorriso(args.iso.resolve())
 
     missing: list[str] = []
+    if "/THIRD_PARTY_NOTICES.md" not in files:
+        missing.append("/THIRD_PARTY_NOTICES.md")
     for pkg in manifest.get("packages", []):
         if not pkg.get("required"):
             continue
@@ -69,4 +71,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

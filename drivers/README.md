@@ -59,6 +59,9 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-is
 
 See also: `docs/virtio-windows-drivers.md`.
 
+Note: the resulting drivers ISO includes `THIRD_PARTY_NOTICES.md` at the ISO root
+so redistributed media carries virtio-win attribution requirements.
+
 ### Optional: build `aero-guest-tools.iso` from virtio-win (post-install enablement)
 
 If you want the full Guest Tools ISO (scripts + certs + drivers), use:

@@ -100,6 +100,29 @@ def _write_readme(stage_root: Path, filename: str, label: str) -> None:
         encoding="utf-8",
     )
 
+def _copy_third_party_notices(repo_root: Path, drivers_root: Path, stage_root: Path) -> None:
+    """
+    Ensure the ISO contains third-party redistribution notices.
+
+    Prefer a `THIRD_PARTY_NOTICES.md` next to the chosen driver root (e.g. the
+    output of `make-driver-pack.ps1`). Fall back to the repo's template under
+    `drivers/virtio/` so even sample builds ship a notices file.
+    """
+
+    candidates = [
+        drivers_root / "THIRD_PARTY_NOTICES.md",
+        repo_root / "drivers/virtio/THIRD_PARTY_NOTICES.md",
+    ]
+    for src in candidates:
+        if src.is_file():
+            shutil.copy2(src, stage_root / "THIRD_PARTY_NOTICES.md")
+            return
+
+    raise SystemExit(
+        "third-party notices file not found; expected one of:\n"
+        + "\n".join(f"- {p}" for p in candidates)
+    )
+
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
@@ -166,6 +189,7 @@ def main() -> int:
             else:
                 shutil.copy2(child, dest)
 
+        _copy_third_party_notices(repo_root, drivers_root, stage_root)
         _write_readme(stage_root, readme_filename, label)
         if args.include_manifest:
             shutil.copy2(args.manifest, stage_root / "manifest.json")
@@ -202,4 +226,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

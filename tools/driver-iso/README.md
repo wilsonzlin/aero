@@ -2,6 +2,8 @@
 
 This tool builds an ISO image that can be mounted inside Aero as a virtual CD-ROM.
 
+The ISO root includes `THIRD_PARTY_NOTICES.md` for redistribution attribution.
+
 ## Dependencies
 
 The builder shells out to an ISO authoring tool:
