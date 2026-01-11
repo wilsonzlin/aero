@@ -76,7 +76,7 @@ The archived note is kept under:
 - **Working on early/prototype plumbing:** the toy protocols are fine, but keep them clearly
   labeled as prototypes.
 
-Note: an older `guest/windows/` prototype Win7 driver tree existed during early bring-up; it used stale
-placeholder PCI IDs (vendor 1AE0) and was not WOW64-complete on Win7 x64. It is archived under
-`prototype/legacy-win7-aerogpu-1ae0/guest/windows/` to avoid accidental installs; use
-`drivers/aerogpu/packaging/win7/` for the supported Win7 driver package.
+Note: an older prototype Win7 driver tree existed during early bring-up; it used stale placeholder PCI IDs
+(vendor 1AE0) and was not WOW64-complete on Win7 x64. It is archived under
+`prototype/legacy-win7-aerogpu-1ae0/` to avoid accidental installs; use `drivers/aerogpu/packaging/win7/`
+for the supported Win7 driver package.
