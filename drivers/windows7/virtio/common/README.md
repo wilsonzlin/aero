@@ -31,7 +31,7 @@ And additional shared helpers:
 - **INTx helper (WDM):** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
 - **Split virtqueues:** `virtqueue_split.*` (portable split ring implementation)
-- **Queue helper (miniport):** `virtio_queue.*` (alloc + `common_cfg` queue programming + notify)
+- **Legacy queue helper:** `virtio_queue.*` (alloc + legacy PFN queue programming)
 
 For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
 [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md).
@@ -151,7 +151,7 @@ must link **exactly one** of them.
     - device config reads with `config_generation` retry logic (`VirtioPciReadDeviceConfig`)
     - queue programming via `queue_desc/queue_avail/queue_used` + `queue_enable`
     - notify doorbells + ISR read-to-ack
-  - Designed to be used with `virtio_queue.*` and `virtqueue_split.*`.
+  - Designed to be used with `virtqueue_split.*` (and driver-specific queue wrappers).
 
 - `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
   - Parses PCI capability list and discovers the required virtio vendor caps
@@ -194,11 +194,10 @@ must link **exactly one** of them.
   - Portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
 
 - `include/virtio_queue.h` + `src/virtio_queue.c`
-  - Windows kernel convenience wrapper around split rings:
-    - allocates descriptor/avail/used in a single physically-contiguous block (convenient but not required by modern)
-      and maintains a descriptor free list
-    - programs queues via `VirtioPciSetupQueue` and sets `queue_enable`
-    - caches the queue’s notify address and kicks via the modern notify region (`NOTIFY_CFG`)
+  - Windows kernel convenience wrapper around **legacy/transitional** split rings:
+    - allocates descriptor/avail/used in a single physically-contiguous block and maintains a descriptor free list
+    - programs queues via the legacy PFN register (`QUEUE_PFN = ring_pa >> 12`)
+    - kicks via the legacy `QUEUE_NOTIFY` I/O port register
 
 - `include/virtio_os.h` + `os_shim/`
   - OS abstraction used by the portable code and host-side unit tests.
@@ -222,8 +221,8 @@ At a high level, drivers using Aero contract v1 devices should:
 5. **Read device-specific config** (optional; e.g. MAC address / capacity):
    - `VirtioPciReadDeviceConfig(&Dev, ...)`
 6. **Program queues** and cache notify addresses:
-   - Either call `VirtioPciSetupQueue(...)` / `VirtioPciGetQueueNotifyAddress(...)` directly, or
-   - Use the convenience wrapper `VirtioQueueCreate(&Dev, &Queue, QueueIndex)`.
+   - Call `VirtioPciSetupQueue(...)` / `VirtioPciGetQueueNotifyAddress(...)`.
+   - Use `virtqueue_split.*` (or your own queue wrapper) to manage split-ring state.
 7. **Handle INTx**:
    - Read the ISR status byte in the ISR to ACK/deassert (read-to-ack), then do
      queue work in a DPC.
@@ -243,10 +242,10 @@ WDM drivers can use the WDM transport + INTx helper:
 6. `VirtioIntxConnect(...)` / `VirtioIntxDisconnect(...)`
 7. `VirtioPciAddStatus(&Dev, VIRTIO_STATUS_DRIVER_OK)`
 
-Note: `virtio_queue.*` is built on the miniport `VIRTIO_PCI_DEVICE` type from
-`virtio_pci_modern_miniport.h` and is primarily intended for miniports. WDM
-drivers typically pair `VirtioPciSetupQueue` with `virtqueue_split.*` directly or
-use their own queue wrapper.
+Note: `virtio_queue.*` is built on the legacy `VIRTIO_PCI_DEVICE` type from
+`virtio_pci_legacy.h` and is intended for the legacy/transitional transport only.
+Modern drivers typically pair `VirtioPciSetupQueue` with `virtqueue_split.*`
+directly or use their own queue wrapper.
 
 ## virtio-pci legacy register offsets
 

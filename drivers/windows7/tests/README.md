@@ -88,7 +88,7 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
   - virtio-blk disk (**modern-only** virtio-pci: `disable-legacy=on`)
   - virtio-net NIC (user-mode networking / slirp; **modern-only** virtio-pci: `disable-legacy=on`)
   - virtio-input keyboard + mouse devices (`virtio-keyboard-pci`, `virtio-mouse-pci`; **modern-only** virtio-pci: `disable-legacy=on`)
-  - (optional) virtio-snd device (when enabled via `-WithVirtioSnd` / `--with-virtio-snd`)
+  - (optional) virtio-snd device (when enabled via `-WithVirtioSnd` / `--with-virtio-snd`; **modern-only** virtio-pci: `disable-legacy=on`)
   - COM1 redirected to a host log file
 - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
   virtio-blk + virtio-input + virtio-snd + virtio-net when RESULT=PASS is seen.
