@@ -458,6 +458,34 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->backing_alloc_id = 0;
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
+
+    if (pDesc->pInitialDataUP) {
+      const auto& init = pDesc->pInitialDataUP[0];
+      if (!init.pSysMem) {
+        res->~AeroGpuResource();
+        return E_INVALIDARG;
+      }
+      if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+      try {
+        res->storage.resize(static_cast<size_t>(res->size_bytes));
+      } catch (...) {
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+      std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
+
+      if (!res->storage.empty()) {
+        auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+            AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+        upload->resource_handle = res->handle;
+        upload->reserved0 = 0;
+        upload->offset_bytes = 0;
+        upload->size_bytes = res->storage.size();
+      }
+    }
     return S_OK;
   }
 
@@ -488,6 +516,50 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->backing_alloc_id = 0;
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
+
+    if (pDesc->pInitialDataUP) {
+      // Only support the most common initial data case for bring-up.
+      if (res->mip_levels != 1 || res->array_size != 1) {
+        res->~AeroGpuResource();
+        return E_NOTIMPL;
+      }
+
+      const auto& init = pDesc->pInitialDataUP[0];
+      if (!init.pSysMem) {
+        res->~AeroGpuResource();
+        return E_INVALIDARG;
+      }
+
+      const uint64_t total = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+      if (total > static_cast<uint64_t>(SIZE_MAX)) {
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+      try {
+        res->storage.resize(static_cast<size_t>(total));
+      } catch (...) {
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+
+      const uint8_t* src = static_cast<const uint8_t*>(init.pSysMem);
+      const size_t src_pitch = init.SysMemPitch ? static_cast<size_t>(init.SysMemPitch)
+                                                : static_cast<size_t>(res->row_pitch_bytes);
+      for (uint32_t y = 0; y < res->height; y++) {
+        std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
+                    src + static_cast<size_t>(y) * src_pitch,
+                    res->row_pitch_bytes);
+      }
+
+      if (!res->storage.empty()) {
+        auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+            AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+        upload->resource_handle = res->handle;
+        upload->reserved0 = 0;
+        upload->offset_bytes = 0;
+        upload->size_bytes = res->storage.size();
+      }
+    }
     return S_OK;
   }
 
