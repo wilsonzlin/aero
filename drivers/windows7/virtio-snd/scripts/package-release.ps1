@@ -66,6 +66,23 @@ function Get-DriverVerFromInf([string]$InfPath) {
   throw "Could not find a DriverVer=...,... line in INF: $InfPath"
 }
 
+function Get-CatalogFileNamesFromInf([string]$InfPath) {
+  $lines = Get-Content -LiteralPath $InfPath -ErrorAction Stop
+  $names = @()
+  foreach ($line in $lines) {
+    $m = [regex]::Match(
+      $line,
+      '^\\s*CatalogFile(\\.[^=\\s]+)?\\s*=\\s*([^\\s;]+\\.cat)\\b',
+      [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+    if ($m.Success) {
+      $names += $m.Groups[2].Value.Trim()
+    }
+  }
+
+  return @($names | Select-Object -Unique)
+}
+
 function Get-PeMachine([string]$Path) {
   try {
     $fs = [System.IO.File]::OpenRead($Path)
@@ -214,6 +231,26 @@ $payload = @(
 
 if ($payload.Count -eq 0) {
   throw "No payload files found to stage under: $infDir"
+}
+
+$missingCatalogs = @()
+foreach ($inf in $infFiles) {
+  $catNames = Get-CatalogFileNamesFromInf -InfPath $inf.FullName
+  foreach ($catName in $catNames) {
+    $catPath = Join-Path $infDir $catName
+    if (-not (Test-Path -LiteralPath $catPath -PathType Leaf)) {
+      $missingCatalogs += [pscustomobject]@{
+        Inf = $inf.Name
+        Cat = $catName
+      }
+    }
+  }
+}
+
+if ($missingCatalogs.Count -gt 0) {
+  $lines = $missingCatalogs | ForEach-Object { "  - {0} -> {1}" -f $_.Inf, $_.Cat }
+  $detail = ($lines -join "`r`n")
+  throw ("Missing catalog file(s) referenced by INF(s) under {0}:`r`n{1}`r`n`r`nRun scripts\\make-cat.cmd, then scripts\\sign-driver.cmd." -f $infDir, $detail)
 }
 
 $releaseRootResolved = Resolve-OrCreateDirectory -Path $ReleaseRoot -ArgName '-ReleaseRoot'
