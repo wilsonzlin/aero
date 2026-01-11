@@ -12,6 +12,7 @@ rem ---------------------------
 
 rem Service name for the virtio-blk storage miniport.
 rem This MUST match the INF AddService name for the storage driver.
+rem Default aligns with the Aero in-tree virtio-blk driver (`aerovblk.inf`).
 set "AERO_VIRTIO_BLK_SERVICE=aerovblk"
 
 rem Optional explicit .sys name for the storage driver.

@@ -15,13 +15,23 @@ This file is intended to be kept in sync with:
 The `*_HWIDS` values are stored as a list of individually quoted hardware IDs to safely include
 `&` characters (e.g. `"PCI\VEN_1AF4&DEV_1042&REV_01"`).
 
-Some devices include multiple IDs (for example transitional + modern) so Guest Tools can recognize either enumeration.
+Contract v1 is **virtio-pci modern-only** (PCI Revision ID `0x01`). For virtio net/blk, the relevant
+`VEN/DEV` pairs are:
+
+- `PCI\VEN_1AF4&DEV_1041` (virtio-net)
+- `PCI\VEN_1AF4&DEV_1042` (virtio-blk)
+
+Some devices include multiple IDs (for example `REV`/`SUBSYS`-qualified variants) so Guest Tools can
+recognize either enumeration.
 
 For Aero virtio devices, these IDs are expected to follow the repo's device contract (virtio-pci
 modern-only IDs plus PCI Revision ID `0x01`). Keep `devices.cmd` consistent with:
 
 - `docs/windows7-virtio-driver-contract.md` (behavioral contract)
 - `docs/windows-device-contract.json` (machine-readable manifest)
+
+`AERO_VIRTIO_BLK_SERVICE` must match the virtio-blk storage driver's INF `AddService` name
+(for Aero in-tree drivers: `aerovblk` from `drivers/windows7/virtio/blk/aerovblk.inf`).
 
 ## AeroGPU PCI IDs
 

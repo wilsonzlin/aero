@@ -54,8 +54,25 @@ We target the **virtio-win** driver distribution (commonly shipped as `virtio-wi
 Notes:
 
 - `VEN_1AF4` is the conventional VirtIO PCI vendor ID used by the upstream ecosystem.
-- Aero’s virtio device contract is `AERO-W7-VIRTIO` (see `docs/windows7-virtio-driver-contract.md`) and is **modern-only** (no transitional IDs).
+- Aero’s virtio device contract is `AERO-W7-VIRTIO` (see `docs/windows7-virtio-driver-contract.md`) and is **modern-only**:
+  - virtio-pci vendor capabilities + BAR0 MMIO (no legacy I/O BAR)
+  - PCI Revision ID `0x01`
+  - device IDs in the virtio 1.0+ modern space (`0x1040 + <virtio device id>`)
 - Many upstream virtio-win drivers also match the transitional ID range (`DEV_1000`, `DEV_1001`, etc.), but Aero does not expose those IDs under the contract.
+
+### Contract ↔ in-tree drivers ↔ Guest Tools config (net/blk)
+
+For Aero’s in-tree drivers and Guest Tools installer logic, the identifiers below must match **exactly**:
+
+| Device | Contract PCI ID | In-tree driver INF | Windows service name | Guest Tools config |
+|---|---|---|---|---|
+| virtio-net | `1AF4:1041` (REV `0x01`) | `drivers/windows7/virtio/net/aerovnet.inf` | `aerovnet` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_NET_HWIDS` |
+| virtio-blk | `1AF4:1042` (REV `0x01`) | `drivers/windows7/virtio/blk/aerovblk.inf` | `aerovblk` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_BLK_SERVICE`, `AERO_VIRTIO_BLK_HWIDS` |
+
+Guest Tools uses:
+
+- `AERO_VIRTIO_BLK_SERVICE` to configure the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase`.
+- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect (include `&REV_01` if your INFs match on revision).
 
 ### Licensing policy (project requirement)
 
