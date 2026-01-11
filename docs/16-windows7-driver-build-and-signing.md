@@ -127,6 +127,12 @@ To add a new driver to CI packaging:
 1. Copy `drivers/_template/ci-package.json` into your driver root as `ci-package.json`
 2. Update the `$schema` relative path as needed
 3. Optionally set `infFiles` to an explicit allowlist (recommended if the driver directory contains multiple INFs)
+4. Optionally set `wow64Files` if the x64 package needs specific 32-bit user-mode payload DLLs copied in from the x86 build output (WOW64 components).
+
+See also the examples under `drivers/_template/`:
+
+- `ci-package.inf-wow64-example.json`
+- `ci-package.wdf-example.json`
 
 > Note: CI only builds drivers with `ci-package.json`; drivers without it are treated as dev/test and skipped (for example, `drivers/win7/virtio/virtio-transport-test/` is a smoke-test driver and is intentionally excluded from CI-produced artifacts).
 >
