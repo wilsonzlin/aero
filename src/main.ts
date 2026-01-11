@@ -214,14 +214,27 @@ function summarizeUsbDevice(
   device: any,
 ): Record<string, unknown> | null {
   if (!device || typeof device !== 'object') return null;
-  return {
-    productName: device.productName,
-    manufacturerName: device.manufacturerName,
-    serialNumber: device.serialNumber,
-    vendorId: device.vendorId,
-    productId: device.productId,
-    opened: device.opened,
+
+  const out: Record<string, unknown> = {};
+  const fieldErrors: Record<string, string> = {};
+
+  const read = (field: string) => {
+    try {
+      out[field] = (device as Record<string, unknown>)[field];
+    } catch (err) {
+      fieldErrors[field] = formatWebUsbError(err);
+    }
   };
+
+  read('productName');
+  read('manufacturerName');
+  read('serialNumber');
+  read('vendorId');
+  read('productId');
+  read('opened');
+
+  if (Object.keys(fieldErrors).length) out.fieldErrors = fieldErrors;
+  return out;
 }
 
 async function runWebUsbProbeWorker(
@@ -304,6 +317,9 @@ async function runWebUsbProbeWorker(
 function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const info = el('pre', { text: '' });
   const output = el('pre', { text: '' });
+  const workerGetDevicesBefore = el('pre', { text: '' });
+  const workerGetDevicesAfter = el('pre', { text: '' });
+  const workerMatchAndOpenOutput = el('pre', { text: '' });
   const brokerOutput = el('pre', { text: '' });
   const errorTitle = el('div', { class: 'bad', text: '' });
   const errorDetails = el('div', { class: 'hint', text: '' });
@@ -353,6 +369,23 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     errorDetails.textContent = explained.details ?? '';
     errorRaw.textContent = formatWebUsbError(err);
     errorHints.replaceChildren(...explained.hints.map((h) => el('li', { text: h })));
+  }
+
+  function renderJson(pre: HTMLPreElement, value: unknown): void {
+    try {
+      pre.textContent = JSON.stringify(value, null, 2);
+    } catch (err) {
+      pre.textContent = formatWebUsbError(err);
+    }
+  }
+
+  function runWorkerGetDevicesSnapshot(target: HTMLPreElement, label: string): void {
+    target.textContent = `Probing worker getDevices() (${label})…`;
+    void runWebUsbProbeWorker({ type: 'probe' })
+      .then((resp) => renderJson(target, resp))
+      .catch((err) => {
+        renderJson(target, { ok: false, error: serializeError(err) });
+      });
   }
 
   function refreshInterfaceSelect(): void {
@@ -480,6 +513,8 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     onclick: async () => {
       output.textContent = '';
       clearError();
+      workerGetDevicesAfter.textContent = '';
+      workerMatchAndOpenOutput.textContent = '';
       selectedDevice = null;
       selectedSummary = null;
       updateInfo();
@@ -527,9 +562,29 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
           options.filters = filters;
         }
 
+        // Snapshot the worker's pre-grant getDevices() view (do not await; preserve user gesture).
+        runWorkerGetDevicesSnapshot(workerGetDevicesBefore, 'before_requestDevice');
+
         selectedDevice = await usb.requestDevice(options);
         selectedSummary = summarizeUsbDevice(selectedDevice);
         updateInfo();
+
+        const criteria: { vendorId: number; productId: number; serialNumber?: string } | null = (() => {
+          const vendorIdValue = selectedDevice?.vendorId;
+          const productIdValue = selectedDevice?.productId;
+          if (typeof vendorIdValue !== 'number' || typeof productIdValue !== 'number') return null;
+          const out: { vendorId: number; productId: number; serialNumber?: string } = {
+            vendorId: vendorIdValue,
+            productId: productIdValue,
+          };
+          try {
+            const serial = selectedDevice?.serialNumber;
+            if (typeof serial === 'string' && serial.length) out.serialNumber = serial;
+          } catch {
+            // ignore
+          }
+          return out;
+        })();
 
         const results: Record<string, unknown> = { selected: selectedSummary };
 
@@ -552,6 +607,25 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
           selectedDevice = null;
         } catch (err) {
           results.transfer = { ok: false, error: serializeError(err) };
+        }
+
+        // 3) Worker getDevices() view after requestDevice() grant.
+        runWorkerGetDevicesSnapshot(workerGetDevicesAfter, 'after_requestDevice');
+
+        // 4) Worker fallback: match by stable criteria, then open+close without receiving USBDevice.
+        if (!criteria) {
+          workerMatchAndOpenOutput.textContent = 'Cannot run match_and_open: missing vendorId/productId on selected device.';
+          results.match_and_open = { ok: false, error: { name: 'Error', message: 'Missing vendorId/productId on selected device.' } };
+        } else {
+          results.matchCriteria = criteria;
+          try {
+            const resp = await runWebUsbProbeWorker({ type: 'match_and_open', criteria });
+            results.match_and_open = { ok: true, response: resp };
+            renderJson(workerMatchAndOpenOutput, resp);
+          } catch (err) {
+            results.match_and_open = { ok: false, error: serializeError(err) };
+            renderJson(workerMatchAndOpenOutput, { ok: false, error: serializeError(err) });
+          }
         }
 
         updateInfo();
@@ -782,6 +856,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   updateInfo();
   // Probe worker-side WebUSB semantics on load so the panel reports both main + worker support.
   void runWorkerProbe();
+  runWorkerGetDevicesSnapshot(workerGetDevicesBefore, 'startup');
 
   return el(
     'div',
@@ -812,6 +887,13 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     errorDetails,
     errorRaw,
     errorHints,
+    el('h3', { text: 'Worker permission sharing (getDevices + match_and_open)' }),
+    el('h4', { text: 'Worker getDevices() BEFORE requestDevice()' }),
+    workerGetDevicesBefore,
+    el('h4', { text: 'Worker getDevices() AFTER requestDevice()' }),
+    workerGetDevicesAfter,
+    el('h4', { text: 'Worker match_and_open result' }),
+    workerMatchAndOpenOutput,
     el('h3', { text: 'Worker I/O via broker (MessagePort RPC)' }),
     el('div', { class: 'row' }, brokerDemoButton),
     brokerOutput,
