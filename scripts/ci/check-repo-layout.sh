@@ -156,9 +156,15 @@ runner_path = suite_dir / "test_runner" / "main.cpp"
 manifest_tests = []
 for raw in manifest_path.read_text(encoding="utf-8").splitlines():
     line = raw.strip()
-    if not line or line.startswith("#") or line.startswith(";"):
+    if not line:
         continue
-    manifest_tests.append(line)
+    # Mirror the Windows-side manifest parsing logic (tokens=1 with comment guards).
+    token = line.split(None, 1)[0]
+    if not token:
+        continue
+    if token[0] in ("#", ";") or token.startswith("::") or token.lower() == "rem":
+        continue
+    manifest_tests.append(token)
 
 for test in manifest_tests:
     test_dir = suite_dir / test
