@@ -144,6 +144,7 @@ constexpr uint32_t kD3D11FormatSupportBuffer = 0x1;
 constexpr uint32_t kD3D11FormatSupportIaVertexBuffer = 0x2;
 constexpr uint32_t kD3D11FormatSupportIaIndexBuffer = 0x4;
 constexpr uint32_t kD3D11FormatSupportTexture2D = 0x20;
+constexpr uint32_t kD3D11FormatSupportShaderSample = 0x200;
 constexpr uint32_t kD3D11FormatSupportRenderTarget = 0x4000;
 constexpr uint32_t kD3D11FormatSupportBlendable = 0x8000;
 constexpr uint32_t kD3D11FormatSupportDepthStencil = 0x10000;
@@ -4449,8 +4450,8 @@ uint32_t d3d11_format_support_flags(uint32_t dxgi_format) {
   switch (dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
     case kDxgiFormatR8G8B8A8Unorm:
-      return kD3D11FormatSupportTexture2D | kD3D11FormatSupportRenderTarget | kD3D11FormatSupportBlendable |
-             kD3D11FormatSupportCpuLockable | kD3D11FormatSupportDisplay;
+      return kD3D11FormatSupportTexture2D | kD3D11FormatSupportRenderTarget | kD3D11FormatSupportShaderSample |
+             kD3D11FormatSupportBlendable | kD3D11FormatSupportCpuLockable | kD3D11FormatSupportDisplay;
     case kDxgiFormatD24UnormS8Uint:
     case kDxgiFormatD32Float:
       return kD3D11FormatSupportTexture2D | kD3D11FormatSupportDepthStencil;

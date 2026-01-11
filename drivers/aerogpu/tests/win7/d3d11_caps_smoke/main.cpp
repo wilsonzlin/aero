@@ -111,13 +111,25 @@ static int RunCapsSmoke(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "unexpected OutputMergerLogicOp (expected FALSE)");
   }
 
+  UINT quality_levels = 0;
+  hr = device->CheckMultisampleQualityLevels(DXGI_FORMAT_B8G8R8A8_UNORM, 1, &quality_levels);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CheckMultisampleQualityLevels(B8G8R8A8, 1x)", hr);
+  }
+  aerogpu_test::PrintfStdout("INFO: %s: msaa quality levels (B8G8R8A8, 1x) = %lu",
+                             kTestName,
+                             (unsigned long)quality_levels);
+  if (quality_levels < 1) {
+    return aerogpu_test::Fail(kTestName, "expected at least 1 quality level for 1x sample count");
+  }
+
   // Format support checks used by the D3D11 runtime during device creation and by common apps.
   int rc = 0;
   rc = CheckFormat(kTestName,
                    device.get(),
                    DXGI_FORMAT_B8G8R8A8_UNORM,
                    D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                       D3D11_FORMAT_SUPPORT_DISPLAY,
+                        D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_DISPLAY,
                    "DXGI_FORMAT_B8G8R8A8_UNORM");
   if (rc) return rc;
 
@@ -125,7 +137,7 @@ static int RunCapsSmoke(int argc, char** argv) {
                    device.get(),
                    DXGI_FORMAT_R8G8B8A8_UNORM,
                    D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                       D3D11_FORMAT_SUPPORT_DISPLAY,
+                        D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_DISPLAY,
                    "DXGI_FORMAT_R8G8B8A8_UNORM");
   if (rc) return rc;
 
