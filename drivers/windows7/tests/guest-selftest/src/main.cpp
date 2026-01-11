@@ -2157,6 +2157,28 @@ static bool QueryServiceIsRunning(SC_HANDLE svc, DWORD* state_out) {
   return ssp.dwCurrentState == SERVICE_RUNNING;
 }
 
+static bool TryStartService(Logger& log, SC_HANDLE svc, const wchar_t* name) {
+  if (!svc || !name) return false;
+  if (StartServiceW(svc, 0, nullptr)) {
+    log.Logf("virtio-snd: StartService(%s) ok", WideToUtf8(name).c_str());
+    return true;
+  }
+
+  const DWORD err = GetLastError();
+  if (err == ERROR_SERVICE_ALREADY_RUNNING) {
+    log.Logf("virtio-snd: StartService(%s) already running", WideToUtf8(name).c_str());
+    return true;
+  }
+  if (err == ERROR_SERVICE_DISABLED) {
+    log.Logf("virtio-snd: StartService(%s) failed: disabled", WideToUtf8(name).c_str());
+    return false;
+  }
+
+  log.Logf("virtio-snd: StartService(%s) failed err=%lu", WideToUtf8(name).c_str(),
+           static_cast<unsigned long>(err));
+  return false;
+}
+
 static void WaitForWindowsAudioServices(Logger& log, DWORD wait_ms) {
   if (wait_ms == 0) return;
 
@@ -2166,8 +2188,9 @@ static void WaitForWindowsAudioServices(Logger& log, DWORD wait_ms) {
     return;
   }
 
-  SC_HANDLE audiosrv = OpenServiceW(scm, L"AudioSrv", SERVICE_QUERY_STATUS);
-  SC_HANDLE builder = OpenServiceW(scm, L"AudioEndpointBuilder", SERVICE_QUERY_STATUS);
+  const DWORD desired_access = SERVICE_QUERY_STATUS | SERVICE_START;
+  SC_HANDLE audiosrv = OpenServiceW(scm, L"AudioSrv", desired_access);
+  SC_HANDLE builder = OpenServiceW(scm, L"AudioEndpointBuilder", desired_access);
 
   if (!audiosrv || !builder) {
     log.Logf("virtio-snd: OpenService(AudioSrv/AudioEndpointBuilder) failed err=%lu", GetLastError());
@@ -2183,11 +2206,21 @@ static void WaitForWindowsAudioServices(Logger& log, DWORD wait_ms) {
   DWORD state_builder = 0;
   bool audio_running = false;
   bool builder_running = false;
+  bool tried_start_audio = false;
+  bool tried_start_builder = false;
 
   while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
     attempt++;
     audio_running = QueryServiceIsRunning(audiosrv, &state_audio);
     builder_running = QueryServiceIsRunning(builder, &state_builder);
+    if (!builder_running && state_builder == SERVICE_STOPPED && !tried_start_builder) {
+      tried_start_builder = true;
+      (void)TryStartService(log, builder, L"AudioEndpointBuilder");
+    }
+    if (!audio_running && state_audio == SERVICE_STOPPED && !tried_start_audio) {
+      tried_start_audio = true;
+      (void)TryStartService(log, audiosrv, L"AudioSrv");
+    }
     if (audio_running && builder_running) break;
     Sleep(500);
   }
