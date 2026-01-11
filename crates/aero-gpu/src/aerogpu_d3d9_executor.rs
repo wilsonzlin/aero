@@ -327,6 +327,7 @@ struct State {
 
     blend_state: BlendState,
     blend_constant: [f32; 4],
+    sample_mask: u32,
     depth_stencil_state: DepthStencilState,
     rasterizer_state: RasterizerState,
 
@@ -526,6 +527,7 @@ fn create_default_state() -> State {
     let mut state = State {
         topology: wgpu::PrimitiveTopology::TriangleList,
         blend_constant: [1.0; 4],
+        sample_mask: 0xFFFF_FFFF,
         ..Default::default()
     };
     state.render_states = create_default_render_states();
@@ -2843,6 +2845,7 @@ impl AerogpuD3d9Executor {
                 };
                 self.state.blend_constant =
                     state.blend_constant_rgba_f32.map(|v| f32::from_bits(v));
+                self.state.sample_mask = state.sample_mask;
                 Ok(())
             }
             AeroGpuCmd::SetDepthStencilState { state } => {
@@ -4498,6 +4501,8 @@ impl AerogpuD3d9Executor {
             pass.set_vertex_buffer(wgpu_slot, buffer.slice(binding.offset_bytes as u64..));
         }
 
+        let sample_mask_allows_draw = (self.state.sample_mask & 1) != 0;
+
         match draw {
             DrawParams::NonIndexed {
                 vertex_count,
@@ -4505,10 +4510,12 @@ impl AerogpuD3d9Executor {
                 first_vertex,
                 first_instance,
             } => {
-                pass.draw(
-                    first_vertex..first_vertex + vertex_count,
-                    first_instance..first_instance + instance_count,
-                );
+                if sample_mask_allows_draw {
+                    pass.draw(
+                        first_vertex..first_vertex + vertex_count,
+                        first_instance..first_instance + instance_count,
+                    );
+                }
             }
             DrawParams::Indexed {
                 index_count,
@@ -4533,11 +4540,13 @@ impl AerogpuD3d9Executor {
                     buffer.slice(index_binding.offset_bytes as u64..),
                     index_binding.format,
                 );
-                pass.draw_indexed(
-                    first_index..first_index + index_count,
-                    base_vertex,
-                    first_instance..first_instance + instance_count,
-                );
+                if sample_mask_allows_draw {
+                    pass.draw_indexed(
+                        first_index..first_index + index_count,
+                        base_vertex,
+                        first_instance..first_instance + instance_count,
+                    );
+                }
             }
         }
 
