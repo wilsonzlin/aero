@@ -1223,6 +1223,18 @@ async fn cookie_auth_requires_valid_session_cookie() {
         .expect_err("expected cookie auth to reject missing session cookie");
     assert_http_status(err, StatusCode::UNAUTHORIZED);
 
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let auth_failures = parse_metric(&body, "l2_auth_failures_total").unwrap();
+    assert!(
+        auth_failures >= 1,
+        "expected auth failure counter >= 1, got {auth_failures}"
+    );
+
     // Valid cookie should succeed.
     let exp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1442,6 +1454,18 @@ async fn max_connections_per_session_enforced_for_jwt() {
         .await
         .expect_err("expected per-session tunnel limit enforcement for jwt auth");
     assert_http_status(err, StatusCode::TOO_MANY_REQUESTS);
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let denied = parse_metric(&body, "l2_session_connection_denied_total").unwrap();
+    assert!(
+        denied >= 1,
+        "expected session connection denied counter >= 1, got {denied}"
+    );
 
     let _ = ws1.send(Message::Close(None)).await;
 
