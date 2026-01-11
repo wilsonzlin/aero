@@ -1827,3 +1827,118 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
     mem.read_physical(dst_gpa, &mut out);
     assert_eq!(out, [0, 255, 0, 255]);
 }
+
+#[test]
+fn aerogpu_ring_submission_completes_fence_on_d3d9_executor_error() {
+    let mut mem = Bus::new(0x40_000);
+
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.executor = AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    };
+
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let backend = match NativeAeroGpuBackend::new_headless() {
+        Ok(backend) => backend,
+        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::aerogpu_ring_submission_completes_fence_on_d3d9_executor_error"
+                ),
+                "wgpu request_adapter returned None",
+            );
+            return;
+        }
+        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    };
+    dev.set_backend(Box::new(backend));
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = 64u32;
+
+    // Ring header.
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + 24, 0); // head
+    mem.write_u32(ring_gpa + 28, 1); // tail
+
+    // Command buffer: CREATE_BUFFER with an invalid size (not aligned to COPY_BUFFER_ALIGNMENT).
+    let cmd_gpa = 0x4000u64;
+    let stream = build_stream(
+        |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+                push_u64(out, 1); // size_bytes (invalid; must be 4-byte aligned)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+        },
+        dev.regs.abi_version,
+    );
+
+    mem.write_physical(cmd_gpa, &stream);
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa + 4, 0); // flags
+    mem.write_u32(desc_gpa + 8, 0); // context_id
+    mem.write_u32(desc_gpa + 12, 0); // engine_id
+    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + 24, stream.len() as u32); // cmd_size_bytes
+    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + 48, 1); // signal_fence
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+    dev.mmio_write(
+        &mut mem,
+        mmio::IRQ_ENABLE,
+        4,
+        irq_bits::FENCE | irq_bits::ERROR,
+    );
+
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    // Drive polling until the fence completes. Even though the command stream is invalid, we must
+    // still make forward progress to avoid deadlocking the guest.
+    let start = Instant::now();
+    let mut now = start;
+    for _ in 0..200 {
+        if dev.regs.completed_fence >= 1 {
+            break;
+        }
+        now += Duration::from_millis(1);
+        dev.tick(&mut mem, now);
+    }
+
+    assert_eq!(dev.regs.completed_fence, 1);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert_ne!(
+        dev.regs.irq_status & irq_bits::ERROR,
+        0,
+        "executor error should raise ERROR IRQ"
+    );
+    assert_eq!(dev.regs.stats.gpu_exec_errors, 1);
+}
