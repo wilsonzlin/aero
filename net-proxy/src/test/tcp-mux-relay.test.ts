@@ -234,6 +234,43 @@ test("tcp-mux closes with 1002 (protocol error) on oversized frame length", asyn
   }
 });
 
+test("tcp-mux ignores OPEN metadata payload", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const open = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port, metadata: "{\"hello\":\"world\"}" })
+    );
+    const payload = Buffer.from("metadata-ok");
+    const data = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload);
+    ws.send(Buffer.concat([open, data]));
+
+    await waitForEcho(waiter, 1, payload);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
 test("tcp-mux relay echoes bytes on multiple concurrent streams", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
