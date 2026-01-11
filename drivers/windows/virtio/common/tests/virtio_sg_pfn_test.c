@@ -172,6 +172,67 @@ static void TestLenClampedToU32(void)
 #endif
 }
 
+static void TestSizingCallNoOutput(void)
+{
+	UINT64 pfns[2] = { 0x700, 0x702 };
+	UINT16 count = 0;
+	NTSTATUS status;
+
+	status = VirtioSgBuildFromPfns(pfns, 2, 0, PAGE_SIZE * 2u, TRUE, NULL, 0, &count);
+	ASSERT_EQ_STATUS(status, STATUS_BUFFER_TOO_SMALL);
+	ASSERT_EQ_U16(count, 2);
+}
+
+static void TestInvalidParams(void)
+{
+	{
+		UINT64 pfns[1] = { 0x800 };
+		VIRTQ_SG sg[1];
+		UINT16 count = 0;
+		NTSTATUS status;
+
+		status = VirtioSgBuildFromPfns(pfns, 1, PAGE_SIZE, 1u, TRUE, sg, 1, &count);
+		ASSERT_EQ_STATUS(status, STATUS_INVALID_PARAMETER);
+	}
+
+	{
+		UINT64 pfns[1] = { 0x800 };
+		VIRTQ_SG sg[1];
+		UINT16 count = 0;
+		NTSTATUS status;
+
+		status = VirtioSgBuildFromPfns(pfns, 1, 0, PAGE_SIZE + 1u, TRUE, sg, 1, &count);
+		ASSERT_EQ_STATUS(status, STATUS_INVALID_PARAMETER);
+	}
+
+	{
+		UINT64 pfns[1] = { 0x800 };
+		UINT16 count = 0;
+		NTSTATUS status;
+
+		status = VirtioSgBuildFromPfns(pfns, 1, 0, 1u, TRUE, NULL, 1, &count);
+		ASSERT_EQ_STATUS(status, STATUS_INVALID_PARAMETER);
+	}
+
+	{
+		VIRTQ_SG sg[1];
+		UINT16 count = 0;
+		NTSTATUS status;
+
+		status = VirtioSgBuildFromPfns(NULL, 0, 0, 1u, TRUE, sg, 1, &count);
+		ASSERT_EQ_STATUS(status, STATUS_INVALID_PARAMETER);
+	}
+
+	{
+		UINT16 count = 0xBEEF;
+		NTSTATUS status;
+
+		status = VirtioSgBuildFromPfns(NULL, 0, 0, 0, TRUE, NULL, 0, &count);
+		ASSERT_EQ_STATUS(status, STATUS_SUCCESS);
+		ASSERT_EQ_U16(count, 0);
+	}
+}
+
 int main(void)
 {
 	TestContiguousCoalesce();
@@ -181,6 +242,8 @@ int main(void)
 	TestBoundaryCases();
 	TestBufferTooSmall();
 	TestLenClampedToU32();
+	TestSizingCallNoOutput();
+	TestInvalidParams();
 
 	printf("virtio_sg_pfn_test: all tests passed\n");
 	return 0;
