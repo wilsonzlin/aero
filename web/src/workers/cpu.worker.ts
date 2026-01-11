@@ -1155,17 +1155,26 @@ async function runLoopInner(): Promise<void> {
     if (!perfWriter || !perfFrameHeader) return;
     const enabled = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
     const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
-    if (!enabled || frameId === 0) {
+    if (!enabled) {
       perfLastFrameId = frameId;
       perfCpuMs = 0;
       perfInstructions = 0n;
       return;
     }
-    if (perfLastFrameId === 0) {
-      // First observed frame ID after enabling perf. Establish a baseline so we
-      // only flush on the next frame boundary.
-      perfLastFrameId = frameId;
+    if (frameId === 0) {
+      // Perf is enabled, but the main thread hasn't published a frame ID yet.
+      // Keep accumulating so the first non-zero frame can include this interval.
+      perfLastFrameId = 0;
       return;
+    }
+    if (perfLastFrameId === 0) {
+      // First observed frame ID after enabling perf. Only emit if we have some
+      // accumulated work; otherwise establish a baseline and wait for the next
+      // frame boundary.
+      if (perfCpuMs <= 0 && perfInstructions === 0n) {
+        perfLastFrameId = frameId;
+        return;
+      }
     }
     if (frameId === perfLastFrameId) return;
     perfLastFrameId = frameId;
@@ -1346,10 +1355,7 @@ async function runLoopInner(): Promise<void> {
       if (now >= nextFrameMs) {
         const header = perfFrameHeader;
         const perfActive =
-          !!perfWriter &&
-          !!header &&
-          Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0 &&
-          (Atomics.load(header, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0) !== 0;
+          !!perfWriter && !!header && Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
         const t0 = perfActive ? performance.now() : 0;
 
         if (vgaFramebuffer) {
