@@ -1,5 +1,6 @@
 mod error;
 mod format;
+mod inspect;
 mod io;
 mod ram;
 mod types;
@@ -10,6 +11,9 @@ pub mod io_snapshot_bridge;
 pub use crate::error::{Result, SnapshotError};
 pub use crate::format::{
     DeviceId, SectionId, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
+};
+pub use crate::inspect::{
+    inspect_snapshot, read_snapshot_meta, RamHeaderSummary, SnapshotIndex, SnapshotSectionInfo,
 };
 pub use crate::ram::{Compression, RamMode, RamWriteOptions};
 pub use crate::types::{
