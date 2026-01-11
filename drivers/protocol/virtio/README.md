@@ -1,6 +1,6 @@
 # `aero-virtio-protocol`
 
-Small, host-buildable crate containing `#[repr(C)]` structs/constants for **virtio** (rings + virtio-pci capabilities).
+Small, host-buildable crate containing `#[repr(C)]` structs/constants for **virtio** (rings + virtio-pci capabilities + device protocol headers used by Aero).
 
 Why this exists:
 

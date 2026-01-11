@@ -8,6 +8,7 @@ See also:
 
 - [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation guide for Windows 7 KMDF drivers (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
 - [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+- [`drivers/protocol/virtio/`](../drivers/protocol/virtio/) — canonical `#[repr(C)]` message layouts (with Rust unit tests) shared between the guest driver and device model.
 
 Scope:
 
@@ -46,6 +47,8 @@ The device reports two PCM streams:
 ## Supported Control Commands
 
 The control virtqueue accepts requests prefixed by a 32-bit little-endian `code`. The response always starts with a 32-bit little-endian **status**.
+
+The canonical packed layouts for all virtio-snd structs referenced below are defined in `drivers/protocol/virtio` (e.g. `VirtioSndPcmInfo`, `VirtioSndPcmSetParamsReq`, `VirtioSndPcmXferHdr`).
 
 ### Status codes
 

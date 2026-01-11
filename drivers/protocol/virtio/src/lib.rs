@@ -205,6 +205,9 @@ pub struct VirtioSndPcmSimpleReq {
   pub stream_id: u32,
 }
 
+/// Simple per-stream control request used for `PREPARE`/`START`/`STOP`/`RELEASE`.
+pub type VirtioSndPcmStreamReq = VirtioSndPcmSimpleReq;
+
 /// virtio-snd PCM stream information (`struct virtio_snd_pcm_info`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -226,6 +229,9 @@ pub struct VirtioSndTxHdr {
   pub stream_id: u32,
   pub reserved: u32,
 }
+
+/// TX queue payload header (`struct virtio_snd_pcm_xfer` header portion).
+pub type VirtioSndPcmXferHdr = VirtioSndTxHdr;
 
 /// virtio-snd RX header (identical layout to [`VirtioSndTxHdr`]).
 pub type VirtioSndRxHdr = VirtioSndTxHdr;
@@ -344,6 +350,13 @@ mod tests {
   }
 
   #[test]
+  fn virtio_snd_pcm_stream_req_layout() {
+    assert_eq!(size_of::<VirtioSndPcmStreamReq>(), 8);
+    assert_eq!(offset_of!(VirtioSndPcmStreamReq, code), 0);
+    assert_eq!(offset_of!(VirtioSndPcmStreamReq, stream_id), 4);
+  }
+
+  #[test]
   fn virtio_snd_pcm_info_layout() {
     assert_eq!(size_of::<VirtioSndPcmInfo>(), 32);
     assert_eq!(offset_of!(VirtioSndPcmInfo, stream_id), 0);
@@ -361,6 +374,13 @@ mod tests {
     assert_eq!(size_of::<VirtioSndTxHdr>(), 8);
     assert_eq!(offset_of!(VirtioSndTxHdr, stream_id), 0);
     assert_eq!(offset_of!(VirtioSndTxHdr, reserved), 4);
+  }
+
+  #[test]
+  fn virtio_snd_pcm_xfer_hdr_layout() {
+    assert_eq!(size_of::<VirtioSndPcmXferHdr>(), 8);
+    assert_eq!(offset_of!(VirtioSndPcmXferHdr, stream_id), 0);
+    assert_eq!(offset_of!(VirtioSndPcmXferHdr, reserved), 4);
   }
 
   #[test]
