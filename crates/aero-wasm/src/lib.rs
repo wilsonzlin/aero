@@ -652,6 +652,9 @@ pub fn attach_mic_bridge(sab: SharedArrayBuffer) -> Result<MicBridge, JsValue> {
 ///
 /// This object owns a [`UsbPassthroughDevice`] instance, drains queued host actions for the
 /// TypeScript WebUSB executor, and accepts completions back from the host.
+///
+/// The canonical host action/completion wire contract is defined by `aero_usb::passthrough`
+/// and documented in `docs/adr/0015-canonical-usb-stack.md` + `docs/webusb-passthrough.md`.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct UsbPassthroughBridge {
