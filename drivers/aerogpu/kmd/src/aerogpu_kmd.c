@@ -1054,10 +1054,20 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
-        ULONG allocId = ++adapter->NextAllocationId;
+        ULONG allocId = (ULONG)InterlockedIncrement((volatile LONG*)&adapter->NextAllocationId);
         if (allocId == 0) {
-            /* 0 is reserved/invalid; skip it on wrap-around. */
-            allocId = ++adapter->NextAllocationId;
+            AEROGPU_LOG("CreateAllocation: allocation id overflow (wrapped to 0), failing with 0x%08lx",
+                        STATUS_INTEGER_OVERFLOW);
+            ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+            /* Roll back allocations already created in this call. */
+            for (UINT j = 0; j < i; ++j) {
+                HANDLE hAllocation = pCreate->pAllocationInfo[j].hAllocation;
+                if (hAllocation) {
+                    ExFreePoolWithTag((PVOID)hAllocation, AEROGPU_POOL_TAG);
+                    pCreate->pAllocationInfo[j].hAllocation = NULL;
+                }
+            }
+            return STATUS_INTEGER_OVERFLOW;
         }
 
         alloc->AllocationId = allocId;

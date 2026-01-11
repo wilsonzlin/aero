@@ -106,7 +106,7 @@ typedef struct _AEROGPU_ADAPTER {
     ULONG LastSubmittedFence;
     ULONG LastCompletedFence;
 
-    ULONG NextAllocationId;
+    volatile LONG NextAllocationId;
 
     /* Current mode (programmed via CommitVidPn / SetVidPnSourceAddress). */
     ULONG CurrentWidth;
