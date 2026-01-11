@@ -2,8 +2,8 @@ use std::collections::{BTreeSet, HashSet};
 
 use aero_cpu_core::jit::runtime::PageVersionTracker;
 
-use crate::profile::{ProfileData, TraceConfig};
-use crate::t2_ir::{BlockId, Function, Instr, TraceIr, TraceKind};
+use super::ir::{BlockId, Function, Instr, TraceIr, TraceKind};
+use super::profile::{ProfileData, TraceConfig};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SideExit {
@@ -83,11 +83,11 @@ impl<'a> TraceBuilder<'a> {
             }
 
             match &block.term {
-                crate::t2_ir::Terminator::Return => {
+                super::ir::Terminator::Return => {
                     trace.ir.kind = TraceKind::Linear;
                     break;
                 }
-                crate::t2_ir::Terminator::SideExit { exit_rip } => {
+                super::ir::Terminator::SideExit { exit_rip } => {
                     // Side exits are trace terminators: the trace must return the correct next RIP.
                     if instr_budget == 0 {
                         break;
@@ -97,7 +97,7 @@ impl<'a> TraceBuilder<'a> {
                     });
                     break;
                 }
-                crate::t2_ir::Terminator::Jump(t) => {
+                super::ir::Terminator::Jump(t) => {
                     if *t == entry_block && self.profile.is_hot_backedge(cur, *t) {
                         trace.ir.kind = TraceKind::Loop;
                         break;
@@ -107,7 +107,7 @@ impl<'a> TraceBuilder<'a> {
                     }
                     cur = *t;
                 }
-                crate::t2_ir::Terminator::Branch {
+                super::ir::Terminator::Branch {
                     cond,
                     then_bb,
                     else_bb,

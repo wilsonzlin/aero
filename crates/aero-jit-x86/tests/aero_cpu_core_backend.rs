@@ -11,9 +11,9 @@ use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit_x86::tier1::ir::{BinOp, GuestReg, IrBuilder, IrTerminator};
-use aero_jit_x86::wasm::tier1::Tier1WasmCodegen;
+use aero_jit_x86::tier1::Tier1WasmCodegen;
 #[cfg(feature = "tier1-inline-tlb")]
-use aero_jit_x86::wasm::tier1::Tier1WasmOptions;
+use aero_jit_x86::tier1::Tier1WasmOptions;
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_jit_x86::Tier1Bus;
 use aero_types::{FlagSet, Gpr, Width};

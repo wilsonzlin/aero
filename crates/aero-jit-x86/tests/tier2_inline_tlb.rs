@@ -4,7 +4,7 @@ use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx::{self, JitContext};
 use aero_jit_x86::tier2::ir::{Instr, Operand, TraceIr, TraceKind, ValueId};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
-use aero_jit_x86::tier2::wasm::{
+use aero_jit_x86::tier2::wasm_codegen::{
     Tier2WasmCodegen, Tier2WasmOptions, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION,
 };
 use aero_jit_x86::wasm::{

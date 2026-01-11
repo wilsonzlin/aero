@@ -1,5 +1,10 @@
 //! Tier-1 (baseline) JIT pipeline: block discovery + x86→IR translation + WASM codegen.
 //!
+//! This tier is responsible for:
+//! - basic block discovery (`block`)
+//! - lowering decoded x86 instructions to a small IR (`translate`, `ir`)
+//! - emitting WASM for a single block (`wasm_codegen`)
+//!
 //! The intended integration path with [`aero_cpu_core::jit::runtime::JitRuntime`] is:
 //!
 //! 1. Install a [`pipeline::Tier1CompileQueue`] as the runtime's
@@ -13,25 +18,15 @@
 //! implements both [`crate::Tier1Bus`] and [`pipeline::Tier1WasmRegistry`], making it a convenient
 //! starting point for experiments and tests.
 
-pub mod block {
-    pub use crate::block::*;
-}
-
-pub mod translate {
-    pub use crate::translate::*;
-}
-
-pub mod ir {
-    pub use crate::tier1_ir::*;
-}
-
-pub mod wasm {
-    pub use crate::wasm::tier1::*;
-}
+pub mod block;
+pub mod ir;
+pub mod translate;
+pub mod wasm_codegen;
 
 pub mod pipeline {
     pub use crate::tier1_pipeline::*;
 }
 
-pub use crate::block::{discover_block, BasicBlock, BlockEndKind, BlockLimits};
-pub use crate::translate::translate_block;
+pub use block::{discover_block, BasicBlock, BlockEndKind, BlockLimits};
+pub use translate::translate_block;
+pub use wasm_codegen::{Tier1WasmCodegen, Tier1WasmOptions, EXPORT_BLOCK_FN, EXPORT_TIER1_BLOCK_FN};

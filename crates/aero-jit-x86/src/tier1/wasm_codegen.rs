@@ -7,9 +7,9 @@ use wasm_encoder::{
 use crate::abi;
 use crate::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE};
 use crate::jit_ctx::{self, JitContext};
-use crate::tier1_ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
+use super::ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 
-use super::abi::{
+use crate::wasm::abi::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
     IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
     IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
@@ -17,7 +17,10 @@ use super::abi::{
 };
 
 /// WASM export name for Tier-1 blocks.
-pub const EXPORT_TIER1_BLOCK_FN: &str = "block";
+pub const EXPORT_BLOCK_FN: &str = crate::wasm::abi::EXPORT_BLOCK_FN;
+
+/// Backwards-compatible alias for [`EXPORT_BLOCK_FN`].
+pub const EXPORT_TIER1_BLOCK_FN: &str = EXPORT_BLOCK_FN;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Tier1WasmOptions {
@@ -256,7 +259,7 @@ impl Tier1WasmCodegen {
         module.section(&funcs);
 
         let mut exports = ExportSection::new();
-        exports.export(EXPORT_TIER1_BLOCK_FN, ExportKind::Func, imported.count);
+        exports.export(EXPORT_BLOCK_FN, ExportKind::Func, imported.count);
         module.section(&exports);
 
         let layout = LocalsLayout::new(block.value_types.len() as u32);

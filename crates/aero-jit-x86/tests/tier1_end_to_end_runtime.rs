@@ -9,9 +9,8 @@ use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit_x86::tier1::ir::interp as tier1_interp;
-use aero_jit_x86::tier1::pipeline::{Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry};
-use aero_jit_x86::tier1::{discover_block, translate_block, BlockLimits};
-use aero_jit_x86::Tier1Bus;
+use aero_jit_x86::tier1_pipeline::{Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry};
+use aero_jit_x86::{discover_block, translate_block, BlockLimits, Tier1Bus};
 use aero_types::Gpr;
 
 #[derive(Clone)]

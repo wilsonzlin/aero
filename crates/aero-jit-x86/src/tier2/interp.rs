@@ -1,9 +1,11 @@
-use crate::t2_ir::{
-    eval_binop, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
-};
-use crate::Tier1Bus;
 use aero_cpu_core::jit::runtime::PageVersionTracker;
 use aero_types::{Flag, FlagSet, Gpr};
+
+use super::ir::{
+    eval_binop, BlockId, FlagValues, Function, Instr, Operand, Terminator, TraceIr, TraceKind,
+    REG_COUNT,
+};
+use crate::Tier1Bus;
 
 #[derive(Clone, Debug)]
 pub struct T2State {
@@ -212,7 +214,7 @@ pub fn run_function_from_block(
     env: &RuntimeEnv,
     bus: &mut dyn Tier1Bus,
     state: &mut T2State,
-    start: crate::t2_ir::BlockId,
+    start: BlockId,
     max_steps: usize,
 ) -> RunExit {
     let mut steps = 0usize;
@@ -228,8 +230,7 @@ pub fn run_function_from_block(
         state.cpu.rip = block.start_rip;
         let mut dummy_stats = ExecStats::default();
         for inst in &block.instrs {
-            if let Some(exit) =
-                exec_instr(inst, state, env, bus, &mut values, &mut dummy_stats, None)
+            if let Some(exit) = exec_instr(inst, state, env, bus, &mut values, &mut dummy_stats, None)
             {
                 match exit {
                     RunExit::SideExit { next_rip } => {
@@ -246,8 +247,8 @@ pub fn run_function_from_block(
             }
         }
         match &block.term {
-            crate::t2_ir::Terminator::Jump(t) => cur = *t,
-            crate::t2_ir::Terminator::Branch {
+            Terminator::Jump(t) => cur = *t,
+            Terminator::Branch {
                 cond,
                 then_bb,
                 else_bb,
@@ -255,7 +256,7 @@ pub fn run_function_from_block(
                 let v = eval_operand(*cond, &values);
                 cur = if v != 0 { *then_bb } else { *else_bb };
             }
-            crate::t2_ir::Terminator::SideExit { exit_rip } => {
+            Terminator::SideExit { exit_rip } => {
                 state.cpu.rip = *exit_rip;
                 if let Some(id) = func.find_block_by_rip(*exit_rip) {
                     cur = id;
@@ -265,7 +266,7 @@ pub fn run_function_from_block(
                     next_rip: *exit_rip,
                 };
             }
-            crate::t2_ir::Terminator::Return => return RunExit::Returned,
+            Terminator::Return => return RunExit::Returned,
         }
     }
 }
@@ -305,15 +306,8 @@ fn run_trace_inner(
     let mut stats = ExecStats::default();
 
     for inst in &trace.prologue {
-        if let Some(exit) = exec_instr(
-            inst,
-            state,
-            env,
-            bus,
-            &mut values,
-            &mut stats,
-            cache.as_mut(),
-        ) {
+        if let Some(exit) = exec_instr(inst, state, env, bus, &mut values, &mut stats, cache.as_mut())
+        {
             return RunResult { exit, stats };
         }
     }

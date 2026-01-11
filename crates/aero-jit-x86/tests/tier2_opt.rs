@@ -6,8 +6,8 @@ mod tier1_common;
 use aero_types::{Flag, FlagSet, Gpr, Width};
 use tier1_common::SimpleBus;
 
-use aero_jit_x86::profile::{ProfileData, TraceConfig};
-use aero_jit_x86::tier2::exec::{
+use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
+use aero_jit_x86::tier2::interp::{
     run_function, run_function_from_block, run_trace, run_trace_with_cached_regs, RunExit,
     RuntimeEnv, T2State,
 };

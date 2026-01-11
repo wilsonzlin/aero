@@ -1,0 +1,13 @@
+[package]
+name = "aero_jit"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+legacy-baseline = ["aero-jit-x86/legacy-baseline"]
+tier1-inline-tlb = ["aero-jit-x86/tier1-inline-tlb"]
+
+[dependencies]
+aero-jit-x86 = { path = "../aero-jit-x86" }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::t2_ir::{eval_binop, Instr, Operand, TraceIr, ValueId};
+use crate::tier2::ir::{eval_binop, Instr, Operand, TraceIr, ValueId};
 
 fn resolve_const(op: Operand, consts: &HashMap<ValueId, u64>) -> Operand {
     match op {

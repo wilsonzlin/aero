@@ -4,9 +4,7 @@ use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitConfig, Jit
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::WasmtimeBackend;
 use aero_jit_x86::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
-use aero_jit_x86::tier1::wasm::Tier1WasmCodegen;
-use aero_jit_x86::tier1::{discover_block, translate_block, BlockLimits};
-use aero_jit_x86::Tier1Bus;
+use aero_jit_x86::{discover_block, translate_block, BlockLimits, Tier1Bus, Tier1WasmCodegen};
 use aero_types::{Gpr, Width};
 
 #[derive(Default)]

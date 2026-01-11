@@ -3,7 +3,7 @@ use std::time::Instant;
 use aero_jit_x86::Tier1Bus;
 use aero_types::{FlagSet, Gpr};
 
-use aero_jit_x86::tier2::exec::{run_trace, run_trace_with_cached_regs, RuntimeEnv, T2State};
+use aero_jit_x86::tier2::interp::{run_trace, run_trace_with_cached_regs, RuntimeEnv, T2State};
 use aero_jit_x86::tier2::ir::{BinOp, Instr, Operand, TraceIr, TraceKind, ValueId};
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 

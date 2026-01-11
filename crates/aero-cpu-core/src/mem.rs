@@ -85,9 +85,8 @@ pub trait CpuBus {
 
     /// Perform a read-modify-write cycle as a single operation when possible.
     ///
-    /// This is used by Tier-0 for `LOCK`ed instructions and other atomic RMW
-    /// instructions (for example, `CMPXCHG`, `XADD`, and `XCHG` with a memory
-    /// operand).
+    /// This is used by the tier-0 interpreter for `LOCK`ed instructions and other atomic RMW
+    /// operations (e.g. `CMPXCHG`, `XADD`, `XCHG` with a memory operand).
     ///
     /// ### Write-intent semantics
     ///
@@ -168,7 +167,7 @@ pub trait CpuBus {
             return Ok(true);
         }
 
-        let len_u64 = len as u64;
+        let len_u64 = u64::try_from(len).map_err(|_| Exception::MemoryFault)?;
         let src_end = src.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
         let dst_end = dst.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
 
@@ -218,8 +217,8 @@ pub trait CpuBus {
             .checked_mul(repeat)
             .ok_or(Exception::MemoryFault)?;
         // Bounds-check destination range without panicking on overflow.
-        dst.checked_add(total as u64)
-            .ok_or(Exception::MemoryFault)?;
+        let total_u64 = u64::try_from(total).map_err(|_| Exception::MemoryFault)?;
+        dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;
         for i in 0..total {
             let byte = pattern[i % pattern.len()];
             self.write_u8(dst + i as u64, byte)?;
@@ -235,6 +234,7 @@ pub trait CpuBus {
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception>;
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception>;
 }
+
 /// Identity-mapped memory bus used by unit tests.
 #[derive(Debug, Clone)]
 pub struct FlatTestBus {
@@ -342,8 +342,10 @@ impl CpuBus for FlatTestBus {
         if len == 0 || dst == src {
             return Ok(true);
         }
+
         let src_range = self.range(src, len)?;
         let dst_range = self.range(dst, len)?;
+
         if src_range.start == dst_range.start {
             return Ok(true);
         }

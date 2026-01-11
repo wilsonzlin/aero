@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::t2_ir::{eval_binop, BinOp, Instr, Operand, TraceIr, ValueId};
+use crate::tier2::ir::{eval_binop, BinOp, Instr, Operand, TraceIr, TraceKind, ValueId};
 
 fn resolve_operand(
     mut op: Operand,
@@ -50,7 +50,7 @@ pub fn run(trace: &mut TraceIr) -> bool {
     if stop {
         trace.prologue = new_prologue;
         trace.body.clear();
-        trace.kind = crate::t2_ir::TraceKind::Linear;
+        trace.kind = TraceKind::Linear;
         return true;
     }
 

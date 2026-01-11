@@ -17,7 +17,7 @@ use aero_cpu_core::jit::cache::CompiledBlockHandle;
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime};
 use aero_cpu_core::state::CpuState as CoreCpuState;
 
-use crate::tier1::wasm::Tier1WasmOptions;
+use crate::tier1::Tier1WasmOptions;
 use crate::tier1_pipeline::{Tier1Compiler, Tier1WasmRegistry};
 use crate::Tier1Bus;
 

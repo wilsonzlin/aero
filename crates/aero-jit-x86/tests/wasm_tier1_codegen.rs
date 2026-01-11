@@ -5,8 +5,8 @@ mod tier1_common;
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::tier1::ir::interp::execute_block;
-use aero_jit_x86::tier1::wasm::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
-use aero_jit_x86::tier1::{discover_block, translate_block, BlockLimits};
+use aero_jit_x86::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
+use aero_jit_x86::{discover_block, translate_block, BlockLimits};
 use aero_jit_x86::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,

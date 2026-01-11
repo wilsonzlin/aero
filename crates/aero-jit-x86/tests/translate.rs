@@ -4,8 +4,7 @@ mod tier1_common;
 
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
-use aero_jit_x86::tier1::{discover_block, translate_block, BlockLimits};
-use aero_jit_x86::Tier1Bus;
+use aero_jit_x86::{discover_block, translate_block, BlockLimits, Tier1Bus};
 use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
 use aero_x86::tier1::{AluOp, DecodedInst, InstKind, Operand};
 use tier1_common::{

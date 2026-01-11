@@ -2,11 +2,15 @@ use std::collections::{HashMap, VecDeque};
 
 use aero_types::{Cond, Flag, FlagSet, Width};
 
-use crate::t2_ir::{BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId};
+use crate::tier1::ir::{
+    BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId,
+};
 use crate::tier1::{discover_block, translate_block, BasicBlock, BlockEndKind, BlockLimits};
-use crate::tier1_ir::{GuestReg, IrBlock, IrInst, IrTerminator};
 use crate::Tier1Bus;
 
+use super::ir::{
+    BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId,
+};
 #[derive(Clone, Copy, Debug)]
 pub struct CfgBuildConfig {
     /// Maximum number of basic blocks to discover before stopping exploration.
@@ -242,7 +246,7 @@ struct BlockLowerer<'a> {
 }
 
 impl BlockLowerer<'_> {
-    fn map_value(&self, v: crate::tier1_ir::ValueId) -> ValueId {
+    fn map_value(&self, v: T1ValueId) -> ValueId {
         ValueId(
             self.base
                 .checked_add(v.0)
@@ -250,7 +254,7 @@ impl BlockLowerer<'_> {
         )
     }
 
-    fn value(&self, v: crate::tier1_ir::ValueId) -> Operand {
+    fn value(&self, v: T1ValueId) -> Operand {
         Operand::Value(self.map_value(v))
     }
 
@@ -329,7 +333,7 @@ impl BlockLowerer<'_> {
         }
     }
 
-    fn lower_read_reg(&mut self, dst: crate::tier1_ir::ValueId, reg: GuestReg) {
+    fn lower_read_reg(&mut self, dst: T1ValueId, reg: GuestReg) {
         let dst = self.map_value(dst);
         match reg {
             GuestReg::Rip => {
@@ -380,7 +384,7 @@ impl BlockLowerer<'_> {
         }
     }
 
-    fn lower_write_reg(&mut self, reg: GuestReg, src: crate::tier1_ir::ValueId) {
+    fn lower_write_reg(&mut self, reg: GuestReg, src: T1ValueId) {
         match reg {
             GuestReg::Rip => {
                 self.unsupported = true;
@@ -476,12 +480,7 @@ impl BlockLowerer<'_> {
         }
     }
 
-    fn lower_trunc(
-        &mut self,
-        dst: crate::tier1_ir::ValueId,
-        src: crate::tier1_ir::ValueId,
-        width: Width,
-    ) {
+    fn lower_trunc(&mut self, dst: T1ValueId, src: T1ValueId, width: Width) {
         self.instrs.push(Instr::BinOp {
             dst: self.map_value(dst),
             op: BinOp::And,
@@ -493,10 +492,10 @@ impl BlockLowerer<'_> {
 
     fn lower_binop(
         &mut self,
-        dst: crate::tier1_ir::ValueId,
-        op: crate::tier1_ir::BinOp,
-        lhs: crate::tier1_ir::ValueId,
-        rhs: crate::tier1_ir::ValueId,
+        dst: T1ValueId,
+        op: T1BinOp,
+        lhs: T1ValueId,
+        rhs: T1ValueId,
         width: Width,
         flags: FlagSet,
     ) {
@@ -600,8 +599,8 @@ impl BlockLowerer<'_> {
     fn lower_flag_op(
         &mut self,
         op: BinOp,
-        lhs: crate::tier1_ir::ValueId,
-        rhs: crate::tier1_ir::ValueId,
+        lhs: T1ValueId,
+        rhs: T1ValueId,
         width: Width,
         flags: FlagSet,
     ) {
@@ -651,7 +650,7 @@ impl BlockLowerer<'_> {
         });
     }
 
-    fn lower_eval_cond(&mut self, dst: crate::tier1_ir::ValueId, cond: Cond) {
+    fn lower_eval_cond(&mut self, dst: T1ValueId, cond: Cond) {
         let dst = self.map_value(dst);
         match cond {
             Cond::O => self.emit_load_flag(dst, Flag::Of),
@@ -774,10 +773,10 @@ impl BlockLowerer<'_> {
 
     fn lower_select(
         &mut self,
-        dst: crate::tier1_ir::ValueId,
-        cond: crate::tier1_ir::ValueId,
-        if_true: crate::tier1_ir::ValueId,
-        if_false: crate::tier1_ir::ValueId,
+        dst: T1ValueId,
+        cond: T1ValueId,
+        if_true: T1ValueId,
+        if_false: T1ValueId,
         width: Width,
     ) {
         // Branchless select with booleanization:
@@ -877,15 +876,15 @@ fn map_flagset(flags: FlagSet) -> FlagSet {
     flags
 }
 
-fn map_binop(op: crate::tier1_ir::BinOp) -> Option<BinOp> {
+fn map_binop(op: T1BinOp) -> Option<BinOp> {
     match op {
-        crate::tier1_ir::BinOp::Add => Some(BinOp::Add),
-        crate::tier1_ir::BinOp::Sub => Some(BinOp::Sub),
-        crate::tier1_ir::BinOp::And => Some(BinOp::And),
-        crate::tier1_ir::BinOp::Or => Some(BinOp::Or),
-        crate::tier1_ir::BinOp::Xor => Some(BinOp::Xor),
-        crate::tier1_ir::BinOp::Shl => Some(BinOp::Shl),
-        crate::tier1_ir::BinOp::Shr => Some(BinOp::Shr),
-        crate::tier1_ir::BinOp::Sar => None,
+        T1BinOp::Add => Some(BinOp::Add),
+        T1BinOp::Sub => Some(BinOp::Sub),
+        T1BinOp::And => Some(BinOp::And),
+        T1BinOp::Or => Some(BinOp::Or),
+        T1BinOp::Xor => Some(BinOp::Xor),
+        T1BinOp::Shl => Some(BinOp::Shl),
+        T1BinOp::Shr => Some(BinOp::Shr),
+        T1BinOp::Sar => None,
     }
 }

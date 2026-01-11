@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::t2_ir::{BinOp, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
+use crate::tier2::ir::{BinOp, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ExprKey {

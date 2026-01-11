@@ -4,7 +4,7 @@
 //! Tier-2 targets hot regions/traces and is allowed to spend more compilation time to
 //! optimize the IR before lowering to WASM.
 
-use crate::t2_ir::TraceIr;
+use super::ir::TraceIr;
 
 pub mod passes;
 

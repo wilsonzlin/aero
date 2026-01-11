@@ -17,8 +17,7 @@ use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVers
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime, PAGE_SHIFT};
 
 use crate::compiler::tier1::compile_tier1_block_with_options;
-use crate::tier1::wasm::Tier1WasmOptions;
-use crate::tier1::BlockLimits;
+use crate::tier1::{BlockLimits, Tier1WasmOptions};
 
 pub use crate::compiler::tier1::Tier1CompileError;
 

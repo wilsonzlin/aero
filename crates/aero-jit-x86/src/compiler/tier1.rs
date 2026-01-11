@@ -6,9 +6,8 @@
 
 use thiserror::Error;
 
-use crate::tier1::wasm::{Tier1WasmCodegen, Tier1WasmOptions};
-use crate::tier1::{discover_block, translate_block, BlockLimits};
-use crate::tier1_ir::{IrInst, IrTerminator};
+use crate::tier1::ir::{IrInst, IrTerminator};
+use crate::tier1::{discover_block, translate_block, BlockLimits, Tier1WasmCodegen, Tier1WasmOptions};
 use crate::Tier1Bus;
 
 #[derive(Debug, Error)]

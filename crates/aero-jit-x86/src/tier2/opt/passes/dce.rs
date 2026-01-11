@@ -1,4 +1,4 @@
-use crate::t2_ir::{Instr, Operand, TraceIr};
+use crate::tier2::ir::{Instr, Operand, TraceIr};
 
 fn max_value_id(trace: &TraceIr) -> usize {
     let mut max_id: Option<u32> = None;

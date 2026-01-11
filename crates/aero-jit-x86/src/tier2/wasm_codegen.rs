@@ -8,12 +8,12 @@ use aero_types::{Flag, FlagSet, Gpr, Width};
 use crate::abi;
 use crate::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE};
 use crate::jit_ctx::{self, JitContext};
-use crate::opt::RegAllocPlan;
-use crate::t2_ir::{BinOp, FlagValues, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
-use crate::wasm::{
-    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
-    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
+use super::opt::RegAllocPlan;
+use super::ir::{BinOp, FlagValues, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
+use crate::wasm::abi::{
+    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
+    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
+    IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
 };
 use crate::{
     JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_OFFSET_MASK, PAGE_SHIFT,
@@ -23,7 +23,7 @@ use crate::{
 /// Export name for a compiled Tier-2 trace.
 pub const EXPORT_TRACE_FN: &str = "trace";
 
-pub use super::abi::IMPORT_CODE_PAGE_VERSION;
+pub use crate::wasm::abi::IMPORT_CODE_PAGE_VERSION;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Tier2WasmOptions {

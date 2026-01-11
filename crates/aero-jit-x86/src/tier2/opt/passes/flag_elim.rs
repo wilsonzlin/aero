@@ -1,6 +1,6 @@
 use aero_types::FlagSet;
 
-use crate::t2_ir::{flag_to_set, Instr, TraceIr};
+use crate::tier2::ir::{flag_to_set, Instr, TraceIr};
 
 pub fn run(trace: &mut TraceIr) -> bool {
     let mut changed = false;

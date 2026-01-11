@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::t2_ir::BlockId;
+use super::ir::BlockId;
 
 /// Runtime profiling data consumed by the Tier-2 trace builder.
 #[derive(Clone, Debug, Default)]

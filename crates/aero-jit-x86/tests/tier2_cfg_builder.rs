@@ -28,17 +28,17 @@ fn cfg_builder_linear_blocks() {
         other => panic!("expected Jump, got {other:?}"),
     }
 
-    match &func.block(b1).term {
-        Terminator::SideExit { exit_rip } => {
-            assert!(
-                *exit_rip > func.block(b1).start_rip,
-                "side-exit rip must advance (start=0x{:x}, exit=0x{:x})",
-                func.block(b1).start_rip,
-                exit_rip
-            );
-        }
-        other => panic!("expected SideExit, got {other:?}"),
-    }
+    let block = func.block(b1);
+    let exit_rip = match &block.term {
+        Terminator::SideExit { exit_rip } => *exit_rip,
+        other => panic!("expected SideExit terminator, got {other:?}"),
+    };
+    assert!(
+        exit_rip > block.start_rip,
+        "side-exit rip must advance (start=0x{:x}, exit=0x{:x})",
+        block.start_rip,
+        exit_rip
+    );
 }
 
 #[test]
@@ -112,15 +112,15 @@ fn cfg_builder_loop_backedge() {
         other => panic!("expected Branch, got {other:?}"),
     }
 
-    match &func.block(exit_bb).term {
-        Terminator::SideExit { exit_rip } => {
-            assert!(
-                *exit_rip > func.block(exit_bb).start_rip,
-                "side-exit rip must advance (start=0x{:x}, exit=0x{:x})",
-                func.block(exit_bb).start_rip,
-                exit_rip
-            );
-        }
-        other => panic!("expected SideExit, got {other:?}"),
-    }
+    let block = func.block(exit_bb);
+    let exit_rip = match &block.term {
+        Terminator::SideExit { exit_rip } => *exit_rip,
+        other => panic!("expected SideExit terminator, got {other:?}"),
+    };
+    assert!(
+        exit_rip > block.start_rip,
+        "side-exit rip must advance (start=0x{:x}, exit=0x{:x})",
+        block.start_rip,
+        exit_rip
+    );
 }

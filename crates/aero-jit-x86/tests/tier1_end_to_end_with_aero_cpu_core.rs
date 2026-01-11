@@ -7,9 +7,8 @@ use aero_jit_x86::abi;
 use aero_jit_x86::backend::{Tier1Cpu, WasmBackend};
 use aero_jit_x86::tier1::ir::interp as tier1_interp;
 use aero_jit_x86::tier1::pipeline::{Tier1CompileQueue, Tier1Compiler};
-use aero_jit_x86::tier1::wasm::Tier1WasmOptions;
-use aero_jit_x86::tier1::{discover_block, translate_block, BlockLimits};
-use aero_jit_x86::Tier1Bus;
+use aero_jit_x86::tier1::Tier1WasmOptions;
+use aero_jit_x86::{discover_block, translate_block, BlockLimits, Tier1Bus};
 use aero_types::Gpr;
 
 #[derive(Default)]

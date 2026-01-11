@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::t2_ir::{Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
+use crate::tier2::ir::{Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
 
 pub fn run(trace: &mut TraceIr) -> bool {
     if trace.kind != TraceKind::Loop {

@@ -32,6 +32,10 @@ pub const IMPORT_PAGE_FAULT: &str = "page_fault";
 /// - translate the virtual address
 /// - fill the corresponding JIT TLB entry in linear memory
 /// - return the packed `{phys_page_base | flags}` word used by the fast-path
+///
+/// Signature differs by codegen tier:
+/// - Tier-1: `mmu_translate(cpu_ptr, jit_ctx_ptr, vaddr, access) -> i64`
+/// - Legacy baseline: `mmu_translate(cpu_ptr, vaddr, access) -> i64`
 pub const IMPORT_MMU_TRANSLATE: &str = "mmu_translate";
 
 /// Exit helper used when a translated access resolves to MMIO/ROM/unmapped instead of RAM.
