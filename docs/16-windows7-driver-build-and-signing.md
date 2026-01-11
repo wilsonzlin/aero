@@ -147,7 +147,7 @@ See also the examples under `drivers/_template/`:
 >
 > `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and **is CI-packaged** (it contains `ci-package.json`). Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if multiple driver packages are staged or you bulk-install from a driver bundle.
 >
-> `drivers/windows/virtio-input/` is CI-packaged and binds to the real virtio-input PCI HWID (`PCI\VEN_1AF4&DEV_1052`). Keep its INF/HWID matches unique (avoid duplicate INFs that bind the same IDs) so Guest Tools packaging and the Win7 host harness remain deterministic.
+> `drivers/windows/virtio-input/` is CI-packaged and binds to the Aero Win7 virtio contract v1 HWIDs (`PCI\VEN_1AF4&DEV_1052&REV_01`, plus the more specific `...&SUBSYS_...&REV_01` keyboard/mouse variants). Keep its INF/HWID matches unique (avoid duplicate INFs that bind the same IDs) so Guest Tools packaging and the Win7 host harness remain deterministic.
 
 ```powershell
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json

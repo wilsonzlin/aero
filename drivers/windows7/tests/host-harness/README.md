@@ -215,9 +215,9 @@ only if you explicitly want the base image to be mutated.
   - QEMU slirp/user networking exposes host as `10.0.2.2` inside the guest, so the guest can HTTP GET `http://10.0.2.2:<HttpPort>/aero-virtio-selftest`.
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
-  - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041`)
-  - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1052`)
-  - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042`)
+  - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041&REV_01`)
+  - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1052&REV_01`)
+  - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042&REV_01`)
   - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (`disable-legacy=on,x-pci-revision=0x01`; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1059&REV_01`)
 - Watches the serial log for:
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
@@ -233,7 +233,8 @@ The Aero Windows 7 virtio device contract encodes the **contract major version**
 Revision ID (contract v1 = `0x01`).
 
 Some QEMU virtio device types report `REV_00` by default. Once the Aero drivers enforce the
-contract Revision ID, they will refuse to bind unless QEMU is told to advertise `REV_01`.
+contract Revision ID, the Win7 virtio driver packages will not bind unless QEMU is told to
+advertise `REV_01` (the shipped INFs are revision-gated, and some drivers also validate at runtime).
 
 The harness sets `disable-legacy=on` for virtio-net/virtio-blk/virtio-input (and virtio-snd when enabled) so QEMU does **not** expose
 the legacy I/O-port transport (transitional devices enumerate with the older `0x1000..` PCI Device IDs such as `1AF4:1000`, `1AF4:1001`, and `1AF4:1011`). This matches
