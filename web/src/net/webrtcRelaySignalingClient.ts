@@ -272,6 +272,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
   // all local candidates so we can re-send them if we have to reconnect the
   // signaling WebSocket (e.g. auth message required).
   const localCandidates: Candidate[] = [];
+  let localCandidateCursor = 0;
 
   let activeWs: WebSocket | null = null;
   let offerSent = false;
@@ -281,12 +282,19 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
   const remoteCandidateBuffer: Candidate[] = [];
   let currentAttempt: symbol | null = null;
 
+  const flushLocalCandidates = () => {
+    if (!trickleEnabled || !offerSent || !activeWs || activeWs.readyState !== WebSocket.OPEN) return;
+    while (localCandidateCursor < localCandidates.length) {
+      const cand = localCandidates[localCandidateCursor++];
+      sendSignal(activeWs, { type: "candidate", candidate: cand });
+    }
+  };
+
   const onIceCandidate = (evt: RTCPeerConnectionIceEvent) => {
     if (!evt.candidate) return;
     const cand = evt.candidate.toJSON() as Candidate;
     localCandidates.push(cand);
-    if (!trickleEnabled || !offerSent || !activeWs || activeWs.readyState !== WebSocket.OPEN) return;
-    sendSignal(activeWs, { type: "candidate", candidate: cand });
+    flushLocalCandidates();
   };
   pc.addEventListener("icecandidate", onIceCandidate);
 
@@ -318,7 +326,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
   const local = pc.localDescription;
   if (!local?.sdp) throw new Error("missing local description after setting offer");
 
-  const protocols: Array<string | undefined> = [undefined];
+  const protocols: Array<string | undefined> = authToken ? [undefined, authToken] : [undefined];
   const authFirstVariants: boolean[] = authToken ? [true, false] : [false];
 
   let lastErr: unknown = null;
@@ -327,6 +335,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     closeActiveWs();
     offerSent = false;
     trickleEnabled = true;
+    localCandidateCursor = 0;
     remoteDescriptionSet = false;
     remoteCandidateBuffer.length = 0;
 
@@ -452,10 +461,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     };
     sendSignal(ws, offerMsg);
     offerSent = true;
-
-    for (const cand of localCandidates) {
-      sendSignal(ws, { type: "candidate", candidate: cand });
-    }
+    flushLocalCandidates();
 
     await answerPromise;
   };
@@ -483,6 +489,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     closeActiveWs();
     offerSent = false;
     trickleEnabled = false;
+    localCandidateCursor = 0;
     remoteDescriptionSet = false;
     remoteCandidateBuffer.length = 0;
 
@@ -581,4 +588,3 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
 
   throw lastErr instanceof Error ? lastErr : new Error("failed to establish signaling websocket");
 }
-
