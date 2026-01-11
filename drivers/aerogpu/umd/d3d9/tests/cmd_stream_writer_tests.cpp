@@ -1821,6 +1821,146 @@ bool TestPresentBackbufferRotationUndoOnSmallCmdBuffer() {
                "present rotation occurs when RT rebind succeeds");
 }
 
+bool TestPresentBackbufferRotationRebindsBackbufferTexture() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_swapchain = false;
+
+    ~Cleanup() {
+      if (has_swapchain && device_funcs.pfnDestroySwapChain) {
+        device_funcs.pfnDestroySwapChain(hDevice, hSwapChain);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  create_sc.present_params.backbuffer_width = 64;
+  create_sc.present_params.backbuffer_height = 64;
+  create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
+  create_sc.present_params.backbuffer_count = 2;
+  create_sc.present_params.swap_effect = 1;
+  create_sc.present_params.flags = 0;
+  create_sc.present_params.hDeviceWindow = nullptr;
+  create_sc.present_params.windowed = TRUE;
+  create_sc.present_params.presentation_interval = 0;
+
+  hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
+  if (!Check(hr == S_OK, "CreateSwapChain")) {
+    return false;
+  }
+  cleanup.hSwapChain = create_sc.hSwapChain;
+  cleanup.has_swapchain = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* sc = reinterpret_cast<SwapChain*>(create_sc.hSwapChain.pDrvPrivate);
+  if (!Check(dev && sc, "swapchain/device pointers")) {
+    return false;
+  }
+  if (!Check(sc->backbuffers.size() == 2, "swapchain has 2 backbuffers")) {
+    return false;
+  }
+
+  const aerogpu_handle_t h0 = sc->backbuffers[0]->handle;
+  const aerogpu_handle_t h1 = sc->backbuffers[1]->handle;
+
+  AEROGPU_D3D9DDI_HRESOURCE hTex{};
+  hTex.pDrvPrivate = sc->backbuffers[0];
+
+  AEROGPU_D3D9DDIARG_PRESENTEX present{};
+  present.hSrc.pDrvPrivate = nullptr;
+  present.hWnd = nullptr;
+  present.sync_interval = 0;
+  present.d3d9_present_flags = 0;
+
+  // Small span-backed DMA buffer. PresentEx itself fits, and SET_RENDER_TARGETS
+  // fits, but SET_RENDER_TARGETS + the required SET_TEXTURE rebind does not.
+  uint8_t small_dma[sizeof(aerogpu_cmd_stream_header) + 64] = {};
+  dev->cmd.set_span(small_dma, sizeof(small_dma));
+
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(backbuffer)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx (small cmd buffer)")) {
+    return false;
+  }
+
+  if (!Check(sc->backbuffers[0]->handle == h0 && sc->backbuffers[1]->handle == h1,
+             "present rotation undone when texture rebind cannot be emitted")) {
+    return false;
+  }
+
+  // Vector-backed buffer: rotation should succeed and emit a SET_TEXTURE rebind
+  // that references the rotated handle.
+  dev->cmd.set_vector();
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(backbuffer) (vector)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx (vector cmd buffer)")) {
+    return false;
+  }
+
+  if (!Check(sc->backbuffers[0]->handle == h1 && sc->backbuffers[1]->handle == h0,
+             "present rotation occurs when rebind succeeds")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const CmdLoc loc = FindLastOpcode(dev->cmd.data(), dev->cmd.bytes_used(), AEROGPU_CMD_SET_TEXTURE);
+  if (!Check(loc.hdr != nullptr, "SET_TEXTURE emitted after present rotation")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_texture*>(loc.hdr);
+  if (!Check(cmd->slot == 0, "SET_TEXTURE slot 0")) {
+    return false;
+  }
+  return Check(cmd->texture == sc->backbuffers[0]->handle, "SET_TEXTURE uses rotated backbuffer handle");
+}
+
 bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -2063,6 +2203,7 @@ int main() {
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();
+  failures += !aerogpu::TestPresentBackbufferRotationRebindsBackbufferTexture();
   failures += !aerogpu::TestRotateResourceIdentitiesUndoOnSmallCmdBuffer();
   failures += !aerogpu::TestResetRebindsBackbufferTexture();
   return failures ? 1 : 0;

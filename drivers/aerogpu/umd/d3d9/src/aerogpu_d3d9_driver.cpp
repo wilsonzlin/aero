@@ -5011,20 +5011,99 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       sc->present_count++;
       sc->last_present_fence = present_fence;
       if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
-        const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
-        for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
-          sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
-        }
-        sc->backbuffers.back()->handle = saved;
-        if (!emit_set_render_targets_locked(dev)) {
-          // Preserve device/host state consistency: if we cannot re-emit the render
-          // target bindings (command buffer too small), undo the rotation so future
-          // draws still target the host's current bindings.
-          const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
-          for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
-            sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
+        auto is_backbuffer = [sc](const Resource* res) -> bool {
+          if (!sc || !res) {
+            return false;
           }
-          sc->backbuffers[0]->handle = undo_saved;
+          return std::find(sc->backbuffers.begin(), sc->backbuffers.end(), res) != sc->backbuffers.end();
+        };
+
+        // Present-style backbuffer rotation swaps the host handles attached to the
+        // backbuffer Resource objects. If any backbuffers are currently bound via
+        // device state (RTs, textures, IA buffers), we must re-emit those binds so
+        // the host stops referencing the old handles.
+        size_t needed_bytes = align_up(sizeof(aerogpu_cmd_set_render_targets), 4);
+        for (uint32_t stage = 0; stage < 16; ++stage) {
+          if (is_backbuffer(dev->textures[stage])) {
+            needed_bytes += align_up(sizeof(aerogpu_cmd_set_texture), 4);
+          }
+        }
+        for (uint32_t stream = 0; stream < 16; ++stream) {
+          if (is_backbuffer(dev->streams[stream].vb)) {
+            needed_bytes += align_up(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding), 4);
+          }
+        }
+        if (is_backbuffer(dev->index_buffer)) {
+          needed_bytes += align_up(sizeof(aerogpu_cmd_set_index_buffer), 4);
+        }
+
+        if (ensure_cmd_space(dev, needed_bytes)) {
+          const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
+          for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
+            sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
+          }
+          sc->backbuffers.back()->handle = saved;
+
+          bool ok = emit_set_render_targets_locked(dev);
+          for (uint32_t stage = 0; ok && stage < 16; ++stage) {
+            if (!is_backbuffer(dev->textures[stage])) {
+              continue;
+            }
+            auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE);
+            if (!cmd) {
+              ok = false;
+              break;
+            }
+            cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+            cmd->slot = stage;
+            cmd->texture = dev->textures[stage] ? dev->textures[stage]->handle : 0;
+            cmd->reserved0 = 0;
+          }
+
+          for (uint32_t stream = 0; ok && stream < 16; ++stream) {
+            if (!is_backbuffer(dev->streams[stream].vb)) {
+              continue;
+            }
+
+            aerogpu_vertex_buffer_binding binding{};
+            binding.buffer = dev->streams[stream].vb ? dev->streams[stream].vb->handle : 0;
+            binding.stride_bytes = dev->streams[stream].stride_bytes;
+            binding.offset_bytes = dev->streams[stream].offset_bytes;
+            binding.reserved0 = 0;
+
+            auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
+                dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
+            if (!cmd) {
+              ok = false;
+              break;
+            }
+            cmd->start_slot = stream;
+            cmd->buffer_count = 1;
+          }
+
+          if (ok && is_backbuffer(dev->index_buffer)) {
+            auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+            if (!cmd) {
+              ok = false;
+            } else {
+              cmd->buffer = dev->index_buffer ? dev->index_buffer->handle : 0;
+              cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
+              cmd->offset_bytes = dev->index_offset_bytes;
+              cmd->reserved0 = 0;
+            }
+          }
+
+          if (!ok) {
+            // Preserve device/host state consistency: if we cannot emit the
+            // rebinding commands (command buffer too small), undo the rotation so
+            // future draws still target the host's current bindings.
+            const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
+            for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
+              sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
+            }
+            sc->backbuffers[0]->handle = undo_saved;
+            dev->cmd.reset();
+          }
         }
       }
     }
@@ -5119,17 +5198,92 @@ HRESULT AEROGPU_D3D9_CALL device_present(
       sc->present_count++;
       sc->last_present_fence = present_fence;
       if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
-        const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
-        for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
-          sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
-        }
-        sc->backbuffers.back()->handle = saved;
-        if (!emit_set_render_targets_locked(dev)) {
-          const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
-          for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
-            sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
+        auto is_backbuffer = [sc](const Resource* res) -> bool {
+          if (!sc || !res) {
+            return false;
           }
-          sc->backbuffers[0]->handle = undo_saved;
+          return std::find(sc->backbuffers.begin(), sc->backbuffers.end(), res) != sc->backbuffers.end();
+        };
+
+        size_t needed_bytes = align_up(sizeof(aerogpu_cmd_set_render_targets), 4);
+        for (uint32_t stage = 0; stage < 16; ++stage) {
+          if (is_backbuffer(dev->textures[stage])) {
+            needed_bytes += align_up(sizeof(aerogpu_cmd_set_texture), 4);
+          }
+        }
+        for (uint32_t stream = 0; stream < 16; ++stream) {
+          if (is_backbuffer(dev->streams[stream].vb)) {
+            needed_bytes += align_up(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding), 4);
+          }
+        }
+        if (is_backbuffer(dev->index_buffer)) {
+          needed_bytes += align_up(sizeof(aerogpu_cmd_set_index_buffer), 4);
+        }
+
+        if (ensure_cmd_space(dev, needed_bytes)) {
+          const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
+          for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
+            sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
+          }
+          sc->backbuffers.back()->handle = saved;
+
+          bool ok = emit_set_render_targets_locked(dev);
+          for (uint32_t stage = 0; ok && stage < 16; ++stage) {
+            if (!is_backbuffer(dev->textures[stage])) {
+              continue;
+            }
+            auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE);
+            if (!cmd) {
+              ok = false;
+              break;
+            }
+            cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+            cmd->slot = stage;
+            cmd->texture = dev->textures[stage] ? dev->textures[stage]->handle : 0;
+            cmd->reserved0 = 0;
+          }
+
+          for (uint32_t stream = 0; ok && stream < 16; ++stream) {
+            if (!is_backbuffer(dev->streams[stream].vb)) {
+              continue;
+            }
+
+            aerogpu_vertex_buffer_binding binding{};
+            binding.buffer = dev->streams[stream].vb ? dev->streams[stream].vb->handle : 0;
+            binding.stride_bytes = dev->streams[stream].stride_bytes;
+            binding.offset_bytes = dev->streams[stream].offset_bytes;
+            binding.reserved0 = 0;
+
+            auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
+                dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
+            if (!cmd) {
+              ok = false;
+              break;
+            }
+            cmd->start_slot = stream;
+            cmd->buffer_count = 1;
+          }
+
+          if (ok && is_backbuffer(dev->index_buffer)) {
+            auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+            if (!cmd) {
+              ok = false;
+            } else {
+              cmd->buffer = dev->index_buffer ? dev->index_buffer->handle : 0;
+              cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
+              cmd->offset_bytes = dev->index_offset_bytes;
+              cmd->reserved0 = 0;
+            }
+          }
+
+          if (!ok) {
+            const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
+            for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
+              sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
+            }
+            sc->backbuffers[0]->handle = undo_saved;
+            dev->cmd.reset();
+          }
         }
       }
     }
