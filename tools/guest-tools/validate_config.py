@@ -484,6 +484,46 @@ def _validate_hwid_contract(
             f"to cover the {driver_kind} PCI HWIDs."
         )
 
+    # AERO-W7-VIRTIO v1 is modern-only. Packaging specs should validate that drivers bind to the
+    # modern virtio-pci device IDs and avoid encoding transitional IDs (the legacy `0x1000..`
+    # device-ID space) in regex patterns.
+    #
+    # This is intentionally strict: if a spec declares a regex that includes transitional IDs via
+    # alternation (e.g. `DEV_(1018|1059)`), our earlier "must match at least one HWID" checks would
+    # not catch it because the pattern still matches the modern ID. This guard prevents that class
+    # of silent drift.
+    if driver_kind.startswith("virtio-"):
+        modern_dev_ids: set[int] = set()
+        for hwid in hwids:
+            base = _pci_hwid_base_ven_dev(hwid)
+            m = re.search(r"(?i)DEV_([0-9A-F]{4})", base)
+            if m:
+                modern_dev_ids.add(int(m.group(1), 16))
+
+        # For virtio modern IDs, the virtio-pci transitional device ID is `modern - 0x41`
+        # (because modern = 0x1040 + type, transitional = 0x1000 + type - 1).
+        transitional_to_modern = {
+            f"{dev_id - 0x41:04X}".lower(): f"{dev_id:04X}".lower()
+            for dev_id in modern_dev_ids
+            if dev_id >= 0x1040
+        }
+
+        for pat in patterns:
+            if "ven_1af4" not in pat.lower():
+                continue
+            for transitional, modern in transitional_to_modern.items():
+                if re.search(rf"(?i)DEV_[^0-9A-F]*{re.escape(transitional)}", pat):
+                    raise ValidationError(
+                        f"Mismatch: {spec_path.name} spec pattern for {driver_name!r} appears to allow a virtio-pci "
+                        f"transitional device ID (DEV_{transitional.upper()}).\n"
+                        "\n"
+                        f"Pattern:\n  - {pat}\n"
+                        "\n"
+                        "Aero's `AERO-W7-VIRTIO` contract is modern-only; transitional virtio-pci IDs are out of scope.\n"
+                        f"Remediation: update {spec_path.name} to validate the modern device ID (DEV_{modern.upper()}) "
+                        "and remove transitional IDs from the regex."
+                    )
+
     match = _find_first_match(patterns, hwids)
     if not match:
         raise ValidationError(

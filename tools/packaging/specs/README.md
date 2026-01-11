@@ -39,6 +39,7 @@ Intended for packaging Guest Tools using a driver payload extracted from **virti
 Same as `win7-virtio-win.json`, but also declares optional drivers:
 
 - Optional: `vioinput` (virtio-input) + `viosnd` (virtio-snd)
+- Validates **modern-only** virtio PCI IDs (`DEV_1052` / `DEV_1059`); transitional IDs are not accepted by the spec.
 
 ## `win7-aero-guest-tools.json`
 
