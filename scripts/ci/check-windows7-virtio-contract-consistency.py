@@ -469,6 +469,10 @@ def _manifest_contains_subsys(patterns: list[str], subsys_vendor: int, subsys_de
     return any(needle in p.upper() for p in patterns)
 
 
+def _manifest_contains_exact(patterns: list[str], expected: str) -> bool:
+    return any(p.upper() == expected.upper() for p in patterns)
+
+
 def parse_contract_feature_bits(md: str, *, file: Path) -> dict[str, int]:
     version_section = _extract_section(
         md,
@@ -1004,7 +1008,7 @@ def main() -> None:
         patterns = _require_str_list(entry, "hardware_id_patterns", device=device_name)
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         base_hwid_upper = base_hwid.upper()
-        if not any(p.upper() == base_hwid_upper for p in patterns):
+        if not _manifest_contains_exact(patterns, base_hwid):
             errors.append(
                 format_error(
                     f"{device_name}: manifest is missing the base VEN/DEV hardware ID pattern:",
@@ -1016,12 +1020,13 @@ def main() -> None:
             )
 
         expected_rev_fragment = f"REV_{contract_rev:02X}"
-        if not any(p.upper().startswith(base_hwid_upper) and expected_rev_fragment in p.upper() for p in patterns):
+        strict_rev_hwid = f"{base_hwid}&{expected_rev_fragment}"
+        if not _manifest_contains_exact(patterns, strict_rev_hwid):
             errors.append(
                 format_error(
-                    f"{device_name}: manifest is missing a revision-qualified hardware ID for the canonical VEN/DEV:",
+                    f"{device_name}: manifest is missing the strict REV-qualified hardware ID pattern (required for automation / contract major safety):",
                     [
-                        f"expected at least one pattern starting with {base_hwid} and containing {expected_rev_fragment}",
+                        f"expected: {strict_rev_hwid}",
                         f"got: {patterns}",
                     ],
                 )
@@ -1075,6 +1080,20 @@ def main() -> None:
                             ],
                         )
                     )
+
+            strict_subsys_rev = (
+                f"{base_hwid}&SUBSYS_{subsys_device:04X}{contract_any.subsystem_vendor_id:04X}&REV_{contract_rev:02X}"
+            )
+            if not _manifest_contains_exact(patterns, strict_subsys_rev):
+                errors.append(
+                    format_error(
+                        f"{device_name}: manifest is missing the strict SUBSYS+REV-qualified hardware ID pattern (preferred for automation / avoiding false positives):",
+                        [
+                            f"expected: {strict_subsys_rev}",
+                            f"got: {patterns}",
+                        ],
+                    )
+                )
 
         # If any pattern revision-qualifies, it must match the contract major.
         has_rev_qualifier = False
