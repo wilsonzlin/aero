@@ -663,6 +663,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     this.lastReadEnd = null;
     this.resetTelemetry();
 
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.flushPending = false;
+
     await this.metadataStore.delete(this.cacheId);
 
     const oldCache = this.cache;
