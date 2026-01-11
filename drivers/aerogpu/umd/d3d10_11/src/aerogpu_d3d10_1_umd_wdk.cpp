@@ -2868,12 +2868,12 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
                                        const D3D10DDI_HRENDERTARGETVIEW* pRTVs,
                                        UINT num_rtvs,
                                        D3D10DDI_HDEPTHSTENCILVIEW hDsv) {
-  if (!hDevice.pDrvPrivate || !pRTVs || num_rtvs == 0) {
+  if (!hDevice.pDrvPrivate) {
     return;
   }
   AEROGPU_D3D10_TRACEF_VERBOSE("SetRenderTargets hDevice=%p hRtv=%p hDsv=%p",
                                hDevice.pDrvPrivate,
-                               pRTVs[0].pDrvPrivate,
+                               (pRTVs && num_rtvs > 0) ? pRTVs[0].pDrvPrivate : nullptr,
                                hDsv.pDrvPrivate);
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
@@ -2884,7 +2884,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
 
   aerogpu_handle_t rtv_handle = 0;
   AeroGpuResource* rtv_res = nullptr;
-  if (pRTVs[0].pDrvPrivate) {
+  if (pRTVs && num_rtvs > 0 && pRTVs[0].pDrvPrivate) {
     auto* view = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(pRTVs[0]);
     rtv_res = view ? view->resource : nullptr;
     rtv_handle = rtv_res ? rtv_res->handle : (view ? view->texture : 0);
@@ -2900,7 +2900,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   dev->current_dsv = dsv_handle;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  cmd->color_count = 1;
+  cmd->color_count = (pRTVs && num_rtvs > 0) ? 1 : 0;
   cmd->depth_stencil = dsv_handle;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
     cmd->colors[i] = 0;
