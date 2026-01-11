@@ -111,8 +111,8 @@ fn d3d9_executor_contexts_do_not_leak_constants() {
     // D3D9 defaults to back-face culling with clockwise front faces.
     let verts = [
         (-0.8f32, -0.2f32, 0.0f32, 1.0f32),
-        (0.0f32, 0.8f32, 0.0f32, 1.0f32),
         (0.8f32, -0.2f32, 0.0f32, 1.0f32),
+        (0.0f32, 0.8f32, 0.0f32, 1.0f32),
     ];
     for (x, y, z, w) in verts {
         push_f32(&mut vb_data, x);

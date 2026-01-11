@@ -176,8 +176,8 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_renders_triangle() {
     // Use clockwise winding so the test does not depend on cull state.
     let verts = [
         (-0.5f32, -0.5f32, 0.0f32, 1.0f32, green_argb),
-        (0.0f32, 0.5f32, 0.0f32, 1.0f32, green_argb),
         (0.5f32, -0.5f32, 0.0f32, 1.0f32, green_argb),
+        (0.0f32, 0.5f32, 0.0f32, 1.0f32, green_argb),
     ];
     let mut vb_data = Vec::new();
     for (x, y, z, w, color) in verts {

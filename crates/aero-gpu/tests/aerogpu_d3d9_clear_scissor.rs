@@ -1520,12 +1520,13 @@ fn d3d9_cmd_stream_clear_color_depth_stencil_d24s8_respects_scissor_rect() {
     let scissor_h = 16i32;
 
     // Full-screen triangle (POSITION float4) at z=0.5.
-    // Note: D3D9 defaults to clockwise front faces. Arrange the full-screen triangle with
-    // clockwise winding so it isn't culled by default state.
+    // Note: D3D9 defaults to culling counter-clockwise triangles in window coordinates (y-down),
+    // so in clip space (y-up) we need counter-clockwise winding for the triangle to be
+    // front-facing under the executor's default rasterizer state.
     let vertices: [f32; 12] = [
         -1.0, -1.0, 0.5, 1.0, //
-        -1.0, 3.0, 0.5, 1.0, //
         3.0, -1.0, 0.5, 1.0, //
+        -1.0, 3.0, 0.5, 1.0, //
     ];
     let vb_bytes: &[u8] = bytemuck::cast_slice(&vertices);
 
