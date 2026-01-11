@@ -260,6 +260,8 @@ For safety and determinism, the provisioning script installs **only an allowlist
 `virtio-transport-test.inf`) that can match the same HWIDs and steal device binding.
 
 Note: the harness uses **modern-only** virtio device IDs (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`).
+If QEMU cannot expose modern-only virtio-snd (`disable-legacy=on` unsupported for the device), virtio-snd may enumerate
+as the transitional ID `DEV_1018` instead.
 For virtio-net, use the contract-v1 driver under `drivers/win7/virtio-net/` (the legacy/transitional
 package under `drivers/windows7/virtio/net/` binds `DEV_1000` and will not match when `disable-legacy=on`).
 
