@@ -44,6 +44,7 @@ if exist "%RUNNER%" (
 )
 
 call :run_test d3d9ex_dwm_probe !TEST_ARGS!
+call :run_test wait_vblank_pacing !TEST_ARGS!
 call :run_test vblank_wait_sanity !TEST_ARGS!
 call :run_test vblank_wait_pacing !TEST_ARGS!
 call :run_test d3d9_raster_status_pacing !TEST_ARGS!
@@ -88,12 +89,13 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--hidden] [--timeout-ms=NNNN] [--no-timeout] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--hidden] [--samples=N] [--timeout-ms=NNNN] [--no-timeout] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
-echo   --allow-remote skips tests that are expected to fail under RDP (SM_REMOTESESSION=1): d3d9ex_dwm_probe, dwm_flush_pacing, vblank_wait_pacing, vblank_wait_sanity.
+echo   --samples affects pacing tests ^(dwm_flush_pacing, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, d3d9_raster_status_pacing^).
+echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, dwm_flush_pacing, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity.
 echo   Use --timeout-ms=NNNN or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
 echo   Use --no-timeout to run without enforcing a timeout.
 exit /b 0
