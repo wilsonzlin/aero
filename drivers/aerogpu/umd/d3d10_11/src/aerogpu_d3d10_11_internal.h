@@ -570,17 +570,61 @@ inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
 }
 
-inline uint64_t submit_locked(Device* dev) {
+inline void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
+  if (!target) {
+    return;
+  }
+
+  uint64_t cur = target->load(std::memory_order_relaxed);
+  while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
+  }
+}
+
+inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* out_hr = nullptr) {
+  if (out_hr) {
+    *out_hr = S_OK;
+  }
   if (!dev || dev->cmd.empty()) {
     return 0;
   }
 
-  Adapter* adapter = dev->adapter;
-  if (!adapter) {
+  dev->cmd.finalize();
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
+  uint64_t fence = 0;
+  const HRESULT hr = dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, &fence);
+  if (out_hr) {
+    *out_hr = hr;
+  }
+  dev->cmd.reset();
+  if (FAILED(hr)) {
+    dev->pending_staging_writes.clear();
     return 0;
   }
 
-  dev->cmd.finalize();
+  if (fence != 0) {
+    atomic_max_u64(&dev->last_submitted_fence, fence);
+    for (Resource* res : dev->pending_staging_writes) {
+      if (res) {
+        res->last_gpu_write_fence = fence;
+      }
+    }
+  }
+  dev->pending_staging_writes.clear();
+
+  atomic_max_u64(&dev->last_completed_fence, dev->wddm_submit.QueryCompletedFence());
+  return fence;
+#else
+  (void)want_present;
+  Adapter* adapter = dev->adapter;
+  if (!adapter) {
+    if (out_hr) {
+      *out_hr = E_FAIL;
+    }
+    dev->pending_staging_writes.clear();
+    dev->cmd.reset();
+    return 0;
+  }
 
   uint64_t fence = 0;
   {
@@ -600,11 +644,13 @@ inline uint64_t submit_locked(Device* dev) {
   dev->pending_staging_writes.clear();
   dev->cmd.reset();
   return fence;
+#endif
 }
 
 inline HRESULT flush_locked(Device* dev) {
-  submit_locked(dev);
-  return S_OK;
+  HRESULT hr = S_OK;
+  (void)submit_locked(dev, /*want_present=*/false, &hr);
+  return hr;
 }
 
 } // namespace aerogpu::d3d10_11
