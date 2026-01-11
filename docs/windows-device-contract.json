@@ -53,15 +53,14 @@
     },
     {
       "device": "aero-gpu",
-      "pci_vendor_id": "0xA0E0",
+      "pci_vendor_id": "0xA3A0",
       "pci_device_id": "0x0001",
       "hardware_id_patterns": [
-        "PCI\\VEN_A0E0&DEV_0001&SUBSYS_0001A0E0",
-        "PCI\\VEN_A0E0&DEV_0001"
+        "PCI\\VEN_A3A0&DEV_0001",
+        "PCI\\VEN_1AED&DEV_0001"
       ],
-      "driver_service_name": "aerogpu",
-      "inf_name": "aero-gpu.inf"
+      "driver_service_name": "AeroGPU",
+      "inf_name": "aerogpu.inf"
     }
   ]
 }
-

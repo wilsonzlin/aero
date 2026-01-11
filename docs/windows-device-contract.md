@@ -48,11 +48,12 @@ Subsystem IDs are used to provide a stable secondary identifier:
 
 ### Aero GPU (WDDM)
 
-Aero GPU is a custom PCI device (not virtio). It uses an Aero-reserved virtual vendor ID:
+Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual PCI IDs:
 
-- `AERO_PCI_VENDOR_ID = 0xA0E0`
+- Primary HWID (new versioned ABI): `A3A0:0001` (`drivers/aerogpu/protocol/aerogpu_pci.h`)
+- Secondary/legacy HWID (legacy bring-up ABI): `1AED:0001` (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
 
-> Note: this is a virtual-only ID used inside the guest; it is not required to be PCI-SIG allocated.
+> Note: these are virtual-only IDs used inside the guest; they are not required to be PCI-SIG allocated.
 
 ## Device table (normative)
 
@@ -64,7 +65,12 @@ All numeric values are shown as hexadecimal.
 | virtio-net | `1AF4:1000` | `1AF4:0001` | `02/00/00` (network / ethernet) | `aerovionet` | `aero-virtio-net.inf` |
 | virtio-snd | `1AF4:1018` | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
 | virtio-input | `1AF4:1011` | `1AF4:0012` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
-| Aero GPU | `A0E0:0001` | `A0E0:0001` | `03/02/00` (display / 3D) | `aerogpu` | `aero-gpu.inf` |
+| Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `AeroGPU` | `aerogpu.inf` |
+
+Notes:
+
+- `aerogpu.inf` also matches the legacy AeroGPU HWID `1AED:0001`.
+- `aerogpu_dx11.inf` is an optional alternative INF if shipping D3D10/11 user-mode components.
 
 ## Windows hardware IDs and driver binding
 
