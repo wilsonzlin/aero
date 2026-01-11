@@ -13,7 +13,7 @@
 ;   - aerogpu_d3d9.dll            (32-bit D3D9 UMD)
 ;   - aerogpu_d3d9_x64.dll        (64-bit D3D9 UMD)
 ;
-; Optional (use aerogpu_dx11.inf if you ship D3D10/11 UMDs):
+; Optional (use legacy\aerogpu_dx11.inf if you ship D3D10/11 UMDs):
 ;   - aerogpu_d3d10.dll
 ;   - aerogpu_d3d10_x64.dll
 ;
