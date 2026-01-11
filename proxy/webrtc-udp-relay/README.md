@@ -212,8 +212,8 @@ Configuration env vars (server → server dialing):
   forward a normalized/derived Origin from the client signaling request to the
   backend WebSocket upgrade request.
 - `L2_BACKEND_ORIGIN` (optional): Override Origin sent to the backend WebSocket.
-  This value must be allowed by the backend (e.g. `AERO_L2_ALLOWED_ORIGINS` for
-  `crates/aero-l2-proxy`).
+  This value must be allowed by the backend (e.g. `AERO_L2_ALLOWED_ORIGINS` or the
+  shared `ALLOWED_ORIGINS` fallback for `crates/aero-l2-proxy`).
   - Alias: `L2_BACKEND_ORIGIN_OVERRIDE` (overrides `L2_BACKEND_WS_ORIGIN`).
 - `L2_BACKEND_WS_ORIGIN` (optional): Static Origin header value to send when
   dialing the backend WebSocket (overridden by `L2_BACKEND_ORIGIN` /
@@ -245,7 +245,8 @@ When the L2 backend is `crates/aero-l2-proxy`, the relay's backend WebSocket dia
 must satisfy the proxy's Origin allowlist and auth policy:
 
 - **Origin allowlist:** the backend requires `Origin` (unless `AERO_L2_OPEN=1`) and
-  checks it against `AERO_L2_ALLOWED_ORIGINS`.
+  checks it against the configured allowlist (`AERO_L2_ALLOWED_ORIGINS` or
+  `ALLOWED_ORIGINS` fallback).
   - By default the relay forwards the client signaling Origin (`L2_BACKEND_FORWARD_ORIGIN=1`).
   - Use `L2_BACKEND_ORIGIN` to pin a specific Origin value (must be in the backend allowlist).
 - **Auth:** if the backend uses gateway session cookies (`AERO_L2_AUTH_MODE=cookie`), enable
@@ -260,6 +261,8 @@ Use the backend service name inside the docker network:
 ```bash
 # L2 proxy (backend).
 export AERO_L2_ALLOWED_ORIGINS=https://aero.example.com
+# (Alternatively, the backend also accepts the shared name `ALLOWED_ORIGINS` when
+# `AERO_L2_ALLOWED_ORIGINS` is unset.)
 export AERO_L2_AUTH_MODE=api_key
 export AERO_L2_API_KEY='REPLACE_WITH_SECRET'
 

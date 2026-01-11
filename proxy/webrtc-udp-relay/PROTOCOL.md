@@ -111,7 +111,8 @@ Backend `Origin` handling (relevant for `crates/aero-l2-proxy` Origin allowlists
   This is the recommended knob when the backend enforces an Origin allowlist and
   you want a fixed `Origin` regardless of the client signaling request.
   - The value MUST be an allowed origin on the backend (e.g. included in
-    `AERO_L2_ALLOWED_ORIGINS` for `crates/aero-l2-proxy`).
+    `AERO_L2_ALLOWED_ORIGINS` (or the shared `ALLOWED_ORIGINS` fallback) for
+    `crates/aero-l2-proxy`).
   - Alias: `L2_BACKEND_ORIGIN_OVERRIDE`.
   - `L2_BACKEND_WS_ORIGIN` is a legacy knob that sets the backend Origin header
     unless overridden by `L2_BACKEND_ORIGIN`/`L2_BACKEND_ORIGIN_OVERRIDE`.
