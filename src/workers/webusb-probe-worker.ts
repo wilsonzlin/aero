@@ -98,7 +98,13 @@ async function runRequestDeviceProbe(
       }, timeoutMs);
     });
 
-    return await Promise.race([settle, timeout]);
+    const result = await Promise.race([settle, timeout]);
+    // If we timed out, don't cache the result so the user can retry after
+    // dismissing any chooser UI that might have appeared.
+    if (result.timeoutMs !== undefined) {
+      requestDeviceProbe = null;
+    }
+    return result;
   })();
 
   return await requestDeviceProbe;
