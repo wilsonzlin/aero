@@ -55,6 +55,55 @@ fn run_to_halt<B: CpuBus>(cpu: &mut Vcpu<B>, interp: &mut Tier0Interpreter, max_
 }
 
 #[test]
+fn tier0_preserves_bios_interrupt_vector_for_hlt_hypercall() {
+    let mut bus = FlatTestBus::new(0x100000);
+
+    // Real-mode code: `int 10h` to jump into the IVT handler.
+    let code_base = 0x0100u64;
+    bus.load(code_base, &[0xCD, 0x10]);
+
+    // IVT entry for INT 10h points to a tiny ROM stub that begins with `HLT`.
+    let vector = 0x10u8;
+    let stub_seg = 0xF000u16;
+    let stub_off = 0x0000u16;
+    let ivt_addr = (vector as u64) * 4;
+    bus.write_u16(ivt_addr, stub_off).unwrap();
+    bus.write_u16(ivt_addr + 2, stub_seg).unwrap();
+
+    // Stub: HLT; IRET. Tier-0 should surface the HLT as `BiosInterrupt(vector)`
+    // and leave RIP pointing at the IRET so the embedding can resume after
+    // dispatching the BIOS interrupt.
+    let stub_phys = (stub_seg as u64) << 4;
+    bus.load(stub_phys, &[0xF4, 0xCF]);
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Real, bus);
+    cpu.cpu.state.write_reg(Register::CS, 0);
+    cpu.cpu.state.write_reg(Register::DS, 0);
+    cpu.cpu.state.write_reg(Register::SS, 0);
+    cpu.cpu.state.write_reg(Register::SP, 0x8000);
+    cpu.cpu.state.set_rflags(0x0002);
+    cpu.cpu.state.set_rip(code_base);
+
+    let mut interp = Tier0Interpreter::new(1024);
+
+    // First block executes the INT and stops at the handler entry (branch).
+    interp.exec_block(&mut cpu);
+    assert_eq!(cpu.cpu.state.segments.cs.selector, stub_seg);
+    assert_eq!(cpu.cpu.state.rip(), stub_off as u64);
+    assert!(cpu.cpu.state.pending_bios_int_valid);
+    assert_eq!(cpu.cpu.state.pending_bios_int, vector);
+
+    // Second block executes the HLT and stops at the hypercall boundary.
+    interp.exec_block(&mut cpu);
+    assert!(!cpu.cpu.state.halted);
+    assert_eq!(cpu.cpu.state.rip(), (stub_off as u64) + 1);
+    // `step()` consumes the BIOS vector when producing `StepExit::BiosInterrupt`;
+    // the tier-0 exec glue should restore it so the embedding can observe it.
+    assert!(cpu.cpu.state.pending_bios_int_valid);
+    assert_eq!(cpu.cpu.state.pending_bios_int, vector);
+}
+
+#[test]
 fn tier0_executes_int_iretd_in_protected_mode() {
     let mut bus = FlatTestBus::new(0x20000);
 
