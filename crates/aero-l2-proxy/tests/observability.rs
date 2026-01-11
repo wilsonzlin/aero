@@ -103,6 +103,85 @@ async fn metrics_increment_after_frames() {
 }
 
 #[tokio::test]
+async fn sessions_active_gauge_tracks_open_tunnels() {
+    let server = TestServer::start(None, None).await;
+
+    let body = reqwest::get(server.http_url("/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let active = parse_metric(&body, "l2_sessions_active").unwrap();
+    assert_eq!(active, 0, "expected no active sessions at startup");
+
+    let mut req = server.ws_url().into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_sender, mut ws_receiver) = ws.split();
+
+    // Wait for the server to observe the opened session.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let body = reqwest::get(server.http_url("/metrics"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            let active = parse_metric(&body, "l2_sessions_active").unwrap();
+            let total = parse_metric(&body, "l2_sessions_total").unwrap();
+            if active == 1 && total >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let _ = ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Close(None))
+        .await;
+
+    // Drain until closed so the server tears down the session.
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(msg) = ws_receiver.next().await {
+            match msg {
+                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => break,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+    })
+    .await;
+
+    // Wait for the session to be removed from the gauge.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let body = reqwest::get(server.http_url("/metrics"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            let active = parse_metric(&body, "l2_sessions_active").unwrap();
+            if active == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn upgrade_rejection_metrics_increment_on_missing_origin() {
     let stack_defaults = StackConfig::default();
     let cfg = ProxyConfig {
