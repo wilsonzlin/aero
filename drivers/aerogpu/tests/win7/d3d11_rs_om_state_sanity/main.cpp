@@ -900,6 +900,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       return FailD3D11WithRemovedReason(
           &reporter, kTestName, "Map(staging) [depth clip enabled]", hr, device.get());
     }
+    map_rc = ValidateStagingMap("Map(staging) [depth clip enabled]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
 
     const int cx = kWidth / 2;
     const int cy = kHeight / 2;
@@ -941,6 +945,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     if (FAILED(hr)) {
       return FailD3D11WithRemovedReason(
           &reporter, kTestName, "Map(staging) [depth clip disabled]", hr, device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [depth clip disabled]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const uint32_t center_unclipped = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
