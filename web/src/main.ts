@@ -455,11 +455,21 @@ async function writeBytesToOpfs(path: string, bytes: Uint8Array): Promise<void> 
   const writable = await handle.createWritable({ keepExistingData: false });
   // `FileSystemWritableFileStream.write()` only accepts ArrayBuffer-backed views in the
   // lib.dom typings. Snapshot buffers coming from threaded WASM builds can be backed by
-  // SharedArrayBuffer, so always clone into a fresh Uint8Array (ArrayBuffer-backed)
-  // before writing.
-  const clone = new Uint8Array(bytes);
-  await writable.write(clone);
-  await writable.close();
+  // SharedArrayBuffer, so clone into an ArrayBuffer-backed Uint8Array before writing.
+  const shouldClone = typeof SharedArrayBuffer !== "undefined" && bytes.buffer instanceof SharedArrayBuffer;
+  const payload = shouldClone ? new Uint8Array(bytes) : bytes;
+
+  try {
+    await writable.write(payload);
+    await writable.close();
+  } catch (err) {
+    try {
+      await writable.abort();
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
 }
 
 function downloadFile(file: Blob, filename: string): void {

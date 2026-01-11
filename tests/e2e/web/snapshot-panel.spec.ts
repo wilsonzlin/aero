@@ -9,7 +9,7 @@ function parseSerialBytes(text: string | null): number | null {
   return Number.parseInt(match[1].replaceAll(",", ""), 10);
 }
 
-test("demo VM snapshot panel saves/restores via OPFS streaming", async ({ page }, testInfo) => {
+test("demo VM snapshot panel saves/restores via OPFS (streaming when available)", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
 
   // The snapshot demo panel lives on the `/web/` capabilities page (served under
