@@ -87,6 +87,8 @@ The device expects a descriptor chain with:
 
 Captured reads are serviced only when the capture stream has been started; otherwise `VIRTIO_SND_S_IO_ERR` is returned.
 
+If the host capture backend cannot provide enough samples to fill the payload buffers, the device writes silence for the missing samples and increments host-side underrun telemetry counters.
+
 ### Capture sample source
 
 In browser builds, captured samples are expected to come from the Web mic capture
@@ -113,7 +115,7 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
   - Uses the virtio PCI transport and split virtqueues to:
     - Query stream capabilities (`PCM_INFO`)
     - Negotiate fixed params (`PCM_SET_PARAMS`)
-    - Start/stop the stream and submit PCM buffers via the TX queue.
+    - Start/stop streams and submit PCM buffers via the TX queue (playback) and RX queue (capture).
 - Distribute as **test-signed**:
   - Enable test mode in the guest (`bcdedit /set testsigning on`).
   - Install the test certificate into the guest's trusted store.
@@ -124,7 +126,7 @@ This is the most controlled path and avoids licensing ambiguity.
 
 If an existing virtio-win `viosnd` driver supports Windows 7 and the project license is compatible, it could be reused to avoid writing a custom audio miniport.
 
-This option requires a licensing review (see `docs/13-legal-considerations.md`) and validation that the driver supports the subset implemented here (single playback stream, S16_LE @ 48kHz).
+This option requires a licensing review (see `docs/13-legal-considerations.md`) and validation that the driver supports the subset implemented here (fixed-format playback + capture streams, S16_LE @ 48kHz).
 
 ## Browser Smoke Test (AudioWorklet)
 
