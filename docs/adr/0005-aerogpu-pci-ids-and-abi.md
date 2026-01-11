@@ -5,11 +5,11 @@
 AeroGPU spans multiple layers (emulator device model, guest kernel-mode driver, guest user-mode driver, installers/INFs, and docs). Over time, multiple “almost the same” AeroGPU PCI identities and ABIs have accumulated:
 
 - `drivers/aerogpu/protocol/{aerogpu_pci.h,aerogpu_ring.h,aerogpu_cmd.h,aerogpu_escape.h}` defines a **versioned** PCI/MMIO + ring protocol and uses the **A3A0** PCI vendor ID.
-- `docs/windows-device-contract.{md,json}` documents the canonical Windows-facing AeroGPU binding contract (**A3A0**) and is checked in CI; older experiments (the retired `aero-gpu-device` cmd/completion-ring prototype ABI, legacy vendor ID `0xA0_E0`) used different PCI identities/ABIs and have been retired (see `docs/legacy/experimental-gpu-command-abi.md`).
+- `docs/windows-device-contract.{md,json}` documents the canonical Windows-facing AeroGPU binding contract (**A3A0**) and is checked in CI; older experiments (the retired `aero-gpu-device` cmd/completion-ring prototype ABI, legacy vendor ID `0xA0_E0`, formerly implemented in `crates/aero-gpu-device`) used different PCI identities/ABIs and have been retired (see `docs/legacy/experimental-gpu-command-abi.md`).
 - Legacy stacks exist with different IDs/ABIs, notably:
   - **1AED**: legacy BAR0 MMIO ABI (and associated INF matching).
   - **1AE0**: archived Win7 prototype stack (see `prototype/legacy-win7-aerogpu-1ae0/`).
-  - Retired `aero-gpu-device` cmd/completion-ring ABI (prototype; legacy vendor ID `0xA0_E0`), used for early host-side experiments and must not be used for the WDDM AeroGPU device.
+  - Retired `aero-gpu-device` cmd/completion-ring ABI (prototype; legacy vendor ID `0xA0_E0`; former `crates/aero-gpu-device`), used for early host-side experiments and must not be used for the WDDM AeroGPU device.
 
 This drift is costly because **PCI IDs and guest↔host ABIs are API**:
 
@@ -57,7 +57,7 @@ These documents must reflect the canonical AeroGPU PCI identity and the canonica
 
 ## Alternatives considered
 
-1. **Keep the retired `aero-gpu-device` cmd/completion-ring ABI (`0xA0_E0` prototype) as “the” AeroGPU ABI**
+1. **Keep the retired `aero-gpu-device` cmd/completion-ring ABI (`0xA0_E0` prototype; former `crates/aero-gpu-device`) as “the” AeroGPU ABI**
    - Pros: was useful for early host-side experiments.
    - Cons: does not match the WDDM driver protocol headers, does not align with current driver packaging, and encourages a split-brain GPU device story (two different “AeroGPU” devices).
 
