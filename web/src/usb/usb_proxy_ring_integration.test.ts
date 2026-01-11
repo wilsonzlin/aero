@@ -125,6 +125,17 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
     expect(ringAttach!.completionRing).toBeInstanceOf(SharedArrayBuffer);
   });
 
+  it("does not send usb.ringAttach when attaching a port with attachRings=false", () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const broker = new UsbBroker({ ringDrainIntervalMs: 1 });
+    const { brokerPort } = createChannel();
+    broker.attachWorkerPort(brokerPort as unknown as MessagePort, { attachRings: false });
+
+    const ringAttach = brokerPort.sent.find((p) => (p.msg as { type?: unknown }).type === "usb.ringAttach");
+    expect(ringAttach).toBeUndefined();
+  });
+
   it("re-sends usb.ringAttach on usb.ringAttachRequest (reusing the same ring handles)", () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
