@@ -8,7 +8,7 @@
 ;   - Legacy HWID (deprecated):
 ;       PCI\VEN_1AED&DEV_0001
 ;
-; Expected package contents (same directory as this INF):
+; Expected package contents (in the parent directory of this INF, i.e. alongside packaging\win7\):
 ;   - aerogpu.sys                 (kernel-mode miniport)
 ;   - aerogpu_d3d9.dll            (32-bit D3D9 UMD)
 ;   - aerogpu_d3d9_x64.dll        (64-bit D3D9 UMD)

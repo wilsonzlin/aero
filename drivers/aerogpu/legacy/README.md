@@ -7,6 +7,11 @@ The canonical (non-legacy) AeroGPU PCI IDs are defined in
 `drivers/aerogpu/protocol/aerogpu_pci.h` (**VEN_A3A0&DEV_0001**) and are what the primary INF
 (`aerogpu.inf`) matches.
 
+This directory provides two legacy-binding INF variants:
+
+- `legacy/aerogpu.inf` (D3D9-only; included in CI driver packages)
+- `legacy/aerogpu_dx11.inf` (D3D9 + optional D3D10/11 UMDs; not included in CI packages by default)
+
 This folder is intended to be shipped alongside the canonical driver package so Guest Tools can
 install against either device model:
 
