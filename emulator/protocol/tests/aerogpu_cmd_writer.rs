@@ -348,8 +348,8 @@ fn cmd_writer_emits_copy_packets() {
     };
 
     let mut w = AerogpuCmdWriter::new();
-    w.copy_buffer(1, 2, 3, 4, 5, AEROGPU_COPY_FLAG_WRITEBACK_DST);
-    w.copy_texture2d(10, 11, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0);
+    w.copy_buffer_writeback_dst(1, 2, 3, 4, 5);
+    w.copy_texture2d_writeback_dst(10, 11, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8);
     w.flush();
 
     let buf = w.finish();
@@ -415,6 +415,15 @@ fn cmd_writer_emits_copy_packets() {
         ),
         8
     );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdCopyTexture2d, flags)
+                ..cursor + offset_of!(AerogpuCmdCopyTexture2d, flags) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AEROGPU_COPY_FLAG_WRITEBACK_DST
+    );
 
     cursor += size1;
 
@@ -429,4 +438,300 @@ fn cmd_writer_emits_copy_packets() {
 
     cursor += size2;
     assert_eq!(cursor, buf.len());
+}
+
+#[test]
+fn cmd_writer_emits_d3d11_binding_table_packets() {
+    use aero_protocol::aerogpu::aerogpu_cmd::{
+        AerogpuCmdCreateSampler, AerogpuCmdDestroySampler, AerogpuCmdSetConstantBuffers,
+        AerogpuCmdSetSamplers, AerogpuConstantBufferBinding, AerogpuHandle,
+        AerogpuSamplerAddressMode, AerogpuSamplerFilter,
+    };
+
+    let mut w = AerogpuCmdWriter::new();
+    w.create_sampler(
+        40,
+        AerogpuSamplerFilter::Linear,
+        AerogpuSamplerAddressMode::Repeat,
+        AerogpuSamplerAddressMode::ClampToEdge,
+        AerogpuSamplerAddressMode::MirrorRepeat,
+    );
+    w.set_samplers(AerogpuShaderStage::Pixel, 2, &[40, 41]);
+    w.set_sampler(AerogpuShaderStage::Vertex, 0, 40);
+
+    let cb_bindings = [
+        AerogpuConstantBufferBinding {
+            buffer: 99,
+            offset_bytes: 16,
+            size_bytes: 64,
+            reserved0: 0,
+        },
+        AerogpuConstantBufferBinding {
+            buffer: 0,
+            offset_bytes: 0,
+            size_bytes: 0,
+            reserved0: 0,
+        },
+    ];
+    w.set_constant_buffers(AerogpuShaderStage::Pixel, 4, &cb_bindings);
+    w.set_constant_buffer(AerogpuShaderStage::Vertex, 1, 77, 0, 128);
+    w.destroy_sampler(40);
+    w.flush();
+
+    let buf = w.finish();
+
+    let expected_sizes: &[(u32, usize)] = &[
+        (
+            AerogpuCmdOpcode::CreateSampler as u32,
+            size_of::<AerogpuCmdCreateSampler>(),
+        ),
+        (
+            AerogpuCmdOpcode::SetSamplers as u32,
+            size_of::<AerogpuCmdSetSamplers>() + 2 * size_of::<AerogpuHandle>(),
+        ),
+        (
+            AerogpuCmdOpcode::SetSamplers as u32,
+            size_of::<AerogpuCmdSetSamplers>() + size_of::<AerogpuHandle>(),
+        ),
+        (
+            AerogpuCmdOpcode::SetConstantBuffers as u32,
+            size_of::<AerogpuCmdSetConstantBuffers>()
+                + 2 * size_of::<AerogpuConstantBufferBinding>(),
+        ),
+        (
+            AerogpuCmdOpcode::SetConstantBuffers as u32,
+            size_of::<AerogpuCmdSetConstantBuffers>() + size_of::<AerogpuConstantBufferBinding>(),
+        ),
+        (
+            AerogpuCmdOpcode::DestroySampler as u32,
+            size_of::<AerogpuCmdDestroySampler>(),
+        ),
+        (
+            AerogpuCmdOpcode::Flush as u32,
+            size_of::<aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdFlush>(),
+        ),
+    ];
+
+    let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+    for &(expected_opcode, expected_size) in expected_sizes {
+        let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+        let opcode = hdr.opcode;
+        let size_bytes = hdr.size_bytes;
+        assert_eq!(opcode, expected_opcode);
+        assert_eq!(size_bytes as usize, expected_size);
+        cursor += expected_size;
+    }
+    assert_eq!(cursor, buf.len());
+
+    // Validate CREATE_SAMPLER fields.
+    let create_sampler_base = AerogpuCmdStreamHeader::SIZE_BYTES;
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[create_sampler_base + offset_of!(AerogpuCmdCreateSampler, sampler_handle)
+                ..create_sampler_base + offset_of!(AerogpuCmdCreateSampler, sampler_handle) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        40
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[create_sampler_base + offset_of!(AerogpuCmdCreateSampler, filter)
+                ..create_sampler_base + offset_of!(AerogpuCmdCreateSampler, filter) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuSamplerFilter::Linear as u32
+    );
+
+    // Validate sampler count and payload for the SET_SAMPLERS packet.
+    let set_samplers_base = AerogpuCmdStreamHeader::SIZE_BYTES + expected_sizes[0].1;
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_samplers_base + offset_of!(AerogpuCmdSetSamplers, start_slot)
+                ..set_samplers_base + offset_of!(AerogpuCmdSetSamplers, start_slot) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_samplers_base + offset_of!(AerogpuCmdSetSamplers, shader_stage)
+                ..set_samplers_base + offset_of!(AerogpuCmdSetSamplers, shader_stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Pixel as u32
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_samplers_base + offset_of!(AerogpuCmdSetSamplers, sampler_count)
+                ..set_samplers_base + offset_of!(AerogpuCmdSetSamplers, sampler_count) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_samplers_base + size_of::<AerogpuCmdSetSamplers>()
+                ..set_samplers_base + size_of::<AerogpuCmdSetSamplers>() + 4]
+                .try_into()
+                .unwrap()
+        ),
+        40
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_samplers_base + size_of::<AerogpuCmdSetSamplers>() + size_of::<AerogpuHandle>()
+                ..set_samplers_base
+                    + size_of::<AerogpuCmdSetSamplers>()
+                    + 2 * size_of::<AerogpuHandle>()]
+                .try_into()
+                .unwrap()
+        ),
+        41
+    );
+
+    // Validate the single-slot SET_SAMPLER packet emitted by `set_sampler`.
+    let set_sampler_base = set_samplers_base + expected_sizes[1].1;
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_sampler_base + offset_of!(AerogpuCmdSetSamplers, shader_stage)
+                ..set_sampler_base + offset_of!(AerogpuCmdSetSamplers, shader_stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Vertex as u32
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_sampler_base + offset_of!(AerogpuCmdSetSamplers, start_slot)
+                ..set_sampler_base + offset_of!(AerogpuCmdSetSamplers, start_slot) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_sampler_base + offset_of!(AerogpuCmdSetSamplers, sampler_count)
+                ..set_sampler_base + offset_of!(AerogpuCmdSetSamplers, sampler_count) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        1
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_sampler_base + size_of::<AerogpuCmdSetSamplers>()
+                ..set_sampler_base + size_of::<AerogpuCmdSetSamplers>() + 4]
+                .try_into()
+                .unwrap()
+        ),
+        40
+    );
+
+    // Validate constant-buffer count and payload for the SET_CONSTANT_BUFFERS packet.
+    let set_cbs_base = set_samplers_base + expected_sizes[1].1 + expected_sizes[2].1;
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_cbs_base + offset_of!(AerogpuCmdSetConstantBuffers, start_slot)
+                ..set_cbs_base + offset_of!(AerogpuCmdSetConstantBuffers, start_slot) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        4
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_cbs_base + offset_of!(AerogpuCmdSetConstantBuffers, buffer_count)
+                ..set_cbs_base + offset_of!(AerogpuCmdSetConstantBuffers, buffer_count) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_cbs_base + size_of::<AerogpuCmdSetConstantBuffers>()
+                ..set_cbs_base + size_of::<AerogpuCmdSetConstantBuffers>() + 4]
+                .try_into()
+                .unwrap()
+        ),
+        99
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_cbs_base
+                + size_of::<AerogpuCmdSetConstantBuffers>()
+                + offset_of!(AerogpuConstantBufferBinding, offset_bytes)
+                ..set_cbs_base
+                    + size_of::<AerogpuCmdSetConstantBuffers>()
+                    + offset_of!(AerogpuConstantBufferBinding, offset_bytes)
+                    + 4]
+                .try_into()
+                .unwrap()
+        ),
+        16
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_cbs_base
+                + size_of::<AerogpuCmdSetConstantBuffers>()
+                + offset_of!(AerogpuConstantBufferBinding, size_bytes)
+                ..set_cbs_base
+                    + size_of::<AerogpuCmdSetConstantBuffers>()
+                    + offset_of!(AerogpuConstantBufferBinding, size_bytes)
+                    + 4]
+                .try_into()
+                .unwrap()
+        ),
+        64
+    );
+
+    // Second binding is all zeros (unbind).
+    let cb1_base = set_cbs_base
+        + size_of::<AerogpuCmdSetConstantBuffers>()
+        + size_of::<AerogpuConstantBufferBinding>();
+    assert_eq!(
+        u32::from_le_bytes(buf[cb1_base..cb1_base + 4].try_into().unwrap()),
+        0
+    );
+
+    // Validate the single-slot SET_CONSTANT_BUFFERS packet emitted by `set_constant_buffer`.
+    let set_cb_single_base = set_cbs_base + expected_sizes[3].1;
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_cb_single_base + offset_of!(AerogpuCmdSetConstantBuffers, start_slot)
+                ..set_cb_single_base + offset_of!(AerogpuCmdSetConstantBuffers, start_slot) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        1
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[set_cb_single_base + offset_of!(AerogpuCmdSetConstantBuffers, buffer_count)
+                ..set_cb_single_base + offset_of!(AerogpuCmdSetConstantBuffers, buffer_count) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        1
+    );
+    let binding0_base = set_cb_single_base + size_of::<AerogpuCmdSetConstantBuffers>();
+    assert_eq!(
+        u32::from_le_bytes(buf[binding0_base..binding0_base + 4].try_into().unwrap()),
+        77
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[binding0_base + offset_of!(AerogpuConstantBufferBinding, size_bytes)
+                ..binding0_base + offset_of!(AerogpuConstantBufferBinding, size_bytes) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        128
+    );
 }
