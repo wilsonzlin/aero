@@ -565,7 +565,11 @@ impl AerogpuD3d11Executor {
             .checked_mul(bytes_per_pixel)
             .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+        let padded_bytes_per_row = unpadded_bytes_per_row
+            .checked_add(align - 1)
+            .map(|v| v / align)
+            .and_then(|v| v.checked_mul(align))
+            .ok_or_else(|| anyhow!("read_texture_rgba8: padded bytes_per_row overflow"))?;
         let buffer_size = (padded_bytes_per_row as u64)
             .checked_mul(height as u64)
             .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer size overflow"))?;
@@ -1961,7 +1965,11 @@ impl AerogpuD3d11Executor {
                     .checked_mul(bytes_per_pixel)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: bytes_per_row overflow"))?;
                 let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                let padded_bpr = ((unpadded_bpr + align - 1) / align) * align;
+                let padded_bpr = unpadded_bpr
+                    .checked_add(align - 1)
+                    .map(|v| v / align)
+                    .and_then(|v| v.checked_mul(align))
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: padded bytes_per_row overflow"))?;
                 let buffer_size = (padded_bpr as u64)
                     .checked_mul(height as u64)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: staging buffer size overflow"))?;
@@ -3170,7 +3178,11 @@ impl AerogpuD3d11Executor {
 
         if tex.desc.height > 1 && bytes_per_row % aligned != 0 {
             // Repack each chunk into an aligned row pitch.
-            let padded_bpr = ((unpadded_bpr + aligned - 1) / aligned) * aligned;
+            let padded_bpr = unpadded_bpr
+                .checked_add(aligned - 1)
+                .map(|v| v / aligned)
+                .and_then(|v| v.checked_mul(aligned))
+                .ok_or_else(|| anyhow!("texture upload padded bytes_per_row overflow"))?;
             let padded_bpr_usize = padded_bpr as usize;
             let rows_per_chunk = (CHUNK_BYTES / padded_bpr_usize).max(1);
 
@@ -4247,7 +4259,11 @@ fn write_texture_linear(
     // wgpu requires bytes_per_row alignment for multi-row writes. Repack when needed.
     let aligned = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     if desc.height > 1 && src_bytes_per_row % aligned != 0 {
-        let padded_bpr = ((unpadded_bpr + aligned - 1) / aligned) * aligned;
+        let padded_bpr = unpadded_bpr
+            .checked_add(aligned - 1)
+            .map(|v| v / aligned)
+            .and_then(|v| v.checked_mul(aligned))
+            .ok_or_else(|| anyhow!("write_texture: padded bytes_per_row overflow"))?;
         let mut repacked = vec![0u8; (padded_bpr as usize) * (desc.height as usize)];
         for row in 0..desc.height as usize {
             let src_start = row * src_bytes_per_row as usize;
