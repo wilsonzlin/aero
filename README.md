@@ -166,7 +166,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 | `mem`     | number (MiB) | `guestMemoryMiB` | `?mem=2048` |
 | `workers` | bool | `enableWorkers` | `?workers=0` |
 | `webgpu`  | bool | `enableWebGPU` | `?webgpu=1` |
-| `proxy`   | string \| `null` | `proxyUrl` | `?proxy=wss%3A%2F%2Fgateway.example.com` |
+| `proxy`   | string \| `null` | `proxyUrl` | `?proxy=https%3A%2F%2Fgateway.example.com` |
 | `disk`    | string \| `null` | `activeDiskImage` | `?disk=win7-sp1.img` |
 | `log`     | `trace|debug|info|warn|error` | `logLevel` | `?log=debug` |
 | `scale`   | number | `uiScale` | `?scale=1.25` |
@@ -175,7 +175,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 
 ```text
 /?mem=2048&log=debug
-/?proxy=ws%3A%2F%2F127.0.0.1%3A8081&workers=0
+/?proxy=http%3A%2F%2F127.0.0.1%3A8081&workers=0
 ```
 
 ### Notes
