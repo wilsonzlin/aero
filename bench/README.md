@@ -129,6 +129,17 @@ node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
 The compare script writes `compare.md` + `summary.json` to `--out-dir` and exits non-zero if any
 metric regresses by more than the configured threshold (exit code 2 indicates extreme variance).
 
+You can also override thresholds directly (useful for local debugging or when tuning CI):
+
+```bash
+node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+  --baseline baseline.json \
+  --current gpu_bench.json \
+  --outDir gpu-perf-results/compare \
+  --thresholdPct 15 \
+  --cvThreshold 0.5
+```
+
 ## Storage I/O benchmark suite (OPFS + IndexedDB)
 
 The `storage_io` scenario loads `web/storage_bench.html` in Chromium via Playwright and records:
