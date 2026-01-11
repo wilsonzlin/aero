@@ -5533,6 +5533,7 @@ uint32_t d3d11_format_support_flags(uint32_t dxgi_format) {
     case kDxgiFormatR32Uint:
       return kD3D11FormatSupportBuffer | kD3D11FormatSupportIaIndexBuffer;
     case kDxgiFormatR32G32Float:
+    case kDxgiFormatR32G32B32Float:
     case kDxgiFormatR32G32B32A32Float:
       return kD3D11FormatSupportBuffer | kD3D11FormatSupportIaVertexBuffer;
     default:

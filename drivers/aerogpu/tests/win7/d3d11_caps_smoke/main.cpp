@@ -111,6 +111,26 @@ static int RunCapsSmoke(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "unexpected OutputMergerLogicOp (expected FALSE)");
   }
 
+  D3D11_FEATURE_DATA_ARCHITECTURE_INFO arch;
+  ZeroMemory(&arch, sizeof(arch));
+  hr = device->CheckFeatureSupport(D3D11_FEATURE_ARCHITECTURE_INFO, &arch, sizeof(arch));
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(ARCHITECTURE_INFO)", hr);
+  }
+  aerogpu_test::PrintfStdout("INFO: %s: architecture: tile_based_deferred=%u",
+                             kTestName,
+                             (unsigned)arch.TileBasedDeferredRenderer);
+
+  D3D11_FEATURE_DATA_D3D9_OPTIONS d3d9;
+  ZeroMemory(&d3d9, sizeof(d3d9));
+  hr = device->CheckFeatureSupport(D3D11_FEATURE_D3D9_OPTIONS, &d3d9, sizeof(d3d9));
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(D3D9_OPTIONS)", hr);
+  }
+  aerogpu_test::PrintfStdout("INFO: %s: d3d9_options: full_non_pow2=%u",
+                             kTestName,
+                             (unsigned)d3d9.FullNonPow2TextureSupport);
+
   D3D11_FEATURE_DATA_FORMAT_SUPPORT2 fmt2;
   ZeroMemory(&fmt2, sizeof(fmt2));
   fmt2.InFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -174,6 +194,14 @@ static int RunCapsSmoke(int argc, char** argv) {
 
   rc = CheckFormat(kTestName,
                    device.get(),
+                   DXGI_FORMAT_B8G8R8X8_UNORM,
+                   D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
+                       D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_DISPLAY,
+                   "DXGI_FORMAT_B8G8R8X8_UNORM");
+  if (rc) return rc;
+
+  rc = CheckFormat(kTestName,
+                   device.get(),
                    DXGI_FORMAT_R16_UINT,
                    D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_INDEX_BUFFER,
                    "DXGI_FORMAT_R16_UINT");
@@ -184,6 +212,27 @@ static int RunCapsSmoke(int argc, char** argv) {
                    DXGI_FORMAT_R32_UINT,
                    D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_INDEX_BUFFER,
                    "DXGI_FORMAT_R32_UINT");
+  if (rc) return rc;
+
+  rc = CheckFormat(kTestName,
+                   device.get(),
+                   DXGI_FORMAT_R32G32_FLOAT,
+                   D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER,
+                   "DXGI_FORMAT_R32G32_FLOAT");
+  if (rc) return rc;
+
+  rc = CheckFormat(kTestName,
+                   device.get(),
+                   DXGI_FORMAT_R32G32B32_FLOAT,
+                   D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER,
+                   "DXGI_FORMAT_R32G32B32_FLOAT");
+  if (rc) return rc;
+
+  rc = CheckFormat(kTestName,
+                   device.get(),
+                   DXGI_FORMAT_R32G32B32A32_FLOAT,
+                   D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER,
+                   "DXGI_FORMAT_R32G32B32A32_FLOAT");
   if (rc) return rc;
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
