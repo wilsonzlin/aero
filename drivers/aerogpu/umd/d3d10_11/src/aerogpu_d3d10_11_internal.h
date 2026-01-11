@@ -227,6 +227,10 @@ struct Device {
   // Opaque pointer to the runtime's device callback table (contains e.g.
   // pfnSetErrorCb).
   const void* runtime_callbacks = nullptr;
+  // Opaque pointer to the runtime device handle's private storage. This is used
+  // for callbacks that require a `*HRTDEVICE` (e.g. `pfnSetErrorCb`) without
+  // including WDK-specific handle types in this shared header.
+  void* runtime_device = nullptr;
   std::mutex mutex;
 
   aerogpu::CmdWriter cmd;
