@@ -182,6 +182,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 
 - URL overrides are intentionally *highest precedence* and are shown as read-only in the Settings panel.
 - Some settings may be forced off at runtime if the browser lacks required capabilities (e.g. workers require `SharedArrayBuffer` + cross-origin isolation).
+- `proxy` (`proxyUrl`) may be either an absolute `ws(s)://` / `http(s)://` URL or a same-origin path like `/l2`.
 
 ## WASM in workers
 

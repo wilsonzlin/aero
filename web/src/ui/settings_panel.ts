@@ -36,8 +36,9 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   webgpuHint.className = "hint";
 
   const proxyInput = document.createElement("input");
-  proxyInput.type = "url";
-  proxyInput.placeholder = "https://gateway.example.com (or blank)";
+  proxyInput.type = "text";
+  proxyInput.inputMode = "url";
+  proxyInput.placeholder = "https://gateway.example.com or /l2 (or blank)";
   proxyInput.autocomplete = "off";
   proxyInput.spellcheck = false;
 
