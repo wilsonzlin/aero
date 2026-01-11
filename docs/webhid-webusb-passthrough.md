@@ -4,6 +4,9 @@ This document describes the intended architecture and security model for
 passing a **real, host-connected device** through a browser page into the guest
 VM as a USB peripheral.
 
+> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB stack
+> selection for the browser runtime (`aero-usb` + `aero-wasm` + `web/`).
+
 The goal is to support “real hardware” use cases (game controllers, specialty
 HID devices, etc) without turning Aero into a native app.
 

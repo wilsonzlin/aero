@@ -3,6 +3,10 @@
 This document describes the **USB passthrough** path where a *real* USB device
 is exposed to the guest OS using **WebUSB** in the browser.
 
+> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB stack
+> selection for the browser runtime. This document describes the chosen `aero-usb` + `web/` design
+> in detail.
+
 The goal is to keep three moving parts coherent and spec-aligned:
 
 - **UHCI** emulation (guest USB host controller; synchronous, TD-driven)
@@ -24,8 +28,9 @@ Implementation references (current repo):
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
 - (Legacy repo-root harness) TS main-thread broker + worker client RPC: `src/platform/webusb_{broker,client,protocol}.ts`
 
-Note: `crates/emulator` also contains an older UHCI + passthrough model used by
-native/emulator tests. The browser/WASM runtime uses `aero-usb` + `aero-wasm` + `web/`.
+Note: `crates/emulator/src/io/usb/*` contains a legacy UHCI + passthrough model used by
+native/emulator tests. Per [ADR 0015](./adr/0015-canonical-usb-stack.md), the browser/WASM runtime
+uses `aero-usb` + `aero-wasm` + `web/` and should not grow a parallel USB stack in `crates/emulator`.
 
 ---
 
