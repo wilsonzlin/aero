@@ -25,6 +25,13 @@ impl Bios {
         self.tty_output.clear();
 
         // 0) Install ROM stubs (read-only).
+        //
+        // The BIOS ROM is mapped twice:
+        // - `BIOS_BASE` (the conventional `F0000..=FFFFF` real-mode window)
+        // - `BIOS_ALIAS_BASE` (the 32-bit reset-vector alias at `FFFF_0000..=FFFF_FFFF`)
+        //
+        // Note: `BIOS_ALIAS_BASE` is outside typical guest RAM. Bus implementations that only
+        // model RAM may need to treat ROM mappings as sparse.
         let rom_image = rom::build_bios_rom();
         bus.map_rom(BIOS_BASE, &rom_image);
         bus.map_rom(BIOS_ALIAS_BASE, &rom_image);
