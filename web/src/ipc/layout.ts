@@ -41,10 +41,11 @@ export const queueDesc = {
 export const queueKind = {
   CMD: 0,
   EVT: 1,
+  NET_TX: 2,
+  NET_RX: 3,
 } as const;
 
 export function alignUp(value: number, align: number): number {
   if ((align & (align - 1)) !== 0) throw new Error("align must be power of two");
   return (value + (align - 1)) & ~(align - 1);
 }
-

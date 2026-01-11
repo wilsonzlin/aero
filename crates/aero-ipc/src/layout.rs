@@ -77,10 +77,19 @@ pub mod queue_desc {
     pub const RESERVED: usize = 3;
 }
 
-/// Queue kinds used by the default layout.
+/// Queue kinds used by the default browser runtime layout (`ioIpcSab`).
+///
+/// These are application-defined values used to locate queues by `kind` in an
+/// Aero IPC buffer.
+///
+/// Keep in sync with:
+/// - `docs/ipc-protocol.md` (queue kinds table)
+/// - `web/src/runtime/shared_layout.ts` (`IO_IPC_*_QUEUE_KIND`)
 pub mod queue_kind {
     pub const CMD: u32 = 0;
     pub const EVT: u32 = 1;
+    pub const NET_TX: u32 = 2;
+    pub const NET_RX: u32 = 3;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
