@@ -53,6 +53,10 @@ typedef struct aerogpu_escape_header {
 } aerogpu_escape_header;
 
 AEROGPU_ESCAPE_STATIC_ASSERT(sizeof(aerogpu_escape_header) == 16);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_header, version) == 0);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_header, op) == 4);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_header, size) == 8);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_header, reserved0) == 12);
 
 /* ---------------------------- Query device -------------------------------- */
 
@@ -76,6 +80,7 @@ typedef struct aerogpu_escape_query_device_out {
 } aerogpu_escape_query_device_out;
 
 AEROGPU_ESCAPE_STATIC_ASSERT(sizeof(aerogpu_escape_query_device_out) == 24);
+AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_out, mmio_version) == 16);
 
 /*
  * Query device response (v2).
