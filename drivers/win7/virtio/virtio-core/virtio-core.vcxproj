@@ -18,58 +18,104 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+
   <PropertyGroup Label="Globals">
     <ProjectGuid>{8A4F2F36-6A0A-4E2C-8A0B-2D3D7BAE5A5C}</ProjectGuid>
-    <Keyword>MakeFileProj</Keyword>
+    <Keyword>Win32Proj</Keyword>
     <RootNamespace>virtiocore</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
+
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
+
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-core.lib" copy /y "%%D\\i386\\virtio-core.lib" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-core.lib" exit /b 1</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-core.lib" copy /y "%%D\\i386\\virtio-core.lib" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-core.lib" exit /b 1</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-core.lib" copy /y "%%D\\i386\\virtio-core.lib" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-core.lib" exit /b 1</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-core.lib" copy /y "%%D\\i386\\virtio-core.lib" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-core.lib" exit /b 1</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-core.lib" copy /y "%%D\\amd64\\virtio-core.lib" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-core.lib" exit /b 1</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-core.lib" copy /y "%%D\\amd64\\virtio-core.lib" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-core.lib" exit /b 1</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-core.lib" copy /y "%%D\\amd64\\virtio-core.lib" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-core.lib" exit /b 1</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-core.lib" copy /y "%%D\\amd64\\virtio-core.lib" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-core.lib" exit /b 1</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN7;_WIN32_WINNT=0x0601;WINVER=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN7;_WIN32_WINNT=0x0601;WINVER=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN7;_WIN32_WINNT=0x0601;WINVER=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN7;_WIN32_WINNT=0x0601;WINVER=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
   <ItemGroup>
+    <ClCompile Include="portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="portable\virtio_pci_aero_layout.c" />
+    <ClCompile Include="src\virtio_pci_caps.c" />
+    <ClCompile Include="src\virtio_pci_modern.c" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="include\virtio_pci_caps.h" />
+    <ClInclude Include="include\virtio_pci_modern.h" />
+    <ClInclude Include="include\virtio_spec.h" />
+    <ClInclude Include="portable\virtio_pci_cap_parser.h" />
+    <ClInclude Include="portable\virtio_pci_aero_layout.h" />
     <None Include="makefile" />
     <None Include="sources" />
-    <None Include="include\virtio_pci_caps.h" />
-    <None Include="include\virtio_pci_modern.h" />
-    <None Include="include\virtio_spec.h" />
-    <None Include="portable\virtio_pci_cap_parser.c" />
-    <None Include="portable\virtio_pci_cap_parser.h" />
-    <None Include="portable\virtio_pci_aero_layout.c" />
-    <None Include="portable\virtio_pci_aero_layout.h" />
-    <None Include="src\virtio_pci_caps.c" />
-    <None Include="src\virtio_pci_modern.c" />
   </ItemGroup>
+
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets" />
 </Project>

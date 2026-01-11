@@ -1,4 +1,4 @@
-# Win7 virtio (KMDF / WDK 7.1) scaffolding
+# Win7 virtio (KMDF) scaffolding
 
 This directory contains a minimal, Windows 7–compatible KMDF build layout for virtio
 drivers:
@@ -13,47 +13,43 @@ The intent is to provide a repeatable starting point for future virtio drivers
 
 ## Toolchain requirements
 
-* Windows Driver Kit (WDK) 7.1 (7600.16385.1)
-* Visual Studio 2010 or Visual Studio 2012
-  * WDK 7.1 ships with VS2010 integration; VS2012 can open VS2010 solutions.
+* Visual Studio Build Tools (or Visual Studio) + a modern Windows Driver Kit (WDK).
+  * CI provisions a pinned Windows Kits toolchain via `ci/install-wdk.ps1`.
+* Drivers target Windows 7 (`TargetVersion=Windows7`) and KMDF 1.9 (`KmdfLibraryVersion=1.9` in the INF).
 
 ## Building
 
-The projects are **NMake wrapper projects** that invoke the classic WDK 7.1 `build.exe`
-system. Build from an appropriate **WDK Build Environment** command prompt so that
-`build.exe` and its environment variables are configured.
+The projects are MSBuild/WDK driver projects (no `build.exe` dependency) and can be built with `msbuild.exe`.
 
 ### Build from command line (recommended)
 
-From a WDK build environment command prompt:
+From a Developer PowerShell / command prompt with the WDK installed:
 
 ```bat
 cd \path\to\repo\drivers\win7\virtio
-msbuild virtio.sln /t:Build /p:Configuration=Release /p:Platform=Win32
+msbuild virtio-transport-test\virtio-transport-test.vcxproj /t:Build /p:Configuration=Release /p:Platform=Win32
 ```
 
-For x64, use the x64 WDK environment prompt and:
+For x64:
 
 ```bat
-msbuild virtio.sln /t:Build /p:Configuration=Release /p:Platform=x64
+msbuild virtio-transport-test\virtio-transport-test.vcxproj /t:Build /p:Configuration=Release /p:Platform=x64
 ```
 
 ### Build from Visual Studio
 
-Launch Visual Studio from a WDK Build Environment prompt (or ensure the WDK build
-tools are on your `PATH`), open `virtio.sln`, select a configuration/platform, and
-build.
+Open `virtio.sln` (or the individual `*.vcxproj`) in Visual Studio, select a configuration/platform, and build.
 
 ## Installing the test driver in a Win7 VM
 
 1. Build `virtio-transport-test` for the VM’s architecture.
 2. Copy the following to the VM:
    * `drivers\win7\virtio\virtio-transport-test\virtio-transport-test.inf`
-   * The built `virtio-transport-test.sys` (from the project’s `obj*` output dir)
+   * The built `virtio-transport-test.sys` (from the project’s build output directory)
 3. Enable test signing:
-   ```bat
-   bcdedit /set testsigning on
-   shutdown /r /t 0
+    ```bat
+    bcdedit /set testsigning on
+    shutdown /r /t 0
    ```
 4. Install:
    * Device Manager → find the virtio PCI device → Update Driver → Have Disk… →
