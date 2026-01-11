@@ -65,7 +65,9 @@ test('preview server sets canonical security headers on HTML/JS/worker/WASM and 
   expect(entryScriptResp.ok(), 'entry JS should return 2xx').toBe(true);
   assertHeaderSubset(entryScriptResp.headers(), canonicalSecurityHeaders, 'entry JS asset');
 
-  // Worker script: load a known module worker from `web/public/assets/`.
+  // Worker script: load a known module worker from `web/public/assets/` and validate
+  // that the CSP is applied in a real script context (not `page.evaluate`, which
+  // Playwright intentionally runs with CSP bypass enabled).
   const workerPath = '/assets/security_headers_worker.js';
   const workerResp = await page.request.get(`${PREVIEW_ORIGIN}${workerPath}`);
   expect(workerResp.ok(), 'worker script should return 2xx').toBe(true);
@@ -91,26 +93,4 @@ test('preview server sets canonical security headers on HTML/JS/worker/WASM and 
   const wasmResp = await page.request.get(`${PREVIEW_ORIGIN}${wasmPath}`);
   expect(wasmResp.ok(), 'wasm asset should return 2xx').toBe(true);
   assertHeaderSubset(wasmResp.headers(), canonicalSecurityHeaders, 'wasm asset');
-
-  // CSP: allow WASM compilation but still block JS eval sinks.
-  await expect(
-    page.evaluate(async () => {
-      const bytes = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
-      await WebAssembly.compile(bytes);
-      return true;
-    }),
-  ).resolves.toBe(true);
-
-  await expect(
-    page.evaluate(() => {
-      try {
-        // eslint-disable-next-line no-eval
-        eval('1+1');
-        return false;
-      } catch {
-        return true;
-      }
-    }),
-  ).resolves.toBe(true);
 });
-
