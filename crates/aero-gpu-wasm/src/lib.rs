@@ -11,7 +11,7 @@ mod wasm {
     use std::collections::HashSet;
 
     use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
-    use aero_gpu::shader_lib::{wgsl as builtin_wgsl, BuiltinShader};
+    use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
     use aero_gpu::{
         AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, AerogpuD3d9Executor,
         FrameTimingsReport, GpuBackendKind, GpuProfiler, GuestMemory, GuestMemoryError,
@@ -1754,11 +1754,7 @@ mod wasm {
                 let scale_fit = (canvas_w / src_w).min(canvas_h / src_h);
                 let scale = if mode == ScaleMode::Integer {
                     let integer = scale_fit.floor();
-                    if integer >= 1.0 {
-                        integer
-                    } else {
-                        scale_fit
-                    }
+                    if integer >= 1.0 { integer } else { scale_fit }
                 } else {
                     scale_fit
                 };
