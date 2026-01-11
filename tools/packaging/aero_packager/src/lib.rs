@@ -217,6 +217,19 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
                 continue;
             }
 
+            let ext = entry
+                .path()
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if !ext.is_empty() && is_private_key_extension(&ext) {
+                bail!(
+                    "refusing to package private key material in licenses directory: {}",
+                    entry.path().display()
+                );
+            }
+
             let rel = entry
                 .path()
                 .strip_prefix(&config.guest_tools_dir)
