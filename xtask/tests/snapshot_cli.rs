@@ -3,8 +3,8 @@ use std::io::Cursor;
 use std::io::{Seek, Write};
 
 use aero_snapshot::{
-    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, SaveOptions, SectionId,
-    SnapshotMeta, SnapshotSource, VcpuSnapshot,
+    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions,
+    SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
 };
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -294,4 +294,80 @@ fn snapshot_validate_supports_multi_cpu_and_rejects_corrupt_internal_len() {
         .args(["snapshot", "validate", corrupt_path.to_str().unwrap()])
         .assert()
         .failure();
+}
+
+struct LargeDirtySource;
+
+impl SnapshotSource for LargeDirtySource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 3,
+            parent_snapshot_id: Some(2),
+            created_unix_ms: 0,
+            label: Some("xtask-large-ram".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        // Exceeds the `--deep` safety limit (512MiB) but should still be cheap to save because
+        // dirty mode with an empty dirty-page set does not read RAM.
+        512 * 1024 * 1024 + 4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        // Should never be called for this test (no dirty pages), but keep it correct.
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        Some(Vec::new())
+    }
+}
+
+#[test]
+fn snapshot_deep_validate_refuses_large_ram() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("large_dirty.aerosnap");
+    let mut source = LargeDirtySource;
+
+    let mut opts = SaveOptions::default();
+    opts.ram = RamWriteOptions {
+        mode: RamMode::Dirty,
+        ..opts.ram
+    };
+
+    let mut file = fs::File::create(&snap).unwrap();
+    file.rewind().unwrap();
+    aero_snapshot::save_snapshot(&mut file, &mut source, opts).unwrap();
+    file.flush().unwrap();
+
+    // Non-deep validation should succeed (it doesn't restore RAM).
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Deep validation should refuse before attempting to restore.
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", "--deep", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("refuses to restore snapshots with RAM >"));
 }
