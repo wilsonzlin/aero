@@ -259,11 +259,32 @@ jobs:
         if: always()
         shell: bash
         run: |
+          log_dir="out/win7-virtio-harness-logs"
+          harness_log="${log_dir}/harness.log"
+
+          result_marker=""
+          snd_marker=""
+          wav_marker=""
+          if [[ -f "${harness_log}" ]]; then
+            result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
+            snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
+            wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
+          fi
+
           {
             echo "### Win7 virtio host harness"
             echo ""
             echo "- Harness step: ${{ steps.harness.outcome }}"
             echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
+            if [[ -n "${result_marker}" ]]; then
+              echo "- Guest result marker: ${result_marker}"
+            fi
+            if [[ -n "${snd_marker}" ]]; then
+              echo "- Guest virtio-snd marker: ${snd_marker}"
+            fi
+            if [[ -n "${wav_marker}" ]]; then
+              echo "- Host wav marker: ${wav_marker}"
+            fi
             echo "- Logs artifact: win7-virtio-harness-logs"
             echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } >>"$GITHUB_STEP_SUMMARY"
