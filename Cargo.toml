@@ -9,6 +9,7 @@ resolver = "2"
 members = [
     "crates/aero-acpi",
     "crates/aero-audio",
+    "crates/aero-auth-tokens",
     "crates/aero-gpu",
     "crates/aero-gpu-trace",
     "crates/aero-gpu-trace-replay",

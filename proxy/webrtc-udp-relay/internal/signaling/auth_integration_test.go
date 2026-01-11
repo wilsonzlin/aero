@@ -97,7 +97,17 @@ func startSignalingServer(t *testing.T, cfg config.Config) (*httptest.Server, *m
 
 func makeJWT(secret string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	payload := base64.RawURLEncoding.EncodeToString([]byte(`{}`))
+	now := time.Now().Unix()
+	payloadJSON, _ := json.Marshal(struct {
+		Iat int64  `json:"iat"`
+		Exp int64  `json:"exp"`
+		SID string `json:"sid"`
+	}{
+		Iat: now,
+		Exp: now + 60,
+		SID: "sess_test",
+	})
+	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
 	unsigned := header + "." + payload
 
 	mac := hmac.New(sha256.New, []byte(secret))

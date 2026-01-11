@@ -42,7 +42,9 @@ func TestJWTVerifier_Verify_AcceptsValidHS256(t *testing.T) {
 	}
 
 	token := mustJWT(t, "secret", map[string]any{"alg": "HS256", "typ": "JWT"}, map[string]any{
+		"iat": now.Unix(),
 		"exp": now.Add(5 * time.Minute).Unix(),
+		"sid": "sess_test",
 	})
 
 	if err := v.Verify(token); err != nil {
@@ -58,7 +60,9 @@ func TestJWTVerifier_Verify_RejectsExpiredToken(t *testing.T) {
 	}
 
 	token := mustJWT(t, "secret", map[string]any{"alg": "HS256"}, map[string]any{
+		"iat": now.Unix(),
 		"exp": now.Add(-1 * time.Second).Unix(),
+		"sid": "sess_test",
 	})
 
 	err := v.Verify(token)
@@ -76,6 +80,9 @@ func TestJWTVerifier_Verify_RejectsTokenNotYetValid(t *testing.T) {
 
 	token := mustJWT(t, "secret", map[string]any{"alg": "HS256"}, map[string]any{
 		"nbf": now.Add(10 * time.Second).Unix(),
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+		"sid": "sess_test",
 	})
 
 	err := v.Verify(token)
@@ -108,7 +115,9 @@ func TestJWTVerifier_Verify_RejectsBadSignature(t *testing.T) {
 
 	// Sign the token with a different secret.
 	token := mustJWT(t, "wrong", map[string]any{"alg": "HS256"}, map[string]any{
+		"iat": now.Unix(),
 		"exp": now.Add(5 * time.Minute).Unix(),
+		"sid": "sess_test",
 	})
 
 	err := v.Verify(token)

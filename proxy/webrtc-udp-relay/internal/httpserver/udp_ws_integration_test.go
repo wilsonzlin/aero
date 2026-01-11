@@ -287,7 +287,12 @@ func TestUDPWebSocket_JWTAuth_QueryParam(t *testing.T) {
 		registerUDPWS(t, cfg, srv)
 	})
 
-	token := mustHS256JWT(t, "secret", map[string]any{"exp": time.Now().Add(5 * time.Minute).Unix()})
+	now := time.Now()
+	token := mustHS256JWT(t, "secret", map[string]any{
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+		"sid": "sess_test",
+	})
 	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/udp?token=" + token
 	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
