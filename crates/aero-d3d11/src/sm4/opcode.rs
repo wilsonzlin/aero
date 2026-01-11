@@ -16,6 +16,7 @@ pub const OPCODE_EXTENDED_BIT: u32 = 0x8000_0000;
 
 // ---- Opcodes (subset) ----
 
+pub const OPCODE_NOP: u32 = 0x00;
 pub const OPCODE_MOV: u32 = 0x01;
 pub const OPCODE_ADD: u32 = 0x02;
 pub const OPCODE_MAD: u32 = 0x04;

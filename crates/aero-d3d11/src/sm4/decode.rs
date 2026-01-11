@@ -140,6 +140,14 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
 
         let inst_toks = &toks[i..i + len];
 
+        // `nop` can appear in both the declaration section and the executable instruction stream.
+        // It has no effect and should not influence where we split declarations from
+        // instructions.
+        if opcode == OPCODE_NOP {
+            i += len;
+            continue;
+        }
+
         // All declarations are required to come before the instruction stream. Unknown
         // declarations are preserved as `Sm4Decl::Unknown` so later stages can still decide
         // whether they're important.
