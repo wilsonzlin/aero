@@ -1303,6 +1303,26 @@ static void test_notify_cap_len_too_short_even_with_duplicate(void) {
                   VIRTIO_PCI_CAP_PARSE_ERR_NOTIFY_CAP_LEN_TOO_SMALL);
 }
 
+static void test_bar_address_overflow(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x200, 0x0100, 16);
+
+    bars[0] = 0xFFFFFFFFFFFFFF00ULL;
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("bar_address_overflow.res", res, VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_OVERFLOW);
+}
+
 static void test_bar_address_missing(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -2017,6 +2037,8 @@ static void test_result_str_coverage(void) {
                            virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_BAR_INDEX_OUT_OF_RANGE));
     expect_str_not_unknown("cap_parse_result_str.BAR_ADDRESS_MISSING",
                            virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_MISSING));
+    expect_str_not_unknown("cap_parse_result_str.BAR_ADDRESS_OVERFLOW",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_OVERFLOW));
     expect_str_not_unknown("cap_parse_result_str.DUPLICATE_CFG_TYPE",
                            virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_DUPLICATE_CFG_TYPE));
     expect_str_not_unknown("cap_parse_result_str.MISSING_COMMON_CFG",
@@ -2110,6 +2132,7 @@ int main(void) {
     test_notify_cap_len_19_too_short();
     test_notify_cap_len_15_returns_cap_len_too_small();
     test_notify_cap_len_too_short_even_with_duplicate();
+    test_bar_address_overflow();
     test_bar_address_missing();
     test_cap_ptr_unaligned();
     test_cap_next_out_of_range();

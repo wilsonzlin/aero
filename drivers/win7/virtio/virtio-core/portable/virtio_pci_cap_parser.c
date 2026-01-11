@@ -96,6 +96,7 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_store_region(
     uint32_t offset,
     uint32_t length) {
     uint64_t base;
+    uint64_t addr;
 
     if (bar >= VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT) {
         return VIRTIO_PCI_CAP_PARSE_ERR_BAR_INDEX_OUT_OF_RANGE;
@@ -106,13 +107,18 @@ static virtio_pci_cap_parse_result_t virtio_pci_cap_parser_store_region(
         return VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_MISSING;
     }
 
+    addr = base + (uint64_t)offset;
+    if (addr < base) {
+        return VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_OVERFLOW;
+    }
+
     out->bar = bar;
     out->id = id;
     out->cap_len = cap_len;
     out->cap_offset = cap_offset;
     out->offset = offset;
     out->length = length;
-    out->addr = base + (uint64_t)offset;
+    out->addr = addr;
     return VIRTIO_PCI_CAP_PARSE_OK;
 }
 
@@ -324,6 +330,8 @@ const char *virtio_pci_cap_parse_result_str(virtio_pci_cap_parse_result_t result
             return "BAR_INDEX_OUT_OF_RANGE";
         case VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_MISSING:
             return "BAR_ADDRESS_MISSING";
+        case VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_OVERFLOW:
+            return "BAR_ADDRESS_OVERFLOW";
         case VIRTIO_PCI_CAP_PARSE_ERR_DUPLICATE_CFG_TYPE:
             return "DUPLICATE_CFG_TYPE";
         case VIRTIO_PCI_CAP_PARSE_ERR_MISSING_COMMON_CFG:

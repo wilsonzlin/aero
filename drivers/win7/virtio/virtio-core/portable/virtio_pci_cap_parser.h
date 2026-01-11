@@ -80,6 +80,7 @@ typedef enum virtio_pci_cap_parse_result {
     VIRTIO_PCI_CAP_PARSE_ERR_MISSING_NOTIFY_CFG,
     VIRTIO_PCI_CAP_PARSE_ERR_MISSING_ISR_CFG,
     VIRTIO_PCI_CAP_PARSE_ERR_MISSING_DEVICE_CFG,
+    VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_OVERFLOW,
 } virtio_pci_cap_parse_result_t;
 
 virtio_pci_cap_parse_result_t virtio_pci_cap_parse(
