@@ -16,10 +16,13 @@
 CARGO_BUILD_RUSTC_WRAPPER = ""
 CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER = ""
 #
-# Some sandbox environments ship with a broken `sccache` wrapper via environment
-# variables. Keep these in addition to the `[build]` overrides below so `cargo`
-# invocations from within the repo are resilient even when wrappers are exported
-# globally.
+# Note: Cargo reads `RUSTC_WRAPPER` / `RUSTC_WORKSPACE_WRAPPER` from the *current*
+# environment when deciding which wrapper to use. Values set here under `[env]`
+# only apply to processes Cargo spawns (rustc, build scripts, etc), so they do
+# not override wrapper env vars exported in your shell.
+#
+# For agent sandboxes, prefer `source scripts/agent-env.sh`, which clears
+# sccache-based wrapper env vars before running Cargo.
 RUSTC_WRAPPER = ""
 RUSTC_WORKSPACE_WRAPPER = ""
 
