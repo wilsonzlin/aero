@@ -398,7 +398,12 @@ function Update-DevicesCmdStorageServiceFromDrivers {
     return
   }
 
-  $infFiles = @(Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue)
+  # Note: on Linux, `-Filter "*.inf"` is case-sensitive. Use a case-insensitive match so
+  # we don't miss `*.INF` files coming from Windows build artifacts.
+  $infFiles = @(
+    Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match '(?i)\.inf$' }
+  )
   if (-not $infFiles -or $infFiles.Count -eq 0) {
     Write-Warning "No .inf files found under staged drivers root ($StageDriversRoot); skipping virtio-blk service auto-detection."
     return
@@ -519,7 +524,13 @@ function Copy-DriversToPackagerLayout {
 
   $inputRootTrimmed = $InputRoot.TrimEnd("\", "/")
 
-  $infFiles = Get-ChildItem -Path $InputRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue | Sort-Object -Property FullName
+  # Note: on Linux, `-Filter "*.inf"` is case-sensitive. Use a case-insensitive match so
+  # we don't miss `*.INF` files coming from Windows build artifacts.
+  $infFiles = @(
+    Get-ChildItem -Path $InputRoot -Recurse -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match '(?i)\.inf$' } |
+      Sort-Object -Property FullName
+  )
   if (-not $infFiles) {
     throw "No '.inf' files found under '$InputRoot'."
   }
