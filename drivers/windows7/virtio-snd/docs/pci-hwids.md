@@ -70,8 +70,8 @@ multiple INFs that match the same contract-v1 device IDs.
 The repository also contains an optional **legacy filename alias** INF
 (`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf` (and
 regenerate/sign `virtio-snd.cat`), it installs the same driver/service as
-`aero-virtio-snd.inf` but provides the legacy filename for compatibility with
-older tooling/workflows.
+`aero-virtio-snd.inf` and matches the same contract-v1 HWID, but provides the
+legacy filename for compatibility with older tooling/workflows.
 
 ## QEMU mapping
 

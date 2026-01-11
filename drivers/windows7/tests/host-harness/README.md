@@ -288,8 +288,8 @@ For safety and determinism, the provisioning script installs **only an allowlist
 Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input/virtio-snd
 (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`) and sets `x-pci-revision=0x01` so strict contract-v1 INFs can bind.
 For virtio-snd, the canonical INF (`aero-virtio-snd.inf`) requires `PCI\VEN_1AF4&DEV_1059&REV_01`. The legacy
-filename alias (`virtio-snd.inf`) matches additional compatibility IDs (for example `DEV_1059` without `REV_01` and
-transitional `DEV_1018`), but it is not used by default.
+filename alias (`virtio-snd.inf`) matches the same contract-v1 HWID but provides the legacy filename for older
+workflows/tools, and it is not used by default.
 
 For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`).
 Avoid installing multiple INFs that bind the same HWID, or disambiguate by passing a relative INF path via
