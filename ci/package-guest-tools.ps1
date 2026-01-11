@@ -832,7 +832,7 @@ try {
   Write-Host "  spec    : $specPathResolved"
   Write-Host "  out     : $outDirResolved"
 
-  & cargo run --manifest-path $packagerManifest --release -- `
+  & cargo run --manifest-path $packagerManifest --release --locked -- `
     --drivers-dir $stageDriversRoot `
     --guest-tools-dir $stageGuestTools `
     --spec $specPathResolved `
