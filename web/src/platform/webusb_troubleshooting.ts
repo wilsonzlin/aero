@@ -40,10 +40,28 @@ function normalizeErrorChain(err: unknown, maxDepth = 5): Array<{ name?: string;
   const chain: Array<{ name?: string; message?: string }> = [];
   const seen = new Set<unknown>();
 
+  const parseStringChain = (text: string): Array<{ name?: string; message?: string }> | null => {
+    const parts = text
+      .split("<-")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    if (parts.length <= 1) return null;
+    return parts.map((part) => {
+      const match = /^([A-Za-z]+Error):\s*(.*)$/.exec(part);
+      if (match) {
+        const [, parsedName, parsedMessage] = match;
+        return { name: parsedName, message: parsedMessage || undefined };
+      }
+      return { message: part };
+    });
+  };
+
   let cur: unknown = err;
   for (let depth = 0; depth < maxDepth; depth += 1) {
     if (typeof cur === "string") {
-      chain.push({ message: cur });
+      const parsed = parseStringChain(cur);
+      if (parsed) chain.push(...parsed);
+      else chain.push({ message: cur });
       break;
     }
 
@@ -52,10 +70,21 @@ function normalizeErrorChain(err: unknown, maxDepth = 5): Array<{ name?: string;
       seen.add(cur);
 
       const { name, message, cause } = cur as ErrorLike;
-      chain.push({
-        name: typeof name === "string" ? name : undefined,
-        message: typeof message === "string" ? message : undefined,
-      });
+      const parsedName = typeof name === "string" ? name : undefined;
+      const parsedMessage = typeof message === "string" ? message : undefined;
+
+      // If we have a single string containing a formatted chain (e.g.
+      // `Error: ... <- NetworkError: ...`), parse it back into a structured list
+      // so callers can still decode the underlying DOMException name.
+      if (parsedMessage && typeof cause === "undefined") {
+        const parsed = parseStringChain(parsedMessage);
+        if (parsed) {
+          chain.push(...parsed);
+          break;
+        }
+      }
+
+      chain.push({ name: parsedName, message: parsedMessage });
 
       if (cause === undefined) break;
       cur = cause;

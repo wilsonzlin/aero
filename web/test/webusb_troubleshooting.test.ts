@@ -69,6 +69,12 @@ test("explainWebUsbError: prefers DOMException name from Error.cause when presen
   assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
 });
 
+test("explainWebUsbError: parses formatted '<-' error chains in strings", () => {
+  const err = new Error("Error: Failed to open USB device <- NetworkError: Unable to claim interface.");
+  const res = withUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)", () => explainWebUsbError(err));
+  assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
+});
+
 test("explainWebUsbError: Windows driver hints omit Linux udev guidance", () => {
   const res = withUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)", () =>
     explainWebUsbError("NetworkError: Unable to claim interface."),
