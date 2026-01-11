@@ -26,6 +26,9 @@ Minimum supported commands:
   Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (when exposed) device feature bits.
   Also prints a fence snapshot and (when available) a scanout0 vblank timing snapshot.
 
+- `aerogpu_dbgctl --status` *(alias for `--query-version`)*  
+  Prints a short combined snapshot (device/ABI + fences + scanout0 vblank).
+
 - `aerogpu_dbgctl --query-umd-private`  
   Calls `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` and prints the `aerogpu_umd_private_v1` blob used by UMDs to discover the active ABI + feature bits.
 
@@ -65,6 +68,7 @@ Examples:
 
 ```
 aerogpu_dbgctl --list-displays
+aerogpu_dbgctl --status
 aerogpu_dbgctl --query-device
 aerogpu_dbgctl --query-umd-private
 aerogpu_dbgctl --query-fence

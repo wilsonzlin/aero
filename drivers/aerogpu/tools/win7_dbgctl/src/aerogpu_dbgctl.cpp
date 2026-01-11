@@ -116,6 +116,7 @@ static void PrintUsage() {
            L"\n"
            L"Commands:\n"
            L"  --list-displays\n"
+           L"  --status  (alias: --query-version)\n"
            L"  --query-version  (alias: --query-device)\n"
            L"  --query-umd-private\n"
            L"  --query-fence\n"
@@ -1181,6 +1182,12 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--query-version") == 0 || wcscmp(a, L"--query-device") == 0) {
+      if (!SetCommand(CMD_QUERY_VERSION)) {
+        return 1;
+      }
+      continue;
+    }
+    if (wcscmp(a, L"--status") == 0) {
       if (!SetCommand(CMD_QUERY_VERSION)) {
         return 1;
       }

@@ -404,7 +404,7 @@ aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 
 | Command | What it should report/do | When to use |
 |---|---|---|
-| `status` | device present, mode, engine state, last reset reason | first command in any bug report |
+| `--status` (alias: `--query-version`) | combined snapshot (device/ABI + fences + vblank) | first command in any bug report |
 | `--query-umd-private` | KMD-provided `UMDRIVERPRIVATE` blob (ABI + feature discovery used by UMDs) | diagnosing ABI/feature mismatches |
 | `--dump-ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
 | `--query-fence` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
