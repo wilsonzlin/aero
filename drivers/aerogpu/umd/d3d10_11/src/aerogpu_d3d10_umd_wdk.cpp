@@ -1059,7 +1059,16 @@ void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
   if (!dev || !dev->callbacks.pfnSetErrorCb) {
     return;
   }
-  dev->callbacks.pfnSetErrorCb(hDevice, hr);
+  // Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
+  // HDEVICE. Prefer the HDEVICE form when that's what the signature expects.
+  if constexpr (std::is_invocable_v<decltype(dev->callbacks.pfnSetErrorCb), D3D10DDI_HDEVICE, HRESULT>) {
+    dev->callbacks.pfnSetErrorCb(hDevice, hr);
+  } else {
+    if (!dev->hrt_device.pDrvPrivate) {
+      return;
+    }
+    CallCbMaybeHandle(dev->callbacks.pfnSetErrorCb, dev->hrt_device, hr);
+  }
 }
 
 static bool SupportsTransfer(const AeroGpuDevice* dev) {
