@@ -440,6 +440,28 @@ fn uhci_register_block_supports_byte_accesses() {
 }
 
 #[test]
+fn uhci_register_block_supports_dword_accesses() {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_CF | USBCMD_MAXP) as u32);
+    uhci.controller.set_usbsts_bits(USBSTS_USBERRINT);
+
+    // A 32-bit read from offset 0 must return USBCMD in the low half and USBSTS in the high half.
+    let v = uhci.port_read(REG_USBCMD, 4);
+    assert_eq!(v as u16, USBCMD_CF | USBCMD_MAXP);
+    assert_ne!(((v >> 16) as u16) & USBSTS_USBERRINT, 0);
+
+    // A 32-bit write should behave like the corresponding byte/word writes.
+    let w = ((USBSTS_USBERRINT as u32) << 16) | (USBCMD_CF | USBCMD_MAXP) as u32;
+    uhci.port_write(REG_USBCMD, 4, w);
+    assert_eq!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
+        0
+    );
+    assert_eq!(uhci.port_read(REG_USBCMD, 2) as u16, USBCMD_CF | USBCMD_MAXP);
+}
+
+#[test]
 fn uhci_fgr_latches_resume_detect_and_can_irq() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
 
