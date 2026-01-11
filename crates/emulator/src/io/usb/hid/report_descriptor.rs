@@ -115,6 +115,7 @@ const MAX_REPORT_SIZE_BITS: u32 = 255;
 /// `REPORT_COUNT` can be encoded in 1/2/4 bytes in the descriptor, but we cap it to keep report
 /// payload sizes within a sane bound.
 const MAX_REPORT_COUNT: u32 = 65_535;
+const MAX_HID_USAGE_U16: u32 = u16::MAX as u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValidationSummary {
@@ -279,6 +280,22 @@ fn validate_collection(
         ));
     }
 
+    if collection.usage_page > MAX_HID_USAGE_U16 {
+        return Err(HidDescriptorError::at(
+            path.as_string(),
+            format!(
+                "usagePage must be in 0..={MAX_HID_USAGE_U16} (got {})",
+                collection.usage_page
+            ),
+        ));
+    }
+    if collection.usage > MAX_HID_USAGE_U16 {
+        return Err(HidDescriptorError::at(
+            path.as_string(),
+            format!("usage must be in 0..={MAX_HID_USAGE_U16} (got {})", collection.usage),
+        ));
+    }
+
     validate_report_list(
         HidReportKind::Input,
         &collection.input_reports,
@@ -347,6 +364,26 @@ fn validate_report_list(
 }
 
 fn validate_report_item(item: &HidReportItem, path: &str) -> Result<u32, HidDescriptorError> {
+    if item.usage_page > MAX_HID_USAGE_U16 {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "usagePage must be in 0..={MAX_HID_USAGE_U16} (got {})",
+                item.usage_page
+            ),
+        ));
+    }
+    for (idx, &usage) in item.usages.iter().enumerate() {
+        if usage > MAX_HID_USAGE_U16 {
+            return Err(HidDescriptorError::at(
+                path,
+                format!(
+                    "usages[{idx}] must be in 0..={MAX_HID_USAGE_U16} (got {usage})"
+                ),
+            ));
+        }
+    }
+
     if item.report_size == 0 || item.report_size > MAX_REPORT_SIZE_BITS {
         return Err(HidDescriptorError::at(
             path,
@@ -1893,6 +1930,46 @@ mod tests {
         let err = synthesize_report_descriptor(&collections).unwrap_err();
         assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
         assert!(err.message.contains("unitExponent"));
+    }
+
+    #[test]
+    fn synth_rejects_collection_usage_page_out_of_range() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x1_0000,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0]");
+        assert!(err.message.contains("usagePage"));
+    }
+
+    #[test]
+    fn synth_rejects_usage_out_of_range() {
+        let mut item = simple_item(1, 1);
+        item.usages = vec![0x1_0000];
+
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![item],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("usages[0]"));
     }
 
     #[test]

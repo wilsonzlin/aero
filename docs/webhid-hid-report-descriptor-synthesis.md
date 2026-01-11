@@ -333,9 +333,13 @@ reports):
 The normalized WebHID JSON contract is consumed by Rust (`crates/aero-usb`) and therefore must fit
 in the Rust value types:
 
-- All unsigned numeric fields (`u32`) MUST be integers in `0..=4294967295`:
-  - `usagePage`, `usage`, `usageMinimum`, `usageMaximum`, `unit`
-  - all entries of `usages`, `strings`, `designators`
+- All unsigned numeric fields (`u32`) MUST be integers in `0..=4294967295`.
+- HID usage pages/usages MUST additionally fit in `u16` (`0..=65535`) because we emit `Usage Page`,
+  `Usage`, and `Usage Min/Max` using their standard 1-2 byte encodings (we do not support the
+  32-bit “Usage = page<<16 | id” form):
+  - `usagePage` (collection and report-item)
+  - `usage` (collection)
+  - `usageMinimum`, `usageMaximum`, and all entries of `usages`
 - All signed numeric fields (`i32`) MUST be integers in `-2147483648..=2147483647`:
   - `logicalMinimum`, `logicalMaximum`, `physicalMinimum`, `physicalMaximum`
 - Boolean fields MUST be booleans (not `0/1` or other truthy/falsy values):

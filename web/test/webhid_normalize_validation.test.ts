@@ -65,11 +65,11 @@ test("normalizeCollections(validate): rejects mixed reportIds", () => {
   });
 });
 
-test("normalizeCollections(validate): rejects non-u32 collection usagePage with a path", () => {
+test("normalizeCollections(validate): rejects collection usagePage outside u16 range with a path", () => {
   const collections: HidCollectionInfo[] = [
     {
       ...baseCollection(),
-      usagePage: -1,
+      usagePage: 0x1_0000,
       inputReports: [{ reportId: 0, items: [BASE_ITEM] }],
     },
   ];
@@ -97,7 +97,7 @@ test("normalizeCollections(validate): rejects isRange items with usages out of o
   });
 });
 
-test("normalizeCollections(validate): rejects non-u32 usages values with a path", () => {
+test("normalizeCollections(validate): rejects usages values outside u16 range with a path", () => {
   const badItem: HidReportItem = { ...BASE_ITEM, usages: [-1] };
   const collections: HidCollectionInfo[] = [
     {
@@ -108,6 +108,20 @@ test("normalizeCollections(validate): rejects non-u32 usages values with a path"
 
   assert.throws(() => normalizeCollections(collections, { validate: true }), {
     message: /usages\[0\].*collections\[0\]\.inputReports\[0\]\.items\[0\]/,
+  });
+});
+
+test("normalizeCollections(validate): rejects item usagePage outside u16 range with a path", () => {
+  const badItem: HidReportItem = { ...BASE_ITEM, usagePage: 0x1_0000 };
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 0, items: [badItem] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /usagePage.*collections\[0\]\.inputReports\[0\]\.items\[0\]/,
   });
 });
 

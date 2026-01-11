@@ -112,6 +112,7 @@ const MAX_REPORT_SIZE_BITS = 255;
 const MAX_REPORT_COUNT = 65_535;
 const MAX_U32 = 0xffff_ffffn;
 const MAX_U32_NUM = 0xffff_ffff;
+const MAX_U16_NUM = 0xffff;
 const MIN_I32 = -0x8000_0000;
 const MAX_I32 = 0x7fff_ffff;
 
@@ -128,6 +129,12 @@ function err(path: Path, message: string): Error {
 function validateU32(value: unknown, name: string, path: Path): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > MAX_U32_NUM) {
     throw err(path, `${name} must be an integer in [0, ${MAX_U32_NUM}] (got ${String(value)})`);
+  }
+}
+
+function validateU16(value: unknown, name: string, path: Path): void {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > MAX_U16_NUM) {
+    throw err(path, `${name} must be an integer in [0, ${MAX_U16_NUM}] (got ${String(value)})`);
   }
 }
 
@@ -148,6 +155,15 @@ function validateU32Array(values: unknown, name: string, path: Path): void {
   }
   for (let i = 0; i < values.length; i++) {
     validateU32(values[i], `${name}[${i}]`, path);
+  }
+}
+
+function validateU16Array(values: unknown, name: string, path: Path): void {
+  if (!Array.isArray(values)) {
+    throw err(path, `${name} must be an array (got ${String(values)})`);
+  }
+  for (let i = 0; i < values.length; i++) {
+    validateU16(values[i], `${name}[${i}]`, path);
   }
 }
 
@@ -435,8 +451,8 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
   const reportBits = new Map<string, bigint>();
 
   const visitCollection = (collection: NormalizedHidCollectionInfo, path: Path): void => {
-    validateU32(collection.usagePage, "usagePage", path);
-    validateU32(collection.usage, "usage", path);
+    validateU16(collection.usagePage, "usagePage", path);
+    validateU16(collection.usage, "usage", path);
 
     const visitReportList = (
       reports: readonly NormalizedHidReportInfo[],
@@ -458,10 +474,10 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
           const item = report.items[itemIdx];
           const itemPath = [...reportPath, `items[${itemIdx}]`];
 
-          validateU32(item.usagePage, "usagePage", itemPath);
-          validateU32Array(item.usages, "usages", itemPath);
-          validateU32(item.usageMinimum, "usageMinimum", itemPath);
-          validateU32(item.usageMaximum, "usageMaximum", itemPath);
+          validateU16(item.usagePage, "usagePage", itemPath);
+          validateU16Array(item.usages, "usages", itemPath);
+          validateU16(item.usageMinimum, "usageMinimum", itemPath);
+          validateU16(item.usageMaximum, "usageMaximum", itemPath);
           validateU32Array(item.strings, "strings", itemPath);
           validateU32(item.stringMinimum, "stringMinimum", itemPath);
           validateU32(item.stringMaximum, "stringMaximum", itemPath);

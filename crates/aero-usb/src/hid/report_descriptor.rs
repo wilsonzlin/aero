@@ -95,6 +95,7 @@ const MAX_REPORT_SIZE_BITS: u32 = 255;
 /// `REPORT_COUNT` can be encoded in 1/2/4 bytes in the descriptor, but we cap it to keep report
 /// payload sizes within a sane bound.
 const MAX_REPORT_COUNT: u32 = 65_535;
+const MAX_HID_USAGE_U16: u32 = u16::MAX as u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValidationSummary {
@@ -274,6 +275,22 @@ fn validate_collection(
         ));
     }
 
+    if collection.usage_page > MAX_HID_USAGE_U16 {
+        return Err(HidDescriptorError::at(
+            path.as_string(),
+            format!(
+                "usagePage must be in 0..={MAX_HID_USAGE_U16} (got {})",
+                collection.usage_page
+            ),
+        ));
+    }
+    if collection.usage > MAX_HID_USAGE_U16 {
+        return Err(HidDescriptorError::at(
+            path.as_string(),
+            format!("usage must be in 0..={MAX_HID_USAGE_U16} (got {})", collection.usage),
+        ));
+    }
+
     validate_report_list(
         HidReportKind::Input,
         &collection.input_reports,
@@ -342,6 +359,26 @@ fn validate_report_list(
 }
 
 fn validate_report_item(item: &HidReportItem, path: &str) -> Result<u32, HidDescriptorError> {
+    if item.usage_page > MAX_HID_USAGE_U16 {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "usagePage must be in 0..={MAX_HID_USAGE_U16} (got {})",
+                item.usage_page
+            ),
+        ));
+    }
+    for (idx, &usage) in item.usages.iter().enumerate() {
+        if usage > MAX_HID_USAGE_U16 {
+            return Err(HidDescriptorError::at(
+                path,
+                format!(
+                    "usages[{idx}] must be in 0..={MAX_HID_USAGE_U16} (got {usage})"
+                ),
+            ));
+        }
+    }
+
     if item.report_size == 0 || item.report_size > MAX_REPORT_SIZE_BITS {
         return Err(HidDescriptorError::at(
             path,
@@ -1514,6 +1551,72 @@ mod tests {
             Err(HidDescriptorError::Validation { path, message }) => {
                 assert_eq!(path, "collections[0].inputReports[0].items[0]");
                 assert!(message.contains("unitExponent"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_collection_usage_page_out_of_range() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x1_0000,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0]");
+                assert!(message.contains("usagePage"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_usage_out_of_range() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 1,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x1_0000],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].inputReports[0].items[0]");
+                assert!(message.contains("usages[0]"));
             }
             other => panic!("expected validation error, got {other:?}"),
         }
