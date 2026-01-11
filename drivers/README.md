@@ -177,7 +177,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
 
 This validates the packaged drivers using:
 
-- `tools/packaging/specs/win7-aero-virtio.json` (modern-only virtio IDs; rejects transitional `1000/1001`)
+- `tools/packaging/specs/win7-aero-virtio.json` (modern-only virtio IDs; rejects virtio-pci transitional IDs)
 
 ## In-guest install workflow (post-install)
 
