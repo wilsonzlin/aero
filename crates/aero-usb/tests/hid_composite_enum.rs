@@ -444,7 +444,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
     let td_gamepad = alloc.alloc(0x20, 0x10);
 
     let buf_kbd = alloc.alloc(8, 0x10);
-    let buf_mouse = alloc.alloc(3, 0x10);
+    let buf_mouse = alloc.alloc(4, 0x10);
     let buf_gamepad = alloc.alloc(8, 0x10);
 
     write_td(
@@ -460,7 +460,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
         td_mouse,
         LINK_PTR_T,
         td_ctrl(true, true),
-        td_token(0x69, 1, 2, false, 3),
+        td_token(0x69, 1, 2, false, 4),
         buf_mouse,
     );
     write_td(
@@ -526,10 +526,11 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
 
     ctrl.step_frame(&mut mem, &mut irq);
     assert_eq!(mem.read_u32(td_mouse + 4) & TD_CTRL_ACTIVE, 0);
-    let report = &mem.data[buf_mouse as usize..buf_mouse as usize + 3];
+    let report = &mem.data[buf_mouse as usize..buf_mouse as usize + 4];
     assert_eq!(report[0], 0);
     assert_eq!(report[1], 5);
     assert_eq!(report[2], (-5i8) as u8);
+    assert_eq!(report[3], 0); // wheel
     assert!(irq.raised);
 
     ctrl.port_write(

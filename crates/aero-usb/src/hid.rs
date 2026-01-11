@@ -22,8 +22,8 @@ const DESC_STRING: u8 = 0x03;
 const DESC_HID: u8 = 0x21;
 const DESC_REPORT: u8 = 0x22;
 
-const KEYBOARD_REPORT_DESCRIPTOR_LEN: u16 = 45;
-const MOUSE_REPORT_DESCRIPTOR_LEN: u16 = 50;
+const KEYBOARD_REPORT_DESCRIPTOR_LEN: u16 = 63;
+const MOUSE_REPORT_DESCRIPTOR_LEN: u16 = 52;
 const GAMEPAD_REPORT_DESCRIPTOR_LEN: u16 = 76;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -233,25 +233,34 @@ impl UsbHidKeyboard {
             0x05, 0x01, // Usage Page (Generic Desktop)
             0x09, 0x06, // Usage (Keyboard)
             0xA1, 0x01, // Collection (Application)
-            0x05, 0x07, // Usage Page (Keyboard)
+            0x05, 0x07, // Usage Page (Keyboard/Keypad)
             0x19, 0xE0, // Usage Minimum (Left Control)
             0x29, 0xE7, // Usage Maximum (Right GUI)
             0x15, 0x00, // Logical Minimum (0)
             0x25, 0x01, // Logical Maximum (1)
             0x75, 0x01, // Report Size (1)
             0x95, 0x08, // Report Count (8)
-            0x81, 0x02, // Input (Data, Variable, Absolute)
+            0x81, 0x02, // Input (Data,Var,Abs) Modifier byte
             0x95, 0x01, // Report Count (1)
             0x75, 0x08, // Report Size (8)
-            0x81, 0x01, // Input (Constant)
+            0x81, 0x01, // Input (Const,Array,Abs) Reserved byte
+            0x95, 0x05, // Report Count (5)
+            0x75, 0x01, // Report Size (1)
+            0x05, 0x08, // Usage Page (LEDs)
+            0x19, 0x01, // Usage Minimum (Num Lock)
+            0x29, 0x05, // Usage Maximum (Kana)
+            0x91, 0x02, // Output (Data,Var,Abs) LED report
+            0x95, 0x01, // Report Count (1)
+            0x75, 0x03, // Report Size (3)
+            0x91, 0x01, // Output (Const,Array,Abs) LED padding
             0x95, 0x06, // Report Count (6)
             0x75, 0x08, // Report Size (8)
             0x15, 0x00, // Logical Minimum (0)
             0x25, 0x65, // Logical Maximum (101)
-            0x05, 0x07, // Usage Page (Keyboard)
+            0x05, 0x07, // Usage Page (Keyboard/Keypad)
             0x19, 0x00, // Usage Minimum (0)
             0x29, 0x65, // Usage Maximum (101)
-            0x81, 0x00, // Input (Data, Array)
+            0x81, 0x00, // Input (Data,Array,Abs) Key arrays (6 bytes)
             0xC0, // End Collection
         ];
         DESC
@@ -510,7 +519,7 @@ pub struct UsbHidMouse {
     ep0: Ep0Control,
 
     buttons: u8,
-    pending_reports: VecDeque<[u8; 3]>,
+    pending_reports: VecDeque<[u8; 4]>,
 }
 
 impl UsbHidMouse {
@@ -532,7 +541,7 @@ impl UsbHidMouse {
         let dx = dx.clamp(-127, 127) as i8 as u8;
         let dy = dy.clamp(-127, 127) as i8 as u8;
         self.pending_reports
-            .push_back([self.buttons & 0x07, dx, dy]);
+            .push_back([self.buttons & 0x07, dx, dy, 0]);
     }
 
     pub fn button_event(&mut self, button_mask: u8, pressed: bool) {
@@ -541,7 +550,14 @@ impl UsbHidMouse {
         } else {
             self.buttons &= !button_mask;
         }
-        self.pending_reports.push_back([self.buttons & 0x07, 0, 0]);
+        self.pending_reports
+            .push_back([self.buttons & 0x07, 0, 0, 0]);
+    }
+
+    pub fn wheel(&mut self, delta: i32) {
+        let wheel = delta.clamp(-127, 127) as i8 as u8;
+        self.pending_reports
+            .push_back([self.buttons & 0x07, 0, 0, wheel]);
     }
 
     fn finalize_control(&mut self) {
@@ -584,25 +600,26 @@ impl UsbHidMouse {
             0xA1, 0x01, // Collection (Application)
             0x09, 0x01, //   Usage (Pointer)
             0xA1, 0x00, //   Collection (Physical)
-            0x05, 0x09, //     Usage Page (Button)
+            0x05, 0x09, //     Usage Page (Buttons)
             0x19, 0x01, //     Usage Minimum (Button 1)
             0x29, 0x03, //     Usage Maximum (Button 3)
             0x15, 0x00, //     Logical Minimum (0)
             0x25, 0x01, //     Logical Maximum (1)
             0x95, 0x03, //     Report Count (3)
             0x75, 0x01, //     Report Size (1)
-            0x81, 0x02, //     Input (Data, Variable, Absolute)
+            0x81, 0x02, //     Input (Data,Var,Abs) Button bits
             0x95, 0x01, //     Report Count (1)
             0x75, 0x05, //     Report Size (5)
-            0x81, 0x01, //     Input (Constant)
+            0x81, 0x01, //     Input (Const,Array,Abs) Padding
             0x05, 0x01, //     Usage Page (Generic Desktop)
             0x09, 0x30, //     Usage (X)
             0x09, 0x31, //     Usage (Y)
+            0x09, 0x38, //     Usage (Wheel)
             0x15, 0x81, //     Logical Minimum (-127)
             0x25, 0x7F, //     Logical Maximum (127)
             0x75, 0x08, //     Report Size (8)
-            0x95, 0x02, //     Report Count (2)
-            0x81, 0x06, //     Input (Data, Variable, Relative)
+            0x95, 0x03, //     Report Count (3)
+            0x81, 0x06, //     Input (Data,Var,Rel) X,Y,Wheel
             0xC0, //   End Collection
             0xC0, // End Collection
         ];
@@ -645,7 +662,7 @@ impl UsbHidMouse {
                 0x05,
                 0x81,
                 0x03,
-                3,
+                4,
                 0,
                 10,
             ]
@@ -1288,7 +1305,7 @@ pub struct UsbHidCompositeInput {
     pending_keyboard_reports: VecDeque<[u8; 8]>,
 
     mouse_buttons: u8,
-    pending_mouse_reports: VecDeque<[u8; 3]>,
+    pending_mouse_reports: VecDeque<[u8; 4]>,
 
     gamepad_report: GamepadReport,
     pending_gamepad_reports: VecDeque<[u8; 8]>,
@@ -1356,7 +1373,7 @@ impl UsbHidCompositeInput {
         let dx = dx.clamp(-127, 127) as i8 as u8;
         let dy = dy.clamp(-127, 127) as i8 as u8;
         self.pending_mouse_reports
-            .push_back([self.mouse_buttons & 0x07, dx, dy]);
+            .push_back([self.mouse_buttons & 0x07, dx, dy, 0]);
     }
 
     pub fn mouse_button_event(&mut self, button_mask: u8, pressed: bool) {
@@ -1366,7 +1383,13 @@ impl UsbHidCompositeInput {
             self.mouse_buttons &= !button_mask;
         }
         self.pending_mouse_reports
-            .push_back([self.mouse_buttons & 0x07, 0, 0]);
+            .push_back([self.mouse_buttons & 0x07, 0, 0, 0]);
+    }
+
+    pub fn mouse_wheel(&mut self, delta: i32) {
+        let wheel = delta.clamp(-127, 127) as i8 as u8;
+        self.pending_mouse_reports
+            .push_back([self.mouse_buttons & 0x07, 0, 0, wheel]);
     }
 
     pub fn gamepad_button_event(&mut self, button_idx: u8, pressed: bool) {
@@ -1506,7 +1529,7 @@ impl UsbHidCompositeInput {
                 0x05,
                 0x82,
                 0x03,
-                3,
+                4,
                 0,
                 10,
                 // Interface 2: Gamepad.
