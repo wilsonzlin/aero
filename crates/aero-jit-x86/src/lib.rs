@@ -9,8 +9,8 @@
 //! the legacy baseline ABI (`CpuState`/`Reg`) and baseline WASM codegen.
 
 pub mod abi;
-pub mod jit_ctx;
 pub mod compiler;
+pub mod jit_ctx;
 pub mod simd;
 pub mod tier1;
 pub mod tier1_pipeline;
@@ -54,7 +54,7 @@ pub const TLB_FLAG_IS_RAM: u64 = 1 << 3;
 pub use tier1::{
     discover_block, translate_block, BasicBlock, BlockEndKind, BlockLimits, Tier1WasmCodegen,
 };
-pub use tier2::{optimize_trace, TraceBuilder, Tier2WasmCodegen};
+pub use tier2::{optimize_trace, Tier2WasmCodegen, TraceBuilder};
 
 // ---- Legacy baseline compatibility ------------------------------------------------------------
 

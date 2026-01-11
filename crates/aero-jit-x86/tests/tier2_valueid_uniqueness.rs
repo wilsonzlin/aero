@@ -3,9 +3,9 @@ mod tier1_common;
 use std::collections::HashMap;
 
 use aero_cpu_core::jit::runtime::PageVersionTracker;
-use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::ir::{Operand, ValueId};
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
+use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
 use aero_jit_x86::tier2::wasm_codegen::Tier2WasmCodegen;
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};

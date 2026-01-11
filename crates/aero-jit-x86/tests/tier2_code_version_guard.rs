@@ -1,8 +1,8 @@
 mod tier1_common;
 
 use aero_jit_x86::tier2::interp::{run_trace, RunExit, RuntimeEnv, T2State};
-use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::ir::{Block, BlockId, Function, Instr, Terminator, TraceIr, TraceKind};
+use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
 use tier1_common::SimpleBus;
 

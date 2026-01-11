@@ -7,8 +7,8 @@ use wasmtime::{Caller, Config, Engine, Linker, Memory, MemoryType, Module, Store
 use super::Tier1Cpu;
 use crate::abi;
 use crate::jit_ctx::{self, JitContext};
-use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::tier1::EXPORT_TIER1_BLOCK_FN;
+use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::wasm::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
     IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,

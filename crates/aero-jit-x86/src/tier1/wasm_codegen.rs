@@ -4,10 +4,10 @@ use wasm_encoder::{
     ImportSection, Instruction, MemArg, MemoryType, Module, TypeSection, ValType,
 };
 
+use super::ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 use crate::abi;
 use crate::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE};
 use crate::jit_ctx::{self, JitContext};
-use super::ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 
 use crate::wasm::abi::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,

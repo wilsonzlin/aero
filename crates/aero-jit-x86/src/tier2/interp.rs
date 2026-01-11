@@ -230,7 +230,8 @@ pub fn run_function_from_block(
         state.cpu.rip = block.start_rip;
         let mut dummy_stats = ExecStats::default();
         for inst in &block.instrs {
-            if let Some(exit) = exec_instr(inst, state, env, bus, &mut values, &mut dummy_stats, None)
+            if let Some(exit) =
+                exec_instr(inst, state, env, bus, &mut values, &mut dummy_stats, None)
             {
                 match exit {
                     RunExit::SideExit { next_rip } => {
@@ -306,8 +307,15 @@ fn run_trace_inner(
     let mut stats = ExecStats::default();
 
     for inst in &trace.prologue {
-        if let Some(exit) = exec_instr(inst, state, env, bus, &mut values, &mut stats, cache.as_mut())
-        {
+        if let Some(exit) = exec_instr(
+            inst,
+            state,
+            env,
+            bus,
+            &mut values,
+            &mut stats,
+            cache.as_mut(),
+        ) {
             return RunResult { exit, stats };
         }
     }

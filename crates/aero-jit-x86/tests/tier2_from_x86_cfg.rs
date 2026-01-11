@@ -4,8 +4,8 @@ use aero_cpu_core::jit::runtime::PageVersionTracker;
 use aero_types::{Flag, FlagSet, Width};
 use tier1_common::SimpleBus;
 
-use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::ir::{Function, Instr, Terminator, TraceKind};
+use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 

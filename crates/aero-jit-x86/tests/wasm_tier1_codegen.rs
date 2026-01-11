@@ -6,13 +6,13 @@ use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::tier1::ir::interp::execute_block;
 use aero_jit_x86::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
-use aero_jit_x86::{discover_block, translate_block, BlockLimits};
 use aero_jit_x86::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
     IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
 };
 use aero_jit_x86::Tier1Bus;
+use aero_jit_x86::{discover_block, translate_block, BlockLimits};
 use aero_types::{Gpr, Width};
 use tier1_common::{write_cpu_to_wasm_bytes, write_gpr, CpuSnapshot, SimpleBus};
 

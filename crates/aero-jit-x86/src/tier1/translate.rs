@@ -1,5 +1,5 @@
 use super::block::{BasicBlock, BlockEndKind};
-use super::ir::{BinOp, GuestReg, IrBuilder, IrBlock, IrTerminator, ValueId};
+use super::ir::{BinOp, GuestReg, IrBlock, IrBuilder, IrTerminator, ValueId};
 use aero_types::{FlagSet, Gpr, Width};
 use aero_x86::tier1::{Address, AluOp, DecodedInst, InstKind, Operand, Reg};
 

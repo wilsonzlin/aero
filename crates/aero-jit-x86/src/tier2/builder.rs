@@ -8,9 +8,7 @@ use crate::tier1::ir::{
 use crate::tier1::{discover_block, translate_block, BasicBlock, BlockEndKind, BlockLimits};
 use crate::Tier1Bus;
 
-use super::ir::{
-    BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId,
-};
+use super::ir::{BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId};
 #[derive(Clone, Copy, Debug)]
 pub struct CfgBuildConfig {
     /// Maximum number of basic blocks to discover before stopping exploration.

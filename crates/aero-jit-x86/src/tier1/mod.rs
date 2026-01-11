@@ -29,4 +29,6 @@ pub mod pipeline {
 
 pub use block::{discover_block, BasicBlock, BlockEndKind, BlockLimits};
 pub use translate::translate_block;
-pub use wasm_codegen::{Tier1WasmCodegen, Tier1WasmOptions, EXPORT_BLOCK_FN, EXPORT_TIER1_BLOCK_FN};
+pub use wasm_codegen::{
+    Tier1WasmCodegen, Tier1WasmOptions, EXPORT_BLOCK_FN, EXPORT_TIER1_BLOCK_FN,
+};

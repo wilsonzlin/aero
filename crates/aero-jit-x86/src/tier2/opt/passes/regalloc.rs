@@ -1,5 +1,5 @@
-use aero_types::Gpr;
 use crate::tier2::ir::{Instr, TraceIr, REG_COUNT};
+use aero_types::Gpr;
 
 /// A simple guest-register allocation plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
