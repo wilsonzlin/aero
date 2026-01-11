@@ -50,6 +50,7 @@ constexpr bool NtSuccess(NTSTATUS st) {
 
 constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
+constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
 constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
 constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
@@ -1886,9 +1887,11 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   lock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
   InitLockArgsForMap(&lock_cb, subresource, map_type_u, map_flags_u);
 
+  const bool do_not_wait = (map_flags_u & kD3DMapFlagDoNotWait) != 0;
   HRESULT hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
   if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-      hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
+      hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L) ||
+      (do_not_wait && hr == kHrPending)) {
     hr = kDxgiErrorWasStillDrawing;
   }
   if (hr == kDxgiErrorWasStillDrawing) {
