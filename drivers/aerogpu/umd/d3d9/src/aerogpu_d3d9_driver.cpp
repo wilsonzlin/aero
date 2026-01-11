@@ -4251,6 +4251,8 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
     return E_INVALIDARG;
   }
 
+  const uint32_t expected_dma_priv_bytes = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+
   using ArgPtr = typename fn_first_param<CallbackFn>::type;
   using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
 
@@ -4291,38 +4293,57 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
     dma_ptr = cmd_ptr;
   }
 
-  WddmAllocationList* alloc_list = nullptr;
-  uint32_t alloc_entries = 0;
+  // Some runtimes only return the new command buffer via GetCommandBufferCb and
+  // keep the allocation/patch lists stable from CreateContext. Start from the
+  // current context pointers and override with any callback-provided values.
+  WddmAllocationList* alloc_list = dev->wddm_context.pAllocationList;
+  uint32_t alloc_entries = dev->wddm_context.AllocationListSize;
   if constexpr (has_member_pAllocationList<Arg>::value) {
-    alloc_list = args.pAllocationList;
+    if (args.pAllocationList) {
+      alloc_list = args.pAllocationList;
+    }
   }
   if constexpr (has_member_AllocationListSize<Arg>::value) {
-    alloc_entries = static_cast<uint32_t>(args.AllocationListSize);
+    if (args.AllocationListSize) {
+      alloc_entries = static_cast<uint32_t>(args.AllocationListSize);
+    }
   }
 
-  WddmPatchLocationList* patch_list = nullptr;
-  uint32_t patch_entries = 0;
+  WddmPatchLocationList* patch_list = dev->wddm_context.pPatchLocationList;
+  uint32_t patch_entries = dev->wddm_context.PatchLocationListSize;
   if constexpr (has_member_pPatchLocationList<Arg>::value) {
-    patch_list = args.pPatchLocationList;
+    if (args.pPatchLocationList) {
+      patch_list = args.pPatchLocationList;
+    }
   }
   if constexpr (has_member_PatchLocationListSize<Arg>::value) {
-    patch_entries = static_cast<uint32_t>(args.PatchLocationListSize);
+    if (args.PatchLocationListSize) {
+      patch_entries = static_cast<uint32_t>(args.PatchLocationListSize);
+    }
   }
 
-  void* dma_priv = nullptr;
-  uint32_t dma_priv_bytes = 0;
+  void* dma_priv = dev->wddm_context.pDmaBufferPrivateData;
+  uint32_t dma_priv_bytes = dev->wddm_context.DmaBufferPrivateDataSize;
   if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
-    dma_priv = args.pDmaBufferPrivateData;
+    if (args.pDmaBufferPrivateData) {
+      dma_priv = args.pDmaBufferPrivateData;
+    }
   }
   if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
-    dma_priv_bytes = static_cast<uint32_t>(args.DmaBufferPrivateDataSize);
+    if (args.DmaBufferPrivateDataSize) {
+      dma_priv_bytes = static_cast<uint32_t>(args.DmaBufferPrivateDataSize);
+    }
   }
-  const uint32_t expected_dma_priv_bytes = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
   if (dma_priv && dma_priv_bytes == 0) {
     dma_priv_bytes = expected_dma_priv_bytes;
   }
 
+  // Validate the required submission contract. If GetCommandBufferCb cannot
+  // provide it, return a failure so callers can fall back to AllocateCb.
   if (!cmd_ptr || cap == 0 || !alloc_list || alloc_entries == 0) {
+    return E_OUTOFMEMORY;
+  }
+  if (!dma_priv || dma_priv_bytes < expected_dma_priv_bytes) {
     return E_OUTOFMEMORY;
   }
 
@@ -4341,13 +4362,11 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   dev->wddm_context.pPatchLocationList = patch_list;
   dev->wddm_context.PatchLocationListSize = patch_entries;
 
-  if ((!dev->wddm_context.pDmaBufferPrivateData ||
-       dev->wddm_context.DmaBufferPrivateDataSize < expected_dma_priv_bytes) &&
-      dma_priv && dma_priv_bytes >= expected_dma_priv_bytes) {
-    dev->wddm_context.pDmaBufferPrivateData = dma_priv;
-    dev->wddm_context.DmaBufferPrivateDataSize = dma_priv_bytes;
-    dev->wddm_context.dma_priv_from_allocate = false;
-  }
+  // Treat DMA private data as an in/out pointer: GetCommandBufferCb may rotate it
+  // alongside the command buffer.
+  dev->wddm_context.pDmaBufferPrivateData = dma_priv;
+  dev->wddm_context.DmaBufferPrivateDataSize = dma_priv_bytes;
+  dev->wddm_context.dma_priv_from_allocate = false;
 
   dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
   dev->wddm_context.reset_submission_buffers();
