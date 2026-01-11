@@ -6899,10 +6899,11 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
             return std::find(sc->backbuffers.begin(), sc->backbuffers.end(), res) != sc->backbuffers.end();
           };
 
-          // Present-style backbuffer rotation swaps the host handles attached to the
-          // backbuffer Resource objects. If any backbuffers are currently bound via
-          // device state (RTs, textures, IA buffers), we must re-emit those binds so
-          // the host stops referencing the old handles.
+          // Present-style backbuffer rotation swaps the underlying identities
+          // (host handle + backing allocation) attached to the backbuffer Resource
+          // objects. If any backbuffers are currently bound via device state (RTs,
+          // textures, IA buffers), we must re-emit those binds so the host stops
+          // referencing the old handles.
           size_t needed_bytes = align_up(sizeof(aerogpu_cmd_set_render_targets), 4);
           for (uint32_t stage = 0; stage < 16; ++stage) {
             if (is_backbuffer(dev->textures[stage])) {
@@ -6919,11 +6920,71 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
           }
 
           if (ensure_cmd_space(dev, needed_bytes)) {
-            const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
+            struct ResourceIdentity {
+              aerogpu_handle_t handle = 0;
+              uint32_t backing_alloc_id = 0;
+              uint32_t backing_offset_bytes = 0;
+              uint64_t share_token = 0;
+              bool is_shared = false;
+              bool is_shared_alias = false;
+              bool locked = false;
+              uint32_t locked_offset = 0;
+              uint32_t locked_size = 0;
+              uint32_t locked_flags = 0;
+              WddmAllocationHandle wddm_hAllocation = 0;
+              std::vector<uint8_t> storage;
+              std::vector<uint8_t> shared_private_driver_data;
+            };
+
+            auto take_identity = [](Resource* res) -> ResourceIdentity {
+              ResourceIdentity id{};
+              id.handle = res->handle;
+              id.backing_alloc_id = res->backing_alloc_id;
+              id.backing_offset_bytes = res->backing_offset_bytes;
+              id.share_token = res->share_token;
+              id.is_shared = res->is_shared;
+              id.is_shared_alias = res->is_shared_alias;
+              id.locked = res->locked;
+              id.locked_offset = res->locked_offset;
+              id.locked_size = res->locked_size;
+              id.locked_flags = res->locked_flags;
+              id.wddm_hAllocation = res->wddm_hAllocation;
+              id.storage = std::move(res->storage);
+              id.shared_private_driver_data = std::move(res->shared_private_driver_data);
+              return id;
+            };
+
+            auto put_identity = [](Resource* res, ResourceIdentity&& id) {
+              res->handle = id.handle;
+              res->backing_alloc_id = id.backing_alloc_id;
+              res->backing_offset_bytes = id.backing_offset_bytes;
+              res->share_token = id.share_token;
+              res->is_shared = id.is_shared;
+              res->is_shared_alias = id.is_shared_alias;
+              res->locked = id.locked;
+              res->locked_offset = id.locked_offset;
+              res->locked_size = id.locked_size;
+              res->locked_flags = id.locked_flags;
+              res->wddm_hAllocation = id.wddm_hAllocation;
+              res->storage = std::move(id.storage);
+              res->shared_private_driver_data = std::move(id.shared_private_driver_data);
+            };
+
+            auto undo_rotation = [sc, &take_identity, &put_identity]() {
+              // Undo the rotation (rotate right by one).
+              ResourceIdentity undo_saved = take_identity(sc->backbuffers.back());
+              for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
+                put_identity(sc->backbuffers[i], take_identity(sc->backbuffers[i - 1]));
+              }
+              put_identity(sc->backbuffers[0], std::move(undo_saved));
+            };
+
+            // Rotate left by one.
+            ResourceIdentity saved = take_identity(sc->backbuffers[0]);
             for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
-              sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
+              put_identity(sc->backbuffers[i], take_identity(sc->backbuffers[i + 1]));
             }
-            sc->backbuffers.back()->handle = saved;
+            put_identity(sc->backbuffers.back(), std::move(saved));
 
             bool ok = true;
             // Track allocations referenced by the rebinding commands so the KMD can
@@ -7005,13 +7066,9 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
             if (!ok) {
               // Preserve device/host state consistency: if we cannot emit the
-              // rebinding commands (command buffer too small), undo the rotation so
-              // future draws still target the host's current bindings.
-              const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
-              for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
-                sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
-              }
-              sc->backbuffers[0]->handle = undo_saved;
+              // rebinding commands, undo the rotation so future draws still target
+              // the host's current bindings.
+              undo_rotation();
               dev->cmd.reset();
               dev->alloc_list_tracker.reset();
             }
@@ -7201,11 +7258,69 @@ HRESULT AEROGPU_D3D9_CALL device_present(
         }
 
         if (ensure_cmd_space(dev, needed_bytes)) {
-          const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
+          struct ResourceIdentity {
+            aerogpu_handle_t handle = 0;
+            uint32_t backing_alloc_id = 0;
+            uint32_t backing_offset_bytes = 0;
+            uint64_t share_token = 0;
+            bool is_shared = false;
+            bool is_shared_alias = false;
+            bool locked = false;
+            uint32_t locked_offset = 0;
+            uint32_t locked_size = 0;
+            uint32_t locked_flags = 0;
+            WddmAllocationHandle wddm_hAllocation = 0;
+            std::vector<uint8_t> storage;
+            std::vector<uint8_t> shared_private_driver_data;
+          };
+
+          auto take_identity = [](Resource* res) -> ResourceIdentity {
+            ResourceIdentity id{};
+            id.handle = res->handle;
+            id.backing_alloc_id = res->backing_alloc_id;
+            id.backing_offset_bytes = res->backing_offset_bytes;
+            id.share_token = res->share_token;
+            id.is_shared = res->is_shared;
+            id.is_shared_alias = res->is_shared_alias;
+            id.locked = res->locked;
+            id.locked_offset = res->locked_offset;
+            id.locked_size = res->locked_size;
+            id.locked_flags = res->locked_flags;
+            id.wddm_hAllocation = res->wddm_hAllocation;
+            id.storage = std::move(res->storage);
+            id.shared_private_driver_data = std::move(res->shared_private_driver_data);
+            return id;
+          };
+
+          auto put_identity = [](Resource* res, ResourceIdentity&& id) {
+            res->handle = id.handle;
+            res->backing_alloc_id = id.backing_alloc_id;
+            res->backing_offset_bytes = id.backing_offset_bytes;
+            res->share_token = id.share_token;
+            res->is_shared = id.is_shared;
+            res->is_shared_alias = id.is_shared_alias;
+            res->locked = id.locked;
+            res->locked_offset = id.locked_offset;
+            res->locked_size = id.locked_size;
+            res->locked_flags = id.locked_flags;
+            res->wddm_hAllocation = id.wddm_hAllocation;
+            res->storage = std::move(id.storage);
+            res->shared_private_driver_data = std::move(id.shared_private_driver_data);
+          };
+
+          auto undo_rotation = [sc, &take_identity, &put_identity]() {
+            ResourceIdentity undo_saved = take_identity(sc->backbuffers.back());
+            for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
+              put_identity(sc->backbuffers[i], take_identity(sc->backbuffers[i - 1]));
+            }
+            put_identity(sc->backbuffers[0], std::move(undo_saved));
+          };
+
+          ResourceIdentity saved = take_identity(sc->backbuffers[0]);
           for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
-            sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
+            put_identity(sc->backbuffers[i], take_identity(sc->backbuffers[i + 1]));
           }
-          sc->backbuffers.back()->handle = saved;
+          put_identity(sc->backbuffers.back(), std::move(saved));
 
           bool ok = true;
           if (track_render_targets_locked(dev) < 0) {
@@ -7283,11 +7398,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
           }
 
           if (!ok) {
-            const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
-            for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
-              sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
-            }
-            sc->backbuffers[0]->handle = undo_saved;
+            undo_rotation();
             dev->cmd.reset();
             dev->alloc_list_tracker.reset();
           }
