@@ -40,7 +40,7 @@ try {
 const expected = parseVersion(expectedRaw);
 if (!expected) {
   console.error("error: Unable to parse .nvmrc");
-  console.error(`Expected a version like "20.11.1", got: ${JSON.stringify(expectedRaw.trim())}`);
+  console.error(`Expected a version like "22.11.0", got: ${JSON.stringify(expectedRaw.trim())}`);
   process.exit(1);
 }
 

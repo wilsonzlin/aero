@@ -6,7 +6,7 @@
   "description": "WebSocket multiplexed TCP proxy relay for Aero (browser Windows emulator)",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=20.11.1 <21"
+    "node": ">=22.11.0 <23"
   },
   "scripts": {
     "start": "node src/cli.js",

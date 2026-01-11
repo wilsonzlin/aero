@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Reference implementation for secure streaming of S3-backed disk images via CloudFront signed access",
   "engines": {
-    "node": ">=20.11.1 <21"
+    "node": ">=22.11.0 <23"
   },
   "main": "dist/index.js",
   "scripts": {

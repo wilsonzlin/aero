@@ -1,4 +1,4 @@
-FROM node:20.11.1-alpine AS build
+FROM node:22.11.0-alpine AS build
 
 WORKDIR /repo
 
@@ -13,7 +13,7 @@ RUN mkdir -p /out \
   && cp -r server/public /out/public \
   && cp -r server/src /out/src
 
-FROM node:20.11.1-alpine
+FROM node:22.11.0-alpine
 
 WORKDIR /app
 

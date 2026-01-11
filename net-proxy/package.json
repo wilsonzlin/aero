@@ -7,7 +7,7 @@
   "type": "commonjs",
   "main": "dist/index.js",
   "engines": {
-    "node": ">=20.11.1 <21"
+    "node": ">=22.11.0 <23"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

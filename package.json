@@ -17,7 +17,7 @@
     "web"
   ],
   "engines": {
-    "node": ">=20.11.1 <21"
+    "node": ">=22.11.0 <23"
   },
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
