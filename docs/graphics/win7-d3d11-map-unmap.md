@@ -233,7 +233,7 @@ Practical Win7 note: different WDK/runtime combinations do not always return `DX
 * `HRESULT_FROM_WIN32(WAIT_TIMEOUT)`
 * `HRESULT_FROM_WIN32(ERROR_TIMEOUT)`
 * `HRESULT_FROM_NT(STATUS_TIMEOUT)` (`0x10000102`; note that this is `SUCCEEDED()` and must be checked explicitly)
-* `E_PENDING` (`0x8000000A`) (observed in some poll-style wait paths)
+* `E_PENDING` (`0x8000000A`) (observed in some poll-style wait paths; typically for DO_NOT_WAIT / `Timeout = 0`)
 
 ---
 
