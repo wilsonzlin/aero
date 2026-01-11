@@ -1064,6 +1064,22 @@ static void test_cap_ptr_out_of_range(void) {
     expect_result("cap_ptr_out_of_range.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_OUT_OF_RANGE);
 }
 
+static void test_cap_ptr_before_cfg_header_end(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x3C; /* aligned but < 0x40 */
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("cap_ptr_before_cfg_header_end.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_OUT_OF_RANGE);
+}
+
 static void test_cap_header_truncated(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -1079,6 +1095,46 @@ static void test_cap_header_truncated(void) {
     /* cfg_space_len is too small to even read cap_id/cap_next at 0x40. */
     res = virtio_pci_cap_parse(cfg, 0x41, bars, &caps);
     expect_result("cap_header_truncated.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_HEADER_TRUNCATED);
+}
+
+static void test_vendor_cap_header_truncated(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    cfg[0x40] = VIRTIO_PCI_CAP_PARSER_PCI_CAP_ID_VNDR;
+    cfg[0x41] = 0;
+
+    /* cfg_space_len is too small to read cap_len/cfg_type. */
+    res = virtio_pci_cap_parse(cfg, 0x43, bars, &caps);
+    expect_result("vendor_cap_header_truncated.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_HEADER_TRUNCATED);
+}
+
+static void test_cap_next_before_cfg_header_end(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    /* cap_next is aligned but points into the type-0 header. */
+    add_virtio_cap(cfg, 0x40, 0x3C, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    bars[0] = 0xA0000000ULL;
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("cap_next_before_cfg_header_end.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE);
 }
 
 static void test_cap_next_unaligned(void) {
@@ -1379,7 +1435,10 @@ int main(void) {
     test_cfg_space_too_small();
     test_no_cap_list_status();
     test_cap_ptr_out_of_range();
+    test_cap_ptr_before_cfg_header_end();
     test_cap_header_truncated();
+    test_vendor_cap_header_truncated();
+    test_cap_next_before_cfg_header_end();
     test_cap_next_unaligned();
     test_bad_argument_null_cfg_space();
     test_bad_argument_null_bars();
