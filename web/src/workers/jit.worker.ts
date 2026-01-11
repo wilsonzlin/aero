@@ -59,7 +59,7 @@ let jitEnabled = false;
 
 const JIT_CACHE_MAX_ENTRIES = 64;
 const moduleCache = new Map<string, WebAssembly.Module>();
-const inflightCompiles = new Map<string, Promise<WebAssembly.Module>>();
+const inflightCompiles = new Map<string, { promise: Promise<WebAssembly.Module>; startMs: number }>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -248,15 +248,14 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
 
   const inflight = inflightCompiles.get(key);
   if (inflight) {
-    const startMs = performance.now();
     if (perf.traceEnabled) perf.instant("jit:inflight_hit", "t", { key });
     try {
-      const module = await inflight;
-      const durationMs = performance.now() - startMs;
+      const module = await inflight.promise;
+      const durationMs = performance.now() - inflight.startMs;
       cacheSet(key, module);
       postJitResponse({ type: "jit:compiled", id: req.id, module, durationMs, cached: true });
     } catch (err) {
-      const durationMs = performance.now() - startMs;
+      const durationMs = performance.now() - inflight.startMs;
       const message = err instanceof Error ? err.message : String(err);
       const code = isCspBlockedError(err) ? "csp_blocked" : "compile_failed";
       if (code === "csp_blocked") {
@@ -275,7 +274,7 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
   let module: WebAssembly.Module;
   try {
     const promise = WebAssembly.compile(req.wasmBytes);
-    inflightCompiles.set(key, promise);
+    inflightCompiles.set(key, { promise, startMs });
     module = await promise;
   } catch (err) {
     const durationMs = performance.now() - startMs;
