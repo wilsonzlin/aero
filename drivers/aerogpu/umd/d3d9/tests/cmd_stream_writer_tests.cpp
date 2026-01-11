@@ -830,6 +830,189 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   return true;
 }
 
+bool TestAdapterMultisampleQualityLevels() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    bool has_adapter = false;
+    ~Cleanup() {
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  struct GetMultisampleQualityLevelsPayload {
+    uint32_t format;
+    uint32_t multisample_type;
+    uint32_t flags;
+    uint32_t quality_levels;
+  };
+
+  GetMultisampleQualityLevelsPayload payload{};
+  payload.format = 22u; // D3DFMT_X8R8G8B8 (supported)
+  payload.multisample_type = 0;
+  payload.flags = 0;
+  payload.quality_levels = 0;
+
+  D3D9DDIARG_GETCAPS get_caps{};
+  get_caps.Type = D3DDDICAPS_GETMULTISAMPLEQUALITYLEVELS;
+  get_caps.pData = &payload;
+  get_caps.DataSize = sizeof(payload);
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_caps);
+  if (!Check(hr == S_OK, "GetCaps(GETMULTISAMPLEQUALITYLEVELS)")) {
+    return false;
+  }
+  if (!Check(payload.quality_levels == 1, "quality_levels==1 for NONE on supported format")) {
+    return false;
+  }
+
+  payload.multisample_type = 1;
+  payload.quality_levels = 0xCDCDCDCDu;
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_caps);
+  if (!Check(hr == S_OK, "GetCaps(GETMULTISAMPLEQUALITYLEVELS) non-zero type")) {
+    return false;
+  }
+  if (!Check(payload.quality_levels == 0, "quality_levels==0 for non-zero multisample type")) {
+    return false;
+  }
+
+  payload.format = 0xFFFFFFFFu;
+  payload.multisample_type = 0;
+  payload.quality_levels = 0xCDCDCDCDu;
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_caps);
+  if (!Check(hr == S_OK, "GetCaps(GETMULTISAMPLEQUALITYLEVELS) unsupported format")) {
+    return false;
+  }
+  if (!Check(payload.quality_levels == 0, "quality_levels==0 for unsupported format")) {
+    return false;
+  }
+
+  struct GetMultisampleQualityLevelsPayloadV1 {
+    uint32_t format;
+    uint32_t multisample_type;
+    uint32_t quality_levels;
+  };
+
+  GetMultisampleQualityLevelsPayloadV1 payload_v1{};
+  payload_v1.format = 21u; // D3DFMT_A8R8G8B8 (supported)
+  payload_v1.multisample_type = 0;
+  payload_v1.quality_levels = 0;
+
+  get_caps.pData = &payload_v1;
+  get_caps.DataSize = sizeof(payload_v1);
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_caps);
+  if (!Check(hr == S_OK, "GetCaps(GETMULTISAMPLEQUALITYLEVELS) v1 payload")) {
+    return false;
+  }
+  return Check(payload_v1.quality_levels == 1, "quality_levels==1 for v1 payload");
+}
+
+bool TestAdapterCachingUpdatesCallbacks() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    bool has_adapter = false;
+    ~Cleanup() {
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup1, cleanup2;
+
+  D3DDDIARG_OPENADAPTER2 open1{};
+  open1.Interface = 1;
+  open1.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks1{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks1_2{};
+  callbacks1.pfnDummy = reinterpret_cast<void*>(static_cast<uintptr_t>(0x11111111u));
+  callbacks1_2.pfnDummy = reinterpret_cast<void*>(static_cast<uintptr_t>(0x22222222u));
+  open1.pAdapterCallbacks = &callbacks1;
+  open1.pAdapterCallbacks2 = &callbacks1_2;
+  open1.pAdapterFuncs = &cleanup1.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open1);
+  if (!Check(hr == S_OK, "OpenAdapter2 (first)")) {
+    return false;
+  }
+  if (!Check(open1.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 (first) returned adapter handle")) {
+    return false;
+  }
+  cleanup1.hAdapter = open1.hAdapter;
+  cleanup1.has_adapter = true;
+
+  auto* adapter = reinterpret_cast<Adapter*>(open1.hAdapter.pDrvPrivate);
+  if (!Check(adapter != nullptr, "adapter pointer")) {
+    return false;
+  }
+
+  const LUID luid = adapter->luid;
+
+  if (!Check(adapter->adapter_callbacks_valid, "adapter_callbacks_valid after first open")) {
+    return false;
+  }
+  if (!Check(adapter->adapter_callbacks2_valid, "adapter_callbacks2_valid after first open")) {
+    return false;
+  }
+  if (!Check(adapter->adapter_callbacks_copy.pfnDummy == callbacks1.pfnDummy, "adapter_callbacks_copy matches first")) {
+    return false;
+  }
+  if (!Check(adapter->adapter_callbacks2_copy.pfnDummy == callbacks1_2.pfnDummy, "adapter_callbacks2_copy matches first")) {
+    return false;
+  }
+
+  D3DDDIARG_OPENADAPTERFROMLUID open2{};
+  open2.Interface = 1;
+  open2.Version = 1;
+  open2.AdapterLuid = luid;
+  D3DDDI_ADAPTERCALLBACKS callbacks2{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2_2{};
+  callbacks2.pfnDummy = reinterpret_cast<void*>(static_cast<uintptr_t>(0x33333333u));
+  callbacks2_2.pfnDummy = reinterpret_cast<void*>(static_cast<uintptr_t>(0x44444444u));
+  open2.pAdapterCallbacks = &callbacks2;
+  open2.pAdapterCallbacks2 = &callbacks2_2;
+  open2.pAdapterFuncs = &cleanup2.adapter_funcs;
+
+  hr = ::OpenAdapterFromLuid(&open2);
+  if (!Check(hr == S_OK, "OpenAdapterFromLuid (second)")) {
+    return false;
+  }
+  if (!Check(open2.hAdapter.pDrvPrivate != nullptr, "OpenAdapterFromLuid returned adapter handle")) {
+    return false;
+  }
+  cleanup2.hAdapter = open2.hAdapter;
+  cleanup2.has_adapter = true;
+
+  if (!Check(open2.hAdapter.pDrvPrivate == open1.hAdapter.pDrvPrivate, "adapter cached across opens")) {
+    return false;
+  }
+
+  if (!Check(adapter->adapter_callbacks_copy.pfnDummy == callbacks2.pfnDummy, "adapter_callbacks_copy updated on re-open")) {
+    return false;
+  }
+  return Check(adapter->adapter_callbacks2_copy.pfnDummy == callbacks2_2.pfnDummy,
+               "adapter_callbacks2_copy updated on re-open");
+}
+
 bool TestCreateResourceRejectsUnsupportedGpuFormat() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -2751,6 +2934,8 @@ int main() {
   failures += !aerogpu::TestOwnedAndBorrowedStreamsMatch();
   failures += !aerogpu::TestEventQueryGetDataSemantics();
   failures += !aerogpu::TestAdapterCapsAndQueryAdapterInfo();
+  failures += !aerogpu::TestAdapterMultisampleQualityLevels();
+  failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
