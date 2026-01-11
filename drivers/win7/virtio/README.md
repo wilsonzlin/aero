@@ -38,7 +38,7 @@ msbuild virtio-transport-test\virtio-transport-test.vcxproj /t:Build /p:Configur
 
 ### Build from Visual Studio
 
-Open `virtio.sln` (or the individual `*.vcxproj`) in Visual Studio, select a configuration/platform, and build.
+Open `win7-virtio.sln` (or the individual `*.vcxproj`) in Visual Studio, select a configuration/platform, and build.
 
 ## Installing the test driver in a Win7 VM
 
