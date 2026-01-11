@@ -233,13 +233,27 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
     void refreshKnownDevices();
   }
 
-  const hint = el("div", {
-    class: "mono",
-    text:
-      "WebUSB permissions persist per-origin; devices granted via the chooser will appear under “Known devices”. " +
-      "Some Chromium builds support revoking permissions via “Forget selected device”; otherwise, use your browser's site settings. " +
-      "The main thread owns WebUSB; workers send usb.action messages and receive usb.completion replies.",
+  const origin = (globalThis as unknown as { location?: { origin?: unknown } }).location?.origin;
+  const encodedOrigin = typeof origin === "string" ? encodeURIComponent(origin) : "";
+  const siteSettingsLink = el("a", {
+    href: `chrome://settings/content/siteDetails?site=${encodedOrigin}`,
+    target: "_blank",
+    rel: "noopener",
+    text: "site settings",
   });
+  const hint = el(
+    "div",
+    { class: "mono" },
+    el("span", {
+      text:
+        "WebUSB permissions persist per-origin; devices granted via the chooser will appear under “Known devices”. " +
+        "Some Chromium builds support revoking permissions via “Forget selected device”; otherwise, use your browser's ",
+    }),
+    siteSettingsLink,
+    el("span", {
+      text: ". The main thread owns WebUSB; workers send usb.action messages and receive usb.completion replies.",
+    }),
+  );
 
   return el(
     "div",
