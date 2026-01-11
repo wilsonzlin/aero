@@ -1,0 +1,116 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  AEROGPU_COPY_FLAG_WRITEBACK_DST,
+  AerogpuCmdWriter,
+} from "../aerogpu/aerogpu_cmd.ts";
+import { AEROGPU_ABI_VERSION_U32, AerogpuFormat } from "../aerogpu/aerogpu_pci.ts";
+import {
+  AEROGPU_ALLOC_ENTRY_SIZE,
+  AEROGPU_ALLOC_FLAG_READONLY,
+  AEROGPU_ALLOC_TABLE_HEADER_SIZE,
+  AEROGPU_ALLOC_TABLE_MAGIC,
+} from "../aerogpu/aerogpu_ring.ts";
+
+import {
+  createAerogpuCpuExecutorState,
+  decodeAerogpuAllocTable,
+  executeAerogpuCmdStream,
+} from "../../../web/src/workers/aerogpu-acmd-executor.ts";
+
+function buildAllocTable(
+  entries: Array<{ allocId: number; flags: number; gpa: number; sizeBytes: number }>,
+): ArrayBuffer {
+  const totalSize = AEROGPU_ALLOC_TABLE_HEADER_SIZE + entries.length * AEROGPU_ALLOC_ENTRY_SIZE;
+  const buf = new ArrayBuffer(totalSize);
+  const view = new DataView(buf);
+
+  view.setUint32(0, AEROGPU_ALLOC_TABLE_MAGIC, true);
+  view.setUint32(4, AEROGPU_ABI_VERSION_U32, true);
+  view.setUint32(8, totalSize, true);
+  view.setUint32(12, entries.length, true);
+  view.setUint32(16, AEROGPU_ALLOC_ENTRY_SIZE, true);
+
+  for (let i = 0; i < entries.length; i += 1) {
+    const e = entries[i]!;
+    const base = AEROGPU_ALLOC_TABLE_HEADER_SIZE + i * AEROGPU_ALLOC_ENTRY_SIZE;
+    view.setUint32(base + 0, e.allocId, true);
+    view.setUint32(base + 4, e.flags, true);
+    view.setBigUint64(base + 8, BigInt(e.gpa), true);
+    view.setBigUint64(base + 16, BigInt(e.sizeBytes), true);
+    view.setBigUint64(base + 24, 0n, true);
+  }
+
+  return buf;
+}
+
+test("ACMD COPY_BUFFER writeback updates guest memory backing for dst buffer", () => {
+  const guest = new Uint8Array(512);
+
+  const allocTableBuf = buildAllocTable([{ allocId: 42, flags: 0, gpa: 100, sizeBytes: 256 }]);
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+
+  const w = new AerogpuCmdWriter();
+  w.createBuffer(1, 0, 8n, 0, 0); // src
+  w.createBuffer(2, 0, 8n, 42, 16); // dst backed
+  w.uploadResource(1, 0n, Uint8Array.of(1, 2, 3, 4));
+  w.copyBuffer(2, 1, 2n, 0n, 4n, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+
+  const state = createAerogpuCpuExecutorState();
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable, guestU8: guest });
+
+  assert.deepEqual(Array.from(guest.subarray(118, 122)), [1, 2, 3, 4]);
+});
+
+test("ACMD COPY_BUFFER writeback rejects READONLY allocs", () => {
+  const guest = new Uint8Array(256);
+  const allocTableBuf = buildAllocTable([{ allocId: 42, flags: AEROGPU_ALLOC_FLAG_READONLY, gpa: 0, sizeBytes: 128 }]);
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+
+  const w = new AerogpuCmdWriter();
+  w.createBuffer(1, 0, 8n, 0, 0);
+  w.createBuffer(2, 0, 8n, 42, 0);
+  w.uploadResource(1, 0n, Uint8Array.of(9, 9, 9, 9));
+  w.copyBuffer(2, 1, 0n, 0n, 4n, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+
+  const state = createAerogpuCpuExecutorState();
+  assert.throws(
+    () => executeAerogpuCmdStream(state, w.finish().buffer, { allocTable, guestU8: guest }),
+    /READONLY/,
+  );
+});
+
+test("ACMD COPY_TEXTURE2D writeback packs rows using row_pitch_bytes and encodes X8 alpha as 255", () => {
+  const guest = new Uint8Array(1024);
+
+  const allocTableBuf = buildAllocTable([{ allocId: 99, flags: 0, gpa: 300, sizeBytes: 256 }]);
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+
+  // 2x2 BGRAX texture with padded rows (rowPitch=12, rowBytes=8).
+  const rowPitchBytes = 12;
+  const upload = new Uint8Array(rowPitchBytes * 2);
+  // Row 0 (y=0): pixel(0,0)=[1,2,3,0] pixel(1,0)=[4,5,6,0]
+  upload.set([1, 2, 3, 0, 4, 5, 6, 0], 0);
+  // Row 1 (y=1): pixel(0,1)=[7,8,9,0] pixel(1,1)=[10,11,12,0]
+  upload.set([7, 8, 9, 0, 10, 11, 12, 0], rowPitchBytes);
+
+  const w = new AerogpuCmdWriter();
+  w.createTexture2d(3, 0, AerogpuFormat.B8G8R8X8Unorm, 2, 2, 1, 1, rowPitchBytes, 0, 0); // src
+  w.createTexture2d(4, 0, AerogpuFormat.B8G8R8X8Unorm, 2, 2, 1, 1, rowPitchBytes, 99, 4); // dst backed
+  w.uploadResource(3, 0n, upload);
+  // Copy src pixel (0,1) into dst pixel (1,0).
+  w.copyTexture2d(4, 3, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+
+  const state = createAerogpuCpuExecutorState();
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable, guestU8: guest });
+
+  // dst backing starts at gpa=300, offset=4. Pixel (1,0) begins at +4 bytes within the row.
+  const dstOff = 300 + 4 + 4;
+  assert.deepEqual(Array.from(guest.subarray(dstOff, dstOff + 4)), [7, 8, 9, 255]);
+
+  // Other pixels and padding should remain untouched (still zero).
+  assert.deepEqual(Array.from(guest.subarray(300 + 4 + 0, 300 + 4 + 4)), [0, 0, 0, 0]);
+  assert.deepEqual(Array.from(guest.subarray(300 + 4 + 8, 300 + 4 + 12)), [0, 0, 0, 0]);
+});
+
