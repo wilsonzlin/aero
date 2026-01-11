@@ -34,6 +34,11 @@ The default packaging spec is:
 
 - `tools/packaging/specs/win7-aero-guest-tools.json`
 
+This spec currently:
+
+- requires: `aerogpu`, `virtio-blk`, `virtio-net`, `virtio-input`
+- includes if present: `virtio-snd`
+
 ## Inputs
 
 ### Driver artifacts
