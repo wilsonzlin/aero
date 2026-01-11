@@ -70,6 +70,9 @@
     <ClInclude Include="src\aerogpu_d3d9_submit.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\aerogpu_d3d9_wdk_abi_expected.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\aerogpu_kmd_query.h">
       <Filter>Header Files</Filter>
     </ClInclude>

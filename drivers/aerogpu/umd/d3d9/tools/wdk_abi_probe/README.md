@@ -107,3 +107,27 @@ In your **WDK build only**:
 3. Define one or more `AEROGPU_D3D9_WDK_ABI_EXPECT_*` macros (using values captured from this probe).
 
 The header is inert unless `AEROGPU_D3D9_USE_WDK_DDI` is defined, so it will not affect repo-local builds that do not have the WDK installed.
+
+## How to regenerate `aerogpu_d3d9_wdk_abi_expected.h` (checked-in expectations)
+
+The Win7 driver MSBuild project enables strict ABI enforcement by including:
+
+- `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_wdk_abi_expected.h`
+
+If you update the WDK/headers/toolchain and the build starts failing due to ABI drift, regenerate the expected header like this:
+
+1. Ensure you are using the same WDK header set as CI.
+   - CI installs the WDK via `ci/install-wdk.ps1` (currently pinned to WDK `10.0.22621.0`).
+2. Build and run this probe for **both** architectures:
+   - x86: `d3d9_wdk_abi_probe_x86.exe`
+   - x64: `d3d9_wdk_abi_probe_x64.exe`
+3. For each architecture, copy the reported values into the matching `#if defined(_M_IX86)` / `#elif defined(_M_X64)` block in:
+   - `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_wdk_abi_expected.h`
+4. Re-check x86 export decoration:
+   - The probe prints `_OpenAdapter@N` / `_OpenAdapter2@M` / `_OpenAdapterFromHdc@K` / `_OpenAdapterFromLuid@L`.
+   - Ensure `drivers/aerogpu/umd/d3d9/aerogpu_d3d9_x86.def` maps the undecorated names to the same decorated values.
+5. Build the D3D9 UMD (Win32 + x64) and verify exports:
+   - `dumpbin /exports aerogpu_d3d9.dll`
+   - `dumpbin /exports aerogpu_d3d9_x64.dll`
+
+After updating the expected header, any future ABI drift (struct layout or x86 stdcall stack bytes) should fail the build at compile time.

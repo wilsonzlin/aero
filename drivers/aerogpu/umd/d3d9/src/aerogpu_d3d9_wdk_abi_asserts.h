@@ -36,11 +36,16 @@
 // -----------------------------------------------------------------------------
 // Compile-time assertion (C/C++, C++03-safe)
 // -----------------------------------------------------------------------------
-// Some Win7-targeted toolchains may be older than C++11; avoid relying on `static_assert`.
+// Some Win7-targeted toolchains may be older than C++11; prefer `static_assert`
+// when available, but keep a fallback that works with older compilers.
 
 #if defined(__cplusplus)
-#define AEROGPU_ABI_STATIC_ASSERT(expr, msg) \
-  typedef char aerogpu_abi_static_assert_##__LINE__[(expr) ? 1 : -1]
+  #if (__cplusplus >= 201103L) || (defined(_MSC_VER) && _MSC_VER >= 1600)
+    #define AEROGPU_ABI_STATIC_ASSERT(expr, msg) static_assert((expr), msg)
+  #else
+    #define AEROGPU_ABI_STATIC_ASSERT(expr, msg) \
+      typedef char aerogpu_abi_static_assert_##__LINE__[(expr) ? 1 : -1]
+  #endif
 #else
   #ifndef C_ASSERT
     #define C_ASSERT(expr) typedef char aerogpu_c_assert_##__LINE__[(expr) ? 1 : -1]
@@ -93,6 +98,17 @@ struct aerogpu_abi_stdcall_stack_bytes<R(__stdcall*)(A1, A2, A3, A4)> {
 // -----------------------------------------------------------------------------
 // Optional expected-value checks (define macros to enable)
 // -----------------------------------------------------------------------------
+//
+// In the canonical Win7 driver build (MSBuild + WDK), ABI drift should be a hard
+// failure. The build can opt-in to using the checked-in expected values by
+// defining:
+//   AEROGPU_D3D9_WDK_ABI_ENFORCE_EXPECTED
+//
+// This keeps repo-local/non-WDK builds unaffected.
+
+#if defined(AEROGPU_D3D9_WDK_ABI_ENFORCE_EXPECTED)
+  #include "aerogpu_d3d9_wdk_abi_expected.h"
+#endif
 
 // Examples (x86):
 //   /DAEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTER_STDCALL_BYTES=4
@@ -1027,6 +1043,346 @@ AEROGPU_ABI_STATIC_ASSERT(
     offsetof(D3DDDIARG_PRESENT, SubmissionFenceId) ==
         AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_PRESENT_SubmissionFenceId,
     "offsetof(D3DDDIARG_PRESENT, SubmissionFenceId) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_pAdapterCallbacks)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3DDDIARG_OPENADAPTER, pAdapterCallbacks) ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_pAdapterCallbacks,
+    "offsetof(D3DDDIARG_OPENADAPTER, pAdapterCallbacks) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_hAdapter)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_OPENADAPTER, hAdapter) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_hAdapter,
+                          "offsetof(D3DDDIARG_OPENADAPTER, hAdapter) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTER2)
+AEROGPU_ABI_STATIC_ASSERT(sizeof(D3DDDIARG_OPENADAPTER2) == AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTER2,
+                          "sizeof(D3DDDIARG_OPENADAPTER2) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_pAdapterFuncs)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3DDDIARG_OPENADAPTER2, pAdapterFuncs) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_pAdapterFuncs,
+    "offsetof(D3DDDIARG_OPENADAPTER2, pAdapterFuncs) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_pAdapterCallbacks)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3DDDIARG_OPENADAPTER2, pAdapterCallbacks) ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_pAdapterCallbacks,
+    "offsetof(D3DDDIARG_OPENADAPTER2, pAdapterCallbacks) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_hAdapter)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_OPENADAPTER2, hAdapter) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_hAdapter,
+                          "offsetof(D3DDDIARG_OPENADAPTER2, hAdapter) does not match expected value");
+#endif
+
+// -----------------------------------------------------------------------------
+// Function tables
+// -----------------------------------------------------------------------------
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDI_ADAPTERFUNCS)
+AEROGPU_ABI_STATIC_ASSERT(sizeof(D3D9DDI_ADAPTERFUNCS) == AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDI_ADAPTERFUNCS,
+                          "sizeof(D3D9DDI_ADAPTERFUNCS) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_ADAPTERFUNCS_pfnCloseAdapter)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_ADAPTERFUNCS, pfnCloseAdapter) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_ADAPTERFUNCS_pfnCloseAdapter,
+                          "offsetof(D3D9DDI_ADAPTERFUNCS, pfnCloseAdapter) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_ADAPTERFUNCS_pfnGetCaps)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_ADAPTERFUNCS, pfnGetCaps) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_ADAPTERFUNCS_pfnGetCaps,
+                          "offsetof(D3D9DDI_ADAPTERFUNCS, pfnGetCaps) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_ADAPTERFUNCS_pfnCreateDevice)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_ADAPTERFUNCS, pfnCreateDevice) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_ADAPTERFUNCS_pfnCreateDevice,
+                          "offsetof(D3D9DDI_ADAPTERFUNCS, pfnCreateDevice) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_ADAPTERFUNCS_pfnQueryAdapterInfo)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_ADAPTERFUNCS, pfnQueryAdapterInfo) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_ADAPTERFUNCS_pfnQueryAdapterInfo,
+                          "offsetof(D3D9DDI_ADAPTERFUNCS, pfnQueryAdapterInfo) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyDevice)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyDevice) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyDevice,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyDevice) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateResource)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateResource) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateResource,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateResource) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyResource)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyResource) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyResource,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyResource) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnLock)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnLock) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnLock,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnLock) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUnlock)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnUnlock) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUnlock,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnUnlock) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateSwapChain)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateSwapChain) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateSwapChain,
+    "offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateSwapChain) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroySwapChain)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroySwapChain) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroySwapChain,
+    "offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroySwapChain) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCheckDeviceState)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckDeviceState) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCheckDeviceState,
+    "offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckDeviceState) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnWaitForVBlank)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForVBlank) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnWaitForVBlank,
+    "offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForVBlank) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetGPUThreadPriority)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetGPUThreadPriority) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetGPUThreadPriority,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnSetGPUThreadPriority) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetGPUThreadPriority)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetGPUThreadPriority) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetGPUThreadPriority,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnGetGPUThreadPriority) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCheckResourceResidency)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckResourceResidency) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCheckResourceResidency,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckResourceResidency) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnQueryResourceResidency)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnQueryResourceResidency) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnQueryResourceResidency,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnQueryResourceResidency) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetDisplayModeEx)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetDisplayModeEx) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetDisplayModeEx,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnGetDisplayModeEx) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnComposeRects)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnComposeRects) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnComposeRects,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnComposeRects) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnPresent)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnPresent) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnPresent,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnPresent) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnFlush)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnFlush) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnFlush,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnFlush) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateQuery)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateQuery) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateQuery,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateQuery) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyQuery)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyQuery) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyQuery,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyQuery) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnIssueQuery)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnIssueQuery) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnIssueQuery,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnIssueQuery) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetQueryData)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetQueryData) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetQueryData,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnGetQueryData) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnWaitForIdle)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForIdle) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnWaitForIdle,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForIdle) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnBlt)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnBlt) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnBlt,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnBlt) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnColorFill)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnColorFill) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnColorFill,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnColorFill) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUpdateSurface)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateSurface) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUpdateSurface,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateSurface) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUpdateTexture)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateTexture) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUpdateTexture,
+                          "offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateTexture) does not match expected value");
+#endif
+
+// -----------------------------------------------------------------------------
+// Runtime callback tables
+// -----------------------------------------------------------------------------
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDI_DEVICECALLBACKS_pfnAllocateCb)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDI_DEVICECALLBACKS, pfnAllocateCb) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDI_DEVICECALLBACKS_pfnAllocateCb,
+                          "offsetof(D3DDDI_DEVICECALLBACKS, pfnAllocateCb) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDI_DEVICECALLBACKS_pfnDeallocateCb)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDI_DEVICECALLBACKS, pfnDeallocateCb) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDI_DEVICECALLBACKS_pfnDeallocateCb,
+                          "offsetof(D3DDDI_DEVICECALLBACKS, pfnDeallocateCb) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDI_DEVICECALLBACKS_pfnSubmitCommandCb)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDI_DEVICECALLBACKS, pfnSubmitCommandCb) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDI_DEVICECALLBACKS_pfnSubmitCommandCb,
+                          "offsetof(D3DDDI_DEVICECALLBACKS, pfnSubmitCommandCb) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDI_DEVICECALLBACKS_pfnRenderCb)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDI_DEVICECALLBACKS, pfnRenderCb) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDI_DEVICECALLBACKS_pfnRenderCb,
+                          "offsetof(D3DDDI_DEVICECALLBACKS, pfnRenderCb) does not match expected value");
+#endif
+
+// -----------------------------------------------------------------------------
+// Submission-related structs
+// -----------------------------------------------------------------------------
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_hDevice)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_CREATECONTEXT, hDevice) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_hDevice,
+                          "offsetof(D3DDDIARG_CREATECONTEXT, hDevice) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_NodeOrdinal)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_CREATECONTEXT, NodeOrdinal) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_NodeOrdinal,
+                          "offsetof(D3DDDIARG_CREATECONTEXT, NodeOrdinal) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_EngineAffinity)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_CREATECONTEXT, EngineAffinity) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_EngineAffinity,
+                          "offsetof(D3DDDIARG_CREATECONTEXT, EngineAffinity) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_Flags)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_CREATECONTEXT, Flags) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_Flags,
+                          "offsetof(D3DDDIARG_CREATECONTEXT, Flags) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_hContext)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_CREATECONTEXT, hContext) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_hContext,
+                          "offsetof(D3DDDIARG_CREATECONTEXT, hContext) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_pPrivateDriverData)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_CREATECONTEXT, pPrivateDriverData) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_pPrivateDriverData,
+                          "offsetof(D3DDDIARG_CREATECONTEXT, pPrivateDriverData) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_PrivateDriverDataSize)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_CREATECONTEXT, PrivateDriverDataSize) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_CREATECONTEXT_PrivateDriverDataSize,
+                          "offsetof(D3DDDIARG_CREATECONTEXT, PrivateDriverDataSize) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_hContext)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_SUBMITCOMMAND, hContext) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_hContext,
+                          "offsetof(D3DDDIARG_SUBMITCOMMAND, hContext) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_pCommandBuffer)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_SUBMITCOMMAND, pCommandBuffer) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_pCommandBuffer,
+                          "offsetof(D3DDDIARG_SUBMITCOMMAND, pCommandBuffer) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_CommandLength)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_SUBMITCOMMAND, CommandLength) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_CommandLength,
+                          "offsetof(D3DDDIARG_SUBMITCOMMAND, CommandLength) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_CommandBufferSize)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_SUBMITCOMMAND, CommandBufferSize) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_CommandBufferSize,
+                          "offsetof(D3DDDIARG_SUBMITCOMMAND, CommandBufferSize) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_pAllocationList)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_SUBMITCOMMAND, pAllocationList) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_pAllocationList,
+                          "offsetof(D3DDDIARG_SUBMITCOMMAND, pAllocationList) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_AllocationListSize)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_SUBMITCOMMAND, AllocationListSize) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_AllocationListSize,
+                          "offsetof(D3DDDIARG_SUBMITCOMMAND, AllocationListSize) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_pPatchLocationList)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_SUBMITCOMMAND, pPatchLocationList) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_pPatchLocationList,
+                          "offsetof(D3DDDIARG_SUBMITCOMMAND, pPatchLocationList) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_PatchLocationListSize)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DDDIARG_SUBMITCOMMAND, PatchLocationListSize) ==
+                              AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_SUBMITCOMMAND_PatchLocationListSize,
+                          "offsetof(D3DDDIARG_SUBMITCOMMAND, PatchLocationListSize) does not match expected value");
 #endif
 
 #endif // AEROGPU_D3D9_USE_WDK_DDI

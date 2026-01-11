@@ -1,4 +1,5 @@
 #include "../include/aerogpu_d3d9_umd.h"
+#include "aerogpu_d3d9_wdk_abi_asserts.h"
 
 #include <array>
 #include <algorithm>
@@ -33,7 +34,6 @@
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_d3d9_submit.h"
-#include "aerogpu_d3d9_wdk_abi_asserts.h"
 #include "aerogpu_win7_abi.h"
 #include "aerogpu_log.h"
 #include "aerogpu_alloc.h"

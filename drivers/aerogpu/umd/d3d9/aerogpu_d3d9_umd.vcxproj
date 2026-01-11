@@ -103,7 +103,7 @@
 
   <ItemDefinitionGroup>
     <ClCompile>
-      <PreprocessorDefinitions Condition="'$(AeroGpuUseWdkHeaders)'=='1'">AEROGPU_UMD_USE_WDK_HEADERS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(AeroGpuUseWdkHeaders)'=='1'">AEROGPU_UMD_USE_WDK_HEADERS=1;AEROGPU_D3D9_WDK_ABI_ENFORCE_EXPECTED;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="'$(AeroGpuUseWdkHeaders)'=='1' and '$(AeroGpuWdkRoot)'!=''">$(AeroGpuWdkRoot)\inc\api;$(AeroGpuWdkRoot)\inc\ddk;$(AeroGpuWdkRoot)\inc\crt;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
@@ -167,6 +167,7 @@
     <ClInclude Include="src\aerogpu_d3d9_objects.h" />
     <ClInclude Include="src\aerogpu_d3d9_shared_resource.h" />
     <ClInclude Include="src\aerogpu_d3d9_submit.h" />
+    <ClInclude Include="src\aerogpu_d3d9_wdk_abi_expected.h" />
     <ClInclude Include="src\aerogpu_kmd_query.h" />
     <ClInclude Include="src\aerogpu_log.h" />
     <ClInclude Include="src\aerogpu_trace.h" />
