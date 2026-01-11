@@ -3008,6 +3008,15 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                 static_cast<unsigned>(dev->wddm_context.AllocationListSize),
                 static_cast<unsigned>(dev->wddm_context.PatchLocationListSize));
 
+  // Wire the command stream builder to the runtime-provided DMA buffer so all
+  // command emission paths write directly into `pCommandBuffer` (no per-submit
+  // std::vector allocations). This is a prerequisite for real Win7 D3D9UMDDI
+  // submission plumbing.
+  if (dev->wddm_context.pCommandBuffer &&
+      dev->wddm_context.CommandBufferSize >= sizeof(aerogpu_cmd_stream_header)) {
+    dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
+  }
+
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
   pDeviceFuncs->pfnDestroyDevice = device_destroy;
   pDeviceFuncs->pfnCreateResource = device_create_resource;
