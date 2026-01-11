@@ -342,6 +342,207 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
 }
 
 #[test]
+fn copy_buffer_executes_before_draw() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        // Host-owned buffers are updated through UPLOAD_RESOURCE, so no alloc table is needed.
+        let mut guest = VecGuestMemory::new(0x20_000);
+
+        // Full-screen triangle (pos: vec2<f32>).
+        let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+        let mut vb_bytes = Vec::new();
+        for v in verts {
+            vb_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        let zero_bytes = vec![0u8; vb_bytes.len()];
+
+        // Build a minimal command stream that copies a vertex buffer and then draws with it.
+        let stream = build_stream(|out| {
+            // CREATE_BUFFER src (handle=1).
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_BUFFER dst (handle=2).
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 2); // buffer_handle
+                push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // UPLOAD_RESOURCE: initialize dst with zeros (deterministic baseline).
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 2); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, zero_bytes.len() as u64); // size_bytes
+                out.extend_from_slice(&zero_bytes);
+            });
+
+            // UPLOAD_RESOURCE: fill src with vertex data.
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                out.extend_from_slice(&vb_bytes);
+            });
+
+            // COPY_BUFFER: dst <- src.
+            emit_packet(out, AerogpuCmdOpcode::CopyBuffer as u32, |out| {
+                push_u32(out, 2); // dst_buffer
+                push_u32(out, 1); // src_buffer
+                push_u64(out, 0); // dst_offset_bytes
+                push_u64(out, 0); // src_offset_bytes
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                push_u32(out, 0); // flags
+                push_u32(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D (handle=3) 1x1 host-owned texture (solid red).
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 3); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (unused when backing_alloc_id == 0)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // UPLOAD_RESOURCE texture 3: solid red.
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 3); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, 4); // size_bytes
+                out.extend_from_slice(&[255, 0, 0, 255]);
+            });
+
+            // CREATE_TEXTURE2D (handle=4) host-owned render target.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 4); // texture_handle
+                push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (unused when backing_alloc_id == 0)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // SET_RENDER_TARGETS: color0 = texture 4.
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, 4); // colors[0]
+                for _ in 1..8 {
+                    push_u32(out, 0);
+                }
+            });
+
+            // CLEAR to black.
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                push_u32(out, 1); // flags: CLEAR_COLOR
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 1.0);
+                push_f32_bits(out, 1.0); // depth (unused)
+                push_u32(out, 0); // stencil
+            });
+
+            // SET_TEXTURE (ps slot 0) = texture 3.
+            emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
+                push_u32(out, 1); // shader_stage: PIXEL
+                push_u32(out, 0); // slot
+                push_u32(out, 3); // texture handle
+                push_u32(out, 0); // reserved0
+            });
+
+            // SET_VERTEX_BUFFERS: slot 0 = buffer 2.
+            emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
+                push_u32(out, 0); // start_slot
+                push_u32(out, 1); // buffer_count
+                push_u32(out, 2); // binding[0].buffer
+                push_u32(out, 8); // binding[0].stride_bytes
+                push_u32(out, 0); // binding[0].offset_bytes
+                push_u32(out, 0); // binding[0].reserved0
+            });
+
+            // DRAW: 3 vertices.
+            emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
+                push_u32(out, 3); // vertex_count
+                push_u32(out, 1); // instance_count
+                push_u32(out, 0); // first_vertex
+                push_u32(out, 0); // first_instance
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest.write(cmd_gpa, &stream).expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            /*alloc_table_gpa=*/ 0,
+            /*alloc_table_size_bytes=*/ 0,
+        );
+        assert!(
+            report.is_ok(),
+            "executor report had errors: {:#?}",
+            report.events
+        );
+
+        let rt_tex = exec.texture(4).expect("render target texture");
+        let rgba = readback_rgba8(
+            exec.device(),
+            exec.queue(),
+            rt_tex,
+            TextureRegion {
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width: 4,
+                    height: 4,
+                    depth_or_array_layers: 1,
+                },
+            },
+        )
+        .await;
+
+        // Sample the center pixel and ensure it matches the uploaded texture (solid red).
+        let idx = ((2 * 4 + 2) * 4) as usize;
+        assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
+    });
+}
+
+#[test]
 fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {

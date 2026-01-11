@@ -558,6 +558,22 @@ fn fs_main() -> @location(0) vec4<f32> {
                     size_bytes,
                     data,
                 } => self.exec_upload_resource(resource_handle, offset_bytes, size_bytes, data),
+                AeroGpuCmd::CopyBuffer {
+                    dst_buffer,
+                    src_buffer,
+                    dst_offset_bytes,
+                    src_offset_bytes,
+                    size_bytes,
+                    flags,
+                } => self.exec_copy_buffer(
+                    dst_buffer,
+                    src_buffer,
+                    dst_offset_bytes,
+                    src_offset_bytes,
+                    size_bytes,
+                    flags,
+                    guest_memory,
+                ),
                 AeroGpuCmd::SetRenderTargets {
                     color_count,
                     depth_stencil,
@@ -684,7 +700,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             })
         };
 
-        let mut wgpu_usage = wgpu::BufferUsages::COPY_DST;
+        let mut wgpu_usage = wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
         if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
             wgpu_usage |= wgpu::BufferUsages::VERTEX;
         }
@@ -1123,6 +1139,98 @@ fn fs_main() -> @location(0) vec4<f32> {
         Err(ExecutorError::Validation(format!(
             "UPLOAD_RESOURCE for unknown resource {handle}"
         )))
+    }
+
+    fn exec_copy_buffer(
+        &mut self,
+        dst_buffer: u32,
+        src_buffer: u32,
+        dst_offset_bytes: u64,
+        src_offset_bytes: u64,
+        size_bytes: u64,
+        flags: u32,
+        guest_memory: &dyn GuestMemory,
+    ) -> Result<(), ExecutorError> {
+        if size_bytes == 0 {
+            return Ok(());
+        }
+
+        if flags != 0 {
+            if flags == cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST {
+                return Err(ExecutorError::Validation(
+                    "COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet".into(),
+                ));
+            }
+            return Err(ExecutorError::Validation(format!(
+                "COPY_BUFFER: unsupported flags 0x{flags:08X}"
+            )));
+        }
+
+        if dst_buffer == 0 || src_buffer == 0 {
+            return Err(ExecutorError::Validation(
+                "COPY_BUFFER: resource handles must be non-zero".into(),
+            ));
+        }
+        if dst_buffer == src_buffer {
+            return Err(ExecutorError::Validation(
+                "COPY_BUFFER: src==dst is not supported".into(),
+            ));
+        }
+
+        if dst_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+            || src_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+            || size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+        {
+            return Err(ExecutorError::Validation(format!(
+                "COPY_BUFFER: offsets and size must be {}-byte aligned (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})",
+                wgpu::COPY_BUFFER_ALIGNMENT
+            )));
+        }
+
+        let (src_size, dst_size) = {
+            let src = self.buffers.get(&src_buffer).ok_or_else(|| {
+                ExecutorError::Validation(format!("COPY_BUFFER: unknown src buffer {src_buffer}"))
+            })?;
+            let dst = self.buffers.get(&dst_buffer).ok_or_else(|| {
+                ExecutorError::Validation(format!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))
+            })?;
+            (src.size_bytes, dst.size_bytes)
+        };
+
+        let src_end = src_offset_bytes
+            .checked_add(size_bytes)
+            .ok_or_else(|| ExecutorError::Validation("COPY_BUFFER: src range overflow".into()))?;
+        let dst_end = dst_offset_bytes
+            .checked_add(size_bytes)
+            .ok_or_else(|| ExecutorError::Validation("COPY_BUFFER: dst range overflow".into()))?;
+        if src_end > src_size || dst_end > dst_size {
+            return Err(ExecutorError::Validation(
+                "COPY_BUFFER: out of bounds".into(),
+            ));
+        }
+
+        // Flush any pending CPU writes before the copy reads/writes the buffers.
+        self.flush_buffer_if_dirty(src_buffer, guest_memory)?;
+        self.flush_buffer_if_dirty(dst_buffer, guest_memory)?;
+
+        let (src, dst) = {
+            let src = self.buffers.get(&src_buffer).ok_or_else(|| {
+                ExecutorError::Validation(format!("COPY_BUFFER: unknown src buffer {src_buffer}"))
+            })?;
+            let dst = self.buffers.get(&dst_buffer).ok_or_else(|| {
+                ExecutorError::Validation(format!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))
+            })?;
+            (&src.buffer, &dst.buffer)
+        };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aerogpu.executor.copy_buffer.encoder"),
+            });
+        encoder.copy_buffer_to_buffer(src, src_offset_bytes, dst, dst_offset_bytes, size_bytes);
+        self.queue.submit([encoder.finish()]);
+        Ok(())
     }
 
     fn exec_set_render_targets(
