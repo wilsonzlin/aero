@@ -152,10 +152,15 @@ Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target
 
 Still missing / in progress (guest-visible USB integration):
 
-- VM snapshot/restore integration for passthrough device state (queued reports, USB configuration
-  state, etc). The underlying device models in `crates/aero-usb` now implement deterministic
-  `aero-io-snapshot` TLV save/restore via `IoSnapshot`, but the higher-level VM snapshot wiring
-  (coordinator/device entry plumbing) is still pending.
+- Full VM snapshot/restore integration for passthrough device state (queued reports, USB configuration
+  state, etc). The underlying device models in `crates/aero-usb` implement deterministic `aero-io-snapshot`
+  TLV save/restore via `IoSnapshot`, and the WASM USB entrypoints now expose deterministic snapshot bytes:
+  - `UhciControllerBridge.snapshot_state()/restore_state()`
+  - `WebUsbUhciBridge.snapshot_state()/restore_state()`
+  - `UhciRuntime.snapshot_state()/restore_state()` (recommended for self-contained WebHID/WebUSB topology)
+
+  Higher-level VM snapshot wiring (coordinator/device entry plumbing, guest RAM capture, and browser-side
+  orchestration) is still pending.
 
 ## Host-side model (main thread owns the device)
 
