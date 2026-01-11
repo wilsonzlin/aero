@@ -9,6 +9,13 @@ import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
 const L2_PROXY_TEST_TIMEOUT_MS = 900_000;
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref();
+  });
+}
+
 function base64UrlNoPad(buf) {
   return buf
     .toString("base64")
@@ -342,12 +349,26 @@ test("l2 proxy enforces per-session tunnel quota (cookie auth)", { timeout: L2_P
 
     first.ws.close(1000, "done");
     await waitForClose(first.ws);
-    // Give the server time to release the permit.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The per-session tunnel permit is released when the session task exits. Avoid a fixed sleep
+    // here; under CI load the permit release can lag slightly behind the client observing the
+    // close frame.
+    const deadline = Date.now() + 2_000;
+    let third = null;
+    while (Date.now() < deadline) {
+      // eslint-disable-next-line no-await-in-loop
+      const attempt = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+        headers: { cookie },
+      });
+      if (attempt.ok) {
+        third = attempt;
+        break;
+      }
+      assert.equal(attempt.status, 429);
+      // eslint-disable-next-line no-await-in-loop
+      await sleep(25);
+    }
+    assert.ok(third && third.ok, "expected tunnel permit to be released after closing the first session");
 
-    const third = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
-      headers: { cookie },
-    });
     assert.equal(third.ok, true);
     third.ws.close(1000, "done");
     await waitForClose(third.ws);
