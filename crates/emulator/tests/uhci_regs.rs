@@ -353,3 +353,40 @@ fn uhci_egsm_suspends_frame_counter() {
     let fr_resume = uhci.port_read(REG_FRNUM, 2) as u16;
     assert_eq!(fr_resume, fr_after.wrapping_add(1) & 0x07ff);
 }
+
+#[test]
+fn uhci_portsc_suspend_resume_bits_roundtrip() {
+    #[derive(Clone)]
+    struct DummyDevice;
+
+    impl UsbDeviceModel for DummyDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    const PORTSC_SUSP: u16 = 1 << 12;
+    const PORTSC_RESUME: u16 = 1 << 13;
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
+
+    // Setting SUSP should latch and be visible on readback.
+    uhci.port_write(REG_PORTSC1, 2, PORTSC_SUSP as u32);
+    assert_ne!(uhci.port_read(REG_PORTSC1, 2) as u16 & PORTSC_SUSP, 0);
+
+    // Setting RESUME should also latch independently.
+    uhci.port_write(REG_PORTSC1, 2, (PORTSC_SUSP | PORTSC_RESUME) as u32);
+    let st = uhci.port_read(REG_PORTSC1, 2) as u16;
+    assert_ne!(st & PORTSC_SUSP, 0);
+    assert_ne!(st & PORTSC_RESUME, 0);
+
+    // Clearing both bits.
+    uhci.port_write(REG_PORTSC1, 2, 0);
+    let st = uhci.port_read(REG_PORTSC1, 2) as u16;
+    assert_eq!(st & (PORTSC_SUSP | PORTSC_RESUME), 0);
+}

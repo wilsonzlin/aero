@@ -11,6 +11,8 @@ struct Port {
     enable_change: bool,
     reset: bool,
     reset_countdown_ms: u8,
+    suspended: bool,
+    resuming: bool,
 }
 
 impl Port {
@@ -23,6 +25,8 @@ impl Port {
             enable_change: false,
             reset: false,
             reset_countdown_ms: 0,
+            suspended: false,
+            resuming: false,
         }
     }
 
@@ -34,6 +38,8 @@ impl Port {
         const LS_J_FS: u16 = 0b01 << 4;
         const LSDA: u16 = 1 << 8;
         const PR: u16 = 1 << 9;
+        const SUSP: u16 = 1 << 12;
+        const RESUME: u16 = 1 << 13;
 
         let mut v = 0u16;
         if self.connected {
@@ -56,6 +62,12 @@ impl Port {
         if self.reset {
             v |= PR;
         }
+        if self.suspended {
+            v |= SUSP;
+        }
+        if self.resuming {
+            v |= RESUME;
+        }
         v
     }
 
@@ -64,6 +76,8 @@ impl Port {
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
         const PR: u16 = 1 << 9;
+        const SUSP: u16 = 1 << 12;
+        const RESUME: u16 = 1 << 13;
 
         // Write-1-to-clear status change bits.
         if value & CSC != 0 {
@@ -77,6 +91,8 @@ impl Port {
         if value & PR != 0 && !self.reset {
             self.reset = true;
             self.reset_countdown_ms = 50;
+            self.suspended = false;
+            self.resuming = false;
             if let Some(dev) = self.device.as_mut() {
                 dev.reset();
             }
@@ -102,6 +118,9 @@ impl Port {
                 self.enabled = false;
                 self.enable_change = true;
             }
+
+            self.suspended = value & SUSP != 0;
+            self.resuming = value & RESUME != 0;
         }
     }
 
