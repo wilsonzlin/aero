@@ -261,4 +261,21 @@ describe("UsbPassthroughDemoRuntime", () => {
 
     expect(() => runtime.tick()).toThrow(/bulkOut/i);
   });
+
+  it("throws when the demo emits an action with an invalid id (so the caller can reset instead of hanging)", () => {
+    const demo = new FakeDemo();
+    demo.actions.push({
+      kind: "bulkIn",
+      id: -1,
+      endpoint: 0x81,
+      length: 8,
+    });
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: () => undefined,
+    });
+
+    expect(() => runtime.tick()).toThrow(/invalid usb action id/i);
+  });
 });

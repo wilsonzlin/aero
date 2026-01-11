@@ -206,7 +206,14 @@ export class UsbPassthroughDemoRuntime {
     for (const raw of rawActions) {
       if (!raw || typeof raw !== "object") continue;
       const action = raw as WasmUsbHostAction;
-      if (typeof (action as { kind?: unknown }).kind !== "string" || typeof (action as { id?: unknown }).id !== "number") continue;
+      const kind = (action as { kind?: unknown }).kind;
+      const id = (action as { id?: unknown }).id;
+      if (typeof kind !== "string") {
+        throw new Error(`UsbPassthroughDemo emitted an invalid USB action (missing kind).`);
+      }
+      if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 0 || id > 0xffff_ffff) {
+        throw new Error(`UsbPassthroughDemo emitted an invalid USB action id: ${String(id)}`);
+      }
 
       const proxy = wasmActionToProxyAction(action);
 
