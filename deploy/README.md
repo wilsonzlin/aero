@@ -20,13 +20,30 @@ Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-ga
 
 - `deploy/docker-compose.yml` – runs:
   - `aero-proxy` (Caddy) on `:80/:443`
-  - `aero-gateway` (your backend container) on the internal docker network
+  - `aero-gateway` (`backend/aero-gateway`) on the internal docker network
 - `deploy/caddy/Caddyfile` – TLS termination, COOP/COEP headers, reverse proxy rules
+- `deploy/scripts/smoke.sh` – builds + boots the compose stack and asserts key headers
 - `deploy/static/index.html` – a small **smoke test page** to validate `window.crossOriginIsolated`
 - `deploy/k8s/` – Kubernetes/Helm deployment for `aero-gateway` with Ingress TLS + COOP/COEP headers
 
 For CSP details and tradeoffs (including why Aero needs `'wasm-unsafe-eval'` for WASM-based JIT),
 see: `docs/security-headers.md`.
+
+## Production-ready vs examples
+
+This directory intentionally includes both **copy/paste-ready** configs and **reference-only**
+templates.
+
+Production-ready building blocks:
+
+- `deploy/docker-compose.yml` + `deploy/caddy/Caddyfile` – single-host deployments (VM/bare metal)
+- `deploy/k8s/chart/aero-gateway/` – Kubernetes Helm chart for the gateway + Ingress headers
+
+Examples / reference-only:
+
+- `deploy/static/` – smoke-test frontend (not the real UI)
+- `deploy/nginx/` – nginx examples (useful if you don't want Caddy)
+- `deploy/k8s/aero-storage-server/` – optional disk/image service templates (not required for the gateway)
 
 ## Production DNS requirements
 
@@ -57,8 +74,8 @@ cp deploy/.env.example deploy/.env
   - `localhost` for local dev
   - `aero.example.com` (or similar) for production
 - `AERO_GATEWAY_IMAGE` (default: `aero-gateway:dev`)
-  - This compose file builds a small **stub gateway** by default (see `deploy/gateway/`).
-  - For production, replace the `aero-gateway` service with your real gateway image.
+  - By default, `deploy/docker-compose.yml` builds `backend/aero-gateway` from source.
+  - For production, prefer a published image and remove the compose `build:` stanza (or override it).
 - `AERO_GATEWAY_UPSTREAM` (default: `aero-gateway:8080`)
   - Only change if your gateway listens on a different port inside docker.
 - `AERO_HSTS_MAX_AGE` (default: `0`)
@@ -79,18 +96,18 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
 - `TRUST_PROXY` (default in compose: `1`)
   - Set to `1` only when the gateway is reachable **only** via the reverse proxy.
   - Required if you want `request.ip` / rate limiting to use `X-Forwarded-For`.
-- `CROSS_ORIGIN_ISOLATION` (default in compose: `1`)
-  - Optional defense-in-depth; the proxy already sets these headers at the edge.
+- `CROSS_ORIGIN_ISOLATION` (default in compose: `0`)
+  - Set to `1` only if you are not injecting COOP/COEP headers at the edge proxy.
 
 ### Using the real gateway in production
 
-`deploy/docker-compose.yml` includes a `build: ./gateway` section to make
-`docker compose up` work out-of-the-box in local dev.
+`deploy/docker-compose.yml` builds `backend/aero-gateway` from source so `docker compose up`
+works without needing a published image.
 
 For production deployments, you will typically:
 
-1) Remove the `build:` stanza from the `aero-gateway` service
-2) Set `image:` to your real published gateway image
+1) Remove the `build:` stanza from the `aero-gateway` service (or override via a separate compose file)
+2) Set `image:` to a published gateway image
 3) Keep the proxy as-is (it is production-ready)
 
 The edge proxy (Caddy) automatically sets standard forwarding headers like:
@@ -186,17 +203,9 @@ You can validate that the TLS + upgrade path works with a CLI client like
 [`wscat`](https://github.com/websockets/wscat) or [`websocat`](https://github.com/vi/websocat):
 
 ```bash
-# With the deploy stub gateway (no query params required):
 # If you haven't trusted the local Caddy CA yet, you may need:
 #   NODE_TLS_REJECT_UNAUTHORIZED=0
-NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp"
-
-# With a real Aero gateway, adjust query params to match its /tcp contract.
-# Canonical (v1):
-#   npx wscat -c "wss://localhost/tcp?v=1&host=example.com&port=80"
-#
-# Compatibility form (also supported):
-#   npx wscat -c "wss://localhost/tcp?v=1&target=example.com:80"
+NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&target=example.com:80"
 ```
 
 If you see a successful handshake but the connection immediately closes, the
@@ -245,6 +254,11 @@ That way the browser still sees a single `https://AERO_DOMAIN` origin.
 By default, `deploy/docker-compose.yml` mounts `deploy/static/` into the proxy
 at `/srv` as a smoke test.
 
+`deploy/caddy/Caddyfile` is tuned for Vite output:
+
+- `/assets/*` gets long-lived caching (`Cache-Control: public, max-age=31536000, immutable`)
+- everything else (including `index.html`) is served with `Cache-Control: no-cache`
+
 To serve your real frontend:
 
 1) Build it (example):
@@ -267,4 +281,37 @@ npm run build
 
 ```bash
 docker compose -f deploy/docker-compose.yml up --force-recreate
+```
+
+## Separate static hosting (frontend on a different origin)
+
+The simplest/most robust setup is **single-origin** (serve static UI + gateway under the same host).
+If you must host the frontend elsewhere (Netlify/Vercel/Cloudflare Pages), you must configure **both**:
+
+1) **Frontend headers** (COOP/COEP + CSP)
+2) **Gateway origin allowlist** (`PUBLIC_BASE_URL` / `ALLOWED_ORIGINS`)
+
+Hosting templates in this repo:
+
+- Netlify + Cloudflare Pages headers: `web/public/_headers` (copied into `web/dist/_headers` on build)
+- Netlify build config: `netlify.toml` (repo root)
+- Vercel config: `vercel.json` (repo root)
+
+When using a separate gateway origin, update the frontend CSP `connect-src` to include the gateway:
+
+```
+connect-src 'self' https://gateway.example.com wss://gateway.example.com
+```
+
+Then configure the gateway to allow the frontend origin:
+
+- `PUBLIC_BASE_URL=https://gateway.example.com`
+- `ALLOWED_ORIGINS=https://frontend.example.com` (comma-separated if multiple)
+
+## Compose smoke check
+
+To validate the compose stack end-to-end (build + headers + `/healthz`), run:
+
+```bash
+bash deploy/scripts/smoke.sh
 ```

@@ -52,14 +52,13 @@ services:
   # This compose file assumes the gateway listens on plain HTTP inside the
   # docker network (TLS is terminated at the proxy).
   aero-gateway:
-    # Local-dev default: a small stub gateway (build context in ./gateway) that:
-    # - serves /healthz and /api/echo over HTTP (example)
-    # - accepts WebSocket upgrades on /tcp and echoes frames back
+    # Canonical gateway implementation lives in `backend/aero-gateway`.
     #
-    # Production: replace this with your real Aero gateway image/build.
+    # For production, prefer a published image and remove the `build:` stanza,
+    # or override it with your own compose file.
     image: ${AERO_GATEWAY_IMAGE:-aero-gateway:dev}
     build:
-      context: ./gateway
+      context: ../backend/aero-gateway
     restart: unless-stopped
     expose:
       - "8080"
@@ -76,7 +75,7 @@ services:
 
       # Optional defense-in-depth: also set COOP/COEP headers at the gateway.
       # (The proxy already sets these at the edge.)
-      CROSS_ORIGIN_ISOLATION: ${CROSS_ORIGIN_ISOLATION:-1}
+      CROSS_ORIGIN_ISOLATION: ${CROSS_ORIGIN_ISOLATION:-0}
 
 volumes:
   caddy_data:

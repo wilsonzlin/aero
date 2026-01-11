@@ -1,0 +1,36 @@
+name: deploy - docker compose smoke
+
+on:
+  pull_request:
+    paths:
+      - deploy/**
+      - backend/aero-gateway/**
+      - .github/workflows/deploy-compose-smoke.yml
+    paths-ignore:
+      - "**/*.md"
+  push:
+    branches:
+      - main
+    paths:
+      - deploy/**
+      - backend/aero-gateway/**
+      - .github/workflows/deploy-compose-smoke.yml
+    paths-ignore:
+      - "**/*.md"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker-compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run deploy smoke check
+        run: bash deploy/scripts/smoke.sh

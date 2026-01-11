@@ -1,9 +1,0 @@
-/*
-  Cross-Origin-Opener-Policy: same-origin
-  Cross-Origin-Embedder-Policy: require-corp
-  Cross-Origin-Resource-Policy: same-origin
-  Origin-Agent-Cluster: ?1
-  Content-Security-Policy: default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'
-  Referrer-Policy: no-referrer
-  X-Content-Type-Options: nosniff
-  Permissions-Policy: camera=(), microphone=(), geolocation=()
