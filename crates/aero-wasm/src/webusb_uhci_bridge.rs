@@ -145,10 +145,7 @@ impl WebUsbUhciBridge {
                 let b1 = self.read_u8(offset.wrapping_add(1));
                 let b2 = self.read_u8(offset.wrapping_add(2));
                 let b3 = self.read_u8(offset.wrapping_add(3));
-                u32::from(b0)
-                    | (u32::from(b1) << 8)
-                    | (u32::from(b2) << 16)
-                    | (u32::from(b3) << 24)
+                u32::from(b0) | (u32::from(b1) << 8) | (u32::from(b2) << 16) | (u32::from(b3) << 24)
             }
             _ => 0xffff_ffff,
         }
@@ -164,12 +161,8 @@ impl WebUsbUhciBridge {
 
         match (offset, size) {
             // Use native 16-bit writes for the 16-bit registers.
-            (
-                REG_USBCMD | REG_USBSTS | REG_USBINTR | REG_FRNUM | REG_PORTSC1 | REG_PORTSC2,
-                2,
-            ) => {
-                self.controller
-                    .port_write(offset, 2, value, &mut self.irq);
+            (REG_USBCMD | REG_USBSTS | REG_USBINTR | REG_FRNUM | REG_PORTSC1 | REG_PORTSC2, 2) => {
+                self.controller.port_write(offset, 2, value, &mut self.irq);
             }
             // FRBASEADD is natively 32-bit.
             (REG_FRBASEADD, 4) => {
