@@ -15,6 +15,9 @@ via BAR0 MMIO magic:
   Ring = legacy `aerogpu_legacy_ring_entry` entries (see `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h`).
   Note: the emulator legacy device model is optional (feature `emulator/aerogpu-legacy`).
 
+Note: the shipped Win7 driver packages (`drivers/aerogpu/packaging/win7`) bind to the canonical `PCI\\VEN_A3A0&DEV_0001`
+HWID only. Installing against the legacy bring-up HWID requires a custom INF that matches `PCI\\VEN_1AED&DEV_0001`.
+
 `--query-version` (alias: `--query-device`), `--query-fence`, `--dump-ring`, and `--selftest` rely on dbgctl escape
 packets implemented by the installed KMD. The tool is primarily developed against the versioned ("AGPU") path, but
 keeps best-effort compatibility decoding for legacy ("ARGP") devices and older KMD builds.
