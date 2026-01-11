@@ -115,6 +115,7 @@ typedef struct _VIRTIOSND_TX_ENGINE {
 extern "C" {
 #endif
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG VirtioSndTxFrameSizeBytes(VOID);
 
 /*
@@ -128,6 +129,7 @@ ULONG VirtioSndTxFrameSizeBytes(VOID);
  *
  * IRQL: PASSIVE_LEVEL only (allocates and initializes DMA buffers).
  */
+_IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndTxInit(
     _Out_ VIRTIOSND_TX_ENGINE* Tx,
     _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
@@ -141,6 +143,7 @@ _Must_inspect_result_ NTSTATUS VirtioSndTxInit(
  *
  * IRQL: PASSIVE_LEVEL only.
  */
+_IRQL_requires_(PASSIVE_LEVEL)
 VOID VirtioSndTxUninit(_Inout_ VIRTIOSND_TX_ENGINE* Tx);
 
 /*
@@ -148,6 +151,7 @@ VOID VirtioSndTxUninit(_Inout_ VIRTIOSND_TX_ENGINE* Tx);
  *
  * IRQL: <= DISPATCH_LEVEL.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndTxSubmitPeriod(
     _Inout_ VIRTIOSND_TX_ENGINE* Tx,
     _In_opt_ const VOID* Pcm1,
@@ -164,6 +168,7 @@ _Must_inspect_result_ NTSTATUS VirtioSndTxSubmitPeriod(
  *
  * IRQL: <= DISPATCH_LEVEL.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndTxSubmitSg(
     _Inout_ VIRTIOSND_TX_ENGINE* Tx,
     _In_reads_(SegmentCount) const VIRTIOSND_TX_SEGMENT* Segments,
@@ -174,9 +179,11 @@ _Must_inspect_result_ NTSTATUS VirtioSndTxSubmitSg(
  *
  * IRQL: <= DISPATCH_LEVEL.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG VirtioSndTxDrainCompletions(_Inout_ VIRTIOSND_TX_ENGINE* Tx);
 
 /* Backwards-compatible name used by the INTx DPC path. */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID VirtioSndTxProcessCompletions(_Inout_ VIRTIOSND_TX_ENGINE* Tx);
 
 /*
@@ -187,6 +194,7 @@ VOID VirtioSndTxProcessCompletions(_Inout_ VIRTIOSND_TX_ENGINE* Tx);
  *
  * IRQL: <= DISPATCH_LEVEL.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID VirtioSndTxOnUsed(_Inout_ VIRTIOSND_TX_ENGINE* Tx, _In_opt_ void* Cookie, _In_ UINT32 UsedLen);
 
 #ifdef __cplusplus
