@@ -22,7 +22,7 @@ describe("usb/usb_proxy_protocol", () => {
     const actions: UsbHostAction[] = [
       { kind: "controlIn", id: 1, setup },
       { kind: "controlOut", id: 2, setup, data: Uint8Array.of(1, 2, 3) },
-      { kind: "bulkIn", id: 3, endpoint: 1, length: 64 },
+      { kind: "bulkIn", id: 3, endpoint: 0x81, length: 64 },
       { kind: "bulkOut", id: 4, endpoint: 2, data: Uint8Array.of(9, 8, 7) },
     ];
 

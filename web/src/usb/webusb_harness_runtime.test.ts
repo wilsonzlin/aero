@@ -153,7 +153,7 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
   it("stops + resets on usb.selected ok:false", () => {
     const port = new FakePort();
 
-    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 };
     const harness = {
       tick: vi.fn(),
       drain_actions: vi.fn(() => [action]),

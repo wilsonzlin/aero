@@ -86,7 +86,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
   it("respects initiallyBlocked and waits for usb.selected ok:true before forwarding actions", async () => {
     const port = new FakePort();
 
-    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 };
     const bridge: UsbPassthroughBridgeLike = {
       drain_actions: vi.fn(() => [action]),
       push_completion: vi.fn(),
@@ -152,7 +152,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
   it("normalizes bigint ids from WASM actions before forwarding to the broker", async () => {
     const port = new FakePort();
 
-    const rawActions = [{ kind: "bulkIn", id: 1n, endpoint: 1, length: 8 }];
+    const rawActions = [{ kind: "bulkIn", id: 1n, endpoint: 0x81, length: 8 }];
 
     const push_completion = vi.fn();
     const bridge: UsbPassthroughBridgeLike = {
@@ -167,7 +167,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
     const p = runtime.pollOnce();
 
-    expect(port.posted).toEqual([{ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 1, length: 8 } }]);
+    expect(port.posted).toEqual([{ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 } }]);
 
     const completion: UsbHostCompletion = { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) };
     port.emit({ type: "usb.completion", completion });
@@ -182,7 +182,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     const port = new FakePort();
 
     const actions: UsbHostAction[] = [
-      { kind: "bulkIn", id: 1, endpoint: 1, length: 8 },
+      { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 },
       { kind: "bulkOut", id: 2, endpoint: 2, data: Uint8Array.of(7, 7) },
     ];
 
@@ -218,7 +218,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
   it("stops pumping and resets the bridge on usb.selected ok:false", async () => {
     const port = new FakePort();
 
-    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 };
     const drain_actions = vi.fn(() => [action]);
     const reset = vi.fn();
     const bridge: UsbPassthroughBridgeLike = {
@@ -315,7 +315,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
   it("pushes an error completion when WASM emits an invalid action (but includes id/kind)", async () => {
     const port = new FakePort();
-    const rawAction = { kind: "bulkIn", id: 3, endpoint: 1, length: "nope" };
+    const rawAction = { kind: "bulkIn", id: 3, endpoint: 0x81, length: "nope" };
 
     const push_completion = vi.fn();
     const reset = vi.fn();
@@ -363,7 +363,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
   it("synthesizes an error completion when the broker sends an invalid usb.completion payload", async () => {
     const port = new FakePort();
-    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 };
 
     const push_completion = vi.fn();
     const reset = vi.fn();
@@ -397,7 +397,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
   it("resets the bridge when WASM emits an out-of-range (non-u32) action id", async () => {
     const port = new FakePort();
-    const rawAction = { kind: "bulkIn", id: 0x1_0000_0000n, endpoint: 1, length: 8 };
+    const rawAction = { kind: "bulkIn", id: 0x1_0000_0000n, endpoint: 0x81, length: 8 };
 
     const push_completion = vi.fn();
     const reset = vi.fn();
