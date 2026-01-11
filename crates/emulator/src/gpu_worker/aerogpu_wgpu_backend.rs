@@ -221,6 +221,7 @@ mod tests {
     use aero_protocol::aerogpu::aerogpu_ring::{
         AerogpuAllocTableHeader, AEROGPU_ALLOC_TABLE_MAGIC,
     };
+    use memory::Bus;
 
     #[test]
     fn decode_alloc_table_bytes_recovers_from_misaligned_buffers() {
@@ -252,5 +253,31 @@ mod tests {
         assert_eq!(entries[0].alloc_id, 1);
         assert_eq!(entries[0].gpa, 0x1000);
         assert_eq!(entries[0].size_bytes, 0x2000);
+    }
+
+    #[test]
+    fn submit_surfaces_execution_errors_via_completion() {
+        let mut backend = AerogpuWgpuBackend::new().unwrap();
+        let mut mem = Bus::new(0x1000);
+
+        // Intentionally malformed command stream: too small to contain even the header.
+        let submission = AeroGpuBackendSubmission {
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            signal_fence: 42,
+            cmd_stream: vec![0u8],
+            alloc_table: None,
+        };
+
+        assert!(backend.submit(&mut mem, submission).is_ok());
+
+        let completions = backend.poll_completions();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].fence, 42);
+        assert!(
+            completions[0].error.is_some(),
+            "expected execution error to be reported via completion"
+        );
     }
 }
