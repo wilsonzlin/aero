@@ -8,7 +8,7 @@ import { randomInt } from 'node:crypto';
  * URLs (S3/CloudFront/etc). Designed to be dependency-free and run on Node 18+.
  *
  * Usage:
- *   node tools/range-harness/index.js --url <URL> [--chunk-size 8388608] [--count 32]
+ *   node tools/range-harness/index.js --url <URL> [--chunk-size 1048576] [--count 32]
  *     [--concurrency 4] [--random|--sequential]
  */
 
@@ -21,11 +21,11 @@ if (typeof fetch !== 'function') {
 function printUsage(exitCode = 0) {
   const lines = [
     'Usage:',
-    '  node tools/range-harness/index.js --url <URL> [--chunk-size 8388608] [--count 32] [--concurrency 4] [--random|--sequential]',
+    '  node tools/range-harness/index.js --url <URL> [--chunk-size 1048576] [--count 32] [--concurrency 4] [--random|--sequential]',
     '',
     'Options:',
     '  --url <URL>            (required) HTTP/HTTPS URL to the disk image',
-    '  --chunk-size <bytes>   Size of each Range request (default: 8388608 = 8MiB)',
+    '  --chunk-size <bytes>   Size of each Range request (default: 1048576 = 1MiB)',
     '  --count <N>            Number of range requests to perform (default: 32)',
     '  --concurrency <N>      Number of in-flight requests (default: 4)',
     '  --passes <N>           Repeat the same range plan N times (default: 1; useful for cache hit verification)',
@@ -75,7 +75,7 @@ function parseArgs(argv) {
   /** @type {Record<string, any>} */
   const opts = {
     url: null,
-    chunkSize: 8 * 1024 * 1024,
+    chunkSize: 1024 * 1024,
     count: 32,
     concurrency: 4,
     mode: 'sequential',

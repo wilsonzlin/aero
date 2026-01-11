@@ -18,7 +18,7 @@ No external npm dependencies are required.
 
 ```bash
 node tools/range-harness/index.js --url <URL> \
-  --chunk-size 8388608 \
+  --chunk-size 1048576 \
   --count 32 \
   --concurrency 4 \
   --random
@@ -33,7 +33,7 @@ node tools/range-harness/index.js --url <URL> --random --json > range-results.js
 ### Options
 
 - `--url <URL>` (required): HTTP/HTTPS URL to probe
-- `--chunk-size <bytes>`: size of each `Range` request (default: `8388608` = 8MiB)
+- `--chunk-size <bytes>`: size of each `Range` request (default: `1048576` = 1MiB)
 - `--count <N>`: number of requests to perform (default: `32`)
 - `--concurrency <N>`: number of in-flight requests (default: `4`)
 - `--passes <N>`: repeat the same range plan `N` times (default: `1`). Useful for verifying that a CDN caches byte ranges (pass 1 is typically `Miss`, pass 2 should become `Hit` if caching is configured).
@@ -52,7 +52,7 @@ If your object is public:
 ```bash
 node tools/range-harness/index.js \
   --url "https://my-bucket.s3.amazonaws.com/windows7.img" \
-  --chunk-size 8388608 --count 32 --concurrency 4 --random
+  --chunk-size 1048576 --count 32 --concurrency 4 --random
 ```
 
 For private objects, use a **pre-signed URL** and paste it into `--url`.
@@ -65,7 +65,7 @@ If your disk image URL requires an `Authorization` header (or any other custom h
 node tools/range-harness/index.js \
   --url "https://example.com/private/windows7.img" \
   --header "Authorization: Bearer eyJ..." \
-  --chunk-size 8388608 --count 32 --concurrency 4 --random
+  --chunk-size 1048576 --count 32 --concurrency 4 --random
 ```
 
 ## Example: CloudFront distribution URL
@@ -73,7 +73,7 @@ node tools/range-harness/index.js \
 ```bash
 node tools/range-harness/index.js \
   --url "https://d111111abcdef8.cloudfront.net/windows7.img" \
-  --chunk-size 8388608 --count 64 --concurrency 8 --random
+  --chunk-size 1048576 --count 64 --concurrency 8 --random
 ```
 
 CloudFront often includes an `X-Cache` header like:
@@ -141,7 +141,7 @@ node tools/range-harness/index.js \
 
 Each request prints a line including:
 
-- The requested `Range` (e.g. `bytes=0-8388607`)
+- The requested `Range` (e.g. `bytes=0-1048575`)
 - `status` (expected: `206`; `200` indicates the server ignored the `Range`)
 - `content-range` (expected to match the requested offsets when `status=206`)
 - `bytes` read
@@ -165,13 +165,13 @@ Example (trimmed):
 
 ```text
 URL: https://d111111abcdef8.cloudfront.net/windows7.img
-Config: chunkSize=8.00MiB count=32 concurrency=4 passes=1 seed=(random) unique=false mode=random
+Config: chunkSize=1.00MiB count=32 concurrency=4 passes=1 seed=(random) unique=false mode=random
 ...
 Summary
 -------
 Requests: 32 ok=32 withWarnings=0
 Latency: avg=120ms median=98ms
-Throughput: bytes=256MiB wall=6.50s aggregate=39.4MiB/s
+Throughput: bytes=32MiB wall=1.25s aggregate=25.6MiB/s
 Status codes: 206:32
 X-Cache: hit=28 miss=4 other=0 missing=0
 ```
@@ -186,7 +186,7 @@ For large disk images, a good starting range for benchmarking is:
 
 - **1MiB** (`1048576`) to match common `StreamingDisk` chunk sizes (good cacheability / less over-fetch)
 - **4MiB** (`4194304`) if you expect high RTT / want to reduce request rate
-- **8MiB** (`8388608`) as a balanced default for pure throughput benchmarking
+- **8MiB** (`8388608`) for throughput-focused benchmarking
 - **16MiB** (`16777216`) when optimizing for peak throughput on low-latency links
 
 Typical workflow:
