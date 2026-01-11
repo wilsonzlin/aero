@@ -158,12 +158,18 @@ services:
       AERO_L2_API_KEY: ${AERO_L2_API_KEY:-}
       AERO_L2_JWT_SECRET: ${AERO_L2_JWT_SECRET:-}
 
-      # Legacy static token authentication.
+      # Legacy token (backwards compatibility).
       #
-      # If set, upgrades must include the token via (in addition to cookie/jwt as configured):
-      # - `?token=<value>` query param, OR
+      # If AERO_L2_AUTH_MODE is unset, setting AERO_L2_TOKEN implicitly enables
+      # API-key auth using this value (equivalent to AERO_L2_AUTH_MODE=api_key +
+      # AERO_L2_API_KEY=<value>).
+      #
+      # Clients then provide the credential via:
+      # - `?token=<value>` (or `?apiKey=<value>`), OR
       # - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
-      #   `aero-l2-tunnel-v1`)
+      #   `aero-l2-tunnel-v1`).
+      #
+      # This is ignored when AERO_L2_AUTH_MODE is explicitly set to cookie/jwt/etc.
       AERO_L2_TOKEN: ${AERO_L2_TOKEN:-}
 
       # Egress policy (highly recommended to set allowlists for production deployments).

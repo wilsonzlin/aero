@@ -172,11 +172,21 @@ talks to a single HTTPS origin:
 - `/l2` → **aero-l2-proxy** (Option C; `aero-l2-tunnel-v1`)
 
 Auth note (Option C): `/l2` should be treated like `/tcp` — **Origin allowlist + authentication**
-are required. The production Rust L2 proxy (`crates/aero-l2-proxy`) enforces an Origin allowlist by
-default, and can optionally require a pre-shared token (`AERO_L2_TOKEN`) provided via `?token=...`
-(or an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<token>` alongside
-`aero-l2-tunnel-v1`). When using the gateway session bootstrap,
-prefer `endpoints.l2` from `POST /session` instead of hardcoding `/l2`.
+are required. The Rust L2 proxy (`crates/aero-l2-proxy`) enforces an Origin allowlist by default and
+supports multiple auth modes via `AERO_L2_AUTH_MODE`:
+
+- `cookie` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
+  by `POST /session`. The proxy must share the gateway session signing secret (`SESSION_SECRET`) via
+  `AERO_L2_SESSION_SECRET` so it can verify the cookie.
+- `api_key` / `jwt` / `cookie_or_jwt`: useful for cross-origin deployments and non-browser/internal
+  clients. Credentials can be delivered via:
+  - query params: `?token=...` / `?apiKey=...`, or
+  - `Sec-WebSocket-Protocol: aero-l2-token.<credential>` (requires the credential be valid for the
+    WebSocket subprotocol token grammar; prefer query mode for JWTs).
+- `AERO_L2_TOKEN` is a legacy alias for API-key auth (used when `AERO_L2_AUTH_MODE` is unset).
+
+When using the gateway session bootstrap, prefer `endpoints.l2` from `POST /session` instead of
+hardcoding `/l2`.
 
 Note: WebRTC’s **data plane** still requires UDP connectivity to the relay’s ICE port range (or a
 TURN server). The reverse proxy only fronts the relay’s HTTP/WebSocket signaling endpoints.

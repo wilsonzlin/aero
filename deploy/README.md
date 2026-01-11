@@ -179,12 +179,23 @@ cp deploy/.env.example deploy/.env
 - `AERO_L2_ALLOWED_ORIGINS_EXTRA` (default: empty)
   - Optional comma-prefixed origins appended to the L2 proxy Origin allowlist.
   - Example: `,https://localhost:5173`
-- `AERO_L2_TOKEN` (optional)
-  - Optional token required by `crates/aero-l2-proxy` during the WebSocket upgrade to `/l2`.
-  - If set, clients must provide the token via:
-    - `?token=<value>` query param, or
-    - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
-      `aero-l2-tunnel-v1`).
+- `AERO_L2_AUTH_MODE` (default in compose: `cookie`)
+  - Auth mode enforced by `crates/aero-l2-proxy` for `/l2` WebSocket upgrades:
+    `none`, `cookie`, `api_key`, `jwt`, `cookie_or_jwt`.
+  - `cookie` uses the `aero_session` cookie issued by `backend/aero-gateway` at `POST /session`
+    (recommended for single-origin deployments).
+- `AERO_L2_SESSION_SECRET` (required for `AERO_L2_AUTH_MODE=cookie` / `cookie_or_jwt`)
+  - Must match the gateway `SESSION_SECRET` so the L2 proxy can validate the `aero_session` cookie.
+    (`deploy/docker-compose.yml` wires this automatically by passing `SESSION_SECRET` through.)
+- `AERO_L2_API_KEY` (required for `AERO_L2_AUTH_MODE=api_key`)
+  - Clients can provide the credential via `?token=...` / `?apiKey=...` or
+    `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`).
+- `AERO_L2_JWT_SECRET` (required for `AERO_L2_AUTH_MODE=jwt` / `cookie_or_jwt`)
+  - JWTs are typically delivered via query string (`?token=...`) because they may not fit the
+    `Sec-WebSocket-Protocol` token grammar.
+- `AERO_L2_TOKEN` (legacy)
+  - Backwards-compatible alias for API-key auth. When `AERO_L2_AUTH_MODE` is unset, setting
+    `AERO_L2_TOKEN` implicitly enables `api_key` mode with that value.
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)
@@ -442,9 +453,9 @@ WebSocket:
 - Caddy proxies the WebSocket upgrade to the `aero-l2-proxy` container
 - The connection uses subprotocol: `aero-l2-tunnel-v1`
 
-Auth note: `/l2` enforces an Origin allowlist by default. For internet-exposed deployments, set
-`AERO_L2_TOKEN` and provide it as `?token=...` (or offer an additional `Sec-WebSocket-Protocol`
-entry `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1`).
+Auth note: `/l2` enforces an Origin allowlist by default and is authenticated by `aero-l2-proxy`.
+In this deploy stack, the default is `AERO_L2_AUTH_MODE=cookie`, which requires an `aero_session`
+cookie issued by the gateway at `POST /session` (see `deploy/.env.example` for token/JWT options).
 
 Endpoint discovery note: browser clients should treat the gateway as the canonical bootstrap API and
 avoid hardcoding `/l2`. The `POST /session` response includes `endpoints.l2` (a same-origin path)
@@ -474,11 +485,19 @@ docker compose -f deploy/docker-compose.yml up --build
 Using `wscat`:
 
 ```bash
-# If `AERO_L2_TOKEN` is set, provide it via query param:
+# Cookie auth (default): first create a session and copy the `aero_session=...` value.
+# curl -k -i -X POST https://localhost/session -H 'content-type: application/json' -d '{}'
 NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat \
-  -c "wss://localhost/l2?token=<AERO_L2_TOKEN>" \
+  -c "wss://localhost/l2" \
   -s aero-l2-tunnel-v1 \
+  -H "Cookie: aero_session=<paste-from-Set-Cookie>" \
   -o https://localhost
+
+# Token auth (optional): provide a credential via query param:
+# NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat \
+#   -c "wss://localhost/l2?token=<credential>" \
+#   -s aero-l2-tunnel-v1 \
+#   -o https://localhost
 ```
 
 Using `websocat`:
@@ -488,7 +507,8 @@ Using `websocat`:
 # add it explicitly (see `websocat --help` for the exact flag in your version).
 websocat --insecure --protocol aero-l2-tunnel-v1 \
   -H "Origin: https://localhost" \
-  wss://localhost/l2?token=<AERO_L2_TOKEN>
+  -H "Cookie: aero_session=<paste-from-Set-Cookie>" \
+  wss://localhost/l2
 ```
 
 ### Production note: egress policy
