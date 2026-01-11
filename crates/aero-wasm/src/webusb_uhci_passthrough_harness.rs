@@ -46,6 +46,7 @@ const PID_OUT: u8 = 0xE1;
 
 // Standard requests.
 const REQ_SET_ADDRESS: u8 = 0x05;
+const REQ_SET_CONFIGURATION: u8 = 0x09;
 
 fn td_token(pid: u8, addr: u8, ep: u8, toggle: bool, max_len: usize) -> u32 {
     let max_len_field = if max_len == 0 {
@@ -147,6 +148,7 @@ enum HarnessPhase {
     SetAddress,
     GetConfigDesc9,
     GetConfigDescFull,
+    SetConfiguration,
     Done,
     Error,
 }
@@ -625,6 +627,29 @@ impl WebUsbUhciPassthroughHarness {
                         return;
                     }
                     self.config_descriptor = chain.collect_in_bytes(&self.mem);
+                    self.phase = HarnessPhase::SetConfiguration;
+                    self.phase_detail = format!("SET_CONFIGURATION({})", self.config_value);
+                    self.pending_chain = Some(build_control_out_no_data_chain(
+                        &mut self.mem,
+                        &mut self.alloc,
+                        self.qh_addr,
+                        self.fl_base,
+                        1,
+                        BusSetupPacket {
+                            request_type: 0x00,
+                            request: REQ_SET_CONFIGURATION,
+                            value: self.config_value as u16,
+                            index: 0,
+                            length: 0,
+                        },
+                    ));
+                }
+            }
+            HarnessPhase::SetConfiguration => {
+                if let Some(chain) = &self.pending_chain {
+                    if !chain.is_complete(&self.mem) {
+                        return;
+                    }
                     self.phase = HarnessPhase::Done;
                     self.phase_detail = format!(
                         "done (device_desc={} bytes, config_desc={} bytes, config_value={})",
