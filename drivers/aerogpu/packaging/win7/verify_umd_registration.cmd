@@ -245,7 +245,9 @@ set "EXPECT_RE=!EXPECT:.=[.]!"
 rem Match the expected value as a full token at end-of-line (avoid false positives
 rem like "aerogpu_d3d9" matching "aerogpu_d3d9_x64", or accidental ".dll" suffixes
 rem on InstalledDisplayDrivers values).
-"%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /r /c:"%EXPECT_RE%[ ]*$" >nul
+set "EXPECT_TRAILER="
+if /i "%TYPE%"=="REG_MULTI_SZ" set "EXPECT_TRAILER=(\\0)?"
+"%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /r /c:"%EXPECT_RE%%EXPECT_TRAILER%[ ]*$" >nul
 if errorlevel 1 set "OK=0"
 
 if "%OK%"=="1" (
