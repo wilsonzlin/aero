@@ -77,3 +77,7 @@ container/recorder (`crates/aero-gpu-trace`), but it is **not** the Win7/WDDM Ae
 - **Implementing the Win7 graphics stack:** use `drivers/aerogpu/protocol/*` + `crates/emulator`.
 - **Working on early/prototype plumbing:** the toy protocols are fine, but keep them clearly
   labeled as prototypes.
+
+Note: an older `guest/windows/` prototype Win7 driver tree existed during early bring-up; it used stale
+placeholder PCI IDs (`VEN_1AE0`) and was not WOW64-complete on Win7 x64. It has been removed to avoid
+accidental installs; use `drivers/aerogpu/packaging/win7/` for the supported Win7 driver package.

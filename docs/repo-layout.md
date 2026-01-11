@@ -93,5 +93,6 @@ These directories are intentionally **not** production code:
 
 - `poc/` – small proof-of-concepts (usually referenced from docs)
 - `prototype/` – larger prototypes / RFC companions
+- `guest/windows/` – legacy Win7 AeroGPU prototype (sources removed; README pointer only)
 
 If you add new experiments, keep them under one of these (or a clearly named `legacy/` directory) and document them with a small `README.md`.
