@@ -4110,23 +4110,54 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       return S_OK;
 
     case 8: { // FEATURE_LEVELS
-      // Win7 D3D11 runtime expects a "count + inline list" layout in practice:
-      //   { UINT NumFeatureLevels; D3D_FEATURE_LEVEL FeatureLevels[NumFeatureLevels]; }
-      //
-      // Avoid pointer-based layouts here; on x86 they are the same size (8 bytes)
-      // and can be misinterpreted by the runtime.
       std::memset(data, 0, data_size);
+      static const D3D_FEATURE_LEVEL kLevels[] = {D3D_FEATURE_LEVEL_10_0};
+
+      // Win7 D3D11 runtime generally expects "count + inline list", but some
+      // header/runtime combinations treat this as a {count, pointer} struct.
+      // Populate both layouts when possible to avoid mismatched interpretation.
+      struct FeatureLevelsCapsPtr {
+        UINT NumFeatureLevels;
+        const D3D_FEATURE_LEVEL* pFeatureLevels;
+      };
+
+      constexpr size_t kInlineLevelsOffset = sizeof(UINT);
+      constexpr size_t kPtrOffset = offsetof(FeatureLevelsCapsPtr, pFeatureLevels);
+
+      // On 32-bit builds the pointer field overlaps the first inline element
+      // (both start at offset 4). Prefer the pointer layout in that case so we
+      // never return a bogus pointer that could crash the runtime.
+      if (data_size >= sizeof(FeatureLevelsCapsPtr) && kPtrOffset == kInlineLevelsOffset) {
+        auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
+        out_ptr->NumFeatureLevels = 1;
+        out_ptr->pFeatureLevels = kLevels;
+        return S_OK;
+      }
+
       if (data_size >= sizeof(UINT) + sizeof(D3D_FEATURE_LEVEL)) {
         auto* out_count = reinterpret_cast<UINT*>(data);
         *out_count = 1;
         auto* out_levels = reinterpret_cast<D3D_FEATURE_LEVEL*>(out_count + 1);
-        out_levels[0] = D3D_FEATURE_LEVEL_10_0;
+        out_levels[0] = kLevels[0];
+        if (data_size >= sizeof(FeatureLevelsCapsPtr) && kPtrOffset >= kInlineLevelsOffset + sizeof(D3D_FEATURE_LEVEL)) {
+          auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
+          out_ptr->pFeatureLevels = kLevels;
+        }
         return S_OK;
       }
+
+      if (data_size >= sizeof(FeatureLevelsCapsPtr)) {
+        auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
+        out_ptr->NumFeatureLevels = 1;
+        out_ptr->pFeatureLevels = kLevels;
+        return S_OK;
+      }
+
       if (data_size >= sizeof(D3D_FEATURE_LEVEL)) {
-        reinterpret_cast<D3D_FEATURE_LEVEL*>(data)[0] = D3D_FEATURE_LEVEL_10_0;
+        *reinterpret_cast<D3D_FEATURE_LEVEL*>(data) = kLevels[0];
         return S_OK;
       }
+
       return E_INVALIDARG;
     }
 
