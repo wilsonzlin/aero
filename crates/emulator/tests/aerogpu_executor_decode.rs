@@ -273,6 +273,79 @@ fn decodes_alloc_table_and_cmd_stream_header() {
 }
 
 #[test]
+fn accepts_unknown_minor_versions_for_submission_headers() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    // Use an unknown minor version while keeping the same major to validate forward-compat rules.
+    let newer_minor = (regs.abi_version & 0xffff_0000) | 999;
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, newer_minor);
+
+    let alloc_table_gpa = 0x5000u64;
+    let alloc_table_size_bytes = write_alloc_table(
+        &mut mem,
+        alloc_table_gpa,
+        newer_minor,
+        AEROGPU_ALLOC_TABLE_MAGIC,
+    );
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        newer_minor,
+        24,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_size_bytes,
+        alloc_table_gpa,
+        alloc_table_size_bytes,
+        42,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 42);
+    assert_eq!(regs.stats.malformed_submissions, 0);
+    assert_eq!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record.decode_errors.is_empty(),
+        "unexpected decode errors: {:?}",
+        record.decode_errors
+    );
+    let header = record
+        .submission
+        .cmd_stream_header
+        .as_ref()
+        .expect("missing cmd stream header");
+    assert_eq!(header.abi_version, newer_minor);
+}
+
+#[test]
 fn malformed_alloc_table_sets_error_irq_and_advances_head() {
     let mut mem = VecMemory::new(0x40_000);
     let mut regs = AeroGpuRegs::default();
