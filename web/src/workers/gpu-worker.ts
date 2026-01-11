@@ -430,9 +430,23 @@ const redrawCursor = (): void => {
     return;
   }
 
-  // Best-effort fallback: re-present the current framebuffer if no redraw primitive exists.
+  // If the presenter does not implement the cursor APIs, there is nothing to redraw.
+  if (!p.setCursorImageRgba8 && !p.setCursorState && !p.setCursorRenderEnabled) return;
+  if (!presenter) return;
+
+  // Best-effort fallback: re-present the last output so backends that only apply cursor state
+  // during present() can reflect the latest cursor updates without clobbering the current
+  // output source (framebuffer vs AeroGPU scanout).
+  if (aerogpuLastOutputSource === "aerogpu") {
+    const last = aerogpuLastPresentedFrame;
+    if (!last) return;
+    presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
+    return;
+  }
+
   const frame = getCurrentFrameInfo();
-  if (!frame || !presenter) return;
+  if (!frame) return;
+  aerogpuLastOutputSource = "framebuffer";
   presenter.present(frame.pixels, frame.strideBytes);
 };
 
