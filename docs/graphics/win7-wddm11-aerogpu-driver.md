@@ -15,7 +15,7 @@ We will implement a **WDDM 1.1 display miniport driver (KMD)** plus a **D3D9Ex u
 2. **A simple memory model** (system-memory-only allocations; no dedicated VRAM; no hardware paging).
 3. **A “command transport boundary”** between the guest driver and the emulator:
    - Virtual PCI device
-   - Small MMIO register block
+   - BAR0 MMIO register block (≥ 64 KiB)
    - Shared submission ring(s) in guest physical memory
    - Fence + interrupt completion
 4. **A present/scanout path** that keeps Windows 7 DWM stable (vblank simulation, SetVidPnSourceAddress-driven scanout).
