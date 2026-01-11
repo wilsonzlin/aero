@@ -167,13 +167,23 @@ describe("webusb_protection (vitest)", () => {
               },
             ],
           },
+          {
+            interfaceNumber: 2,
+            alternates: [
+              {
+                alternateSetting: 0,
+                interfaceClass: 0x10,
+                interfaceSubclass: 0x01,
+                interfaceProtocol: 0x00,
+              },
+            ],
+          },
         ],
       },
     ]);
 
     const result = classifyWebUsbDevice(device);
     expect(result.hasUnprotectedInterfaces).toBe(false);
-    expect(result.protected.map((entry) => entry.classCode)).toEqual([0x01, 0x0e]);
+    expect(result.protected.map((entry) => entry.classCode)).toEqual([0x01, 0x0e, 0x10]);
   });
 });
-
