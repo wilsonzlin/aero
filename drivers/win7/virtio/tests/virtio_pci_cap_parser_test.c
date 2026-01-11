@@ -1224,6 +1224,29 @@ static void test_notify_cap_len_19_too_short(void) {
     expect_result("notify_cap_len_19_too_short.res", res, VIRTIO_PCI_CAP_PARSE_ERR_NOTIFY_CAP_LEN_TOO_SMALL);
 }
 
+static void test_notify_cap_len_15_returns_cap_len_too_small(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_cap(cfg, 0x54, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_NOTIFY, 0, 0x1000, 0x0100, 15);
+
+    bars[0] = 0xA0000000ULL;
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("notify_cap_len_15_returns_cap_len_too_small.res",
+                  res,
+                  VIRTIO_PCI_CAP_PARSE_ERR_CAP_LEN_TOO_SMALL);
+}
+
 static void test_notify_cap_len_too_short_even_with_duplicate(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -1973,6 +1996,7 @@ int main(void) {
     test_cap_len_too_short();
     test_notify_cap_len_too_short();
     test_notify_cap_len_19_too_short();
+    test_notify_cap_len_15_returns_cap_len_too_small();
     test_notify_cap_len_too_short_even_with_duplicate();
     test_bar_address_missing();
     test_cap_ptr_unaligned();
