@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-interrupts = { path = "../aero-interrupts" }
+aero-io-snapshot = { path = "../aero-io-snapshot" }
 memory = { path = "../memory" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

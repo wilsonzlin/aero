@@ -393,6 +393,7 @@ dependencies = [
  "aero-acpi",
  "aero-devices",
  "aero-interrupts",
+ "aero-io-snapshot",
  "js-sys",
  "memory",
  "wasm-bindgen",
