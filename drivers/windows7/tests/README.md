@@ -43,15 +43,15 @@ drivers/windows7/tests/
 The selftest emits machine-parseable markers:
 
 ```
-AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
-AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-# (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|...
-# or:
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
-AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+ AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+ # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
+ # or:
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
+ AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
@@ -59,8 +59,9 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and 
 (virtio-blk + virtio-input + virtio-snd + virtio-net) were emitted so older selftest binaries can’t accidentally pass.
 
 Note:
-- The virtio-snd test reports `SKIP` when `PCI\VEN_1AF4&DEV_1059` is missing by default; use `--require-snd` to make
-  missing virtio-snd fail the overall selftest. Use `--disable-snd` to force `SKIP`.
+- virtio-snd playback is **skipped by default**; enable it with `--test-snd` / `--require-snd`.
+  When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL.
+  Use `--disable-snd` to force `SKIP` for both playback and capture.
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed).
