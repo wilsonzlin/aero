@@ -82,7 +82,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const workflowName = "win7-virtio-selftest";
+            const workflowName = "Win7 virtio selftest (guest tool)";
             const fallbackWorkflowFile = "win7-virtio-selftest.yml";
             const sha = context.sha;
             let runId = "";
@@ -136,7 +136,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ steps.selftest_run.outputs.run_id }}
-          name: aero-virtio-selftest
+          # win7-virtio-selftest.yml publishes:
+          # - win7-virtio-selftest-x86
+          # - win7-virtio-selftest-x64
+          pattern: win7-virtio-selftest-*
+          merge-multiple: true
           path: out/win7-virtio-harness/selftest
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -238,8 +242,8 @@ jobs:
           mkdir -p out/win7-virtio-harness
           if [[ -f "$SERIAL_LOG_PATH" ]]; then
             dest="out/win7-virtio-harness/$(basename "$SERIAL_LOG_PATH")"
-            src_abs="$(realpath "$SERIAL_LOG_PATH")"
-            dest_abs="$(realpath -m "$dest")"
+            src_abs="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$SERIAL_LOG_PATH")"
+            dest_abs="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$dest")"
             if [[ "$src_abs" != "$dest_abs" ]]; then
               cp "$SERIAL_LOG_PATH" "$dest"
             fi
