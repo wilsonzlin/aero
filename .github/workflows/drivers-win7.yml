@@ -31,14 +31,22 @@ on:
 
 jobs:
   virtio-host-tests-linux:
-    name: Virtio host tests (Linux)
+    name: Virtio host tests (Linux, ${{ matrix.cc }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc:
+          - gcc
+          - clang
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Run virtio host tests (CMake)
         shell: bash
+        env:
+          CC: ${{ matrix.cc }}
         run: |
           set -euo pipefail
 
