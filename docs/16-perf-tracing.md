@@ -66,3 +66,17 @@ Current placeholder instrumentation points:
 - Main thread: requestAnimationFrame present loops (`web/src/display/vga_presenter.ts`, plus any callers of `startFrameScheduler`)
 - Main thread: `wasm:init` span for runtime WASM loader (`web/src/main.ts`)
 - Workers: `wasm:init` + `worker:init` spans (`web/src/workers/*.worker.ts`, `web/src/workers/gpu-worker.ts`, `web/src/workers/aero-gpu-worker.ts`)
+
+## Audio telemetry (ring buffer health)
+
+When `startAudioPerfSampling()` is enabled for an `EnabledAudioOutput`, the trace will contain counter (`ph: "C"`) events with:
+
+- `audio.bufferLevelFrames` — current queued frames in the output ring buffer
+- `audio.underruns` — total underrun count (increments when the worklet has to output silence)
+- `audio.overruns` — total dropped frames due to producer writes exceeding available capacity
+- `audio.sampleRate` — AudioContext sample rate
+
+See:
+
+- `web/src/platform/audio.ts` (`startAudioPerfSampling`, `getMetrics`)
+- `web/src/main.ts` (demo UI auto-starts sampling when audio output is initialized and `window.aero.perf` is present)
