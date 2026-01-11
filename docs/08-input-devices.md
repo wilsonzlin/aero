@@ -780,7 +780,7 @@ intended architecture, security model, and current limitations.
 
 Virtio-input is the virtio device for input peripherals. Conceptually it is a stream of small typed events (similar to Linux `evdev`) delivered over virtqueues, rather than a full USB bus + endpoints + HID polling model.
 
-For Aero, virtio-input is the intended “fast path” for keyboard/mouse once a guest driver is available:
+For Aero, virtio-input is the intended “fast path” for keyboard/mouse once the guest driver is installed:
 
 - **Host side is simpler**: no USB host controller state machines, device enumeration, descriptors, periodic interrupt transfers, etc.
 - **Lower latency / easier batching**: we can push events as they happen (or coalesce them per frame) into a ring buffer and raise an interrupt, instead of modeling USB frames/microframes.
