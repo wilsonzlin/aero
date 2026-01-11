@@ -27,6 +27,7 @@ jobs:
       PERF_EXTREME_CV_THRESHOLD: "0.5"
       AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
       AERO_REQUIRE_WEBGPU: "0"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - name: Checkout (candidate)
         uses: actions/checkout@v4
@@ -121,38 +122,20 @@ jobs:
             ${{ steps.node-dir-head.outputs.lockfile }}
             ${{ steps.node-dir-base.outputs.lockfile }}
 
-      - name: Determine Playwright version
-        id: playwright-version
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./head/tools/perf/package-lock.json')?.packages?.['node_modules/playwright-core']?.version ?? ''")"
-          if [[ -z "$version" ]]; then
-            echo "playwright-core version not found in head/tools/perf/package-lock.json" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
-          restore-keys: |
-            ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-
-
       - name: Install perf tool dependencies
         run: npm ci
         working-directory: head/tools/perf
 
-      - name: Install Chromium (Playwright)
-        run: node node_modules/playwright-core/cli.js install --with-deps chromium
-        working-directory: head/tools/perf
+      - name: Setup Playwright (cached)
+        uses: ./.github/actions/setup-playwright
+        with:
+          browsers: chromium
+          working-directory: head/tools/perf
+          lockfile: head/tools/perf/package-lock.json
 
       - name: Install app dependencies (baseline)
         run: npm ci
         working-directory: ${{ steps.node-dir-base.outputs.dir }}
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Build app (baseline)
         run: npm run build
@@ -187,8 +170,6 @@ jobs:
       - name: Install app dependencies (candidate)
         run: npm ci
         working-directory: ${{ steps.node-dir-head.outputs.dir }}
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Build app (candidate)
         run: npm run build

@@ -17,7 +17,7 @@ jobs:
     env:
       # WebGPU is REQUIRED in this workflow; regressions should fail loudly.
       AERO_REQUIRE_WEBGPU: "1"
-      PLAYWRIGHT_BROWSERS_PATH: .cache/ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -26,21 +26,15 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: package-lock.json
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: .cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}-chromium
-          restore-keys: |
-            ${{ runner.os }}-playwright-
 
       - name: Install dependencies
         run: npm ci
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
-      - name: Install Playwright browsers
-        run: npx playwright install chromium
+      - name: Setup Playwright (cached)
+        uses: ./.github/actions/setup-playwright
+        with:
+          browsers: chromium
+          lockfile: package-lock.json
 
       - name: Run Playwright WebGPU tests
         run: npx playwright test --project=chromium-webgpu

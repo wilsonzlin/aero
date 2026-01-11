@@ -13,6 +13,8 @@ on:
 jobs:
   gpu-goldens:
     runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -23,19 +25,14 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}-chromium-firefox
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
       - name: Install dependencies
-        run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
+        run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox
+      - name: Setup Playwright (cached)
+        uses: ./.github/actions/setup-playwright
+        with:
+          browsers: chromium firefox
+          lockfile: package-lock.json
 
       - name: Verify golden generator is up-to-date
         run: |

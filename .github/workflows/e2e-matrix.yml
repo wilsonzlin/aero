@@ -51,6 +51,7 @@ jobs:
       # WebGPU microbench is only meaningful on Chromium and is opt-in; other
       # projects keep it disabled to avoid redundant "unsupported" artifacts.
       AERO_WEBGPU_BENCH: ${{ matrix.project == 'chromium' && '1' || '0' }}
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
     strategy:
       fail-fast: false
@@ -97,23 +98,16 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ matrix.project }}-${{ hashFiles(steps.node-dir.outputs.lockfile) }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-${{ matrix.project }}-
-
       - name: Install dependencies
         working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm ci
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
-      - name: Install Playwright browser (with OS deps)
-        working-directory: ${{ steps.node-dir.outputs.dir }}
-        run: npx playwright install --with-deps ${{ matrix.project }}
+      - name: Setup Playwright (cached)
+        uses: ./.github/actions/setup-playwright
+        with:
+          browsers: ${{ matrix.project }}
+          working-directory: ${{ steps.node-dir.outputs.dir }}
+          lockfile: ${{ steps.node-dir.outputs.lockfile }}
 
       - name: Run Playwright tests
         env:

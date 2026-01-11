@@ -77,15 +77,17 @@ cargo test --workspace --all-features
 npm ci
 npm run test:unit
 
-# Playwright E2E
-npx playwright install --with-deps
-npm run test:e2e
+ # Playwright E2E
+ npx playwright install --with-deps
+ npm run test:e2e
 ```
 
 Notes:
 
 - The `wasm-pack` step is usually run from the specific crate that produces WASM (often under `crates/`).
-- Playwright browser downloads are large; CI typically caches them, but locally you only need to install once.
+- Playwright browser downloads are large; locally you typically only need to run `npx playwright install --with-deps` once per machine.
+  - CI uses `.github/actions/setup-playwright` to cache the Playwright browser binaries directory and re-install only if the cache is missing.
+  - CI also sets `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` for `npm ci` so browser downloads happen via the explicit install step (and can be cached).
 
 ---
 

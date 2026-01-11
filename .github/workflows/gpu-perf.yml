@@ -21,6 +21,7 @@ jobs:
     env:
       NODE_VERSION: "20.11.1"
       GPU_PERF_REGRESSION_THRESHOLD_PCT: "15"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - name: Checkout (candidate)
         uses: actions/checkout@v4
@@ -47,26 +48,17 @@ jobs:
       - name: Install dependencies (baseline)
         working-directory: base
         run: npm ci
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Install dependencies (candidate)
         working-directory: head
         run: npm ci
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
+      - name: Setup Playwright (cached)
+        uses: ./.github/actions/setup-playwright
         with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('head/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-chromium-
-
-      - name: Install Chromium (Playwright)
-        working-directory: head
-        run: npx playwright install --with-deps chromium
+          browsers: chromium
+          working-directory: head
+          lockfile: head/package-lock.json
 
       - name: Write scenario params
         working-directory: head
