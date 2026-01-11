@@ -1796,23 +1796,26 @@ uint64_t WddmSubmit::QueryCompletedFence() {
       if (callbacks_ && callbacks_->pfnWaitForSynchronizationObjectCb && runtime_device_private_ && hContext_ && hSyncObject_) {
          D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
          fill_wait_for_sync_object_args(&args,
-                                        hContext_,
-                                        kmt_adapter_for_debug_,
-                                        handles,
-                                        fence_values,
-                                        last_submitted_fence_,
-                                        /*timeout=*/0);
+                                         hContext_,
+                                         kmt_adapter_for_debug_,
+                                         handles,
+                                         fence_values,
+                                         last_submitted_fence_,
+                                         /*timeout=*/0);
 
         const HRESULT hr = CallCbMaybeHandle(callbacks_->pfnWaitForSynchronizationObjectCb,
                                              MakeRtDevice11(runtime_device_private_),
                                              MakeRtDevice10(runtime_device_private_),
                                              &args);
-        if (SUCCEEDED(hr)) {
-          completed = std::max(completed, last_submitted_fence_);
+        // NOTE: `HRESULT_FROM_NT(STATUS_TIMEOUT)` (0x10000102) is a *success*
+        // HRESULT, so do not rely solely on `SUCCEEDED/FAILED` when interpreting
+        // wait results.
+        if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
+            hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == kHrNtStatusTimeout || hr == kHrNtStatusGraphicsGpuBusy ||
+            hr == kHrPending) {
           need_kmt_fallback = false;
-        } else if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-                   hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == kHrNtStatusTimeout || hr == kHrNtStatusGraphicsGpuBusy ||
-                   hr == kHrPending) {
+        } else if (SUCCEEDED(hr)) {
+          completed = std::max(completed, last_submitted_fence_);
           need_kmt_fallback = false;
         }
       }
