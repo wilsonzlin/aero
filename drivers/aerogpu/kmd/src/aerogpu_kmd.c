@@ -155,7 +155,38 @@ static ULONGLONG AeroGpuReadRegU64HiLoHi(_In_ const AEROGPU_ADAPTER* Adapter, _I
     }
 }
 
-static VOID AeroGpuLogSubmission(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG Fence, _In_ ULONG Type, _In_ ULONG DmaSize)
+static ULONGLONG AeroGpuReadVolatileU64HiLoHi(_In_ const volatile ULONG* LoAddr)
+{
+    ULONG hi = LoAddr[1];
+    for (;;) {
+        const ULONG lo = LoAddr[0];
+        const ULONG hi2 = LoAddr[1];
+        if (hi == hi2) {
+            return ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
+        }
+        hi = hi2;
+    }
+}
+
+static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter || !Adapter->Bar0) {
+        return 0;
+    }
+
+    if (Adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+        return (ULONGLONG)AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
+    }
+
+    if (Adapter->FencePageVa) {
+        const volatile ULONG* parts = (const volatile ULONG*)&Adapter->FencePageVa->completed_fence;
+        return AeroGpuReadVolatileU64HiLoHi(parts);
+    }
+
+    return AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI);
+}
+
+static VOID AeroGpuLogSubmission(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG Fence, _In_ ULONG Type, _In_ ULONG DmaSize)
 {
     ULONG idx = Adapter->SubmissionLog.WriteIndex++ % AEROGPU_SUBMISSION_LOG_SIZE;
     Adapter->SubmissionLog.Entries[idx].Fence = Fence;
@@ -499,6 +530,16 @@ static NTSTATUS AeroGpuV1RingInit(_Inout_ AEROGPU_ADAPTER* Adapter)
 
 static NTSTATUS AeroGpuV1FencePageInit(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
+    Adapter->FencePageVa = NULL;
+    Adapter->FencePagePa.QuadPart = 0;
+
+    AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, 0);
+    AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, 0);
+
+    if ((Adapter->DeviceFeatures & AEROGPU_FEATURE_FENCE_PAGE) == 0) {
+        return STATUS_SUCCESS;
+    }
+
     Adapter->FencePageVa = (struct aerogpu_fence_page*)AeroGpuAllocContiguous(PAGE_SIZE, &Adapter->FencePagePa);
     if (!Adapter->FencePageVa) {
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -507,6 +548,8 @@ static NTSTATUS AeroGpuV1FencePageInit(_Inout_ AEROGPU_ADAPTER* Adapter)
     Adapter->FencePageVa->magic = AEROGPU_FENCE_PAGE_MAGIC;
     Adapter->FencePageVa->abi_version = AEROGPU_ABI_VERSION_U32;
     Adapter->FencePageVa->completed_fence = 0;
+
+    KeMemoryBarrier();
 
     AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, Adapter->FencePagePa.LowPart);
     AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, (ULONG)(Adapter->FencePagePa.QuadPart >> 32));
@@ -823,59 +866,43 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     }
 
     const ULONG magic = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
-    ULONGLONG v1Features = 0;
-
-    /*
-     * ABI detection: treat the versioned "AGPU" MMIO magic as the new ABI, and
-     * fall back to the legacy register map otherwise.
-     *
-     * This keeps older emulator device models working even if they don't report
-     * the expected legacy magic value.
-     */
-    adapter->AbiKind = AEROGPU_ABI_KIND_LEGACY;
-    adapter->UsingNewAbi = FALSE;
-    if (magic == AEROGPU_MMIO_MAGIC) {
-        adapter->AbiKind = AEROGPU_ABI_KIND_V1;
-        adapter->UsingNewAbi = TRUE;
-        const ULONG abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
-        const ULONG abiMajor = abiVersion >> 16;
-        if (abiMajor != AEROGPU_ABI_MAJOR) {
-            AEROGPU_LOG("StartDevice: unsupported ABI major=%lu (abi=0x%08lx)", abiMajor, abiVersion);
-            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-            adapter->Bar0 = NULL;
-            adapter->Bar0Length = 0;
-            return STATUS_NOT_SUPPORTED;
-        }
-        const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                                   ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-        v1Features = features;
-        AEROGPU_LOG("StartDevice: ABI=v1 magic=0x%08lx (new) abi=0x%08lx features=0x%I64x",
-                    magic,
-                    abiVersion,
-                    (unsigned long long)features);
-    } else {
-        const ULONG version = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_VERSION);
-        if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
-            AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x); assuming legacy ABI",
-                        magic,
-                        AEROGPU_LEGACY_MMIO_MAGIC);
-        }
-        AEROGPU_LOG("StartDevice: ABI=legacy magic=0x%08lx version=0x%08lx", magic, version);
+    if (magic != AEROGPU_MMIO_MAGIC) {
+        AEROGPU_LOG("StartDevice: invalid MMIO magic=0x%08lx (expected 0x%08lx)", magic, (ULONG)AEROGPU_MMIO_MAGIC);
+        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
+        adapter->Bar0 = NULL;
+        adapter->Bar0Length = 0;
+        return STATUS_NOT_SUPPORTED;
     }
 
-    {
-        ULONGLONG features = (adapter->AbiKind == AEROGPU_ABI_KIND_V1) ? v1Features : 0;
+    adapter->AbiKind = AEROGPU_ABI_KIND_V1;
+    adapter->UsingNewAbi = TRUE;
 
-        adapter->DeviceFeatures = features;
-        adapter->SupportsVblank = ((features & AEROGPU_FEATURE_VBLANK) != 0) ? TRUE : FALSE;
-        adapter->VblankInterruptTypeValid = FALSE;
-        adapter->VblankInterruptType = 0;
-        AEROGPU_LOG("StartDevice: FEATURES=0x%I64x (vblank=%lu)", features, adapter->SupportsVblank ? 1ul : 0ul);
-
-        InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankSeq, 0);
-        InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankInterruptTime100ns, 0);
-        adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+    const ULONG abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
+    const ULONG abiMajor = abiVersion >> 16;
+    if (abiMajor != AEROGPU_ABI_MAJOR) {
+        AEROGPU_LOG("StartDevice: unsupported ABI major=%lu (abi=0x%08lx)", abiMajor, abiVersion);
+        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
+        adapter->Bar0 = NULL;
+        adapter->Bar0Length = 0;
+        return STATUS_NOT_SUPPORTED;
     }
+
+    const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                               ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+
+    adapter->DeviceFeatures = features;
+    adapter->SupportsVblank = ((features & AEROGPU_FEATURE_VBLANK) != 0) ? TRUE : FALSE;
+    adapter->VblankInterruptTypeValid = FALSE;
+    adapter->VblankInterruptType = 0;
+
+    AEROGPU_LOG("StartDevice: ABI=v1 magic=0x%08lx abi=0x%08lx features=0x%I64x",
+                magic,
+                abiVersion,
+                (unsigned long long)features);
+
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankSeq, 0);
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankInterruptTime100ns, 0);
+    adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
 
     if (adapter->DxgkInterface.DxgkCbRegisterInterrupt) {
         NTSTATUS st = adapter->DxgkInterface.DxgkCbRegisterInterrupt(adapter->StartInfo.hDxgkHandle);
@@ -911,6 +938,23 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         ringSt = AeroGpuLegacyRingInit(adapter);
     }
     if (!NT_SUCCESS(ringSt)) {
+        if (adapter->Bar0 && adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            /* Ensure the device won't touch freed ring memory on early-start failure. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_HI, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, 0);
+
+            {
+                KIRQL oldIrql;
+                KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                adapter->IrqEnableMask = 0;
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
+                KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+            }
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+        }
+
         AeroGpuRingCleanup(adapter);
         MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
         adapter->Bar0 = NULL;
@@ -947,6 +991,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
     if (adapter->Bar0) {
         /* Stop device IRQ generation before unregistering the ISR. */
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
             {
                 KIRQL oldIrql;
                 KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
@@ -2151,7 +2196,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
     }
 
-    AeroGpuLogSubmission(adapter, (ULONG)fence, type, pSubmitCommand->DmaBufferSize);
+    AeroGpuLogSubmission(adapter, fence, type, pSubmitCommand->DmaBufferSize);
 
     return STATUS_SUCCESS;
 }
@@ -2188,11 +2233,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         }
 
         if ((handled & AEROGPU_IRQ_FENCE) != 0) {
-            const ULONGLONG completedFence64 = adapter->FencePageVa
-                                                   ? adapter->FencePageVa->completed_fence
-                                                   : ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO) |
-                                                      ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)
-                                                          << 32));
+            const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
 
             /*
              * Win7 fences are ULONGs. Clamp to avoid sending a fence that appears
@@ -2598,13 +2639,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         ULONGLONG completedFence = adapter->LastCompletedFence;
         if (adapter->Bar0) {
-            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-                completedFence = AeroGpuReadRegU64HiLoHi(adapter,
-                                                        AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
-                                                        AEROGPU_MMIO_REG_COMPLETED_FENCE_HI);
-            } else {
-                completedFence = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
-            }
+            completedFence = AeroGpuReadCompletedFence(adapter);
         }
 
         aerogpu_escape_query_fence_out* out = (aerogpu_escape_query_fence_out*)pEscape->pPrivateDriverData;
@@ -2891,23 +2926,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * Completion is detected by observing ring head advancement, not fence
          * advancement.
          */
-        ULONGLONG completedFence = adapter->LastCompletedFence;
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-            completedFence = adapter->FencePageVa
-                                 ? adapter->FencePageVa->completed_fence
-                                 : ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO) |
-                                    ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI) << 32));
-        } else {
-            completedFence = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
-        }
+        const ULONGLONG completedFence = AeroGpuReadCompletedFence(adapter);
         const ULONGLONG fenceNoop = completedFence;
 
         /*
          * For the new (AGPU) device ABI, command buffers must begin with an
          * `aerogpu_cmd_stream_header`. Use a minimal NOP stream for selftest.
-         *
-         * For legacy devices, cmd_gpa/cmd_size_bytes is derived from the legacy
-         * submission descriptor.
          */
         PVOID dmaVa = NULL;
         PHYSICAL_ADDRESS dmaPa;
@@ -2949,6 +2973,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 (aerogpu_legacy_submission_desc_header*)AeroGpuAllocContiguous(sizeof(*desc), &descPa);
             descVa = desc;
             if (!desc) {
+                AeroGpuFreeContiguous(dmaVa);
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
                 return STATUS_SUCCESS;
             }

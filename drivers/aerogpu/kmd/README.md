@@ -10,28 +10,32 @@ drivers/aerogpu/kmd/
   src/                     Miniport implementation (.c)
 ```
 
-## ABI status (legacy vs versioned)
+## Device ABI (versioned)
 
-The KMD supports two AeroGPU device ABIs:
+The device ABI is defined in:
 
-* **Versioned ABI (primary, new device)**:
-  * `drivers/aerogpu/protocol/aerogpu_pci.h` (PCI IDs + MMIO register map)
-  * `drivers/aerogpu/protocol/aerogpu_ring.h` (ring + submit descriptors + fence page + optional allocation table)
-  * `drivers/aerogpu/protocol/aerogpu_cmd.h` (command stream packets)
-  * Emulator device model: `crates/emulator/src/devices/pci/aerogpu.rs`
-* **Legacy bring-up ABI (compatibility)**:
-  * The KMD uses a minimal internal shim: `include/aerogpu_legacy_abi.h`
-  * Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`
+* `drivers/aerogpu/protocol/aerogpu_pci.h` (PCI IDs + MMIO register map)
+* `drivers/aerogpu/protocol/aerogpu_ring.h` (ring + submit descriptors + 64-bit fences + optional allocation table)
+* `drivers/aerogpu/protocol/aerogpu_cmd.h` (command stream packets)
 
-The KMD detects which ABI is active by reading BAR0[0] (MMIO magic):
-* New ABI: `"AGPU"` (`AEROGPU_MMIO_MAGIC`)
-* Legacy ABI: `"ARGP"` (`AEROGPU_LEGACY_MMIO_MAGIC`)
+This KMD targets the **versioned** AeroGPU PCI device (`VID=0xA3A0`, `DID=0x0001`) implemented by:
 
-Note that the legacy and versioned ABIs use **different PCI IDs**:
-* Legacy (ARGP): `VID=0x1AED`, `DID=0x0001`
-* Versioned (`aerogpu_pci.h`): `VID=0xA3A0`, `DID=0x0001`
+* `crates/emulator/src/devices/pci/aerogpu.rs`
+ 
+Legacy note: older emulator device models used MMIO magic `"ARGP"` and different PCI IDs (`VID=0x1AED`, `DID=0x0001`)
+(see `crates/emulator/src/devices/pci/aerogpu_legacy.rs`). The KMD rejects non-`AEROGPU_MMIO_MAGIC` devices, but
+`include/aerogpu_legacy_abi.h` remains as a minimal historical reference for bring-up/debug tooling.
 
-Make sure your Win7 INF and your emulator device model agree on which VID/DID to expose.
+During `DxgkDdiStartDevice`, the driver validates:
+
+* `AEROGPU_MMIO_REG_MAGIC == AEROGPU_MMIO_MAGIC` (`"AGPU"`)
+* `AEROGPU_MMIO_REG_ABI_VERSION` major matches `AEROGPU_ABI_MAJOR`
+
+If either check fails, the device start is rejected with `STATUS_NOT_SUPPORTED`.
+
+Legacy ABI note: older emulator device models used `drivers/aerogpu/protocol/aerogpu_protocol.h` and MMIO magic
+`"ARGP"`. The KMD no longer binds to that device, but `include/aerogpu_legacy_abi.h` remains as a minimal historical
+reference for bring-up/debug tooling.
 
 See:
 * `drivers/aerogpu/protocol/README.md` for ABI details.

@@ -44,7 +44,7 @@ typedef enum _AEROGPU_ABI_KIND {
 } AEROGPU_ABI_KIND;
 
 typedef struct _AEROGPU_SUBMISSION_LOG_ENTRY {
-    ULONG Fence;
+    ULONGLONG Fence;
     ULONG Type;
     ULONG DmaSize;
     LARGE_INTEGER Qpc;
