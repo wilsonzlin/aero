@@ -3,27 +3,32 @@
     {
       "name": "aerogpu",
       "required": true,
-      "expected_hardware_ids": []
+      "expected_hardware_ids": [],
+      "expected_hardware_ids_from_devices_cmd_var": "AERO_GPU_HWIDS"
     },
     {
       "name": "virtio-blk",
       "required": true,
-      "expected_hardware_ids": []
+      "expected_hardware_ids": [],
+      "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_BLK_HWIDS"
     },
     {
       "name": "virtio-net",
       "required": true,
-      "expected_hardware_ids": []
+      "expected_hardware_ids": [],
+      "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_NET_HWIDS"
     },
     {
       "name": "virtio-input",
       "required": true,
-      "expected_hardware_ids": []
+      "expected_hardware_ids": [],
+      "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_INPUT_HWIDS"
     },
     {
       "name": "virtio-snd",
       "required": false,
-      "expected_hardware_ids": []
+      "expected_hardware_ids": [],
+      "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_SND_HWIDS"
     }
   ]
 }

@@ -51,8 +51,9 @@ without pinning stable hardware IDs yet.
 - Requires: `aerogpu` + `virtio-blk` + `virtio-net` + `virtio-input`
 - Optional: `virtio-snd`
 
-Unlike `win7-aero-guest-tools.json`, this spec keeps `expected_hardware_ids` empty so CI can validate
-that the correct driver directories are present even while HWID patterns evolve.
+Unlike `win7-aero-guest-tools.json`, this spec keeps `expected_hardware_ids` empty and derives
+expected HWIDs from `guest-tools/config/devices.cmd` (via `expected_hardware_ids_from_devices_cmd_var`),
+so CI can validate driver binding stays in sync with the device contract without hardcoding regexes here.
 
 This spec is used by the Win7 driver CI/release workflows when packaging Guest Tools from the signed
 packages produced by `ci/make-catalogs.ps1` + `ci/sign-drivers.ps1`.

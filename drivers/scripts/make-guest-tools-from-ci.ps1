@@ -29,7 +29,7 @@ param(
   [string] $SpecPath = "tools/packaging/specs/win7-aero-guest-tools.json",
 
   # Output directory for `aero-guest-tools.iso`, `aero-guest-tools.zip`, and `manifest.json`.
-  [string] $OutDir = "out/artifacts/guest-tools",
+  [string] $OutDir = "out/artifacts",
 
   [string] $Version,
   [string] $BuildId,
