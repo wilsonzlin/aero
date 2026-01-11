@@ -230,15 +230,18 @@ pub struct JitMetricsTotals {
 
 impl JitMetricsTotals {
     pub const fn blocks_compiled_total(&self) -> u64 {
-        self.tier1_blocks_compiled_total + self.tier2_blocks_compiled_total
+        self.tier1_blocks_compiled_total
+            .saturating_add(self.tier2_blocks_compiled_total)
     }
 
     pub const fn compile_ns_total(&self) -> u64 {
-        self.tier1_compile_ns_total + self.tier2_compile_ns_total
+        self.tier1_compile_ns_total
+            .saturating_add(self.tier2_compile_ns_total)
     }
 
     pub const fn cache_lookups_total(&self) -> u64 {
-        self.cache_lookup_hit_total + self.cache_lookup_miss_total
+        self.cache_lookup_hit_total
+            .saturating_add(self.cache_lookup_miss_total)
     }
 
     pub fn cache_hit_rate(&self) -> f64 {

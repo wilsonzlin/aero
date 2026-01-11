@@ -1,4 +1,4 @@
-use perf::jit::{ns_to_ms, JitTier, JitTier2Pass};
+use perf::jit::{ns_to_ms, JitMetricsTotals, JitTier, JitTier2Pass};
 use perf::telemetry::Telemetry;
 use std::time::Duration;
 
@@ -112,4 +112,27 @@ fn jit_metrics_compile_time_saturates_on_overflow() {
 
     let snapshot = telemetry.snapshot();
     assert_eq!(snapshot.jit.totals.tier1.compile_ms, ns_to_ms(u64::MAX));
+}
+
+#[test]
+fn jit_metrics_totals_helpers_saturate_on_overflow() {
+    let totals = JitMetricsTotals {
+        cache_lookup_hit_total: u64::MAX,
+        cache_lookup_miss_total: u64::MAX,
+        tier1_blocks_compiled_total: u64::MAX,
+        tier2_blocks_compiled_total: u64::MAX,
+        tier1_compile_ns_total: u64::MAX,
+        tier2_compile_ns_total: u64::MAX,
+        tier2_pass_const_fold_ns_total: 0,
+        tier2_pass_dce_ns_total: 0,
+        tier2_pass_regalloc_ns_total: 0,
+        deopt_total: 0,
+        guard_fail_total: 0,
+        code_cache_capacity_bytes: 0,
+        code_cache_used_bytes: 0,
+    };
+
+    assert_eq!(totals.cache_lookups_total(), u64::MAX);
+    assert_eq!(totals.blocks_compiled_total(), u64::MAX);
+    assert_eq!(totals.compile_ns_total(), u64::MAX);
 }

@@ -85,7 +85,7 @@ impl Telemetry {
         let delta_misses = totals
             .cache_lookup_miss_total
             .saturating_sub(prev.totals.cache_lookup_miss_total);
-        let delta_lookups = delta_hits + delta_misses;
+        let delta_lookups = delta_hits.saturating_add(delta_misses);
         let cache_hit_rate = if delta_lookups == 0 {
             0.0
         } else {
