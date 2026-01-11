@@ -1066,8 +1066,8 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       if (!callbacks->pfnPresentCb) {
         return E_NOTIMPL;
       }
-      uint64_t fence_id_tmp = 0;
-      uint64_t fence_value_tmp = 0;
+      [[maybe_unused]] uint64_t fence_id_tmp = 0;
+      [[maybe_unused]] uint64_t fence_value_tmp = 0;
       D3DDDICB_PRESENT present = {};
       __if_exists(D3DDDICB_PRESENT::hContext) {
         present.hContext = hContext;
@@ -1133,8 +1133,8 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       if (!callbacks->pfnRenderCb) {
         return E_NOTIMPL;
       }
-      uint64_t fence_id_tmp = 0;
-      uint64_t fence_value_tmp = 0;
+      [[maybe_unused]] uint64_t fence_id_tmp = 0;
+      [[maybe_unused]] uint64_t fence_value_tmp = 0;
       D3DDDICB_RENDER render = {};
       __if_exists(D3DDDICB_RENDER::hContext) {
         render.hContext = hContext;
