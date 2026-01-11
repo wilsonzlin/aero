@@ -174,7 +174,7 @@ exit /b 1
 rem -----------------------------------------------------------------------------
 :find_class_key
 set "FIND_TERM=%~1"
-for /f "delims=" %%K in ('"%REGEXE%" query "%CLASSKEY%" /s /f "%FIND_TERM%" /d 2^>nul ^| findstr /i /r "^HKEY_"') do (
+for /f "delims=" %%K in ('"%REGEXE%" query "%CLASSKEY%" /s /f "%FIND_TERM%" /d /i 2^>nul ^| findstr /i /r "^HKEY_"') do (
   set "AEROGPU_CLASS_KEY=%%K"
   goto :eof
 )
