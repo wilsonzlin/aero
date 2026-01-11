@@ -162,7 +162,7 @@ On completion, the workflow uploads the serial log and harness output as the `wi
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
   - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041`)
-  - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input)
+  - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1052`)
   - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042`)
   - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (adds `disable-legacy=on` and `x-pci-revision=0x01` when supported)
 - Watches the serial log for:
@@ -177,8 +177,8 @@ Revision ID (contract v1 = `0x01`).
 Some QEMU virtio device types report `REV_00` by default. Once the Aero drivers enforce the
 contract Revision ID, they will refuse to bind unless QEMU is told to advertise `REV_01`.
 
-The harness also sets `disable-legacy=on` for virtio-net/virtio-blk (and virtio-snd when supported) so QEMU does **not** expose
-the legacy I/O-port transport (transitional devices enumerate as `DEV_1000/DEV_1001`). This matches
+The harness sets `disable-legacy=on` for virtio-net/virtio-blk/virtio-input (and virtio-snd when supported) so QEMU does **not** expose
+the legacy I/O-port transport (transitional devices enumerate as `DEV_1000/DEV_1001/DEV_1012`). This matches
 [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO` v1),
 which is modern-only.
 

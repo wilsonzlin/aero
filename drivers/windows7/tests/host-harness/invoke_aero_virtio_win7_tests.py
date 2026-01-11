@@ -8,7 +8,7 @@ PowerShell is inconvenient (e.g. Linux CI).
 
 Note: This harness intentionally uses *modern-only* virtio-pci devices (`disable-legacy=on`).
 The Aero Windows 7 virtio driver contract (v1) ships INF files that match the modern PCI
-device IDs (e.g. DEV_1041/DEV_1042). If QEMU is launched with transitional/legacy virtio
+device IDs (e.g. DEV_1041/DEV_1042/DEV_1052). If QEMU is launched with transitional/legacy virtio
 devices (`-drive if=virtio` / `virtio-*-pci` without `disable-legacy=on`), Windows will
 enumerate different PCI IDs and the drivers will not bind.
 

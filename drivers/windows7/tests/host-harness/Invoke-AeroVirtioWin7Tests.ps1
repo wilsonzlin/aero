@@ -281,7 +281,7 @@ $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 try {
   $serialChardev = "file,id=charserial0,path=$SerialLogPath"
   $netdev = "user,id=net0"
-  # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042) per AERO-W7-VIRTIO v1.
+  # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042/DEV_1052) per AERO-W7-VIRTIO v1.
   # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
   # drivers bind under QEMU.
   $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0"
@@ -289,8 +289,8 @@ try {
   $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
   $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId
 
-  $kbd = "virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01"
-  $mouse = "virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01"
+  $kbd = New-AeroWin7VirtioKeyboardDeviceArg
+  $mouse = New-AeroWin7VirtioMouseDeviceArg
 
   $virtioSndArgs = @()
   if ($WithVirtioSnd) {

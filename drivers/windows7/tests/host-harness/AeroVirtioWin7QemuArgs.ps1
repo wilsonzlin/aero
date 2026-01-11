@@ -4,11 +4,11 @@
 #
 # The Windows 7 virtio driver contract (AERO-W7-VIRTIO v1) requires *modern-only*
 # virtio-pci devices. QEMU's `virtio-*-pci` devices are transitional by default and
-# can expose the legacy I/O-port transport (PCI Device IDs 0x1000/0x1001).
+# can expose the legacy I/O-port transport (PCI Device IDs 0x10xx, e.g. 0x1000/0x1001/0x1012).
 #
-# To force modern-only enumeration (PCI Device IDs 0x1041/0x1042) and prevent
-# legacy transport from being exposed, pass `disable-legacy=on` on each virtio-pci
-# device.
+# To force modern-only enumeration (e.g. virtio-net `DEV_1041`, virtio-blk `DEV_1042`,
+# virtio-input `DEV_1052`) and prevent legacy transport from being exposed, pass
+# `disable-legacy=on` on each virtio-pci device.
 #
 # The contract major version is encoded in the PCI Revision ID. Contract v1 requires
 # Revision ID 0x01, but some QEMU virtio devices report REV_00 by default. Force
@@ -55,3 +55,16 @@ function New-AeroWin7VirtioBlkDeviceArg {
   return "virtio-blk-pci,drive=$DriveId,disable-legacy=on,x-pci-revision=0x01"
 }
 
+function New-AeroWin7VirtioKeyboardDeviceArg {
+  [CmdletBinding()]
+  param()
+
+  return "virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01"
+}
+
+function New-AeroWin7VirtioMouseDeviceArg {
+  [CmdletBinding()]
+  param()
+
+  return "virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01"
+}
