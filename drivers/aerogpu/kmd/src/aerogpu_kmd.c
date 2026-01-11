@@ -525,6 +525,10 @@ static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICA
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_HEIGHT, Adapter->CurrentHeight);
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_FORMAT, AEROGPU_LEGACY_SCANOUT_X8R8G8B8);
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE, enable);
+    if (!enable && Adapter->SupportsVblank) {
+        /* Be robust against stale vblank IRQ state on scanout disable. */
+        AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+    }
 }
 
 static VOID AeroGpuSetScanoutEnable(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG Enable)
@@ -541,6 +545,10 @@ static VOID AeroGpuSetScanoutEnable(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG
         }
     } else {
         AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE, Enable);
+        if (!Enable && Adapter->SupportsVblank) {
+            /* Be robust against stale vblank IRQ state on scanout disable. */
+            AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+        }
     }
 }
 
@@ -1028,6 +1036,12 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
             }
             features = maybeFeatures & knownFeatures;
         }
+        if ((features & AEROGPU_FEATURE_VBLANK) != 0 &&
+            adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
+            AEROGPU_LOG("StartDevice: legacy BAR0 too small (%lu bytes) for vblank regs; disabling vblank feature",
+                        adapter->Bar0Length);
+            features &= ~(ULONGLONG)AEROGPU_FEATURE_VBLANK;
+        }
         if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
             AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x); assuming legacy ABI",
                         magic,
@@ -1041,7 +1055,10 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
 
     adapter->DeviceAbiVersion = abiVersion;
     adapter->DeviceFeatures = features;
-    adapter->SupportsVblank = ((features & AEROGPU_FEATURE_VBLANK) != 0) ? TRUE : FALSE;
+    adapter->SupportsVblank = (((features & AEROGPU_FEATURE_VBLANK) != 0) &&
+                               (adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))))
+                                  ? TRUE
+                                  : FALSE;
     adapter->VblankInterruptTypeValid = FALSE;
     adapter->VblankInterruptType = 0;
 
@@ -1051,6 +1068,22 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
 
     BOOLEAN interruptRegistered = FALSE;
+
+    /*
+     * Ensure a consistent initial vblank IRQ state. dxgkrnl will enable/disable
+     * vsync interrupts via DxgkDdiControlInterrupt.
+     *
+     * Use the new IRQ block even for legacy devices.
+     */
+    if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+        ULONG irqEnable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+        if (irqEnable & AEROGPU_IRQ_SCANOUT_VBLANK) {
+            irqEnable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, irqEnable);
+        }
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+    }
+
     if (adapter->DxgkInterface.DxgkCbRegisterInterrupt) {
         NTSTATUS st = adapter->DxgkInterface.DxgkCbRegisterInterrupt(adapter->StartInfo.hDxgkHandle);
         if (!NT_SUCCESS(st)) {
@@ -1190,6 +1223,18 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+
+            /*
+             * Tear down vblank IRQ state (new IRQ block) to avoid leaving the
+             * level-triggered interrupt line asserted across StopDevice/StartDevice
+             * cycles.
+             */
+            if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+                ULONG irqEnable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+                irqEnable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, irqEnable);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+            }
         }
     }
 
@@ -1568,7 +1613,7 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
 
     ULONGLONG periodNs = adapter->VblankPeriodNs ? (ULONGLONG)adapter->VblankPeriodNs : (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
     BOOLEAN haveVblankRegs = FALSE;
-    if (adapter->Bar0 && adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->SupportsVblank &&
+    if (adapter->Bar0 && adapter->SupportsVblank &&
         adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
         const ULONG mmioPeriod = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
         if (mmioPeriod != 0) {
@@ -2604,27 +2649,42 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             }
         }
 
-        const BOOLEAN haveIrqRegs =
-            adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_STATUS + sizeof(ULONG));
-        if (haveIrqRegs) {
+        /*
+         * Legacy ABI vblank/error interrupts use the newer IRQ_STATUS/IRQ_ENABLE/IRQ_ACK
+         * block (if present), even though fence interrupts are still delivered via
+         * the legacy INT_STATUS/ACK registers.
+         */
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             const ULONG irqStatus = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
-            const ULONG handled = irqStatus & (AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR);
-            if (handled != 0) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, handled);
+            if (irqStatus != 0) {
+                const ULONG known = (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR);
+                const ULONG unknown = irqStatus & ~known;
+                if (unknown != 0) {
+                    static LONG g_UnexpectedLegacyMmioIrqWarned = 0;
+                    if (InterlockedExchange(&g_UnexpectedLegacyMmioIrqWarned, 1) == 0) {
+                        DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                                   DPFLTR_ERROR_LEVEL,
+                                   "aerogpu-kmd: unexpected legacy IRQ_STATUS bits (status=0x%08lx)\n",
+                                   irqStatus);
+                    }
+                }
 
-                if ((handled & AEROGPU_IRQ_ERROR) != 0) {
+                /* Ack in the ISR to deassert the (level-triggered) interrupt line. */
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, irqStatus);
+                any = TRUE;
+
+                if ((irqStatus & AEROGPU_IRQ_ERROR) != 0) {
                     static LONG g_IrqErrorLoggedLegacy = 0;
                     if (InterlockedExchange(&g_IrqErrorLoggedLegacy, 1) == 0) {
                         DbgPrintEx(DPFLTR_IHVVIDEO_ID,
                                    DPFLTR_ERROR_LEVEL,
-                                   "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx)\n",
+                                   "aerogpu-kmd: legacy device IRQ error (IRQ_STATUS=0x%08lx)\n",
                                    irqStatus);
                     }
-                    any = TRUE;
                     queueDpc = TRUE;
                 }
 
-                if ((handled & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
+                if ((irqStatus & AEROGPU_IRQ_SCANOUT_VBLANK) != 0 && adapter->SupportsVblank) {
                     const ULONGLONG now100ns = KeQueryInterruptTime();
                     const ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
                                                                  AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
@@ -2640,7 +2700,6 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                     AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
                     AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
 
-                    any = TRUE;
                     queueDpc = TRUE;
 
                     if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
@@ -2760,13 +2819,23 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
     {
         KIRQL oldIrql;
         KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-        ULONG enable = adapter->IrqEnableMask;
-        if (EnableInterrupt) {
-            enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
+        ULONG enable = 0;
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            enable = adapter->IrqEnableMask;
+            if (EnableInterrupt) {
+                enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
+            } else {
+                enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+            }
+            adapter->IrqEnableMask = enable;
         } else {
-            enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+            enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+            if (EnableInterrupt) {
+                enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
+            } else {
+                enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+            }
         }
-        adapter->IrqEnableMask = enable;
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
 
         /* Be robust against stale pending bits when disabling. */
