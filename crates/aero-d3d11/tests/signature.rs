@@ -94,7 +94,8 @@ fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
 #[test]
 fn parses_isgn_v0_signature_chunk() {
     let bytes = build_signature_chunk_v0_one_entry("POSITION", 0);
-    let sig = parse_signature_chunk(FourCC(*b"ISGN"), &bytes).expect("signature parse should succeed");
+    let sig =
+        parse_signature_chunk(FourCC(*b"ISGN"), &bytes).expect("signature parse should succeed");
 
     assert_eq!(sig.parameters.len(), 1);
     let p = &sig.parameters[0];
@@ -112,7 +113,8 @@ fn parses_isgn_v0_signature_chunk() {
 #[test]
 fn parses_isg1_v1_signature_chunk_and_preserves_stream() {
     let bytes = build_signature_chunk_v1_one_entry("POSITION", 0, 2);
-    let sig = parse_signature_chunk(FourCC(*b"ISG1"), &bytes).expect("signature parse should succeed");
+    let sig =
+        parse_signature_chunk(FourCC(*b"ISG1"), &bytes).expect("signature parse should succeed");
 
     assert_eq!(sig.parameters.len(), 1);
     let p = &sig.parameters[0];
@@ -128,10 +130,7 @@ fn parse_signatures_prefers_v1_chunk_id_when_both_exist() {
     let isgn = build_signature_chunk_v0_one_entry("V0", 0);
     let isg1 = build_signature_chunk_v1_one_entry("V1", 1, 0);
 
-    let dxbc_bytes = build_dxbc(&[
-        (FourCC(*b"ISGN"), &isgn),
-        (FourCC(*b"ISG1"), &isg1),
-    ]);
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISGN"), &isgn), (FourCC(*b"ISG1"), &isg1)]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
 
     let sigs = parse_signatures(&dxbc).expect("signature parse should succeed");
@@ -141,4 +140,3 @@ fn parse_signatures_prefers_v1_chunk_id_when_both_exist() {
     assert_eq!(sig.parameters[0].semantic_name, "V1");
     assert_eq!(sig.parameters[0].register, 1);
 }
-

@@ -41,18 +41,9 @@ pub struct ShaderSignatures {
 #[derive(Debug)]
 pub enum SignatureError {
     MissingChunk(FourCC),
-    MalformedChunk {
-        fourcc: FourCC,
-        reason: String,
-    },
-    OutOfBounds {
-        fourcc: FourCC,
-        reason: String,
-    },
-    InvalidUtf8 {
-        fourcc: FourCC,
-        reason: String,
-    },
+    MalformedChunk { fourcc: FourCC, reason: String },
+    OutOfBounds { fourcc: FourCC, reason: String },
+    InvalidUtf8 { fourcc: FourCC, reason: String },
 }
 
 impl fmt::Display for SignatureError {
