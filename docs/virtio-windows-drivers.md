@@ -365,12 +365,14 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-To build storage+network-only Guest Tools media (no optional audio/input drivers), use:
+By default, the wrapper uses `-Profile minimal` (storage + network only).
+
+To include best-effort Win7 audio/input drivers when present in your virtio-win version, use:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
-  -Profile minimal `
+  -Profile full `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
@@ -407,11 +409,11 @@ This wrapper:
 
 1. Extracts a Win7 driver pack from `virtio-win.iso` (using `drivers/scripts/make-driver-pack.ps1`).
 2. Converts it into the input layout expected by the Rust Guest Tools packager.
-3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `full`):
-   - `-Profile full` (default): `tools/packaging/specs/win7-virtio-full.json`
+3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `minimal`):
+   - `-Profile minimal` (default): `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
+   - `-Profile full`: `tools/packaging/specs/win7-virtio-full.json`
       - required: `viostor` + `netkvm`
       - optional (included if present): `vioinput` + `viosnd`
-   - `-Profile minimal`: `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
 
 Advanced overrides:
 

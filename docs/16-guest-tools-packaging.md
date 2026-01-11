@@ -307,19 +307,19 @@ Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio
 
 Profiles (defaults):
 
-- `full` (default):
-  - `-Drivers @('viostor','netkvm','viosnd','vioinput')`
-  - `-SpecPath tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
-- `minimal`:
+- `minimal` (default):
   - `-Drivers @('viostor','netkvm')`
   - `-SpecPath tools/packaging/specs/win7-virtio-win.json`
+- `full`:
+  - `-Drivers @('viostor','netkvm','viosnd','vioinput')`
+  - `-SpecPath tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
 
-To build storage+network-only Guest Tools media (no optional audio/input drivers), use `-Profile minimal`:
+To include best-effort Win7 audio/input drivers when present in your virtio-win version, use `-Profile full`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
-  -Profile minimal `
+  -Profile full `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
