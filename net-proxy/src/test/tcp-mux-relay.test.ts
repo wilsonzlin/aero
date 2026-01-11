@@ -667,3 +667,46 @@ test("tcp-mux stream_id is unique for the lifetime of the websocket", async () =
     await echoServer.close();
   }
 });
+
+test("tcp-mux rejects DATA after client FIN with PROTOCOL_ERROR", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const open = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    const payload = Buffer.from("fin-test");
+    ws.send(Buffer.concat([open, encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload)]));
+    await waitForEcho(waiter, 1, payload);
+
+    const fin = encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN));
+    const dataAfterFin = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("should-error"));
+    ws.send(Buffer.concat([fin, dataAfterFin]));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.PROTOCOL_ERROR);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});

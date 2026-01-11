@@ -346,6 +346,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
 
   const sendMuxFrame = (msgType: TcpMuxMsgType, streamId: number, payload?: Buffer) => {
     if (closed) return;
+    if (ws.readyState !== ws.OPEN) return;
     const frame = encodeTcpMuxFrame(msgType, streamId, payload);
     const ok = wsStream.write(frame);
     if (!ok) {
