@@ -53,6 +53,7 @@ struct Resource {
   uint32_t depth = 0;
   uint32_t mip_levels = 1;
   uint32_t usage = 0;
+  uint32_t pool = 0;
   uint32_t size_bytes = 0;
   uint32_t row_pitch = 0;
   uint32_t slice_pitch = 0;
@@ -72,6 +73,7 @@ struct Resource {
   bool locked = false;
   uint32_t locked_offset = 0;
   uint32_t locked_size = 0;
+  uint32_t locked_flags = 0;
 
   // WDDM allocation handle for this resource's backing store (per-process).
   // The stable ID referenced in command buffers is `backing_alloc_id`.

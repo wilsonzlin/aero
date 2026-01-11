@@ -336,6 +336,14 @@ uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format) {
   }
 }
 
+// D3DLOCK_* flags (numeric values from d3d9.h). Only the bits we care about are
+// defined here to keep the UMD self-contained.
+constexpr uint32_t kD3DLOCK_READONLY = 0x00000010u;
+
+// D3DPOOL_* (numeric values from d3d9.h).
+constexpr uint32_t kD3DPOOL_DEFAULT = 0u;
+constexpr uint32_t kD3DPOOL_SYSTEMMEM = 2u;
+
 uint32_t d3d9_stage_to_aerogpu_stage(AEROGPU_D3D9DDI_SHADER_STAGE stage) {
   return (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? AEROGPU_SHADER_STAGE_VERTEX : AEROGPU_SHADER_STAGE_PIXEL;
 }
@@ -628,6 +636,62 @@ HRESULT flush_locked(Device* dev) {
   return S_OK;
 }
 
+HRESULT wait_for_fence(Adapter* adapter, uint64_t fence_value) {
+  if (!adapter || fence_value == 0) {
+    return S_OK;
+  }
+  std::unique_lock<std::mutex> lock(adapter->fence_mutex);
+  if (adapter->completed_fence < fence_value) {
+    adapter->fence_cv.wait(lock, [&] { return adapter->completed_fence >= fence_value; });
+  }
+  return S_OK;
+}
+
+bool is_supported_readback_format(uint32_t d3d9_format) {
+  // For initial Win7 D3D9Ex bring-up we only require X8R8G8B8 / A8R8G8B8.
+  switch (d3d9_format) {
+    case 21u: // D3DFMT_A8R8G8B8
+    case 22u: // D3DFMT_X8R8G8B8
+      return true;
+    default:
+      return false;
+  }
+}
+
+HRESULT copy_surface_bytes(const Resource* src, Resource* dst) {
+  if (!src || !dst) {
+    return E_INVALIDARG;
+  }
+  if (src->width != dst->width || src->height != dst->height) {
+    return E_INVALIDARG;
+  }
+  if (src->format != dst->format) {
+    return E_INVALIDARG;
+  }
+  if (!is_supported_readback_format(src->format)) {
+    return E_NOTIMPL;
+  }
+
+  const uint32_t bpp = bytes_per_pixel(src->format);
+  const uint32_t row_bytes = src->width * bpp;
+  if (src->row_pitch < row_bytes || dst->row_pitch < row_bytes) {
+    return E_FAIL;
+  }
+  if (src->storage.size() < static_cast<size_t>(src->row_pitch) * src->height ||
+      dst->storage.size() < static_cast<size_t>(dst->row_pitch) * dst->height) {
+    return E_FAIL;
+  }
+
+  const uint8_t* src_base = src->storage.data();
+  uint8_t* dst_base = dst->storage.data();
+  for (uint32_t y = 0; y < src->height; y++) {
+    std::memcpy(dst_base + static_cast<size_t>(y) * dst->row_pitch,
+                src_base + static_cast<size_t>(y) * src->row_pitch,
+                row_bytes);
+  }
+  return S_OK;
+}
+
 // -----------------------------------------------------------------------------
 // Adapter DDIs
 // -----------------------------------------------------------------------------
@@ -881,6 +945,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->depth = std::max(1u, pCreateResource->depth);
   res->mip_levels = mip_levels;
   res->usage = pCreateResource->usage;
+  res->pool = pCreateResource->pool;
 
   const bool wants_shared = (pCreateResource->pSharedHandle != nullptr);
   const bool open_existing_shared = wants_shared && (*pCreateResource->pSharedHandle != nullptr);
@@ -928,6 +993,17 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     res->storage.resize(res->size_bytes);
   } catch (...) {
     return E_OUTOFMEMORY;
+  }
+
+  // System-memory pool resources are CPU-only: the host does not need a backing
+  // GPU object for readback destinations.
+  if (res->pool == kD3DPOOL_SYSTEMMEM) {
+    if (wants_shared) {
+      return kD3DErrInvalidCall;
+    }
+    res->handle = 0;
+    pCreateResource->hResource.pDrvPrivate = res.release();
+    return S_OK;
   }
 
   if (wants_shared && !open_existing_shared) {
@@ -1061,6 +1137,7 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
   res->locked = true;
   res->locked_offset = offset;
   res->locked_size = size;
+  res->locked_flags = pLock->flags;
 
   pLockedBox->pData = res->storage.data() + offset;
   pLockedBox->rowPitch = res->row_pitch;
@@ -1094,15 +1171,100 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
 
   res->locked = false;
 
+  const uint32_t locked_flags = res->locked_flags;
+  res->locked_flags = 0;
+
   // For bring-up we inline resource updates directly into the command stream so
   // the host/emulator does not need to dereference guest allocations.
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-      AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
-  cmd->resource_handle = res->handle;
-  cmd->reserved0 = 0;
-  cmd->offset_bytes = offset;
-  cmd->size_bytes = size;
+  //
+  // Note: system-memory pool resources (e.g. CreateOffscreenPlainSurface with
+  // D3DPOOL_SYSTEMMEM) are CPU-only and must not be uploaded. Similarly, read-only
+  // locks do not imply a content update.
+  if (res->handle != 0 && (locked_flags & kD3DLOCK_READONLY) == 0) {
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = offset;
+    cmd->size_bytes = size;
+  }
   return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    const AEROGPU_D3D9DDIARG_GETRENDERTARGETDATA* pGetRenderTargetData) {
+  if (!hDevice.pDrvPrivate || !pGetRenderTargetData) {
+    return E_INVALIDARG;
+  }
+
+  auto* dev = as_device(hDevice);
+  auto* src = as_resource(pGetRenderTargetData->hSrcResource);
+  auto* dst = as_resource(pGetRenderTargetData->hDstResource);
+  if (!dev || !src || !dst) {
+    return E_INVALIDARG;
+  }
+
+  // GetRenderTargetData copies from a GPU render target/backbuffer into a
+  // system-memory surface.
+  if (dst->pool != kD3DPOOL_SYSTEMMEM) {
+    return E_INVALIDARG;
+  }
+  if (dst->locked) {
+    return E_FAIL;
+  }
+
+  // Flush prior GPU work and wait for completion so the CPU sees final pixels.
+  uint64_t fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    fence = submit(dev);
+  }
+  if (fence == 0 && dev->adapter) {
+    std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
+    fence = dev->adapter->last_submitted_fence;
+  }
+  HRESULT hr = wait_for_fence(dev->adapter, fence);
+  if (hr < 0) {
+    return hr;
+  }
+
+  return copy_surface_bytes(src, dst);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_copy_rects(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    const AEROGPU_D3D9DDIARG_COPYRECTS* pCopyRects) {
+  if (!hDevice.pDrvPrivate || !pCopyRects) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  auto* src = as_resource(pCopyRects->hSrcResource);
+  auto* dst = as_resource(pCopyRects->hDstResource);
+  if (!dev || !src || !dst) {
+    return E_INVALIDARG;
+  }
+
+  // Minimal implementation: only full-surface copies are supported.
+  if (pCopyRects->pSrcRects != nullptr || pCopyRects->rect_count != 0) {
+    return E_NOTIMPL;
+  }
+
+  uint64_t fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    fence = submit(dev);
+  }
+  if (fence == 0 && dev->adapter) {
+    std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
+    fence = dev->adapter->last_submitted_fence;
+  }
+  HRESULT hr = wait_for_fence(dev->adapter, fence);
+  if (hr < 0) {
+    return hr;
+  }
+
+  return copy_surface_bytes(src, dst);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_render_target(
@@ -1852,7 +2014,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(AEROGPU_D3D9DDI_HDEVICE hDevice) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1963,6 +2125,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnDestroyQuery = device_destroy_query;
   pDeviceFuncs->pfnIssueQuery = device_issue_query;
   pDeviceFuncs->pfnGetQueryData = device_get_query_data;
+  pDeviceFuncs->pfnGetRenderTargetData = device_get_render_target_data;
+  pDeviceFuncs->pfnCopyRects = device_copy_rects;
   pDeviceFuncs->pfnWaitForIdle = device_wait_for_idle;
 
   dev.release();

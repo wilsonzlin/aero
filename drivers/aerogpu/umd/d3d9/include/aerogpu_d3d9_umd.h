@@ -291,6 +291,12 @@ typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {
   uint32_t depth;
   uint32_t mip_levels;
   uint32_t usage;    // driver-defined (e.g. render target, dynamic)
+  // D3DPOOL numeric value (D3DPOOL_DEFAULT/MANAGED/SYSTEMMEM/SCRATCH).
+  //
+  // The Win7 D3D9 runtime uses this to request system-memory surfaces for
+  // GetRenderTargetData readback (via CreateOffscreenPlainSurface with
+  // D3DPOOL_SYSTEMMEM).
+  uint32_t pool;
   uint32_t size;     // for buffers (bytes)
   AEROGPU_D3D9DDI_HRESOURCE hResource; // out
 
@@ -320,6 +326,19 @@ typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {
     uint32_t PrivateDriverDataSize;
   };
 } AEROGPU_D3D9DDIARG_CREATERESOURCE;
+
+typedef struct AEROGPU_D3D9DDIARG_GETRENDERTARGETDATA {
+  AEROGPU_D3D9DDI_HRESOURCE hSrcResource;
+  AEROGPU_D3D9DDI_HRESOURCE hDstResource;
+} AEROGPU_D3D9DDIARG_GETRENDERTARGETDATA;
+
+typedef struct AEROGPU_D3D9DDIARG_COPYRECTS {
+  AEROGPU_D3D9DDI_HRESOURCE hSrcResource;
+  AEROGPU_D3D9DDI_HRESOURCE hDstResource;
+  // Optional rect list. If NULL/0, treat as full-surface copy.
+  const RECT* pSrcRects;
+  uint32_t rect_count;
+} AEROGPU_D3D9DDIARG_COPYRECTS;
 
 typedef struct AEROGPU_D3D9DDIARG_LOCK {
   AEROGPU_D3D9DDI_HRESOURCE hResource;
@@ -448,6 +467,10 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_ISSUEQUERY)(
     AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_ISSUEQUERY* pIssueQuery);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_GETQUERYDATA)(
     AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_GETQUERYDATA* pGetQueryData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_GETRENDERTARGETDATA)(
+    AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_GETRENDERTARGETDATA* pGetRenderTargetData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_COPYRECTS)(
+    AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_COPYRECTS* pCopyRects);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_WAITFORIDLE)(
     AEROGPU_D3D9DDI_HDEVICE hDevice);
 
@@ -493,6 +516,10 @@ struct AEROGPU_D3D9DDI_DEVICEFUNCS {
   PFN_AEROGPU_D3D9DDI_DESTROYQUERY pfnDestroyQuery;
   PFN_AEROGPU_D3D9DDI_ISSUEQUERY pfnIssueQuery;
   PFN_AEROGPU_D3D9DDI_GETQUERYDATA pfnGetQueryData;
+
+  // Readback / copy helpers used by GetRenderTargetData and related operations.
+  PFN_AEROGPU_D3D9DDI_GETRENDERTARGETDATA pfnGetRenderTargetData;
+  PFN_AEROGPU_D3D9DDI_COPYRECTS pfnCopyRects;
   PFN_AEROGPU_D3D9DDI_WAITFORIDLE pfnWaitForIdle;
 };
 
