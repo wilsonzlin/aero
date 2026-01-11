@@ -84,7 +84,7 @@ qemu-system-i386 \
   -drive file=win7-x86.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x86.wav \
-  -device virtio-sound-pci,audiodev=aerosnd0
+  -device virtio-sound-pci,audiodev=aerosnd0,disable-legacy=on,x-pci-revision=0x01
 ```
 
 ### Windows 7 SP1 x64
@@ -97,12 +97,14 @@ qemu-system-x86_64 \
   -drive file=win7-x64.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x64.wav \
-  -device virtio-sound-pci,audiodev=aerosnd0
+  -device virtio-sound-pci,audiodev=aerosnd0,disable-legacy=on,x-pci-revision=0x01
 ```
 
-These examples use stock QEMU defaults (transitional virtio-snd PCI IDs); install `aero-virtio-snd-legacy.inf`.
-To validate the strict Aero contract v1 identity under QEMU, append `,disable-legacy=on,x-pci-revision=0x01`
-to the virtio-snd device (if supported) and install `aero-virtio-snd.inf`.
+These examples validate the strict Aero contract v1 identity under QEMU (modern `DEV_1059&REV_01`); install
+`aero-virtio-snd.inf`.
+
+If your QEMU build does not support `disable-legacy` and/or `x-pci-revision`, remove those properties from the
+virtio-snd `-device ...` arg and install the transitional package instead (`aero-virtio-snd-legacy.inf`).
 
 ### Audio backend alternatives
 
@@ -118,6 +120,16 @@ If you cannot use the `wav` backend, replace `-audiodev wav,...` with a backend 
 - PCI vendor/device: `VEN_1AF4&DEV_1059`
 - Contract major version: `REV_01` (encoded in PCI Revision ID)
 - Transport: PCI vendor-specific capabilities + BAR0 MMIO (virtio-pci modern)
+ 
+Some QEMU builds enumerate virtio-snd as a transitional device by default (`DEV_1018`, typically `REV_00`);
+use the opt-in legacy package in that case.
+
+### Expected HWIDs (quick reference)
+
+| Mode | Expected HWID | INF | SYS |
+|---|---|---|---|
+| Aero contract v1 (modern-only; default build) | `PCI\VEN_1AF4&DEV_1059&REV_01` | `aero-virtio-snd.inf` | `virtiosnd.sys` |
+| QEMU transitional (optional) | `PCI\VEN_1AF4&DEV_1018` | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` |
 
 The shipped INF (`inf/aero-virtio-snd.inf`) is intentionally strict and matches only:
 
@@ -207,11 +219,16 @@ Use either Device Manager or PnPUtil.
 5. Point it to the directory containing the driver package `*.inf` files:
     - Repo layout: `drivers/windows7/virtio-snd/inf/`
     - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
-   - For stock QEMU, pick `aero-virtio-snd-legacy.inf` when prompted.
+   - When prompted, pick the INF that matches your QEMU device configuration:
+     - `aero-virtio-snd.inf` (recommended; modern `DEV_1059&REV_01`)
+     - `aero-virtio-snd-legacy.inf` (stock QEMU defaults; transitional `DEV_1018`)
 
 **PnPUtil (scriptable, elevated CMD):**
 
 ```bat
+pnputil -i -a X:\path\to\aero-virtio-snd.inf
+
+REM Stock QEMU (transitional DEV_1018):
 pnputil -i -a X:\path\to\aero-virtio-snd-legacy.inf
 ```
 
