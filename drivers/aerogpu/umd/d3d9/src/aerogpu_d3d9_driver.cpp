@@ -1400,8 +1400,19 @@ uint64_t submit(Device* dev, bool is_present) {
   }
 
   if (dev->cmd.empty()) {
-    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    return adapter->last_submitted_fence;
+    // Even if there's nothing to submit, callers may use submit() as a "split"
+    // point when the per-submit allocation list is full. Reset submission-local
+    // tracking state so subsequent commands start with a fresh allocation list
+    // without issuing an empty DMA buffer to the kernel.
+    uint64_t fence = 0;
+    {
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      fence = adapter->last_submitted_fence;
+    }
+    dev->cmd.reset();
+    dev->alloc_list_tracker.reset();
+    dev->wddm_context.reset_submission_buffers();
+    return fence;
   }
 
   dev->cmd.finalize();
