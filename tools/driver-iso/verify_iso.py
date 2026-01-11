@@ -51,7 +51,12 @@ def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
   $img = $null
   try {
     $img = Mount-DiskImage -ImagePath $IsoPath -PassThru
-    $vol = $img | Get-Volume
+    $vol = $null
+    for ($i = 0; $i -lt 20; $i++) {
+      $vol = $img | Get-Volume -ErrorAction SilentlyContinue
+      if ($vol -and $vol.DriveLetter) { break }
+      Start-Sleep -Milliseconds 200
+    }
     if (-not $vol -or -not $vol.DriveLetter) {
       throw "Mounted ISO volume has no drive letter."
     }
