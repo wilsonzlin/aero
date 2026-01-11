@@ -11,7 +11,7 @@ The repository historically accumulated multiple overlapping USB/UHCI implementa
 - **Repo-root WebUSB demo RPC (parallel TypeScript surface):**
   - Generic main-thread broker + worker client: `src/platform/webusb_{broker,client,protocol}.ts`
 - **Legacy/native/test path (parallel):**
-  - Full USB stack (UHCI, hubs, HID, passthrough helpers): `crates/emulator/src/io/usb/*`
+  - Full USB stack (UHCI, hubs, HID, passthrough helpers): `crates/emulator`
 - **Legacy prototype (duplicate wire contract):**
   - Early WebUSB passthrough bridge/types: `crates/aero-wasm/src/usb_passthrough.rs`
 
@@ -52,9 +52,9 @@ The Rust↔TypeScript WebUSB passthrough “host action/completion” contract i
 Any change to the wire contract must update **all three** in a single change set and keep both the
 Rust and TS tests passing.
 
-### 3) Status of `crates/emulator/src/io/usb/*`
+### 3) Status of the legacy `crates/emulator` USB stack
 
-`crates/emulator/src/io/usb/*` is considered **legacy/native-only**:
+The `crates/emulator` USB stack is considered **legacy/native-only**:
 
 - It may remain temporarily for native bring-up and as a reference implementation.
 - It is **not** the canonical implementation for the browser runtime.
@@ -124,9 +124,9 @@ Rust and TS tests passing.
    - Deletion target (once demos migrate or become redundant): `src/platform/webusb_{broker,client,protocol}.ts`.
 
 4. **Converge native on shared code**
-   - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
-     device models/UHCI (or gate the legacy code behind a feature flag and stop extending it).
-   - Deletion target: `crates/emulator/src/io/usb/*` once unused.
+    - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
+      device models/UHCI (or gate the legacy code behind a feature flag and stop extending it).
+    - Deletion target: legacy USB stack under `crates/emulator` once unused.
 
 ### Testing strategy
 
