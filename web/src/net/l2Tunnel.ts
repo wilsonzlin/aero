@@ -9,6 +9,8 @@ import {
   encodePong,
 } from "../shared/l2TunnelProtocol";
 
+export const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
+
 export type L2TunnelEvent =
   | { type: "open" }
   | { type: "frame"; frame: Uint8Array }
@@ -408,7 +410,9 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
  * ```ts
  * import { WebSocketL2TunnelClient } from "./net";
  *
- * const tunnel = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => {
+ * // `gatewayBaseUrl` may be `https://...` (auto-converted to `wss://.../l2`),
+ * // or an explicit `wss://.../l2` URL.
+ * const tunnel = new WebSocketL2TunnelClient("https://gateway.example.com", (ev) => {
  *   if (ev.type === "frame") nicRx(ev.frame);
  * });
  *
@@ -420,7 +424,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
   private ws: WebSocket | null = null;
 
   constructor(
-    private readonly url: string,
+    private readonly gatewayBaseUrl: string,
     sink: L2TunnelSink,
     opts: L2TunnelClientOptions = {},
   ) {
@@ -431,10 +435,22 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
     if (this.isClosedOrClosing()) return;
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
 
-    const ws = new WebSocket(this.url);
+    const ws = new WebSocket(this.buildWebSocketUrl(), L2_TUNNEL_SUBPROTOCOL);
     ws.binaryType = "arraybuffer";
 
-    ws.onopen = () => this.onTransportOpen();
+    ws.onopen = () => {
+      // `docs/l2-tunnel-protocol.md` requires strict subprotocol negotiation.
+      if (ws.protocol !== L2_TUNNEL_SUBPROTOCOL) {
+        this.onTransportError(
+          new Error(
+            `L2 tunnel subprotocol not negotiated (wanted ${L2_TUNNEL_SUBPROTOCOL}, got ${ws.protocol || "none"})`,
+          ),
+        );
+        ws.close(1002);
+        return;
+      }
+      this.onTransportOpen();
+    };
     ws.onmessage = (evt) => {
       if (!(evt.data instanceof ArrayBuffer)) return;
       this.onTransportMessage(new Uint8Array(evt.data));
@@ -446,6 +462,23 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
     };
 
     this.ws = ws;
+  }
+
+  private buildWebSocketUrl(): string {
+    const url = new URL(this.gatewayBaseUrl);
+    if (url.protocol === "http:") url.protocol = "ws:";
+    if (url.protocol === "https:") url.protocol = "wss:";
+
+    // Accept either a base URL (append `/l2`) or an explicit endpoint URL that
+    // already points at `/l2`/`/eth`.
+    const path = url.pathname.replace(/\/$/, "");
+    if (path.endsWith("/l2") || path.endsWith("/eth")) {
+      url.pathname = path;
+    } else {
+      url.pathname = `${path}/l2`;
+    }
+
+    return url.toString();
   }
 
   protected canEnqueue(): boolean {
