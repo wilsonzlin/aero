@@ -8,6 +8,7 @@ import { loadConfigFromEnv, type ProxyConfig } from "./config";
 import { formatError, log } from "./logger";
 import { resolveAndAuthorizeTarget } from "./security";
 import {
+  TCP_MUX_HEADER_BYTES,
   TCP_MUX_SUBPROTOCOL,
   TcpMuxCloseFlags,
   TcpMuxErrorCode,
@@ -686,6 +687,12 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
 
     for (const frame of frames) {
       handleMuxFrame(frame);
+    }
+
+    // Avoid unbounded buffering if the peer sends an incomplete frame or never finishes a
+    // max-sized payload. The only legitimate "pending" state is a single partial frame.
+    if (muxParser.pendingBytes() > TCP_MUX_HEADER_BYTES + config.tcpMuxMaxFramePayloadBytes) {
+      closeAll("protocol_error", 1002, "Protocol error");
     }
   });
 
