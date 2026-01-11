@@ -1,3 +1,12 @@
+// NOTE: Repo-root WebUSB demo RPC.
+//
+// This module implements a generic main-thread WebUSB broker used by the repo-root Vite harness
+// (`src/main.ts`) for diagnostics / demos.
+//
+// It is NOT the canonical guest USB passthrough protocol (UsbHostAction/UsbHostCompletion). For the
+// browser runtime passthrough stack, use `web/src/usb/*` and see:
+// - docs/adr/0015-canonical-usb-stack.md
+
 import {
   WEBUSB_BROKER_PORT_MESSAGE_TYPE,
   type WebUsbBrokerEvent,

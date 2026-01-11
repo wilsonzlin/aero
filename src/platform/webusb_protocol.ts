@@ -1,3 +1,13 @@
+// NOTE: Repo-root WebUSB demo RPC protocol.
+//
+// This file defines the message schema for the repo-root WebUSB broker/client demo stack
+// (`src/platform/webusb_{broker,client}.ts`). It models direct `navigator.usb` operations and is
+// intentionally separate from Aero's canonical guest USB passthrough wire contract.
+//
+// For browser runtime USB passthrough into the guest (UHCI + host actions/completions), see:
+// - docs/adr/0015-canonical-usb-stack.md
+// - docs/webusb-passthrough.md
+
 export const WEBUSB_BROKER_PORT_MESSAGE_TYPE = 'WebUsbBrokerPort' as const;
 
 export type WebUsbDeviceId = number;
