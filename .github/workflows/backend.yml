@@ -5,6 +5,7 @@ on:
     paths:
       - backend/aero-gateway/**
       - protocol-vectors/**
+      - crates/conformance/test-vectors/**
       - .github/workflows/backend.yml
     paths-ignore:
       - "**/*.md"
@@ -14,6 +15,7 @@ on:
     paths:
       - backend/aero-gateway/**
       - protocol-vectors/**
+      - crates/conformance/test-vectors/**
       - .github/workflows/backend.yml
     paths-ignore:
       - "**/*.md"
