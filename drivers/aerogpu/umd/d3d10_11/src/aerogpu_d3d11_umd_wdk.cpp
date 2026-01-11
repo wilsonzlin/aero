@@ -1112,8 +1112,6 @@ static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   return ctx ? ctx->dev : nullptr;
 }
 
-static void ReportNotImpl() {}
-
 static void ReportNotImpl(D3D11DDI_HDEVICE) {
   // Most device-level void DDIs are object destruction. Avoid reporting an error
   // from stubs so teardown paths remain robust even when the runtime probes
@@ -1123,9 +1121,6 @@ static void ReportNotImpl(D3D11DDI_HDEVICE) {
 static void ReportNotImpl(D3D11DDI_HDEVICECONTEXT hCtx) {
   SetError(DeviceFromContext(hCtx), E_NOTIMPL);
 }
-
-template <typename Handle0, typename... Rest>
-static void ReportNotImpl(Handle0, Rest...) {}
 
 static void EmitBindShadersLocked(Device* dev) {
   if (!dev) {
