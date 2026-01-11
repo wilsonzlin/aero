@@ -1109,15 +1109,21 @@ registerProcessor('aero-audio-processor', AeroAudioProcessor);
 
 ```javascript
 async function setupAudio() {
+    // NOTE: browsers may ignore the requested sample rate. Always use
+    // `audioContext.sampleRate` (the *actual* rate) when sizing buffers or
+    // configuring resamplers to avoid pitch/speed shifts (Safari/iOS commonly
+    // runs at 44.1kHz even if 48kHz is requested).
+    const requestedSampleRate = 48000;
     const audioContext = new AudioContext({
-        sampleRate: 48000,
+        sampleRate: requestedSampleRate,
         latencyHint: 'interactive'
     });
     
     await audioContext.audioWorklet.addModule('audio-worklet-processor.js');
     
-    // Shared buffer for audio data (1 second @ 48kHz stereo)
-    const ringBufferSize = 16 + (48000 * 2 * 4);
+    const sampleRate = audioContext.sampleRate;
+    // Shared buffer for audio data (~1 second of stereo frames).
+    const ringBufferSize = 16 + (sampleRate * 2 * 4);
     const ringBuffer = new SharedArrayBuffer(ringBufferSize);
     
     const audioNode = new AudioWorkletNode(audioContext, 'aero-audio-processor', {
