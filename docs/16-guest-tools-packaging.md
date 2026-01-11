@@ -450,5 +450,10 @@ python tools/guest-tools/validate_config.py
 python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-full.json
 python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-guest-tools.json
 python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-virtio.json
-python tools/guest-tools/validate_config.py --windows-device-contract docs/windows-device-contract-virtio-win.json --spec tools/packaging/specs/win7-virtio-win.json
+
+# To validate the virtio-win contract variant, you must point the validator at a devices.cmd
+# generated from that contract (or extracted from a virtio-win Guest Tools ZIP). The in-repo
+# guest-tools/config/devices.cmd is generated from the canonical Aero contract.
+python scripts/generate-guest-tools-devices-cmd.py --contract docs/windows-device-contract-virtio-win.json --output /tmp/devices-virtio-win.cmd
+python tools/guest-tools/validate_config.py --devices-cmd /tmp/devices-virtio-win.cmd --windows-device-contract docs/windows-device-contract-virtio-win.json --spec tools/packaging/specs/win7-virtio-win.json
 ```
