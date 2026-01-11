@@ -30,8 +30,8 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01` and the shipped INF matches `...&REV_01`)
       - If the VM/device does not report `REV_01`, the Aero contract driver will not bind and the selftest will treat the device as missing.
       - For QEMU-based testing, you typically need `disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device so Windows enumerates `DEV_1059&REV_01`.
-    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
-      (transitional virtio-snd PCI ID).
+    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional PCI ID
+      `PCI\VEN_1AF4&DEV_1018` (typically `REV_00`).
       - The Aero contract INF is strict and will not bind; install the opt-in transitional package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
       - Pass `--allow-virtio-snd-transitional` to accept the transitional ID (intended for QEMU bring-up/regression).
   - Validate that the PCI device is bound to the expected in-tree driver service and emit
