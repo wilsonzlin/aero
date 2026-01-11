@@ -7,6 +7,7 @@ pub mod profile;
 pub mod simd;
 pub mod t2_exec;
 pub mod t2_ir;
+pub mod tier2;
 pub mod trace;
 pub mod wasm;
 
