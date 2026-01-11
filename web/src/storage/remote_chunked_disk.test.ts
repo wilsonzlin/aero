@@ -35,6 +35,63 @@ function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
   return data.buffer instanceof ArrayBuffer ? (data as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
 }
 
+class BlockingRemoveStore implements BinaryStore {
+  private readonly files = new Map<string, Uint8Array<ArrayBuffer>>();
+  private readonly started: Promise<void>;
+  private readonly released: Promise<void>;
+  private startedResolve: (() => void) | null = null;
+  private releasedResolve: (() => void) | null = null;
+  private blockRecursiveRemove = false;
+
+  constructor() {
+    this.started = new Promise<void>((resolve) => {
+      this.startedResolve = resolve;
+    });
+    this.released = new Promise<void>((resolve) => {
+      this.releasedResolve = resolve;
+    });
+  }
+
+  waitForRecursiveRemove(): Promise<void> {
+    return this.started;
+  }
+
+  armRecursiveRemoveBlock(): void {
+    this.blockRecursiveRemove = true;
+  }
+
+  releaseRecursiveRemove(): void {
+    if (!this.blockRecursiveRemove) return;
+    this.blockRecursiveRemove = false;
+    this.releasedResolve?.();
+  }
+
+  async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
+    const data = this.files.get(path);
+    return data ? data.slice() : null;
+  }
+
+  async write(path: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
+    this.files.set(path, data.slice());
+  }
+
+  async remove(path: string, options: { recursive?: boolean } = {}): Promise<void> {
+    if (options.recursive && this.blockRecursiveRemove) {
+      this.startedResolve?.();
+      await this.released;
+    }
+
+    if (options.recursive) {
+      const prefix = path.endsWith("/") ? path : `${path}/`;
+      for (const key of Array.from(this.files.keys())) {
+        if (key === path || key.startsWith(prefix)) this.files.delete(key);
+      }
+      return;
+    }
+    this.files.delete(path);
+  }
+}
+
 async function sha256Hex(data: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", toArrayBufferUint8(data));
   const bytes = new Uint8Array(digest);
@@ -537,6 +594,80 @@ describe("RemoteChunkedDisk", () => {
     expect(t.bytesDownloaded).toBe(2048);
     expect(t.cachedBytes).toBe(0);
     expect(t.lastFetchMs).toBeNull();
+    await disk.close();
+  });
+
+  it("does not wipe telemetry for reads that occur while clearCache is in-flight", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = 1024;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, 1024)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [{ size: 1024, sha256: await sha256Hex(chunks[0]!) }],
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      const m = url.pathname.match(/^\/chunks\/(\d+)\.bin$/);
+      if (m) {
+        const idx = Number(m[1]);
+        const data = chunks[idx];
+        if (!data) {
+          res.statusCode = 404;
+          res.end("missing");
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(data);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new BlockingRemoveStore();
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+
+    store.armRecursiveRemoveBlock();
+    const clearPromise = disk.clearCache();
+    await store.waitForRecursiveRemove();
+
+    const buf = new Uint8Array(512);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(img.slice(0, 512));
+
+    store.releaseRecursiveRemove();
+    await clearPromise;
+
+    const t = disk.getTelemetrySnapshot();
+    expect(t.requests).toBe(1);
+    expect(t.bytesDownloaded).toBe(1024);
+
     await disk.close();
   });
 });

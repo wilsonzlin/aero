@@ -110,7 +110,7 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
 
   it("caches fetched blocks in IndexedDB and reuses them on subsequent reads", async () => {
     const blockSize = 1024 * 1024;
-    // NOTE: `RemoteStreamingDisk` treats `cacheLimitBytes=null` as "cache disabled".
+    // NOTE: `RemoteStreamingDisk` treats `cacheLimitBytes=0` as "cache disabled".
     // Use a positive limit here so the IDB cache is enabled.
     const cacheLimitBytes = blockSize * 8;
     const image = makeTestImage(blockSize * 3);
@@ -131,6 +131,56 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     const second = await disk.read(0, 16);
     expect(Array.from(second)).toEqual(Array.from(image.subarray(0, 16)));
     expect(mock.stats.chunkRangeCalls).toBe(before + 1);
+
+    disk.close();
+    mock.restore();
+  });
+
+  it("does not wipe telemetry for reads that occur while clearCache is in-flight", async () => {
+    const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+      blockSize,
+      cacheBackend: "idb",
+      cacheLimitBytes,
+      prefetchSequentialBlocks: 0,
+    });
+
+    const cache = (disk as unknown as { idbCache?: { clear: () => Promise<void> } }).idbCache;
+    if (!cache) throw new Error("expected idb cache");
+
+    const originalClear = cache.clear.bind(cache);
+    let releaseClear: (() => void) | null = null;
+    const releasePromise = new Promise<void>((resolve) => {
+      releaseClear = resolve;
+    });
+
+    let started: (() => void) | null = null;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+
+    cache.clear = async () => {
+      started?.();
+      await releasePromise;
+      await originalClear();
+    };
+
+    const clearPromise = disk.clearCache();
+    await startedPromise;
+
+    const bytes = await disk.read(0, 16);
+    expect(Array.from(bytes)).toEqual(Array.from(image.subarray(0, 16)));
+
+    releaseClear?.();
+    await clearPromise;
+
+    const t = disk.getTelemetrySnapshot();
+    expect(t.requests).toBe(1);
+    expect(t.bytesDownloaded).toBe(blockSize);
 
     disk.close();
     mock.restore();

@@ -650,17 +650,6 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   async clearCache(): Promise<void> {
     this.cacheGeneration += 1;
-    if (this.cacheLimitBytes !== 0) {
-      if (this.cacheBackend === "idb") {
-        if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
-        await this.idbCache.clear();
-      } else {
-        if (!this.opfsCache) throw new Error("Remote disk OPFS cache not initialized");
-        await this.opfsCache.clear();
-      }
-    }
-    this.rangeSet = new RangeSet();
-    this.cachedBytes = 0;
     this.lastReadEnd = null;
     this.inflight.clear();
     this.telemetry = {
@@ -674,6 +663,18 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       lastFetchAtMs: null,
       lastFetchRange: null,
     };
+
+    if (this.cacheLimitBytes !== 0) {
+      if (this.cacheBackend === "idb") {
+        if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
+        await this.idbCache.clear();
+      } else {
+        if (!this.opfsCache) throw new Error("Remote disk OPFS cache not initialized");
+        await this.opfsCache.clear();
+      }
+    }
+    this.rangeSet = new RangeSet();
+    this.cachedBytes = 0;
   }
 
   async close(): Promise<void> {

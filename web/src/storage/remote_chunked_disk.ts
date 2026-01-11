@@ -1065,7 +1065,6 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     this.cacheGeneration += 1;
     this.inflight.clear();
     this.lastReadEnd = null;
-    await this.chunkCache.clear();
     this.telemetry = {
       blockRequests: 0,
       cacheHits: 0,
@@ -1077,6 +1076,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       lastFetchAtMs: null,
       lastFetchRange: null,
     };
+    await this.chunkCache.clear();
   }
 
   async close(): Promise<void> {
