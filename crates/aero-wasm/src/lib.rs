@@ -58,9 +58,6 @@ use aero_audio::sink::AudioSink;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::JsCast;
-
-#[cfg(target_arch = "wasm32")]
 use aero_usb::{
     hid::passthrough::UsbHidPassthrough,
     hid::webhid,
@@ -482,8 +479,8 @@ impl UsbHidPassthroughBridge {
     }
 
     pub fn push_input_report(&mut self, report_id: u32, data: &[u8]) -> Result<(), JsValue> {
-        let report_id = u8::try_from(report_id)
-            .map_err(|_| JsValue::from_str("reportId is out of range (expected 0..=255)"))?;
+        let report_id =
+            u8::try_from(report_id).map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         self.device.push_input_report(report_id, data);
         Ok(())
     }
@@ -544,14 +541,12 @@ impl WebHidPassthroughBridge {
         collections: JsValue,
     ) -> Result<Self, JsValue> {
         let collections: Vec<webhid::HidCollectionInfo> =
-            serde_wasm_bindgen::from_value(collections).map_err(|e| {
-                JsValue::from_str(&format!("invalid WebHID collections metadata: {e}"))
-            })?;
+            serde_wasm_bindgen::from_value(collections)
+                .map_err(|e| js_error(&format!("invalid WebHID collections metadata: {e}")))?;
 
         let report_descriptor =
-            webhid::synthesize_report_descriptor(&collections).map_err(|e| {
-                JsValue::from_str(&format!("failed to synthesize HID report descriptor: {e}"))
-            })?;
+            webhid::synthesize_report_descriptor(&collections)
+                .map_err(|e| js_error(&format!("failed to synthesize HID report descriptor: {e}")))?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
 
@@ -572,8 +567,8 @@ impl WebHidPassthroughBridge {
     }
 
     pub fn push_input_report(&mut self, report_id: u32, data: &[u8]) -> Result<(), JsValue> {
-        let report_id = u8::try_from(report_id)
-            .map_err(|_| JsValue::from_str("reportId is out of range (expected 0..=255)"))?;
+        let report_id =
+            u8::try_from(report_id).map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         self.device.push_input_report(report_id, data);
         Ok(())
     }
