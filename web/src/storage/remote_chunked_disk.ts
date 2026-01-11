@@ -69,6 +69,20 @@ export type RemoteChunkedDiskOptions = {
    * database (persistent even without OPFS).
    */
   cacheBackend?: DiskBackend;
+  /**
+   * Stable cache identity for the remote disk (used as `imageId` in cache key derivation).
+   *
+   * This should be a control-plane identifier (e.g. database ID), not a signed URL.
+   * Defaults to the manifest `imageId` when present, otherwise a normalized manifest URL
+   * without query/hash components.
+   */
+  cacheImageId?: string;
+  /**
+   * Stable version identifier for the remote disk (used as `version` in cache key derivation).
+   *
+   * Defaults to the manifest `version`.
+   */
+  cacheVersion?: string;
 };
 
 /**
@@ -710,7 +724,12 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   static async open(manifestUrl: string, options: RemoteChunkedDiskOptions = {}): Promise<RemoteChunkedDisk> {
     if (!manifestUrl) throw new Error("manifestUrl must not be empty");
 
-    const resolved: Required<RemoteChunkedDiskOptions> = {
+    const resolved: Required<Omit<RemoteChunkedDiskOptions, "store" | "cacheBackend" | "cacheImageId" | "cacheVersion">> & {
+      store: BinaryStore;
+      cacheBackend: DiskBackend;
+      cacheImageId?: string;
+      cacheVersion?: string;
+    } = {
       credentials: options.credentials ?? "same-origin",
       cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
       maxConcurrentFetches: options.maxConcurrentFetches ?? 4,
@@ -719,6 +738,8 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       retryBaseDelayMs: options.retryBaseDelayMs ?? 200,
       store: options.store ?? (hasOpfsRoot() ? new OpfsStore() : new MemoryStore()),
       cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
+      cacheImageId: options.cacheImageId,
+      cacheVersion: options.cacheVersion,
     };
 
     if (resolved.cacheLimitBytes !== null) {
@@ -745,11 +766,21 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const manifest = parseManifest(json);
 
     const manifestV1 = json as ChunkedDiskManifestV1;
-    const imageId =
+    const derivedImageId =
       typeof manifestV1.imageId === "string" && manifestV1.imageId.trim().length > 0
         ? manifestV1.imageId
         : stableImageIdFromUrl(manifestUrl);
-    const cacheKeyParts: RemoteCacheKeyParts = { imageId, version: manifestV1.version, deliveryType: "chunked" };
+
+    const cacheImageId = (resolved.cacheImageId ?? derivedImageId).trim();
+    if (!cacheImageId) {
+      throw new Error("cacheImageId must not be empty");
+    }
+    const cacheVersion = (resolved.cacheVersion ?? manifestV1.version).trim();
+    if (!cacheVersion) {
+      throw new Error("cacheVersion must not be empty");
+    }
+
+    const cacheKeyParts: RemoteCacheKeyParts = { imageId: cacheImageId, version: cacheVersion, deliveryType: "chunked" };
     const validators = {
       sizeBytes: manifest.totalSize,
       etag: resp.headers.get("etag"),
@@ -776,8 +807,8 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       const idbCache = await IdbRemoteChunkCache.open({
         cacheKey,
         signature: {
-          imageId,
-          version: manifestV1.version,
+          imageId: cacheKeyParts.imageId,
+          version: cacheKeyParts.version,
           etag: resp.headers.get("etag"),
           sizeBytes: manifest.totalSize,
           chunkSize: manifest.chunkSize,
