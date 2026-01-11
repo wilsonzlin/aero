@@ -1,4 +1,7 @@
+import { encodeHidInputReportRingRecord } from "../hid/hid_input_report_ring";
 import { normalizeCollections, type HidCollectionInfo } from "../hid/webhid_normalize";
+import { RingBuffer } from "../ipc/ring_buffer";
+import { StatusIndex } from "../runtime/shared_layout";
 import { fnv1a32Hex } from "../utils/fnv1a";
 import {
   isHidSendReportMessage,
@@ -16,6 +19,7 @@ export const EXTERNAL_HUB_ROOT_PORT: GuestUsbRootPort = 0;
 export const DIRECT_ATTACH_ROOT_PORT: GuestUsbRootPort = 1;
 
 export const DEFAULT_EXTERNAL_HUB_PORT_COUNT = 16;
+const DEFAULT_NUMERIC_DEVICE_ID_BASE = 0x4000_0000;
 
 export function getNoFreeGuestUsbPortsMessage(options: { externalHubPortCount?: number } = {}): string {
   const hubPortCount = options.externalHubPortCount ?? DEFAULT_EXTERNAL_HUB_PORT_COUNT;
@@ -79,6 +83,9 @@ export class WebHidPassthroughManager {
   readonly #target: HidPassthroughTarget;
   readonly #externalHubPortCount: number;
 
+  #inputReportRing: RingBuffer | null = null;
+  #status: Int32Array | null = null;
+
   #knownDevices: HIDDevice[] = [];
   #attachedDevices: WebHidPassthroughAttachment[] = [];
   readonly #listeners = new Set<WebHidPassthroughListener>();
@@ -91,6 +98,9 @@ export class WebHidPassthroughManager {
 
   readonly #deviceIds = new WeakMap<HIDDevice, string>();
   #nextDeviceOrdinal = 1;
+
+  readonly #numericDeviceIds = new Map<string, number>();
+  #nextNumericDeviceId = DEFAULT_NUMERIC_DEVICE_ID_BASE;
 
   readonly #onConnect: ((event: Event) => void) | null;
   readonly #onDisconnect: ((event: Event) => void) | null;
@@ -166,6 +176,14 @@ export class WebHidPassthroughManager {
     } catch (err) {
       console.warn("WebHID output report forwarding failed", err);
     }
+  }
+
+  setInputReportRing(ring: RingBuffer | null, status: Int32Array | null = null): void {
+    if (ring && ring !== this.#inputReportRing) {
+      ring.reset();
+    }
+    this.#inputReportRing = ring;
+    this.#status = status;
   }
 
   getState(): WebHidPassthroughState {
@@ -244,6 +262,7 @@ export class WebHidPassthroughManager {
     await device.open();
 
     if (this.#target !== NOOP_TARGET) {
+      const numericDeviceId = this.#numericDeviceIdFor(deviceId);
       let normalizedCollections: ReturnType<typeof normalizeCollections>;
       try {
         const rawCollections = (device as unknown as { collections?: unknown }).collections;
@@ -261,6 +280,7 @@ export class WebHidPassthroughManager {
         this.#target.postMessage({
           type: "hid:attach",
           deviceId,
+          numericDeviceId,
           guestPort: guestPath[0] as GuestUsbRootPort,
           guestPath,
           vendorId: device.vendorId,
@@ -280,6 +300,18 @@ export class WebHidPassthroughManager {
       const onInputReport = (event: HIDInputReportEvent): void => {
         try {
           const src = new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength);
+          const ring = this.#inputReportRing;
+          if (ring && this.#canUseSharedMemory()) {
+            const ts = (event as unknown as { timeStamp?: unknown }).timeStamp;
+            const tsMs = typeof ts === "number" && Number.isFinite(ts) ? Math.max(0, Math.round(ts)) : 0;
+            const record = encodeHidInputReportRingRecord({ deviceId: numericDeviceId, reportId: event.reportId, tsMs, data: src });
+            if (ring.tryPush(record)) return;
+            if (this.#status) {
+              Atomics.add(this.#status, StatusIndex.IoHidInputReportDropCounter, 1);
+            }
+            return;
+          }
+
           const out = new Uint8Array(src.byteLength);
           out.set(src);
           const data = out.buffer;
@@ -410,6 +442,24 @@ export class WebHidPassthroughManager {
     const id = `${hash}-${this.#nextDeviceOrdinal++}`;
     this.#deviceIds.set(device, id);
     return id;
+  }
+
+  #numericDeviceIdFor(deviceId: string): number {
+    const existing = this.#numericDeviceIds.get(deviceId);
+    if (existing !== undefined) return existing;
+
+    const id = this.#nextNumericDeviceId++ >>> 0;
+    this.#numericDeviceIds.set(deviceId, id);
+    return id;
+  }
+
+  #canUseSharedMemory(): boolean {
+    // SharedArrayBuffer requires cross-origin isolation in browsers. Node/Vitest may still provide it,
+    // but keep the check aligned with the browser contract so behaviour matches production.
+    if ((globalThis as any).crossOriginIsolated !== true) return false;
+    if (typeof SharedArrayBuffer === "undefined") return false;
+    if (typeof Atomics === "undefined") return false;
+    return true;
   }
 
   async #handleDisconnect(event: Event): Promise<void> {

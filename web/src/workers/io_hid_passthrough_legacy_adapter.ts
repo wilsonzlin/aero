@@ -54,8 +54,20 @@ export class IoWorkerLegacyHidPassthroughAdapter {
 
   attach(msg: HidPassthroughAttachMessage): HidAttachMessage {
     const existing = this.#numericIdByLegacyId.get(msg.deviceId);
-    const deviceId = existing ?? this.#nextDeviceId++;
-    if (existing === undefined) {
+    const requested = msg.numericDeviceId;
+    const requestedValid =
+      typeof requested === "number" && Number.isFinite(requested) && Number.isInteger(requested) && requested >= 0 && requested <= 0xffff_ffff;
+
+    let deviceId: number;
+    if (existing !== undefined) {
+      deviceId = existing;
+    } else if (requestedValid && !this.#legacyIdByNumericId.has(requested >>> 0)) {
+      deviceId = requested >>> 0;
+      this.#nextDeviceId = Math.max(this.#nextDeviceId, deviceId + 1);
+      this.#numericIdByLegacyId.set(msg.deviceId, deviceId);
+      this.#legacyIdByNumericId.set(deviceId, msg.deviceId);
+    } else {
+      deviceId = this.#nextDeviceId++;
       this.#numericIdByLegacyId.set(msg.deviceId, deviceId);
       this.#legacyIdByNumericId.set(deviceId, msg.deviceId);
     }

@@ -54,6 +54,14 @@ export function isGuestUsbPath(value: unknown): value is GuestUsbPath {
 type HidAttachMessageV0 = {
   type: "hid:attach";
   deviceId: string;
+  /**
+   * Optional numeric ID used by the guest-side passthrough bridges.
+   *
+   * When provided, the I/O worker can use this value directly instead of allocating
+   * its own numeric IDs, enabling SharedArrayBuffer ring-buffer fast paths for
+   * high-frequency input reports.
+   */
+  numericDeviceId?: number;
   guestPort: GuestUsbPort;
   /**
    * Optional for transition/interop with newer senders.
@@ -68,6 +76,14 @@ type HidAttachMessageV0 = {
 type HidAttachMessageV1 = {
   type: "hid:attach";
   deviceId: string;
+  /**
+   * Optional numeric ID used by the guest-side passthrough bridges.
+   *
+   * When provided, the I/O worker can use this value directly instead of allocating
+   * its own numeric IDs, enabling SharedArrayBuffer ring-buffer fast paths for
+   * high-frequency input reports.
+   */
+  numericDeviceId?: number;
   guestPath: GuestUsbPath;
   /**
    * @deprecated Present for backwards compatibility. When `guestPath` is set,
@@ -208,6 +224,9 @@ export function isHidAttachHubMessage(value: unknown): value is HidAttachHubMess
 export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
   if (!isRecord(value) || value.type !== "hid:attach") return false;
   if (typeof value.deviceId !== "string") return false;
+  if (value.numericDeviceId !== undefined) {
+    if (!isFiniteNumber(value.numericDeviceId) || !Number.isInteger(value.numericDeviceId)) return false;
+  }
   const guestPort = value.guestPort;
   const guestPath = value.guestPath;
   if (guestPort === undefined && guestPath === undefined) return false;

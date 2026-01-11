@@ -30,7 +30,7 @@ import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgp
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
-import type { WorkerRole } from "./runtime/shared_layout";
+import { IO_IPC_HID_IN_QUEUE_KIND, type WorkerRole } from "./runtime/shared_layout";
 import { DiskManager } from "./storage/disk_manager";
 import type { DiskImageMetadata, MountConfig } from "./storage/metadata";
 import { OPFS_DISKS_PATH, OPFS_LEGACY_IMAGES_DIR } from "./storage/metadata";
@@ -38,6 +38,7 @@ import { RuntimeDiskClient, type OpenResult } from "./storage/runtime_disk_clien
 import { type JitWorkerResponse } from "./workers/jit_protocol";
 import { JitWorkerClient } from "./workers/jit_worker_client";
 import { DemoVmWorkerClient } from "./workers/demo_vm_worker_client";
+import { openRingByKind } from "./ipc/ipc";
 import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./ipc/shared-layout";
 import { mountSettingsPanel } from "./ui/settings_panel";
@@ -95,6 +96,28 @@ const webHidManager = new WebHidPassthroughManager({
     },
   },
 });
+
+function syncWebHidInputReportRing(ioWorker: Worker | null): void {
+  if (!ioWorker) {
+    webHidManager.setInputReportRing(null);
+    return;
+  }
+
+  const sab = workerCoordinator.getIoIpcSab();
+  const status = workerCoordinator.getStatusView();
+  if (!sab || !status) {
+    webHidManager.setInputReportRing(null);
+    return;
+  }
+
+  try {
+    const ring = openRingByKind(sab, IO_IPC_HID_IN_QUEUE_KIND);
+    webHidManager.setInputReportRing(ring, status);
+  } catch {
+    webHidManager.setInputReportRing(null);
+  }
+}
+
 configManager.subscribe((state) => {
   workerCoordinator.updateConfig(state.effective);
 });
@@ -3053,6 +3076,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         if (ioWorker) {
           usbBroker.attachWorkerPort(ioWorker);
           wireIoWorkerForWebHid(ioWorker, webHidManager);
+          syncWebHidInputReportRing(ioWorker);
           attachedIoWorker = ioWorker;
           ioWorker.postMessage({
             type: "setBootDisks",
@@ -3337,6 +3361,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           cd: selection?.cd ?? null,
         });
       }
+      syncWebHidInputReportRing(ioWorker);
       attachedIoWorker = ioWorker;
     }
 

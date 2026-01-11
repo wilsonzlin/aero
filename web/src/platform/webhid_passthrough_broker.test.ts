@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
+import { decodeHidInputReportRingRecord } from "../hid/hid_input_report_ring";
 import type { HidPassthroughMessage } from "./hid_passthrough_protocol";
 import { WebHidPassthroughManager } from "./webhid_passthrough";
 
@@ -67,6 +69,17 @@ class TestTarget {
 function bufferSourceToBytes(src: BufferSource): Uint8Array {
   return src instanceof ArrayBuffer ? new Uint8Array(src) : new Uint8Array(src.buffer, src.byteOffset, src.byteLength);
 }
+
+const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+
+afterEach(() => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+  if (originalCrossOriginIsolatedDescriptor) {
+    Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
+  } else if (original) {
+    Reflect.deleteProperty(globalThis as any, "crossOriginIsolated");
+  }
+});
 
 describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
   it("posts hid:attach with normalized collections and forwards inputreport events", async () => {
@@ -155,5 +168,33 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     device.dispatchInputReport(2, new DataView(new Uint8Array([10]).buffer));
     const forwarded = target.posted.filter((p) => p.message.type === "hid:inputReport");
     expect(forwarded).toHaveLength(1);
+  });
+
+  it("writes inputreport events into the configured SAB ring instead of posting hid:inputReport messages", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const device = new FakeHidDevice();
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target });
+
+    const kind = 1;
+    const sab = createIpcBuffer([{ kind, capacityBytes: 4096 }]).buffer;
+    const ring = openRingByKind(sab, kind);
+    const status = new Int32Array(new SharedArrayBuffer(64 * 4));
+    manager.setInputReportRing(ring, status);
+
+    await manager.attachKnownDevice(device as unknown as HIDDevice);
+    const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as any;
+    expect(typeof attach.numericDeviceId).toBe("number");
+
+    const before = target.posted.length;
+    device.dispatchInputReport(7, new DataView(new Uint8Array([0xad, 0xbe]).buffer));
+    expect(target.posted.length).toBe(before);
+
+    const payload = ring.tryPop();
+    expect(payload).not.toBeNull();
+    const record = decodeHidInputReportRingRecord(payload!);
+    expect(record).toMatchObject({ deviceId: attach.numericDeviceId, reportId: 7, tsMs: 0 });
+    expect(Array.from(record!.data)).toEqual([0xad, 0xbe]);
   });
 });
