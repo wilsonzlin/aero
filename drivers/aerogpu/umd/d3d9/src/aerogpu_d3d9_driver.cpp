@@ -6004,11 +6004,7 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice
 
   auto* dev = as_device(hDevice);
   if (!dev || !dev->adapter) {
-#if defined(_WIN32)
-    ::Sleep(16);
-#else
-    std::this_thread::sleep_for(std::chrono::milliseconds(16));
-#endif
+    sleep_ms(16);
     return trace.ret(S_OK);
   }
 
@@ -6017,6 +6013,10 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice
   if (dev->adapter->primary_refresh_hz != 0) {
     period_ms = std::max<uint32_t>(1, 1000u / dev->adapter->primary_refresh_hz);
   }
+  // Some display stacks (particularly remote/virtualised ones) can report bizarre
+  // refresh rates (e.g. 1Hz). Clamp the computed period so WaitForVBlank remains
+  // bounded and DWM never stalls for seconds.
+  period_ms = std::min<uint32_t>(period_ms, 50u);
 
   // Prefer a real vblank wait when possible (KMD-backed scanline polling),
   // but always keep the wait bounded so DWM cannot hang if vblank delivery is
@@ -6029,9 +6029,9 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice
   if (dev->adapter->kmd_query.WaitForVBlank(vid_pn_source_id, timeout_ms)) {
     return trace.ret(S_OK);
   }
-  ::Sleep(period_ms);
+  sleep_ms(std::min<uint32_t>(period_ms, timeout_ms));
 #else
-  std::this_thread::sleep_for(std::chrono::milliseconds(16));
+  sleep_ms(16);
 #endif
   return trace.ret(S_OK);
 }

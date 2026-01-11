@@ -120,6 +120,14 @@ In practice, DWM and other Ex clients frequently touch a wider surface area than
 | `ComposeRects(...)` | Can return `D3D_OK` if unused; if used, implement a simple CPU fallback or translate to a host blit operation. |
 | `CreateRenderTargetEx` / `CreateOffscreenPlainSurfaceEx` / `CreateDepthStencilSurfaceEx` | Forward to the non-Ex creation path, honoring `pSharedHandle` and accepting additional flags/usage parameters. |
 
+**AeroGPU Win7 UMD DDI coverage (DWM-critical Ex calls):**
+
+- `pfnCheckDeviceState` returns `S_OK` for visible windows and `S_PRESENT_OCCLUDED` when the destination window is minimized/hidden (best-effort).
+- `pfnWaitForVBlank` prefers a real KMD vblank wait (scanline polling) when available, but is always bounded (no multi-second sleeps).
+- `pfnSetGPUThreadPriority` / `pfnGetGPUThreadPriority` always succeed and clamp the stored priority to `[-7, 7]`.
+- `pfnCheckResourceResidency` / `pfnQueryResourceResidency` never fail for valid devices and conservatively report resources as resident.
+- `pfnComposeRects` is treated as a safe no-op (`S_OK`) for initial DWM bring-up.
+
 #### `ResetEx`, `GetDisplayModeEx`
 
 Implement:
@@ -400,6 +408,17 @@ At minimum, validate that:
 - The host command processor accepts `PRESENT_EX` commands.
 - Fence completion events are generated.
 - Present stats requests do not fail (even if values are approximate).
+
+### Guest Windows test app: `d3d9ex_dwm_ddi_sanity`
+
+This test exists specifically to catch “DWM hang” failure modes caused by Ex-only device probes. It calls:
+
+- `IDirect3DDevice9Ex::CheckDeviceState`
+- `::WaitForVBlank`
+- `::SetGPUThreadPriority` / `::GetGPUThreadPriority`
+- `::CheckResourceResidency` / `::QueryResourceResidency`
+
+and asserts that every call succeeds and stays non-blocking (per-call upper bound similar to `d3d9ex_query_latency`).
 
 ---
 
