@@ -25,6 +25,11 @@ If you are building from source / working on a PR, the GitHub Actions workflow
    5. (Optional) **HDA → virtio-snd**
 5. Run `verify.cmd` as Administrator and check `report.txt`.
 
+> Note: Aero’s Windows 7 virtio device contract (`AERO-W7-VIRTIO` v1) encodes the contract major version in the PCI
+> Revision ID (`REV_01`). The in-tree Win7 virtio INFs are revision-gated, so if you are testing under QEMU or another
+> VMM you may need to set `x-pci-revision=0x01` on the virtio devices (and preferably `disable-legacy=on`) for the
+> drivers to bind.
+
 ## Contents
 
 - [Prerequisites](#prerequisites)
