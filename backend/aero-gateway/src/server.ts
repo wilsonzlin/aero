@@ -178,6 +178,7 @@ export function buildServer(config: Config): ServerBundle {
           idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
         },
         dns: { maxQueryBytes: config.DNS_MAX_QUERY_BYTES },
+        l2: { maxFramePayloadBytes: 2048, maxControlPayloadBytes: 256 },
       },
     };
 

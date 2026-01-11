@@ -71,6 +71,7 @@ test('POST /session sets aero_session cookie and returns CreateSessionResponse',
     udpRelayToken: '/udp-relay/token',
   });
   assert.deepEqual(body.limits?.dns, { maxQueryBytes: 4096 });
+  assert.deepEqual(body.limits?.l2, { maxFramePayloadBytes: 2048, maxControlPayloadBytes: 256 });
   assert.equal(body.limits?.tcp?.maxConnections, 64);
   assert.equal(body.limits?.tcp?.maxMessageBytes, 1024 * 1024);
   assert.equal(body.limits?.tcp?.connectTimeoutMs, 10_000);

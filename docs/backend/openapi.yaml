@@ -87,6 +87,9 @@ paths:
                         idleTimeoutMs: 300000
                       dns:
                         maxQueryBytes: 4096
+                      l2:
+                        maxFramePayloadBytes: 2048
+                        maxControlPayloadBytes: 256
         '400':
           $ref: '#/components/responses/ErrorResponse'
 
@@ -276,7 +279,7 @@ components:
         limits:
           type: object
           additionalProperties: false
-          required: [tcp, dns]
+          required: [tcp, dns, l2]
           properties:
             tcp:
               type: object
@@ -314,6 +317,19 @@ components:
                   type: integer
                   minimum: 1
                   description: Maximum accepted DNS query message size in bytes.
+            l2:
+              type: object
+              additionalProperties: false
+              required: [maxFramePayloadBytes, maxControlPayloadBytes]
+              properties:
+                maxFramePayloadBytes:
+                  type: integer
+                  minimum: 1
+                  description: Maximum payload size for L2 tunnel FRAME messages in bytes.
+                maxControlPayloadBytes:
+                  type: integer
+                  minimum: 1
+                  description: Maximum payload size for L2 tunnel control messages (PING/PONG/ERROR) in bytes.
 
     UdpRelayEndpoints:
       type: object
