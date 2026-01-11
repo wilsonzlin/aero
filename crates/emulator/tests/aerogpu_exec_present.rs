@@ -3,6 +3,8 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use emulator::devices::aerogpu_regs::ring_control;
 use emulator::devices::aerogpu_ring::AEROGPU_RING_MAGIC;
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
@@ -44,13 +46,6 @@ impl MemoryBus for VecMemory {
     }
 }
 
-fn push_cmd(buf: &mut Vec<u8>, opcode: u32, payload: &[u8]) {
-    let size_bytes = (8 + payload.len()) as u32;
-    buf.extend_from_slice(&opcode.to_le_bytes());
-    buf.extend_from_slice(&size_bytes.to_le_bytes());
-    buf.extend_from_slice(payload);
-}
-
 #[test]
 fn doorbell_executes_present_and_updates_scanout() {
     let backend = match AerogpuWgpuBackend::new() {
@@ -85,57 +80,25 @@ fn doorbell_executes_present_and_updates_scanout() {
     //   SetRenderTargets(color0=1)
     //   Clear(color=red)
     //   Present
-    let mut cmd = Vec::new();
-    cmd.extend_from_slice(&0x444D_4341u32.to_le_bytes()); // "ACMD"
-    cmd.extend_from_slice(&regs.abi_version.to_le_bytes());
-    cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched below)
-    cmd.extend_from_slice(&0u32.to_le_bytes()); // flags
-    cmd.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-    cmd.extend_from_slice(&0u32.to_le_bytes()); // reserved1
-
-    // CreateTexture2d: payload is 48 bytes after hdr.
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&1u32.to_le_bytes()); // texture_handle
-    payload.extend_from_slice(&AEROGPU_RESOURCE_USAGE_RENDER_TARGET.to_le_bytes()); // usage_flags
-    payload.extend_from_slice(&(AeroGpuFormat::R8G8B8A8Unorm as u32).to_le_bytes()); // format
-    payload.extend_from_slice(&1u32.to_le_bytes()); // width
-    payload.extend_from_slice(&1u32.to_le_bytes()); // height
-    payload.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
-    payload.extend_from_slice(&1u32.to_le_bytes()); // array_layers
-    payload.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
-    payload.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
-    payload.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
-    payload.extend_from_slice(&0u64.to_le_bytes()); // reserved0
-    push_cmd(&mut cmd, 0x101, &payload);
-
-    // SetRenderTargets: payload is 40 bytes after hdr.
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&1u32.to_le_bytes()); // color_count
-    payload.extend_from_slice(&0u32.to_le_bytes()); // depth_stencil
-    payload.extend_from_slice(&1u32.to_le_bytes()); // colors[0]
-    for _ in 1..8 {
-        payload.extend_from_slice(&0u32.to_le_bytes());
-    }
-    push_cmd(&mut cmd, 0x400, &payload);
-
-    // Clear: payload is 28 bytes after hdr.
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&AEROGPU_CLEAR_COLOR.to_le_bytes()); // flags
-    payload.extend_from_slice(&(1.0f32.to_bits()).to_le_bytes()); // r
-    payload.extend_from_slice(&(0.0f32.to_bits()).to_le_bytes()); // g
-    payload.extend_from_slice(&(0.0f32.to_bits()).to_le_bytes()); // b
-    payload.extend_from_slice(&(1.0f32.to_bits()).to_le_bytes()); // a
-    payload.extend_from_slice(&(0.0f32.to_bits()).to_le_bytes()); // depth
-    payload.extend_from_slice(&0u32.to_le_bytes()); // stencil
-    push_cmd(&mut cmd, 0x600, &payload);
-
-    // Present: payload is 8 bytes after hdr.
-    let payload = [0u32.to_le_bytes(), 0u32.to_le_bytes()].concat(); // scanout_id=0, flags=0
-    push_cmd(&mut cmd, 0x700, &payload);
-
-    // Patch stream size.
-    let size_bytes = cmd.len() as u32;
-    cmd[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1, // texture_handle
+        AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AerogpuFormat::R8G8B8A8Unorm as u32,
+        1, // width
+        1, // height
+        1, // mip_levels
+        1, // array_layers
+        0, // row_pitch_bytes
+        0, // backing_alloc_id
+        0, // backing_offset_bytes
+    );
+    writer.set_render_targets(&[1], 0);
+    writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 0.0, 0);
+    writer.present(0, 0);
+    let mut cmd = writer.finish();
+    // Keep the command stream header abi_version in sync with what the emulated device reports.
+    cmd[4..8].copy_from_slice(&regs.abi_version.to_le_bytes());
 
     // Place command buffer in guest memory.
     let cmd_gpa = 0x4000u64;
