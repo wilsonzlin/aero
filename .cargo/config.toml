@@ -4,12 +4,14 @@
 # applied via environment variables in `scripts/agent-env.sh`.
 
 [env]
-# Some environments configure Cargo to use `sccache` via a global Cargo config. In
-# ephemeral agent sandboxes the sccache server is not always available, which
-# causes *all* cargo commands to fail before compilation even starts.
+# Some environments configure Cargo to use `sccache` via a global Cargo config or
+# environment variables. In ephemeral agent sandboxes the sccache server is not
+# always available, which causes *all* cargo commands to fail before compilation
+# even starts.
 #
 # Default to no rustc wrapper for this repo. Developers/CI that want sccache can
-# opt back in by setting `CARGO_BUILD_RUSTC_WRAPPER=sccache` in their shell.
+# opt back in by setting `CARGO_BUILD_RUSTC_WRAPPER=sccache` / `RUSTC_WRAPPER=sccache`
+# (or by overriding `build.rustc-wrapper` in a higher-precedence Cargo config).
 CARGO_BUILD_RUSTC_WRAPPER = ""
 #
 # Some sandbox environments ship with a broken `sccache` wrapper via environment
