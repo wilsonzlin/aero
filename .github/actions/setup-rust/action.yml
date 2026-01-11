@@ -38,6 +38,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        workspace="${GITHUB_WORKSPACE:-.}"
+        workspace="${workspace//\\//}"
+        cd "$workspace"
         echo "::group::Rust setup"
         echo "toolchain: ${{ inputs.toolchain }}"
         echo "targets: ${{ inputs.targets }}"
@@ -51,6 +54,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        workspace="${GITHUB_WORKSPACE:-.}"
+        workspace="${workspace//\\//}"
+        cd "$workspace"
         requested="${{ inputs.toolchain }}"
         resolved="$requested"
 
@@ -141,6 +147,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        workspace="${GITHUB_WORKSPACE:-.}"
+        workspace="${workspace//\\//}"
+        cd "$workspace"
         policy="${{ inputs.locked }}"
         flag=""
 
@@ -183,6 +192,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        workspace="${GITHUB_WORKSPACE:-.}"
+        workspace="${workspace//\\//}"
+        cd "$workspace"
         echo "::group::Rust versions"
         rustc --version
         cargo --version
