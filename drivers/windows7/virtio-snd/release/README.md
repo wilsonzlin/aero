@@ -35,6 +35,32 @@ powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/pac
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/package-release.ps1 -Arch amd64
 ```
 
+## Producing both x86 + amd64 packages
+
+Because the driver binary name is the same on both architectures (`virtiosnd.sys`), you cannot keep both builds in `inf/` at the same time.
+
+To produce both `release/x86/virtio-snd/` and `release/amd64/virtio-snd/`:
+
+1. Stage the **x86** `virtiosnd.sys` into `inf/`, generate catalogs, sign, and package:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/stage-built-sys.ps1 -Arch x86 -InputDir <build-output-root>
+   .\drivers\windows7\virtio-snd\scripts\make-cat.cmd
+   .\drivers\windows7\virtio-snd\scripts\sign-driver.cmd
+   powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/package-release.ps1
+   ```
+
+2. Repeat for **amd64**:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/stage-built-sys.ps1 -Arch amd64 -InputDir <build-output-root>
+   .\drivers\windows7\virtio-snd\scripts\make-cat.cmd
+   .\drivers\windows7\virtio-snd\scripts\sign-driver.cmd
+   powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/package-release.ps1
+   ```
+
+> Catalogs must be regenerated per-architecture because `Inf2Cat` hashes the staged `virtiosnd.sys`.
+
 ### Optional: deterministic zip bundle
 
 To also emit a deterministic zip into `release/out/`:
