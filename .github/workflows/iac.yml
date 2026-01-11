@@ -186,35 +186,35 @@ jobs:
             # (COOP/COEP/CSP are set at the app/proxy layer instead).
             if [[ "$values" != "values-prod-appheaders.yaml" ]]; then
               python3 - "$out" <<'PY'
-import json
-import sys
-from pathlib import Path
+          import json
+          import sys
+          from pathlib import Path
 
-out_path = sys.argv[1]
-text = Path(out_path).read_text(encoding="utf-8")
+          out_path = sys.argv[1]
+          text = Path(out_path).read_text(encoding="utf-8")
 
-headers = json.loads(Path("scripts/headers.json").read_text(encoding="utf-8"))
-expected = {}
-expected.update(headers.get("crossOriginIsolation", {}))
-expected.update(headers.get("baseline", {}))
-expected.update(headers.get("contentSecurityPolicy", {}))
+          headers = json.loads(Path("scripts/headers.json").read_text(encoding="utf-8"))
+          expected = {}
+          expected.update(headers.get("crossOriginIsolation", {}))
+          expected.update(headers.get("baseline", {}))
+          expected.update(headers.get("contentSecurityPolicy", {}))
 
-missing = []
-for key, value in expected.items():
-    # nginx snippet form:
-    if f'add_header {key} "{value}"' in text:
-        continue
-    # Traefik middleware YAML form:
-    if f'{key}: "{value}"' in text:
-        continue
-    missing.append(key)
+          missing = []
+          for key, value in expected.items():
+              # nginx snippet form:
+              if f'add_header {key} "{value}"' in text:
+                  continue
+              # Traefik middleware YAML form:
+              if f'{key}: "{value}"' in text:
+                  continue
+              missing.append(key)
 
-if missing:
-    print(f"Rendered Helm manifests missing canonical headers: {', '.join(missing)}", file=sys.stderr)
-    sys.exit(1)
+          if missing:
+              print(f"Rendered Helm manifests missing canonical headers: {', '.join(missing)}", file=sys.stderr)
+              sys.exit(1)
 
-print("Validated ingress header strategy against scripts/headers.json")
-PY
+          print("Validated ingress header strategy against scripts/headers.json")
+          PY
             fi
           done
 
