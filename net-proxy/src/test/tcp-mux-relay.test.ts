@@ -376,3 +376,57 @@ test("tcp-mux enforces max streams per websocket with STREAM_LIMIT_EXCEEDED", as
     await echoServer.close();
   }
 });
+
+test("tcp-mux enforces per-stream buffered bytes with STREAM_BUFFER_OVERFLOW", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    tcpMuxMaxStreamBufferedBytes: 1
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const openOverflow = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    const dataOverflow = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from([1, 2]));
+    ws.send(Buffer.concat([openOverflow, dataOverflow]));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW);
+
+    const openOk = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      2,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    const payload = Buffer.from("a");
+    const dataOk = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 2, payload);
+    ws.send(Buffer.concat([openOk, dataOk]));
+
+    await waitForEcho(waiter, 2, payload);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});
