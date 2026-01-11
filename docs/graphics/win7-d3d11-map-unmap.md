@@ -92,7 +92,7 @@ The runtime exposes callback tables to the UMD during device creation (`D3D11DDI
 For exact field names across Win7 WDK revisions (and a probe tool you can build against your installed headers), see:
 
 * [`win7-d3d10-11-umd-callbacks-and-fences.md`](./win7-d3d10-11-umd-callbacks-and-fences.md)
-* [`drivers/aerogpu/tools/win7_wdk_probe`](../../drivers/aerogpu/tools/win7_wdk_probe/README.md) (also prints `sizeof`/`offsetof` for `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK`)
+* [`drivers/aerogpu/tools/win7_wdk_probe`](../../drivers/aerogpu/tools/win7_wdk_probe/README.md) (prints `sizeof`/`offsetof` for `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK` and the CreateResource allocation structs)
 
 Map/Unmap uses at least:
 

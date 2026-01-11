@@ -611,6 +611,11 @@ Win7-era D3D10/11 UMD DDI headers:
 
 It includes the Win7 D3D10/11 UMD DDI headers and prints `sizeof`/`offsetof` for:
 
+- CreateResource allocation contract (resource backing allocations):
+  - `D3D10DDIARG_CREATERESOURCE`
+  - `D3D11DDIARG_CREATERESOURCE`
+  - `D3DDDI_ALLOCATIONINFO`
+  - `D3DDDICB_ALLOCATE` / `D3DDDICB_DEALLOCATE` (resource-allocation members)
 - CreateDevice wiring (where `pCallbacks` / `pUMCallbacks` live):
   - `D3D10DDIARG_CREATEDEVICE`
   - `D3D11DDIARG_CREATEDEVICE`

@@ -29,6 +29,7 @@ See also:
 * UMD D3D10/11 stubs: `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_umd.cpp` (CreateResource/DestroyResource are currently “no-WDK” stubs).
 * KMD allocation behavior: `drivers/aerogpu/kmd/src/aerogpu_kmd.c` (`AeroGpuDdiCreateAllocation` / `AeroGpuDdiDestroyAllocation`).
 * WDDM memory model: `docs/graphics/win7-wddm11-aerogpu-driver.md` (§5 “Memory model (minimal)”).
+* Header/layout probe tool: `drivers/aerogpu/tools/win7_wdk_probe` (prints `sizeof`/`offsetof` for `D3D*DDIARG_CREATERESOURCE`, `D3DDDI_ALLOCATIONINFO`, and the resource-allocation members of `D3DDDICB_ALLOCATE` / `D3DDDICB_DEALLOCATE`).
 
 ---
 
