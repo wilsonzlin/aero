@@ -347,100 +347,131 @@ export class WebHidBroker {
     const deviceId = this.getDeviceId(device);
     if (this.#attachedToWorker.has(deviceId)) return deviceId;
 
-    await this.manager.attachKnownDevice(device);
+    let sentAttachToWorker = false;
+    try {
+      await this.manager.attachKnownDevice(device);
 
-    const guestPathHint: GuestUsbPath | undefined = this.manager.getState().attachedDevices.find((entry) => entry.device === device)?.guestPath;
-    const guestPortHint = guestPathHint?.[0];
+      const guestPathHint: GuestUsbPath | undefined = this.manager
+        .getState()
+        .attachedDevices.find((entry) => entry.device === device)?.guestPath;
+      const guestPortHint = guestPathHint?.[0];
 
-    // The WebHID `@types/w3c-web-hid` definitions mark many collection fields as optional,
-    // but real Chromium devices always populate them. `normalizeCollections` expects a
-    // fully-populated shape matching the Rust contract, so cast and let the normalizer
-    // throw if a browser provides incomplete metadata.
-    const collections = normalizeCollections(device.collections);
-    const hasInterruptOut = computeHasInterruptOut(collections);
+      // The WebHID `@types/w3c-web-hid` definitions mark many collection fields as optional,
+      // but real Chromium devices always populate them. `normalizeCollections` expects a
+      // fully-populated shape matching the Rust contract, so cast and let the normalizer
+      // throw if a browser provides incomplete metadata.
+      //
+      // Validate key invariants here (mixed report IDs, out-of-order isRange bounds, etc.) so we
+      // fail deterministically before sending metadata to the worker.
+      const collections = normalizeCollections(device.collections, { validate: true });
+      const hasInterruptOut = computeHasInterruptOut(collections);
 
-    const attachMsg: HidAttachMessage = {
-      type: "hid.attach",
-      deviceId,
-      vendorId: device.vendorId,
-      productId: device.productId,
-      ...(device.productName ? { productName: device.productName } : {}),
-      ...(guestPathHint ? { guestPath: guestPathHint } : {}),
-      ...(guestPortHint === 0 || guestPortHint === 1 ? { guestPort: guestPortHint } : {}),
-      collections,
-      hasInterruptOut,
-    };
+      const attachMsg: HidAttachMessage = {
+        type: "hid.attach",
+        deviceId,
+        vendorId: device.vendorId,
+        productId: device.productId,
+        ...(device.productName ? { productName: device.productName } : {}),
+        ...(guestPathHint ? { guestPath: guestPathHint } : {}),
+        ...(guestPortHint === 0 || guestPortHint === 1 ? { guestPort: guestPortHint } : {}),
+        collections,
+        hasInterruptOut,
+      };
 
-    this.#postToWorker(worker, attachMsg);
-    if (this.#workerPort !== worker) {
-      throw new Error("IO worker disconnected while attaching HID device.");
-    }
+      this.#postToWorker(worker, attachMsg);
+      sentAttachToWorker = true;
+      if (this.#workerPort !== worker) {
+        // Best-effort: detach from the worker we just posted to so it doesn't retain stale state.
+        try {
+          worker.postMessage({ type: "hid.detach", deviceId } satisfies HidDetachMessage);
+        } catch {
+          // ignore
+        }
+        throw new Error("IO worker disconnected while attaching HID device.");
+      }
 
-    const onInputReport = (event: HIDInputReportEvent): void => {
-      const activeWorker = this.#workerPort;
-      if (!activeWorker) return;
-      if (!this.#attachedToWorker.has(deviceId)) return;
+      const onInputReport = (event: HIDInputReportEvent): void => {
+        const activeWorker = this.#workerPort;
+        if (!activeWorker) return;
+        if (!this.#attachedToWorker.has(deviceId)) return;
 
-      const view = event.data;
-      if (!(view instanceof DataView)) return;
-      const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        const view = event.data;
+        if (!(view instanceof DataView)) return;
+        const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
 
-      const tsMs = typeof event.timeStamp === "number" ? event.timeStamp : undefined;
-      this.#lastInputReportInfo.set(deviceId, { tsMs: tsMs ?? performance.now(), byteLength: src.byteLength });
-      this.#scheduleEmitForInputReports();
+        const tsMs = typeof event.timeStamp === "number" ? event.timeStamp : undefined;
+        this.#lastInputReportInfo.set(deviceId, { tsMs: tsMs ?? performance.now(), byteLength: src.byteLength });
+        this.#scheduleEmitForInputReports();
 
-      const ring = this.#inputReportRing;
-      if (ring && this.#canUseSharedMemory()) {
-        const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + src.byteLength, (dest) => {
-          writeHidInputReportRingRecord(dest, {
-            deviceId,
-            reportId: event.reportId,
-            tsMs,
-            data: src,
+        const ring = this.#inputReportRing;
+        if (ring && this.#canUseSharedMemory()) {
+          const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + src.byteLength, (dest) => {
+            writeHidInputReportRingRecord(dest, {
+              deviceId,
+              reportId: event.reportId,
+              tsMs,
+              data: src,
+            });
           });
-        });
-        if (ok) {
-          this.#inputReportRingPushed += 1;
+          if (ok) {
+            this.#inputReportRingPushed += 1;
+            return;
+          }
+          // Drop rather than blocking/spinning; this is a best-effort fast path.
+          this.#inputReportRingDropped += 1;
+          const status = this.#status;
+          if (status) {
+            try {
+              Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, 1);
+            } catch {
+              // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
+            }
+          }
           return;
         }
-        // Drop rather than blocking/spinning; this is a best-effort fast path.
-        this.#inputReportRingDropped += 1;
-        const status = this.#status;
-        if (status) {
-          try {
-            Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, 1);
-          } catch {
-            // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
-          }
+
+        const inputRing = this.#inputRing;
+        if (inputRing) {
+          inputRing.push(deviceId >>> 0, HidRingReportType.Input, event.reportId >>> 0, src);
+          return;
         }
-        return;
-      }
 
-      const inputRing = this.#inputRing;
-      if (inputRing) {
-        inputRing.push(deviceId >>> 0, HidRingReportType.Input, event.reportId >>> 0, src);
-        return;
-      }
-
-      const data = new Uint8Array(src.byteLength);
-      data.set(src);
-      const msg: HidInputReportMessage = {
-        type: "hid.inputReport",
-        deviceId,
-        reportId: event.reportId,
-        data,
-        tsMs,
+        const data = new Uint8Array(src.byteLength);
+        data.set(src);
+        const msg: HidInputReportMessage = {
+          type: "hid.inputReport",
+          deviceId,
+          reportId: event.reportId,
+          data,
+          tsMs,
+        };
+        this.#inputReportFallback += 1;
+        this.#postToWorker(activeWorker, msg, [data.buffer]);
       };
-      this.#inputReportFallback += 1;
-      this.#postToWorker(activeWorker, msg, [data.buffer]);
-    };
 
-    device.addEventListener("inputreport", onInputReport);
-    this.#inputReportListeners.set(deviceId, onInputReport);
-    this.#attachedToWorker.add(deviceId);
-    this.#emit();
+      device.addEventListener("inputreport", onInputReport);
+      this.#inputReportListeners.set(deviceId, onInputReport);
+      this.#attachedToWorker.add(deviceId);
+      this.#emit();
 
-    return deviceId;
+      return deviceId;
+    } catch (err) {
+      if (sentAttachToWorker) {
+        try {
+          worker.postMessage({ type: "hid.detach", deviceId } satisfies HidDetachMessage);
+        } catch {
+          // ignore
+        }
+      }
+
+      // Ensure we don't leak manager-side guest paths / open handles when attaching fails.
+      await this.#unbridgeDevice(deviceId, { sendDetach: false }).catch(() => undefined);
+      this.#attachedToWorker.delete(deviceId);
+      this.#emit();
+      await this.manager.detachDevice(device).catch(() => undefined);
+
+      throw err;
+    }
   }
 
   async detachDevice(device: HIDDevice): Promise<void> {

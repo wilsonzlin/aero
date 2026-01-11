@@ -107,11 +107,15 @@ export class UhciHidTopologyManager {
     }
   }
 
-  #maybeAttachHub(rootPort: number): boolean {
+  #maybeAttachHub(rootPort: number, options: { minPortCount?: number } = {}): boolean {
     const uhci = this.#uhci;
     if (!uhci) return false;
 
-    const portCount = this.#requiredHubPortCount(rootPort);
+    let portCount = this.#requiredHubPortCount(rootPort);
+    const minPortCount = options.minPortCount;
+    if (typeof minPortCount === "number") {
+      portCount = Math.max(portCount, clampHubPortCount(minPortCount));
+    }
     const existing = this.#hubAttachedPortCountByRoot.get(rootPort);
     if (existing !== undefined && existing >= portCount) return false;
     try {
