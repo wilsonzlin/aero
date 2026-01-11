@@ -340,3 +340,49 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
         0x03
     );
 }
+
+#[test]
+fn hda_snapshot_restore_clamps_corb_pointers_to_selected_ring_size() {
+    let hda = HdaController::new();
+    let mut mem = GuestMemory::new(0x10_000);
+
+    // Place a simple CORB verb at entry 1. After clamping CORBWP=3 -> 1 and CORBRP=0, the
+    // controller should process exactly this entry (and must not spin forever).
+    let corb_base = 0x1000u64;
+    let rirb_base = 0x2000u64;
+    let cmd = (0u32 << 28) | (0u32 << 20) | verb_12(0xF00, 0x00);
+    mem.write_u32(corb_base + 1 * 4, cmd);
+
+    let worklet_ring = AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    };
+    let mut state = hda.snapshot_state(worklet_ring);
+
+    // Force the CORB size selector to 2 entries, then set an out-of-range CORBWP.
+    state.gctl = 0x1; // out of reset
+    state.corblbase = corb_base as u32;
+    state.rirblbase = rirb_base as u32;
+    state.corbctl = 0x2; // RUN
+    state.rirbctl = 0x2; // RUN
+    state.corbsize = (state.corbsize & !0x3) | 0; // 2 entries
+    state.corbwp = 3; // out of range for 2-entry ring
+    state.corbrp = 0;
+
+    let mut restored = HdaController::new();
+    restored.restore_state(&state);
+
+    // Pointers must be clamped immediately on restore.
+    assert_eq!(restored.mmio_read(REG_CORBWP, 2), 1);
+    assert_eq!(restored.mmio_read(REG_CORBRP, 2), 0);
+
+    restored.process(&mut mem, 0);
+
+    // After processing, CORBRP should catch up to CORBWP.
+    assert_eq!(restored.mmio_read(REG_CORBRP, 2), restored.mmio_read(REG_CORBWP, 2));
+
+    // Sanity check that a response was emitted into guest memory (entry index isn't important).
+    let any_resp = mem.read_u32(rirb_base + 1 * 8);
+    assert_ne!(any_resp, 0);
+}
