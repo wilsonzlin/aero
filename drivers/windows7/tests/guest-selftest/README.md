@@ -67,18 +67,25 @@ The host harness parses these markers from COM1 serial:
 AERO_VIRTIO_SELFTEST|START|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-# (either, depending on flags/device):
+
+# virtio-snd may be SKIP/PASS/FAIL depending on flags and device presence.
+# Capture is reported separately as "virtio-snd-capture".
+#
+# Example: virtio-snd not present (or not required) => skip:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
-# (capture is reported separately):
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
- # or:
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
-  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
- # or:
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL
-  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing
-  AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
-  AERO_VIRTIO_SELFTEST|RESULT|PASS
+AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+AERO_VIRTIO_SELFTEST|RESULT|PASS
+
+# Example: virtio-snd present => playback + capture markers:
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present
+AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+AERO_VIRTIO_SELFTEST|RESULT|PASS
+
+# Example: virtio-snd failure => overall FAIL:
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|...
+AERO_VIRTIO_SELFTEST|RESULT|FAIL
 ```
 
 Notes:
