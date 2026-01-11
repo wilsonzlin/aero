@@ -66,7 +66,7 @@ This module is **transport-only**. Drivers integrating it must provide:
   - microsecond stall for reset polling
   - spinlock primitives for CommonCfg selector serialization
 - BAR0 physical address + length (from the driver’s resource discovery path)
-- Per-driver device ID filtering (e.g. `0x1042` for virtio-blk) if required by the driver package
+- Per-driver device ID filtering (e.g. `0x1059` for virtio-snd) if required by the driver package
 - DMA allocations for virtqueues and request buffers (device sees guest physical addresses)
 - Interrupt wiring (INTx + ISR polling/ack)
 
