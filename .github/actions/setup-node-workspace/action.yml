@@ -46,11 +46,9 @@ runs:
           version="$requested"
         elif [[ -f "$root/.nvmrc" ]]; then
           version="$(cat "$root/.nvmrc")"
-        elif [[ -f "$root/.node-version" ]]; then
-          version="$(cat "$root/.node-version")"
         else
-          # Keep parity with existing workflows until Task 4 introduces a repo-wide standard file.
-          version="20"
+          echo "error: .nvmrc not found at '$root/.nvmrc' (set the action input node-version to override)" >&2
+          exit 1
         fi
 
         # Trim whitespace / CRLF
