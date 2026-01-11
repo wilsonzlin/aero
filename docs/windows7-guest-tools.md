@@ -9,6 +9,7 @@ This guide walks you through installing Windows 7 in Aero using the **baseline (
 1. Install Windows 7 SP1 using **baseline devices**: **AHCI + e1000 + VGA**.
 2. Mount `aero-guest-tools.iso` and run `setup.cmd` as Administrator.
 3. Reboot once (still on baseline devices).
+   - If you used `setup.cmd /skipstorage` (GPU-only / partial Guest Tools media), keep the boot disk on **AHCI** and skip step **4.1** (AHCI → virtio-blk). You can still switch other devices.
 4. Switch devices in this order (reboot between each):
    1. **AHCI → virtio-blk**
    2. **e1000 → virtio-net**
@@ -359,6 +360,8 @@ If `setup.cmd` enabled **Test Signing** or `nointegritychecks`, the reboot is re
 To reduce the chance of an unrecoverable boot issue, switch devices **in stages** and verify Windows boots between each step.
 
 ### Stage A: switch storage (AHCI → virtio-blk)
+
+If you installed Guest Tools with `setup.cmd /skipstorage`, do **not** perform this stage yet. Leave the boot disk on **AHCI** until you re-run `setup.cmd` without `/skipstorage` using media that includes the virtio-blk driver.
 
 1. Shut down Windows cleanly.
 2. In Aero’s VM settings, switch the **system disk controller** from **AHCI** to **virtio-blk**.
