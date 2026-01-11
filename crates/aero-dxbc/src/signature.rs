@@ -35,6 +35,10 @@ pub struct SignatureEntry {
     /// Read/write mask stored as a raw `u8`.
     pub read_write_mask: u8,
     /// Stream index (used by geometry shaders), if present in the encoding.
+    ///
+    /// Note: all known D3D10+ signature encodings include a stream field; this
+    /// is modeled as an `Option` because some callers only care about streams
+    /// for geometry/tessellation shaders.
     pub stream: Option<u32>,
 }
 
@@ -42,6 +46,15 @@ pub struct SignatureEntry {
 ///
 /// This function expects the chunk payload bytes (the data following the chunk's
 /// `FourCC` and size fields inside the DXBC container).
+///
+/// The container format has two commonly-observed entry layouts:
+/// - 24-byte entries (classic `*SGN` chunks).
+/// - 32-byte entries (some toolchains emit `*SG1` chunks).
+///
+/// [`DxbcFile::get_signature`](crate::DxbcFile::get_signature) passes the chunk
+/// FourCC to the parser to prefer the matching layout for `*SG1`, but this
+/// standalone function also contains a conservative heuristic to auto-detect
+/// the 32-byte layout.
 pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> {
     parse_signature_chunk_impl(None, bytes)
 }
