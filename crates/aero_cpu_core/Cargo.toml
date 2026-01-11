@@ -22,3 +22,4 @@ memoffset = "0.9"
 [[bench]]
 name = "emulator_critical"
 harness = false
+required-features = ["legacy-interp"]
