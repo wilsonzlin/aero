@@ -242,8 +242,8 @@ Once the system boots with virtio-snd hardware present:
 - **Device Manager** (`devmgmt.msc`)
   - Under **Sound, video and game controllers**, you should see the virtio-snd device (the INF default name is **“Aero VirtIO Sound Device”**).
   - In **Properties → Driver → Driver Details**, you should see `virtiosnd.sys` (contract v1) or `virtiosnd_legacy.sys` (transitional/QEMU).
-  - If/when the driver exposes PortCls endpoints, you should also see playback endpoints under **Audio inputs and outputs**.
-- **PnP driver store**
+  - You should also see playback/recording endpoints under **Audio inputs and outputs**.
+  - **PnP driver store**
 
   `pnputil -e` lists staged packages:
 
