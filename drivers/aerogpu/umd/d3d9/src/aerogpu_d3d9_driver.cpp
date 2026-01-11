@@ -2096,18 +2096,13 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   }
 
   // Ensure all prior GPU work is submitted and capture the submission fence.
-  uint64_t fence = submit(dev);
-  if (fence != 0) {
-    std::lock_guard<std::mutex> fence_lock(adapter->fence_mutex);
-    adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
-  }
+  const uint64_t submit_fence = submit(dev);
 
-  // Preferred: use the fence returned by submit(). Fallback: query the KMD's
-  // last_submitted_fence (useful when END happens with no pending cmd buffer).
-  uint64_t fence_value = fence;
-  if (fence_value == 0) {
-    fence_value = refresh_fence_snapshot(adapter).last_submitted;
-  }
+  // Prefer the fence returned by submit() when it is backed by the real runtime
+  // submission fence. Fallback (and safety net): query the KMD's last submitted
+  // fence and use whichever is larger.
+  const uint64_t fence_value =
+      std::max<uint64_t>(submit_fence, refresh_fence_snapshot(adapter).last_submitted);
 
   q->fence_value.store(fence_value, std::memory_order_release);
   q->issued.store(true, std::memory_order_release);
