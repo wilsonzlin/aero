@@ -14,8 +14,9 @@ use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime, PAGE_SHIFT};
 
-use crate::compiler::tier1::compile_tier1_block;
+use crate::compiler::tier1::compile_tier1_block_with_options;
 use crate::tier1_pipeline::Tier1WasmRegistry;
+use crate::wasm::tier1::Tier1WasmOptions;
 use crate::BlockLimits;
 
 /// Minimal interface a host CPU type must expose to execute Tier-1 WASM blocks.
@@ -160,6 +161,21 @@ where
     Cpu: Tier1Cpu,
     C: CompileRequestSink,
 {
+    compile_and_install_with_options(backend, runtime, entry_rip, Tier1WasmOptions::default())
+}
+
+/// Same as [`compile_and_install`], but allows selecting Tier-1 WASM codegen options (e.g. enabling
+/// the inline-TLB fast-path).
+pub fn compile_and_install_with_options<Cpu, C>(
+    backend: &mut WasmBackend<Cpu>,
+    runtime: &JitRuntime<WasmBackend<Cpu>, C>,
+    entry_rip: u64,
+    options: Tier1WasmOptions,
+) -> CompiledBlockHandle
+where
+    Cpu: Tier1Cpu,
+    C: CompileRequestSink,
+{
     let limits = BlockLimits::default();
 
     // Capture page-version metadata *before* reading guest code. We snapshot the full discovery
@@ -168,7 +184,7 @@ where
     let snapshot_len = snapshot_len_for_limits(limits);
     let pre_meta = runtime.snapshot_meta(entry_rip, snapshot_len);
 
-    let compilation = compile_tier1_block(backend, entry_rip, limits);
+    let compilation = compile_tier1_block_with_options(backend, entry_rip, limits, options);
     let table_index = backend.add_compiled_block(&compilation.wasm_bytes);
 
     CompiledBlockHandle {

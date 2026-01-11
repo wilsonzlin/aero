@@ -7,7 +7,7 @@ use aero_x86::tier1::{decode_one, InstKind};
 use thiserror::Error;
 
 use crate::tier1_ir::{IrInst, IrTerminator};
-use crate::wasm::tier1::Tier1WasmCodegen;
+use crate::wasm::tier1::{Tier1WasmCodegen, Tier1WasmOptions};
 use crate::{translate_block, BasicBlock, BlockEndKind, BlockLimits};
 
 /// Source of guest code bytes for the Tier-1 compiler.
@@ -112,6 +112,7 @@ pub struct Tier1Compiler<P, R> {
     registry: R,
     limits: BlockLimits,
     codegen: Tier1WasmCodegen,
+    wasm_options: Tier1WasmOptions,
 }
 
 impl<P, R> Tier1Compiler<P, R> {
@@ -121,12 +122,25 @@ impl<P, R> Tier1Compiler<P, R> {
             registry,
             limits: BlockLimits::default(),
             codegen: Tier1WasmCodegen::new(),
+            wasm_options: Tier1WasmOptions::default(),
         }
     }
 
     #[must_use]
     pub fn with_limits(mut self, limits: BlockLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    #[must_use]
+    pub fn with_wasm_options(mut self, options: Tier1WasmOptions) -> Self {
+        self.wasm_options = options;
+        self
+    }
+
+    #[must_use]
+    pub fn with_inline_tlb(mut self, inline_tlb: bool) -> Self {
+        self.wasm_options.inline_tlb = inline_tlb;
         self
     }
 }
@@ -169,7 +183,9 @@ where
         }
 
         let exit_to_interpreter = matches!(ir.terminator, IrTerminator::ExitToInterpreter { .. });
-        let wasm = self.codegen.compile_block(&ir);
+        let wasm = self
+            .codegen
+            .compile_block_with_options(&ir, self.wasm_options);
         let table_index = self
             .registry
             .register_tier1_block(wasm, exit_to_interpreter);

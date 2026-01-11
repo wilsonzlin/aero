@@ -3,8 +3,9 @@
 use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
-use aero_jit::backend::{compile_and_install, CompileQueue, Tier1Cpu, WasmBackend};
+use aero_jit::backend::{compile_and_install_with_options, CompileQueue, Tier1Cpu, WasmBackend};
 use aero_jit::tier1_ir::interp::{execute_block, TestCpu as InterpCpu};
+use aero_jit::wasm::tier1::Tier1WasmOptions;
 use aero_jit::{discover_block, translate_block, BlockLimits};
 use aero_types::Gpr;
 
@@ -128,7 +129,12 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
     for rip in requested {
         let handle = {
             let jit = dispatcher.jit_mut();
-            compile_and_install(&mut backend, jit, rip)
+            compile_and_install_with_options(
+                &mut backend,
+                jit,
+                rip,
+                Tier1WasmOptions { inline_tlb: true },
+            )
         };
         dispatcher.jit_mut().install_handle(handle);
     }
