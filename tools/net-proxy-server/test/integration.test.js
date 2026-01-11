@@ -30,6 +30,14 @@ function waitForWsOpen(ws) {
   });
 }
 
+function waitForWsFailure(ws) {
+  return new Promise((resolve) => {
+    ws.once("error", () => resolve());
+    ws.once("unexpected-response", () => resolve());
+    ws.once("close", () => resolve());
+  });
+}
+
 function asBuffer(data) {
   if (Buffer.isBuffer(data)) return data;
   if (data instanceof ArrayBuffer) return Buffer.from(data);
@@ -97,6 +105,7 @@ test("integration: OPEN+DATA roundtrip to echo server (split + concatenated WS m
     ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
     const waiter = createFrameWaiter(ws);
     await waitForWsOpen(ws);
+    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
 
     // Stream 1: send OPEN + DATA concatenated into a single WebSocket message.
     const open1 = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort }));
@@ -122,6 +131,28 @@ test("integration: OPEN+DATA roundtrip to echo server (split + concatenated WS m
     if (ws) ws.terminate();
     if (proxy) await proxy.close();
     if (echoServer) await new Promise((resolve) => echoServer.close(resolve));
+  }
+});
+
+test("integration: requires aero-tcp-mux-v1 subprotocol", async () => {
+  let proxy;
+  let ws;
+
+  try {
+    proxy = await createProxyServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "test-token",
+      allowPrivateIps: true,
+      metricsIntervalMs: 0,
+    });
+
+    ws = new WebSocket(`${proxy.url}?token=test-token`);
+    await waitForWsFailure(ws);
+    assert.notEqual(ws.readyState, WebSocket.OPEN);
+  } finally {
+    if (ws) ws.terminate();
+    if (proxy) await proxy.close();
   }
 });
 
