@@ -20,7 +20,11 @@ pub const SUPPORTED_FEATURES: u64 = FEATURE_FENCE_PAGE
     | FEATURE_CURSOR
     | FEATURE_SCANOUT
     | FEATURE_VBLANK
-    | if AEROGPU_ABI_MINOR >= 1 { FEATURE_TRANSFER } else { 0 };
+    | if AEROGPU_ABI_MINOR >= 1 {
+        FEATURE_TRANSFER
+    } else {
+        0
+    };
 
 pub mod mmio {
     use aero_protocol::aerogpu::aerogpu_pci as pci;

@@ -5,12 +5,16 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_PRESENT_FLAG_VSYNC,
 };
-use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32};
+use aero_protocol::aerogpu::aerogpu_pci::{
+    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
+};
 use aero_protocol::aerogpu::aerogpu_ring::{
     AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
 };
 use aero_protocol::aerogpu::{aerogpu_cmd as cmd, aerogpu_ring as ring};
-use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_MMIO_MAGIC, FEATURE_TRANSFER};
+use emulator::devices::aerogpu_regs::{
+    irq_bits, mmio, ring_control, AEROGPU_MMIO_MAGIC, FEATURE_TRANSFER,
+};
 use emulator::devices::aerogpu_ring::{
     AeroGpuRingHeader, AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
     AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
