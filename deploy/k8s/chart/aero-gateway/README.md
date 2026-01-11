@@ -72,33 +72,34 @@ l2Proxy:
 
 `aero-l2-proxy` can authenticate `/l2` WebSocket upgrades via `AERO_L2_AUTH_MODE`.
 
-This chart defaults to `cookie` auth for `/l2` (matching the gateway’s cookie-backed session used by `/tcp`).
+This chart defaults to `session` auth for `/l2` (matching the gateway’s cookie-backed session used by `/tcp`).
 
 Supported values:
 
 - `none`
-- `cookie` (recommended for same-origin browser clients)
-- `api_key`
+- `session` (recommended for same-origin browser clients; legacy alias: `cookie`)
+- `token` (legacy alias: `api_key`)
 - `jwt`
 - `cookie_or_jwt`
-- `cookie_or_api_key`
-- `cookie_and_api_key`
+- `session_or_token` (legacy alias: `cookie_or_api_key`)
+- `session_and_token` (legacy alias: `cookie_and_api_key`)
 
 Example:
 
 ```yaml
 l2Proxy:
   auth:
-    mode: "cookie"
+    mode: "session"
 ```
 
-If you use `cookie` / `cookie_or_jwt` / `cookie_or_api_key` / `cookie_and_api_key`, the proxy must share the gateway session signing secret
-(`SESSION_SECRET`) to verify gateway-issued cookies (see below).
+If you use `session` / `cookie_or_jwt` / `session_or_token` / `session_and_token`, the proxy must share the gateway
+session signing secret (`SESSION_SECRET`) to verify gateway-issued cookies (see below).
 
-### Session secret sharing (`cookie` / `cookie_or_jwt` / `cookie_or_api_key` / `cookie_and_api_key` auth)
+### Session secret sharing (`session` / `cookie_or_jwt` / `session_or_token` / `session_and_token` auth)
 
-If your `aero-l2-proxy` auth mode verifies gateway-issued session cookies (`AERO_L2_AUTH_MODE=cookie`,
-`cookie_or_jwt`, `cookie_or_api_key`, or `cookie_and_api_key`), it must use the same signing secret as the gateway (`SESSION_SECRET`).
+If your `aero-l2-proxy` auth mode verifies gateway-issued session cookies (`AERO_L2_AUTH_MODE=session`,
+`cookie_or_jwt`, `session_or_token`, or `session_and_token`), it must use the same signing secret as the gateway
+(`SESSION_SECRET`).
 
 By default, this chart reuses the gateway secret configured under `secrets.*` (so both pods see the
 same `SESSION_SECRET` value). If you need to source `SESSION_SECRET` from a different Secret:

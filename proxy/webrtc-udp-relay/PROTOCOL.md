@@ -118,7 +118,7 @@ Backend `Origin` handling (relevant for `crates/aero-l2-proxy` Origin allowlists
     unless overridden by `L2_BACKEND_ORIGIN`/`L2_BACKEND_ORIGIN_OVERRIDE`.
 
 Backend token authentication (relevant for `crates/aero-l2-proxy`
-`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt|cookie_or_api_key|cookie_and_api_key`):
+`AERO_L2_AUTH_MODE=token|jwt|cookie_or_jwt|session_or_token|session_and_token`):
 
 - `L2_BACKEND_TOKEN` (optional): If set, the relay offers an additional WebSocket
   subprotocol `aero-l2-token.<token>` alongside the required `aero-l2-tunnel-v1`
@@ -132,8 +132,8 @@ Credential forwarding (optional):
 
 - `L2_BACKEND_AUTH_FORWARD_MODE` (optional, default: `query`):
   `none|query|subprotocol`.
-  - `query`: append `token=<credential>` and `apiKey=<credential>` query
-    parameters when dialing the backend.
+  - `query`: append `token=<credential>` (and `apiKey=<credential>` for
+    compatibility) query parameters when dialing the backend.
   - `subprotocol`: offer an additional WebSocket subprotocol
     `aero-l2-token.<credential>` alongside the required `aero-l2-tunnel-v1`
     subprotocol. The negotiated subprotocol is still required to be
@@ -141,7 +141,7 @@ Credential forwarding (optional):
     - The `<credential>` must be valid for `Sec-WebSocket-Protocol` (HTTP token /
       RFC 7230 `tchar`); use `query` mode if your credential contains characters
       that can't be represented as a subprotocol token.
-  - The forwarded `<credential>` is the same JWT/API key that authenticated the
+  - The forwarded `<credential>` is the same JWT/token that authenticated the
     relay's signaling endpoints (`AUTH_MODE`). When `AUTH_MODE=none`, no
     credential is forwarded.
 

@@ -185,25 +185,26 @@ cp deploy/.env.example deploy/.env
   - Example: `,https://localhost:5173`
 - `AERO_L2_AUTH_MODE` (default: `none`)
   - Authentication mode for `/l2` (handled by `crates/aero-l2-proxy`).
-  - Supported values: `none`, `cookie`, `api_key`, `jwt`, `cookie_or_jwt`, `cookie_or_api_key`, `cookie_and_api_key`.
+  - Supported values: `none`, `session`, `token`, `session_or_token`, `session_and_token`, `jwt`, `cookie_or_jwt`.
+    - Legacy aliases: `cookie`, `api_key`, `cookie_or_api_key`, `cookie_and_api_key`.
 - `AERO_L2_SESSION_SECRET` (optional override)
-  - Secret for validating the `aero_session` cookie when `AERO_L2_AUTH_MODE=cookie|cookie_or_jwt|cookie_or_api_key|cookie_and_api_key`.
+  - Secret for validating the `aero_session` cookie when `AERO_L2_AUTH_MODE=session|cookie_or_jwt|session_or_token|session_and_token`.
   - `crates/aero-l2-proxy` reads this from `AERO_GATEWAY_SESSION_SECRET` (preferred) and falls back to
     `SESSION_SECRET` / `AERO_L2_SESSION_SECRET` (legacy), so the deploy stack can share one secret
     across both services.
 - `AERO_L2_API_KEY` / `AERO_L2_JWT_SECRET` (optional)
-  - Credentials for `AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt|cookie_or_api_key|cookie_and_api_key`.
+  - Credentials for `AERO_L2_AUTH_MODE=token|jwt|cookie_or_jwt|session_or_token|session_and_token`.
   - Credentials can be delivered via query params:
-    - API key auth: `?apiKey=...` (or `?token=...` for compatibility)
+    - Token auth: `?token=...` (preferred) (or `?apiKey=...` for compatibility)
     - JWT auth: `?token=...`
     or an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
     `aero-l2-tunnel-v1`; prefer this form when possible to avoid putting secrets in URLs/logs).
 - `AERO_L2_TOKEN` (optional, legacy)
-  - Legacy alias for API-key auth.
+  - Legacy alias for token auth.
   - `deploy/docker-compose.yml` defaults `AERO_L2_AUTH_MODE=none`, so `AERO_L2_TOKEN` has no effect unless you
-    explicitly enable API-key auth (e.g. `AERO_L2_AUTH_MODE=api_key|cookie_or_api_key|cookie_and_api_key`).
-  - Accepted as a fallback value for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE=api_key|cookie_or_api_key|cookie_and_api_key`.
-  - Ignored when `AERO_L2_AUTH_MODE` is set to `cookie`, `jwt`, `cookie_or_jwt`, or `none`.
+    explicitly enable token auth (e.g. `AERO_L2_AUTH_MODE=token|session_or_token|session_and_token`).
+  - Accepted as a fallback value for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE=token|session_or_token|session_and_token`.
+  - Ignored when `AERO_L2_AUTH_MODE` is set to `session` (legacy alias: `cookie`), `jwt`, `cookie_or_jwt`, or `none`.
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)
@@ -230,10 +231,10 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
 - `SESSION_SECRET` (strongly recommended for production)
   - HMAC secret used to sign the `aero_session` cookie minted by `POST /session`.
   - Used to authenticate privileged endpoints like `/tcp`, and `/l2` when the L2 proxy is configured for
-    cookie auth (`AERO_L2_AUTH_MODE=cookie|cookie_or_jwt|cookie_or_api_key|cookie_and_api_key`).
+    session-cookie auth (`AERO_L2_AUTH_MODE=session|cookie_or_jwt|session_or_token|session_and_token`).
   - If unset, the deploy stack generates and persists a random secret in a Docker volume (sessions survive
     restarts until `docker compose down -v`).
-  - When using cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=cookie` / `cookie_or_jwt` / `cookie_or_api_key` / `cookie_and_api_key`), `crates/aero-l2-proxy`
+  - When using session-cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=session` / `cookie_or_jwt` / `session_or_token` / `session_and_token`), `crates/aero-l2-proxy`
     must share the same signing secret so it can validate the `aero_session` cookie minted by the gateway.
 - `ALLOWED_ORIGINS` (optional, comma-separated)
   - Set explicitly if you need to allow additional origins (e.g. a dev server).
@@ -307,17 +308,17 @@ To enable it in the compose stack, set in `deploy/.env`:
 L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
 ```
 
-The relay can forward the client’s **Origin** and **AUTH_MODE credential** (JWT/API key) to the
+The relay can forward the client’s **Origin** and **AUTH_MODE credential** (JWT/token) to the
 backend dial. Relevant env vars are documented in `proxy/webrtc-udp-relay/README.md`, including:
 
 - `L2_BACKEND_AUTH_FORWARD_MODE=none|query|subprotocol`
 - `L2_BACKEND_FORWARD_ORIGIN=1`
-- `L2_BACKEND_FORWARD_AERO_SESSION=1` (recommended for `AERO_L2_AUTH_MODE=cookie`; forwards `Cookie: aero_session=...` captured from signaling)
+- `L2_BACKEND_FORWARD_AERO_SESSION=1` (recommended for `AERO_L2_AUTH_MODE=session`; forwards `Cookie: aero_session=...` captured from signaling)
 - `L2_BACKEND_ORIGIN_OVERRIDE=https://example.com` (optional)
 
 Note: the backend `/l2` endpoint must be configured to accept whatever auth material the relay forwards. For
-cookie-auth `/l2` (`AERO_L2_AUTH_MODE=cookie`), enable `L2_BACKEND_FORWARD_AERO_SESSION=1` so WebRTC L2
-bridging continues to work while preserving session-cookie auth.
+session-cookie `/l2` (`AERO_L2_AUTH_MODE=session`; legacy alias: `cookie`), enable
+`L2_BACKEND_FORWARD_AERO_SESSION=1` so WebRTC L2 bridging continues to work while preserving session-cookie auth.
 
 ## Optional TURN server (coturn profile)
 
@@ -465,22 +466,23 @@ WebSocket:
 - Caddy proxies the WebSocket upgrade to the `aero-l2-proxy` container
 - The connection uses subprotocol: `aero-l2-tunnel-v1`
 
-### L2 tunnel auth (cookie)
+### L2 tunnel auth (session cookie)
 
 `/l2` enforces an Origin allowlist by default. For production deployments you should also enable
-authentication. The recommended mode for same-origin browser clients is cookie session auth
-(`AERO_L2_AUTH_MODE=cookie`):
+authentication. The recommended mode for same-origin browser clients is session-cookie auth
+(`AERO_L2_AUTH_MODE=session`; legacy alias: `cookie`):
 
 - `aero-l2-proxy` validates the `aero_session` cookie minted by the gateway (`POST /session`).
   - Browser WebSocket handshakes include cookies automatically for same-origin connections.
   - CLI clients must provide `Cookie: aero_session=...` on the WebSocket upgrade.
 
 For non-browser clients / internal bridges, you can switch to token-based auth
-(`AERO_L2_AUTH_MODE=api_key|jwt`), accept either a cookie session or a token (`AERO_L2_AUTH_MODE=cookie_or_jwt|cookie_or_api_key`),
-or require both (`AERO_L2_AUTH_MODE=cookie_and_api_key`).
+(`AERO_L2_AUTH_MODE=token|jwt`), accept either a session cookie or a token/JWT
+(`AERO_L2_AUTH_MODE=session_or_token|cookie_or_jwt`), or require both
+(`AERO_L2_AUTH_MODE=session_and_token`; legacy alias: `cookie_and_api_key`).
 Credentials can be provided via:
 
-- Query params: `?token=<value>` (or `?apiKey=<value>` for API-key auth)
+- Query params: `?token=<value>` (preferred; `?apiKey=<value>` for compatibility)
 - Preferred (avoids secrets in URLs/logs): offer an additional `Sec-WebSocket-Protocol` entry
   `aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`)
 

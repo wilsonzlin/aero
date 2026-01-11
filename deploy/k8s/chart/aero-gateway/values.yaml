@@ -117,23 +117,23 @@ l2Proxy:
     #
     # Supported values:
     #   - "none"
-    #   - "cookie" (recommended for same-origin browser clients in production)
-    #   - "api_key"
+    #   - "session" (recommended for same-origin browser clients in production; legacy alias: "cookie")
+    #   - "token" (legacy alias: "api_key")
     #   - "jwt"
     #   - "cookie_or_jwt"
-    #   - "cookie_or_api_key"
-    #   - "cookie_and_api_key"
+    #   - "session_or_token" (legacy alias: "cookie_or_api_key")
+    #   - "session_and_token" (legacy alias: "cookie_and_api_key")
     #
-    # Default: "cookie" (matches the gateway's session-cookie auth used by `/tcp`).
+    # Default: "session" (matches the gateway's session-cookie auth used by `/tcp`).
     #
-    # Note: when using `"cookie"` / `"cookie_or_jwt"` / `"cookie_or_api_key"` / `"cookie_and_api_key"`, `aero-l2-proxy` must share the gateway
+    # Note: when using `"session"` / `"cookie_or_jwt"` / `"session_or_token"` / `"session_and_token"`, `aero-l2-proxy` must share the gateway
     # `SESSION_SECRET` so it can validate `aero_session` cookies (see `l2Proxy.sessionSecret`).
-    mode: "cookie"
+    mode: "session"
 
   # Session cookie auth wiring.
   #
-  # When using `auth.mode: "cookie"` (or `"cookie_or_jwt"` / `"cookie_or_api_key"` / `"cookie_and_api_key"`), the L2 proxy
-  # must be able to verify the gateway-issued session cookie. This requires sharing the signing secret used by the gateway
+  # When using `auth.mode: "session"` (or `"cookie_or_jwt"` / `"session_or_token"` / `"session_and_token"`), the L2 proxy must be able to verify the
+  # gateway-issued session cookie. This requires sharing the signing secret used by the gateway
   # (`SESSION_SECRET`).
   #
   # By default, this chart reuses the gateway secret (secrets.*). To use a separate Secret:

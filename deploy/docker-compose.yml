@@ -7,8 +7,9 @@ services:
   # Shared gateway session secret (cookie signing).
   #
   # `backend/aero-gateway` uses a signed `aero_session` cookie for privileged endpoints (e.g. `/tcp`).
-  # `crates/aero-l2-proxy` can optionally validate the same cookie when `AERO_L2_AUTH_MODE` uses a
-  # cookie-based mode (`cookie`, `cookie_or_jwt`, `cookie_or_api_key`, `cookie_and_api_key`).
+  # `crates/aero-l2-proxy` can optionally validate the same cookie when `AERO_L2_AUTH_MODE` includes
+  # session cookies (e.g. `session` (legacy alias: `cookie`), `cookie_or_jwt`, `session_or_token`
+  # (legacy: `cookie_or_api_key`), `session_and_token` (legacy: `cookie_and_api_key`)).
   #
   # To keep `docker compose up` working out of the box (and keep sessions stable across restarts),
   # this helper generates a random secret (once) and stores it in a Docker volume. You can (and should)
@@ -119,15 +120,15 @@ services:
       # origin allowlisting / absolute URL generation.
       PUBLIC_BASE_URL: https://${AERO_DOMAIN:-localhost}
 
-      # Session signing secret (cookie auth). Strongly recommended for production.
+      # Session signing secret (gateway session cookie). Strongly recommended for production.
       #
       # If unset, `aero-session-secret` generates a random secret and persists it in a Docker volume
       # so sessions survive restarts (until `docker compose down -v`).
       #
-      # When using cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=cookie` /
-      # `cookie_or_jwt` / `cookie_or_api_key` / `cookie_and_api_key` on `aero-l2-proxy`), the L2
-      # proxy must share this
-      # secret so it can validate the same `aero_session` cookies minted by the gateway.
+      # When using session-cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=session` /
+      # `cookie_or_jwt` / `session_or_token` / `session_and_token` on `aero-l2-proxy`), the L2 proxy
+      # must share this secret so it can validate the same `aero_session` cookies minted by the
+      # gateway.
       SESSION_SECRET: ${SESSION_SECRET:-}
 
       # Optional explicit origin allowlist (comma-separated). When unset/empty, the
@@ -199,18 +200,20 @@ services:
       # Default: no authentication (`none`), only Origin allowlisting.
       #
       # Note: `crates/aero-l2-proxy` will auto-select an auth mode when `AERO_L2_AUTH_MODE` is unset
-      # and a credential is present (e.g. `cookie_or_api_key` when a session secret is configured).
+      # and a credential is present (e.g. `session_or_token` (legacy: `cookie_or_api_key`) when a
+      # session secret is configured).
       # This deploy stack always has a session secret via `aero-session-secret`, so we explicitly
       # default `AERO_L2_AUTH_MODE` to `none` to keep `/l2` unauthenticated unless opted into.
       #
-      # Cookie session auth (recommended for same-origin browser clients) validates the
+      # Session cookie auth (recommended for same-origin browser clients) validates the
       # `aero_session` cookie minted by `backend/aero-gateway` at `POST /session`.
       #
-      # IMPORTANT: cookie auth requires the L2 proxy and gateway to share the same signing secret.
+      # IMPORTANT: session-cookie auth requires the L2 proxy and gateway to share the same signing secret.
       # `crates/aero-l2-proxy` reads this from AERO_GATEWAY_SESSION_SECRET (preferred) and falls back to
       # SESSION_SECRET / AERO_L2_SESSION_SECRET (legacy).
       #
-      # Supported auth modes: none, cookie, api_key, jwt, cookie_or_jwt, cookie_or_api_key, cookie_and_api_key
+      # Supported auth modes: none, session, token, session_or_token, session_and_token, jwt, cookie_or_jwt
+      # (legacy aliases: cookie, api_key, cookie_or_api_key, cookie_and_api_key)
       AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-none}
       AERO_L2_SESSION_SECRET: ${AERO_L2_SESSION_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
@@ -226,19 +229,20 @@ services:
       # Legacy token (backwards compatibility).
       #
       # Note: this compose file defaults AERO_L2_AUTH_MODE=none, so setting AERO_L2_TOKEN has no
-      # effect unless you explicitly enable API-key auth (e.g. `AERO_L2_AUTH_MODE=api_key`,
-      # `cookie_or_api_key`, or `cookie_and_api_key`).
+      # effect unless you explicitly enable token auth (e.g. `AERO_L2_AUTH_MODE=token`,
+      # `session_or_token`, or `session_and_token`; legacy aliases: `api_key`, `cookie_or_api_key`,
+      # `cookie_and_api_key`).
       #
       # Clients then provide the credential via:
-      # - `?token=<value>` (or `?apiKey=<value>`), OR
+      # - `?token=<value>` (preferred; `?apiKey=<value>` for compatibility), OR
       # - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
       #   `aero-l2-tunnel-v1`).
       #
-      # In API-key auth modes (`api_key`, `cookie_or_api_key`, `cookie_and_api_key`), this is also
+      # In token auth modes (`token`, `session_or_token`, `session_and_token`), this is also
       # accepted as a fallback value for `AERO_L2_API_KEY`.
       #
-      # This is ignored when `AERO_L2_AUTH_MODE` is explicitly set to `cookie`, `jwt`, `cookie_or_jwt`,
-      # or `none`.
+      # This is ignored when `AERO_L2_AUTH_MODE` is explicitly set to `session` (legacy: `cookie`),
+      # `jwt`, `cookie_or_jwt`, or `none`.
       AERO_L2_TOKEN: ${AERO_L2_TOKEN:-}
 
       # Egress policy (highly recommended to set allowlists for production deployments).
@@ -309,7 +313,7 @@ services:
       # Then ensure the relay can forward auth material / headers to the backend:
       #   L2_BACKEND_AUTH_FORWARD_MODE=query
       #   L2_BACKEND_FORWARD_ORIGIN=1
-      #   L2_BACKEND_FORWARD_AERO_SESSION=1           # forwards Cookie: aero_session=... (for AERO_L2_AUTH_MODE=cookie)
+      #   L2_BACKEND_FORWARD_AERO_SESSION=1           # forwards Cookie: aero_session=... (for AERO_L2_AUTH_MODE=session)
       - L2_BACKEND_WS_URL
       - L2_BACKEND_ORIGIN
       - L2_BACKEND_TOKEN

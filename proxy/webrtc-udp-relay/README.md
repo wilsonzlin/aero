@@ -219,8 +219,8 @@ Configuration env vars (server → server dialing):
   dialing the backend WebSocket (overridden by `L2_BACKEND_ORIGIN` /
   `L2_BACKEND_ORIGIN_OVERRIDE`).
 - `L2_BACKEND_AUTH_FORWARD_MODE` (default `query`): `none|query|subprotocol` —
-  how to forward the relay credential (JWT/API key) to the backend:
-  - `query`: append `token=<credential>` and `apiKey=<credential>`
+  how to forward the relay credential (JWT/token) to the backend:
+  - `query`: append `token=<credential>` (and `apiKey=<credential>` for compatibility)
   - `subprotocol`: offer `aero-l2-token.<credential>` (credential must be valid
     for `Sec-WebSocket-Protocol`, i.e. an HTTP token / RFC 7230 `tchar`)
   - `none`: do not forward credentials
@@ -249,13 +249,13 @@ must satisfy the proxy's Origin allowlist and auth policy:
   `ALLOWED_ORIGINS` fallback).
   - By default the relay forwards the client signaling Origin (`L2_BACKEND_FORWARD_ORIGIN=1`).
   - Use `L2_BACKEND_ORIGIN` to pin a specific Origin value (must be in the backend allowlist).
-- **Auth:** if the backend uses gateway session cookies (`AERO_L2_AUTH_MODE=cookie|cookie_or_jwt|cookie_or_api_key|cookie_and_api_key`),
-  enable `L2_BACKEND_FORWARD_AERO_SESSION=1` so the relay forwards `Cookie: aero_session=<...>`
-  extracted from the signaling request.
-  - For token/JWT auth (`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt|cookie_or_api_key|cookie_and_api_key`), configure
-    `L2_BACKEND_TOKEN` and/or `L2_BACKEND_AUTH_FORWARD_MODE`.
-  - For `AERO_L2_AUTH_MODE=cookie_and_api_key`, you typically need **both** `L2_BACKEND_FORWARD_AERO_SESSION=1` and
-    a token (`L2_BACKEND_TOKEN` or forwarded client credentials).
+- **Auth:** if the backend uses gateway session cookies (`AERO_L2_AUTH_MODE=session|cookie_or_jwt|session_or_token|session_and_token`;
+  legacy aliases: `cookie`, `cookie_or_api_key`, `cookie_and_api_key`), enable `L2_BACKEND_FORWARD_AERO_SESSION=1` so the relay forwards
+  `Cookie: aero_session=<...>` extracted from the signaling request.
+  - For token/JWT auth (`AERO_L2_AUTH_MODE=token|jwt|cookie_or_jwt|session_or_token|session_and_token`; legacy aliases:
+    `api_key`, `cookie_or_api_key`, `cookie_and_api_key`), configure `L2_BACKEND_TOKEN` and/or `L2_BACKEND_AUTH_FORWARD_MODE`.
+  - For `AERO_L2_AUTH_MODE=session_and_token` (legacy alias: `cookie_and_api_key`), you typically need **both**
+    `L2_BACKEND_FORWARD_AERO_SESSION=1` and a token (`L2_BACKEND_TOKEN` or forwarded client credentials).
 
 #### Docker / docker-compose
 
@@ -266,7 +266,7 @@ Use the backend service name inside the docker network:
 export AERO_L2_ALLOWED_ORIGINS=https://aero.example.com
 # (Alternatively, the backend also accepts the shared name `ALLOWED_ORIGINS` when
 # `AERO_L2_ALLOWED_ORIGINS` is unset.)
-export AERO_L2_AUTH_MODE=api_key
+export AERO_L2_AUTH_MODE=token
 export AERO_L2_API_KEY='REPLACE_WITH_SECRET'
 
 # WebRTC relay (bridge).

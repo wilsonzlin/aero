@@ -43,7 +43,7 @@ compose() {
     AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
     AERO_L2_PROXY_LISTEN_ADDR= \
     AERO_L2_ALLOW_PRIVATE_IPS=0 \
-    AERO_L2_AUTH_MODE=cookie \
+    AERO_L2_AUTH_MODE=session \
     AERO_WEBRTC_UDP_RELAY_UPSTREAM=aero-webrtc-udp-relay:8080 \
     BUILD_COMMIT= \
     BUILD_TIME= \
@@ -114,8 +114,8 @@ fi
 
 echo "deploy smoke: checking deploy/docker-compose.yml defaults" >&2
 # Ensure the canonical deploy stack continues to work out-of-the-box:
-# - `/l2` should not require cookie auth unless explicitly enabled.
-# - Operators can opt into cookie auth by setting `AERO_L2_AUTH_MODE=cookie` (and should set
+# - `/l2` should not require session-cookie auth unless explicitly enabled.
+# - Operators can opt into session-cookie auth by setting `AERO_L2_AUTH_MODE=session` (legacy alias: `cookie`) and should set
 #   `SESSION_SECRET` explicitly for production; the deploy stack can also generate one automatically).
 env \
   -u AERO_L2_AUTH_MODE \
