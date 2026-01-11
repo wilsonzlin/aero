@@ -866,6 +866,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     }
 
     const ULONG magic = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
+    adapter->DeviceMmioMagic = magic;
     if (magic != AEROGPU_MMIO_MAGIC) {
         AEROGPU_LOG("StartDevice: invalid MMIO magic=0x%08lx (expected 0x%08lx)", magic, (ULONG)AEROGPU_MMIO_MAGIC);
         MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
@@ -878,6 +879,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     adapter->UsingNewAbi = TRUE;
 
     const ULONG abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
+    adapter->DeviceAbiVersion = abiVersion;
     const ULONG abiMajor = abiVersion >> 16;
     if (abiMajor != AEROGPU_ABI_MAJOR) {
         AEROGPU_LOG("StartDevice: unsupported ABI major=%lu (abi=0x%08lx)", abiMajor, abiVersion);

@@ -117,6 +117,10 @@ typedef struct _AEROGPU_ADAPTER {
     PUCHAR Bar0;
     ULONG Bar0Length;
 
+    /* Cached MMIO discovery fields (see aerogpu_pci.h). */
+    ULONG DeviceMmioMagic;
+    ULONG DeviceAbiVersion;
+
     /* Device feature bits (AEROGPU_FEATURE_* from aerogpu_pci.h). */
     ULONGLONG DeviceFeatures;
     BOOLEAN SupportsVblank;
