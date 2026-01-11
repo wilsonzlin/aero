@@ -79,6 +79,7 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     /* Protocol engines (controlq + txq) */
     VIRTIOSND_CONTROL Control;
     VIRTIOSND_TX_ENGINE Tx;
+    volatile LONG TxEngineInitialized;
 
     /* INTx plumbing */
     PKINTERRUPT InterruptObject;
@@ -139,6 +140,12 @@ _Must_inspect_result_ NTSTATUS VirtIoSndHwSubmitTx(
     _In_opt_ const VOID* Pcm2,
     _In_ ULONG Pcm2Bytes,
     _In_ BOOLEAN AllowSilenceFill);
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndInitTxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG MaxPeriodBytes, _In_ ULONG BufferCount);
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+VOID VirtIoSndUninitTxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 
 #ifdef __cplusplus
 } /* extern "C" */

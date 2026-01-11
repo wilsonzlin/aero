@@ -230,7 +230,6 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     return STATUS_SUCCESS;
 }
-
 _Use_decl_annotations_
 VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
@@ -254,6 +253,7 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     VirtioSndCtrlUninit(&Dx->Control);
 
     VirtioSndTxUninit(&Dx->Tx);
+    (VOID)InterlockedExchange(&Dx->TxEngineInitialized, 0);
 
     VirtIoSndDestroyQueues(Dx);
 
@@ -320,6 +320,9 @@ NTSTATUS VirtIoSndStartHardware(
 
     /* Initialize the protocol engines now that queues are available. */
     VirtioSndCtrlInit(&Dx->Control, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
+
+    RtlZeroMemory(&Dx->Tx, sizeof(Dx->Tx));
+    Dx->TxEngineInitialized = 0;
 
     status = VirtIoSndIntxConnect(Dx);
     if (!NT_SUCCESS(status)) {
@@ -388,9 +391,67 @@ NTSTATUS VirtIoSndHwSubmitTx(
      * currently performed by higher layers (WaveRT stream). Fail clearly if a
      * caller attempts to submit before TxInit has run.
      */
-    if (Dx->Tx.Queue == NULL) {
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
     return VirtioSndTxSubmitPeriod(&Dx->Tx, Pcm1, Pcm1Bytes, Pcm2, Pcm2Bytes, AllowSilenceFill);
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG MaxPeriodBytes, ULONG BufferCount)
+{
+    NTSTATUS status;
+
+    if (Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (!Dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) != 0) {
+#ifdef STATUS_ALREADY_INITIALIZED
+        return STATUS_ALREADY_INITIALIZED;
+#else
+        return STATUS_INVALID_DEVICE_STATE;
+#endif
+    }
+
+    status = VirtioSndTxInit(&Dx->Tx, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_TX], MaxPeriodBytes, BufferCount);
+    if (NT_SUCCESS(status)) {
+        InterlockedExchange(&Dx->TxEngineInitialized, 1);
+    } else {
+        RtlZeroMemory(&Dx->Tx, sizeof(Dx->Tx));
+        InterlockedExchange(&Dx->TxEngineInitialized, 0);
+    }
+
+    return status;
+}
+
+_Use_decl_annotations_
+VOID VirtIoSndUninitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    LARGE_INTEGER delay;
+
+    if (Dx == NULL) {
+        return;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return;
+    }
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0) {
+        return;
+    }
+
+    InterlockedExchange(&Dx->TxEngineInitialized, 0);
+
+    delay.QuadPart = -10 * 1000; /* 1ms */
+    while (InterlockedCompareExchange(&Dx->DpcInFlight, 0, 0) != 0) {
+        KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+
+    VirtioSndTxUninit(&Dx->Tx);
 }
