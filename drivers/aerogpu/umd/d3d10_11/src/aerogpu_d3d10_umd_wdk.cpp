@@ -1516,6 +1516,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     CallCbMaybeHandle(dev->callbacks.pfnDeallocateCb, dev->hrt_device, &dealloc);
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_resource_handle = 0;
+    res->wddm_allocation_handle = 0;
   };
 
   const auto allocate_one = [&](uint64_t size_bytes,
@@ -2364,7 +2365,8 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
     if (cb && cb->pfnUnlockCb) {
       D3DDDICB_UNLOCK unlock_cb = {};
-      unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
+      unlock_cb.hAllocation =
+          UintPtrToD3dHandle<decltype(unlock_cb.hAllocation)>(static_cast<std::uintptr_t>(res->mapped_wddm_allocation));
       InitUnlockArgsForMap(&unlock_cb, subresource);
       const HRESULT unlock_hr = CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
       if (FAILED(unlock_hr)) {

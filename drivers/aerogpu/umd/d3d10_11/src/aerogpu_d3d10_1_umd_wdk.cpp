@@ -1871,6 +1871,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_resource_handle = 0;
+    res->wddm_allocation_handle = 0;
   };
 
   const auto allocate_one = [&](uint64_t size_bytes,
@@ -2013,6 +2014,9 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!km_resource || !km_alloc) {
       D3DDDICB_DEALLOCATE dealloc = {};
       D3DKMT_HANDLE h = static_cast<D3DKMT_HANDLE>(km_alloc);
+      __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+        dealloc.hContext = UintPtrToD3dHandle<decltype(dealloc.hContext)>(static_cast<std::uintptr_t>(dev->kmt_context));
+      }
       __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
         dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(km_resource);
       }
@@ -2401,6 +2405,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
 
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_resource_handle = 0;
+    res->wddm_allocation_handle = 0;
   }
 
   if (res->handle != kInvalidHandle) {
@@ -2799,7 +2804,8 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
     const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
     if (cb && cb->pfnUnlockCb) {
       D3DDDICB_UNLOCK unlock_cb = {};
-      unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
+      unlock_cb.hAllocation =
+          UintPtrToD3dHandle<decltype(unlock_cb.hAllocation)>(static_cast<std::uintptr_t>(res->mapped_wddm_allocation));
       InitUnlockArgsForMap(&unlock_cb, subresource);
       const HRESULT unlock_hr = CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
       if (FAILED(unlock_hr)) {
