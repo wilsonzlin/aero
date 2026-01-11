@@ -19,6 +19,7 @@ for older QEMU builds (or when intentionally testing legacy driver packages).
 
 It:
 - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
+  - use `--http-log <path>` to record per-request logs (useful for CI artifacts)
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
 """

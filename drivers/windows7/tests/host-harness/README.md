@@ -85,6 +85,7 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --qemu-system qemu-system-x86_64 \
   --disk-image ./win7-aero-tests.qcow2 \
   --serial-log ./win7-serial.log \
+  --http-log ./win7-http.log \
   --timeout-seconds 600 \
   --snapshot
 ```
