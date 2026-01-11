@@ -5,12 +5,16 @@ use std::rc::Rc;
 
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime};
+#[cfg(feature = "tier1-inline-tlb")]
+use aero_cpu_core::jit::runtime::JitBackend;
 use aero_cpu_core::state::CpuState;
 use aero_jit::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit::tier1::ir::{BinOp, GuestReg, IrBuilder, IrTerminator};
 use aero_jit::wasm::tier1::Tier1WasmCodegen;
+#[cfg(feature = "tier1-inline-tlb")]
 use aero_jit::wasm::tier1::Tier1WasmOptions;
+#[cfg(feature = "tier1-inline-tlb")]
 use aero_jit::Tier1Bus;
 use aero_types::{FlagSet, Gpr, Width};
 
@@ -216,6 +220,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
 }
 
 #[test]
+#[cfg(feature = "tier1-inline-tlb")]
 fn wasmtime_backend_executes_inline_tlb_load_store() {
     let entry = 0x1000u64;
 
@@ -258,6 +263,7 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
 }
 
 #[test]
+#[cfg(feature = "tier1-inline-tlb")]
 fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
     let entry = 0x1000u64;
 

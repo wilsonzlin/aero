@@ -5,10 +5,8 @@ use wasm_encoder::{
 };
 
 use crate::abi;
-use crate::abi::{
-    JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET, MMU_ACCESS_READ,
-    MMU_ACCESS_WRITE,
-};
+use crate::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE};
+use crate::jit_ctx::JitContext;
 use crate::tier1_ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 
 use super::abi::{
@@ -25,6 +23,8 @@ pub const EXPORT_TIER1_BLOCK_FN: &str = "block";
 pub struct Tier1WasmOptions {
     /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads
     /// and stores.
+    ///
+    /// Note: this option is ignored unless the crate feature `tier1-inline-tlb` is enabled.
     pub inline_tlb: bool,
 }
 
@@ -70,6 +70,14 @@ impl Tier1WasmCodegen {
         block: &IrBlock,
         options: Tier1WasmOptions,
     ) -> Vec<u8> {
+        #[cfg(not(feature = "tier1-inline-tlb"))]
+        let mut options = options;
+        #[cfg(feature = "tier1-inline-tlb")]
+        let options = options;
+        #[cfg(not(feature = "tier1-inline-tlb"))]
+        {
+            options.inline_tlb = false;
+        }
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
@@ -109,7 +117,10 @@ impl Tier1WasmCodegen {
             let ty = types.len();
             types
                 .ty()
-                .function([ValType::I32, ValType::I64, ValType::I32], [ValType::I64]);
+                .function(
+                    [ValType::I32, ValType::I32, ValType::I64, ValType::I32],
+                    [ValType::I64],
+                );
             Some(ty)
         } else {
             None
@@ -140,7 +151,9 @@ impl Tier1WasmCodegen {
             .ty()
             .function([ValType::I32, ValType::I64], [ValType::I64]);
         let ty_block = types.len();
-        types.ty().function([ValType::I32], [ValType::I64]);
+        types
+            .ty()
+            .function([ValType::I32, ValType::I32], [ValType::I64]);
         module.section(&types);
 
         let mut imports = ImportSection::new();
@@ -275,12 +288,12 @@ impl Tier1WasmCodegen {
 
         if options.inline_tlb {
             // Load JIT metadata (guest RAM base and TLB salt).
-            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-            func.instruction(&Instruction::I64Load(memarg(JIT_CTX_RAM_BASE_OFFSET, 3)));
+            func.instruction(&Instruction::LocalGet(layout.jit_ctx_ptr_local()));
+            func.instruction(&Instruction::I64Load(memarg(JitContext::RAM_BASE_OFFSET, 3)));
             func.instruction(&Instruction::LocalSet(layout.ram_base_local()));
 
-            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-            func.instruction(&Instruction::I64Load(memarg(JIT_CTX_TLB_SALT_OFFSET, 3)));
+            func.instruction(&Instruction::LocalGet(layout.jit_ctx_ptr_local()));
+            func.instruction(&Instruction::I64Load(memarg(JitContext::TLB_SALT_OFFSET, 3)));
             func.instruction(&Instruction::LocalSet(layout.tlb_salt_local()));
         }
 
@@ -374,12 +387,16 @@ impl LocalsLayout {
         0
     }
 
+    fn jit_ctx_ptr_local(self) -> u32 {
+        1
+    }
+
     fn gpr_local(self, reg: Gpr) -> u32 {
-        1 + reg.as_u8() as u32
+        2 + reg.as_u8() as u32
     }
 
     fn rip_local(self) -> u32 {
-        1 + 16
+        2 + 16
     }
 
     fn rflags_local(self) -> u32 {
@@ -929,6 +946,8 @@ impl Emitter<'_> {
         self.func
             .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
         self.func
+            .instruction(&Instruction::LocalGet(self.layout.jit_ctx_ptr_local()));
+        self.func
             .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
         self.func.instruction(&Instruction::I32Const(access_code));
         self.func.instruction(&Instruction::Call(
@@ -1010,12 +1029,12 @@ impl Emitter<'_> {
     }
 
     fn emit_tlb_entry_addr(&mut self) {
-        // base = cpu_ptr + JIT_CTX_TLB_OFFSET + ((vpn & mask) * ENTRY_SIZE)
+        // base = jit_ctx_ptr + JitContext::TLB_OFFSET + ((vpn & mask) * ENTRY_SIZE)
         self.func
-            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+            .instruction(&Instruction::LocalGet(self.layout.jit_ctx_ptr_local()));
         self.func.instruction(&Instruction::I64ExtendI32U);
         self.func
-            .instruction(&Instruction::I64Const(JIT_CTX_TLB_OFFSET as i64));
+            .instruction(&Instruction::I64Const(JitContext::TLB_OFFSET as i64));
         self.func.instruction(&Instruction::I64Add);
 
         self.func

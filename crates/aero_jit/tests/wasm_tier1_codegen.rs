@@ -19,21 +19,22 @@ use tier1_common::{write_cpu_to_wasm_bytes, write_gpr, CpuSnapshot, SimpleBus};
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
 const CPU_PTR: i32 = 0x1_0000;
+const JIT_CTX_PTR: i32 = CPU_PTR + aero_jit::abi::CPU_STATE_SIZE as i32;
 
 fn validate_wasm(bytes: &[u8]) {
     let mut validator = wasmparser::Validator::new();
     validator.validate_all(bytes).unwrap();
 }
 
-fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<i32, i64>) {
+fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), i64>) {
     let engine = Engine::default();
     let module = Module::new(&engine, bytes).unwrap();
 
     let mut store = Store::new(&engine, ());
     let mut linker = Linker::new(&engine);
 
-    // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
-    let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
+    // Guest memory in page 0, CpuState at CPU_PTR in page 1, and room for the JIT context.
+    let memory = Memory::new(&mut store, MemoryType::new(4, None)).unwrap();
     linker
         .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
         .unwrap();
@@ -66,7 +67,7 @@ fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<i32, i64>) {
 
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
     let block = instance
-        .get_typed_func::<i32, i64>(&store, EXPORT_TIER1_BLOCK_FN)
+        .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TIER1_BLOCK_FN)
         .unwrap();
     (store, memory, block)
 }
@@ -232,7 +233,7 @@ fn run_wasm(
         .write(&mut store, CPU_PTR as usize, &cpu_bytes)
         .unwrap();
 
-    let ret = func.call(&mut store, CPU_PTR).unwrap();
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
 
     // Read back guest memory region (page 0).
     let mut out_mem = vec![0u8; bus.mem().len()];

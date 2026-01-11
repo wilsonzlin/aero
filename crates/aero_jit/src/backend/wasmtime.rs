@@ -6,7 +6,7 @@ use wasmtime::{Caller, Config, Engine, Linker, Memory, MemoryType, Module, Store
 
 use super::Tier1Cpu;
 use crate::abi;
-use crate::abi::{JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET};
+use crate::jit_ctx::JitContext;
 use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::wasm::tier1::EXPORT_TIER1_BLOCK_FN;
 use crate::wasm::{
@@ -36,10 +36,17 @@ impl HostExitState {
 
 /// Reference `wasmtime`-powered backend that can execute Tier-1 compiled blocks.
 ///
-/// ## Tier-1 ABI contract (`export block(cpu_ptr: i32) -> i64`)
+/// ## Tier-1 ABI contract (`export block(cpu_ptr: i32, jit_ctx_ptr: i32) -> i64`)
 ///
 /// The compiled block receives a pointer (`cpu_ptr`) into the shared linear memory where an
-/// [`aero_cpu_core::state::CpuState`] is stored. The block mutates CPU state in-place and returns an `i64`:
+/// [`aero_cpu_core::state::CpuState`] is stored.
+///
+/// The block also receives a pointer (`jit_ctx_ptr`) to a JIT-only context region (`crate::jit_ctx`)
+/// stored separately from the architectural CPU state. This allows the Tier-1 code generator to
+/// use an optional inline direct-mapped TLB + direct-RAM fast-path without polluting
+/// `aero_cpu_core::state::CpuState`.
+///
+/// The block mutates CPU state in-place and returns an `i64`:
 ///
 /// - `ret != JIT_EXIT_SENTINEL_I64`: `ret` is the next RIP; execution can continue in the JIT.
 /// - `ret == JIT_EXIT_SENTINEL_I64`: the block requests a one-shot exit to the interpreter.
@@ -52,7 +59,8 @@ pub struct WasmtimeBackend<Cpu> {
     linker: Linker<HostExitState>,
     memory: Memory,
     cpu_ptr: i32,
-    blocks: Vec<TypedFunc<i32, i64>>,
+    jit_ctx_ptr: i32,
+    blocks: Vec<TypedFunc<(i32, i32), i64>>,
     _phantom: PhantomData<Cpu>,
 }
 
@@ -96,13 +104,19 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         let byte_len = (memory_pages as usize)
             .checked_mul(65_536)
             .expect("memory_pages overflow");
-        let end = (cpu_ptr as usize)
-            .checked_add(abi::CPU_AND_JIT_CTX_BYTE_SIZE as usize)
+        let jit_ctx_ptr = cpu_ptr
+            .checked_add(abi::CPU_STATE_SIZE as i32)
+            .expect("jit_ctx_ptr overflow");
+        let cpu_end = (cpu_ptr as usize)
+            .checked_add(abi::CPU_STATE_SIZE as usize)
             .expect("cpu_ptr overflow");
+        let ctx_end = (jit_ctx_ptr as usize)
+            .checked_add(JitContext::TOTAL_BYTE_SIZE)
+            .expect("jit_ctx_ptr overflow");
+        let end = cpu_end.max(ctx_end);
         assert!(
             end <= byte_len,
-            "cpu_ptr (0x{cpu_ptr:x}) + CPU_AND_JIT_CTX_BYTE_SIZE ({}) must fit in linear memory ({} bytes)",
-            abi::CPU_AND_JIT_CTX_BYTE_SIZE,
+            "cpu_ptr (0x{cpu_ptr:x}) + cpu/jit_ctx regions (end=0x{end:x}) must fit in linear memory ({} bytes)",
             byte_len
         );
 
@@ -112,6 +126,7 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             linker,
             memory,
             cpu_ptr,
+            jit_ctx_ptr,
             blocks: Vec::new(),
             _phantom: PhantomData,
         }
@@ -127,7 +142,7 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             .instantiate(&mut self.store, &module)
             .expect("instantiate wasm module");
         let func = instance
-            .get_typed_func::<i32, i64>(&mut self.store, EXPORT_TIER1_BLOCK_FN)
+            .get_typed_func::<(i32, i32), i64>(&mut self.store, EXPORT_TIER1_BLOCK_FN)
             .expect("get exported tier1 block function");
         let idx = self.blocks.len() as u32;
         self.blocks.push(func);
@@ -152,13 +167,13 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             .write(&mut self.store, rflags_off, &rflags.to_le_bytes())
             .expect("write CpuState.rflags into linear memory");
 
-        // Keep the Tier-1 JIT context fields initialized for the inline-TLB fast-path.
+        // Keep the Tier-1 JIT context header initialized for the optional inline-TLB fast-path.
         let mem = self.memory.data_mut(&mut self.store);
-        let base = self.cpu_ptr as usize;
-        mem[base + JIT_CTX_RAM_BASE_OFFSET as usize..base + JIT_CTX_RAM_BASE_OFFSET as usize + 8]
-            .copy_from_slice(&0u64.to_le_bytes()); // guest RAM begins at linear address 0
-        mem[base + JIT_CTX_TLB_SALT_OFFSET as usize..base + JIT_CTX_TLB_SALT_OFFSET as usize + 8]
-            .copy_from_slice(&0x1234_5678_9abc_def0u64.to_le_bytes());
+        let ctx = JitContext {
+            ram_base: 0, // guest RAM begins at linear address 0
+            tlb_salt: 0x1234_5678_9abc_def0,
+        };
+        ctx.write_header_to_mem(mem, self.jit_ctx_ptr as usize);
     }
 
     fn sync_cpu_from_wasm(&mut self, cpu: &mut CoreCpuState) {
@@ -219,7 +234,7 @@ where
         self.sync_cpu_to_wasm(cpu.tier1_state());
 
         let ret = func
-            .call(&mut self.store, self.cpu_ptr)
+            .call(&mut self.store, (self.cpu_ptr, self.jit_ctx_ptr))
             .expect("wasm tier1 block trapped");
 
         let exit_to_interpreter = ret == JIT_EXIT_SENTINEL_I64;
@@ -395,13 +410,18 @@ fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MMU_TRANSLATE,
-                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, vaddr: i64, _access: i32| -> i64 {
+                move |mut caller: Caller<'_, HostExitState>,
+                      cpu_ptr: i32,
+                      jit_ctx_ptr: i32,
+                      vaddr: i64,
+                      _access: i32|
+                      -> i64 {
                     let vaddr_u = vaddr as u64;
                     let vpn = vaddr_u >> crate::PAGE_SHIFT;
                     let idx = (vpn & crate::JIT_TLB_INDEX_MASK) as u64;
 
                     let tlb_salt = {
-                        let addr = cpu_ptr as usize + JIT_CTX_TLB_SALT_OFFSET as usize;
+                        let addr = jit_ctx_ptr as usize + (JitContext::TLB_SALT_OFFSET as usize);
                         let bytes: [u8; 8] = mem.data(&caller)[addr..addr + 8].try_into().unwrap();
                         u64::from_le_bytes(bytes)
                     };
@@ -417,8 +437,8 @@ fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
                         | if is_ram { crate::TLB_FLAG_IS_RAM } else { 0 };
                     let data = phys_base | flags;
 
-                    let entry_addr = cpu_ptr as usize
-                        + JIT_CTX_TLB_OFFSET as usize
+                    let entry_addr = jit_ctx_ptr as usize
+                        + (JitContext::TLB_OFFSET as usize)
                         + (idx as usize) * (crate::JIT_TLB_ENTRY_SIZE as usize);
                     let mem_mut = mem.data_mut(&mut caller);
                     mem_mut[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());

@@ -1,19 +1,17 @@
-#![cfg(debug_assertions)]
+#![cfg(all(debug_assertions, feature = "tier1-inline-tlb"))]
 
 mod tier1_common;
 
 use aero_cpu_core::state::CpuState;
-use aero_jit::abi::{
-    CPU_AND_JIT_CTX_BYTE_SIZE, CPU_STATE_SIZE, JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET,
-    JIT_CTX_TLB_SALT_OFFSET,
-};
+use aero_jit::abi;
+use aero_jit::jit_ctx::JitContext;
 use aero_jit::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
 use aero_jit::wasm::tier1::{Tier1WasmCodegen, Tier1WasmOptions};
 use aero_jit::wasm::{
     EXPORT_BLOCK_FN, IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16,
     IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16,
     IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE,
-    IMPORT_MODULE, IMPORT_PAGE_FAULT,
+    IMPORT_MODULE, IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
 };
 use aero_jit::{
     JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_SHIFT, TLB_FLAG_EXEC,
@@ -23,6 +21,10 @@ use aero_types::{Gpr, Width};
 use tier1_common::{write_cpu_to_wasm_bytes, CpuSnapshot};
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
+
+const CPU_PTR: i32 = 0;
+const JIT_CTX_PTR: i32 = abi::CPU_STATE_SIZE as i32;
+const TLB_SALT: u64 = 0x1234_5678_9abc_def0;
 
 #[derive(Debug, Default, Clone, Copy)]
 struct HostState {
@@ -42,7 +44,7 @@ fn instantiate(
     bytes: &[u8],
     memory_pages: u32,
     ram_size: u64,
-) -> (Store<HostState>, Memory, TypedFunc<i32, i64>) {
+) -> (Store<HostState>, Memory, TypedFunc<(i32, i32), i64>) {
     let engine = Engine::default();
     let module = Module::new(&engine, bytes).unwrap();
 
@@ -83,9 +85,10 @@ fn instantiate(
             IMPORT_JIT_EXIT,
             Func::wrap(
                 &mut store,
-                |_caller: Caller<'_, HostState>, _kind: i32, _rip: i64| -> i64 {
-                    // Sentinel mirrors `u64::MAX`.
-                    -1i64
+                |_caller: Caller<'_, HostState>, _kind: i32, rip: i64| -> i64 {
+                    // Like `jit_exit_mmio`, return the resume RIP while the block returns the
+                    // sentinel separately.
+                    rip
                 },
             ),
         )
@@ -93,7 +96,7 @@ fn instantiate(
 
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
     let block = instance
-        .get_typed_func::<i32, i64>(&store, EXPORT_BLOCK_FN)
+        .get_typed_func::<(i32, i32), i64>(&store, EXPORT_BLOCK_FN)
         .unwrap();
     (store, memory, block)
 }
@@ -153,6 +156,20 @@ fn define_mem_helpers(
             .expect("memory write in bounds");
     }
 
+    fn read_ram_base(
+        caller: &mut Caller<'_, HostState>,
+        memory: &Memory,
+        cpu_ptr: i32,
+    ) -> usize {
+        // Slow-path helpers only receive `cpu_ptr`; in our tests, the JIT context is stored at
+        // `cpu_ptr + CPU_STATE_SIZE`.
+        read_u64_from_memory(
+            caller,
+            memory,
+            cpu_ptr as usize + (abi::CPU_STATE_SIZE as usize) + (JitContext::RAM_BASE_OFFSET as usize),
+        ) as usize
+    }
+
     let mem = memory.clone();
     linker
         .define(
@@ -162,11 +179,7 @@ fn define_mem_helpers(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64| -> i32 {
                     caller.data_mut().slow_mem_reads += 1;
-                    let ram_base = read_u64_from_memory(
-                        &mut caller,
-                        &mem,
-                        cpu_ptr as usize + JIT_CTX_RAM_BASE_OFFSET as usize,
-                    ) as usize;
+                    let ram_base = read_ram_base(&mut caller, &mem, cpu_ptr);
                     read::<1>(&mut caller, &mem, ram_base + addr as usize) as i32
                 },
             ),
@@ -182,11 +195,7 @@ fn define_mem_helpers(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64| -> i32 {
                     caller.data_mut().slow_mem_reads += 1;
-                    let ram_base = read_u64_from_memory(
-                        &mut caller,
-                        &mem,
-                        cpu_ptr as usize + JIT_CTX_RAM_BASE_OFFSET as usize,
-                    ) as usize;
+                    let ram_base = read_ram_base(&mut caller, &mem, cpu_ptr);
                     read::<2>(&mut caller, &mem, ram_base + addr as usize) as i32
                 },
             ),
@@ -202,11 +211,7 @@ fn define_mem_helpers(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64| -> i32 {
                     caller.data_mut().slow_mem_reads += 1;
-                    let ram_base = read_u64_from_memory(
-                        &mut caller,
-                        &mem,
-                        cpu_ptr as usize + JIT_CTX_RAM_BASE_OFFSET as usize,
-                    ) as usize;
+                    let ram_base = read_ram_base(&mut caller, &mem, cpu_ptr);
                     read::<4>(&mut caller, &mem, ram_base + addr as usize) as i32
                 },
             ),
@@ -222,11 +227,7 @@ fn define_mem_helpers(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64| -> i64 {
                     caller.data_mut().slow_mem_reads += 1;
-                    let ram_base = read_u64_from_memory(
-                        &mut caller,
-                        &mem,
-                        cpu_ptr as usize + JIT_CTX_RAM_BASE_OFFSET as usize,
-                    ) as usize;
+                    let ram_base = read_ram_base(&mut caller, &mem, cpu_ptr);
                     read::<8>(&mut caller, &mem, ram_base + addr as usize) as i64
                 },
             ),
@@ -242,11 +243,7 @@ fn define_mem_helpers(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64, value: i32| {
                     caller.data_mut().slow_mem_writes += 1;
-                    let ram_base = read_u64_from_memory(
-                        &mut caller,
-                        &mem,
-                        cpu_ptr as usize + JIT_CTX_RAM_BASE_OFFSET as usize,
-                    ) as usize;
+                    let ram_base = read_ram_base(&mut caller, &mem, cpu_ptr);
                     write::<1>(&mut caller, &mem, ram_base + addr as usize, value as u64);
                 },
             ),
@@ -262,11 +259,7 @@ fn define_mem_helpers(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64, value: i32| {
                     caller.data_mut().slow_mem_writes += 1;
-                    let ram_base = read_u64_from_memory(
-                        &mut caller,
-                        &mem,
-                        cpu_ptr as usize + JIT_CTX_RAM_BASE_OFFSET as usize,
-                    ) as usize;
+                    let ram_base = read_ram_base(&mut caller, &mem, cpu_ptr);
                     write::<2>(&mut caller, &mem, ram_base + addr as usize, value as u64);
                 },
             ),
@@ -282,11 +275,7 @@ fn define_mem_helpers(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64, value: i32| {
                     caller.data_mut().slow_mem_writes += 1;
-                    let ram_base = read_u64_from_memory(
-                        &mut caller,
-                        &mem,
-                        cpu_ptr as usize + JIT_CTX_RAM_BASE_OFFSET as usize,
-                    ) as usize;
+                    let ram_base = read_ram_base(&mut caller, &mem, cpu_ptr);
                     write::<4>(&mut caller, &mem, ram_base + addr as usize, value as u64);
                 },
             ),
@@ -302,11 +291,7 @@ fn define_mem_helpers(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64, value: i64| {
                     caller.data_mut().slow_mem_writes += 1;
-                    let ram_base = read_u64_from_memory(
-                        &mut caller,
-                        &mem,
-                        cpu_ptr as usize + JIT_CTX_RAM_BASE_OFFSET as usize,
-                    ) as usize;
+                    let ram_base = read_ram_base(&mut caller, &mem, cpu_ptr);
                     write::<8>(&mut caller, &mem, ram_base + addr as usize, value as u64);
                 },
             ),
@@ -327,7 +312,8 @@ fn define_mmu_translate(
             Func::wrap(
                 &mut *store,
                 move |mut caller: Caller<'_, HostState>,
-                      cpu_ptr: i32,
+                      _cpu_ptr: i32,
+                      jit_ctx_ptr: i32,
                       vaddr: i64,
                       _access: i32|
                       -> i64 {
@@ -340,7 +326,7 @@ fn define_mmu_translate(
                     let salt = read_u64_from_memory(
                         &mut caller,
                         &mem,
-                        cpu_ptr as usize + JIT_CTX_TLB_SALT_OFFSET as usize,
+                        jit_ctx_ptr as usize + (JitContext::TLB_SALT_OFFSET as usize),
                     );
 
                     let tag = (vpn ^ salt) | 1;
@@ -353,8 +339,8 @@ fn define_mmu_translate(
                         | if is_ram { TLB_FLAG_IS_RAM } else { 0 };
                     let data = phys_base | flags;
 
-                    let entry_addr = (cpu_ptr as u64)
-                        + (JIT_CTX_TLB_OFFSET as u64)
+                    let entry_addr = (jit_ctx_ptr as u64)
+                        + (JitContext::TLB_OFFSET as u64)
                         + idx * (JIT_TLB_ENTRY_SIZE as u64);
 
                     write_u64_to_memory(&mut caller, &mem, entry_addr as usize, tag);
@@ -380,14 +366,81 @@ fn define_mmio_exit(store: &mut Store<HostState>, linker: &mut Linker<HostState>
                  _size: i32,
                  _is_write: i32,
                  _value: i64,
-                 _rip: i64|
+                 rip: i64|
                  -> i64 {
                     caller.data_mut().mmio_exit_calls += 1;
-                    -1i64
+                    rip
                 },
             ),
         )
         .unwrap();
+}
+
+fn run_wasm_inner(
+    block: &aero_jit::tier1::ir::IrBlock,
+    cpu: CpuState,
+    ram: Vec<u8>,
+    ram_size: u64,
+    prefill_tlb: Option<(u64, u64)>,
+) -> (u64, CpuState, Vec<u8>, HostState) {
+    let wasm = Tier1WasmCodegen::new()
+        .compile_block_with_options(block, Tier1WasmOptions { inline_tlb: true });
+    validate_wasm(&wasm);
+
+    let ram_base = (JIT_CTX_PTR as u64) + (JitContext::TOTAL_BYTE_SIZE as u64);
+    let total_len = ram_base as usize + ram.len();
+
+    let mut mem = vec![0u8; total_len];
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    let cpu_base = CPU_PTR as usize;
+    mem[cpu_base..cpu_base + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    if let Some((vaddr, tlb_data)) = prefill_tlb {
+        let vpn = vaddr >> PAGE_SHIFT;
+        let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
+        let entry_addr = (JIT_CTX_PTR as usize)
+            + (JitContext::TLB_OFFSET as usize)
+            + idx * (JIT_TLB_ENTRY_SIZE as usize);
+        let tag = (vpn ^ TLB_SALT) | 1;
+        mem[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());
+        mem[entry_addr + 8..entry_addr + 16].copy_from_slice(&tlb_data.to_le_bytes());
+    }
+
+    mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
+
+    let pages = ((total_len + 65_535) / 65_536) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let cpu_base = CPU_PTR as usize;
+    let snap = CpuSnapshot::from_wasm_bytes(&got_mem[cpu_base..cpu_base + abi::CPU_STATE_SIZE as usize]);
+    let mut got_cpu = CpuState::default();
+    got_cpu.gpr = snap.gpr;
+    got_cpu.rip = snap.rip;
+    got_cpu.set_rflags(snap.rflags);
+
+    let next_rip = if ret == JIT_EXIT_SENTINEL_I64 {
+        got_cpu.rip
+    } else {
+        ret as u64
+    };
+
+    let got_ram = got_mem[ram_base as usize..ram_base as usize + ram.len()].to_vec();
+    let host_state = *store.data();
+    (next_rip, got_cpu, got_ram, host_state)
 }
 
 fn run_wasm(
@@ -396,38 +449,18 @@ fn run_wasm(
     ram: Vec<u8>,
     ram_size: u64,
 ) -> (u64, CpuState, Vec<u8>, HostState) {
-    let wasm = Tier1WasmCodegen::new()
-        .compile_block_with_options(block, Tier1WasmOptions { inline_tlb: true });
-    validate_wasm(&wasm);
+    run_wasm_inner(block, cpu, ram, ram_size, None)
+}
 
-    let ram_base = CPU_AND_JIT_CTX_BYTE_SIZE as u64;
-    let total_len = ram_base as usize + ram.len();
-
-    let mut mem = vec![0u8; total_len];
-    write_cpu_to_wasm_bytes(&cpu, &mut mem[..CPU_STATE_SIZE as usize]);
-    mem[JIT_CTX_RAM_BASE_OFFSET as usize..JIT_CTX_RAM_BASE_OFFSET as usize + 8]
-        .copy_from_slice(&ram_base.to_le_bytes());
-    mem[JIT_CTX_TLB_SALT_OFFSET as usize..JIT_CTX_TLB_SALT_OFFSET as usize + 8]
-        .copy_from_slice(&0x1234_5678_9abc_def0u64.to_le_bytes());
-
-    mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
-
-    let pages = ((total_len + 65535) / 65536) as u32;
-    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
-    memory.write(&mut store, 0, &mem).unwrap();
-
-    let got_rip = func.call(&mut store, 0).unwrap() as u64;
-
-    let mut got_mem = vec![0u8; total_len];
-    memory.read(&store, 0, &mut got_mem).unwrap();
-    let snap = CpuSnapshot::from_wasm_bytes(&got_mem);
-    let mut got_cpu = CpuState::default();
-    got_cpu.gpr = snap.gpr;
-    got_cpu.rip = snap.rip;
-    got_cpu.set_rflags(snap.rflags);
-    let got_ram = got_mem[ram_base as usize..ram_base as usize + ram.len()].to_vec();
-    let host_state = *store.data();
-    (got_rip, got_cpu, got_ram, host_state)
+fn run_wasm_with_prefilled_tlb(
+    block: &aero_jit::tier1::ir::IrBlock,
+    cpu: CpuState,
+    ram: Vec<u8>,
+    ram_size: u64,
+    vaddr: u64,
+    tlb_data: u64,
+) -> (u64, CpuState, Vec<u8>, HostState) {
+    run_wasm_inner(block, cpu, ram, ram_size, Some((vaddr, tlb_data)))
 }
 
 #[test]
@@ -469,9 +502,9 @@ fn tier1_inline_tlb_same_page_access_hits_and_caches() {
     cpu.rip = 0x1000;
 
     let ram = vec![0u8; 0x10000];
-    let (got_rip, got_cpu, got_ram, host_state) = run_wasm(&block, cpu, ram, 0x10000);
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm(&block, cpu, ram, 0x10000);
 
-    assert_eq!(got_rip, 0x3000);
+    assert_eq!(next_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
     assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234_5678);
     assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 0xAB);
@@ -537,13 +570,86 @@ fn tier1_inline_tlb_collision_forces_retranslate() {
     ram[collide_addr as usize..collide_addr as usize + 4]
         .copy_from_slice(&0x99aa_bbccu32.to_le_bytes());
 
-    let (got_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, ram_len as u64);
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, ram_len as u64);
 
-    assert_eq!(got_rip, 0x3000);
+    assert_eq!(next_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
 
     // page 0, collide page, page 0 again.
     assert_eq!(host_state.mmu_translate_calls, 3);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_permission_miss_read_calls_translate() {
+    let addr = 0x1000u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W8, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let mut cpu = CpuState::default();
+    cpu.rip = 0x1000;
+
+    let mut ram = vec![0u8; 0x10000];
+    ram[addr as usize] = 0x7f;
+
+    // Pre-fill a matching TLB entry, but intentionally omit READ permission to force a slow
+    // `mmu_translate` call.
+    let tlb_data = (addr & PAGE_BASE_MASK) | (TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+
+    let (next_rip, got_cpu, _got_ram, host_state) =
+        run_wasm_with_prefilled_tlb(&block, cpu, ram, 0x10000, addr, tlb_data);
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 0x7f);
+
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_permission_miss_write_calls_translate() {
+    let addr = 0x1000u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W16, 0xdead);
+    b.store(Width::W16, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let mut cpu = CpuState::default();
+    cpu.rip = 0x1000;
+
+    let ram = vec![0u8; 0x10000];
+
+    // Pre-fill a matching TLB entry, but intentionally omit WRITE permission.
+    let tlb_data = (addr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+
+    let (next_rip, got_cpu, got_ram, host_state) =
+        run_wasm_with_prefilled_tlb(&block, cpu, ram, 0x10000, addr, tlb_data);
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(&got_ram[addr as usize..addr as usize + 2], &0xdead_u16.to_le_bytes());
+
+    assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
@@ -573,9 +679,9 @@ fn tier1_inline_tlb_cross_page_load_uses_slow_helper() {
     let mut ram = vec![0u8; 0x10000];
     ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
 
-    let (got_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x10000);
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x10000);
 
-    assert_eq!(got_rip, 0x3000);
+    assert_eq!(next_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
     assert_eq!(
         got_cpu.gpr[Gpr::Rax.as_u8() as usize],
@@ -599,10 +705,10 @@ fn tier1_inline_tlb_mmio_load_exits_to_runtime() {
     cpu.rip = 0x1000;
 
     let ram = vec![0u8; 0x10000];
-    let (got_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
 
-    assert_eq!(got_rip, u64::MAX);
-    assert_eq!(got_cpu.rip, u64::MAX);
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
     assert_eq!(host_state.mmio_exit_calls, 1);
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
@@ -622,12 +728,13 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
     cpu.rip = 0x1000;
 
     let ram = vec![0u8; 0x10000];
-    let (got_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
 
-    assert_eq!(got_rip, u64::MAX);
-    assert_eq!(got_cpu.rip, u64::MAX);
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
     assert_eq!(host_state.mmio_exit_calls, 1);
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
 }
+

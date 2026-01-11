@@ -1,4 +1,5 @@
 pub mod abi;
+pub mod jit_ctx;
 
 mod block;
 pub mod compiler;
@@ -10,7 +11,6 @@ mod tier1_ir;
 mod tier1_pipeline;
 mod trace;
 mod translate;
-
 pub mod profile;
 pub mod simd;
 pub mod tier1;

@@ -8,6 +8,8 @@ license = "MIT OR Apache-2.0"
 default = []
 # Legacy baseline IR + inline-TLB WASM backend (kept for comparison/testing).
 legacy-baseline = []
+# Emit an inline direct-mapped TLB + direct-RAM fast-path for Tier-1 WASM codegen.
+tier1-inline-tlb = []
 
 [dependencies]
 wasm-encoder = "0.244.0"
