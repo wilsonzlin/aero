@@ -1961,6 +1961,7 @@ static bool UnmapLocked(Device* dev, Resource* res) {
     }
 
     const auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+    const auto* cb_device = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
     if (cb && cb->pfnUnlockCb) {
       D3DDDICB_UNLOCK unlock = {};
       unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
@@ -1972,6 +1973,22 @@ static bool UnmapLocked(Device* dev, Resource* res) {
       }
       const HRESULT unlock_hr =
           CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+      if (FAILED(unlock_hr)) {
+        SetError(dev, unlock_hr);
+      }
+    } else if (cb_device && cb_device->pfnUnlockCb) {
+      D3DDDICB_UNLOCK unlock = {};
+      unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock.SubresourceIndex = 0;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock.SubResourceIndex = 0;
+      }
+      const HRESULT unlock_hr = CallCbMaybeHandle(cb_device->pfnUnlockCb,
+                                                  MakeRtDeviceHandle(dev),
+                                                  MakeRtDeviceHandle10(dev),
+                                                  &unlock);
       if (FAILED(unlock_hr)) {
         SetError(dev, unlock_hr);
       }
@@ -6383,7 +6400,17 @@ static HRESULT MapLocked11(Device* dev,
   };
 
   const auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
-  if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb) {
+  const auto* cb_device = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
+  enum class LockCbPath {
+    Wddm,
+    Device,
+  };
+  LockCbPath lock_path{};
+  if (cb && cb->pfnLockCb && cb->pfnUnlockCb) {
+    lock_path = LockCbPath::Wddm;
+  } else if (cb_device && cb_device->pfnLockCb && cb_device->pfnUnlockCb) {
+    lock_path = LockCbPath::Device;
+  } else {
     if (allow_storage_map) {
       return map_storage();
     }
@@ -6458,7 +6485,12 @@ static HRESULT MapLocked11(Device* dev,
     }
   }
 
-  const HRESULT lock_hr = CallCbMaybeHandle(cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &lock);
+  HRESULT lock_hr = E_FAIL;
+  if (lock_path == LockCbPath::Wddm) {
+    lock_hr = CallCbMaybeHandle(cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &lock);
+  } else {
+    lock_hr = CallCbMaybeHandle(cb_device->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &lock);
+  }
   const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
   if (lock_hr == kDxgiErrorWasStillDrawing ||
       (do_not_wait && (lock_hr == kHrPending || lock_hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
@@ -6482,7 +6514,11 @@ static HRESULT MapLocked11(Device* dev,
     __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
       unlock.SubResourceIndex = subresource;
     }
-    (void)CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+    if (lock_path == LockCbPath::Wddm) {
+      (void)CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+    } else {
+      (void)CallCbMaybeHandle(cb_device->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+    }
     if (allow_storage_map) {
       return map_storage();
     }
@@ -6903,23 +6939,42 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
   const bool is_guest_backed = (res->backing_alloc_id != 0);
   const D3DDDI_DEVICECALLBACKS* ddi =
       is_guest_backed ? reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks) : nullptr;
+  const auto* device_cb =
+      is_guest_backed ? reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks) : nullptr;
 
   const auto lock_for_write = [&](D3DDDICB_LOCK* lock_args) -> HRESULT {
-    if (!lock_args || !ddi || !ddi->pfnLockCb || !dev->runtime_device) {
+    if (!lock_args || !dev->runtime_device) {
       return E_NOTIMPL;
     }
-    return CallCbMaybeHandle(ddi->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+    if (ddi && ddi->pfnLockCb) {
+      return CallCbMaybeHandle(ddi->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+    }
+    if (device_cb && device_cb->pfnLockCb) {
+      return CallCbMaybeHandle(device_cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+    }
+    return E_NOTIMPL;
   };
 
   const auto unlock = [&](D3DDDICB_UNLOCK* unlock_args) -> HRESULT {
-    if (!unlock_args || !ddi || !ddi->pfnUnlockCb || !dev->runtime_device) {
+    if (!unlock_args || !dev->runtime_device) {
       return E_NOTIMPL;
     }
-    return CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), unlock_args);
+    if (ddi && ddi->pfnUnlockCb) {
+      return CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), unlock_args);
+    }
+    if (device_cb && device_cb->pfnUnlockCb) {
+      return CallCbMaybeHandle(device_cb->pfnUnlockCb,
+                               MakeRtDeviceHandle(dev),
+                               MakeRtDeviceHandle10(dev),
+                               unlock_args);
+    }
+    return E_NOTIMPL;
   };
 
   if (is_guest_backed) {
-    if (!ddi || !ddi->pfnLockCb || !ddi->pfnUnlockCb) {
+    const bool has_lock_unlock =
+        (ddi && ddi->pfnLockCb && ddi->pfnUnlockCb) || (device_cb && device_cb->pfnLockCb && device_cb->pfnUnlockCb);
+    if (!has_lock_unlock) {
       SetError(dev, E_NOTIMPL);
       return;
     }
