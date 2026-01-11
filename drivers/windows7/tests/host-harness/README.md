@@ -413,9 +413,12 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
 Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd-capture to PASS
 (not SKIP), so do not use `-DisableSndCapture` in that mode.
 
-To run the virtio-snd **capture** smoke test when a capture endpoint exists (and enable the full-duplex regression test),
-provision the scheduled task with
-`--test-snd-capture` (for example via `New-AeroWin7TestImage.ps1 -TestSndCapture`).
+To run the virtio-snd **capture** smoke test (and enable the full-duplex regression test):
+
+- Newer `aero-virtio-selftest.exe` binaries auto-run capture + duplex tests whenever a virtio-snd device is present
+  (this is required for the strict host harness mode when `-WithVirtioSnd` / `--with-virtio-snd` is enabled).
+- For older selftest binaries, provision the scheduled task with `--test-snd-capture` (for example via
+  `New-AeroWin7TestImage.ps1 -TestSndCapture`), or set `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1` in the guest environment.
 
 - Add `-RequireSndCapture` to fail if no virtio-snd capture endpoint is present.
 - Add `-RequireNonSilence` to fail the smoke test if only silence is captured.

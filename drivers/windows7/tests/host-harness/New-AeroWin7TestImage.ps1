@@ -97,6 +97,19 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# The host harness (`Invoke-AeroVirtioWin7Tests*`) requires the guest selftest to emit PASS markers
+# for virtio-snd playback + capture + duplex when `--with-virtio-snd` / `-WithVirtioSnd` is enabled.
+#
+# Older `aero-virtio-selftest.exe` builds only run the capture + duplex smoke tests when explicitly
+# enabled via `--test-snd-capture` (or `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`). Newer selftest
+# builds auto-enable capture/duplex whenever a virtio-snd device is present.
+#
+# To keep provisioning media compatible with both behaviors, default `-TestSndCapture` to on when
+# virtio-snd is being required/tested, unless the caller explicitly disabled capture.
+if (-not $TestSndCapture -and -not $DisableSnd -and -not $DisableSndCapture -and ($RequireSnd -or $RequireSndCapture -or $RequireNonSilence)) {
+  $TestSndCapture = $true
+}
+
 function Write-TextFileUtf8NoBom {
   param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Content)
   $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -469,9 +482,12 @@ Notes:
     Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
    - To skip capture-only checks (while still exercising playback), generate this media with `-DisableSndCapture` (adds `--disable-snd-capture`).
      Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd-capture to PASS (not SKIP).
-   - To run the virtio-snd capture smoke test (if a capture endpoint exists), generate this media with `-TestSndCapture` (adds `--test-snd-capture`).
-     - Use `-RequireSndCapture` to fail if no capture endpoint exists.
-     - Use `-RequireNonSilence` to fail if only silence is captured.
+   - To run the virtio-snd capture smoke test (and enable the full-duplex regression test):
+     - Newer `aero-virtio-selftest.exe` binaries run capture/duplex automatically whenever virtio-snd is present.
+     - For older selftest binaries, generate this media with `-TestSndCapture` (adds `--test-snd-capture`). This script also
+       defaults `-TestSndCapture` on when virtio-snd is being required/tested, unless capture is explicitly disabled.
+      - Use `-RequireSndCapture` to fail if no capture endpoint exists.
+      - Use `-RequireNonSilence` to fail if only silence is captured.
  - To accept the transitional virtio-snd PCI ID (`PCI\VEN_1AF4&DEV_1018`) in the guest selftest, generate this media with
    `-AllowVirtioSndTransitional` (adds `--allow-virtio-snd-transitional`).
  - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
