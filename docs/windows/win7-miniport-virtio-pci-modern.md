@@ -37,13 +37,15 @@ On Windows 7, your miniport must:
 
 ## 1) Common device identity checks (config space offsets)
 
-Before attempting to parse capabilities or touch MMIO, validate the device identity from PCI config:
+Before attempting to parse capabilities or touch MMIO, validate the device identity from PCI config.
+
+For Aero, the **PCI Revision ID encodes the virtio contract major version** (not “modern vs legacy” in the general virtio sense). Contract v1 uses `REV_01`.
 
 * Vendor ID: `0x1AF4`
 * Device ID:
   * `0x1041` = virtio-net
   * `0x1042` = virtio-blk
-* **Revision ID**: `0x01` = modern (Virtio 1.0+ PCI capability transport)
+* **Revision ID**: `0x01` = `AERO-W7-VIRTIO` contract v1
 
 Pseudocode helpers (avoid unaligned loads):
 
@@ -67,7 +69,7 @@ UCHAR  rev    = cfg[PCI_CFG_REVISION_ID];
 
 if (vendor != 0x1AF4) return DEVICE_NOT_SUPPORTED;
 if (device != 0x1041 && device != 0x1042) return DEVICE_NOT_SUPPORTED;
-if (rev != 0x01) return DEVICE_IS_LEGACY_OR_TRANSITIONAL; // not “modern”
+if (rev != 0x01) return DEVICE_NOT_SUPPORTED; // not an AERO-W7-VIRTIO v1 device
 ```
 
 ---
