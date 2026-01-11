@@ -431,6 +431,7 @@ pub trait DisplayAdapter {
 | Storage Backend         | OPFS primary, IndexedDB fallback             | Large file support                      |
 | Network Transport       | L2 tunnel over WebSocket (default), optional WebRTC DataChannel | Keep the browser as a frame forwarder; proxy runs the user-space stack (ADR 0013) |
 | Audio Processing        | AudioWorklet                                 | Low latency audio                       |
+| USB passthrough stack   | `crates/aero-usb` + `web/src/usb/*` (ADR 0015) | Single canonical browser USB/UHCI stack; deterministic device models in Rust |
 | Browser memory model    | Split buffers (shared `WebAssembly.Memory` + small SABs) | Avoid >4GiB offsets and single huge SAB allocations |
 
 
