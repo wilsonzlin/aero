@@ -514,7 +514,9 @@ fn enforce_security(
                 .find_map(gateway_session::extract_session_cookie_value);
             let sid = session_token
                 .as_deref()
-                .and_then(|token| gateway_session::verify_session_token(token, cookie_secret, now_ms))
+                .and_then(|token| {
+                    gateway_session::verify_session_token(token, cookie_secret, now_ms)
+                })
                 .map(|session| session.id);
 
             if let Some(sid) = sid {
@@ -598,7 +600,9 @@ fn enforce_security(
                 .find_map(gateway_session::extract_session_cookie_value);
             let sid = session_token
                 .as_deref()
-                .and_then(|token| gateway_session::verify_session_token(token, cookie_secret, now_ms))
+                .and_then(|token| {
+                    gateway_session::verify_session_token(token, cookie_secret, now_ms)
+                })
                 .map(|session| session.id);
 
             if let Some(sid) = sid {
@@ -664,7 +668,9 @@ fn enforce_security(
                 .find_map(gateway_session::extract_session_cookie_value);
             let sid = session_token
                 .as_deref()
-                .and_then(|token| gateway_session::verify_session_token(token, cookie_secret, now_ms))
+                .and_then(|token| {
+                    gateway_session::verify_session_token(token, cookie_secret, now_ms)
+                })
                 .map(|session| session.id);
             let cookie_ok = sid.is_some();
 
