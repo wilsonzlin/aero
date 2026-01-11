@@ -2817,17 +2817,10 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   if (rt_changed) {
     (void)emit_set_render_targets_locked(dev);
   }
-  if (!res->is_shared) {
-    (void)emit_destroy_resource_locked(dev, res->handle);
-  } else {
-    // Shared resources are opened in multiple processes (e.g. DWM + app). We
-    // intentionally do not emit DESTROY_RESOURCE on per-process close to avoid
-    // premature host-side destruction. This leaks shared resources for now but
-    // keeps DWM stable without requiring a KMD-mediated global refcount.
-    logf("aerogpu-d3d9: close shared_surface res=%u token=%llu (no DESTROY_RESOURCE)\n",
-         res->handle,
-         static_cast<unsigned long long>(res->share_token));
-  }
+  // For shared resources, the host maintains its own refcount across alias
+  // handles, so it is safe (and important) to emit DESTROY_RESOURCE on
+  // per-process close.
+  (void)emit_destroy_resource_locked(dev, res->handle);
   delete res;
   return trace.ret(S_OK);
 }
