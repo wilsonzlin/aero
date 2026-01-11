@@ -144,7 +144,11 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
         meta.encode(w)
     })?;
 
-    let cpus = source.cpu_states();
+    let mut cpus = source.cpu_states();
+    cpus.sort_by_key(|cpu| cpu.apic_id);
+    if cpus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+        return Err(SnapshotError::Corrupt("duplicate APIC ID in CPU list"));
+    }
     if cpus.len() == 1 && cpus[0].apic_id == 0 && cpus[0].internal_state.is_empty() {
         write_section(w, SectionId::CPU, 2, 0, |w| cpus[0].cpu.encode_v2(w))?;
     } else {

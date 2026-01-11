@@ -3,14 +3,14 @@ use std::io::Cursor;
 use aero_snapshot::{
     save_snapshot, Compression, CpuMode, CpuState, DeviceId, DeviceState, DiskOverlayRef,
     DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, SaveOptions, SegmentState, SnapshotMeta,
-    SnapshotSource,
+    SnapshotSource, VcpuSnapshot,
 };
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 
 #[derive(Clone)]
 struct RandomOrderSource {
     meta: SnapshotMeta,
-    cpu: CpuState,
+    cpus: Vec<VcpuSnapshot>,
     mmu: MmuState,
     devices: Vec<DeviceState>,
     disks: Vec<DiskOverlayRef>,
@@ -24,7 +24,15 @@ impl SnapshotSource for RandomOrderSource {
     }
 
     fn cpu_state(&self) -> CpuState {
-        self.cpu.clone()
+        self.cpus
+            .iter()
+            .find(|cpu| cpu.apic_id == 0)
+            .map(|cpu| cpu.cpu.clone())
+            .unwrap_or_default()
+    }
+
+    fn cpu_states(&self) -> Vec<VcpuSnapshot> {
+        self.cpus.clone()
     }
 
     fn mmu_state(&self) -> MmuState {
@@ -68,7 +76,7 @@ fn make_source(seed: u64) -> RandomOrderSource {
         label: Some("determinism-test".to_string()),
     };
 
-    let cpu = CpuState {
+    let cpu0 = CpuState {
         rax: 1,
         rbx: 2,
         rcx: 3,
@@ -95,6 +103,36 @@ fn make_source(seed: u64) -> RandomOrderSource {
         fs: SegmentState::real_mode(22),
         gs: SegmentState::real_mode(23),
         ss: SegmentState::real_mode(24),
+        ..CpuState::default()
+    };
+
+    let cpu1 = CpuState {
+        rax: 0x101,
+        rbx: 0x102,
+        rcx: 0x103,
+        rdx: 0x104,
+        rsi: 0x105,
+        rdi: 0x106,
+        rbp: 0x107,
+        rsp: 0x108,
+        r8: 0x109,
+        r9: 0x10A,
+        r10: 0x10B,
+        r11: 0x10C,
+        r12: 0x10D,
+        r13: 0x10E,
+        r14: 0x10F,
+        r15: 0x110,
+        rip: 0x111,
+        rflags: 0x112,
+        mode: CpuMode::Real,
+        halted: false,
+        cs: SegmentState::real_mode(0x2000),
+        ds: SegmentState::real_mode(0x2001),
+        es: SegmentState::real_mode(0x2002),
+        fs: SegmentState::real_mode(0x2003),
+        gs: SegmentState::real_mode(0x2004),
+        ss: SegmentState::real_mode(0x2005),
         ..CpuState::default()
     };
 
@@ -169,9 +207,23 @@ fn make_source(seed: u64) -> RandomOrderSource {
     let mut dirty_pages = vec![4u64, 2, 0, 4, 1, 2];
     dirty_pages.shuffle(&mut rng);
 
+    let mut cpus = vec![
+        VcpuSnapshot {
+            apic_id: 0,
+            cpu: cpu0,
+            internal_state: Vec::new(),
+        },
+        VcpuSnapshot {
+            apic_id: 1,
+            cpu: cpu1,
+            internal_state: Vec::new(),
+        },
+    ];
+    cpus.shuffle(&mut rng);
+
     RandomOrderSource {
         meta,
-        cpu,
+        cpus,
         mmu,
         devices,
         disks,

@@ -45,6 +45,7 @@ This framing enables **backward-compatible schema evolution**:
 
 - `DEVICES` entries are written in canonical order: `(device_id, device_version, device_flags)`.
 - `DISKS` entries are written in canonical order: `disk_id`.
+- `CPUS` entries are written in canonical order: ascending `apic_id`.
 - Dirty-page RAM snapshots canonicalize the dirty page list: sorted ascending, deduplicated, and validated against the guest RAM size.
 
 ### Core sections (format v1)
