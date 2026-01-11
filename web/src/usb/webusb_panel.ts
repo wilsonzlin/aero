@@ -163,10 +163,10 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     document.createElement("br"),
     "For deeper inspection of protected interface classes and claimability, see ",
     Object.assign(document.createElement("a"), {
-      href: "/webusb_diagnostics.html",
+      href: "./webusb_diagnostics.html",
       target: "_blank",
       rel: "noopener",
-      textContent: "/webusb_diagnostics.html",
+      textContent: "./webusb_diagnostics.html",
     }),
     ".",
   );
