@@ -106,25 +106,32 @@ See [Validation rules](#validation-rules) for the “mixed 0/non-zero” policy.
 
 Each `HIDReportItem` maps to:
 
-1. A set of **global** items (apply to the next main item):
-    - `Usage Page` (`item.usagePage`)
-    - `Report Size` (`item.reportSize`)
-    - `Report Count` (`item.reportCount`)
-    - `Logical Minimum` / `Logical Maximum` (`item.logicalMinimum` / `item.logicalMaximum`)
-    - `Physical Minimum` / `Physical Maximum` (`item.physicalMinimum` / `item.physicalMaximum`)
-    - `Unit Exponent` (`item.unitExponent`)
-    - `Unit` (`item.unit`)
-2. A set of **local** items (consumed by the next main item only):
-    - either a `Usage` list (`item.usages`)
-    - or `Usage Minimum` / `Usage Maximum` (`item.usageMinimum` / `item.usageMaximum`)
-3. The **main item** itself:
-    - `Input(flags)` for input reports
-    - `Output(flags)` for output reports
-    - `Feature(flags)` for feature reports
+1. A set of **global** + **local** items that define the next main item.
+2. The **main item** itself:
+   - `Input(flags)` for input reports
+   - `Output(flags)` for output reports
+   - `Feature(flags)` for feature reports
 
 We treat the WebHID `HIDReportInfo` that the item came from as the authoritative “main item kind” (`Input` vs `Output` vs `Feature`).
 
 WebHID also exposes less-common HID locals (`strings`, `designators`) and related min/max fields. These are currently ignored by synthesis (see [Known limitations](#known-limitations)).
+
+### Deterministic per-item emission order
+
+Because we are regenerating bytes from metadata (not replaying the original descriptor), we emit a canonical sequence of items for each `HIDReportItem` (matching `crates/emulator/src/io/usb/hid/webhid.rs`):
+
+1. `Usage Page` (global): `item.usagePage`
+2. Usage locals:
+   - if `item.isRange`: `Usage Minimum` + `Usage Maximum` (`item.usageMinimum`/`item.usageMaximum`)
+   - else: one `Usage` item per entry in `item.usages`
+3. Other globals (in this order):
+   - `Logical Minimum` / `Logical Maximum`
+   - `Physical Minimum` / `Physical Maximum`
+   - `Unit Exponent`
+   - `Unit`
+   - `Report Size`
+   - `Report Count`
+4. Main item: `Input` / `Output` / `Feature`
 
 ---
 
