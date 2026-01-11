@@ -97,7 +97,7 @@ fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
 }
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
-    let version = ((stage_type as u32) << 16) | (5u32 << 4) | 0u32;
+    let version = ((stage_type as u32) << 16) | (5u32 << 4);
     let total_dwords = 2 + body_tokens.len();
     let mut tokens = Vec::with_capacity(total_dwords);
     tokens.push(version);

@@ -27,22 +27,17 @@ impl FramebufferSize {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AspectMode {
     /// Stretch to fill the canvas/surface.
     Stretch,
     /// Preserve aspect ratio (letterboxing/pillarboxing).
+    #[default]
     FitKeepAspect,
     /// Preserve aspect ratio using an integer scale factor when possible.
     ///
     /// If the surface is smaller than the framebuffer, this falls back to `FitKeepAspect`.
     IntegerScale,
-}
-
-impl Default for AspectMode {
-    fn default() -> Self {
-        Self::FitKeepAspect
-    }
 }
 
 impl AspectMode {
@@ -57,7 +52,7 @@ impl AspectMode {
 
 /// Presentation abstraction: a `wgpu` presenter (WebGPU/WebGL2 backends) or a stub backend.
 pub enum FramebufferPresenter<'a> {
-    Wgpu(WebGpuFramebufferPresenter<'a>),
+    Wgpu(Box<WebGpuFramebufferPresenter<'a>>),
     WebGl2Stub(WebGl2Stub),
 }
 
@@ -141,7 +136,7 @@ impl<'a> FramebufferPresenter<'a> {
             options.webgpu.clone(),
         )
         .await?;
-        Ok(FramebufferPresenter::Wgpu(presenter))
+        Ok(FramebufferPresenter::Wgpu(Box::new(presenter)))
     }
 
     /// Create a presenter for a browser `<canvas>` using WebGPU, with a WebGL2 fallback.
@@ -363,7 +358,6 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         backend_kind: BackendKind,
         options: WebGpuInitOptions,
     ) -> Result<Self, WebGpuInitError> {
-        let surface_size = surface_size;
         let config_size = surface_size.clamped_for_surface();
 
         let context =
@@ -758,7 +752,7 @@ fn preferred_present_mode(modes: &[wgpu::PresentMode]) -> wgpu::PresentMode {
 
 fn padded_bytes_per_row(unpadded_bytes_per_row: u32) -> u32 {
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    ((unpadded_bytes_per_row + align - 1) / align) * align
+    unpadded_bytes_per_row.div_ceil(align) * align
 }
 
 #[repr(C)]

@@ -178,11 +178,11 @@ fn handle_assist_syncs_bus_after_cr3_write() {
     // PD1: map linear 0x0000_0000 -> code_page, 0x0000_1000 -> page_a.
     phys.write_u32_raw(pd1_base, (pt1_base as u32) | flags);
     phys.write_u32_raw(pt1_base, (code_page as u32) | flags);
-    phys.write_u32_raw(pt1_base + 1 * 4, (page_a as u32) | flags);
+    phys.write_u32_raw(pt1_base + 4, (page_a as u32) | flags);
 
     // PD2: map linear 0x0000_1000 -> page_b (code mapping not required after the CR3 write).
     phys.write_u32_raw(pd2_base, (pt2_base as u32) | flags);
-    phys.write_u32_raw(pt2_base + 1 * 4, (page_b as u32) | flags);
+    phys.write_u32_raw(pt2_base + 4, (page_b as u32) | flags);
 
     phys.write_u32_raw(page_a, 0x1111_1111);
     phys.write_u32_raw(page_b, 0x2222_2222);
@@ -234,7 +234,7 @@ fn invlpg_flushes_pagingbus_translation() {
 
     phys.write_u32_raw(pd_base, (pt_base as u32) | flags);
     phys.write_u32_raw(pt_base, (code_page as u32) | flags);
-    phys.write_u32_raw(pt_base + 1 * 4, (page_a as u32) | flags);
+    phys.write_u32_raw(pt_base + 4, (page_a as u32) | flags);
 
     // Place distinguishable values in the backing physical pages.
     phys.write_u32_raw(page_a, 0x1111_1111);
@@ -269,7 +269,7 @@ fn invlpg_flushes_pagingbus_translation() {
 
     // Patch the PTE to point to page B without changing CR3.
     bus.inner_mut()
-        .write_u32_raw(pt_base + 1 * 4, (page_b as u32) | flags);
+        .write_u32_raw(pt_base + 4, (page_b as u32) | flags);
 
     // INVLPG should flush the cached translation so the second load sees page B.
     let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 2);
@@ -294,7 +294,7 @@ fn invlpg_flushes_translation_for_wrapped_linear_address() {
 
     phys.write_u32_raw(pd_base, (pt_base as u32) | flags);
     phys.write_u32_raw(pt_base, (code_page as u32) | flags);
-    phys.write_u32_raw(pt_base + 1 * 4, (page_a as u32) | flags);
+    phys.write_u32_raw(pt_base + 4, (page_a as u32) | flags);
 
     phys.write_u32_raw(page_a, 0x1111_1111);
     phys.write_u32_raw(page_b, 0x2222_2222);
@@ -335,7 +335,7 @@ fn invlpg_flushes_translation_for_wrapped_linear_address() {
 
     // Patch the PTE for linear 0x1000 to point to page B without changing CR3.
     bus.inner_mut()
-        .write_u32_raw(pt_base + 1 * 4, (page_b as u32) | flags);
+        .write_u32_raw(pt_base + 4, (page_b as u32) | flags);
 
     // INVLPG must invalidate based on the architecturally correct linear address
     // (32-bit wrap), so the second load sees page B.

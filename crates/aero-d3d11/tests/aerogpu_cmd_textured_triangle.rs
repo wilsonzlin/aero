@@ -51,7 +51,7 @@ fn begin_cmd(stream: &mut Vec<u8>, opcode: u32) -> usize {
     start
 }
 
-fn end_cmd(stream: &mut Vec<u8>, start: usize) {
+fn end_cmd(stream: &mut [u8], start: usize) {
     let size = (stream.len() - start) as u32;
     stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size.to_le_bytes());
@@ -100,7 +100,7 @@ fn make_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
     // Version token layout assumed by our decoder:
     // type in bits 16.., major in bits 4..7, minor in bits 0..3.
-    let version = ((stage_type as u32) << 16) | (5u32 << 4) | 0u32;
+    let version = ((stage_type as u32) << 16) | (5u32 << 4);
     let total_dwords = 2 + body_tokens.len();
     let mut tokens = Vec::with_capacity(total_dwords);
     tokens.push(version);

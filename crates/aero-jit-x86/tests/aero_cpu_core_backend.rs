@@ -245,8 +245,10 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
     let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
     let idx = backend.add_compiled_block(&wasm);
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
 
     let exit = backend.execute(idx, &mut cpu);
     assert_eq!(exit.next_rip, 0x2000);
@@ -290,8 +292,10 @@ fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
     let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
     let idx = backend.add_compiled_block(&wasm);
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
 
     let exit = backend.execute(idx, &mut cpu);
     assert!(exit.exit_to_interpreter);

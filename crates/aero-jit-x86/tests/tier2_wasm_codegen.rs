@@ -53,13 +53,11 @@ fn instantiate_trace(
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
     let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
-    define_mem_helpers(&mut store, &mut linker, memory.clone());
+    define_mem_helpers(&mut store, &mut linker, memory);
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -137,11 +135,9 @@ fn instantiate_trace_without_code_page_version(
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
     let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
-    define_mem_helpers(&mut store, &mut linker, memory.clone());
+    define_mem_helpers(&mut store, &mut linker, memory);
 
     // Crucially: do NOT define `env.code_page_version`. This should still instantiate when the
     // trace is compiled with `Tier2WasmOptions { code_version_guard_import: false, .. }`.
@@ -164,9 +160,7 @@ fn instantiate_trace_minimal(
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
     let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
     // Intentionally do not define any host helpers: memory-free traces should not import them.
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
@@ -257,7 +251,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
 
     // Reads.
     {
-        let mem = memory.clone();
+        let mem = memory;
         linker
             .define(
                 IMPORT_MODULE,
@@ -272,7 +266,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             .unwrap();
     }
     {
-        let mem = memory.clone();
+        let mem = memory;
         linker
             .define(
                 IMPORT_MODULE,
@@ -287,7 +281,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             .unwrap();
     }
     {
-        let mem = memory.clone();
+        let mem = memory;
         linker
             .define(
                 IMPORT_MODULE,
@@ -302,7 +296,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             .unwrap();
     }
     {
-        let mem = memory.clone();
+        let mem = memory;
         linker
             .define(
                 IMPORT_MODULE,
@@ -319,7 +313,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
 
     // Writes.
     {
-        let mem = memory.clone();
+        let mem = memory;
         linker
             .define(
                 IMPORT_MODULE,
@@ -335,7 +329,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             .unwrap();
     }
     {
-        let mem = memory.clone();
+        let mem = memory;
         linker
             .define(
                 IMPORT_MODULE,
@@ -351,7 +345,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             .unwrap();
     }
     {
-        let mem = memory.clone();
+        let mem = memory;
         linker
             .define(
                 IMPORT_MODULE,
@@ -461,8 +455,8 @@ fn write_cpu_state(bytes: &mut [u8], cpu: &aero_cpu_core::state::CpuState) {
 
 fn read_cpu_state(bytes: &[u8]) -> ([u64; 16], u64, u64) {
     let mut gpr = [0u64; 16];
-    for i in 0..16 {
-        gpr[i] = read_u64_le(bytes, abi::CPU_GPR_OFF[i] as usize);
+    for (i, reg) in gpr.iter_mut().enumerate() {
+        *reg = read_u64_le(bytes, abi::CPU_GPR_OFF[i] as usize);
     }
     let rip = read_u64_le(bytes, abi::CPU_RIP_OFF as usize);
     let rflags = read_u64_le(bytes, abi::CPU_RFLAGS_OFF as usize);

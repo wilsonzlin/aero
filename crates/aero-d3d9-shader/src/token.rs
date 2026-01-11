@@ -64,23 +64,21 @@ pub fn decode_src_param(tokens: &[u32], idx: &mut usize) -> SrcParam {
     let modifier = SrcModifier::from_raw(mod_raw);
 
     let mut relative = None;
-    if token & ADDR_MODE_RELATIVE != 0 {
-        if *idx < tokens.len() {
-            let rel_token = tokens[*idx];
-            *idx += 1;
-            if rel_token & 0x8000_0000 != 0 {
-                let rel_reg = decode_reg(rel_token);
-                let rel_swz = ((rel_token & SRC_SWIZZLE_MASK) >> SRC_SWIZZLE_SHIFT) as u8;
-                let rel_swizzle = Swizzle::from_byte(rel_swz);
-                relative = Some(RelativeAddress {
-                    reg: rel_reg,
-                    component: rel_swizzle.x,
-                });
-            } else {
-                // Relative token wasn't a register token; step back so it can be treated as an
-                // immediate by the caller.
-                *idx -= 1;
-            }
+    if token & ADDR_MODE_RELATIVE != 0 && *idx < tokens.len() {
+        let rel_token = tokens[*idx];
+        *idx += 1;
+        if rel_token & 0x8000_0000 != 0 {
+            let rel_reg = decode_reg(rel_token);
+            let rel_swz = ((rel_token & SRC_SWIZZLE_MASK) >> SRC_SWIZZLE_SHIFT) as u8;
+            let rel_swizzle = Swizzle::from_byte(rel_swz);
+            relative = Some(RelativeAddress {
+                reg: rel_reg,
+                component: rel_swizzle.x,
+            });
+        } else {
+            // Relative token wasn't a register token; step back so it can be treated as an
+            // immediate by the caller.
+            *idx -= 1;
         }
     }
 

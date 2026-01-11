@@ -140,11 +140,11 @@ fn virtio_input_posts_buffers_then_delivers_events() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -231,11 +231,11 @@ fn virtio_input_statusq_buffers_are_consumed() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -278,7 +278,7 @@ fn virtio_input_statusq_buffers_are_consumed() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     dev.bar0_write(
-        caps.notify + 1 * u64::from(caps.notify_mult),
+        caps.notify + u64::from(caps.notify_mult),
         &1u16.to_le_bytes(),
         &mut mem,
     );
@@ -297,12 +297,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let mut mem = GuestRam::new(0x10000);
 
     // ID_NAME (NUL-terminated string).
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_ID_NAME,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ID_NAME);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let payload = bar_read(&mut dev, caps.device + 8, size);
@@ -310,12 +305,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     assert_eq!(payload.last().copied(), Some(0));
 
     // ID_DEVIDS (BUS_VIRTUAL, virtio vendor id, keyboard product id, version).
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_ID_DEVIDS,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ID_DEVIDS);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
     assert_eq!(bar_read_u8(&mut dev, caps.device + 2), 8);
     let payload = bar_read(&mut dev, caps.device + 8, 8);
@@ -330,12 +320,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     );
 
     // EV_BITS: subsel=0 returns supported event types (keyboard: SYN/KEY/LED).
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_EV_BITS,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     assert_eq!(size, 128);
@@ -345,12 +330,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     assert_eq!(ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
 
     // EV_BITS: subsel=EV_KEY returns supported key bitmap (keyboard should include KEY_A).
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_EV_BITS,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_KEY as u8);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     assert_eq!(size, 128);
@@ -362,24 +342,14 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let mut dev = VirtioPciDevice::new(Box::new(mouse), Box::new(InterruptLog::default()));
     let caps = parse_caps(&dev);
 
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_ID_NAME,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ID_NAME);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let payload = bar_read(&mut dev, caps.device + 8, size);
     assert!(payload.starts_with(b"Aero Virtio Mouse"));
 
     // Mouse ID_DEVIDS uses product 0x0002.
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_ID_DEVIDS,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ID_DEVIDS);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
     assert_eq!(bar_read_u8(&mut dev, caps.device + 2), 8);
     let payload = bar_read(&mut dev, caps.device + 8, 8);
@@ -393,12 +363,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
         ]
     );
 
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_EV_BITS,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let ev_bits = bar_read(&mut dev, caps.device + 8, size);
@@ -407,12 +372,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     assert_eq!(ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
 
     // Mouse key bitmap includes BTN_LEFT.
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_EV_BITS,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_KEY as u8);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let key_bits = bar_read(&mut dev, caps.device + 8, size);
@@ -422,19 +382,14 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     );
 
     // Mouse rel bitmap includes REL_X.
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_EV_BITS,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_REL as u8);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let rel_bits = bar_read(&mut dev, caps.device + 8, size);
     assert_ne!(rel_bits[(REL_X / 8) as usize] & (1u8 << (REL_X % 8)), 0);
 
     // All selectors not explicitly required by the Win7 contract must return size=0.
-    bar_write_u8(&mut dev, &mut mem, caps.device + 0, 0xff);
+    bar_write_u8(&mut dev, &mut mem, caps.device, 0xff);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
     assert_eq!(bar_read_u8(&mut dev, caps.device + 2), 0);
 }
@@ -467,11 +422,7 @@ fn virtio_input_malformed_descriptor_chain_does_not_wedge_queue() {
     write_u16_le(&mut mem, used, 0).unwrap();
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
-    dev.bar0_write(
-        caps.notify + 0 * u64::from(caps.notify_mult),
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
 
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
     let used_id = read_u32_le(&mem, used + 4).unwrap();
@@ -528,7 +479,7 @@ fn virtio_pci_reserved_feature_select_reads_zero_and_ignores_writes() {
     let mut mem = GuestRam::new(0x10000);
 
     // device_feature_select values other than 0 or 1 must read as 0.
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 2);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 2);
     assert_eq!(bar_read_u32(&mut dev, caps.common + 0x04), 0);
 
     // driver_feature_select values other than 0 or 1 must read as 0 and ignore writes.
@@ -575,11 +526,11 @@ fn virtio_pci_notify_accepts_32bit_writes() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -622,7 +573,7 @@ fn virtio_pci_notify_accepts_32bit_writes() {
 
     // Contract v1 requires notify to accept 32-bit writes too.
     dev.bar0_write(
-        caps.notify + 1 * u64::from(caps.notify_mult),
+        caps.notify + u64::from(caps.notify_mult),
         &1u32.to_le_bytes(),
         &mut mem,
     );
@@ -687,9 +638,9 @@ fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
     );
 
     // Read offered features.
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
 
     // Write the offered features, plus one unsupported bit (EVENT_IDX = bit 29).
@@ -724,9 +675,9 @@ fn virtio_pci_clears_features_ok_when_driver_omits_version_1_in_modern_mode() {
     );
 
     // Read offered features.
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
 
     // Negotiate all the offered features except VERSION_1. The device must reject
@@ -808,11 +759,11 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -845,11 +796,7 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     // Queue kick only makes the buffer available; it should not raise an interrupt.
-    dev.bar0_write(
-        caps.notify + 0 * u64::from(caps.notify_mult),
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
     {
         let state = irq_state.borrow();
         assert_eq!(state.raised, 0);
@@ -873,7 +820,7 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
     }
 
     // Mutate some selector state so reset behavior is observable.
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1); // device_feature_select
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1); // device_feature_select
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1); // driver_feature_select
     bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1); // queue_select
 
@@ -897,7 +844,7 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
     assert_eq!((u64::from(avail_hi) << 32) | u64::from(avail_lo), 0);
     assert_eq!((u64::from(used_hi) << 32) | u64::from(used_lo), 0);
     assert_eq!(bar_read_u8(&mut dev, caps.common + 0x14), 0);
-    assert_eq!(bar_read_u32(&mut dev, caps.common + 0x00), 0);
+    assert_eq!(bar_read_u32(&mut dev, caps.common), 0);
     assert_eq!(bar_read_u32(&mut dev, caps.common + 0x08), 0);
     assert_eq!(bar_read_u16(&mut dev, caps.common + 0x16), 0);
     assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
@@ -924,11 +871,11 @@ fn virtio_pci_isr_read_acknowledges_and_deasserts_intx() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -974,11 +921,7 @@ fn virtio_pci_isr_read_acknowledges_and_deasserts_intx() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     // Kicking the queue only makes the buffers available; without events, it must not assert INTx.
-    dev.bar0_write(
-        caps.notify + 0 * u64::from(caps.notify_mult),
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 0);
     {
         let state = irq_state.borrow();
@@ -1066,11 +1009,11 @@ fn virtio_pci_no_interrupt_flag_suppresses_queue_interrupts() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -1112,7 +1055,7 @@ fn virtio_pci_no_interrupt_flag_suppresses_queue_interrupts() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     dev.bar0_write(
-        caps.notify + 1 * u64::from(caps.notify_mult),
+        caps.notify + u64::from(caps.notify_mult),
         &1u16.to_le_bytes(),
         &mut mem,
     );
@@ -1137,12 +1080,7 @@ fn virtio_pci_device_cfg_writes_do_not_raise_config_interrupt() {
 
     // Device config writes are used by virtio-input selector probing. They must not
     // trigger CONFIG interrupts; config IRQs are reserved for device-side changes.
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
-        caps.device + 0,
-        VIRTIO_INPUT_CFG_ID_NAME,
-    );
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ID_NAME);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
 
     let state = irq_state.borrow();

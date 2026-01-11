@@ -410,10 +410,8 @@ fn tree_get_or_create_path<'a>(root: &'a mut KeyTreeNode, path: &str) -> &'a mut
 }
 
 fn sort_tree(node: &mut KeyTreeNode) {
-    node.children
-        .sort_by(|a, b| a.name.to_uppercase().cmp(&b.name.to_uppercase()));
-    node.values
-        .sort_by(|a, b| a.name.to_uppercase().cmp(&b.name.to_uppercase()));
+    node.children.sort_by_key(|child| child.name.to_uppercase());
+    node.values.sort_by_key(|value| value.name.to_uppercase());
     for child in &mut node.children {
         sort_tree(child);
     }
@@ -424,7 +422,7 @@ fn hive_to_tree(key: &RegistryKey<'_>) -> Result<KeyTreeNode> {
 
     let mut values = key.values().map_err(|e| anyhow!("read values: {e}"))?;
     // Ensure stable output bytes: sort values by name before storing.
-    values.sort_by(|a, b| a.name().to_uppercase().cmp(&b.name().to_uppercase()));
+    values.sort_by_key(|value| value.name().to_uppercase());
 
     for value in values {
         node.values.push(KeyTreeValue {
@@ -437,7 +435,7 @@ fn hive_to_tree(key: &RegistryKey<'_>) -> Result<KeyTreeNode> {
     }
 
     let mut subkeys = key.subkeys().map_err(|e| anyhow!("read subkeys: {e}"))?;
-    subkeys.sort_by(|a, b| a.name().to_uppercase().cmp(&b.name().to_uppercase()));
+    subkeys.sort_by_key(|key| key.name().to_uppercase());
 
     for subkey in subkeys {
         node.children.push(hive_to_tree(&subkey)?);

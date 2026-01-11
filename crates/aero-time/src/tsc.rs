@@ -63,7 +63,7 @@ impl Tsc {
         }
         let numer = (delta_tsc as u128) * 1_000_000_000u128;
         let denom = self.freq_hz as u128;
-        let delta_ns = (numer + denom - 1) / denom;
+        let delta_ns = numer.div_ceil(denom);
         let delta_ns = if delta_ns > u64::MAX as u128 {
             u64::MAX
         } else {

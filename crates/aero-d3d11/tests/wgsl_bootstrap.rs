@@ -4,7 +4,7 @@ use aero_d3d11::{translate_sm4_to_wgsl_bootstrap, Sm4Program, WgslBootstrapError
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
     // Version token layout:
     // type in bits 16.., major in bits 4..7, minor in bits 0..3.
-    let version = ((stage_type as u32) << 16) | (5u32 << 4) | 0u32;
+    let version = ((stage_type as u32) << 16) | (5u32 << 4);
     let total_dwords = 2 + body_tokens.len();
     let mut tokens = Vec::with_capacity(total_dwords);
     tokens.push(version);

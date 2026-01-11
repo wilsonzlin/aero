@@ -181,8 +181,8 @@ impl CpuBus for SparseBus {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], aero_cpu_core::Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for i in 0..len {
-            buf[i] = self.read_u8_raw(vaddr.wrapping_add(i as u64));
+        for (i, slot) in buf.iter_mut().take(len).enumerate() {
+            *slot = self.read_u8_raw(vaddr.wrapping_add(i as u64));
         }
         Ok(buf)
     }
@@ -342,8 +342,8 @@ fn rep_movsb_df1_uses_bulk_copy_and_decrements() {
     state.set_flag(FLAG_DF, true);
     state.segments.ds.base = 0;
     state.segments.es.base = 0;
-    state.write_reg(Register::ESI, (src_start + count as u64 - 1) as u64);
-    state.write_reg(Register::EDI, (dst_start + count as u64 - 1) as u64);
+    state.write_reg(Register::ESI, src_start + count as u64 - 1);
+    state.write_reg(Register::EDI, dst_start + count as u64 - 1);
     state.write_reg(Register::ECX, count as u64);
 
     for i in 0..count as u64 {

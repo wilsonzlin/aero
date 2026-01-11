@@ -272,7 +272,7 @@ fn handle_dcl(
     outputs: &mut Vec<IoDecl>,
     samplers: &mut Vec<SamplerDecl>,
 ) -> Result<(), BuildError> {
-    let dst = match inst.operands.get(0) {
+    let dst = match inst.operands.first() {
         Some(Operand::Dst(dst)) => dst,
         _ => return Err(err(inst, "dcl missing destination operand")),
     };
@@ -318,7 +318,7 @@ fn handle_dcl(
 }
 
 fn handle_def_f32(inst: &DecodedInstruction, out: &mut Vec<ConstDefF32>) -> Result<(), BuildError> {
-    let dst = match inst.operands.get(0) {
+    let dst = match inst.operands.first() {
         Some(Operand::Dst(dst)) => dst,
         _ => return Err(err(inst, "def missing destination operand")),
     };
@@ -330,12 +330,12 @@ fn handle_def_f32(inst: &DecodedInstruction, out: &mut Vec<ConstDefF32>) -> Resu
     }
 
     let mut vals = [0f32; 4];
-    for i in 0..4 {
+    for (i, slot) in vals.iter_mut().enumerate() {
         let token = match inst.operands.get(1 + i) {
             Some(Operand::Imm32(v)) => *v,
             _ => return Err(err(inst, "def missing immediate constant tokens")),
         };
-        vals[i] = f32::from_bits(token);
+        *slot = f32::from_bits(token);
     }
 
     out.push(ConstDefF32 {
@@ -472,11 +472,7 @@ fn decode_compare_op(code: u8) -> CompareOp {
     }
 }
 
-fn push_binop<F>(
-    stack: &mut Vec<Frame>,
-    inst: &DecodedInstruction,
-    ctor: F,
-) -> Result<(), BuildError>
+fn push_binop<F>(stack: &mut [Frame], inst: &DecodedInstruction, ctor: F) -> Result<(), BuildError>
 where
     F: FnOnce(Dst, Src, Src, InstModifiers) -> IrOp,
 {
@@ -487,11 +483,7 @@ where
     push_stmt(stack, Stmt::Op(ctor(dst, src0, src1, modifiers)))
 }
 
-fn push_unop<F>(
-    stack: &mut Vec<Frame>,
-    inst: &DecodedInstruction,
-    ctor: F,
-) -> Result<(), BuildError>
+fn push_unop<F>(stack: &mut [Frame], inst: &DecodedInstruction, ctor: F) -> Result<(), BuildError>
 where
     F: FnOnce(Dst, Src, InstModifiers) -> IrOp,
 {
@@ -502,7 +494,7 @@ where
 }
 
 fn push_cmpop(
-    stack: &mut Vec<Frame>,
+    stack: &mut [Frame],
     inst: &DecodedInstruction,
     op: CompareOp,
 ) -> Result<(), BuildError> {
@@ -522,7 +514,7 @@ fn push_cmpop(
     )
 }
 
-fn push_setp(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), BuildError> {
+fn push_setp(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), BuildError> {
     let dst = extract_dst(inst, 0)?;
     if dst.reg.file != RegFile::Predicate {
         return Err(err(inst, "setp destination must be a predicate register"));
@@ -547,7 +539,7 @@ fn push_setp(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), Bu
     )
 }
 
-fn push_texld(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), BuildError> {
+fn push_texld(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), BuildError> {
     // `tex` (SM2/3) is `texld` / `texldp` depending on a flag we captured as an immediate.
     let dst = extract_dst(inst, 0)?;
     let coord = extract_src(inst, 1)?;
@@ -574,7 +566,7 @@ fn push_texld(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), B
     )
 }
 
-fn push_texldl(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), BuildError> {
+fn push_texldl(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), BuildError> {
     let dst = extract_dst(inst, 0)?;
     let coord = extract_src(inst, 1)?;
     let sampler_src = extract_src(inst, 2)?;
@@ -599,7 +591,7 @@ fn push_texldl(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), 
     )
 }
 
-fn push_texldd(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), BuildError> {
+fn push_texldd(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), BuildError> {
     let dst = extract_dst(inst, 0)?;
     let coord = extract_src(inst, 1)?;
     let ddx = extract_src(inst, 2)?;
@@ -626,7 +618,7 @@ fn push_texldd(stack: &mut Vec<Frame>, inst: &DecodedInstruction) -> Result<(), 
     )
 }
 
-fn push_stmt(stack: &mut Vec<Frame>, stmt: Stmt) -> Result<(), BuildError> {
+fn push_stmt(stack: &mut [Frame], stmt: Stmt) -> Result<(), BuildError> {
     match stack.last_mut() {
         Some(Frame::Root(block)) => block.stmts.push(stmt),
         Some(Frame::Loop { body }) => body.stmts.push(stmt),

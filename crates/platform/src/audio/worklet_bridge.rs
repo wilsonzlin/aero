@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn test_snapshot_restore_preserves_indices_and_capacity() {
         let mut rb = InterleavedRingBuffer::new(8, 2);
-        let written = rb.write_interleaved(&vec![1.0f32; 6 * 2]);
+        let written = rb.write_interleaved(&[1.0f32; 6 * 2]);
         assert_eq!(written, 6);
 
         let mut out = vec![0.0f32; 2 * 2];

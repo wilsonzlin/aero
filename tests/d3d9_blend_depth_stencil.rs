@@ -237,7 +237,7 @@ fn assert_rgba_near(actual: [u8; 4], expected: [u8; 4], tolerance: u8) {
     for i in 0..4 {
         let a = actual[i] as i16;
         let e = expected[i] as i16;
-        let diff = (a - e).abs() as u8;
+        let diff = (a - e).unsigned_abs() as u8;
         assert!(
             diff <= tolerance,
             "channel {}: actual={:?} expected={:?} tolerance={}",

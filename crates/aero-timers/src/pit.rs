@@ -62,7 +62,7 @@ impl Pit {
     fn ns_from_tick_ceil(tick: u64) -> u64 {
         let numer = (tick as u128) * 1_000_000_000u128;
         let denom = PIT_INPUT_HZ as u128;
-        ((numer + denom - 1) / denom) as u64
+        numer.div_ceil(denom) as u64
     }
 
     /// Write to the PIT command register (port 0x43).

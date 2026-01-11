@@ -39,9 +39,9 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
 fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
     let redtbl_low = 0x10u32 + gsi * 2;
     let redtbl_high = redtbl_low + 1;
-    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
     pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
-    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
     pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
 }
 

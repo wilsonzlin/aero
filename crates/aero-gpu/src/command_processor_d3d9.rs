@@ -23,15 +23,9 @@ use crate::protocol_d3d9::{
     STREAM_HEADER_LEN, STREAM_MAGIC, STREAM_VERSION_MAJOR,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ProcessorConfig {
     pub validation: bool,
-}
-
-impl Default for ProcessorConfig {
-    fn default() -> Self {
-        Self { validation: false }
-    }
 }
 
 #[derive(Debug, Clone)]

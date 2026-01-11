@@ -40,43 +40,12 @@ impl Vec4 {
         Self::new(v, v, v, v)
     }
 
-    pub fn add(self, rhs: Self) -> Self {
-        Self::new(
-            self.x + rhs.x,
-            self.y + rhs.y,
-            self.z + rhs.z,
-            self.w + rhs.w,
-        )
-    }
-
-    pub fn sub(self, rhs: Self) -> Self {
-        Self::new(
-            self.x - rhs.x,
-            self.y - rhs.y,
-            self.z - rhs.z,
-            self.w - rhs.w,
-        )
-    }
-
-    pub fn mul(self, rhs: Self) -> Self {
-        Self::new(
-            self.x * rhs.x,
-            self.y * rhs.y,
-            self.z * rhs.z,
-            self.w * rhs.w,
-        )
-    }
-
     pub fn mul_scalar(self, rhs: f32) -> Self {
         Self::new(self.x * rhs, self.y * rhs, self.z * rhs, self.w * rhs)
     }
 
     pub fn div_scalar(self, rhs: f32) -> Self {
         Self::new(self.x / rhs, self.y / rhs, self.z / rhs, self.w / rhs)
-    }
-
-    pub fn neg(self) -> Self {
-        Self::new(-self.x, -self.y, -self.z, -self.w)
     }
 
     pub fn abs(self) -> Self {
@@ -111,6 +80,53 @@ impl Vec4 {
     }
 }
 
+impl std::ops::Add for Vec4 {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(
+            self.x + rhs.x,
+            self.y + rhs.y,
+            self.z + rhs.z,
+            self.w + rhs.w,
+        )
+    }
+}
+
+impl std::ops::Sub for Vec4 {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::new(
+            self.x - rhs.x,
+            self.y - rhs.y,
+            self.z - rhs.z,
+            self.w - rhs.w,
+        )
+    }
+}
+
+impl std::ops::Mul for Vec4 {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self::new(
+            self.x * rhs.x,
+            self.y * rhs.y,
+            self.z * rhs.z,
+            self.w * rhs.w,
+        )
+    }
+}
+
+impl std::ops::Neg for Vec4 {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Self::new(-self.x, -self.y, -self.z, -self.w)
+    }
+}
+
 fn swizzle(v: Vec4, swz: Swizzle) -> Vec4 {
     let a = [v.x, v.y, v.z, v.w];
     let idx = |i: u8| a[i as usize];
@@ -120,14 +136,14 @@ fn swizzle(v: Vec4, swz: Swizzle) -> Vec4 {
 fn apply_src_modifier(v: Vec4, modifier: SrcModifier) -> Vec4 {
     match modifier {
         SrcModifier::None => v,
-        SrcModifier::Negate => v.neg(),
-        SrcModifier::Bias => v.sub(Vec4::splat(0.5)),
-        SrcModifier::BiasNegate => v.sub(Vec4::splat(0.5)).neg(),
-        SrcModifier::Sign => v.mul_scalar(2.0).sub(Vec4::splat(1.0)),
-        SrcModifier::SignNegate => v.mul_scalar(2.0).sub(Vec4::splat(1.0)).neg(),
-        SrcModifier::Comp => Vec4::splat(1.0).sub(v),
+        SrcModifier::Negate => -v,
+        SrcModifier::Bias => v - Vec4::splat(0.5),
+        SrcModifier::BiasNegate => -(v - Vec4::splat(0.5)),
+        SrcModifier::Sign => v.mul_scalar(2.0) - Vec4::splat(1.0),
+        SrcModifier::SignNegate => -(v.mul_scalar(2.0) - Vec4::splat(1.0)),
+        SrcModifier::Comp => Vec4::splat(1.0) - v,
         SrcModifier::X2 => v.mul_scalar(2.0),
-        SrcModifier::X2Negate => v.mul_scalar(2.0).neg(),
+        SrcModifier::X2Negate => -v.mul_scalar(2.0),
         SrcModifier::Dz => {
             let z = v.z.max(f32::EPSILON);
             v.div_scalar(z)
@@ -137,8 +153,8 @@ fn apply_src_modifier(v: Vec4, modifier: SrcModifier) -> Vec4 {
             v.div_scalar(w)
         }
         SrcModifier::Abs => v.abs(),
-        SrcModifier::AbsNegate => v.abs().neg(),
-        SrcModifier::Not => Vec4::splat(1.0).sub(v),
+        SrcModifier::AbsNegate => -v.abs(),
+        SrcModifier::Not => Vec4::splat(1.0) - v,
     }
 }
 
@@ -250,7 +266,7 @@ impl Texture2D {
                 let c01 = self.get(x0, y1);
                 let c11 = self.get(x1, y1);
 
-                let lerp = |a: Vec4, b: Vec4, t: f32| a.mul_scalar(1.0 - t).add(b.mul_scalar(t));
+                let lerp = |a: Vec4, b: Vec4, t: f32| a.mul_scalar(1.0 - t) + b.mul_scalar(t);
                 let cx0 = lerp(c00, c10, tx);
                 let cx1 = lerp(c01, c11, tx);
                 lerp(cx0, cx1, ty)
@@ -301,11 +317,11 @@ fn blend_factor(factor: BlendFactor, src: Vec4, dst: Vec4) -> Vec4 {
         BlendFactor::Zero => Vec4::splat(0.0),
         BlendFactor::One => Vec4::splat(1.0),
         BlendFactor::SrcColor => src,
-        BlendFactor::OneMinusSrcColor => Vec4::splat(1.0).sub(src),
+        BlendFactor::OneMinusSrcColor => Vec4::splat(1.0) - src,
         BlendFactor::SrcAlpha => Vec4::splat(src.w),
         BlendFactor::OneMinusSrcAlpha => Vec4::splat(1.0 - src.w),
         BlendFactor::DstColor => dst,
-        BlendFactor::OneMinusDstColor => Vec4::splat(1.0).sub(dst),
+        BlendFactor::OneMinusDstColor => Vec4::splat(1.0) - dst,
         BlendFactor::DstAlpha => Vec4::splat(dst.w),
         BlendFactor::OneMinusDstAlpha => Vec4::splat(1.0 - dst.w),
     }
@@ -317,12 +333,12 @@ fn blend(state: BlendState, src: Vec4, dst: Vec4) -> Vec4 {
     }
     let sf = blend_factor(state.src_factor, src, dst);
     let df = blend_factor(state.dst_factor, src, dst);
-    let s = src.mul(sf);
-    let d = dst.mul(df);
+    let s = src * sf;
+    let d = dst * df;
     match state.op {
-        BlendOp::Add => s.add(d),
-        BlendOp::Subtract => s.sub(d),
-        BlendOp::ReverseSubtract => d.sub(s),
+        BlendOp::Add => s + d,
+        BlendOp::Subtract => s - d,
+        BlendOp::ReverseSubtract => d - s,
     }
 }
 
@@ -521,7 +537,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let v = apply_result_modifier(a.add(b), inst.result_modifier);
+                        let v = apply_result_modifier(a + b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -536,7 +552,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let v = apply_result_modifier(a.sub(b), inst.result_modifier);
+                        let v = apply_result_modifier(a - b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -551,7 +567,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let v = apply_result_modifier(a.mul(b), inst.result_modifier);
+                        let v = apply_result_modifier(a * b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -599,7 +615,7 @@ fn run_vertex_shader(
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
                         let c = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants);
-                        let v = apply_result_modifier(a.mul(b).add(c), inst.result_modifier);
+                        let v = apply_result_modifier(a * b + c, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -842,7 +858,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let v = apply_result_modifier(a.add(b), inst.result_modifier);
+                        let v = apply_result_modifier(a + b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -857,7 +873,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let v = apply_result_modifier(a.sub(b), inst.result_modifier);
+                        let v = apply_result_modifier(a - b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -872,7 +888,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let v = apply_result_modifier(a.mul(b), inst.result_modifier);
+                        let v = apply_result_modifier(a * b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -920,7 +936,7 @@ fn run_pixel_shader(
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
                         let c = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
-                        let v = apply_result_modifier(a.mul(b).add(c), inst.result_modifier);
+                        let v = apply_result_modifier(a * b + c, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -1109,25 +1125,40 @@ fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
     (px - ax) * (by - ay) - (py - ay) * (bx - ax)
 }
 
-/// Draw a triangle list.
-pub fn draw(
-    target: &mut RenderTarget,
-    vs: &ShaderIr,
-    ps: &ShaderIr,
-    vertex_decl: &VertexDecl,
-    vertex_buffer: &[u8],
-    indices: Option<&[u16]>,
-    constants: &[Vec4; 256],
-    textures: &HashMap<u16, Texture2D>,
-    sampler_states: &HashMap<u16, SamplerState>,
+pub struct DrawCall<'a> {
+    pub vertex_decl: &'a VertexDecl,
+    pub vertex_buffer: &'a [u8],
+    pub indices: Option<&'a [u16]>,
+    pub constants: &'a [Vec4; 256],
+    pub textures: &'a HashMap<u16, Texture2D>,
+    pub sampler_states: &'a HashMap<u16, SamplerState>,
+    pub blend_state: BlendState,
+}
+
+struct PixelContext<'a> {
+    ps: &'a ShaderIr,
+    constants: &'a [Vec4; 256],
+    textures: &'a HashMap<u16, Texture2D>,
+    sampler_states: &'a HashMap<u16, SamplerState>,
     blend_state: BlendState,
-) {
+}
+
+/// Draw a triangle list.
+pub fn draw(target: &mut RenderTarget, vs: &ShaderIr, ps: &ShaderIr, call: DrawCall<'_>) {
+    let pixel_ctx = PixelContext {
+        ps,
+        constants: call.constants,
+        textures: call.textures,
+        sampler_states: call.sampler_states,
+        blend_state: call.blend_state,
+    };
+
     let fetch_vertex = |vertex_index: u32| -> HashMap<u16, Vec4> {
-        let base = vertex_index as usize * vertex_decl.stride as usize;
+        let base = vertex_index as usize * call.vertex_decl.stride as usize;
         let mut inputs = HashMap::<u16, Vec4>::new();
-        for (slot, element) in vertex_decl.elements.iter().enumerate() {
+        for (slot, element) in call.vertex_decl.elements.iter().enumerate() {
             let off = base + element.offset as usize;
-            let bytes = &vertex_buffer[off..off + element.ty.byte_size()];
+            let bytes = &call.vertex_buffer[off..off + element.ty.byte_size()];
             inputs.insert(slot as u16, read_vertex_element(bytes, element.ty));
         }
         inputs
@@ -1136,7 +1167,7 @@ pub fn draw(
     let mut verts = Vec::<ScreenVertex>::new();
     let mut emit_vertex = |vertex_index: u32| {
         let inputs = fetch_vertex(vertex_index);
-        let out = run_vertex_shader(vs, &inputs, constants);
+        let out = run_vertex_shader(vs, &inputs, call.constants);
         let cp = out.clip_pos;
         let inv_w = 1.0 / cp.w;
         let ndc_x = cp.x * inv_w;
@@ -1153,7 +1184,7 @@ pub fn draw(
     };
 
     // Process vertices. For simplicity we process all unique vertices referenced by indices or by draw order.
-    match indices {
+    match call.indices {
         Some(idx) => {
             let max = idx.iter().copied().max().unwrap_or(0) as u32;
             for i in 0..=max {
@@ -1164,21 +1195,11 @@ pub fn draw(
                 let a = &verts[tri[0] as usize];
                 let b = &verts[tri[1] as usize];
                 let c = &verts[tri[2] as usize];
-                rasterize_triangle(
-                    target,
-                    ps,
-                    a,
-                    b,
-                    c,
-                    constants,
-                    textures,
-                    sampler_states,
-                    blend_state,
-                );
+                rasterize_triangle(target, &pixel_ctx, a, b, c);
             }
         }
         None => {
-            let vertex_count = (vertex_buffer.len() / vertex_decl.stride as usize) as u32;
+            let vertex_count = (call.vertex_buffer.len() / call.vertex_decl.stride as usize) as u32;
             for i in 0..vertex_count {
                 emit_vertex(i);
             }
@@ -1186,17 +1207,7 @@ pub fn draw(
                 let a = &verts[tri[0] as usize];
                 let b = &verts[tri[1] as usize];
                 let c = &verts[tri[2] as usize];
-                rasterize_triangle(
-                    target,
-                    ps,
-                    a,
-                    b,
-                    c,
-                    constants,
-                    textures,
-                    sampler_states,
-                    blend_state,
-                );
+                rasterize_triangle(target, &pixel_ctx, a, b, c);
             }
         }
     }
@@ -1204,14 +1215,10 @@ pub fn draw(
 
 fn rasterize_triangle(
     target: &mut RenderTarget,
-    ps: &ShaderIr,
+    ctx: &PixelContext<'_>,
     a: &ScreenVertex,
     b: &ScreenVertex,
     c: &ScreenVertex,
-    constants: &[Vec4; 256],
-    textures: &HashMap<u16, Texture2D>,
-    sampler_states: &HashMap<u16, SamplerState>,
-    blend_state: BlendState,
 ) {
     let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
     let max_x = a.x.max(b.x).max(c.x).ceil().min(target.width as f32 - 1.0) as i32;
@@ -1269,10 +1276,7 @@ fn rasterize_triangle(
                             .copied()
                             .unwrap_or(Vec4::ZERO)
                             .mul_scalar(c.inv_w);
-                        let v = va
-                            .mul_scalar(b0)
-                            .add(vb.mul_scalar(b1))
-                            .add(vc.mul_scalar(b2))
+                        let v = (va.mul_scalar(b0) + vb.mul_scalar(b1) + vc.mul_scalar(b2))
                             .mul_scalar(w);
                         out.insert(k, v);
                     }
@@ -1282,9 +1286,16 @@ fn rasterize_triangle(
                 let attr = interp_map(&a.attr, &b.attr, &c.attr);
                 let tex = interp_map(&a.tex, &b.tex, &c.tex);
 
-                let color = run_pixel_shader(ps, &attr, &tex, constants, textures, sampler_states);
+                let color = run_pixel_shader(
+                    ctx.ps,
+                    &attr,
+                    &tex,
+                    ctx.constants,
+                    ctx.textures,
+                    ctx.sampler_states,
+                );
                 let dst = target.get(x as u32, y as u32);
-                let out = blend(blend_state, color, dst).clamp01();
+                let out = blend(ctx.blend_state, color, dst).clamp01();
                 target.set(x as u32, y as u32, out);
             }
         }

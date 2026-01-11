@@ -500,7 +500,7 @@ impl Emitter<'_> {
 
                 // Cross-page accesses are handled via the slow helper (rare but required for
                 // correctness).
-                let cross_limit = (PAGE_OFFSET_MASK as u64).saturating_sub(size_bytes as u64 - 1);
+                let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes as u64 - 1);
                 self.f
                     .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
                 self.f
@@ -557,7 +557,7 @@ impl Emitter<'_> {
                     MemSize::U64 => (8u32, self.imported.mem_write_u64),
                 };
 
-                let cross_limit = (PAGE_OFFSET_MASK as u64).saturating_sub(size_bytes as u64 - 1);
+                let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes as u64 - 1);
                 self.f
                     .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
                 self.f

@@ -467,6 +467,37 @@ pub(crate) fn calc_ea(
     }
 }
 
+pub(crate) fn read_mem<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    addr: u64,
+    bits: u32,
+) -> Result<u64, Exception> {
+    match bits {
+        8 => Ok(bus.read_u8(state.apply_a20(addr))? as u64),
+        16 => Ok(read_u16_wrapped(state, bus, addr)? as u64),
+        32 => Ok(read_u32_wrapped(state, bus, addr)? as u64),
+        64 => Ok(read_u64_wrapped(state, bus, addr)?),
+        _ => Err(Exception::InvalidOpcode),
+    }
+}
+
+pub(crate) fn write_mem<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    addr: u64,
+    bits: u32,
+    val: u64,
+) -> Result<(), Exception> {
+    match bits {
+        8 => bus.write_u8(state.apply_a20(addr), val as u8),
+        16 => write_u16_wrapped(state, bus, addr, val as u16),
+        32 => write_u32_wrapped(state, bus, addr, val as u32),
+        64 => write_u64_wrapped(state, bus, addr, val),
+        _ => Err(Exception::InvalidOpcode),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,36 +559,5 @@ mod tests {
             calc_ea(&state, &decoded.instr, next_ip, true).expect("calc_ea"),
             0x1000
         );
-    }
-}
-
-pub(crate) fn read_mem<B: CpuBus>(
-    state: &CpuState,
-    bus: &mut B,
-    addr: u64,
-    bits: u32,
-) -> Result<u64, Exception> {
-    match bits {
-        8 => Ok(bus.read_u8(state.apply_a20(addr))? as u64),
-        16 => Ok(read_u16_wrapped(state, bus, addr)? as u64),
-        32 => Ok(read_u32_wrapped(state, bus, addr)? as u64),
-        64 => Ok(read_u64_wrapped(state, bus, addr)?),
-        _ => Err(Exception::InvalidOpcode),
-    }
-}
-
-pub(crate) fn write_mem<B: CpuBus>(
-    state: &CpuState,
-    bus: &mut B,
-    addr: u64,
-    bits: u32,
-    val: u64,
-) -> Result<(), Exception> {
-    match bits {
-        8 => bus.write_u8(state.apply_a20(addr), val as u8),
-        16 => write_u16_wrapped(state, bus, addr, val as u16),
-        32 => write_u32_wrapped(state, bus, addr, val as u32),
-        64 => write_u64_wrapped(state, bus, addr, val),
-        _ => Err(Exception::InvalidOpcode),
     }
 }

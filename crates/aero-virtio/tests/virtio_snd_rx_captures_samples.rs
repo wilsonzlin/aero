@@ -143,67 +143,98 @@ fn configure_queue(
     write_u16_le(mem, used + 2, 0).unwrap();
 }
 
-fn submit_chain(
-    dev: &mut VirtioPciDevice,
-    mem: &mut GuestRam,
-    caps: &Caps,
+struct QueueSubmitter {
     queue_index: u16,
     desc_table: u64,
     avail_addr: u64,
     avail_idx: u16,
-    out_addr: u64,
-    out_len: u32,
-    in_addr: u64,
-    in_len: u32,
-) {
-    write_desc(mem, desc_table, 0, out_addr, out_len, VIRTQ_DESC_F_NEXT, 1);
-    write_desc(mem, desc_table, 1, in_addr, in_len, VIRTQ_DESC_F_WRITE, 0);
-
-    // Add to avail ring.
-    let elem_addr = avail_addr + 4 + u64::from(avail_idx) * 2;
-    write_u16_le(mem, elem_addr, 0).unwrap();
-    write_u16_le(mem, avail_addr + 2, avail_idx.wrapping_add(1)).unwrap();
-
-    dev.bar0_write(
-        caps.notify + u64::from(queue_index) * u64::from(caps.notify_mult),
-        &queue_index.to_le_bytes(),
-        mem,
-    );
 }
 
-fn submit_rx_chain(
-    dev: &mut VirtioPciDevice,
-    mem: &mut GuestRam,
-    caps: &Caps,
-    desc_table: u64,
-    avail_addr: u64,
-    avail_idx: u16,
-    hdr_addr: u64,
-    payload_addr: u64,
-    payload_len: u32,
-    resp_addr: u64,
-) {
-    write_desc(mem, desc_table, 0, hdr_addr, 8, VIRTQ_DESC_F_NEXT, 1);
-    write_desc(
-        mem,
-        desc_table,
-        1,
-        payload_addr,
-        payload_len,
-        VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
-        2,
-    );
-    write_desc(mem, desc_table, 2, resp_addr, 8, VIRTQ_DESC_F_WRITE, 0);
+impl QueueSubmitter {
+    fn new(queue_index: u16, desc_table: u64, avail_addr: u64) -> Self {
+        Self {
+            queue_index,
+            desc_table,
+            avail_addr,
+            avail_idx: 0,
+        }
+    }
 
-    let elem_addr = avail_addr + 4 + u64::from(avail_idx) * 2;
-    write_u16_le(mem, elem_addr, 0).unwrap();
-    write_u16_le(mem, avail_addr + 2, avail_idx.wrapping_add(1)).unwrap();
+    fn submit_out_in(
+        &mut self,
+        dev: &mut VirtioPciDevice,
+        mem: &mut GuestRam,
+        caps: &Caps,
+        out_desc: (u64, u32),
+        in_desc: (u64, u32),
+    ) {
+        let (out_addr, out_len) = out_desc;
+        let (in_addr, in_len) = in_desc;
+        write_desc(
+            mem,
+            self.desc_table,
+            0,
+            out_addr,
+            out_len,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            mem,
+            self.desc_table,
+            1,
+            in_addr,
+            in_len,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
 
-    dev.bar0_write(
-        caps.notify + u64::from(VIRTIO_SND_QUEUE_RX) * u64::from(caps.notify_mult),
-        &VIRTIO_SND_QUEUE_RX.to_le_bytes(),
-        mem,
-    );
+        // Add to avail ring.
+        let elem_addr = self.avail_addr + 4 + u64::from(self.avail_idx) * 2;
+        write_u16_le(mem, elem_addr, 0).unwrap();
+        self.avail_idx = self.avail_idx.wrapping_add(1);
+        write_u16_le(mem, self.avail_addr + 2, self.avail_idx).unwrap();
+
+        dev.bar0_write(
+            caps.notify + u64::from(self.queue_index) * u64::from(caps.notify_mult),
+            &self.queue_index.to_le_bytes(),
+            mem,
+        );
+    }
+
+    fn submit_rx(
+        &mut self,
+        dev: &mut VirtioPciDevice,
+        mem: &mut GuestRam,
+        caps: &Caps,
+        hdr_addr: u64,
+        payload_desc: (u64, u32),
+        resp_addr: u64,
+    ) {
+        let (payload_addr, payload_len) = payload_desc;
+        write_desc(mem, self.desc_table, 0, hdr_addr, 8, VIRTQ_DESC_F_NEXT, 1);
+        write_desc(
+            mem,
+            self.desc_table,
+            1,
+            payload_addr,
+            payload_len,
+            VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
+            2,
+        );
+        write_desc(mem, self.desc_table, 2, resp_addr, 8, VIRTQ_DESC_F_WRITE, 0);
+
+        let elem_addr = self.avail_addr + 4 + u64::from(self.avail_idx) * 2;
+        write_u16_le(mem, elem_addr, 0).unwrap();
+        self.avail_idx = self.avail_idx.wrapping_add(1);
+        write_u16_le(mem, self.avail_addr + 2, self.avail_idx).unwrap();
+
+        dev.bar0_write(
+            caps.notify + u64::from(self.queue_index) * u64::from(caps.notify_mult),
+            &self.queue_index.to_le_bytes(),
+            mem,
+        );
+    }
 }
 
 #[test]
@@ -235,12 +266,12 @@ fn virtio_snd_rx_captures_samples() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -291,7 +322,7 @@ fn virtio_snd_rx_captures_samples() {
     // Drive the capture state machine: SET_PARAMS -> PREPARE -> START.
     let ctrl_req = 0x7000;
     let ctrl_resp = 0x7100;
-    let mut ctrl_avail_idx = 0u16;
+    let mut ctrl_queue = QueueSubmitter::new(VIRTIO_SND_QUEUE_CONTROL, ctrl_desc, ctrl_avail);
 
     let mut set_params = [0u8; 24];
     set_params[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
@@ -304,20 +335,13 @@ fn virtio_snd_rx_captures_samples() {
     set_params[22] = VIRTIO_SND_PCM_RATE_48000;
     mem.write(ctrl_req, &set_params).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        set_params.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, set_params.len() as u32),
+        (ctrl_resp, 64),
     );
-    ctrl_avail_idx += 1;
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
         VIRTIO_SND_S_OK
@@ -330,20 +354,13 @@ fn virtio_snd_rx_captures_samples() {
     .concat();
     mem.write(ctrl_req, &prepare).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        prepare.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, prepare.len() as u32),
+        (ctrl_resp, 64),
     );
-    ctrl_avail_idx += 1;
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
         VIRTIO_SND_S_OK
@@ -357,22 +374,10 @@ fn virtio_snd_rx_captures_samples() {
     let hdr = [CAPTURE_STREAM_ID.to_le_bytes(), 0u32.to_le_bytes()].concat();
     mem.write(rx_hdr, &hdr).unwrap();
 
-    let mut rx_avail_idx = 0u16;
+    let mut rx_queue = QueueSubmitter::new(VIRTIO_SND_QUEUE_RX, rx_desc, rx_avail);
     mem.write(rx_payload, &[0xffu8; 8]).unwrap();
     mem.write(rx_resp, &[0xffu8; 8]).unwrap();
-    submit_rx_chain(
-        &mut dev,
-        &mut mem,
-        &caps,
-        rx_desc,
-        rx_avail,
-        rx_avail_idx,
-        rx_hdr,
-        rx_payload,
-        8,
-        rx_resp,
-    );
-    rx_avail_idx += 1;
+    rx_queue.submit_rx(&mut dev, &mut mem, &caps, rx_hdr, (rx_payload, 8), rx_resp);
 
     let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
     assert_eq!(
@@ -400,18 +405,12 @@ fn virtio_snd_rx_captures_samples() {
     .concat();
     mem.write(ctrl_req, &start).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        start.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, start.len() as u32),
+        (ctrl_resp, 64),
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -421,19 +420,7 @@ fn virtio_snd_rx_captures_samples() {
     // RX request: capture 4 mono samples (8 bytes).
     mem.write(rx_payload, &[0xffu8; 8]).unwrap();
     mem.write(rx_resp, &[0xffu8; 8]).unwrap();
-    submit_rx_chain(
-        &mut dev,
-        &mut mem,
-        &caps,
-        rx_desc,
-        rx_avail,
-        rx_avail_idx,
-        rx_hdr,
-        rx_payload,
-        8,
-        rx_resp,
-    );
-    rx_avail_idx += 1;
+    rx_queue.submit_rx(&mut dev, &mut mem, &caps, rx_hdr, (rx_payload, 8), rx_resp);
 
     let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
     assert_eq!(
@@ -457,18 +444,7 @@ fn virtio_snd_rx_captures_samples() {
     // count the underrun + dropped samples.
     mem.write(rx_payload, &[0xffu8; 8]).unwrap();
     mem.write(rx_resp, &[0xffu8; 8]).unwrap();
-    submit_rx_chain(
-        &mut dev,
-        &mut mem,
-        &caps,
-        rx_desc,
-        rx_avail,
-        rx_avail_idx,
-        rx_hdr,
-        rx_payload,
-        8,
-        rx_resp,
-    );
+    rx_queue.submit_rx(&mut dev, &mut mem, &caps, rx_hdr, (rx_payload, 8), rx_resp);
 
     let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
     assert_eq!(
@@ -534,12 +510,12 @@ fn virtio_snd_rx_resamples_capture_rate_to_guest_48k() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -590,7 +566,7 @@ fn virtio_snd_rx_resamples_capture_rate_to_guest_48k() {
     // Drive the capture state machine: SET_PARAMS -> PREPARE -> START.
     let ctrl_req = 0x7000;
     let ctrl_resp = 0x7100;
-    let mut ctrl_avail_idx = 0u16;
+    let mut ctrl_queue = QueueSubmitter::new(VIRTIO_SND_QUEUE_CONTROL, ctrl_desc, ctrl_avail);
 
     let mut set_params = [0u8; 24];
     set_params[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
@@ -603,20 +579,13 @@ fn virtio_snd_rx_resamples_capture_rate_to_guest_48k() {
     set_params[22] = VIRTIO_SND_PCM_RATE_48000;
     mem.write(ctrl_req, &set_params).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        set_params.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, set_params.len() as u32),
+        (ctrl_resp, 64),
     );
-    ctrl_avail_idx += 1;
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
         VIRTIO_SND_S_OK
@@ -629,20 +598,13 @@ fn virtio_snd_rx_resamples_capture_rate_to_guest_48k() {
     .concat();
     mem.write(ctrl_req, &prepare).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        prepare.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, prepare.len() as u32),
+        (ctrl_resp, 64),
     );
-    ctrl_avail_idx += 1;
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
         VIRTIO_SND_S_OK
@@ -655,18 +617,12 @@ fn virtio_snd_rx_resamples_capture_rate_to_guest_48k() {
     .concat();
     mem.write(ctrl_req, &start).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        start.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, start.len() as u32),
+        (ctrl_resp, 64),
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -681,21 +637,10 @@ fn virtio_snd_rx_resamples_capture_rate_to_guest_48k() {
     let hdr = [CAPTURE_STREAM_ID.to_le_bytes(), 0u32.to_le_bytes()].concat();
     mem.write(rx_hdr, &hdr).unwrap();
 
-    let rx_avail_idx = 0u16;
+    let mut rx_queue = QueueSubmitter::new(VIRTIO_SND_QUEUE_RX, rx_desc, rx_avail);
     mem.write(rx_payload, &[0xffu8; 96]).unwrap();
     mem.write(rx_resp, &[0xffu8; 8]).unwrap();
-    submit_rx_chain(
-        &mut dev,
-        &mut mem,
-        &caps,
-        rx_desc,
-        rx_avail,
-        rx_avail_idx,
-        rx_hdr,
-        rx_payload,
-        96,
-        rx_resp,
-    );
+    rx_queue.submit_rx(&mut dev, &mut mem, &caps, rx_hdr, (rx_payload, 96), rx_resp);
 
     let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
     assert_eq!(

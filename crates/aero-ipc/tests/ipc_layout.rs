@@ -102,7 +102,7 @@ fn rejects_reserved_and_capacity_mismatches() {
 
     // Reserved field must be 0.
     let mut bad_reserved = bytes.clone();
-    let desc0_base = ipc_header::BYTES + 0 * queue_desc::BYTES;
+    let desc0_base = ipc_header::BYTES;
     write_u32_le(&mut bad_reserved, desc0_base + queue_desc::RESERVED * 4, 1);
     assert!(matches!(
         parse_ipc_buffer(&bad_reserved),
@@ -111,7 +111,7 @@ fn rejects_reserved_and_capacity_mismatches() {
 
     // Ring header capacity must match descriptor capacity.
     let mut bad_ring_cap = bytes.clone();
-    let q1_offset_base = ipc_header::BYTES + 1 * queue_desc::BYTES;
+    let q1_offset_base = ipc_header::BYTES + queue_desc::BYTES;
     let q1_offset_bytes = u32::from_le_bytes(
         bad_ring_cap[q1_offset_base + queue_desc::OFFSET_BYTES * 4
             ..q1_offset_base + queue_desc::OFFSET_BYTES * 4 + 4]

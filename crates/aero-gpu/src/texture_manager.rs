@@ -153,7 +153,7 @@ impl From<SamplerDesc> for SamplerKey {
 }
 
 impl SamplerDesc {
-    fn to_wgpu(&self) -> wgpu::SamplerDescriptor<'_> {
+    fn to_wgpu(self) -> wgpu::SamplerDescriptor<'static> {
         wgpu::SamplerDescriptor {
             label: None,
             address_mode_u: self.address_mode_u,
@@ -428,9 +428,11 @@ impl<'a> TextureManager<'a> {
 
         match selection.upload_transform {
             TextureUploadTransform::Direct => upload_direct(
-                self.device,
-                self.queue,
-                &mut self.stats,
+                UploadCtx {
+                    device: self.device,
+                    queue: self.queue,
+                    stats: &mut self.stats,
+                },
                 &texture,
                 region,
                 requested_format,
@@ -438,8 +440,8 @@ impl<'a> TextureManager<'a> {
                 data,
             ),
             TextureUploadTransform::Bc1ToRgba8 => {
-                let expected = ((region.size.width + 3) / 4) as usize
-                    * ((region.size.height + 3) / 4) as usize
+                let expected = region.size.width.div_ceil(4) as usize
+                    * region.size.height.div_ceil(4) as usize
                     * 8;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
@@ -464,8 +466,8 @@ impl<'a> TextureManager<'a> {
                 )
             }
             TextureUploadTransform::Bc2ToRgba8 => {
-                let expected = ((region.size.width + 3) / 4) as usize
-                    * ((region.size.height + 3) / 4) as usize
+                let expected = region.size.width.div_ceil(4) as usize
+                    * region.size.height.div_ceil(4) as usize
                     * 16;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
@@ -490,8 +492,8 @@ impl<'a> TextureManager<'a> {
                 )
             }
             TextureUploadTransform::Bc3ToRgba8 => {
-                let expected = ((region.size.width + 3) / 4) as usize
-                    * ((region.size.height + 3) / 4) as usize
+                let expected = region.size.width.div_ceil(4) as usize
+                    * region.size.height.div_ceil(4) as usize
                     * 16;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
@@ -516,8 +518,8 @@ impl<'a> TextureManager<'a> {
                 )
             }
             TextureUploadTransform::Bc7ToRgba8 => {
-                let expected = ((region.size.width + 3) / 4) as usize
-                    * ((region.size.height + 3) / 4) as usize
+                let expected = region.size.width.div_ceil(4) as usize
+                    * region.size.height.div_ceil(4) as usize
                     * 16;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
@@ -627,21 +629,21 @@ fn estimate_mip_level_size_bytes(format: wgpu::TextureFormat, width: u32, height
             width as u64 * height as u64 * 4
         }
         wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
-            let blocks_w = (width + 3) / 4;
-            let blocks_h = (height + 3) / 4;
+            let blocks_w = width.div_ceil(4);
+            let blocks_h = height.div_ceil(4);
             blocks_w as u64 * blocks_h as u64 * 8
         }
         wgpu::TextureFormat::Bc2RgbaUnorm | wgpu::TextureFormat::Bc2RgbaUnormSrgb => {
-            let blocks_w = (width + 3) / 4;
-            let blocks_h = (height + 3) / 4;
+            let blocks_w = width.div_ceil(4);
+            let blocks_h = height.div_ceil(4);
             blocks_w as u64 * blocks_h as u64 * 16
         }
         wgpu::TextureFormat::Bc3RgbaUnorm
         | wgpu::TextureFormat::Bc3RgbaUnormSrgb
         | wgpu::TextureFormat::Bc7RgbaUnorm
         | wgpu::TextureFormat::Bc7RgbaUnormSrgb => {
-            let blocks_w = (width + 3) / 4;
-            let blocks_h = (height + 3) / 4;
+            let blocks_w = width.div_ceil(4);
+            let blocks_h = height.div_ceil(4);
             blocks_w as u64 * blocks_h as u64 * 16
         }
         _ => width as u64 * height as u64 * 4,
@@ -649,32 +651,71 @@ fn estimate_mip_level_size_bytes(format: wgpu::TextureFormat, width: u32, height
 }
 
 fn upload_direct(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    stats: &mut TextureManagerStats,
+    ctx: UploadCtx<'_>,
     texture: &wgpu::Texture,
     region: TextureRegion,
     format: TextureFormat,
     mip_size: wgpu::Extent3d,
     data: &[u8],
 ) -> Result<(), TextureManagerError> {
+    let UploadCtx {
+        device,
+        queue,
+        stats,
+    } = ctx;
     match format {
         TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb => {
             upload_rgba8(device, queue, stats, texture, region, data)
         }
 
-        TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => {
-            upload_bc(device, queue, stats, texture, region, mip_size, data, 8)
-        }
-        TextureFormat::Bc2RgbaUnorm | TextureFormat::Bc2RgbaUnormSrgb => {
-            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
-        }
-        TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => {
-            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
-        }
-        TextureFormat::Bc7RgbaUnorm | TextureFormat::Bc7RgbaUnormSrgb => {
-            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
-        }
+        TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => upload_bc(
+            UploadCtx {
+                device,
+                queue,
+                stats,
+            },
+            texture,
+            region,
+            mip_size,
+            data,
+            8,
+        ),
+        TextureFormat::Bc2RgbaUnorm | TextureFormat::Bc2RgbaUnormSrgb => upload_bc(
+            UploadCtx {
+                device,
+                queue,
+                stats,
+            },
+            texture,
+            region,
+            mip_size,
+            data,
+            16,
+        ),
+        TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => upload_bc(
+            UploadCtx {
+                device,
+                queue,
+                stats,
+            },
+            texture,
+            region,
+            mip_size,
+            data,
+            16,
+        ),
+        TextureFormat::Bc7RgbaUnorm | TextureFormat::Bc7RgbaUnormSrgb => upload_bc(
+            UploadCtx {
+                device,
+                queue,
+                stats,
+            },
+            texture,
+            region,
+            mip_size,
+            data,
+            16,
+        ),
     }
 }
 
@@ -701,9 +742,11 @@ fn upload_rgba8(
     let layout_rows = height;
 
     upload_with_alignment(
-        device,
-        queue,
-        stats,
+        UploadCtx {
+            device,
+            queue,
+            stats,
+        },
         texture,
         region,
         data,
@@ -715,17 +758,20 @@ fn upload_rgba8(
 }
 
 fn upload_bc(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    stats: &mut TextureManagerStats,
+    ctx: UploadCtx<'_>,
     texture: &wgpu::Texture,
     region: TextureRegion,
     mip_size: wgpu::Extent3d,
     data: &[u8],
     block_bytes: u32,
 ) -> Result<(), TextureManagerError> {
+    let UploadCtx {
+        device,
+        queue,
+        stats,
+    } = ctx;
     // Origin must be block-aligned.
-    if region.origin.x % 4 != 0 || region.origin.y % 4 != 0 {
+    if !region.origin.x.is_multiple_of(4) || !region.origin.y.is_multiple_of(4) {
         return Err(TextureManagerError::BcRegionNotBlockAligned {
             origin_x: region.origin.x,
             origin_y: region.origin.y,
@@ -737,8 +783,10 @@ fn upload_bc(
     }
 
     // Size must be block-aligned unless the copy reaches the mip edge.
-    if (region.size.width % 4 != 0 && region.origin.x + region.size.width != mip_size.width)
-        || (region.size.height % 4 != 0 && region.origin.y + region.size.height != mip_size.height)
+    if (!region.size.width.is_multiple_of(4)
+        && region.origin.x + region.size.width != mip_size.width)
+        || (!region.size.height.is_multiple_of(4)
+            && region.origin.y + region.size.height != mip_size.height)
     {
         return Err(TextureManagerError::BcRegionNotBlockAligned {
             origin_x: region.origin.x,
@@ -750,8 +798,8 @@ fn upload_bc(
         });
     }
 
-    let blocks_w = (region.size.width + 3) / 4;
-    let blocks_h = (region.size.height + 3) / 4;
+    let blocks_w = region.size.width.div_ceil(4);
+    let blocks_h = region.size.height.div_ceil(4);
     let unpadded_bpr = blocks_w * block_bytes;
     let expected = unpadded_bpr as usize * blocks_h as usize;
     if data.len() != expected {
@@ -765,9 +813,11 @@ fn upload_bc(
     let layout_rows = blocks_h;
 
     upload_with_alignment(
-        device,
-        queue,
-        stats,
+        UploadCtx {
+            device,
+            queue,
+            stats,
+        },
         texture,
         region,
         data,
@@ -778,10 +828,14 @@ fn upload_bc(
     Ok(())
 }
 
+struct UploadCtx<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    stats: &'a mut TextureManagerStats,
+}
+
 fn upload_with_alignment(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    stats: &mut TextureManagerStats,
+    ctx: UploadCtx<'_>,
     texture: &wgpu::Texture,
     region: TextureRegion,
     data: &[u8],
@@ -789,6 +843,11 @@ fn upload_with_alignment(
     padded_bpr: u32,
     layout_rows: u32,
 ) {
+    let UploadCtx {
+        device,
+        queue,
+        stats,
+    } = ctx;
     let needs_padding = padded_bpr != unpadded_bpr;
     let threshold = 256 * 1024usize;
 

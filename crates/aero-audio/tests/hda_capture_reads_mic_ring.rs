@@ -15,7 +15,7 @@ fn hda_capture_reads_from_mic_ring_buffer() {
     hda.codec_mut().execute_verb(4, set_stream_ch);
 
     // 48kHz, 16-bit, mono.
-    let fmt_raw: u16 = (1 << 4) | 0x0;
+    let fmt_raw: u16 = 1 << 4;
     let set_fmt = (0x200u32 << 8) | (fmt_raw as u8 as u32);
     hda.codec_mut().execute_verb(4, set_fmt);
 
@@ -26,7 +26,7 @@ fn hda_capture_reads_from_mic_ring_buffer() {
     let pcm_len_bytes = frames * bytes_per_frame;
 
     // One BDL entry pointing at the capture buffer.
-    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u64(bdl_base, pcm_base);
     mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base + 12, 0);
 

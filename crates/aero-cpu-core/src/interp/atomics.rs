@@ -398,8 +398,8 @@ fn exec_cmpxchg8b<B: Bus>(
         return Err(ExecError::InvalidOpcode(0));
     }
     let addr = effective_address(cpu, inst)?;
-    let expected = ((cpu.regs.get(2, 4, false) as u64) << 32) | cpu.regs.get(0, 4, false) as u64;
-    let replacement = ((cpu.regs.get(1, 4, false) as u64) << 32) | cpu.regs.get(3, 4, false) as u64;
+    let expected = (cpu.regs.get(2, 4, false) << 32) | cpu.regs.get(0, 4, false);
+    let replacement = (cpu.regs.get(1, 4, false) << 32) | cpu.regs.get(3, 4, false);
 
     let (old, swapped) = if inst.prefixes.lock {
         atomic_rmw_sized(cpu, bus, addr, 8, |old| {
@@ -961,8 +961,7 @@ fn atomic_rmw_sized<B: Bus, R>(
             let (new, r) = f(old as u64);
             (new as u32, r)
         }),
-        8 => bus.atomic_rmw::<u64, _>(addr, |old| f(old)),
-        _ => bus.atomic_rmw::<u64, _>(addr, |old| f(old)),
+        _ => bus.atomic_rmw::<u64, _>(addr, f),
     };
     cpu.log_event("atomic_rmw");
     cpu.end_atomic();

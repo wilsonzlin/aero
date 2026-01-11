@@ -61,7 +61,7 @@ pub fn disassemble_sm2_sm3(shader_type: ShaderType, tokens: &[u32]) -> String {
                 let _ = write!(out, "{sep}{}", format_operand(shader_type, arg));
             }
         }
-        let _ = writeln!(out, "");
+        let _ = writeln!(out);
 
         i += len;
     }

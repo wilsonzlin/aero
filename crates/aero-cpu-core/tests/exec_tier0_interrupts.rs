@@ -3,6 +3,7 @@ use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF, SEG_ACCESS_PRESENT};
 use aero_x86::Register;
 
+#[allow(clippy::too_many_arguments)]
 fn make_descriptor(
     base: u32,
     limit_raw: u32,

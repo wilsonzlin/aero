@@ -34,8 +34,8 @@ fn boot_sector_read_via_ide_pio() {
     ide.write_u8(0x1F7, ATA_CMD_READ_SECTORS, &irq14, &irq15);
 
     let mut buf = [0u8; SECTOR_SIZE];
-    for i in 0..SECTOR_SIZE {
-        buf[i] = ide.read_u8(0x1F0, &irq14, &irq15);
+    for byte in buf.iter_mut() {
+        *byte = ide.read_u8(0x1F0, &irq14, &irq15);
     }
 
     assert_eq!(&buf[0..4], b"BOOT");
@@ -64,7 +64,7 @@ fn boot_sector_read_via_ahci_dma() {
     let ctba = 0x3000;
     let data_buf = 0x4000;
 
-    ahci.write_u32(0x100 + 0x00, clb as u32);
+    ahci.write_u32(0x100, clb as u32);
     ahci.write_u32(0x100 + 0x08, fb as u32);
     ahci.write_u32(0x04, (1 << 1) | (1 << 31)); // GHC.IE | GHC.AE
     ahci.write_u32(0x100 + 0x14, 1); // PxIE.DHRE
@@ -97,7 +97,7 @@ fn boot_sector_read_via_ahci_dma() {
     ahci.write_u32(0x100 + 0x38, 1);
     ahci.process(&mut mem);
 
-    assert_eq!(irq.level(), true);
+    assert!(irq.level());
 
     let mut out = [0u8; SECTOR_SIZE];
     mem.read(data_buf, &mut out);

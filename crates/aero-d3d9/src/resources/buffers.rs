@@ -110,7 +110,7 @@ impl VertexBuffer {
         }
 
         let align = wgpu::COPY_BUFFER_ALIGNMENT;
-        if (offset as u64) % align != 0 || (size as u64) % align != 0 {
+        if !(offset as u64).is_multiple_of(align) || !(size as u64).is_multiple_of(align) {
             return Err(anyhow!(
                 "vertex buffer lock range must be 4-byte aligned (offset {}, size {})",
                 offset,
@@ -135,15 +135,7 @@ impl VertexBuffer {
         });
         self.lock_data.resize(size as usize, 0);
 
-        if flags.contains(LockFlags::READONLY) {
-            if let Some(shadow) = &self.shadow {
-                let start = offset as usize;
-                let end = start + size as usize;
-                self.lock_data
-                    .as_mut_slice()
-                    .copy_from_slice(&shadow[start..end]);
-            }
-        } else if !flags.contains(LockFlags::DISCARD) {
+        if flags.contains(LockFlags::READONLY) || !flags.contains(LockFlags::DISCARD) {
             if let Some(shadow) = &self.shadow {
                 let start = offset as usize;
                 let end = start + size as usize;
@@ -163,7 +155,9 @@ impl VertexBuffer {
 
         if !lock.flags.contains(LockFlags::READONLY) {
             let align = wgpu::COPY_BUFFER_ALIGNMENT;
-            if (lock.offset as u64) % align != 0 || (lock.size as u64) % align != 0 {
+            if !(lock.offset as u64).is_multiple_of(align)
+                || !(lock.size as u64).is_multiple_of(align)
+            {
                 return Err(anyhow!(
                     "vertex buffer unlock range must be 4-byte aligned (offset {}, size {})",
                     lock.offset,
@@ -260,13 +254,7 @@ impl IndexBuffer {
         });
         self.lock_data.resize(size as usize, 0);
 
-        if flags.contains(LockFlags::READONLY) {
-            let start = offset as usize;
-            let end = start + size as usize;
-            self.lock_data
-                .as_mut_slice()
-                .copy_from_slice(&self.shadow[start..end]);
-        } else if !flags.contains(LockFlags::DISCARD) {
+        if flags.contains(LockFlags::READONLY) || !flags.contains(LockFlags::DISCARD) {
             let start = offset as usize;
             let end = start + size as usize;
             self.lock_data
@@ -352,7 +340,7 @@ impl TransientBufferArena {
         data: &[u8],
         alignment: u64,
     ) -> (Arc<wgpu::Buffer>, u64, u64) {
-        let copy_alignment = wgpu::COPY_BUFFER_ALIGNMENT as u64;
+        let copy_alignment = wgpu::COPY_BUFFER_ALIGNMENT;
         let aligned = align_up_u64(self.cursor, alignment.max(copy_alignment));
         let padded_len = align_up_u64(data.len() as u64, copy_alignment);
         let required = aligned + padded_len;
@@ -413,7 +401,7 @@ impl ResourceManager {
             return Err(anyhow!("vertex buffer id already exists: {}", id));
         }
 
-        if (desc.size_bytes as u64) % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+        if !(desc.size_bytes as u64).is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT) {
             return Err(anyhow!(
                 "vertex buffer size must be 4-byte aligned for WebGPU copies (got {})",
                 desc.size_bytes

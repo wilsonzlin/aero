@@ -173,6 +173,7 @@ fn index_devices(devices: &[DeviceEntry]) -> Result<BTreeMap<String, DeviceEntry
 }
 
 fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<()> {
+    let rev_re = regex::Regex::new(r"(?i)&REV_([0-9A-F]{2})").expect("static regex must compile");
     for (name, dev) in devices {
         let vendor = parse_hex_u16(&dev.pci_vendor_id)
             .with_context(|| format!("{name}: invalid pci_vendor_id"))?;
@@ -252,8 +253,6 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
             // tooling convenience, but it must contain at least one REV_01-qualified HWID and must
             // not include any other REV_.. values.
             let mut revs = BTreeSet::<String>::new();
-            let rev_re =
-                regex::Regex::new(r"(?i)&REV_([0-9A-F]{2})").expect("static regex must compile");
             for pat in &dev.hardware_id_patterns {
                 for caps in rev_re.captures_iter(pat) {
                     let rev = caps.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -925,7 +924,11 @@ fn parse_inf_active_pci_hwids(inf_text: &str) -> BTreeSet<String> {
         if line.is_empty() {
             continue;
         }
-        let candidate = line.split(',').map(|p| p.trim()).last().unwrap_or_default();
+        let candidate = line
+            .split(',')
+            .map(|p| p.trim())
+            .next_back()
+            .unwrap_or_default();
         if candidate.to_ascii_uppercase().starts_with("PCI\\VEN_") {
             out.insert(candidate.to_string());
         }

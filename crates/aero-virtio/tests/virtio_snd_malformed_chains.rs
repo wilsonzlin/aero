@@ -99,12 +99,12 @@ fn negotiate_features(dev: &mut VirtioPciDevice, mem: &mut GuestRam, caps: &Caps
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(dev, mem, caps.common + 0x00, 0);
+    bar_write_u32(dev, mem, caps.common, 0);
     let f0 = bar_read_u32(dev, caps.common + 0x04);
     bar_write_u32(dev, mem, caps.common + 0x08, 0);
     bar_write_u32(dev, mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(dev, mem, caps.common + 0x00, 1);
+    bar_write_u32(dev, mem, caps.common, 1);
     let f1 = bar_read_u32(dev, caps.common + 0x04);
     bar_write_u32(dev, mem, caps.common + 0x08, 1);
     bar_write_u32(dev, mem, caps.common + 0x0c, f1);

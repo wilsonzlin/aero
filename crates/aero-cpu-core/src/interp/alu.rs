@@ -14,7 +14,7 @@ fn sign_bit(size: usize) -> u64 {
 }
 
 fn parity(byte: u8) -> bool {
-    byte.count_ones() % 2 == 0
+    byte.count_ones().is_multiple_of(2)
 }
 
 pub fn sub_with_flags(

@@ -58,12 +58,10 @@ fn instantiate(
     let mut linker = Linker::new(&engine);
 
     let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
-    define_mem_helpers(&mut store, &mut linker, memory.clone());
-    define_mmu_translate(&mut store, &mut linker, memory.clone());
+    define_mem_helpers(&mut store, &mut linker, memory);
+    define_mmu_translate(&mut store, &mut linker, memory);
     define_mmio_exit(&mut store, &mut linker);
 
     linker
@@ -168,7 +166,7 @@ fn define_mem_helpers(
         ) as usize
     }
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -184,7 +182,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -200,7 +198,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -216,7 +214,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -232,7 +230,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -248,7 +246,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -264,7 +262,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -319,7 +317,7 @@ fn define_mmu_translate(
 
                     let vaddr_u = vaddr as u64;
                     let vpn = vaddr_u >> PAGE_SHIFT;
-                    let idx = (vpn & JIT_TLB_INDEX_MASK) as u64;
+                    let idx = vpn & JIT_TLB_INDEX_MASK;
 
                     let salt = read_u64_from_memory(
                         &mut caller,
@@ -414,7 +412,7 @@ fn run_wasm_inner(
 
     mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
 
-    let pages = ((total_len + 65_535) / 65_536) as u32;
+    let pages = total_len.div_ceil(65_536) as u32;
     let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
     memory.write(&mut store, 0, &mem).unwrap();
 
@@ -426,9 +424,11 @@ fn run_wasm_inner(
     let cpu_base = CPU_PTR as usize;
     let snap =
         CpuSnapshot::from_wasm_bytes(&got_mem[cpu_base..cpu_base + abi::CPU_STATE_SIZE as usize]);
-    let mut got_cpu = CpuState::default();
-    got_cpu.gpr = snap.gpr;
-    got_cpu.rip = snap.rip;
+    let mut got_cpu = CpuState {
+        gpr: snap.gpr,
+        rip: snap.rip,
+        ..Default::default()
+    };
     got_cpu.set_rflags(snap.rflags);
 
     let next_rip = if ret == JIT_EXIT_SENTINEL_I64 {
@@ -497,8 +497,10 @@ fn tier1_inline_tlb_same_page_access_hits_and_caches() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
-    cpu.rip = 0x1000;
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
 
     let ram = vec![0u8; 0x10000];
     let (next_rip, got_cpu, got_ram, host_state) = run_wasm(&block, cpu, ram, 0x10000);
@@ -559,8 +561,10 @@ fn tier1_inline_tlb_collision_forces_retranslate() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
-    cpu.rip = 0x1000;
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
 
     let ram_len = collide_addr as usize + 0x2000;
     let mut ram = vec![0u8; ram_len];
@@ -599,8 +603,10 @@ fn tier1_inline_tlb_permission_miss_read_calls_translate() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
-    cpu.rip = 0x1000;
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
 
     let mut ram = vec![0u8; 0x10000];
     ram[addr as usize] = 0x7f;
@@ -633,8 +639,10 @@ fn tier1_inline_tlb_permission_miss_write_calls_translate() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
-    cpu.rip = 0x1000;
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
 
     let ram = vec![0u8; 0x10000];
 
@@ -675,8 +683,10 @@ fn tier1_inline_tlb_cross_page_load_uses_slow_helper() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
-    cpu.rip = 0x1000;
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
 
     let mut ram = vec![0u8; 0x10000];
     ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
@@ -703,8 +713,10 @@ fn tier1_inline_tlb_mmio_load_exits_to_runtime() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
-    cpu.rip = 0x1000;
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
 
     let ram = vec![0u8; 0x10000];
     let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
@@ -726,8 +738,10 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
-    cpu.rip = 0x1000;
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
 
     let ram = vec![0u8; 0x10000];
     let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);

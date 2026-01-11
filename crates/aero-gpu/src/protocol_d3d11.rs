@@ -141,8 +141,12 @@ impl<'a> CmdStream<'a> {
     pub fn is_empty(&self) -> bool {
         self.cursor >= self.words.len()
     }
+}
 
-    pub fn next(&mut self) -> Option<Result<CmdPacket<'a>, CmdParseError>> {
+impl<'a> Iterator for CmdStream<'a> {
+    type Item = Result<CmdPacket<'a>, CmdParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
         if self.cursor >= self.words.len() {
             return None;
         }
@@ -306,6 +310,7 @@ pub enum BindingType {
     StorageTexture2DWriteOnly = 5,
 }
 
+#[derive(Default)]
 pub struct CmdWriter {
     words: Vec<CmdWord>,
 }
@@ -332,7 +337,7 @@ impl CmdWriter {
         bytes: &[u8],
     ) {
         let byte_len = bytes.len() as u32;
-        let padded_words = ((bytes.len() + 3) / 4) as u32;
+        let padded_words = bytes.len().div_ceil(4) as u32;
         let payload_words = fixed_payload.len() as u32 + 1 + padded_words;
 
         self.words.push(opcode as CmdWord);
@@ -370,6 +375,7 @@ impl CmdWriter {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_texture2d(
         &mut self,
         id: ResourceId,
@@ -394,6 +400,7 @@ impl CmdWriter {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_texture2d(
         &mut self,
         texture_id: ResourceId,
@@ -457,6 +464,7 @@ impl CmdWriter {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_render_pipeline(
         &mut self,
         pipeline_id: ResourceId,
@@ -468,13 +476,14 @@ impl CmdWriter {
         vertex_buffers: &[VertexBufferLayoutDesc<'_>],
         bindings: &[BindingDesc],
     ) {
-        let mut payload: Vec<u32> = Vec::new();
-        payload.push(pipeline_id);
-        payload.push(vs_shader);
-        payload.push(fs_shader);
-        payload.push(color_format as u32);
-        payload.push(depth_format as u32);
-        payload.push(topology as u32);
+        let mut payload: Vec<u32> = vec![
+            pipeline_id,
+            vs_shader,
+            fs_shader,
+            color_format as u32,
+            depth_format as u32,
+            topology as u32,
+        ];
 
         payload.push(vertex_buffers.len() as u32);
         for vb in vertex_buffers {

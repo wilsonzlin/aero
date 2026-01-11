@@ -405,7 +405,7 @@ impl LinearResampler {
         const MAX_RESTORED_QUEUED_FRAMES: u32 = 65_536;
         let queued_frames = queued_frames.min(MAX_RESTORED_QUEUED_FRAMES);
         self.src
-            .extend(std::iter::repeat([0.0, 0.0]).take(queued_frames as usize));
+            .extend(std::iter::repeat_n([0.0, 0.0], queued_frames as usize));
     }
 }
 

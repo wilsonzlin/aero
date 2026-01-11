@@ -81,7 +81,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
             .expect("memory write in bounds");
     }
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -95,7 +95,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -109,7 +109,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -123,7 +123,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -137,7 +137,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -151,7 +151,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -165,7 +165,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -209,10 +209,8 @@ impl WasmiTraceBackend {
         let mut linker = Linker::new(&engine);
 
         let memory = Memory::new(&mut store, MemoryType::new(2, None)).expect("alloc memory");
-        linker
-            .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
-            .unwrap();
-        define_mem_helpers(&mut store, &mut linker, memory.clone());
+        linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
+        define_mem_helpers(&mut store, &mut linker, memory);
         linker
             .define(
                 IMPORT_MODULE,

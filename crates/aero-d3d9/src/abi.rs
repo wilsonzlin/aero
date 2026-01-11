@@ -116,7 +116,7 @@ pub fn parse_commands(mut bytes: &[u8]) -> Result<Vec<Command<'_>>, CommandParse
             x if x == Opcode::SetPixelShader as u32 => Command::SetPixelShader { dxbc: payload },
             x if x == Opcode::SetVertexDecl as u32 => Command::SetVertexDecl { bytes: payload },
             x if x == Opcode::SetRenderState as u32 => {
-                if payload.len() % 4 != 0 {
+                if !payload.len().is_multiple_of(4) {
                     return Err(CommandParseError::BufferTooSmall);
                 }
                 Command::SetRenderState { states: payload }
@@ -126,7 +126,7 @@ pub fn parse_commands(mut bytes: &[u8]) -> Result<Vec<Command<'_>>, CommandParse
                     return Err(CommandParseError::BufferTooSmall);
                 }
                 let sampler = read_u32_le(&payload[0..4]);
-                if (payload.len() - 4) % 4 != 0 {
+                if !(payload.len() - 4).is_multiple_of(4) {
                     return Err(CommandParseError::BufferTooSmall);
                 }
                 Command::SetSamplerState {

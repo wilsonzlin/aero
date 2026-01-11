@@ -45,6 +45,12 @@ impl Block {
     }
 }
 
+impl Default for Block {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Op(IrOp),
@@ -430,7 +436,7 @@ fn format_op(op: &IrOp) -> String {
         } => format!(
             "{} {}",
             format_inst("mov", modifiers),
-            format_dst_src(dst, &[src.clone()])
+            format_dst_src(dst, std::slice::from_ref(src))
         ),
         IrOp::Add {
             dst,
@@ -500,7 +506,7 @@ fn format_op(op: &IrOp) -> String {
         } => format!(
             "{} {}",
             format_inst("rcp", modifiers),
-            format_dst_src(dst, &[src.clone()])
+            format_dst_src(dst, std::slice::from_ref(src))
         ),
         IrOp::Rsq {
             dst,
@@ -509,7 +515,7 @@ fn format_op(op: &IrOp) -> String {
         } => format!(
             "{} {}",
             format_inst("rsq", modifiers),
-            format_dst_src(dst, &[src.clone()])
+            format_dst_src(dst, std::slice::from_ref(src))
         ),
         IrOp::Min {
             dst,

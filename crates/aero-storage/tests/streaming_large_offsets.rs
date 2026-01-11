@@ -181,6 +181,7 @@ async fn streaming_disk_reads_offsets_beyond_4gib_without_truncation() {
 
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
+        .truncate(true)
         .read(true)
         .write(true)
         .open(&path)

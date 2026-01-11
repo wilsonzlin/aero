@@ -73,7 +73,7 @@ fn readback_rgba8(
 ) -> Vec<u8> {
     let bytes_per_pixel = 4u32;
     let unpadded_bytes_per_row = width * bytes_per_pixel;
-    let padded_bytes_per_row = ((unpadded_bytes_per_row + 255) / 256) * 256;
+    let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(256) * 256;
     let buffer_size = padded_bytes_per_row as u64 * height as u64;
 
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {

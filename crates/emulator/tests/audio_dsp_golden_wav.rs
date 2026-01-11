@@ -19,7 +19,7 @@ fn build_test_wav() -> Vec<u8> {
     for i in 0..frames {
         // Deterministic (non-sine) pattern to keep the golden stable across platforms.
         let l = ((i as i32 * 257 + 12345) % 65536 - 32768) as i16;
-        let r = (-l) as i16;
+        let r = l.wrapping_neg();
         data.extend_from_slice(&l.to_le_bytes());
         data.extend_from_slice(&r.to_le_bytes());
     }

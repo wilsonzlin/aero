@@ -1395,6 +1395,12 @@ impl AeroApi {
     }
 }
 
+impl Default for AeroApi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // -------------------------------------------------------------------------------------------------
 // Legacy demo VM (snapshotting) API
 // -------------------------------------------------------------------------------------------------
@@ -1479,9 +1485,7 @@ mod legacy_demo_vm {
         #[wasm_bindgen(constructor)]
         pub fn new(ram_size_bytes: u32) -> Self {
             // The BIOS expects to use the EBDA at 0x9F000, so enforce a minimum RAM size.
-            let ram_size_bytes = (ram_size_bytes as u64)
-                .max(2 * 1024 * 1024)
-                .min(64 * 1024 * 1024);
+            let ram_size_bytes = (ram_size_bytes as u64).clamp(2 * 1024 * 1024, 64 * 1024 * 1024);
 
             let mut inner = aero_machine::Machine::new(aero_machine::MachineConfig {
                 ram_size_bytes,

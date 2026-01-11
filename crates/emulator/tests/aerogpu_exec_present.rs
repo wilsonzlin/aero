@@ -119,7 +119,7 @@ fn doorbell_executes_present_and_updates_scanout() {
     let entry_count = 8u32;
     let entry_stride = 64u32;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -129,7 +129,7 @@ fn doorbell_executes_present_and_updates_scanout() {
     mem.write_u32(ring_gpa + 28, 1); // tail
 
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 1); // flags (PRESENT)
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id

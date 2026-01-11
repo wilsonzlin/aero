@@ -358,7 +358,7 @@ fn render_single_stream_position_color_uv() {
     let uvs = quad_uvs();
     let vertices: Vec<VertexPosColorUv> = positions
         .into_iter()
-        .zip(uvs.into_iter())
+        .zip(uvs)
         .map(|(pos, uv)| VertexPosColorUv {
             pos,
             color: color_red,

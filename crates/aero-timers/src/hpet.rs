@@ -61,7 +61,7 @@ impl Hpet {
     fn ns_from_ticks_ceil(&self, ticks: u64) -> u64 {
         let numer = (ticks as u128) * 1_000_000_000u128;
         let denom = self.freq_hz as u128;
-        ((numer + denom - 1) / denom) as u64
+        numer.div_ceil(denom) as u64
     }
 
     fn counter_ticks(&self, guest_now_ns: u64) -> u64 {

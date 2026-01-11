@@ -471,7 +471,7 @@ mod tests {
 
         // Reset vector at F000:FFF0 should be a FAR JMP to F000:E000.
         let off = 0xFFF0usize;
-        assert_eq!(rom_image[off + 0], 0xEA);
+        assert_eq!(rom_image[off], 0xEA);
         assert_eq!(&rom_image[off + 1..off + 5], &[0x00, 0xE0, 0x00, 0xF0]);
 
         // Fallback stub at F000:E000: `cli; hlt; jmp $-2`.

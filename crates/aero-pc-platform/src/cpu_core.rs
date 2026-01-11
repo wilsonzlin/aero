@@ -474,7 +474,7 @@ impl CpuBus for PcCpuBus {
         // Fast-path: if the chunk size is a multiple of the pattern length, each
         // chunk begins at pattern offset 0. We can fill the scratch buffer once
         // and reuse it for all chunks.
-        if BUF_SIZE % pattern.len() == 0 {
+        if BUF_SIZE.is_multiple_of(pattern.len()) {
             for (i, slot) in buf.iter_mut().enumerate() {
                 *slot = pattern[i % pattern.len()];
             }

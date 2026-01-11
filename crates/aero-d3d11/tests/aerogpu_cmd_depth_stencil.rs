@@ -34,7 +34,7 @@ fn begin_cmd(stream: &mut Vec<u8>, opcode: u32) -> usize {
     start
 }
 
-fn end_cmd(stream: &mut Vec<u8>, start: usize) {
+fn end_cmd(stream: &mut [u8], start: usize) {
     let size = (stream.len() - start) as u32;
     stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size.to_le_bytes());
@@ -225,7 +225,7 @@ fn aerogpu_cmd_depth_write_disable_allows_far_overwrite() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
         stream.extend_from_slice(&(dxbc_vs.len() as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        stream.extend_from_slice(&dxbc_vs);
+        stream.extend_from_slice(dxbc_vs);
         stream.resize(stream.len() + (align4(dxbc_vs.len()) - dxbc_vs.len()), 0);
         end_cmd(&mut stream, start);
 
@@ -235,7 +235,7 @@ fn aerogpu_cmd_depth_write_disable_allows_far_overwrite() {
         stream.extend_from_slice(&1u32.to_le_bytes()); // stage = pixel
         stream.extend_from_slice(&(dxbc_ps.len() as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        stream.extend_from_slice(&dxbc_ps);
+        stream.extend_from_slice(dxbc_ps);
         stream.resize(stream.len() + (align4(dxbc_ps.len()) - dxbc_ps.len()), 0);
         end_cmd(&mut stream, start);
 
@@ -462,7 +462,7 @@ fn aerogpu_cmd_rasterizer_state_enables_scissor() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
         stream.extend_from_slice(&(dxbc_vs.len() as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        stream.extend_from_slice(&dxbc_vs);
+        stream.extend_from_slice(dxbc_vs);
         stream.resize(stream.len() + (align4(dxbc_vs.len()) - dxbc_vs.len()), 0);
         end_cmd(&mut stream, start);
 
@@ -472,7 +472,7 @@ fn aerogpu_cmd_rasterizer_state_enables_scissor() {
         stream.extend_from_slice(&1u32.to_le_bytes()); // stage = pixel
         stream.extend_from_slice(&(dxbc_ps.len() as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        stream.extend_from_slice(&dxbc_ps);
+        stream.extend_from_slice(dxbc_ps);
         stream.resize(stream.len() + (align4(dxbc_ps.len()) - dxbc_ps.len()), 0);
         end_cmd(&mut stream, start);
 

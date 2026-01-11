@@ -60,7 +60,7 @@ const _: () = {
 pub const TIER2_CTX_OFFSET: u32 = abi::CPU_STATE_SIZE + (JitContext::TOTAL_BYTE_SIZE as u32);
 
 /// Offset of the Tier-2 trace exit reason (`u32`).
-pub const TRACE_EXIT_REASON_OFFSET: u32 = TIER2_CTX_OFFSET + 0;
+pub const TRACE_EXIT_REASON_OFFSET: u32 = TIER2_CTX_OFFSET;
 
 /// The trace exited normally (no special handling required).
 pub const TRACE_EXIT_REASON_NONE: u32 = 0;

@@ -125,9 +125,7 @@ impl fmt::Display for LayoutError {
 
 impl SharedFramebufferLayout {
     pub fn new_rgba8(width: u32, height: u32, tile_size: u32) -> Result<Self, LayoutError> {
-        let stride_bytes = width
-            .checked_mul(FramebufferFormat::Rgba8.bytes_per_pixel())
-            .unwrap_or(u32::MAX);
+        let stride_bytes = width.saturating_mul(FramebufferFormat::Rgba8.bytes_per_pixel());
         Self::new(
             width,
             height,
@@ -148,9 +146,7 @@ impl SharedFramebufferLayout {
             return Err(LayoutError::ZeroSized);
         }
 
-        let min_stride_bytes = width
-            .checked_mul(format.bytes_per_pixel())
-            .unwrap_or(u32::MAX);
+        let min_stride_bytes = width.saturating_mul(format.bytes_per_pixel());
         if stride_bytes < min_stride_bytes {
             return Err(LayoutError::StrideTooSmall {
                 stride_bytes,
@@ -387,10 +383,9 @@ impl SharedFramebuffer {
         let Some(base) = NonNull::new(base) else {
             return Err(SharedFramebufferError::NullBasePtr);
         };
-        if (base.as_ptr() as usize) % 4 != 0 {
-            return Err(SharedFramebufferError::UnalignedBasePtr {
-                addr: base.as_ptr() as usize,
-            });
+        let addr = base.as_ptr() as usize;
+        if !addr.is_multiple_of(4) {
+            return Err(SharedFramebufferError::UnalignedBasePtr { addr });
         }
 
         Ok(Self { base, layout })
@@ -630,12 +625,12 @@ fn align_up(value: usize, align: usize) -> usize {
 
 fn div_ceil(value: u32, divisor: u32) -> u32 {
     debug_assert!(divisor != 0);
-    (value + divisor - 1) / divisor
+    value.div_ceil(divisor)
 }
 
 fn div_ceil_usize(value: usize, divisor: usize) -> usize {
     debug_assert!(divisor != 0);
-    (value + divisor - 1) / divisor
+    value.div_ceil(divisor)
 }
 
 #[cfg(all(test, not(feature = "loom")))]

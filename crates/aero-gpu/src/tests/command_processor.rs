@@ -20,7 +20,7 @@ fn push_u64(out: &mut Vec<u8>, v: u64) {
 }
 
 fn pad4(out: &mut Vec<u8>) {
-    while out.len() % 4 != 0 {
+    while !out.len().is_multiple_of(4) {
         out.push(0);
     }
 }
@@ -53,7 +53,7 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
 
     let size_bytes = (out.len() - start) as u32;
     assert!(size_bytes >= 8);
-    assert_eq!(size_bytes % 4, 0);
+    assert!(size_bytes.is_multiple_of(4));
     out[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size_bytes.to_le_bytes());
 }

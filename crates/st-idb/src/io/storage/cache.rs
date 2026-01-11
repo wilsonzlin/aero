@@ -47,6 +47,10 @@ impl BlockCache {
         self.lru.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.lru.is_empty()
+    }
+
     pub fn contains(&self, idx: &u64) -> bool {
         self.lru.contains(idx)
     }

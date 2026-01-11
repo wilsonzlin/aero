@@ -46,7 +46,7 @@ pub fn remix_interleaved(
     if src_channels == 0 || dst_channels == 0 {
         return Err(RemixError::InvalidChannels);
     }
-    if input.len() % src_channels != 0 {
+    if !input.len().is_multiple_of(src_channels) {
         return Err(RemixError::InputLengthNotAligned {
             expected_multiple: src_channels,
         });
@@ -63,96 +63,79 @@ pub fn remix_interleaved(
 
     match (src_channels, dst_channels) {
         (1, 2) => {
-            for i in 0..frames {
-                let s = input[i];
-                out[i * 2] = s;
-                out[i * 2 + 1] = s;
+            for (dst, &sample) in out.chunks_exact_mut(2).zip(input.iter()) {
+                dst[0] = sample;
+                dst[1] = sample;
             }
         }
         (2, 1) => {
-            for i in 0..frames {
-                let base = i * 2;
-                out[i] = (input[base] + input[base + 1]) * 0.5;
+            for (dst, frame) in out.iter_mut().zip(input.chunks_exact(2)) {
+                *dst = (frame[0] + frame[1]) * 0.5;
             }
         }
         (6, 2) => {
             const C: f32 = 0.707_106_77; // -3 dB (sqrt(1/2))
             const LFE: f32 = 0.5;
-            for i in 0..frames {
-                let base = i * 6;
-                let fl = input[base];
-                let fr = input[base + 1];
-                let fc = input[base + 2];
-                let lfe = input[base + 3];
-                let sl = input[base + 4];
-                let sr = input[base + 5];
-
-                out[i * 2] = fl + fc * C + sl * C + lfe * LFE;
-                out[i * 2 + 1] = fr + fc * C + sr * C + lfe * LFE;
+            for (dst, frame) in out.chunks_exact_mut(2).zip(input.chunks_exact(6)) {
+                let fl = frame[0];
+                let fr = frame[1];
+                let fc = frame[2];
+                let lfe = frame[3];
+                let sl = frame[4];
+                let sr = frame[5];
+                dst[0] = fl + fc * C + sl * C + lfe * LFE;
+                dst[1] = fr + fc * C + sr * C + lfe * LFE;
             }
         }
         (2, 6) => {
-            for i in 0..frames {
-                let base_in = i * 2;
-                let l = input[base_in];
-                let r = input[base_in + 1];
-                let base_out = i * 6;
-
-                out[base_out] = l;
-                out[base_out + 1] = r;
-                out[base_out + 2] = (l + r) * 0.5;
-                out[base_out + 3] = 0.0;
-                out[base_out + 4] = l;
-                out[base_out + 5] = r;
+            for (dst, frame) in out.chunks_exact_mut(6).zip(input.chunks_exact(2)) {
+                let l = frame[0];
+                let r = frame[1];
+                dst[0] = l;
+                dst[1] = r;
+                dst[2] = (l + r) * 0.5;
+                dst[3] = 0.0;
+                dst[4] = l;
+                dst[5] = r;
             }
         }
         _ => {
             // Generic fallbacks:
             if dst_channels == 1 {
                 let inv = 1.0 / (src_channels as f32);
-                for i in 0..frames {
-                    let base = i * src_channels;
-                    let mut acc = 0.0;
-                    for c in 0..src_channels {
-                        acc += input[base + c];
-                    }
-                    out[i] = acc * inv;
+                for (dst, frame) in out.iter_mut().zip(input.chunks_exact(src_channels)) {
+                    let acc: f32 = frame.iter().copied().sum();
+                    *dst = acc * inv;
                 }
             } else if src_channels == 1 {
-                for i in 0..frames {
-                    let s = input[i];
-                    let base_out = i * dst_channels;
-                    for c in 0..dst_channels {
-                        out[base_out + c] = s;
-                    }
+                for (dst, &sample) in out.chunks_exact_mut(dst_channels).zip(input.iter()) {
+                    dst.fill(sample);
                 }
             } else if dst_channels == 2 {
                 // Heuristic: preserve first two channels and fold the rest in at half gain.
-                for i in 0..frames {
-                    let base = i * src_channels;
-                    let mut l = input[base];
-                    let mut r = input[base + 1];
-                    for c in 2..src_channels {
-                        let v = input[base + c] * 0.5;
+                for (dst, frame) in out
+                    .chunks_exact_mut(2)
+                    .zip(input.chunks_exact(src_channels))
+                {
+                    let mut l = frame[0];
+                    let mut r = frame[1];
+                    for &src in &frame[2..] {
+                        let v = src * 0.5;
                         l += v;
                         r += v;
                     }
-                    let base_out = i * 2;
-                    out[base_out] = l;
-                    out[base_out + 1] = r;
+                    dst[0] = l;
+                    dst[1] = r;
                 }
             } else {
                 // Truncate or zero-extend.
                 let copy_channels = src_channels.min(dst_channels);
-                for i in 0..frames {
-                    let base_in = i * src_channels;
-                    let base_out = i * dst_channels;
-                    for c in 0..copy_channels {
-                        out[base_out + c] = input[base_in + c];
-                    }
-                    for c in copy_channels..dst_channels {
-                        out[base_out + c] = 0.0;
-                    }
+                for (dst, frame) in out
+                    .chunks_exact_mut(dst_channels)
+                    .zip(input.chunks_exact(src_channels))
+                {
+                    dst[..copy_channels].copy_from_slice(&frame[..copy_channels]);
+                    dst[copy_channels..].fill(0.0);
                 }
             }
         }

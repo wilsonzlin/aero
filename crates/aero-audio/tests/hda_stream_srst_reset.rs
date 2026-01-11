@@ -33,12 +33,12 @@ fn clearing_srst_resets_stream_engine_state() {
     // Fill PCM with a simple non-zero pattern.
     for n in 0..frames {
         let off = pcm_base + (n * bytes_per_frame) as u64;
-        mem.write_u16(off, (0x1000 + n as u16) as u16);
-        mem.write_u16(off + 2, (0x2000 + n as u16) as u16);
+        mem.write_u16(off, 0x1000 + n as u16);
+        mem.write_u16(off + 2, 0x2000 + n as u16);
     }
 
     // One IOC BDL entry.
-    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u64(bdl_base, pcm_base);
     mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base + 12, 1);
 

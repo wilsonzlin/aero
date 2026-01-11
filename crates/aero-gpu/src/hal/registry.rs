@@ -89,6 +89,10 @@ impl<Tag, T> ResourceRegistry<Tag, T> {
         self.slots.len() - self.free_list.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     fn get_slot(&self, id: Handle<Tag>) -> Result<&Slot<T>, GpuError> {
         self.slots
             .get(id.index() as usize)

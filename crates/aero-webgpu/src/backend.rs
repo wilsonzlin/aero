@@ -2,18 +2,13 @@ use crate::{
     BackendCaps, BackendError, TextureCompressionCaps, WebGl2Stub, WebGpuContext, WebGpuInitOptions,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RequestedBackend {
     /// Prefer WebGPU when available, otherwise fall back to WebGL2 (if enabled).
+    #[default]
     Auto,
     WebGpu,
     WebGl2,
-}
-
-impl Default for RequestedBackend {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// High-level backend selection options.

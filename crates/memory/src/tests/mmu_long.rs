@@ -54,7 +54,7 @@ fn long_mode_large_pages_2mb_and_1gb() {
     // 1GB page via PDPTE[1]
     let phys_1g = 0x4000_0000u64; // 1GB aligned
     let vaddr_1g = 0x0000_0000_4000_1234u64;
-    bus.write_u64(pdpt_base + 1 * 8, phys_1g | 0x083);
+    bus.write_u64(pdpt_base + 8, phys_1g | 0x083);
 
     // 2MB page via PDE[0] under PDPTE[0]
     let phys_2m = 0x0080_0000u64; // 2MB aligned
@@ -166,14 +166,14 @@ fn tlb_global_vs_non_global_flush_on_cr3_switch() {
     bus.write_u64(cr3_a, pdpt_a | 0x003);
     bus.write_u64(pdpt_a, pd_a | 0x003);
     bus.write_u64(pd_a, pt_a | 0x003);
-    bus.write_u64(pt_a + 1 * 8, p_global_a | 0x103); // global mapping: P|RW|G
+    bus.write_u64(pt_a + 8, p_global_a | 0x103); // global mapping: P|RW|G
     bus.write_u64(pt_a + 2 * 8, p_local_a | 0x003); // local mapping: P|RW
 
     // Build CR3 B tables.
     bus.write_u64(cr3_b, pdpt_b | 0x003);
     bus.write_u64(pdpt_b, pd_b | 0x003);
     bus.write_u64(pd_b, pt_b | 0x003);
-    bus.write_u64(pt_b + 1 * 8, p_global_b | 0x103);
+    bus.write_u64(pt_b + 8, p_global_b | 0x103);
     bus.write_u64(pt_b + 2 * 8, p_local_b | 0x003);
 
     let mut mmu = TlbMmu::new(new_mmu_long(cr3_a, true));

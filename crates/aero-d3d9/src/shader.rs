@@ -1,6 +1,6 @@
 //! Shader parsing and translation (DXBC/D3D9 bytecode → IR → WGSL).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap};
 
 use blake3::Hash;
 use thiserror::Error;
@@ -53,7 +53,7 @@ impl Swizzle {
 
     pub fn from_d3d_byte(swz: u8) -> Self {
         // 2 bits per component, x in bits 0..1, y in 2..3, z in 4..5, w in 6..7.
-        let comp = |shift: u32| ((swz >> shift) & 0b11u8) as u8;
+        let comp = |shift: u32| (swz >> shift) & 0b11u8;
         Self([comp(0), comp(2), comp(4), comp(6)])
     }
 }
@@ -355,7 +355,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     if token_bytes.len() < 4 {
         return Err(ShaderError::TokenStreamTooSmall);
     }
-    if token_bytes.len() % 4 != 0 {
+    if !token_bytes.len().is_multiple_of(4) {
         return Err(ShaderError::TokenStreamTooSmall);
     }
     let words: Vec<u32> = token_bytes
@@ -1348,12 +1348,14 @@ pub struct ShaderCache {
 impl ShaderCache {
     pub fn get_or_translate(&mut self, bytes: &[u8]) -> Result<&CachedShader, ShaderError> {
         let hash = blake3::hash(bytes);
-        if !self.map.contains_key(&hash) {
-            let program = parse(bytes)?;
-            let ir = to_ir(&program);
-            let wgsl = generate_wgsl(&ir);
-            self.map.insert(hash, CachedShader { hash, ir, wgsl });
+        match self.map.entry(hash) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let program = parse(bytes)?;
+                let ir = to_ir(&program);
+                let wgsl = generate_wgsl(&ir);
+                Ok(entry.insert(CachedShader { hash, ir, wgsl }))
+            }
         }
-        Ok(self.map.get(&hash).unwrap())
     }
 }

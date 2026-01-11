@@ -196,15 +196,14 @@ fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 fn negotiated_limits(adapter: &wgpu::Adapter, desired_max_buffer_size: u64) -> wgpu::Limits {
     let adapter_limits = adapter.limits();
 
-    let mut limits = wgpu::Limits::default();
-
     // Clamp requested limits to what the adapter reports.
-    limits.max_buffer_size = desired_max_buffer_size.min(adapter_limits.max_buffer_size);
-    let desired_storage_binding_size = limits
-        .max_buffer_size
+    let max_buffer_size = desired_max_buffer_size.min(adapter_limits.max_buffer_size);
+    let desired_storage_binding_size = max_buffer_size
         .min(u64::from(adapter_limits.max_storage_buffer_binding_size))
         .min(u64::from(u32::MAX));
-    limits.max_storage_buffer_binding_size = desired_storage_binding_size as u32;
-
-    limits
+    wgpu::Limits {
+        max_buffer_size,
+        max_storage_buffer_binding_size: desired_storage_binding_size as u32,
+        ..wgpu::Limits::default()
+    }
 }

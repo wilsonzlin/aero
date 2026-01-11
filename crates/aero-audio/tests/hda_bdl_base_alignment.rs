@@ -33,7 +33,7 @@ fn bdl_base_low_bits_are_ignored() {
     }
 
     // One BDL entry pointing at the PCM buffer.
-    mem.write_u64(bdl_base_aligned + 0, pcm_base);
+    mem.write_u64(bdl_base_aligned, pcm_base);
     mem.write_u32(bdl_base_aligned + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base_aligned + 12, 0);
 

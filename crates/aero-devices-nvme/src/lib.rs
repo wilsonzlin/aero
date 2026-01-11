@@ -604,7 +604,7 @@ impl NvmeController {
 
         if slba
             .checked_add(sectors)
-            .map_or(true, |end| end > self.disk.total_sectors())
+            .is_none_or(|end| end > self.disk.total_sectors())
         {
             return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
         }
@@ -636,7 +636,7 @@ impl NvmeController {
 
         if slba
             .checked_add(sectors)
-            .map_or(true, |end| end > self.disk.total_sectors())
+            .is_none_or(|end| end > self.disk.total_sectors())
         {
             return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
         }
@@ -757,55 +757,26 @@ impl IoSnapshot for NvmeController {
     const DEVICE_VERSION: SnapshotVersion = <NvmeControllerState as IoSnapshot>::DEVICE_VERSION;
 
     fn save_state(&self) -> Vec<u8> {
-        let mut state = NvmeControllerState::default();
-        state.cap = self.cap;
-        state.vs = self.vs;
-        state.intms = self.intms;
-        // INTMC is write-only in this device model; we store 0 for compatibility with the shared
-        // snapshot state struct.
-        state.intmc = 0;
-        state.cc = self.cc;
-        state.csts = self.csts;
-        state.aqa = self.aqa;
-        state.asq = self.asq;
-        state.acq = self.acq;
-        state.intx_level = self.intx_level;
+        NvmeControllerState {
+            cap: self.cap,
+            vs: self.vs,
+            intms: self.intms,
+            cc: self.cc,
+            csts: self.csts,
+            aqa: self.aqa,
+            asq: self.asq,
+            acq: self.acq,
+            intx_level: self.intx_level,
 
-        state.admin_sq = self.admin_sq.as_ref().map(|sq| NvmeSubmissionQueueState {
-            qid: sq.id,
-            base: sq.base,
-            size: sq.size,
-            head: sq.head,
-            tail: sq.tail,
-            cqid: sq.cqid,
-        });
-
-        state.admin_cq = self.admin_cq.as_ref().map(|cq| NvmeCompletionQueueState {
-            qid: cq.id,
-            base: cq.base,
-            size: cq.size,
-            head: cq.head,
-            tail: cq.tail,
-            phase: cq.phase,
-            irq_enabled: cq.irq_enabled,
-        });
-
-        state.io_sqs = self
-            .io_sqs
-            .values()
-            .map(|sq| NvmeSubmissionQueueState {
+            admin_sq: self.admin_sq.as_ref().map(|sq| NvmeSubmissionQueueState {
                 qid: sq.id,
                 base: sq.base,
                 size: sq.size,
                 head: sq.head,
                 tail: sq.tail,
                 cqid: sq.cqid,
-            })
-            .collect();
-        state.io_cqs = self
-            .io_cqs
-            .values()
-            .map(|cq| NvmeCompletionQueueState {
+            }),
+            admin_cq: self.admin_cq.as_ref().map(|cq| NvmeCompletionQueueState {
                 qid: cq.id,
                 base: cq.base,
                 size: cq.size,
@@ -813,13 +784,36 @@ impl IoSnapshot for NvmeController {
                 tail: cq.tail,
                 phase: cq.phase,
                 irq_enabled: cq.irq_enabled,
-            })
-            .collect();
+            }),
 
-        // This controller processes commands synchronously, so there is no meaningful in-flight state.
-        state.in_flight.clear();
-
-        state.save_state()
+            io_sqs: self
+                .io_sqs
+                .values()
+                .map(|sq| NvmeSubmissionQueueState {
+                    qid: sq.id,
+                    base: sq.base,
+                    size: sq.size,
+                    head: sq.head,
+                    tail: sq.tail,
+                    cqid: sq.cqid,
+                })
+                .collect(),
+            io_cqs: self
+                .io_cqs
+                .values()
+                .map(|cq| NvmeCompletionQueueState {
+                    qid: cq.id,
+                    base: cq.base,
+                    size: cq.size,
+                    head: cq.head,
+                    tail: cq.tail,
+                    phase: cq.phase,
+                    irq_enabled: cq.irq_enabled,
+                })
+                .collect(),
+            ..Default::default()
+        }
+        .save_state()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
@@ -978,7 +972,7 @@ fn prp_segments(
     let entries_per_list = PAGE_SIZE / 8;
     let mut list_addr = prp2;
     while remaining > 0 {
-        let pages_needed = (remaining + PAGE_SIZE - 1) / PAGE_SIZE;
+        let pages_needed = remaining.div_ceil(PAGE_SIZE);
         let max_pages_this_list = if pages_needed > entries_per_list {
             // Chained PRP list: last entry is a pointer to the next list.
             entries_per_list - 1
@@ -1018,25 +1012,13 @@ fn prp_segments(
 }
 
 /// Minimal PCI config space model for the NVMe controller.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PciConfig {
     bar0: u64,
     bar0_probe: bool,
     command: u16,
     status: u16,
     interrupt_line: u8,
-}
-
-impl Default for PciConfig {
-    fn default() -> Self {
-        Self {
-            bar0: 0,
-            bar0_probe: false,
-            command: 0,
-            status: 0,
-            interrupt_line: 0,
-        }
-    }
 }
 
 impl PciConfig {
@@ -1052,7 +1034,7 @@ impl PciConfig {
             0x00 => (Self::DEVICE_ID as u32) << 16 | (Self::VENDOR_ID as u32),
             0x04 => (self.status as u32) << 16 | (self.command as u32),
             0x08 => (0x01u32 << 24) | (0x08u32 << 16) | (0x02u32 << 8), // NVMe class code
-            0x0c => 0x00 << 16,                                         // header type 0x00
+            0x0c => 0,                                                  // header type 0x00
             0x10 => {
                 if self.bar0_probe {
                     let size = bar0_size.max(0x10);
@@ -1265,7 +1247,7 @@ mod tests {
 
         fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()> {
             let sector_size = self.sector_size as usize;
-            if buffer.len() % sector_size != 0 {
+            if !buffer.len().is_multiple_of(sector_size) {
                 return Err(DiskError::UnalignedBuffer {
                     len: buffer.len(),
                     sector_size: self.sector_size,
@@ -1294,7 +1276,7 @@ mod tests {
 
         fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
             let sector_size = self.sector_size as usize;
-            if buffer.len() % sector_size != 0 {
+            if !buffer.len().is_multiple_of(sector_size) {
                 return Err(DiskError::UnalignedBuffer {
                     len: buffer.len(),
                     sector_size: self.sector_size,
@@ -1537,7 +1519,7 @@ mod tests {
         set_prp1(&mut cmd, io_sq);
         set_cdw10(&mut cmd, (15u32 << 16) | 1);
         set_cdw11(&mut cmd, 1);
-        mem.write_physical(asq + 1 * 64, &cmd);
+        mem.write_physical(asq + 64, &cmd);
         ctrl.mmio_write(0x1000, 4, 2, &mut mem);
 
         // WRITE 1 sector at LBA 0.
@@ -1564,7 +1546,7 @@ mod tests {
         set_nsid(&mut cmd, 1);
         set_prp1(&mut cmd, read_buf);
         set_cdw12(&mut cmd, 0);
-        mem.write_physical(io_sq + 1 * 64, &cmd);
+        mem.write_physical(io_sq + 64, &cmd);
         ctrl.mmio_write(0x1008, 4, 2, &mut mem); // SQ1 tail = 2
 
         let cqe = read_cqe(&mut mem, io_cq + 16);
@@ -1619,7 +1601,7 @@ mod tests {
         set_prp1(&mut cmd, io_sq);
         set_cdw10(&mut cmd, (1u32 << 16) | 1);
         set_cdw11(&mut cmd, 1);
-        mem.write_physical(asq + 1 * 64, &cmd);
+        mem.write_physical(asq + 64, &cmd);
         ctrl.mmio_write(0x1000, 4, 2, &mut mem);
 
         // Consume admin CQ entries (2 completions from queue creation) so INTx reflects I/O CQ.
@@ -1648,11 +1630,11 @@ mod tests {
         let mut cmd = build_command(0x00);
         set_cid(&mut cmd, 0x11);
         set_nsid(&mut cmd, 1);
-        mem.write_physical(io_sq + 1 * 64, &cmd);
+        mem.write_physical(io_sq + 64, &cmd);
         ctrl.mmio_write(sq_tail_db, 4, 0, &mut mem);
         assert!(ctrl.intx_level);
 
-        let cqe = read_cqe(&mut mem, io_cq + 1 * 16);
+        let cqe = read_cqe(&mut mem, io_cq + 16);
         assert_eq!(cqe.cid, 0x11);
         assert_eq!(cqe.status & 0x1, 1);
         assert_eq!(cqe.status & !0x1, 0);

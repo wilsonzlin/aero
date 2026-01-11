@@ -41,7 +41,7 @@ fn write_u64_le(dma: &mut TestDma, addr: u64, v: u64) {
 
 /// Minimal legacy TX descriptor layout (16 bytes).
 fn write_tx_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, len: u16, cmd: u8, status: u8) {
-    write_u64_le(dma, addr + 0, buf_addr);
+    write_u64_le(dma, addr, buf_addr);
     dma.write(addr + 8, &len.to_le_bytes());
     dma.write(addr + 10, &[0u8]); // cso
     dma.write(addr + 11, &[cmd]);
@@ -52,7 +52,7 @@ fn write_tx_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, len: u16, cmd: u8,
 
 /// Minimal legacy RX descriptor layout (16 bytes).
 fn write_rx_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, status: u8) {
-    write_u64_le(dma, addr + 0, buf_addr);
+    write_u64_le(dma, addr, buf_addr);
     dma.write(addr + 8, &0u16.to_le_bytes()); // length
     dma.write(addr + 10, &0u16.to_le_bytes()); // checksum
     dma.write(addr + 12, &[status]);
@@ -100,7 +100,7 @@ fn eeprom_read_returns_mac_words() {
     let mut dma = TestDma::new(0x1000);
 
     // Read EEPROM word 0.
-    dev.mmio_write_u32(&mut dma, 0x0014, 1 | (0 << 8)); // START + addr
+    dev.mmio_write_u32(&mut dma, 0x0014, 1); // START + addr=0
     let eerd = dev.mmio_read_u32(0x0014);
     let data = (eerd >> 16) as u16;
     assert_eq!(data, u16::from_le_bytes([mac[0], mac[1]]));

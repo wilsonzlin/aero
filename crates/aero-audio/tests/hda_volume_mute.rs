@@ -8,7 +8,7 @@ fn verb_12(verb_id: u16, payload8: u8) -> u32 {
 }
 
 fn verb_4(group: u16, payload16: u16) -> u32 {
-    let verb_id = (group << 8) | ((payload16 >> 8) as u16);
+    let verb_id = (group << 8) | (payload16 >> 8);
     ((verb_id as u32) << 8) | (payload16 as u8 as u32)
 }
 
@@ -41,7 +41,7 @@ fn setup_basic_playback(mem: &mut GuestMemory, hda: &mut HdaController, frames: 
     }
 
     // One BDL entry pointing at the PCM buffer.
-    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u64(bdl_base, pcm_base);
     mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base + 12, 0);
 

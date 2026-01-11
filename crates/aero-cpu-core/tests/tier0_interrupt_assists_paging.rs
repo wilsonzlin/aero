@@ -125,10 +125,7 @@ fn tier0_assist_protected_int_stack_switch_ignores_user_supervisor_paging_bit() 
     let pt_base = 0x11000u64;
 
     // Top-level PDE permits user access; leaf PTE controls U/S.
-    phys.write_u32(
-        pd_base + 0 * 4,
-        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
-    );
+    phys.write_u32(pd_base, (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32));
 
     set_pte32(&mut phys, pt_base, 0x0, PTE_P32 | PTE_RW32 | PTE_US32); // user code
     set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT supervisor-only
@@ -150,7 +147,7 @@ fn tier0_assist_protected_int_stack_switch_ignores_user_supervisor_paging_bit() 
     let kernel_stack_top = 0xA000u32;
 
     // Minimal GDT: null + ring0 code/data + ring3 code/data.
-    phys.write_u64(gdt_base + 0x00, 0);
+    phys.write_u64(gdt_base, 0);
     phys.write_u64(gdt_base + 0x08, seg_desc(0, 0xFFFFF, 0xA, 0)); // ring0 code
     phys.write_u64(gdt_base + 0x10, seg_desc(0, 0xFFFFF, 0x2, 0)); // ring0 data
     phys.write_u64(gdt_base + 0x18, seg_desc(0, 0xFFFFF, 0xA, 3)); // ring3 code

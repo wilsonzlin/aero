@@ -555,362 +555,6 @@ impl MemoryBus for PhysicalMemoryBus {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::phys::{GuestMemoryError, GuestMemoryResult};
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Clone)]
-    struct SharedRam {
-        bytes: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl SharedRam {
-        fn new(bytes: Vec<u8>) -> Self {
-            Self {
-                bytes: Arc::new(Mutex::new(bytes)),
-            }
-        }
-
-        fn snapshot(&self) -> Vec<u8> {
-            self.bytes.lock().unwrap().clone()
-        }
-    }
-
-    impl GuestMemory for SharedRam {
-        fn size(&self) -> u64 {
-            self.bytes.lock().unwrap().len() as u64
-        }
-
-        fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
-            let bytes = self.bytes.lock().unwrap();
-            let size = bytes.len() as u64;
-            let len = dst.len();
-
-            let end = paddr
-                .checked_add(len as u64)
-                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
-            if end > size {
-                return Err(GuestMemoryError::OutOfRange { paddr, len, size });
-            }
-
-            let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
-                paddr,
-                len,
-                size,
-            })?;
-            let end =
-                start
-                    .checked_add(len)
-                    .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
-
-            dst.copy_from_slice(&bytes[start..end]);
-            Ok(())
-        }
-
-        fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
-            let mut bytes = self.bytes.lock().unwrap();
-            let size = bytes.len() as u64;
-            let len = src.len();
-
-            let end = paddr
-                .checked_add(len as u64)
-                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
-            if end > size {
-                return Err(GuestMemoryError::OutOfRange { paddr, len, size });
-            }
-
-            let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
-                paddr,
-                len,
-                size,
-            })?;
-            let end =
-                start
-                    .checked_add(len)
-                    .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
-
-            bytes[start..end].copy_from_slice(src);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct MmioState {
-        mem: Vec<u8>,
-        reads: Vec<(u64, usize)>,
-        writes: Vec<(u64, usize, u64)>,
-    }
-
-    #[derive(Clone)]
-    struct RecordingMmio {
-        state: Arc<Mutex<MmioState>>,
-    }
-
-    impl RecordingMmio {
-        fn new(mem: Vec<u8>) -> (Self, Arc<Mutex<MmioState>>) {
-            let state = Arc::new(Mutex::new(MmioState {
-                mem,
-                ..Default::default()
-            }));
-            (
-                Self {
-                    state: state.clone(),
-                },
-                state,
-            )
-        }
-    }
-
-    impl MmioHandler for RecordingMmio {
-        fn read(&mut self, offset: u64, size: usize) -> u64 {
-            let mut state = self.state.lock().unwrap();
-            state.reads.push((offset, size));
-            let mut buf = [0xFFu8; 8];
-            let off = offset as usize;
-            for i in 0..size.min(8) {
-                buf[i] = state.mem.get(off + i).copied().unwrap_or(0xFF);
-            }
-            u64::from_le_bytes(buf)
-        }
-
-        fn write(&mut self, offset: u64, size: usize, value: u64) {
-            let mut state = self.state.lock().unwrap();
-            state.writes.push((offset, size, value));
-            let bytes = value.to_le_bytes();
-            let off = offset as usize;
-            for i in 0..size.min(8) {
-                if let Some(dst) = state.mem.get_mut(off + i) {
-                    *dst = bytes[i];
-                }
-            }
-        }
-    }
-
-    #[derive(Default)]
-    struct StrictMmioState {
-        mem: Vec<u8>,
-        reads: Vec<(u64, usize)>,
-        writes: Vec<(u64, usize, u64)>,
-    }
-
-    #[derive(Clone)]
-    struct StrictMmio {
-        state: Arc<Mutex<StrictMmioState>>,
-    }
-
-    impl StrictMmio {
-        fn new(mem: Vec<u8>) -> (Self, Arc<Mutex<StrictMmioState>>) {
-            let state = Arc::new(Mutex::new(StrictMmioState {
-                mem,
-                ..Default::default()
-            }));
-            (
-                Self {
-                    state: state.clone(),
-                },
-                state,
-            )
-        }
-    }
-
-    impl MmioHandler for StrictMmio {
-        fn read(&mut self, offset: u64, size: usize) -> u64 {
-            assert!(
-                matches!(size, 1 | 2 | 4 | 8),
-                "unexpected MMIO read size {size}"
-            );
-            assert_eq!(
-                offset % size as u64,
-                0,
-                "unaligned MMIO read: offset={offset} size={size}"
-            );
-
-            let mut state = self.state.lock().unwrap();
-            state.reads.push((offset, size));
-
-            let mut buf = [0xFFu8; 8];
-            let off = offset as usize;
-            for i in 0..size {
-                buf[i] = state.mem.get(off + i).copied().unwrap_or(0xFF);
-            }
-            u64::from_le_bytes(buf)
-        }
-
-        fn write(&mut self, offset: u64, size: usize, value: u64) {
-            assert!(
-                matches!(size, 1 | 2 | 4 | 8),
-                "unexpected MMIO write size {size}"
-            );
-            assert_eq!(
-                offset % size as u64,
-                0,
-                "unaligned MMIO write: offset={offset} size={size}"
-            );
-
-            let mut state = self.state.lock().unwrap();
-            state.writes.push((offset, size, value));
-            let bytes = value.to_le_bytes();
-            let off = offset as usize;
-            for i in 0..size {
-                if let Some(dst) = state.mem.get_mut(off + i) {
-                    *dst = bytes[i];
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn unmapped_reads_return_all_ones() {
-        let ram = SharedRam::new(vec![0u8; 4]);
-        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
-
-        assert_eq!(bus.read_physical_u8(10), 0xFF);
-        assert_eq!(bus.read_physical_u16(10), 0xFFFF);
-        assert_eq!(bus.read_physical_u32(10), 0xFFFF_FFFF);
-        assert_eq!(bus.read_physical_u64(10), 0xFFFF_FFFF_FFFF_FFFF);
-        assert_eq!(bus.read_physical_u128(10), u128::MAX);
-
-        let mut buf = [0u8; 3];
-        bus.read_physical(10, &mut buf);
-        assert_eq!(buf, [0xFF; 3]);
-    }
-
-    #[test]
-    fn rom_is_read_only_and_does_not_write_through_to_ram() {
-        let ram = SharedRam::new((0u8..16).collect());
-        let ram_view = ram.clone();
-        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
-
-        bus.map_rom(4, Arc::from([0x10u8, 0x11, 0x12, 0x13].as_slice()))
-            .unwrap();
-
-        assert_eq!(bus.read_physical_u32(4), 0x1312_1110);
-
-        bus.write_physical_u32(4, 0xAABB_CCDD);
-
-        // ROM view is unchanged.
-        assert_eq!(bus.read_physical_u32(4), 0x1312_1110);
-
-        // Underlying RAM is unchanged too.
-        let snap = ram_view.snapshot();
-        assert_eq!(&snap[4..8], &[4u8, 5, 6, 7]);
-    }
-
-    #[test]
-    fn mmio_overrides_rom_and_ram() {
-        let mut base_ram: Vec<u8> = vec![0; 32];
-        base_ram[8..12].copy_from_slice(&[0x01, 0x02, 0x03, 0x04]);
-        let ram = SharedRam::new(base_ram);
-        let ram_view = ram.clone();
-        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
-
-        bus.map_rom(8, Arc::from([0x10u8, 0x20, 0x30, 0x40].as_slice()))
-            .unwrap();
-
-        let (mmio, mmio_state) = RecordingMmio::new(vec![0xAA, 0xBB, 0xCC, 0xDD]);
-        bus.map_mmio(8, 4, Box::new(mmio)).unwrap();
-
-        assert_eq!(bus.read_physical_u32(8), 0xDDCC_BBAA);
-
-        bus.write_physical_u32(8, 0x1122_3344);
-
-        let state = mmio_state.lock().unwrap();
-        assert_eq!(state.writes.len(), 1);
-        assert_eq!(state.writes[0].0, 0);
-        assert_eq!(state.writes[0].1, 4);
-        assert_eq!(state.mem, vec![0x44, 0x33, 0x22, 0x11]);
-        drop(state);
-
-        // RAM was not modified by the MMIO write.
-        let snap = ram_view.snapshot();
-        assert_eq!(&snap[8..12], &[0x01, 0x02, 0x03, 0x04]);
-    }
-
-    #[test]
-    fn cross_boundary_accesses_are_split_safely() {
-        // Crossing the end of RAM should not panic and should use 0xFF for unmapped bytes.
-        let ram = SharedRam::new(vec![0x01, 0x02, 0x03, 0x04]);
-        let ram_view = ram.clone();
-        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
-
-        assert_eq!(bus.read_physical_u32(2), 0xFFFF_0403);
-
-        bus.write_physical_u32(2, 0xAABB_CCDD);
-        let snap = ram_view.snapshot();
-        assert_eq!(snap, vec![0x01, 0x02, 0xDD, 0xCC]);
-        assert_eq!(bus.read_physical_u32(2), 0xFFFF_CCDD);
-
-        // Crossing into MMIO: RAM[3], MMIO[0..2], RAM[6]
-        let base_ram: Vec<u8> = (0u8..8).collect();
-        let ram = SharedRam::new(base_ram.clone());
-        let ram_view = ram.clone();
-        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
-
-        let (mmio, mmio_state) = RecordingMmio::new(vec![0xAA, 0xBB]);
-        bus.map_mmio(4, 2, Box::new(mmio)).unwrap();
-
-        let v = bus.read_physical_u32(3);
-        assert_eq!(v, u32::from_le_bytes([3, 0xAA, 0xBB, 6]));
-
-        bus.write_physical_u32(3, u32::from_le_bytes([0x11, 0x22, 0x33, 0x44]));
-
-        let snap = ram_view.snapshot();
-        assert_eq!(snap[3], 0x11);
-        assert_eq!(snap[6], 0x44);
-
-        let state = mmio_state.lock().unwrap();
-        assert_eq!(state.writes.len(), 1);
-        assert_eq!(state.writes[0].0, 0);
-        assert_eq!(state.writes[0].1, 2);
-        assert_eq!(state.mem, vec![0x22, 0x33]);
-    }
-
-    #[test]
-    fn unaligned_u64_mmio_accesses_are_split_into_aligned_operations() {
-        let ram = SharedRam::new(vec![0u8; 32]);
-        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
-
-        let (mmio, mmio_state) = StrictMmio::new((0u8..16).collect());
-        bus.map_mmio(0x1000, 16, Box::new(mmio)).unwrap();
-
-        // This access starts at an odd offset within the MMIO region; the bus must not issue an
-        // unaligned 8-byte read to the handler.
-        let got = bus.read_physical_u64(0x1001);
-        assert_eq!(got, u64::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8]));
-
-        bus.write_physical_u64(0x1001, 0x1122_3344_5566_7788);
-
-        let state = mmio_state.lock().unwrap();
-        assert_eq!(
-            &state.mem[1..9],
-            &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
-        );
-    }
-
-    #[test]
-    fn small_bus_avoids_unaligned_multi_byte_mmio_operations() {
-        // The lightweight `Bus` router provides an 8-byte fast path for MMIO reads/writes. Ensure
-        // it doesn't invoke unaligned multi-byte operations when the access is unaligned.
-        let mut bus = Bus::new(0);
-
-        let (mmio, mmio_state) = StrictMmio::new((0u8..16).collect());
-        bus.map_mmio(0x1000, 16, Box::new(mmio));
-
-        let got = bus.read(0x1001, 8);
-        assert_eq!(got, u64::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8]));
-
-        bus.write(0x1001, 8, 0x1122_3344_5566_7788);
-
-        let state = mmio_state.lock().unwrap();
-        assert_eq!(
-            &state.mem[1..9],
-            &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
-        );
-    }
-}
-
 /// Simple MMIO handler interface for [`Bus`].
 pub trait MmioHandler {
     fn read(&mut self, offset: u64, size: usize) -> u64;
@@ -1144,5 +788,361 @@ impl MemoryBus for Bus {
         for (i, byte) in buf.iter().enumerate() {
             self.write_u8(paddr.wrapping_add(i as u64), *byte);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::phys::{GuestMemoryError, GuestMemoryResult};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct SharedRam {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl SharedRam {
+        fn new(bytes: Vec<u8>) -> Self {
+            Self {
+                bytes: Arc::new(Mutex::new(bytes)),
+            }
+        }
+
+        fn snapshot(&self) -> Vec<u8> {
+            self.bytes.lock().unwrap().clone()
+        }
+    }
+
+    impl GuestMemory for SharedRam {
+        fn size(&self) -> u64 {
+            self.bytes.lock().unwrap().len() as u64
+        }
+
+        fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
+            let bytes = self.bytes.lock().unwrap();
+            let size = bytes.len() as u64;
+            let len = dst.len();
+
+            let end = paddr
+                .checked_add(len as u64)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+            if end > size {
+                return Err(GuestMemoryError::OutOfRange { paddr, len, size });
+            }
+
+            let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
+                paddr,
+                len,
+                size,
+            })?;
+            let end =
+                start
+                    .checked_add(len)
+                    .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+
+            dst.copy_from_slice(&bytes[start..end]);
+            Ok(())
+        }
+
+        fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
+            let mut bytes = self.bytes.lock().unwrap();
+            let size = bytes.len() as u64;
+            let len = src.len();
+
+            let end = paddr
+                .checked_add(len as u64)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+            if end > size {
+                return Err(GuestMemoryError::OutOfRange { paddr, len, size });
+            }
+
+            let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
+                paddr,
+                len,
+                size,
+            })?;
+            let end =
+                start
+                    .checked_add(len)
+                    .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+
+            bytes[start..end].copy_from_slice(src);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MmioState {
+        mem: Vec<u8>,
+        reads: Vec<(u64, usize)>,
+        writes: Vec<(u64, usize, u64)>,
+    }
+
+    #[derive(Clone)]
+    struct RecordingMmio {
+        state: Arc<Mutex<MmioState>>,
+    }
+
+    impl RecordingMmio {
+        fn new(mem: Vec<u8>) -> (Self, Arc<Mutex<MmioState>>) {
+            let state = Arc::new(Mutex::new(MmioState {
+                mem,
+                ..Default::default()
+            }));
+            (
+                Self {
+                    state: state.clone(),
+                },
+                state,
+            )
+        }
+    }
+
+    impl MmioHandler for RecordingMmio {
+        fn read(&mut self, offset: u64, size: usize) -> u64 {
+            let mut state = self.state.lock().unwrap();
+            state.reads.push((offset, size));
+            let mut buf = [0xFFu8; 8];
+            let off = offset as usize;
+            for (i, slot) in buf.iter_mut().take(size.min(8)).enumerate() {
+                *slot = state.mem.get(off + i).copied().unwrap_or(0xFF);
+            }
+            u64::from_le_bytes(buf)
+        }
+
+        fn write(&mut self, offset: u64, size: usize, value: u64) {
+            let mut state = self.state.lock().unwrap();
+            state.writes.push((offset, size, value));
+            let bytes = value.to_le_bytes();
+            let off = offset as usize;
+            for (i, byte) in bytes.iter().take(size.min(8)).enumerate() {
+                if let Some(dst) = state.mem.get_mut(off + i) {
+                    *dst = *byte;
+                }
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct StrictMmioState {
+        mem: Vec<u8>,
+        reads: Vec<(u64, usize)>,
+        writes: Vec<(u64, usize, u64)>,
+    }
+
+    #[derive(Clone)]
+    struct StrictMmio {
+        state: Arc<Mutex<StrictMmioState>>,
+    }
+
+    impl StrictMmio {
+        fn new(mem: Vec<u8>) -> (Self, Arc<Mutex<StrictMmioState>>) {
+            let state = Arc::new(Mutex::new(StrictMmioState {
+                mem,
+                ..Default::default()
+            }));
+            (
+                Self {
+                    state: state.clone(),
+                },
+                state,
+            )
+        }
+    }
+
+    impl MmioHandler for StrictMmio {
+        fn read(&mut self, offset: u64, size: usize) -> u64 {
+            assert!(
+                matches!(size, 1 | 2 | 4 | 8),
+                "unexpected MMIO read size {size}"
+            );
+            assert_eq!(
+                offset % size as u64,
+                0,
+                "unaligned MMIO read: offset={offset} size={size}"
+            );
+
+            let mut state = self.state.lock().unwrap();
+            state.reads.push((offset, size));
+
+            let mut buf = [0xFFu8; 8];
+            let off = offset as usize;
+            for (i, slot) in buf.iter_mut().take(size).enumerate() {
+                *slot = state.mem.get(off + i).copied().unwrap_or(0xFF);
+            }
+            u64::from_le_bytes(buf)
+        }
+
+        fn write(&mut self, offset: u64, size: usize, value: u64) {
+            assert!(
+                matches!(size, 1 | 2 | 4 | 8),
+                "unexpected MMIO write size {size}"
+            );
+            assert_eq!(
+                offset % size as u64,
+                0,
+                "unaligned MMIO write: offset={offset} size={size}"
+            );
+
+            let mut state = self.state.lock().unwrap();
+            state.writes.push((offset, size, value));
+            let bytes = value.to_le_bytes();
+            let off = offset as usize;
+            for (i, byte) in bytes.iter().take(size).enumerate() {
+                if let Some(dst) = state.mem.get_mut(off + i) {
+                    *dst = *byte;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unmapped_reads_return_all_ones() {
+        let ram = SharedRam::new(vec![0u8; 4]);
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        assert_eq!(bus.read_physical_u8(10), 0xFF);
+        assert_eq!(bus.read_physical_u16(10), 0xFFFF);
+        assert_eq!(bus.read_physical_u32(10), 0xFFFF_FFFF);
+        assert_eq!(bus.read_physical_u64(10), 0xFFFF_FFFF_FFFF_FFFF);
+        assert_eq!(bus.read_physical_u128(10), u128::MAX);
+
+        let mut buf = [0u8; 3];
+        bus.read_physical(10, &mut buf);
+        assert_eq!(buf, [0xFF; 3]);
+    }
+
+    #[test]
+    fn rom_is_read_only_and_does_not_write_through_to_ram() {
+        let ram = SharedRam::new((0u8..16).collect());
+        let ram_view = ram.clone();
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        bus.map_rom(4, Arc::from([0x10u8, 0x11, 0x12, 0x13].as_slice()))
+            .unwrap();
+
+        assert_eq!(bus.read_physical_u32(4), 0x1312_1110);
+
+        bus.write_physical_u32(4, 0xAABB_CCDD);
+
+        // ROM view is unchanged.
+        assert_eq!(bus.read_physical_u32(4), 0x1312_1110);
+
+        // Underlying RAM is unchanged too.
+        let snap = ram_view.snapshot();
+        assert_eq!(&snap[4..8], &[4u8, 5, 6, 7]);
+    }
+
+    #[test]
+    fn mmio_overrides_rom_and_ram() {
+        let mut base_ram: Vec<u8> = vec![0; 32];
+        base_ram[8..12].copy_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+        let ram = SharedRam::new(base_ram);
+        let ram_view = ram.clone();
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        bus.map_rom(8, Arc::from([0x10u8, 0x20, 0x30, 0x40].as_slice()))
+            .unwrap();
+
+        let (mmio, mmio_state) = RecordingMmio::new(vec![0xAA, 0xBB, 0xCC, 0xDD]);
+        bus.map_mmio(8, 4, Box::new(mmio)).unwrap();
+
+        assert_eq!(bus.read_physical_u32(8), 0xDDCC_BBAA);
+
+        bus.write_physical_u32(8, 0x1122_3344);
+
+        let state = mmio_state.lock().unwrap();
+        assert_eq!(state.writes.len(), 1);
+        assert_eq!(state.writes[0].0, 0);
+        assert_eq!(state.writes[0].1, 4);
+        assert_eq!(state.mem, vec![0x44, 0x33, 0x22, 0x11]);
+        drop(state);
+
+        // RAM was not modified by the MMIO write.
+        let snap = ram_view.snapshot();
+        assert_eq!(&snap[8..12], &[0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn cross_boundary_accesses_are_split_safely() {
+        // Crossing the end of RAM should not panic and should use 0xFF for unmapped bytes.
+        let ram = SharedRam::new(vec![0x01, 0x02, 0x03, 0x04]);
+        let ram_view = ram.clone();
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        assert_eq!(bus.read_physical_u32(2), 0xFFFF_0403);
+
+        bus.write_physical_u32(2, 0xAABB_CCDD);
+        let snap = ram_view.snapshot();
+        assert_eq!(snap, vec![0x01, 0x02, 0xDD, 0xCC]);
+        assert_eq!(bus.read_physical_u32(2), 0xFFFF_CCDD);
+
+        // Crossing into MMIO: RAM[3], MMIO[0..2], RAM[6]
+        let base_ram: Vec<u8> = (0u8..8).collect();
+        let ram = SharedRam::new(base_ram.clone());
+        let ram_view = ram.clone();
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        let (mmio, mmio_state) = RecordingMmio::new(vec![0xAA, 0xBB]);
+        bus.map_mmio(4, 2, Box::new(mmio)).unwrap();
+
+        let v = bus.read_physical_u32(3);
+        assert_eq!(v, u32::from_le_bytes([3, 0xAA, 0xBB, 6]));
+
+        bus.write_physical_u32(3, u32::from_le_bytes([0x11, 0x22, 0x33, 0x44]));
+
+        let snap = ram_view.snapshot();
+        assert_eq!(snap[3], 0x11);
+        assert_eq!(snap[6], 0x44);
+
+        let state = mmio_state.lock().unwrap();
+        assert_eq!(state.writes.len(), 1);
+        assert_eq!(state.writes[0].0, 0);
+        assert_eq!(state.writes[0].1, 2);
+        assert_eq!(state.mem, vec![0x22, 0x33]);
+    }
+
+    #[test]
+    fn unaligned_u64_mmio_accesses_are_split_into_aligned_operations() {
+        let ram = SharedRam::new(vec![0u8; 32]);
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        let (mmio, mmio_state) = StrictMmio::new((0u8..16).collect());
+        bus.map_mmio(0x1000, 16, Box::new(mmio)).unwrap();
+
+        // This access starts at an odd offset within the MMIO region; the bus must not issue an
+        // unaligned 8-byte read to the handler.
+        let got = bus.read_physical_u64(0x1001);
+        assert_eq!(got, u64::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8]));
+
+        bus.write_physical_u64(0x1001, 0x1122_3344_5566_7788);
+
+        let state = mmio_state.lock().unwrap();
+        assert_eq!(
+            &state.mem[1..9],
+            &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
+        );
+    }
+
+    #[test]
+    fn small_bus_avoids_unaligned_multi_byte_mmio_operations() {
+        // The lightweight `Bus` router provides an 8-byte fast path for MMIO reads/writes. Ensure
+        // it doesn't invoke unaligned multi-byte operations when the access is unaligned.
+        let mut bus = Bus::new(0);
+
+        let (mmio, mmio_state) = StrictMmio::new((0u8..16).collect());
+        bus.map_mmio(0x1000, 16, Box::new(mmio));
+
+        let got = bus.read(0x1001, 8);
+        assert_eq!(got, u64::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8]));
+
+        bus.write(0x1001, 8, 0x1122_3344_5566_7788);
+
+        let state = mmio_state.lock().unwrap();
+        assert_eq!(
+            &state.mem[1..9],
+            &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
+        );
     }
 }

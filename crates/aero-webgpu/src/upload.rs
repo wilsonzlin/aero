@@ -1,8 +1,8 @@
-/// Helpers for staging uploads (CPU → GPU).
-///
-/// This module is intentionally small; we can evolve it into a more general
-/// staging belt / suballocator once the graphics stack starts streaming larger
-/// dynamic resources.
+//! Helpers for staging uploads (CPU → GPU).
+//!
+//! This module is intentionally small; we can evolve it into a more general
+//! staging belt / suballocator once the graphics stack starts streaming larger
+//! dynamic resources.
 
 /// A reusable scratch buffer for uploading RGBA8 pixel data to a 2D texture.
 #[derive(Default)]
@@ -54,7 +54,7 @@ impl Rgba8TextureUploader {
         let required_len = (stride_bytes as usize) * (height as usize);
         debug_assert!(rgba.len() >= required_len);
 
-        let aligned = (stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) == 0;
+        let aligned = stride_bytes.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
         let (bytes, bytes_per_row) = if aligned {
             (&rgba[..required_len], stride_bytes)
@@ -95,7 +95,7 @@ impl Rgba8TextureUploader {
 
 fn padded_bytes_per_row(unpadded_bytes_per_row: u32) -> u32 {
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    ((unpadded_bytes_per_row + align - 1) / align) * align
+    unpadded_bytes_per_row.div_ceil(align) * align
 }
 
 fn copy_rgba8_to_padded_strided(

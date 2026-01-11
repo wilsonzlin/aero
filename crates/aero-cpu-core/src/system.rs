@@ -828,7 +828,7 @@ impl Cpu {
     /// WRMSR instruction semantics (ECX selects MSR, value from EDX:EAX).
     pub fn instr_wrmsr(&mut self) -> Result<(), Exception> {
         let msr_index = self.rcx as u32;
-        let value = ((self.rdx as u64) << 32) | (self.rax as u32 as u64);
+        let value = (self.rdx << 32) | (self.rax as u32 as u64);
         self.wrmsr_value(msr_index, value)
     }
 
@@ -980,7 +980,7 @@ impl Cpu {
                 self.rax = (self.rax & !0xFFFF) | (val as u64 & 0xFFFF);
             }
             4 => {
-                self.rax = (val as u32) as u64;
+                self.rax = val as u64;
             }
             _ => return Err(Exception::InvalidOpcode),
         }

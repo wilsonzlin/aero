@@ -231,40 +231,40 @@ impl DxbcShader {
         let container = DxbcContainer::parse(container_bytes)?;
 
         let shader_chunk = container
-            .find_first(&FourCc::from_str("SHDR"))
-            .or_else(|| container.find_first(&FourCc::from_str("SHEX")))
+            .find_first(&FourCc::from("SHDR"))
+            .or_else(|| container.find_first(&FourCc::from("SHEX")))
             .ok_or(DxbcError::MissingShaderChunk)?;
 
         let tokens = parse_u32_token_stream(shader_chunk.data, shader_chunk.fourcc)?;
 
-        let (shader_type, shader_model) = parse_version_token(tokens.get(0).copied()).ok_or(
+        let (shader_type, shader_model) = parse_version_token(tokens.first().copied()).ok_or(
             DxbcError::InvalidShaderBytecode {
                 reason: "missing/invalid version token",
             },
         )?;
 
         let reflection = container
-            .find_first(&FourCc::from_str("RDEF"))
+            .find_first(&FourCc::from("RDEF"))
             .map(|c| reflection::parse_rdef(c.data))
             .transpose()?;
 
         let input_signature = container
-            .find_first(&FourCc::from_str("ISGN"))
+            .find_first(&FourCc::from("ISGN"))
             .map(|c| signature::parse_signature(c.fourcc, c.data))
             .transpose()?;
 
         let output_signature = container
-            .find_first(&FourCc::from_str("OSGN"))
+            .find_first(&FourCc::from("OSGN"))
             .map(|c| signature::parse_signature(c.fourcc, c.data))
             .transpose()?;
 
         let patch_constant_signature = container
-            .find_first(&FourCc::from_str("PSGN"))
+            .find_first(&FourCc::from("PSGN"))
             .map(|c| signature::parse_signature(c.fourcc, c.data))
             .transpose()?;
 
         let stats = container
-            .find_first(&FourCc::from_str("STAT"))
+            .find_first(&FourCc::from("STAT"))
             .map(|c| parse_u32_list(c.data, c.fourcc))
             .transpose()?;
 
@@ -372,7 +372,7 @@ impl DxbcShader {
 }
 
 fn parse_u32_list(bytes: &[u8], fourcc: FourCc) -> Result<Vec<u32>, DxbcError> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(DxbcError::InvalidChunkSizeAlignment {
             fourcc,
             size: bytes.len() as u32,

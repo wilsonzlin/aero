@@ -115,7 +115,7 @@ pub async fn get_image(
     State(state): State<ImagesState>,
     headers: HeaderMap,
 ) -> Response {
-    tracing::Span::current().record("image_id", &tracing::field::display(&image_id));
+    tracing::Span::current().record("image_id", tracing::field::display(&image_id));
     serve_image(image_id, state, headers, true).await
 }
 
@@ -124,7 +124,7 @@ pub async fn head_image(
     State(state): State<ImagesState>,
     headers: HeaderMap,
 ) -> Response {
-    tracing::Span::current().record("image_id", &tracing::field::display(&image_id));
+    tracing::Span::current().record("image_id", tracing::field::display(&image_id));
     serve_image(image_id, state, headers, false).await
 }
 

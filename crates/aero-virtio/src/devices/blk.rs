@@ -21,6 +21,12 @@ pub const VIRTIO_BLK_S_IOERR: u8 = 1;
 pub const VIRTIO_BLK_S_UNSUPP: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockBackendError {
+    OutOfBounds { offset: u64, len: usize },
+    IoError,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioBlkConfig {
     /// Capacity in 512-byte sectors.
     pub capacity: u64,
@@ -56,12 +62,15 @@ impl VirtioBlkConfig {
 
 pub trait BlockBackend {
     fn len(&self) -> u64;
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), ()>;
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), ()>;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError>;
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError>;
     fn blk_size(&self) -> u32 {
         VIRTIO_BLK_SECTOR_SIZE as u32
     }
-    fn flush(&mut self) -> Result<(), ()> {
+    fn flush(&mut self) -> Result<(), BlockBackendError> {
         Ok(())
     }
     fn device_id(&self) -> [u8; 20] {
@@ -99,19 +108,51 @@ impl BlockBackend for MemDisk {
         self.data.len() as u64
     }
 
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), ()> {
-        let end = offset as usize + dst.len();
-        dst.copy_from_slice(&self.data[offset as usize..end]);
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
+        let offset = usize::try_from(offset).map_err(|_| BlockBackendError::OutOfBounds {
+            offset,
+            len: dst.len(),
+        })?;
+        let end = offset
+            .checked_add(dst.len())
+            .ok_or(BlockBackendError::OutOfBounds {
+                offset: offset as u64,
+                len: dst.len(),
+            })?;
+        let src = self
+            .data
+            .get(offset..end)
+            .ok_or(BlockBackendError::OutOfBounds {
+                offset: offset as u64,
+                len: dst.len(),
+            })?;
+        dst.copy_from_slice(src);
         Ok(())
     }
 
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), ()> {
-        let end = offset as usize + src.len();
-        self.data[offset as usize..end].copy_from_slice(src);
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
+        let offset = usize::try_from(offset).map_err(|_| BlockBackendError::OutOfBounds {
+            offset,
+            len: src.len(),
+        })?;
+        let end = offset
+            .checked_add(src.len())
+            .ok_or(BlockBackendError::OutOfBounds {
+                offset: offset as u64,
+                len: src.len(),
+            })?;
+        let dst = self
+            .data
+            .get_mut(offset..end)
+            .ok_or(BlockBackendError::OutOfBounds {
+                offset: offset as u64,
+                len: src.len(),
+            })?;
+        dst.copy_from_slice(src);
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), ()> {
+    fn flush(&mut self) -> Result<(), BlockBackendError> {
         Ok(())
     }
 
@@ -257,74 +298,80 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
             match typ {
                 VIRTIO_BLK_T_IN => {
                     let total_len: u64 = data_segs.iter().map(|(_, _, len)| *len as u64).sum();
-                    let sector_off = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE);
-                    let end_off = sector_off.and_then(|off| off.checked_add(total_len));
+                    let bounds = sector
+                        .checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                        .and_then(|off| off.checked_add(total_len).map(|end| (off, end)));
 
                     if data_segs.is_empty()
                         || data_segs.len() > self.config.seg_max as usize
-                        || total_len % VIRTIO_BLK_SECTOR_SIZE != 0
-                        || sector_off.is_none()
-                        || end_off.is_none()
-                        || end_off.unwrap() > self.backend.len()
+                        || !total_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
                     {
                         status = VIRTIO_BLK_S_IOERR;
-                    } else {
-                        let mut offset = sector_off.unwrap();
-                        for (d, seg_off, seg_len) in &data_segs {
-                            if !d.is_write_only() {
-                                status = VIRTIO_BLK_S_IOERR;
-                                break;
+                    } else if let Some((mut offset, end_off)) = bounds {
+                        if end_off > self.backend.len() {
+                            status = VIRTIO_BLK_S_IOERR;
+                        } else {
+                            for (d, seg_off, seg_len) in &data_segs {
+                                if !d.is_write_only() {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+                                let Some(addr) = d.addr.checked_add(*seg_off as u64) else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                let Ok(dst) = mem.get_slice_mut(addr, *seg_len) else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                if self.backend.read_at(offset, dst).is_err() {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+                                offset = offset.saturating_add(*seg_len as u64);
                             }
-                            let Some(addr) = d.addr.checked_add(*seg_off as u64) else {
-                                status = VIRTIO_BLK_S_IOERR;
-                                break;
-                            };
-                            let Ok(dst) = mem.get_slice_mut(addr, *seg_len) else {
-                                status = VIRTIO_BLK_S_IOERR;
-                                break;
-                            };
-                            if self.backend.read_at(offset, dst).is_err() {
-                                status = VIRTIO_BLK_S_IOERR;
-                                break;
-                            }
-                            offset = offset.saturating_add(*seg_len as u64);
                         }
+                    } else {
+                        status = VIRTIO_BLK_S_IOERR;
                     }
                 }
                 VIRTIO_BLK_T_OUT => {
                     let total_len: u64 = data_segs.iter().map(|(_, _, len)| *len as u64).sum();
-                    let sector_off = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE);
-                    let end_off = sector_off.and_then(|off| off.checked_add(total_len));
+                    let bounds = sector
+                        .checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                        .and_then(|off| off.checked_add(total_len).map(|end| (off, end)));
 
                     if data_segs.is_empty()
                         || data_segs.len() > self.config.seg_max as usize
-                        || total_len % VIRTIO_BLK_SECTOR_SIZE != 0
-                        || sector_off.is_none()
-                        || end_off.is_none()
-                        || end_off.unwrap() > self.backend.len()
+                        || !total_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
                     {
                         status = VIRTIO_BLK_S_IOERR;
-                    } else {
-                        let mut offset = sector_off.unwrap();
-                        for (d, seg_off, seg_len) in &data_segs {
-                            if d.is_write_only() {
-                                status = VIRTIO_BLK_S_IOERR;
-                                break;
+                    } else if let Some((mut offset, end_off)) = bounds {
+                        if end_off > self.backend.len() {
+                            status = VIRTIO_BLK_S_IOERR;
+                        } else {
+                            for (d, seg_off, seg_len) in &data_segs {
+                                if d.is_write_only() {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+                                let Some(addr) = d.addr.checked_add(*seg_off as u64) else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                let Ok(src) = mem.get_slice(addr, *seg_len) else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                if self.backend.write_at(offset, src).is_err() {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+                                offset = offset.saturating_add(*seg_len as u64);
                             }
-                            let Some(addr) = d.addr.checked_add(*seg_off as u64) else {
-                                status = VIRTIO_BLK_S_IOERR;
-                                break;
-                            };
-                            let Ok(src) = mem.get_slice(addr, *seg_len) else {
-                                status = VIRTIO_BLK_S_IOERR;
-                                break;
-                            };
-                            if self.backend.write_at(offset, src).is_err() {
-                                status = VIRTIO_BLK_S_IOERR;
-                                break;
-                            }
-                            offset = offset.saturating_add(*seg_len as u64);
                         }
+                    } else {
+                        status = VIRTIO_BLK_S_IOERR;
                     }
                 }
                 VIRTIO_BLK_T_FLUSH => {

@@ -46,11 +46,13 @@ fn jit_backend_executes_tier1_block_by_table_index() {
         cache_max_blocks: 16,
         cache_max_bytes: 0,
     };
-    let mut jit = JitRuntime::new(config, backend, NullCompileSink::default());
+    let mut jit = JitRuntime::new(config, backend, NullCompileSink);
     jit.install_block(entry, table_index, entry, code.len() as u32);
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x8000;
 
     let handle = jit.prepare_block(entry).expect("expected compiled handle");
@@ -84,8 +86,10 @@ fn jit_backend_exit_to_interpreter_uses_sentinel() {
     let mut backend = WasmtimeBackend::<CpuState>::new();
     let table_index = backend.add_compiled_block(&wasm);
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
 
     let exit = backend.execute(table_index, &mut cpu);
 

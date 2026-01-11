@@ -99,7 +99,7 @@ const SD_CTL_STRM_MASK: u32 = 0xF << SD_CTL_STRM_SHIFT;
 const SD_STS_BCIS: u32 = 1 << 2; // Buffer Completion Interrupt Status (in SDSTS byte)
 
 /// One HDA stream descriptor worth of registers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StreamDescriptor {
     pub ctl: u32,
     pub lpib: u32,
@@ -110,22 +110,6 @@ pub struct StreamDescriptor {
     pub fmt: u16,
     pub bdpl: u32,
     pub bdpu: u32,
-}
-
-impl Default for StreamDescriptor {
-    fn default() -> Self {
-        Self {
-            ctl: 0,
-            lpib: 0,
-            cbl: 0,
-            lvi: 0,
-            fifow: 0,
-            fifos: 0,
-            fmt: 0,
-            bdpl: 0,
-            bdpu: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -543,7 +527,7 @@ impl HdaCodec {
                 self.output.format = payload16;
                 0
             }
-            0xB00..=0xBff => self.get_amp_gain_mute(payload16),
+            0xB00..=0xBFF => self.get_amp_gain_mute(payload16),
             0x300..=0x3ff => {
                 self.set_amp_gain_mute(payload16);
                 0
@@ -648,7 +632,7 @@ impl HdaCodec {
         match param_id {
             0x09 => {
                 // Audio widget capabilities: type=audio output (0), stereo, out amp present, format override.
-                (0x0u32) | (1 << 4) | (1 << 6) | (1 << 8)
+                (1 << 4) | (1 << 6) | (1 << 8)
             }
             0x0A => supported_pcm_caps(),
             0x0B => {
@@ -787,6 +771,12 @@ impl HdaCodec {
     }
 }
 
+impl Default for HdaCodec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Minimal Intel HD Audio controller emulation.
 #[derive(Debug, Clone)]
 pub struct HdaController {
@@ -834,6 +824,12 @@ pub struct HdaController {
     /// `AudioContext` (and therefore potentially a different `AudioContext.sampleRate`) than the
     /// output AudioWorklet graph.
     capture_sample_rate_hz: u32,
+}
+
+impl Default for HdaController {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HdaController {
@@ -1284,7 +1280,7 @@ impl HdaController {
                     _ if addr == REG_WAKEEN + 1 => {
                         self.wakeen = (self.wakeen & !0xff00) | ((byte as u16) << 8)
                     }
-                    REG_STATESTS => self.statests &= !((byte as u16) << 0),
+                    REG_STATESTS => self.statests &= !(byte as u16),
                     _ if addr == REG_STATESTS + 1 => self.statests &= !((byte as u16) << 8),
                     _ => {}
                 }
@@ -1817,13 +1813,7 @@ impl HdaController {
         fn apply_gain(sample: f32, gain: f32) -> f32 {
             let mut sample = if sample.is_finite() { sample } else { 0.0 };
             sample *= gain;
-            if sample > 1.0 {
-                1.0
-            } else if sample < -1.0 {
-                -1.0
-            } else {
-                sample
-            }
+            sample.clamp(-1.0, 1.0)
         }
     }
 
@@ -2027,7 +2017,7 @@ impl HdaController {
             // Snapshot files may come from untrusted sources; clamp to a reasonable upper bound so
             // restore cannot allocate multi-gigabyte host buffers.
             const MAX_HOST_SAMPLE_RATE_HZ: u32 = 384_000;
-            rate_hz.min(MAX_HOST_SAMPLE_RATE_HZ).max(1)
+            rate_hz.clamp(1, MAX_HOST_SAMPLE_RATE_HZ)
         }
 
         if state.output_rate_hz != 0 {
@@ -2175,7 +2165,7 @@ mod tests {
     }
 
     fn verb_4(group: u16, payload16: u16) -> u32 {
-        let verb_id = (group << 8) | ((payload16 >> 8) as u16);
+        let verb_id = (group << 8) | (payload16 >> 8);
         ((verb_id as u32) << 8) | (payload16 as u8 as u32)
     }
 
@@ -2229,8 +2219,8 @@ mod tests {
         // Setup CORB/RIRB in guest memory.
         let corb_base = 0x1000u64;
         let rirb_base = 0x2000u64;
-        hda.mmio_write(REG_CORBLBASE, 4, corb_base as u64);
-        hda.mmio_write(REG_RIRBLBASE, 4, rirb_base as u64);
+        hda.mmio_write(REG_CORBLBASE, 4, corb_base);
+        hda.mmio_write(REG_RIRBLBASE, 4, rirb_base);
 
         // Set pointers so first command/response lands at entry 0.
         hda.mmio_write(REG_CORBRP, 2, 0x00ff);

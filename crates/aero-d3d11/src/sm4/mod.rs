@@ -56,7 +56,7 @@ impl Sm4Program {
     }
 
     pub fn parse_program_tokens(bytes: &[u8]) -> Result<Self, Sm4Error> {
-        if bytes.len() % 4 != 0 {
+        if !bytes.len().is_multiple_of(4) {
             return Err(Sm4Error::MisalignedTokens { len: bytes.len() });
         }
         let mut tokens = Vec::with_capacity(bytes.len() / 4);

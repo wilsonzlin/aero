@@ -156,7 +156,7 @@ mod tests {
         irq.set_level(true);
         irq.set_level(true);
         irq.set_level(false);
-        assert_eq!(irq.level(), false);
+        assert!(!irq.level());
         assert_eq!(irq.transitions(), vec![true, false]);
     }
 }

@@ -62,6 +62,7 @@ impl MemoryBus for TestMemory {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_descriptor(
     base: u32,
     limit_raw: u32,
@@ -111,9 +112,9 @@ fn gdt_descriptor_reads_ignore_user_supervisor_paging_bit() {
     phys.write_u64(pd_base, pt_base | PTE_P | PTE_RW | PTE_US);
 
     // Map page 0 as user-accessible (not strictly needed but mirrors typical setups).
-    phys.write_u64(pt_base + 0 * 8, 0x0000 | PTE_P | PTE_RW | PTE_US);
+    phys.write_u64(pt_base, PTE_P | PTE_RW | PTE_US);
     // Map the GDT page (0x1000) as supervisor-only (U/S=0).
-    phys.write_u64(pt_base + 1 * 8, 0x1000 | PTE_P | PTE_RW);
+    phys.write_u64(pt_base + 8, 0x1000 | PTE_P | PTE_RW);
 
     let mut bus = PagingBus::new(phys);
 
@@ -121,8 +122,8 @@ fn gdt_descriptor_reads_ignore_user_supervisor_paging_bit() {
     let gdt_base = 0x1000u64;
     let null = 0u64;
     let user_data = make_descriptor(0, 0xFFFFF, 0x2, true, 3, true, false, false, true, true);
-    bus.inner_mut().write_u64(gdt_base + 0 * 8, null);
-    bus.inner_mut().write_u64(gdt_base + 1 * 8, user_data);
+    bus.inner_mut().write_u64(gdt_base, null);
+    bus.inner_mut().write_u64(gdt_base + 8, user_data);
 
     // Selector for the DPL3 data segment.
     let selector = (1u16 << 3) | 0b11;

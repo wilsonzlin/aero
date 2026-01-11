@@ -151,11 +151,13 @@ fn assemble_ps_passthrough_color() -> Vec<u8> {
 fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
     let mut mem = Bus::new(0x40_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -182,7 +184,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
     let entry_stride = 64u32;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -447,7 +449,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -523,11 +525,13 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
 fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_ranges() {
     let mut mem = Bus::new(0x80_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -554,7 +558,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
     let entry_stride = 64u32;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -614,7 +618,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
     let alloc_entry_stride = 32u32;
     let alloc_table_size_bytes = 24u32 + alloc_entry_count * alloc_entry_stride;
 
-    mem.write_u32(alloc_table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+    mem.write_u32(alloc_table_gpa, AEROGPU_ALLOC_TABLE_MAGIC);
     mem.write_u32(alloc_table_gpa + 4, dev.regs.abi_version);
     mem.write_u32(alloc_table_gpa + 8, alloc_table_size_bytes);
     mem.write_u32(alloc_table_gpa + 12, alloc_entry_count);
@@ -623,7 +627,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
 
     // Entry 0: VB backing.
     let entry0 = alloc_table_gpa + 24;
-    mem.write_u32(entry0 + 0, 1); // alloc_id
+    mem.write_u32(entry0, 1); // alloc_id
     mem.write_u32(entry0 + 4, 0); // flags
     mem.write_u64(entry0 + 8, vb_gpa);
     mem.write_u64(entry0 + 16, vb_data.len() as u64);
@@ -631,7 +635,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
 
     // Entry 1: IB backing.
     let entry1 = alloc_table_gpa + 24 + 32;
-    mem.write_u32(entry1 + 0, 2); // alloc_id
+    mem.write_u32(entry1, 2); // alloc_id
     mem.write_u32(entry1 + 4, 0); // flags
     mem.write_u64(entry1 + 8, ib_gpa);
     mem.write_u64(entry1 + 16, ib_data.len() as u64);
@@ -852,7 +856,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -928,11 +932,13 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
 fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     let mut mem = Bus::new(0x40_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -958,7 +964,7 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     let entry_count = 8u32;
     let entry_stride = 64u32;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1160,7 +1166,7 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     mem.write_physical(cmd_gpa, &stream);
 
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -1221,11 +1227,13 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
 fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     let mut mem = Bus::new(0x60_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -1252,7 +1260,7 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     let entry_stride = 64u32;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1557,7 +1565,7 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     mem.write_physical(cmd1_gpa, &stream1);
 
     let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc0_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc0_gpa, 64); // desc_size_bytes
     mem.write_u32(desc0_gpa + 4, 0); // flags
     mem.write_u32(desc0_gpa + 8, 1); // context_id
     mem.write_u32(desc0_gpa + 12, 0); // engine_id
@@ -1568,7 +1576,7 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     mem.write_u64(desc0_gpa + 48, 1); // signal_fence
 
     let desc1_gpa = desc0_gpa + entry_stride as u64;
-    mem.write_u32(desc1_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc1_gpa, 64); // desc_size_bytes
     mem.write_u32(desc1_gpa + 4, 0); // flags
     mem.write_u32(desc1_gpa + 8, 2); // context_id
     mem.write_u32(desc1_gpa + 12, 0); // engine_id
@@ -1635,11 +1643,13 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
 fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
     let mut mem = Bus::new(0x40_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -1666,7 +1676,7 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
     let entry_stride = 64u32;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1684,7 +1694,7 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
     let dst_gpa = 0x8000u64;
     mem.write_physical(dst_gpa, &[0xAA, 0xAA, 0xAA, 0xAA]);
 
-    mem.write_u32(alloc_table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+    mem.write_u32(alloc_table_gpa, AEROGPU_ALLOC_TABLE_MAGIC);
     mem.write_u32(alloc_table_gpa + 4, dev.regs.abi_version);
     mem.write_u32(alloc_table_gpa + 8, alloc_table_size_bytes);
     mem.write_u32(alloc_table_gpa + 12, alloc_entry_count);
@@ -1692,7 +1702,7 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
     mem.write_u32(alloc_table_gpa + 20, 0); // reserved0
 
     let entry0 = alloc_table_gpa + 24;
-    mem.write_u32(entry0 + 0, 1); // alloc_id
+    mem.write_u32(entry0, 1); // alloc_id
     mem.write_u32(entry0 + 4, 0); // flags
     mem.write_u64(entry0 + 8, dst_gpa);
     mem.write_u64(entry0 + 16, 4096); // size_bytes
@@ -1781,7 +1791,7 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -1832,11 +1842,13 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
 fn aerogpu_ring_submission_completes_fence_on_d3d9_executor_error() {
     let mut mem = Bus::new(0x40_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -1863,7 +1875,7 @@ fn aerogpu_ring_submission_completes_fence_on_d3d9_executor_error() {
     let entry_stride = 64u32;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1892,7 +1904,7 @@ fn aerogpu_ring_submission_completes_fence_on_d3d9_executor_error() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id

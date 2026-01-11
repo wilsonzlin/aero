@@ -623,7 +623,7 @@ fn complete_command(
     mem.write_u32(header_addr + 4, bytes_transferred);
 
     let status = ATA_STATUS_DRDY | ATA_STATUS_DSC;
-    port_regs.tfd = (status as u32) | (0u32 << 8);
+    port_regs.tfd = status as u32;
 
     write_d2h_fis(mem, port_regs.fb, status, 0);
 
@@ -730,7 +730,7 @@ mod tests {
         ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
         ctl.process(&mut mem);
 
-        assert_eq!(irq.level(), true);
+        assert!(irq.level());
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_CI), 0);
         assert_eq!(
             ctl.read_u32(PORT_BASE + PORT_REG_IS) & PORT_IS_DHRS,
@@ -743,7 +743,7 @@ mod tests {
 
         // Clear the interrupt.
         ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
-        assert_eq!(irq.level(), false);
+        assert!(!irq.level());
     }
 
     #[test]
@@ -805,6 +805,6 @@ mod tests {
         let mut verify = [0u8; 4];
         mem.read(verify_buf, &mut verify);
         assert_eq!(verify, [1, 2, 3, 4]);
-        assert_eq!(irq.level(), true);
+        assert!(irq.level());
     }
 }

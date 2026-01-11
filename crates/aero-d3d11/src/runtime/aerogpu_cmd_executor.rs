@@ -275,25 +275,13 @@ struct ConstantBufferScratch {
     size: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct AerogpuD3d11Resources {
     buffers: HashMap<u32, BufferResource>,
     textures: HashMap<u32, Texture2dResource>,
     samplers: HashMap<u32, aero_gpu::bindings::samplers::CachedSampler>,
     shaders: HashMap<u32, ShaderResource>,
     input_layouts: HashMap<u32, InputLayoutResource>,
-}
-
-impl Default for AerogpuD3d11Resources {
-    fn default() -> Self {
-        Self {
-            buffers: HashMap::new(),
-            textures: HashMap::new(),
-            samplers: HashMap::new(),
-            shaders: HashMap::new(),
-            input_layouts: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1129,6 +1117,7 @@ impl AerogpuD3d11Executor {
         self.submit_encoder(encoder, label);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn exec_non_draw_command(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1193,6 +1182,7 @@ impl AerogpuD3d11Executor {
     /// opcode while no render pass is active. It begins a pass with `LoadOp::Load`,
     /// then continues consuming subsequent commands until a pass-ending opcode is
     /// reached (SET_RENDER_TARGETS, CLEAR, PRESENT, FLUSH, ...).
+    #[allow(clippy::too_many_arguments)]
     fn exec_render_pass_load<'a>(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1666,7 +1656,7 @@ impl AerogpuD3d11Executor {
                             let base = 24 + i * 16;
                             let buffer = read_u32_le(cmd_bytes, base)?;
                             let offset_bytes = read_u32_le(cmd_bytes, base + 4)? as u64;
-                            if offset_bytes != 0 && offset_bytes % uniform_align != 0 {
+                            if offset_bytes != 0 && !offset_bytes.is_multiple_of(uniform_align) {
                                 needs_break = true;
                                 break;
                             }
@@ -3926,10 +3916,10 @@ impl AerogpuD3d11Executor {
             let n = remaining.min(CHUNK);
             let mut tmp = vec![0u8; n];
             guest_mem
-                .read(gpa + (offset - dirty.start) as u64, &mut tmp)
-                .map_err(|e| anyhow_guest_mem(e))?;
+                .read(gpa + (offset - dirty.start), &mut tmp)
+                .map_err(anyhow_guest_mem)?;
 
-            let write_len = if n % (wgpu::COPY_BUFFER_ALIGNMENT as usize) != 0 {
+            let write_len = if !n.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT as usize) {
                 if offset + n as u64 != dirty.end || dirty.end != buffer_size {
                     bail!("buffer {buffer_handle} upload is not COPY_BUFFER_ALIGNMENT-aligned");
                 }
@@ -4039,6 +4029,7 @@ impl AerogpuD3d11Executor {
         // `COPY_BYTES_PER_ROW_ALIGNMENT`.
         const CHUNK_BYTES: usize = 256 * 1024;
 
+        #[allow(clippy::too_many_arguments)]
         fn upload_subresource(
             queue: &wgpu::Queue,
             texture: &wgpu::Texture,
@@ -4464,6 +4455,7 @@ fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLa
         count: None,
     })
 }
+#[allow(clippy::too_many_arguments)]
 fn build_bind_group(
     device: &wgpu::Device,
     cache: &mut BindGroupCache<Arc<wgpu::BindGroup>>,

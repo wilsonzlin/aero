@@ -351,6 +351,42 @@ struct BoundIndexBuffer {
     offset_bytes: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CopyBufferArgs {
+    dst_buffer: u32,
+    src_buffer: u32,
+    dst_offset_bytes: u64,
+    src_offset_bytes: u64,
+    size_bytes: u64,
+    flags: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CopyTexture2dArgs {
+    dst_texture: u32,
+    src_texture: u32,
+    dst_mip_level: u32,
+    dst_array_layer: u32,
+    src_mip_level: u32,
+    src_array_layer: u32,
+    dst_x: u32,
+    dst_y: u32,
+    src_x: u32,
+    src_y: u32,
+    width: u32,
+    height: u32,
+    flags: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DrawIndexedArgs {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+}
+
 #[derive(Debug, Default)]
 struct ExecutorState {
     render_target: Option<u32>,
@@ -826,12 +862,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                     size_bytes,
                     flags,
                 } => self.exec_copy_buffer(
-                    dst_buffer,
-                    src_buffer,
-                    dst_offset_bytes,
-                    src_offset_bytes,
-                    size_bytes,
-                    flags,
+                    CopyBufferArgs {
+                        dst_buffer,
+                        src_buffer,
+                        dst_offset_bytes,
+                        src_offset_bytes,
+                        size_bytes,
+                        flags,
+                    },
                     guest_memory,
                     alloc_table,
                     pending_writebacks,
@@ -851,19 +889,21 @@ fn fs_main() -> @location(0) vec4<f32> {
                     height,
                     flags,
                 } => self.exec_copy_texture2d(
-                    dst_texture,
-                    src_texture,
-                    dst_mip_level,
-                    dst_array_layer,
-                    src_mip_level,
-                    src_array_layer,
-                    dst_x,
-                    dst_y,
-                    src_x,
-                    src_y,
-                    width,
-                    height,
-                    flags,
+                    CopyTexture2dArgs {
+                        dst_texture,
+                        src_texture,
+                        dst_mip_level,
+                        dst_array_layer,
+                        src_mip_level,
+                        src_array_layer,
+                        dst_x,
+                        dst_y,
+                        src_x,
+                        src_y,
+                        width,
+                        height,
+                        flags,
+                    },
                     guest_memory,
                     alloc_table,
                     pending_writebacks,
@@ -914,11 +954,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                     base_vertex,
                     first_instance,
                 } => self.exec_draw_indexed(
-                    index_count,
-                    instance_count,
-                    first_index,
-                    base_vertex,
-                    first_instance,
+                    DrawIndexedArgs {
+                        index_count,
+                        instance_count,
+                        first_index,
+                        base_vertex,
+                        first_instance,
+                    },
                     guest_memory,
                     alloc_table,
                 ),
@@ -1131,7 +1173,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 "CREATE_BUFFER size_bytes must be > 0".into(),
             ));
         }
-        if size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+        if !size_bytes.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT) {
             return Err(ExecutorError::Validation(format!(
                 "CREATE_BUFFER size_bytes must be a multiple of {} (got {size_bytes})",
                 wgpu::COPY_BUFFER_ALIGNMENT
@@ -1231,6 +1273,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok((fmt, bpp))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn exec_create_texture2d(
         &mut self,
         texture_handle: u32,
@@ -1512,8 +1555,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                 )));
             }
 
-            if offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
-                || size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+            if !offset_bytes.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                || !size_bytes.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
             {
                 return Err(ExecutorError::Validation(format!(
                     "UPLOAD_RESOURCE buffer offset_bytes and size_bytes must be multiples of {} (handle={handle} offset_bytes={offset_bytes} size_bytes={size_bytes})",
@@ -1549,7 +1592,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 )));
             }
 
-            if offset_bytes % row_pitch != 0 || size_bytes % row_pitch != 0 {
+            if !offset_bytes.is_multiple_of(row_pitch) || !size_bytes.is_multiple_of(row_pitch) {
                 return Err(ExecutorError::Validation(format!(
                     "UPLOAD_RESOURCE for texture {handle} must be row-aligned (offset_bytes and size_bytes must be multiples of row_pitch_bytes={})",
                     tex.linear_row_pitch_bytes
@@ -1578,7 +1621,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                 )));
             }
 
-            let upload_bpr = if tex.linear_row_pitch_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0
+            let upload_bpr = if tex
+                .linear_row_pitch_bytes
+                .is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             {
                 tex.linear_row_pitch_bytes
             } else {
@@ -1721,16 +1766,19 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     fn exec_copy_buffer(
         &mut self,
-        dst_buffer: u32,
-        src_buffer: u32,
-        dst_offset_bytes: u64,
-        src_offset_bytes: u64,
-        size_bytes: u64,
-        flags: u32,
+        args: CopyBufferArgs,
         guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<(), ExecutorError> {
+        let CopyBufferArgs {
+            dst_buffer,
+            src_buffer,
+            dst_offset_bytes,
+            src_offset_bytes,
+            size_bytes,
+            flags,
+        } = args;
         if size_bytes == 0 {
             return Ok(());
         }
@@ -1753,9 +1801,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             ));
         }
 
-        if dst_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
-            || src_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
-            || size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+        if !dst_offset_bytes.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+            || !src_offset_bytes.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+            || !size_bytes.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
         {
             return Err(ExecutorError::Validation(format!(
                 "COPY_BUFFER: offsets and size must be {}-byte aligned (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})",
@@ -1872,23 +1920,26 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     fn exec_copy_texture2d(
         &mut self,
-        dst_texture: u32,
-        src_texture: u32,
-        dst_mip_level: u32,
-        dst_array_layer: u32,
-        src_mip_level: u32,
-        src_array_layer: u32,
-        dst_x: u32,
-        dst_y: u32,
-        src_x: u32,
-        src_y: u32,
-        width: u32,
-        height: u32,
-        flags: u32,
+        args: CopyTexture2dArgs,
         guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<(), ExecutorError> {
+        let CopyTexture2dArgs {
+            dst_texture,
+            src_texture,
+            dst_mip_level,
+            dst_array_layer,
+            src_mip_level,
+            src_array_layer,
+            dst_x,
+            dst_y,
+            src_x,
+            src_y,
+            width,
+            height,
+            flags,
+        } = args;
         if width == 0 || height == 0 {
             return Ok(());
         }
@@ -2291,7 +2342,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             wgpu::IndexFormat::Uint16 => 2,
             wgpu::IndexFormat::Uint32 => 4,
         };
-        if (offset_bytes as u64) % align != 0 {
+        if !(offset_bytes as u64).is_multiple_of(align) {
             return Err(ExecutorError::Validation(format!(
                 "SET_INDEX_BUFFER offset_bytes must be aligned to {align} (got {offset_bytes})"
             )));
@@ -2504,14 +2555,17 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     fn exec_draw_indexed(
         &mut self,
-        index_count: u32,
-        instance_count: u32,
-        first_index: u32,
-        base_vertex: i32,
-        first_instance: u32,
+        args: DrawIndexedArgs,
         guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
+        let DrawIndexedArgs {
+            index_count,
+            instance_count,
+            first_index,
+            base_vertex,
+            first_instance,
+        } = args;
         let Some(rt) = self.state.render_target else {
             return Err(ExecutorError::Validation(
                 "DRAW_INDEXED requires a bound render target".into(),
@@ -2712,7 +2766,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         let mut row_ranges = Vec::<Range<u32>>::new();
         for r in &tex.dirty_ranges {
             let start_row = (r.start / row_pitch) as u32;
-            let end_row = ((r.end + row_pitch - 1) / row_pitch) as u32;
+            let end_row = r.end.div_ceil(row_pitch) as u32;
             row_ranges.push(start_row..end_row);
         }
         coalesce_ranges_u32(&mut row_ranges);
@@ -2729,7 +2783,10 @@ fn fs_main() -> @location(0) vec4<f32> {
             .width
             .checked_mul(tex.bytes_per_pixel)
             .ok_or_else(|| ExecutorError::Validation("texture row size overflow".into()))?;
-        let upload_bpr = if backing.row_pitch_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 {
+        let upload_bpr = if backing
+            .row_pitch_bytes
+            .is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        {
             backing.row_pitch_bytes
         } else {
             align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)

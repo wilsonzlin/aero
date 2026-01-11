@@ -239,24 +239,24 @@ impl Texture {
             )
         };
 
-        uploads.write_texture(
-            tex,
-            level,
-            wgpu::Origin3d {
+        uploads.write_texture(super::TextureUpload {
+            texture: tex,
+            mip_level: level,
+            origin: wgpu::Origin3d {
                 x: 0,
                 y: 0,
                 z: layer,
             },
-            wgpu::TextureAspect::All,
-            wgpu::Extent3d {
+            aspect: wgpu::TextureAspect::All,
+            size: wgpu::Extent3d {
                 width: mip_w,
                 height: mip_h,
                 depth_or_array_layers: 1,
             },
-            padded_bpr,
-            upload_rows_per_image,
-            &padded,
-        );
+            bytes_per_row: padded_bpr,
+            rows_per_image: upload_rows_per_image,
+            data: &padded,
+        });
         Ok(())
     }
 
@@ -482,8 +482,8 @@ fn decompress_dxt_to_bgra8(
 }
 
 fn decompress_bc1_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
-    let blocks_w = (width + 3) / 4;
-    let blocks_h = (height + 3) / 4;
+    let blocks_w = width.div_ceil(4);
+    let blocks_h = height.div_ceil(4);
     let expected = (blocks_w * blocks_h * 8) as usize;
     if src.len() < expected {
         return Err(anyhow!(
@@ -520,7 +520,7 @@ fn decompress_bc1_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8
 
             for py in 0..4u32 {
                 for px in 0..4u32 {
-                    let pixel_index = (py * 4 + px) as u32;
+                    let pixel_index = py * 4 + px;
                     let sel = ((indices >> (2 * pixel_index)) & 0x3) as usize;
                     let x = bx * 4 + px;
                     let y = by * 4 + py;
@@ -538,8 +538,8 @@ fn decompress_bc1_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8
 }
 
 fn decompress_bc2_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
-    let blocks_w = (width + 3) / 4;
-    let blocks_h = (height + 3) / 4;
+    let blocks_w = width.div_ceil(4);
+    let blocks_h = height.div_ceil(4);
     let expected = (blocks_w * blocks_h * 16) as usize;
     if src.len() < expected {
         return Err(anyhow!(
@@ -573,7 +573,7 @@ fn decompress_bc2_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8
 
             for py in 0..4u32 {
                 for px in 0..4u32 {
-                    let pixel_index = (py * 4 + px) as u32;
+                    let pixel_index = py * 4 + px;
                     let sel = ((indices >> (2 * pixel_index)) & 0x3) as usize;
                     let a4 = ((alpha_bits >> (4 * pixel_index)) & 0xF) as u8;
                     let alpha = a4 * 17;
@@ -595,8 +595,8 @@ fn decompress_bc2_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8
 }
 
 fn decompress_bc3_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
-    let blocks_w = (width + 3) / 4;
-    let blocks_h = (height + 3) / 4;
+    let blocks_w = width.div_ceil(4);
+    let blocks_h = height.div_ceil(4);
     let expected = (blocks_w * blocks_h * 16) as usize;
     if src.len() < expected {
         return Err(anyhow!(
@@ -637,7 +637,7 @@ fn decompress_bc3_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8
 
             for py in 0..4u32 {
                 for px in 0..4u32 {
-                    let pixel_index = (py * 4 + px) as u32;
+                    let pixel_index = py * 4 + px;
                     let sel = ((indices >> (2 * pixel_index)) & 0x3) as usize;
                     let a_sel = ((alpha_idx_bits >> (3 * pixel_index)) & 0x7) as usize;
                     let alpha = alpha_table[a_sel];
@@ -662,18 +662,20 @@ fn bc3_alpha_table(a0: u8, a1: u8) -> [u8; 8] {
     let mut table = [0u8; 8];
     table[0] = a0;
     table[1] = a1;
+    let a0_u16 = u16::from(a0);
+    let a1_u16 = u16::from(a1);
     if a0 > a1 {
-        table[2] = ((6u16 * a0 as u16 + 1u16 * a1 as u16) / 7) as u8;
-        table[3] = ((5u16 * a0 as u16 + 2u16 * a1 as u16) / 7) as u8;
-        table[4] = ((4u16 * a0 as u16 + 3u16 * a1 as u16) / 7) as u8;
-        table[5] = ((3u16 * a0 as u16 + 4u16 * a1 as u16) / 7) as u8;
-        table[6] = ((2u16 * a0 as u16 + 5u16 * a1 as u16) / 7) as u8;
-        table[7] = ((1u16 * a0 as u16 + 6u16 * a1 as u16) / 7) as u8;
+        table[2] = ((6u16 * a0_u16 + a1_u16) / 7) as u8;
+        table[3] = ((5u16 * a0_u16 + 2u16 * a1_u16) / 7) as u8;
+        table[4] = ((4u16 * a0_u16 + 3u16 * a1_u16) / 7) as u8;
+        table[5] = ((3u16 * a0_u16 + 4u16 * a1_u16) / 7) as u8;
+        table[6] = ((2u16 * a0_u16 + 5u16 * a1_u16) / 7) as u8;
+        table[7] = ((a0_u16 + 6u16 * a1_u16) / 7) as u8;
     } else {
-        table[2] = ((4u16 * a0 as u16 + 1u16 * a1 as u16) / 5) as u8;
-        table[3] = ((3u16 * a0 as u16 + 2u16 * a1 as u16) / 5) as u8;
-        table[4] = ((2u16 * a0 as u16 + 3u16 * a1 as u16) / 5) as u8;
-        table[5] = ((1u16 * a0 as u16 + 4u16 * a1 as u16) / 5) as u8;
+        table[2] = ((4u16 * a0_u16 + a1_u16) / 5) as u8;
+        table[3] = ((3u16 * a0_u16 + 2u16 * a1_u16) / 5) as u8;
+        table[4] = ((2u16 * a0_u16 + 3u16 * a1_u16) / 5) as u8;
+        table[5] = ((a0_u16 + 4u16 * a1_u16) / 5) as u8;
         table[6] = 0;
         table[7] = 255;
     }
@@ -714,8 +716,8 @@ mod tests {
 
     #[test]
     fn bc1_decompress_solid_color() {
-        // Solid red (approx) in RGB565: 0b11111_000000_00000
-        let data = bc1_solid_block(0b11111_000000_00000);
+        // Solid red (approx) in RGB565.
+        let data = bc1_solid_block(0xF800);
         let out = decompress_bc1_to_bgra8(4, 4, &data).unwrap();
         // First pixel should be red-ish with full alpha.
         assert_eq!(out[0], 0); // B

@@ -103,7 +103,7 @@ fn make_iced_stream() -> Vec<u8> {
         }
     }
     // Padding so decoding at the end always has lookahead bytes.
-    out.extend(std::iter::repeat(0x90).take(32));
+    out.extend(std::iter::repeat_n(0x90, 32));
     out
 }
 

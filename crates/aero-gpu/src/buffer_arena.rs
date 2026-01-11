@@ -87,10 +87,9 @@ impl BufferArena {
     /// buffer) on success.
     pub fn alloc(&mut self, size: u64, alignment: u64) -> Option<u64> {
         let alignment = alignment.max(1);
-        let size = size;
 
         let aligned = align_up(self.cursor, alignment);
-        debug_assert_eq!(aligned % alignment, 0);
+        debug_assert!(aligned.is_multiple_of(alignment));
 
         let end = aligned.checked_add(size)?;
         if end > self.end() {

@@ -136,7 +136,7 @@ impl TextureFormatSelection {
             | TextureFormat::Bc3RgbaUnormSrgb
             | TextureFormat::Bc7RgbaUnorm
             | TextureFormat::Bc7RgbaUnormSrgb => {
-                let blocks_w = (width + 3) / 4;
+                let blocks_w = width.div_ceil(4);
                 let block_bytes = self.requested.bc_block_bytes()?;
                 blocks_w.checked_mul(block_bytes)?
             }

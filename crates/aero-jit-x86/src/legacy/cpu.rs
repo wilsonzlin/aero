@@ -155,11 +155,11 @@ impl CpuState {
             "CpuState read out of bounds"
         );
         let mut regs = [0u64; Reg::COUNT];
-        for i in 0..Reg::COUNT {
+        for (i, reg) in regs.iter_mut().enumerate() {
             let off = base + i * 8;
             let mut buf = [0u8; 8];
             buf.copy_from_slice(&mem[off..off + 8]);
-            regs[i] = u64::from_le_bytes(buf);
+            *reg = u64::from_le_bytes(buf);
         }
         let rip_off = base + (Reg::COUNT * 8);
         let mut buf = [0u8; 8];

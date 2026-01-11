@@ -75,7 +75,7 @@ impl<'a> TraceBuilder<'a> {
                 if instr_budget == 0 {
                     break;
                 }
-                trace.ir.body.push(inst.clone());
+                trace.ir.body.push(*inst);
                 instr_budget -= 1;
                 if inst.is_terminator() {
                     break 'build;
@@ -151,7 +151,7 @@ impl<'a> TraceBuilder<'a> {
         }
 
         let guards = self.compute_code_version_guards(&trace, entry_rip);
-        trace.ir.prologue.extend(guards.iter().cloned());
+        trace.ir.prologue.extend(guards.iter().copied());
         if trace.ir.kind == TraceKind::Loop {
             trace.ir.body.splice(0..0, guards);
         }

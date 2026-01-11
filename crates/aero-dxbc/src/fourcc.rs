@@ -12,6 +12,7 @@ impl FourCC {
     /// Creates a [`FourCC`] from a 4 byte string.
     ///
     /// Returns `None` if `s` is not exactly 4 bytes long.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         let bytes = s.as_bytes();
         let &[a, b, c, d] = bytes else {
@@ -23,6 +24,18 @@ impl FourCC {
     /// Interprets this fourcc as UTF-8, replacing invalid bytes with U+FFFD.
     pub fn as_str_lossy(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.0)
+    }
+}
+
+impl core::str::FromStr for FourCC {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = s.as_bytes();
+        let &[a, b, c, d] = bytes else {
+            return Err(());
+        };
+        Ok(Self([a, b, c, d]))
     }
 }
 

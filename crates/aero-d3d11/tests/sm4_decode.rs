@@ -7,7 +7,7 @@ use aero_d3d11::{
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
     // Version token layout:
     // type in bits 16.., major in bits 4..7, minor in bits 0..3.
-    let version = ((stage_type as u32) << 16) | (5u32 << 4) | 0u32;
+    let version = ((stage_type as u32) << 16) | (5u32 << 4);
     let total_dwords = 2 + body_tokens.len();
     let mut tokens = Vec::with_capacity(total_dwords);
     tokens.push(version);
@@ -31,7 +31,7 @@ fn opcode_token(opcode: u32, len: u32) -> u32 {
 fn opcode_token_with_sat(opcode: u32, len_without_ext: u32) -> Vec<u32> {
     // Extended opcode token (type 0) with saturate bit set at bit 13.
     let opcode_token = opcode | ((len_without_ext + 1) << OPCODE_LEN_SHIFT) | OPCODE_EXTENDED_BIT;
-    let ext = 0u32 | (1u32 << 13);
+    let ext = 1u32 << 13;
     vec![opcode_token, ext]
 }
 
@@ -98,7 +98,7 @@ fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle, modifier: OperandModifier
             OperandModifier::Abs => 2,
             OperandModifier::AbsNeg => 3,
         };
-        out.push((mod_bits << 6) | 0u32);
+        out.push(mod_bits << 6);
     }
     out.extend_from_slice(indices);
     out

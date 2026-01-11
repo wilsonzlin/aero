@@ -93,10 +93,7 @@ struct Vertex {
 fn bytes_of_vertices(verts: &[Vertex]) -> &[u8] {
     // Safety: Vertex is #[repr(C)] and contains only plain f32 arrays with no padding.
     unsafe {
-        std::slice::from_raw_parts(
-            verts.as_ptr() as *const u8,
-            verts.len() * core::mem::size_of::<Vertex>(),
-        )
+        std::slice::from_raw_parts(verts.as_ptr() as *const u8, core::mem::size_of_val(verts))
     }
 }
 

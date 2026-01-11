@@ -96,7 +96,7 @@ impl LinearResampler {
         if input.is_empty() {
             return Ok(());
         }
-        if input.len() % self.channels != 0 {
+        if !input.len().is_multiple_of(self.channels) {
             return Err(ResampleError::InputLengthNotAligned {
                 expected_multiple: self.channels,
             });
@@ -174,7 +174,6 @@ impl LinearResampler {
 
         // With no future samples available, treat the next frame as identical to `prev_frame`.
         while self.pos < 1.0 {
-            let frac = self.pos as f32;
             for c in 0..self.channels {
                 let a = self.prev_frame[c];
                 // frame1 == frame0, so interpolation is constant.
@@ -460,7 +459,7 @@ impl SincResampler {
         if input.is_empty() {
             return Ok(());
         }
-        if input.len() % self.channels != 0 {
+        if !input.len().is_multiple_of(self.channels) {
             return Err(ResampleError::InputLengthNotAligned {
                 expected_multiple: self.channels,
             });
@@ -558,7 +557,7 @@ impl SincResampler {
             // Need samples from center-(half-1) .. center+half.
             let start = center - (self.half - 1);
 
-            for c in 0..self.channels {
+            for (c, &last) in last_frame.iter().enumerate() {
                 let mut acc = 0.0f32;
                 for (t, &k) in coeffs.iter().enumerate() {
                     let idx = start + t as isize;
@@ -568,7 +567,7 @@ impl SincResampler {
                         let base = idx as usize * self.channels;
                         self.history[base + c]
                     } else {
-                        last_frame[c]
+                        last
                     };
                     acc += sample * k;
                 }

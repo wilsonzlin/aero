@@ -93,7 +93,7 @@ impl VertexDeclaration {
     /// This expects a stream of 8-byte `D3DVERTEXELEMENT9` structs in little-endian order,
     /// terminated by the standard end marker (`stream=0xFF, type=UNUSED`).
     pub fn from_d3d_bytes(bytes: &[u8]) -> Result<Self, VertexInputError> {
-        if bytes.len() % D3dVertexElement9::BYTE_SIZE != 0 {
+        if !bytes.len().is_multiple_of(D3dVertexElement9::BYTE_SIZE) {
             return Err(VertexInputError::VertexDeclBytesNotMultipleOf8 { len: bytes.len() });
         }
 

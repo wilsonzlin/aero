@@ -28,8 +28,10 @@ fn tier1_ir_interp_call_helper_bails_out_to_interpreter() {
         next_rip: entry + 4,
     });
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
     write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
 

@@ -251,7 +251,7 @@ impl<S: AudioSink> VirtioSndDevice<S> {
             return Ok(VIRTIO_SND_S_BAD_MSG);
         }
 
-        if pending_lo.is_some() || sample_count % 2 != 0 {
+        if pending_lo.is_some() || !sample_count.is_multiple_of(2) {
             return Ok(VIRTIO_SND_S_BAD_MSG);
         }
 

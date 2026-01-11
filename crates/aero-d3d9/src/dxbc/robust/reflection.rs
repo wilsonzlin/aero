@@ -102,13 +102,13 @@ fn parse_constant_buffers(
     let total = (cb_count as usize)
         .checked_mul(desc_size)
         .ok_or(DxbcError::InvalidChunk {
-            fourcc: FourCc::from_str("RDEF"),
+            fourcc: FourCc::from("RDEF"),
             reason: "constant buffer count overflow",
         })?;
 
     if cb_offset.checked_add(total).is_none() || cb_offset + total > bytes.len() {
         return Err(DxbcError::InvalidChunk {
-            fourcc: FourCc::from_str("RDEF"),
+            fourcc: FourCc::from("RDEF"),
             reason: "constant buffer table out of bounds",
         });
     }
@@ -152,13 +152,13 @@ fn parse_variables(
     let total = (var_count as usize)
         .checked_mul(desc_size)
         .ok_or(DxbcError::InvalidChunk {
-            fourcc: FourCc::from_str("RDEF"),
+            fourcc: FourCc::from("RDEF"),
             reason: "variable count overflow",
         })?;
 
     if var_offset.checked_add(total).is_none() || var_offset + total > bytes.len() {
         return Err(DxbcError::InvalidChunk {
-            fourcc: FourCc::from_str("RDEF"),
+            fourcc: FourCc::from("RDEF"),
             reason: "variable table out of bounds",
         });
     }
@@ -192,7 +192,7 @@ fn parse_variables(
 fn parse_type(bytes: &[u8], offset: usize, depth: u32) -> Result<DxbcType, DxbcError> {
     if depth > 32 {
         return Err(DxbcError::InvalidChunk {
-            fourcc: FourCc::from_str("RDEF"),
+            fourcc: FourCc::from("RDEF"),
             reason: "type recursion too deep",
         });
     }
@@ -214,13 +214,13 @@ fn parse_type(bytes: &[u8], offset: usize, depth: u32) -> Result<DxbcType, DxbcE
         let total = (member_count as usize)
             .checked_mul(member_desc_size)
             .ok_or(DxbcError::InvalidChunk {
-                fourcc: FourCc::from_str("RDEF"),
+                fourcc: FourCc::from("RDEF"),
                 reason: "member count overflow",
             })?;
 
         if mo.checked_add(total).is_none() || mo + total > bytes.len() {
             return Err(DxbcError::InvalidChunk {
-                fourcc: FourCc::from_str("RDEF"),
+                fourcc: FourCc::from("RDEF"),
                 reason: "member table out of bounds",
             });
         }
@@ -266,13 +266,13 @@ fn parse_bound_resources(
     let total = (rb_count as usize)
         .checked_mul(desc_size)
         .ok_or(DxbcError::InvalidChunk {
-            fourcc: FourCc::from_str("RDEF"),
+            fourcc: FourCc::from("RDEF"),
             reason: "resource count overflow",
         })?;
 
     if rb_offset.checked_add(total).is_none() || rb_offset + total > bytes.len() {
         return Err(DxbcError::InvalidChunk {
-            fourcc: FourCc::from_str("RDEF"),
+            fourcc: FourCc::from("RDEF"),
             reason: "resource table out of bounds",
         });
     }

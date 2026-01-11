@@ -13,7 +13,7 @@
 //! - translation to WGSL using `aero-d3d9`
 //! - caching of WGSL + compiled `wgpu::ShaderModule`s keyed by a strong hash of the original bytes
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use aero_d3d9::dxbc::{Container as DxbcContainer, DxbcError, FourCC};
 use aero_d3d9::shader::{self, ShaderError, ShaderStage, ShaderVersion};
@@ -109,7 +109,7 @@ impl D3d9ShaderCache {
         let payload_format = ShaderPayloadFormat::detect(bytes);
 
         // Ensure the shader artifact exists (translate/compile on miss).
-        if !self.by_hash.contains_key(&hash) {
+        if let Entry::Vacant(e) = self.by_hash.entry(hash) {
             let token_stream = extract_token_stream(payload_format, bytes)?;
             let program = shader::parse(token_stream)?;
 
@@ -135,18 +135,15 @@ impl D3d9ShaderCache {
                 source: wgpu::ShaderSource::Wgsl(wgsl.wgsl.clone().into()),
             });
 
-            self.by_hash.insert(
+            e.insert(CachedD3d9Shader {
                 hash,
-                CachedD3d9Shader {
-                    hash,
-                    payload_format,
-                    version: program.version,
-                    wgsl: wgsl.wgsl,
-                    entry_point: wgsl.entry_point,
-                    bind_group_layout: wgsl.bind_group_layout,
-                    module,
-                },
-            );
+                payload_format,
+                version: program.version,
+                wgsl: wgsl.wgsl,
+                entry_point: wgsl.entry_point,
+                bind_group_layout: wgsl.bind_group_layout,
+                module,
+            });
         }
 
         let artifact = self
@@ -168,10 +165,10 @@ impl D3d9ShaderCache {
     }
 }
 
-fn extract_token_stream<'a>(
+fn extract_token_stream(
     format: ShaderPayloadFormat,
-    bytes: &'a [u8],
-) -> Result<&'a [u8], D3d9ShaderCacheError> {
+    bytes: &[u8],
+) -> Result<&[u8], D3d9ShaderCacheError> {
     match format {
         ShaderPayloadFormat::D3d9TokenStream => Ok(bytes),
         ShaderPayloadFormat::Dxbc => {

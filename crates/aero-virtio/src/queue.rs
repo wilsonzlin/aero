@@ -164,7 +164,7 @@ impl DescriptorChain {
         table_addr: u64,
         len: u32,
     ) -> Result<Vec<Descriptor>, VirtQueueError> {
-        if len % 16 != 0 {
+        if !len.is_multiple_of(16) {
             return Err(VirtQueueError::IndirectDescriptorLenNotMultipleOf16 { len });
         }
         let count_u32 = len / 16;
@@ -294,7 +294,7 @@ impl VirtQueue {
                 }))?;
         write_u16_le(mem, used_idx_addr, self.next_used)?;
 
-        Ok(self.needs_interrupt(mem, old_used, self.next_used)?)
+        self.needs_interrupt(mem, old_used, self.next_used)
     }
 
     /// Update the `avail_event` field (end of the used ring) when

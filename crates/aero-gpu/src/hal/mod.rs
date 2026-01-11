@@ -154,21 +154,11 @@ impl Origin3d {
     pub const ZERO: Self = Self { x: 0, y: 0, z: 0 };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ImageDataLayout {
     pub offset: u64,
     pub bytes_per_row: Option<u32>,
     pub rows_per_image: Option<u32>,
-}
-
-impl Default for ImageDataLayout {
-    fn default() -> Self {
-        Self {
-            offset: 0,
-            bytes_per_row: None,
-            rows_per_image: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

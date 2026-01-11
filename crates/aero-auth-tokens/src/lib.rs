@@ -52,14 +52,14 @@ fn hmac_sha256(key: &[u8], chunks: &[&[u8]]) -> [u8; 32] {
     }
 
     let mut inner = Sha256::new();
-    inner.update(&ipad);
+    inner.update(ipad);
     for chunk in chunks {
         inner.update(chunk);
     }
     let inner_hash = inner.finalize();
 
     let mut outer = Sha256::new();
-    outer.update(&opad);
+    outer.update(opad);
     outer.update(inner_hash);
     let outer_hash = outer.finalize();
 

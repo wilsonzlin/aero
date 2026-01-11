@@ -13,7 +13,7 @@ use tier1_common::{
 };
 
 fn parity_even(byte: u8) -> bool {
-    byte.count_ones() % 2 == 0
+    byte.count_ones().is_multiple_of(2)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -347,8 +347,10 @@ fn mov_add_cmp_sete_ret() {
     ];
 
     let entry = 0x1000u64;
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     write_gpr(&mut cpu, Gpr::Rsp, 0x8000);
 
     let mut bus = SimpleBus::new(0x10000);
@@ -386,8 +388,10 @@ fn call_rel32() {
     ];
     let entry = 0x1000u64;
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
 
     let bus = SimpleBus::new(0x10000);
@@ -418,8 +422,10 @@ fn cmp_jne_not_taken() {
     ];
     let entry = 0x3000u64;
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
 
     let bus = SimpleBus::new(0x10000);
 
@@ -447,8 +453,10 @@ fn lea_sib_ret() {
     ];
     let entry = 0x4000u64;
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     write_gpr(&mut cpu, Gpr::Rsp, 0x8800);
     write_gpr(&mut cpu, Gpr::Rcx, 0x100);
     write_gpr(&mut cpu, Gpr::Rdx, 0x2);

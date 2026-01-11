@@ -135,7 +135,7 @@ pub struct VecBlockDevice {
 
 impl VecBlockDevice {
     pub fn new(mut data: Vec<u8>) -> Result<Self, MachineError> {
-        if data.len() % 512 != 0 {
+        if !data.len().is_multiple_of(512) {
             return Err(MachineError::InvalidDiskSize(data.len()));
         }
         if data.is_empty() {
@@ -404,8 +404,8 @@ impl CpuBus for Bus<'_> {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for i in 0..len {
-            buf[i] = self.mem.read_u8(vaddr.wrapping_add(i as u64));
+        for (i, byte) in buf.iter_mut().enumerate().take(len) {
+            *byte = self.mem.read_u8(vaddr.wrapping_add(i as u64));
         }
         Ok(buf)
     }

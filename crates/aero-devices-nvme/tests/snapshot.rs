@@ -65,7 +65,7 @@ impl DiskBackend for SharedDisk {
 
     fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> aero_devices_nvme::DiskResult<()> {
         let sector_size = self.sector_size as usize;
-        if buffer.len() % sector_size != 0 {
+        if !buffer.len().is_multiple_of(sector_size) {
             return Err(aero_devices_nvme::DiskError::UnalignedBuffer {
                 len: buffer.len(),
                 sector_size: self.sector_size,
@@ -96,7 +96,7 @@ impl DiskBackend for SharedDisk {
 
     fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> aero_devices_nvme::DiskResult<()> {
         let sector_size = self.sector_size as usize;
-        if buffer.len() % sector_size != 0 {
+        if !buffer.len().is_multiple_of(sector_size) {
             return Err(aero_devices_nvme::DiskError::UnalignedBuffer {
                 len: buffer.len(),
                 sector_size: self.sector_size,
@@ -210,7 +210,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_prp1(&mut cmd, io_sq);
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
-    mem.write_physical(asq + 1 * 64, &cmd);
+    mem.write_physical(asq + 64, &cmd);
     ctrl.mmio_write(0x1000, 4, 2, &mut mem); // SQ0 tail = 2
 
     // Consume admin CQ completions so INTx level reflects IO CQ only.
@@ -259,7 +259,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw10(&mut cmd, 0);
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
-    mem2.write_physical(io_sq + 1 * 64, &cmd);
+    mem2.write_physical(io_sq + 64, &cmd);
     restored.mmio_write(0x1008, 4, 2, &mut mem2); // SQ1 tail = 2
 
     let cqe = read_cqe(&mut mem2, io_cq + 16);
@@ -303,7 +303,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_prp1(&mut cmd, io_sq);
     set_cdw10(&mut cmd, (1u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
-    mem.write_physical(asq + 1 * 64, &cmd);
+    mem.write_physical(asq + 64, &cmd);
     ctrl.mmio_write(0x1000, 4, 2, &mut mem);
 
     // Consume admin CQ completions (2 entries).
@@ -327,7 +327,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let mut cmd = build_command(0x00);
     set_cid(&mut cmd, 0x11);
     set_nsid(&mut cmd, 1);
-    mem.write_physical(io_sq + 1 * 64, &cmd);
+    mem.write_physical(io_sq + 64, &cmd);
     ctrl.mmio_write(sq_tail_db, 4, 0, &mut mem);
     assert!(ctrl.intx_level);
 
@@ -341,7 +341,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
 
     assert!(restored.intx_level);
 
-    let cqe = read_cqe(&mut mem2, io_cq + 1 * 16);
+    let cqe = read_cqe(&mut mem2, io_cq + 16);
     assert_eq!(cqe.cid, 0x11);
     assert_eq!(cqe.status & 0x1, 1);
     assert_eq!(cqe.status & !0x1, 0);

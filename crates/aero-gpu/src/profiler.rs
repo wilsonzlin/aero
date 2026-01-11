@@ -337,7 +337,10 @@ impl GpuProfiler {
         if self.next_frame_index < self.config.query_history_frames {
             return;
         }
-        if self.next_frame_index % self.config.readback_interval_frames != 0 {
+        if !self
+            .next_frame_index
+            .is_multiple_of(self.config.readback_interval_frames)
+        {
             return;
         }
 

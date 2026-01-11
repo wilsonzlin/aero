@@ -719,7 +719,7 @@ impl IdeController {
                     0x10 => {
                         if self.bar0_probe {
                             // 8-byte I/O BAR.
-                            (!(0x08u32 - 1) & 0xffff_fffc) | 0x01
+                            !(0x08u32 - 1) | 0x01
                         } else {
                             self.bar0
                         }
@@ -735,7 +735,7 @@ impl IdeController {
                     0x18 => {
                         if self.bar2_probe {
                             // 8-byte I/O BAR.
-                            (!(0x08u32 - 1) & 0xffff_fffc) | 0x01
+                            !(0x08u32 - 1) | 0x01
                         } else {
                             self.bar2
                         }
@@ -751,7 +751,7 @@ impl IdeController {
                     0x20 => {
                         // BAR4: Bus Master IDE (16 bytes).
                         if self.bar4_probe {
-                            (!(0x10u32 - 1) & 0xffff_fffc) | 0x01
+                            !(0x10u32 - 1) | 0x01
                         } else {
                             self.bar4
                         }

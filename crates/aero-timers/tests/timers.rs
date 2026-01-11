@@ -52,7 +52,7 @@ fn pit_periodic_irq0() {
     pit.write_channel0_data(0x03, now, &mut queue);
 
     // 1000 PIT ticks => 1000 / 1_193_182 seconds.
-    let period_ns = (1000u128 * 1_000_000_000u128 + 1_193_182u128 - 1) / 1_193_182u128;
+    let period_ns = (1000u128 * 1_000_000_000u128).div_ceil(1_193_182u128);
     for n in 1..=5u64 {
         host.set_ns((period_ns as u64) * n);
         let now = time.now_ns();

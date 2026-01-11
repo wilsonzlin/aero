@@ -156,18 +156,15 @@ impl AcpiTables {
             }
         })?;
 
-        let mut aero_cfg = aero_acpi::AcpiConfig {
+        // Keep the MMIO window ending right below the IOAPIC base (matching the default).
+        let default_cfg = aero_acpi::AcpiConfig::default();
+        let pci_mmio_size = default_cfg.io_apic_addr.saturating_sub(pci_mmio_base);
+        let aero_cfg = aero_acpi::AcpiConfig {
             cpu_count: config.cpu_count,
             pci_mmio_base,
-            ..Default::default()
+            pci_mmio_size,
+            ..default_cfg
         };
-
-        // Keep the MMIO window ending right below the IOAPIC base (matching the default).
-        if aero_cfg.io_apic_addr <= aero_cfg.pci_mmio_base {
-            aero_cfg.pci_mmio_size = 0;
-        } else {
-            aero_cfg.pci_mmio_size = aero_cfg.io_apic_addr - aero_cfg.pci_mmio_base;
-        }
 
         let placement = aero_acpi::AcpiPlacement {
             tables_base: reclaim_base,

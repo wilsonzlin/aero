@@ -148,12 +148,12 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -200,11 +200,7 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     // Kicking the queue only makes the buffer available; without an event, it must not complete.
-    dev.bar0_write(
-        caps.notify + 0 * u64::from(caps.notify_mult),
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 0);
 
     // Deliver an event; the device should write it into the >4GiB buffer and complete the chain.

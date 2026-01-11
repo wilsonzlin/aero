@@ -20,7 +20,7 @@ struct FlagVals {
 }
 
 fn parity_even(byte: u8) -> bool {
-    byte.count_ones() % 2 == 0
+    byte.count_ones().is_multiple_of(2)
 }
 
 fn compute_logic_flags(width: Width, result: u64) -> FlagVals {
@@ -261,7 +261,7 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                 let l = temps[lhs.0 as usize];
                 let r = temps[rhs.0 as usize];
                 let w = *width;
-                let shift_mask = (w.bits() - 1) as u32;
+                let shift_mask = w.bits() - 1;
                 let (res, flag_vals) = match op {
                     BinOp::Add => {
                         let res = w.truncate(l.wrapping_add(r));

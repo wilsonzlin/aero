@@ -17,6 +17,8 @@ use emulator::io::usb::{
 use emulator::io::PortIO;
 use memory::MemoryBus;
 
+type InterruptOutLog = Rc<RefCell<Vec<(u8, Vec<u8>)>>>;
+
 const FRAME_LIST_BASE: u32 = 0x1000;
 const QH_ADDR: u32 = 0x2000;
 const TD0: u32 = 0x3000;
@@ -160,8 +162,6 @@ fn reset_port(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, portsc: u16) {
         uhci.tick_1ms(mem);
     }
 }
-
-type InterruptOutLog = Rc<RefCell<Vec<(u8, Vec<u8>)>>>;
 
 #[derive(Clone, Debug)]
 struct DummyInterruptOutDevice {

@@ -1995,14 +1995,14 @@ impl AerogpuD3d9Executor {
                             if y >= *height as u64 {
                                 return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
                             }
-                            if (x_bytes % bpp as u64) != 0 {
+                            if !x_bytes.is_multiple_of(bpp as u64) {
                                 return Err(AerogpuD3d9Error::UploadNotSupported(resource_handle));
                             }
                             let x = (x_bytes / bpp as u64) as u32;
 
                             let origin_y = y as u32;
                             let (origin_x, copy_w, copy_h, bytes_per_row, mut bytes) =
-                                if x_bytes == 0 && (size_bytes % src_pitch_u64) == 0 {
+                                if x_bytes == 0 && size_bytes.is_multiple_of(src_pitch_u64) {
                                     // Upload whole rows (including padding) starting at row `y`.
                                     let copy_h = (size_bytes / src_pitch_u64) as u32;
                                     if copy_h == 0 {
@@ -2040,7 +2040,7 @@ impl AerogpuD3d9Executor {
                                             resource_handle,
                                         ));
                                     }
-                                    if (size_bytes % bpp as u64) != 0 {
+                                    if !size_bytes.is_multiple_of(bpp as u64) {
                                         return Err(AerogpuD3d9Error::UploadNotSupported(
                                             resource_handle,
                                         ));
@@ -2917,8 +2917,7 @@ impl AerogpuD3d9Executor {
                     blend_op_alpha: state.blend_op_alpha,
                     color_write_mask: [state.color_write_mask; 8],
                 };
-                self.state.blend_constant =
-                    state.blend_constant_rgba_f32.map(|v| f32::from_bits(v));
+                self.state.blend_constant = state.blend_constant_rgba_f32.map(f32::from_bits);
                 self.state.sample_mask = state.sample_mask;
                 Ok(())
             }
@@ -3075,11 +3074,12 @@ impl AerogpuD3d9Executor {
                 texture,
             } => {
                 // For now, treat all sampler bindings as pixel shader (DWM path).
-                if shader_stage == cmd::AerogpuShaderStage::Pixel as u32 {
-                    if (slot as usize) < self.state.textures_ps.len() {
-                        self.state.textures_ps[slot as usize] = texture;
-                        self.bind_group_dirty = true;
-                    }
+                let slot = slot as usize;
+                if shader_stage == cmd::AerogpuShaderStage::Pixel as u32
+                    && slot < self.state.textures_ps.len()
+                {
+                    self.state.textures_ps[slot] = texture;
+                    self.bind_group_dirty = true;
                 }
                 Ok(())
             }
@@ -3453,8 +3453,8 @@ impl AerogpuD3d9Executor {
                 // in this command buffer. If the range isn't aligned for `copy_buffer_to_buffer`,
                 // submit the current encoder and fall back to `queue.write_buffer` so we still
                 // update exactly the requested bytes.
-                if (aligned_start % wgpu::COPY_BUFFER_ALIGNMENT) == 0
-                    && (len_u64 % wgpu::COPY_BUFFER_ALIGNMENT) == 0
+                if aligned_start.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                    && len_u64.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
                 {
                     let staging =
                         self.device
@@ -3563,7 +3563,7 @@ impl AerogpuD3d9Executor {
         let mut row_ranges = Vec::<Range<u32>>::new();
         for r in &ranges {
             let start_row = (r.start / row_pitch) as u32;
-            let end_row = ((r.end + row_pitch - 1) / row_pitch) as u32;
+            let end_row = r.end.div_ceil(row_pitch) as u32;
             row_ranges.push(start_row..end_row);
         }
         coalesce_ranges_u32(&mut row_ranges);
@@ -3580,7 +3580,10 @@ impl AerogpuD3d9Executor {
         let unpadded_bpr = width
             .checked_mul(bpp)
             .ok_or_else(|| AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into()))?;
-        let upload_bpr = if backing.row_pitch_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 {
+        let upload_bpr = if backing
+            .row_pitch_bytes
+            .is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        {
             backing.row_pitch_bytes
         } else {
             align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
@@ -3801,7 +3804,7 @@ impl AerogpuD3d9Executor {
                 },
                 store: wgpu::StoreOp::Store,
             }),
-            stencil_ops: depth_has_stencil.then(|| wgpu::Operations {
+            stencil_ops: depth_has_stencil.then_some(wgpu::Operations {
                 load: if clear_stencil_enabled {
                     wgpu::LoadOp::Clear(stencil & 0xFF)
                 } else {
@@ -4012,7 +4015,7 @@ impl AerogpuD3d9Executor {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
-                    stencil_ops: depth_has_stencil.then(|| wgpu::Operations {
+                    stencil_ops: depth_has_stencil.then_some(wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
@@ -4552,7 +4555,7 @@ impl AerogpuD3d9Executor {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 }),
-                stencil_ops: depth_has_stencil.then(|| wgpu::Operations {
+                stencil_ops: depth_has_stencil.then_some(wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 }),
@@ -4606,7 +4609,7 @@ impl AerogpuD3d9Executor {
         }
 
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_bind_group(0, bind_group, &[]);
 
         // Bind vertex buffers: wgpu slot is derived from the vertex declaration's used streams.
         for stream in &vertex_buffers.streams {

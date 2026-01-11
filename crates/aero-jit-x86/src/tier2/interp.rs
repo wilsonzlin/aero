@@ -7,17 +7,9 @@ use super::ir::{
 };
 use crate::Tier1Bus;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct T2State {
     pub cpu: aero_cpu_core::state::CpuState,
-}
-
-impl Default for T2State {
-    fn default() -> Self {
-        Self {
-            cpu: aero_cpu_core::state::CpuState::default(),
-        }
-    }
 }
 
 impl PartialEq for T2State {

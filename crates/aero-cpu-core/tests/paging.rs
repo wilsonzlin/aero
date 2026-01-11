@@ -107,17 +107,17 @@ fn setup_pae_4k(
     // IA-32e PDPT (PAE) entries do not have RW/US bits; only bit 0 (P) and a
     // handful of cache/AVL bits are allowed. Keep it minimal to avoid reserved
     // bit faults during the walk.
-    mem.write_u64(pdpt_base + 0 * 8, pd_base | PTE_P);
+    mem.write_u64(pdpt_base, pd_base | PTE_P);
     mem.write_u64(pdpt_base + 3 * 8, pd_base | PTE_P);
 
     // Point both PD[0] and PD[511] at the same PT so we can map 0x0000_0000 and
     // 0xFFFF_F000 with a single 4KiB page table.
     let pde_flags = PTE_P | PTE_RW | PTE_US;
-    mem.write_u64(pd_base + 0 * 8, pt_base | pde_flags);
+    mem.write_u64(pd_base, pt_base | pde_flags);
     mem.write_u64(pd_base + 511 * 8, pt_base | pde_flags);
 
     // PTE[0] and PTE[511]
-    mem.write_u64(pt_base + 0 * 8, pte0);
+    mem.write_u64(pt_base, pte0);
     mem.write_u64(pt_base + 511 * 8, pte511);
 }
 
@@ -415,7 +415,7 @@ fn tier0_fetch_wrapping_32bit_linear_address_respects_nx() {
     // immediate byte wraps to 0x0000_0000. The low page is marked NX, so the
     // instruction fetch must #PF there.
     phys.write_u8_raw(high_page + 0xfff, 0xB0);
-    phys.write_u8_raw(low_page + 0x000, 0x5A);
+    phys.write_u8_raw(low_page, 0x5A);
 
     let mut bus = PagingBus::new(phys);
     let mut state = pae_state(pdpt_base, EFER_NXE, 0);

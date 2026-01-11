@@ -654,7 +654,7 @@ impl VirtioPciDevice {
                 };
 
                 // struct virtio_pci_cap
-                self.config_space[cap_off + 0] = PCI_CAP_ID_VENDOR_SPECIFIC;
+                self.config_space[cap_off] = PCI_CAP_ID_VENDOR_SPECIFIC;
                 self.config_space[cap_off + 1] = next;
                 self.config_space[cap_off + 2] = *cap_len;
                 self.config_space[cap_off + 3] = *cfg_type;
@@ -754,11 +754,9 @@ impl VirtioPciDevice {
                 let enabled = u16::from_le_bytes(data.try_into().unwrap()) != 0;
                 if enabled {
                     self.enable_selected_queue();
-                } else {
-                    if let Some(q) = self.selected_queue_mut() {
-                        q.enable = false;
-                        q.queue = None;
-                    }
+                } else if let Some(q) = self.selected_queue_mut() {
+                    q.enable = false;
+                    q.queue = None;
                 }
             }
             (0x20, 8) => {
@@ -902,7 +900,7 @@ impl VirtioPciDevice {
 
     fn notify_cfg_write(&mut self, offset: u64, _data: &[u8], mem: &mut dyn GuestMemory) {
         let mult = u64::from(self.notify_off_multiplier);
-        if mult == 0 || offset % mult != 0 {
+        if mult == 0 || !offset.is_multiple_of(mult) {
             return;
         }
         let notify_off = (offset / mult) as u16;
@@ -1013,10 +1011,11 @@ impl VirtioPciDevice {
 
     fn lock_transport_mode(&mut self, desired: TransportMode, offset: u64, data: &[u8]) -> bool {
         // Always allow reset regardless of mode, so guests can recover.
-        if desired == TransportMode::Legacy && offset == VIRTIO_PCI_LEGACY_STATUS {
-            if data.first().copied().unwrap_or(0) == 0 {
-                return true;
-            }
+        if desired == TransportMode::Legacy
+            && offset == VIRTIO_PCI_LEGACY_STATUS
+            && data.first().copied().unwrap_or(0) == 0
+        {
+            return true;
         }
         if desired == TransportMode::Modern
             && offset == 0x14

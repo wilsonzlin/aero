@@ -12,28 +12,31 @@ pub fn new_bus() -> Bus {
 }
 
 pub fn new_mmu_legacy32(cr3: u64) -> Mmu {
-    let mut mmu = Mmu::default();
-    mmu.cr0 = CR0_PG;
-    mmu.cr3 = cr3;
-    mmu.cr4 = CR4_PSE;
-    mmu
+    Mmu {
+        cr0: CR0_PG,
+        cr3,
+        cr4: CR4_PSE,
+        ..Default::default()
+    }
 }
 
 pub fn new_mmu_pae(cr3: u64) -> Mmu {
-    let mut mmu = Mmu::default();
-    mmu.cr0 = CR0_PG;
-    mmu.cr3 = cr3;
-    mmu.cr4 = CR4_PAE;
-    mmu
+    Mmu {
+        cr0: CR0_PG,
+        cr3,
+        cr4: CR4_PAE,
+        ..Default::default()
+    }
 }
 
 pub fn new_mmu_long(cr3: u64, nxe: bool) -> Mmu {
-    let mut mmu = Mmu::default();
-    mmu.cr0 = CR0_PG;
-    mmu.cr3 = cr3;
-    mmu.cr4 = CR4_PAE;
-    mmu.efer = EFER_LME | if nxe { EFER_NXE } else { 0 };
-    mmu
+    Mmu {
+        cr0: CR0_PG,
+        cr3,
+        cr4: CR4_PAE,
+        efer: EFER_LME | if nxe { EFER_NXE } else { 0 },
+        ..Default::default()
+    }
 }
 
 fn is_canonical_4level(vaddr: u64) -> bool {

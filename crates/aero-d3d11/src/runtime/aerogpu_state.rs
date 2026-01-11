@@ -111,36 +111,21 @@ impl Default for RasterizerState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PrimitiveTopology {
     PointList,
     LineList,
     LineStrip,
+    #[default]
     TriangleList,
     TriangleStrip,
     TriangleFan,
 }
 
-impl Default for PrimitiveTopology {
-    fn default() -> Self {
-        // D3D11's IA topology default is unspecified; use a common safe default.
-        Self::TriangleList
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct RenderTargets {
     pub colors: [Option<AerogpuHandle>; 8],
     pub depth_stencil: Option<AerogpuHandle>,
-}
-
-impl Default for RenderTargets {
-    fn default() -> Self {
-        Self {
-            colors: [None; 8],
-            depth_stencil: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

@@ -32,7 +32,7 @@ pub struct AtaDrive {
 impl AtaDrive {
     pub fn new(disk: Box<dyn VirtualDisk>) -> io::Result<Self> {
         let capacity = disk.capacity_bytes();
-        if capacity % SECTOR_SIZE as u64 != 0 {
+        if !capacity.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "disk capacity is not a multiple of 512-byte sectors",
@@ -155,7 +155,7 @@ fn build_identify_sector(sector_count: u64) -> [u8; SECTOR_SIZE] {
 fn map_disk_error(err: DiskError) -> io::Error {
     // Storage controllers surface errors via ATA status registers rather than rich error codes.
     // Map any disk-layer error to an opaque I/O failure for the device logic.
-    io::Error::new(io::ErrorKind::Other, err)
+    io::Error::other(err)
 }
 
 fn write_ata_string(words: &mut [u16; 256], start: usize, len_words: usize, s: &str) {

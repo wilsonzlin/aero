@@ -34,11 +34,11 @@ impl StreamSourceFreq {
         }
 
         if indexed {
-            Ok(StreamFreqKind::IndexedData { instances: freq })
+            Ok(StreamFreqKind::Indexed { instances: freq })
         } else if instanced {
-            Ok(StreamFreqKind::InstanceData { divisor: freq })
+            Ok(StreamFreqKind::Instance { divisor: freq })
         } else {
-            Ok(StreamFreqKind::VertexData)
+            Ok(StreamFreqKind::Vertex)
         }
     }
 }
@@ -46,11 +46,11 @@ impl StreamSourceFreq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamFreqKind {
     /// Per-vertex data (default).
-    VertexData,
+    Vertex,
     /// Marks the "indexed data" stream and encodes the instance count.
-    IndexedData { instances: u32 },
+    Indexed { instances: u32 },
     /// Per-instance data stream; `divisor` controls how often to advance.
-    InstanceData { divisor: u32 },
+    Instance { divisor: u32 },
 }
 
 /// Derived step information for a stream.
@@ -112,8 +112,8 @@ impl StreamsFreqState {
 
         for (stream, &freq) in self.freqs.iter().enumerate() {
             match freq.kind()? {
-                StreamFreqKind::VertexData => {}
-                StreamFreqKind::IndexedData { instances } => {
+                StreamFreqKind::Vertex => {}
+                StreamFreqKind::Indexed { instances } => {
                     if draw_instances != 1 && draw_instances != instances {
                         return Err(StreamSourceFreqParseError::ConflictingIndexedInstances {
                             existing: draw_instances,
@@ -123,7 +123,7 @@ impl StreamsFreqState {
                     }
                     draw_instances = instances;
                 }
-                StreamFreqKind::InstanceData { divisor } => {
+                StreamFreqKind::Instance { divisor } => {
                     steps[stream] = StreamStep::Instance { divisor };
                 }
             }
@@ -214,8 +214,7 @@ pub fn expand_instance_data(
         return Err(InstanceDataExpandError::ZeroDivisor);
     }
 
-    let required_src_instances =
-        ((draw_instances as u64) + (divisor as u64) - 1) / (divisor as u64);
+    let required_src_instances = (draw_instances as u64).div_ceil(divisor as u64);
     let required_src_bytes = (required_src_instances as usize)
         .checked_mul(stride)
         .ok_or(InstanceDataExpandError::SizeOverflow)?;

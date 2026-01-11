@@ -390,7 +390,7 @@ impl<W: TextureWriter> Presenter<W> {
         let can_direct = rect.x == 0
             && rect.w == self.width
             && stride == row_bytes
-            && (rect_h == 1 || (stride % COPY_BYTES_PER_ROW_ALIGNMENT == 0));
+            && (rect_h == 1 || stride.is_multiple_of(COPY_BYTES_PER_ROW_ALIGNMENT));
 
         let required_len = required_data_len(bytes_per_row, row_bytes, rect_h);
 

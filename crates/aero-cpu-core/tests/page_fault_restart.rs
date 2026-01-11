@@ -119,7 +119,7 @@ fn protected_mode_page_fault_handler_can_map_page_and_restart_faulting_instructi
     let mut phys = TestMemory::new(0x20000);
 
     // Page directory: PDE[0] -> PT.
-    phys.write_u32(PD_BASE + 0 * 4, (PT_BASE as u32) | flags);
+    phys.write_u32(PD_BASE, (PT_BASE as u32) | flags);
 
     // Identity-map the low pages we need (except the faulting page).
     for page_idx in 0u32..=9 {
@@ -127,7 +127,7 @@ fn protected_mode_page_fault_handler_can_map_page_and_restart_faulting_instructi
             continue;
         }
         let pte_addr = PT_BASE + (page_idx as u64) * 4;
-        phys.write_u32(pte_addr, page_idx * 0x1000 | flags);
+        phys.write_u32(pte_addr, (page_idx * 0x1000) | flags);
     }
 
     // Place the backing byte at physical 0x5000; handler will map FAULT_ADDR -> BACKING_PAGE.

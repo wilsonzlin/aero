@@ -211,7 +211,8 @@ impl AeroGpuLegacyPciDevice {
                 return None;
             }
             // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to 16_666_666).
-            let period_ns = (1_000_000_000u64 + hz as u64 - 1) / hz as u64;
+            let hz = u64::from(hz);
+            let period_ns = 1_000_000_000u64.div_ceil(hz);
             Some(Duration::from_nanos(period_ns))
         });
 
@@ -312,7 +313,7 @@ impl AeroGpuLegacyPciDevice {
         while head != tail && processed < entry_count {
             let entry_gpa =
                 self.regs.ring_base_gpa + u64::from(head) * LEGACY_RING_ENTRY_STRIDE_BYTES;
-            let ty = mem.read_u32(entry_gpa + 0);
+            let ty = mem.read_u32(entry_gpa);
             if ty != ring_entry_type::SUBMIT {
                 self.regs.stats.malformed_submissions =
                     self.regs.stats.malformed_submissions.saturating_add(1);
@@ -331,7 +332,7 @@ impl AeroGpuLegacyPciDevice {
                 self.regs.stats.malformed_submissions =
                     self.regs.stats.malformed_submissions.saturating_add(1);
             } else {
-                let version = mem.read_u32(desc_gpa + 0);
+                let version = mem.read_u32(desc_gpa);
                 if version != 1 {
                     self.regs.stats.malformed_submissions =
                         self.regs.stats.malformed_submissions.saturating_add(1);

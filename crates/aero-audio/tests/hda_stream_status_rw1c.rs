@@ -19,7 +19,7 @@ fn stream_status_byte_is_rw1c_and_clears_intsts() {
     // Codec ADC (NID 4) -> stream tag 2.
     hda.codec_mut().execute_verb(4, (0x706u32 << 8) | 0x20);
     // 48kHz, 16-bit, mono.
-    let fmt_raw: u16 = (1 << 4) | 0x0;
+    let fmt_raw: u16 = 1 << 4;
     hda.codec_mut()
         .execute_verb(4, (0x200u32 << 8) | (fmt_raw as u8 as u32));
 
@@ -29,7 +29,7 @@ fn stream_status_byte_is_rw1c_and_clears_intsts() {
     let bytes_per_frame = 2usize;
     let pcm_len_bytes = frames * bytes_per_frame;
 
-    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u64(bdl_base, pcm_base);
     mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base + 12, 1); // IOC
 
@@ -55,7 +55,7 @@ fn stream_status_byte_is_rw1c_and_clears_intsts() {
     // Interrupt + BCIS latched.
     assert_ne!(hda.mmio_read(REG_INTSTS, 4) as u32 & (1 << 1), 0);
 
-    let sd1_sts = REG_SD_BASE + SD_STRIDE * 1 + 0x03;
+    let sd1_sts = REG_SD_BASE + SD_STRIDE + 0x03;
     assert_ne!(hda.mmio_read(sd1_sts, 1) as u8 & SD_STS_BCIS, 0);
 
     let ctl_before = hda.stream_mut(1).ctl & 0x00ff_ffff;
@@ -77,7 +77,7 @@ fn bcis_latches_without_ioce() {
 
     // Codec ADC (NID 4) -> stream tag 2.
     hda.codec_mut().execute_verb(4, (0x706u32 << 8) | 0x20);
-    let fmt_raw: u16 = (1 << 4) | 0x0;
+    let fmt_raw: u16 = 1 << 4;
     hda.codec_mut()
         .execute_verb(4, (0x200u32 << 8) | (fmt_raw as u8 as u32));
 
@@ -87,7 +87,7 @@ fn bcis_latches_without_ioce() {
     let bytes_per_frame = 2usize;
     let pcm_len_bytes = frames * bytes_per_frame;
 
-    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u64(bdl_base, pcm_base);
     mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base + 12, 1); // IOC
 
@@ -109,7 +109,7 @@ fn bcis_latches_without_ioce() {
     capture.push_samples(&[0.25; 16]);
     hda.process_with_capture(&mut mem, frames, &mut capture);
 
-    let sd1_sts = REG_SD_BASE + SD_STRIDE * 1 + 0x03;
+    let sd1_sts = REG_SD_BASE + SD_STRIDE + 0x03;
     assert_ne!(hda.mmio_read(sd1_sts, 1) as u8 & SD_STS_BCIS, 0);
     assert_eq!(hda.mmio_read(REG_INTSTS, 4) as u32 & (1 << 1), 0);
 }

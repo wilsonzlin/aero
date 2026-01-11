@@ -206,8 +206,8 @@ fn decompress_bc3_block(
 }
 
 pub fn decompress_bc1_rgba8(width: u32, height: u32, bc1_data: &[u8]) -> Vec<u8> {
-    let blocks_w = (width + 3) / 4;
-    let blocks_h = (height + 3) / 4;
+    let blocks_w = width.div_ceil(4);
+    let blocks_h = height.div_ceil(4);
     let expected = blocks_w as usize * blocks_h as usize * 8;
     assert_eq!(
         bc1_data.len(),
@@ -229,8 +229,8 @@ pub fn decompress_bc1_rgba8(width: u32, height: u32, bc1_data: &[u8]) -> Vec<u8>
 }
 
 pub fn decompress_bc3_rgba8(width: u32, height: u32, bc3_data: &[u8]) -> Vec<u8> {
-    let blocks_w = (width + 3) / 4;
-    let blocks_h = (height + 3) / 4;
+    let blocks_w = width.div_ceil(4);
+    let blocks_h = height.div_ceil(4);
     let expected = blocks_w as usize * blocks_h as usize * 16;
     assert_eq!(
         bc3_data.len(),
@@ -252,8 +252,8 @@ pub fn decompress_bc3_rgba8(width: u32, height: u32, bc3_data: &[u8]) -> Vec<u8>
 }
 
 pub fn decompress_bc2_rgba8(width: u32, height: u32, bc2_data: &[u8]) -> Vec<u8> {
-    let blocks_w = (width + 3) / 4;
-    let blocks_h = (height + 3) / 4;
+    let blocks_w = width.div_ceil(4);
+    let blocks_h = height.div_ceil(4);
     let expected = blocks_w as usize * blocks_h as usize * 16;
     assert_eq!(
         bc2_data.len(),
@@ -275,8 +275,8 @@ pub fn decompress_bc2_rgba8(width: u32, height: u32, bc2_data: &[u8]) -> Vec<u8>
 }
 
 pub fn decompress_bc7_rgba8(width: u32, height: u32, bc7_data: &[u8]) -> Vec<u8> {
-    let blocks_w = (width + 3) / 4;
-    let blocks_h = (height + 3) / 4;
+    let blocks_w = width.div_ceil(4);
+    let blocks_h = height.div_ceil(4);
     let expected = blocks_w as usize * blocks_h as usize * 16;
     assert_eq!(
         bc7_data.len(),
@@ -353,7 +353,7 @@ mod tests {
         // color0=0x0000 (black), color1=0xffff (white).
         // indices: first texel uses index 3 (transparent), rest index 0 (black).
         let mut indices: u32 = 0;
-        indices |= 3u32 << 0;
+        indices |= 3u32;
         let idx_bytes = indices.to_le_bytes();
         let bc1 = [
             0x00,
@@ -391,7 +391,7 @@ mod tests {
         // Row 0 alpha 255.
         assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
         // Row 1 alpha 0.
-        let row1 = 1 * 4 * 4;
+        let row1 = 4 * 4;
         assert_eq!(&rgba[row1..row1 + 4], &[255, 255, 255, 0]);
         // Row 2 alpha 218 (floor(6*255/7)).
         let row2 = 2 * 4 * 4;
@@ -420,7 +420,7 @@ mod tests {
         // Row 0 alpha 255.
         assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
         // Row 1 alpha 0.
-        let row1 = 1 * 4 * 4;
+        let row1 = 4 * 4;
         assert_eq!(&rgba[row1..row1 + 4], &[255, 255, 255, 0]);
         // Row 2 alpha 136.
         let row2 = 2 * 4 * 4;

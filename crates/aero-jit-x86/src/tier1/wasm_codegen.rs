@@ -22,7 +22,7 @@ pub const EXPORT_BLOCK_FN: &str = crate::wasm::abi::EXPORT_BLOCK_FN;
 /// Backwards-compatible alias for [`EXPORT_BLOCK_FN`].
 pub const EXPORT_TIER1_BLOCK_FN: &str = EXPORT_BLOCK_FN;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Tier1WasmOptions {
     /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads
     /// and stores.
@@ -31,13 +31,7 @@ pub struct Tier1WasmOptions {
     pub inline_tlb: bool,
 }
 
-impl Default for Tier1WasmOptions {
-    fn default() -> Self {
-        Self { inline_tlb: false }
-    }
-}
-
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct ImportedFuncs {
     mem_read_u8: u32,
     mem_read_u16: u32,
@@ -600,8 +594,8 @@ impl Emitter<'_> {
                 };
 
                 // Cross-page accesses use the slow helper for correctness.
-                let cross_limit = (crate::PAGE_OFFSET_MASK as u64)
-                    .saturating_sub(size_bytes.saturating_sub(1) as u64);
+                let cross_limit =
+                    crate::PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
                 self.func
@@ -700,8 +694,8 @@ impl Emitter<'_> {
                     Width::W64 => (8u32, self.imported.mem_write_u64),
                 };
 
-                let cross_limit = (crate::PAGE_OFFSET_MASK as u64)
-                    .saturating_sub(size_bytes.saturating_sub(1) as u64);
+                let cross_limit =
+                    crate::PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
                 self.func
@@ -1645,26 +1639,6 @@ impl Emitter<'_> {
         self.emit_shift_mask(width);
         self.func.instruction(&Instruction::I64ShrS);
         self.emit_trunc(width);
-    }
-}
-
-impl Default for ImportedFuncs {
-    fn default() -> Self {
-        Self {
-            mem_read_u8: 0,
-            mem_read_u16: 0,
-            mem_read_u32: 0,
-            mem_read_u64: 0,
-            mem_write_u8: 0,
-            mem_write_u16: 0,
-            mem_write_u32: 0,
-            mem_write_u64: 0,
-            mmu_translate: None,
-            _page_fault: 0,
-            jit_exit_mmio: None,
-            _jit_exit: 0,
-            count: 0,
-        }
     }
 }
 

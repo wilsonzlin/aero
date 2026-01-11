@@ -792,7 +792,7 @@ mod tests {
         tcp[14..16].copy_from_slice(&4096u16.to_be_bytes());
         packet.extend_from_slice(&tcp);
 
-        packet.extend(std::iter::repeat(0x42u8).take(payload_len));
+        packet.extend(std::iter::repeat_n(0x42u8, payload_len));
         packet
     }
 
@@ -824,7 +824,7 @@ mod tests {
         tcp[14..16].copy_from_slice(&4096u16.to_be_bytes());
         packet.extend_from_slice(&tcp);
 
-        packet.extend(std::iter::repeat(0x42u8).take(payload_len));
+        packet.extend(std::iter::repeat_n(0x42u8, payload_len));
         packet
     }
 
@@ -924,7 +924,7 @@ mod tests {
 
         let mut packet = build_ipv4_tcp_frame(payload_len, flags);
         // Append junk beyond the IPv4 total length.
-        packet.extend(std::iter::repeat(0x99u8).take(128));
+        packet.extend(std::iter::repeat_n(0x99u8, 128));
 
         let hdr = VirtioNetHdr {
             flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,

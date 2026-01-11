@@ -185,7 +185,7 @@ fn build_hub_descriptor(num_ports: usize) -> Vec<u8> {
     desc.extend_from_slice(&HUB_W_HUB_CHARACTERISTICS.to_le_bytes()); // wHubCharacteristics
     desc.push(0x01); // bPwrOn2PwrGood (2ms)
     desc.push(0x00); // bHubContrCurrent
-    desc.extend(std::iter::repeat_n(0u8, bitmap_len)); // DeviceRemovable
+    desc.extend(core::iter::repeat_n(0u8, bitmap_len)); // DeviceRemovable
     desc.extend_from_slice(&port_pwr_ctrl_mask); // PortPwrCtrlMask
     desc
 }

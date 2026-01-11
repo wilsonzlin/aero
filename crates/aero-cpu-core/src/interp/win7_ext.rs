@@ -830,7 +830,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                         cpu.sse.xmm[a as usize],
                         b,
                         imm,
-                        cpu.regs.eax() as u32,
+                        cpu.regs.eax(),
                         cpu.regs.rdx as u32,
                     );
                     cpu.sse.xmm[0] = mask;
@@ -858,7 +858,7 @@ pub fn exec<B: Bus>(cpu: &mut Cpu, bus: &mut B, bytes: &[u8]) -> Result<usize, E
                         cpu.sse.xmm[a as usize],
                         b,
                         imm,
-                        cpu.regs.eax() as u32,
+                        cpu.regs.eax(),
                         cpu.regs.rdx as u32,
                     );
                     cpu.regs.set_ecx(index, cpu.mode);

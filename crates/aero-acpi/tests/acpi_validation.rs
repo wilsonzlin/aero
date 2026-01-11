@@ -177,13 +177,15 @@ fn read_sdt_signature(mem: &TestMemory, paddr: u64) -> [u8; 4] {
 
 #[test]
 fn generated_tables_are_self_consistent_and_checksums_pass() {
-    let mut cfg = AcpiConfig::default();
-    cfg.cpu_count = 2;
-    cfg.local_apic_addr = 0xFEE0_0000;
-    cfg.io_apic_addr = 0xFEC0_0000;
-    cfg.hpet_addr = 0xFED0_0000;
-    cfg.sci_irq = 9;
-    cfg.pirq_to_gsi = [20, 21, 22, 23];
+    let cfg = AcpiConfig {
+        cpu_count: 2,
+        local_apic_addr: 0xFEE0_0000,
+        io_apic_addr: 0xFEC0_0000,
+        hpet_addr: 0xFED0_0000,
+        sci_irq: 9,
+        pirq_to_gsi: [20, 21, 22, 23],
+        ..Default::default()
+    };
 
     let placement = AcpiPlacement {
         tables_base: 0x0010_0000,
@@ -436,11 +438,13 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
 
 #[test]
 fn mcfg_is_emitted_and_describes_the_ecam_window_when_enabled() {
-    let mut cfg = AcpiConfig::default();
-    cfg.pcie_ecam_base = 0xC000_0000;
-    cfg.pcie_segment = 0;
-    cfg.pcie_start_bus = 0;
-    cfg.pcie_end_bus = 0;
+    let cfg = AcpiConfig {
+        pcie_ecam_base: 0xC000_0000,
+        pcie_segment: 0,
+        pcie_start_bus: 0,
+        pcie_end_bus: 0,
+        ..Default::default()
+    };
 
     let placement = AcpiPlacement::default();
     let tables = AcpiTables::build(&cfg, placement);

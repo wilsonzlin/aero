@@ -41,25 +41,46 @@ struct LastModifiedState {
     counters: Counters,
 }
 
-async fn start_range_server_with_options(
-    image: Vec<u8>,
-    etag: &str,
+#[derive(Clone, Copy)]
+struct RangeServerOptions<'a> {
+    etag: &'a str,
     fail_first_range: bool,
-    required_header: Option<(&str, &str)>,
+    required_header: Option<(&'a str, &'a str)>,
     ignore_range: bool,
     enforce_strong_if_range: bool,
     wrong_content_range: bool,
-    content_encoding: Option<&str>,
+    content_encoding: Option<&'a str>,
+}
+
+impl<'a> RangeServerOptions<'a> {
+    fn new(etag: &'a str) -> Self {
+        Self {
+            etag,
+            fail_first_range: false,
+            required_header: None,
+            ignore_range: false,
+            enforce_strong_if_range: false,
+            wrong_content_range: false,
+            content_encoding: None,
+        }
+    }
+}
+
+async fn start_range_server_with_options(
+    image: Vec<u8>,
+    options: RangeServerOptions<'_>,
 ) -> (Url, Arc<State>, oneshot::Sender<()>) {
     let state = Arc::new(State {
         image: Arc::new(image),
-        etag: std::sync::Mutex::new(etag.to_string()),
-        fail_first_range: AtomicBool::new(fail_first_range),
-        required_header: required_header.map(|(k, v)| (k.to_string(), v.to_string())),
-        ignore_range,
-        enforce_strong_if_range,
-        wrong_content_range,
-        content_encoding: content_encoding.map(|v| v.to_string()),
+        etag: std::sync::Mutex::new(options.etag.to_string()),
+        fail_first_range: AtomicBool::new(options.fail_first_range),
+        required_header: options
+            .required_header
+            .map(|(k, v)| (k.to_string(), v.to_string())),
+        ignore_range: options.ignore_range,
+        enforce_strong_if_range: options.enforce_strong_if_range,
+        wrong_content_range: options.wrong_content_range,
+        content_encoding: options.content_encoding.map(|v| v.to_string()),
         counters: Counters::default(),
     });
 
@@ -361,17 +382,8 @@ fn parse_range_header(header: &str, total_size: u64) -> Result<(u64, u64), Statu
 #[tokio::test]
 async fn streaming_reads_and_reuses_cache() {
     let image: Vec<u8> = (0..(4096 + 123)).map(|i| (i % 251) as u8).collect();
-    let (url, state, shutdown) = start_range_server_with_options(
-        image.clone(),
-        "etag-v1",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), RangeServerOptions::new("etag-v1")).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
@@ -422,17 +434,8 @@ async fn streaming_reads_and_reuses_cache() {
 #[tokio::test]
 async fn cache_invalidates_on_validator_change() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
-    let (url, state1, shutdown1) = start_range_server_with_options(
-        image.clone(),
-        "etag-v1",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url, state1, shutdown1) =
+        start_range_server_with_options(image.clone(), RangeServerOptions::new("etag-v1")).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -456,17 +459,8 @@ async fn cache_invalidates_on_validator_change() {
     let _ = shutdown1.send(());
 
     // Same bytes endpoint, but validator changed => invalidate cache and re-fetch.
-    let (url2, state2, shutdown2) = start_range_server_with_options(
-        image.clone(),
-        "etag-v2",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url2, state2, shutdown2) =
+        start_range_server_with_options(image.clone(), RangeServerOptions::new("etag-v2")).await;
     let mut config2 = StreamingDiskConfig::new(url2, cache_dir.path());
     config2.cache_backend = StreamingCacheBackend::Directory;
     config2.options.chunk_size = 1024;
@@ -488,17 +482,8 @@ async fn cache_invalidates_on_validator_change() {
 #[tokio::test]
 async fn inflight_dedup_avoids_duplicate_fetches() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
-    let (url, state, shutdown) = start_range_server_with_options(
-        image.clone(),
-        "etag-dedup",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), RangeServerOptions::new("etag-dedup")).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -545,13 +530,10 @@ async fn retries_transient_http_errors() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) = start_range_server_with_options(
         image.clone(),
-        "etag-retry",
-        true,
-        None,
-        false,
-        false,
-        false,
-        None,
+        RangeServerOptions {
+            fail_first_range: true,
+            ..RangeServerOptions::new("etag-retry")
+        },
     )
     .await;
 
@@ -580,17 +562,9 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
     use sha2::{Digest, Sha256};
 
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
-    let (url, state, shutdown) = start_range_server_with_options(
-        image.clone(),
-        "etag-integrity",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), RangeServerOptions::new("etag-integrity"))
+            .await;
 
     let chunk_size = 1024usize;
     let mut sha256 = Vec::new();
@@ -627,17 +601,8 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
 #[tokio::test]
 async fn if_range_mismatch_is_reported_as_validator_mismatch() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
-    let (url, state, shutdown) = start_range_server_with_options(
-        image.clone(),
-        "etag-v1",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), RangeServerOptions::new("etag-v1")).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -662,13 +627,10 @@ async fn request_headers_are_sent_on_all_http_requests() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) = start_range_server_with_options(
         image.clone(),
-        "etag-auth",
-        false,
-        Some(("x-test-auth", "secret")),
-        false,
-        false,
-        false,
-        None,
+        RangeServerOptions {
+            required_header: Some(("x-test-auth", "secret")),
+            ..RangeServerOptions::new("etag-auth")
+        },
     )
     .await;
 
@@ -693,13 +655,10 @@ async fn missing_required_header_fails_open_with_http_error() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
         image,
-        "etag-auth-required",
-        false,
-        Some(("x-test-auth", "secret")),
-        false,
-        false,
-        false,
-        None,
+        RangeServerOptions {
+            required_header: Some(("x-test-auth", "secret")),
+            ..RangeServerOptions::new("etag-auth-required")
+        },
     )
     .await;
 
@@ -719,17 +678,8 @@ async fn missing_required_header_fails_open_with_http_error() {
 #[tokio::test]
 async fn open_fails_when_config_validator_mismatches_remote_etag() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
-    let (url, _state, shutdown) = start_range_server_with_options(
-        image,
-        "etag-actual",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url, _state, shutdown) =
+        start_range_server_with_options(image, RangeServerOptions::new("etag-actual")).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -813,13 +763,10 @@ async fn range_not_supported_is_reported_when_server_ignores_range() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
         image.clone(),
-        "etag-norange",
-        false,
-        None,
-        true,
-        false,
-        false,
-        None,
+        RangeServerOptions {
+            ignore_range: true,
+            ..RangeServerOptions::new("etag-norange")
+        },
     )
     .await;
 
@@ -843,13 +790,10 @@ async fn content_range_mismatch_is_protocol_error() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
         image.clone(),
-        "etag-badcr",
-        false,
-        None,
-        false,
-        false,
-        true,
-        None,
+        RangeServerOptions {
+            wrong_content_range: true,
+            ..RangeServerOptions::new("etag-badcr")
+        },
     )
     .await;
 
@@ -873,13 +817,10 @@ async fn content_encoding_is_rejected() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
         image.clone(),
-        "etag-encoding",
-        false,
-        None,
-        false,
-        false,
-        false,
-        Some("gzip"),
+        RangeServerOptions {
+            content_encoding: Some("gzip"),
+            ..RangeServerOptions::new("etag-encoding")
+        },
     )
     .await;
 
@@ -901,17 +842,9 @@ async fn content_encoding_is_rejected() {
 #[tokio::test]
 async fn cache_invalidates_when_cache_backend_changes() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
-    let (url, state, shutdown) = start_range_server_with_options(
-        image.clone(),
-        "etag-backend",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), RangeServerOptions::new("etag-backend"))
+            .await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
@@ -952,17 +885,9 @@ async fn cache_invalidates_when_cache_backend_changes() {
 #[tokio::test]
 async fn corrupt_cache_metadata_is_treated_as_invalidation() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
-    let (url, state, shutdown) = start_range_server_with_options(
-        image.clone(),
-        "etag-corrupt",
-        false,
-        None,
-        false,
-        false,
-        false,
-        None,
-    )
-    .await;
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), RangeServerOptions::new("etag-corrupt"))
+            .await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
@@ -1011,13 +936,10 @@ async fn weak_etag_does_not_break_range_fetches() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(
         image.clone(),
-        r#"W/"etag-weak""#,
-        false,
-        None,
-        false,
-        true,
-        false,
-        None,
+        RangeServerOptions {
+            enforce_strong_if_range: true,
+            ..RangeServerOptions::new(r#"W/"etag-weak""#)
+        },
     )
     .await;
 
@@ -1045,13 +967,10 @@ async fn weak_etag_change_is_detected_even_without_if_range() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) = start_range_server_with_options(
         image.clone(),
-        r#"W/"etag-v1""#,
-        false,
-        None,
-        false,
-        true,
-        false,
-        None,
+        RangeServerOptions {
+            enforce_strong_if_range: true,
+            ..RangeServerOptions::new(r#"W/"etag-v1""#)
+        },
     )
     .await;
 

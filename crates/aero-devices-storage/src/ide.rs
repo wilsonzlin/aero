@@ -677,11 +677,11 @@ mod tests {
         ctl.write_u8(PRIMARY_BASE + 6, 0xE0, &irq14, &irq15);
         ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_IDENTIFY, &irq14, &irq15);
 
-        assert_eq!(irq14.level(), true);
+        assert!(irq14.level());
 
         let mut buf = [0u8; SECTOR_SIZE];
         for i in 0..(SECTOR_SIZE / 2) {
-            let w = ctl.read_u16(PRIMARY_BASE + 0, &irq14, &irq15);
+            let w = ctl.read_u16(PRIMARY_BASE, &irq14, &irq15);
             buf[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
         }
 
@@ -689,7 +689,7 @@ mod tests {
         assert_eq!(buf[0], 0x40);
         // Reading status clears IRQ.
         let _ = ctl.read_u8(PRIMARY_BASE + 7, &irq14, &irq15);
-        assert_eq!(irq14.level(), false);
+        assert!(!irq14.level());
     }
 
     #[test]
@@ -704,13 +704,13 @@ mod tests {
         ctl.write_u8(PRIMARY_BASE + 5, 0, &irq14, &irq15);
         ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_READ_SECTORS, &irq14, &irq15);
 
-        assert_eq!(irq14.level(), true);
+        assert!(irq14.level());
 
         // First 4 bytes of sector 1 are [1,2,3,4].
-        let b0 = ctl.read_u8(PRIMARY_BASE + 0, &irq14, &irq15);
-        let b1 = ctl.read_u8(PRIMARY_BASE + 0, &irq14, &irq15);
-        let b2 = ctl.read_u8(PRIMARY_BASE + 0, &irq14, &irq15);
-        let b3 = ctl.read_u8(PRIMARY_BASE + 0, &irq14, &irq15);
+        let b0 = ctl.read_u8(PRIMARY_BASE, &irq14, &irq15);
+        let b1 = ctl.read_u8(PRIMARY_BASE, &irq14, &irq15);
+        let b2 = ctl.read_u8(PRIMARY_BASE, &irq14, &irq15);
+        let b3 = ctl.read_u8(PRIMARY_BASE, &irq14, &irq15);
         assert_eq!([b0, b1, b2, b3], [1, 2, 3, 4]);
     }
 }

@@ -163,9 +163,9 @@ fn page_fault_is_delivered_through_idt_and_cr2_is_set() {
     let flags = PTE_P | PTE_RW | PTE_US;
 
     // PDE[0] -> PT.
-    phys.write_u32(pd_base + 0 * 4, (pt_base as u32) | flags);
+    phys.write_u32(pd_base, (pt_base as u32) | flags);
     // PTE[0] -> code page (linear 0x0000).
-    phys.write_u32(pt_base + 0 * 4, (code_page as u32) | flags);
+    phys.write_u32(pt_base, (code_page as u32) | flags);
     // PTE[2] -> stack page (linear 0x2000).
     phys.write_u32(pt_base + 2 * 4, (stack_page as u32) | flags);
 

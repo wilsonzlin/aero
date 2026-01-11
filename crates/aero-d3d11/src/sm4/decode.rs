@@ -143,11 +143,11 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
 
         // Comment blocks can be emitted via the `customdata` opcode. They have no impact on shader
         // semantics and can appear in both the declaration and executable sections.
-        if opcode == OPCODE_CUSTOMDATA {
-            if inst_toks.get(1).copied() == Some(CUSTOMDATA_CLASS_COMMENT) {
-                i += len;
-                continue;
-            }
+        if opcode == OPCODE_CUSTOMDATA
+            && inst_toks.get(1).copied() == Some(CUSTOMDATA_CLASS_COMMENT)
+        {
+            i += len;
+            continue;
         }
 
         // `nop` can appear in both the declaration section and the executable instruction stream.
@@ -876,10 +876,7 @@ impl<'a> InstrReader<'a> {
                     remaining: 0,
                 },
             })
-            .map(|v| {
-                self.pos += 1;
-                v
-            })
+            .inspect(|_| self.pos += 1)
     }
 
     fn is_eof(&self) -> bool {

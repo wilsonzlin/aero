@@ -146,6 +146,7 @@ impl<W: Write> TraceWriter<W> {
         Ok(blob_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn write_aerogpu_submission(
         &mut self,
         submit_flags: u32,
@@ -402,6 +403,7 @@ impl<W: Write> Recorder<W> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_aerogpu_submission(
         &mut self,
         submit_flags: u32,

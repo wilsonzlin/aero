@@ -6,17 +6,12 @@ use aero_perf::PerfWorker;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CpuMode {
+    #[default]
     Real16,
     Protected32,
     Long64,
-}
-
-impl Default for CpuMode {
-    fn default() -> Self {
-        Self::Real16
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,15 +24,9 @@ pub enum Segment {
     Gs,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SegmentReg {
     pub base: u64,
-}
-
-impl Default for SegmentReg {
-    fn default() -> Self {
-        Self { base: 0 }
-    }
 }
 
 #[derive(Clone, Debug, Default)]

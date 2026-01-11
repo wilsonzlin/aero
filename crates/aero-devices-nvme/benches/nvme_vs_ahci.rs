@@ -93,7 +93,7 @@ impl VecDisk {
     }
 
     fn check(&self, lba: u64, bytes: usize) -> DiskResult<()> {
-        if bytes % self.sector_size as usize != 0 {
+        if !bytes.is_multiple_of(self.sector_size as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: bytes,
                 sector_size: self.sector_size,
@@ -202,7 +202,7 @@ fn bench_device_read_4k(c: &mut Criterion) {
         set_cmd_u64(&mut cmd, 24, IO_SQ);
         set_cmd_u32(&mut cmd, 40, (63u32 << 16) | 1); // qsize=64, qid=1
         set_cmd_u32(&mut cmd, 44, 1); // cqid=1
-        write_nvme_cmd(&mut mem, ASQ + 1 * 64, &cmd);
+        write_nvme_cmd(&mut mem, ASQ + 64, &cmd);
         ctrl.mmio_write(0x1000, 4, 2, &mut mem);
 
         // Consume the two admin completions so INTx doesn't stay asserted.

@@ -75,12 +75,10 @@ fn instantiate(
     let mut linker = Linker::new(&engine);
 
     let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
-    define_mem_helpers(&mut store, &mut linker, memory.clone());
-    define_mmu_translate(&mut store, &mut linker, memory.clone());
+    define_mem_helpers(&mut store, &mut linker, memory);
+    define_mmu_translate(&mut store, &mut linker, memory);
     linker
         .define(
             IMPORT_MODULE,
@@ -143,7 +141,7 @@ fn define_mem_helpers(
             .expect("memory write in bounds");
     }
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -165,7 +163,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -187,7 +185,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -209,7 +207,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -231,7 +229,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -253,7 +251,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -275,7 +273,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -342,7 +340,7 @@ fn define_mmu_translate(
 
                     let vaddr_u = vaddr as u64;
                     let vpn = vaddr_u >> PAGE_SHIFT;
-                    let idx = (vpn & JIT_TLB_INDEX_MASK) as u64;
+                    let idx = vpn & JIT_TLB_INDEX_MASK;
 
                     let tlb_salt = read_u64_from_memory(
                         &mut caller,
@@ -411,7 +409,7 @@ fn run_trace(
     };
     ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
 
-    let pages = ((total_len + 65_535) / 65_536) as u32;
+    let pages = total_len.div_ceil(65_536) as u32;
     let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
     memory.write(&mut store, 0, &mem).unwrap();
 
@@ -423,8 +421,8 @@ fn run_trace(
     memory.read(&store, 0, &mut got_mem).unwrap();
 
     let mut gpr = [0u64; 16];
-    for i in 0..16 {
-        gpr[i] = read_u64_le(&got_mem, cpu_ptr_usize + (abi::CPU_GPR_OFF[i] as usize));
+    for (i, reg) in gpr.iter_mut().enumerate() {
+        *reg = read_u64_le(&got_mem, cpu_ptr_usize + (abi::CPU_GPR_OFF[i] as usize));
     }
 
     (ret, got_mem[..ram.len()].to_vec(), gpr, *store.data())
@@ -541,7 +539,7 @@ fn tier2_inline_tlb_collision_forces_retranslate() {
 
 #[test]
 fn tier2_inline_tlb_cross_page_load_uses_slow_helper() {
-    let addr = PAGE_SIZE as u64 - 2;
+    let addr = PAGE_SIZE - 2;
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![

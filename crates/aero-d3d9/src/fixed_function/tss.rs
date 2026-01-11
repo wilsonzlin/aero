@@ -64,13 +64,7 @@ impl Default for AlphaTestState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct FogState {
     pub enabled: bool,
-}
-
-impl Default for FogState {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }

@@ -1092,8 +1092,7 @@ impl Emitter<'_> {
         let slow_read = slow_read.expect("memory read helper import missing");
 
         // Cross-page accesses use the slow helper for correctness.
-        let cross_limit =
-            (PAGE_OFFSET_MASK as u64).saturating_sub(size_bytes.saturating_sub(1) as u64);
+        let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
         self.f
             .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
         self.f
@@ -1226,8 +1225,7 @@ impl Emitter<'_> {
         };
         let slow_write = slow_write.expect("memory write helper import missing");
 
-        let cross_limit =
-            (PAGE_OFFSET_MASK as u64).saturating_sub(size_bytes.saturating_sub(1) as u64);
+        let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
         self.f
             .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
         self.f

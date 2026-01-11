@@ -119,7 +119,7 @@ impl BinOp {
 /// Evaluate a [`BinOp`], returning `(result, flags)` computed using a simplified x86-like model.
 pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
     fn parity_even(byte: u8) -> bool {
-        byte.count_ones() % 2 == 0
+        byte.count_ones().is_multiple_of(2)
     }
 
     match op {
@@ -449,16 +449,11 @@ impl Instr {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TraceKind {
+    #[default]
     Linear,
     Loop,
-}
-
-impl Default for TraceKind {
-    fn default() -> Self {
-        Self::Linear
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

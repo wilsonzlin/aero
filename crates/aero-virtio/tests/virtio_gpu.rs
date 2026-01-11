@@ -122,6 +122,7 @@ fn push_rect(out: &mut Vec<u8>, r: proto::Rect) {
     proto::write_u32_le(out, r.height);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn submit_control(
     dev: &mut VirtioPciDevice,
     mem: &mut GuestRam,
@@ -199,12 +200,12 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -519,12 +520,12 @@ fn virtio_gpu_rejects_oversize_request_without_wedging_queue() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);

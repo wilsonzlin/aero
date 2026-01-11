@@ -64,6 +64,12 @@ pub struct WasmtimeBackend<Cpu> {
     _phantom: PhantomData<Cpu>,
 }
 
+impl<Cpu> Default for WasmtimeBackend<Cpu> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<Cpu> WasmtimeBackend<Cpu> {
     /// Default location for the `CpuState` structure within linear memory.
     ///
@@ -498,7 +504,7 @@ fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
                       -> i64 {
                     let vaddr_u = vaddr as u64;
                     let vpn = vaddr_u >> crate::PAGE_SHIFT;
-                    let idx = (vpn & crate::JIT_TLB_INDEX_MASK) as u64;
+                    let idx = vpn & crate::JIT_TLB_INDEX_MASK;
 
                     let tlb_salt = {
                         let addr = jit_ctx_ptr as usize + (JitContext::TLB_SALT_OFFSET as usize);

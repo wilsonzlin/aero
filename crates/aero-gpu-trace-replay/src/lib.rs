@@ -229,12 +229,12 @@ impl AerogpuSoftwareExecutor {
     }
 
     fn process_cmd_stream(&mut self, bytes: &[u8], mem: &SubmissionMemory) -> Result<(), String> {
-        let mut iter = AerogpuCmdStreamIter::new(bytes)
+        let iter = AerogpuCmdStreamIter::new(bytes)
             .map_err(|err| format!("failed to decode cmd stream: {err:?}"))?;
 
         // Track offsets for diagnostics (iterator itself doesn't expose it).
         let mut offset = AerogpuCmdStreamHeader::SIZE_BYTES;
-        while let Some(packet) = iter.next() {
+        for packet in iter {
             let packet = packet
                 .map_err(|err| format!("cmd packet decode error at offset {offset}: {err:?}"))?;
 
@@ -627,8 +627,8 @@ fn rasterize_triangle(rt: &mut FrameBuffer, viewport: Viewport, tri: &[(f32, f32
             let b2 = w2 * inv_area;
 
             let mut rgba = [0f32; 4];
-            for i in 0..4 {
-                rgba[i] = b0 * p0.2[i] + b1 * p1.2[i] + b2 * p2.2[i];
+            for (i, value) in rgba.iter_mut().enumerate() {
+                *value = b0 * p0.2[i] + b1 * p1.2[i] + b2 * p2.2[i];
             }
             let dst = ((y * rt.width + x) as usize) * 4;
             rt.rgba8[dst] = (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8;

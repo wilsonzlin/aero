@@ -350,12 +350,13 @@ fn restore_snapshot_checked_respects_custom_dirty_page_size() {
     let mut source = DummySource::new(8192);
     source.write_u8(0, 1);
 
-    let mut opts = SaveOptions::default();
-    opts.ram = RamWriteOptions {
-        mode: RamMode::Full,
-        compression: Compression::None,
-        page_size: 4096,
-        chunk_size: 1024,
+    let opts = SaveOptions {
+        ram: RamWriteOptions {
+            mode: RamMode::Full,
+            compression: Compression::None,
+            page_size: 4096,
+            chunk_size: 1024,
+        },
     };
     let bytes = snapshot_bytes(&mut source, opts).unwrap();
 

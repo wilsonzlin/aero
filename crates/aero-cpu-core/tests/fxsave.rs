@@ -22,8 +22,8 @@ fn patterned_u128(seed: u8) -> u128 {
 
 fn patterned_st80(seed: u8) -> u128 {
     let mut bytes = [0u8; 16];
-    for i in 0..10 {
-        bytes[i] = seed.wrapping_add(i as u8);
+    for (i, b) in bytes.iter_mut().take(10).enumerate() {
+        *b = seed.wrapping_add(i as u8);
     }
     u128::from_le_bytes(bytes)
 }

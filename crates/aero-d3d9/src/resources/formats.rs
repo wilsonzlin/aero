@@ -63,8 +63,8 @@ impl FormatInfo {
         let (w, h) = self.mip_dimensions(width, height, level);
         let (bw, bh) = if self.d3d_is_compressed {
             (
-                (w + self.d3d_block_width - 1) / self.d3d_block_width,
-                (h + self.d3d_block_height - 1) / self.d3d_block_height,
+                w.div_ceil(self.d3d_block_width),
+                h.div_ceil(self.d3d_block_height),
             )
         } else {
             (w, h)
@@ -75,7 +75,7 @@ impl FormatInfo {
     pub fn d3d_mip_level_pitch(&self, width: u32, level: u32) -> u32 {
         let w = (width >> level).max(1);
         let blocks = if self.d3d_is_compressed {
-            (w + self.d3d_block_width - 1) / self.d3d_block_width
+            w.div_ceil(self.d3d_block_width)
         } else {
             w
         };
@@ -85,7 +85,7 @@ impl FormatInfo {
     pub fn upload_bytes_per_row(&self, width: u32, level: u32) -> u32 {
         let w = (width >> level).max(1);
         let blocks = if self.upload_is_compressed {
-            (w + self.upload_block_width - 1) / self.upload_block_width
+            w.div_ceil(self.upload_block_width)
         } else {
             w
         };
@@ -95,7 +95,7 @@ impl FormatInfo {
     pub fn upload_rows_per_image(&self, height: u32, level: u32) -> u32 {
         let h = (height >> level).max(1);
         if self.upload_is_compressed {
-            (h + self.upload_block_height - 1) / self.upload_block_height
+            h.div_ceil(self.upload_block_height)
         } else {
             h
         }
@@ -260,22 +260,14 @@ pub fn format_info(
             force_opaque_alpha: false,
         }),
 
-        (depth, _) if matches!(depth, D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32) => {
-            Err(anyhow!(
-                "depth format {:?} must be used with TextureUsageKind::DepthStencil",
-                format
-            ))
-        }
-
-        _ => Err(anyhow!(
-            "unsupported D3D format {:?} for usage {:?}",
-            format,
-            usage
+        (D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32, _) => Err(anyhow!(
+            "depth format {:?} must be used with TextureUsageKind::DepthStencil",
+            format
         )),
     }
 }
 
 pub fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    ((bytes_per_row + align - 1) / align) * align
+    bytes_per_row.div_ceil(align) * align
 }

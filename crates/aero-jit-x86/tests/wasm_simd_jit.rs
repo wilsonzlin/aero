@@ -585,8 +585,10 @@ fn mxcsr_gate_traps_for_float_ops() {
         .get_typed_func::<(), ()>(&mut store, "run")
         .unwrap();
 
-    let mut state = SseState::default();
-    state.mxcsr = MXCSR_DEFAULT ^ 0x2000; // change rounding mode bits
+    let state = SseState {
+        mxcsr: MXCSR_DEFAULT ^ 0x2000, // change rounding mode bits
+        ..Default::default()
+    };
 
     let mut state_bytes = vec![0u8; STATE_SIZE_BYTES];
     state.write_to_bytes(&mut state_bytes).unwrap();

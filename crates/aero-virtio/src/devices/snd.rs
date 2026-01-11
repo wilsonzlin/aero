@@ -640,7 +640,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             .iter()
             .map(|d| u64::from(d.len))
             .fold(0u64, u64::saturating_add);
-        if payload_bytes % 2 != 0 {
+        if !payload_bytes.is_multiple_of(2) {
             status = VIRTIO_SND_S_BAD_MSG;
         }
         // Avoid unbounded host allocations if the guest provides a pathologically large capture

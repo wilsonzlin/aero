@@ -42,7 +42,7 @@ fn verb_12(verb_id: u16, payload8: u8) -> u32 {
 }
 
 fn verb_4(group: u16, payload16: u16) -> u32 {
-    let verb_id = (group << 8) | ((payload16 >> 8) as u16);
+    let verb_id = (group << 8) | (payload16 >> 8);
     ((verb_id as u32) << 8) | (payload16 as u8 as u32)
 }
 
@@ -103,7 +103,7 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
     let buf0 = 0x2000u64;
     let buf1 = 0x3000u64;
 
-    mem.write_u64(bdl_base + 0, buf0);
+    mem.write_u64(bdl_base, buf0);
     mem.write_u32(bdl_base + 8, 256);
     mem.write_u32(bdl_base + 12, 1);
     mem.write_u64(bdl_base + 16, buf1);
@@ -252,7 +252,7 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     hda.codec_mut().execute_verb(4, verb_12(0x706, 0x20));
 
     // 44.1kHz, 16-bit, mono.
-    let fmt_raw: u16 = (1 << 14) | (1 << 4) | 0x0;
+    let fmt_raw: u16 = (1 << 14) | (1 << 4);
     hda.codec_mut().execute_verb(4, verb_4(0x2, fmt_raw));
 
     // Give mic pin (NID 5) a non-default control value so we can verify codec capture state restores.
@@ -265,7 +265,7 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     let buf0 = 0x2000u64;
     let buf1 = 0x3000u64;
 
-    mem.write_u64(bdl_base + 0, buf0);
+    mem.write_u64(bdl_base, buf0);
     mem.write_u32(bdl_base + 8, 512);
     mem.write_u32(bdl_base + 12, 0);
 
@@ -350,8 +350,8 @@ fn hda_snapshot_restore_clamps_corb_pointers_to_selected_ring_size() {
     // controller should process exactly this entry (and must not spin forever).
     let corb_base = 0x1000u64;
     let rirb_base = 0x2000u64;
-    let cmd = (0u32 << 28) | (0u32 << 20) | verb_12(0xF00, 0x00);
-    mem.write_u32(corb_base + 1 * 4, cmd);
+    let cmd = verb_12(0xF00, 0x00);
+    mem.write_u32(corb_base + 4, cmd);
 
     let worklet_ring = AudioWorkletRingState {
         capacity_frames: 256,
@@ -366,7 +366,7 @@ fn hda_snapshot_restore_clamps_corb_pointers_to_selected_ring_size() {
     state.rirblbase = rirb_base as u32;
     state.corbctl = 0x2; // RUN
     state.rirbctl = 0x2; // RUN
-    state.corbsize = (state.corbsize & !0x3) | 0; // 2 entries
+    state.corbsize &= !0x3; // 2 entries
     state.corbwp = 3; // out of range for 2-entry ring
     state.corbrp = 0;
 
@@ -386,7 +386,7 @@ fn hda_snapshot_restore_clamps_corb_pointers_to_selected_ring_size() {
     );
 
     // Sanity check that a response was emitted into guest memory (entry index isn't important).
-    let any_resp = mem.read_u32(rirb_base + 1 * 8);
+    let any_resp = mem.read_u32(rirb_base + 8);
     assert_ne!(any_resp, 0);
 }
 
@@ -472,7 +472,7 @@ fn hda_snapshot_restore_restores_capture_sample_rate_hz_for_capture_resampler_de
     hda.codec_mut().execute_verb(4, verb_12(0x706, 0x20));
 
     // Guest capture format: 48kHz, 16-bit, mono. This forces resampling 44.1k -> 48k.
-    let fmt_raw: u16 = (1 << 4) | 0x0;
+    let fmt_raw: u16 = 1 << 4;
     hda.codec_mut().execute_verb(4, verb_4(0x2, fmt_raw));
 
     let bdl_base = 0x1000u64;
@@ -600,7 +600,7 @@ fn hda_snapshot_restore_clamps_bdl_index_to_lvi() {
     // One BDL entry at index 0. (If restore doesn't clamp the snapshot-provided
     // bdl_index, the device would attempt to read an out-of-bounds entry and
     // panic in this unit test harness.)
-    mem.write_u64(bdl_base + 0, buf);
+    mem.write_u64(bdl_base, buf);
     mem.write_u32(bdl_base + 8, buf_len);
     mem.write_u32(bdl_base + 12, 0);
 
@@ -672,14 +672,14 @@ fn hda_snapshot_restore_clamps_capture_frame_accum_to_avoid_huge_capture_steps()
     snap.codec_capture.input_channel = 0;
 
     // Guest capture format: 48kHz, 16-bit, mono.
-    let fmt_raw: u16 = (1 << 4) | 0x0;
+    let fmt_raw: u16 = 1 << 4;
     snap.codec_capture.input_format = fmt_raw;
 
     // One BDL entry so capture DMA has a valid target.
     let bdl_base = 0x1000u64;
     let buf = 0x2000u64;
     let buf_len = 512u32;
-    mem.write_u64(bdl_base + 0, buf);
+    mem.write_u64(bdl_base, buf);
     mem.write_u32(bdl_base + 8, buf_len);
     mem.write_u32(bdl_base + 12, 0);
 

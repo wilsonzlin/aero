@@ -28,7 +28,7 @@ fn configure_basic_stream(mem: &mut GuestMemory, hda: &mut HdaController, frames
         mem.write_u16(off + 2, v);
     }
 
-    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u64(bdl_base, pcm_base);
     mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base + 12, 0);
 

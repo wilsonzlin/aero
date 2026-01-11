@@ -182,7 +182,7 @@ fn cap_rects_in_place(rects: &mut Vec<Rect>, cap: usize) {
 
     // Sort to make grouping deterministic and spatially coherent-ish.
     rects.sort_by_key(|r| (r.y, r.x));
-    let group_size = (rects.len() + cap - 1) / cap;
+    let group_size = rects.len().div_ceil(cap);
 
     let mut capped = Vec::with_capacity(cap);
     for chunk in rects.chunks(group_size) {

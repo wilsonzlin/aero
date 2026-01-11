@@ -53,7 +53,7 @@ pub(crate) async fn middleware(
         store_read_seconds = tracing::field::Empty,
     );
     if let Some(user_id) = user_id {
-        span.record("user_id", &tracing::field::display(user_id));
+        span.record("user_id", tracing::field::display(user_id));
     }
 
     let start = Instant::now();

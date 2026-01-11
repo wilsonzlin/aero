@@ -98,11 +98,13 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8>
 fn aerogpu_ring_submission_executes_and_updates_scanout() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);

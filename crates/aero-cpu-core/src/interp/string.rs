@@ -175,8 +175,7 @@ fn add_wrapping(value: u64, delta: i64, addr_size: AddrSize) -> u64 {
         }
         AddrSize::A32 => {
             let v = value as u32;
-            let d = delta as i64;
-            v.wrapping_add(d as u32) as u64
+            v.wrapping_add(delta as u32) as u64
         }
         AddrSize::A64 => value.wrapping_add(delta as u64),
     }

@@ -164,7 +164,7 @@ mod tests {
 
         bda_time.advance(&mut memory, Duration::from_secs(2));
 
-        let expected_after_midnight = (u64::from(TICKS_PER_DAY) * 1 / 86_400) as u32;
+        let expected_after_midnight = (u64::from(TICKS_PER_DAY) / 86_400) as u32;
         assert_eq!(bda_time.tick_count(), expected_after_midnight);
         assert_eq!(bda_time.midnight_flag(), 1);
         assert_eq!(memory.read_u8(BDA_MIDNIGHT_FLAG_ADDR), 1);

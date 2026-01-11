@@ -199,6 +199,12 @@ pub struct StreamEncoder {
     bytes: Vec<u8>,
 }
 
+impl Default for StreamEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamEncoder {
     pub fn new() -> Self {
         let mut bytes = Vec::new();
@@ -270,6 +276,7 @@ impl StreamEncoder {
         self.push_command(Opcode::SwapChainDestroy, &payload);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn texture_create(
         &mut self,
         context_id: u32,
@@ -492,6 +499,7 @@ impl StreamEncoder {
         self.push_command(Opcode::SetTexture, &payload);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn set_viewport(
         &mut self,
         context_id: u32,

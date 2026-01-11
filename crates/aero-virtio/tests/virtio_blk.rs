@@ -1,6 +1,6 @@
 use aero_virtio::devices::blk::{
-    BlockBackend, VirtioBlk, VIRTIO_BLK_S_IOERR, VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_FLUSH,
-    VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
+    BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_S_IOERR, VIRTIO_BLK_S_UNSUPP,
+    VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
 };
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -26,19 +26,51 @@ impl BlockBackend for SharedDisk {
         self.data.borrow().len() as u64
     }
 
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), ()> {
-        let offset = offset as usize;
-        dst.copy_from_slice(&self.data.borrow()[offset..offset + dst.len()]);
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
+        let offset = usize::try_from(offset).map_err(|_| BlockBackendError::OutOfBounds {
+            offset,
+            len: dst.len(),
+        })?;
+        let end = offset
+            .checked_add(dst.len())
+            .ok_or(BlockBackendError::OutOfBounds {
+                offset: offset as u64,
+                len: dst.len(),
+            })?;
+        let data = self.data.borrow();
+        if end > data.len() {
+            return Err(BlockBackendError::OutOfBounds {
+                offset: offset as u64,
+                len: dst.len(),
+            });
+        }
+        dst.copy_from_slice(&data[offset..end]);
         Ok(())
     }
 
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), ()> {
-        let offset = offset as usize;
-        self.data.borrow_mut()[offset..offset + src.len()].copy_from_slice(src);
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
+        let offset = usize::try_from(offset).map_err(|_| BlockBackendError::OutOfBounds {
+            offset,
+            len: src.len(),
+        })?;
+        let end = offset
+            .checked_add(src.len())
+            .ok_or(BlockBackendError::OutOfBounds {
+                offset: offset as u64,
+                len: src.len(),
+            })?;
+        let mut data = self.data.borrow_mut();
+        if end > data.len() {
+            return Err(BlockBackendError::OutOfBounds {
+                offset: offset as u64,
+                len: src.len(),
+            });
+        }
+        data[offset..end].copy_from_slice(src);
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), ()> {
+    fn flush(&mut self) -> Result<(), BlockBackendError> {
         self.flushes.set(self.flushes.get().saturating_add(1));
         Ok(())
     }
@@ -140,13 +172,15 @@ const DESC_TABLE: u64 = 0x4000;
 const AVAIL_RING: u64 = 0x5000;
 const USED_RING: u64 = 0x6000;
 
-fn setup() -> (
+type TestSetup = (
     VirtioPciDevice,
     Caps,
     GuestRam,
     Rc<RefCell<Vec<u8>>>,
     Rc<Cell<u32>>,
-) {
+);
+
+fn setup() -> TestSetup {
     let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
     let flushes = Rc::new(Cell::new(0u32));
     let backend = SharedDisk {
@@ -202,12 +236,12 @@ fn setup() -> (
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0); // device_feature_select
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0); // device_feature_select
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0); // driver_feature_select
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -250,7 +284,7 @@ fn virtio_blk_config_exposes_capacity_and_block_size() {
     let (mut dev, caps, _mem, _backing, _flushes) = setup();
 
     // virtio-blk config: capacity in 512-byte sectors.
-    let cap = bar_read_u64(&mut dev, caps.device + 0);
+    let cap = bar_read_u64(&mut dev, caps.device);
     assert_eq!(cap, 8);
 
     let size_max = bar_read_u32(&mut dev, caps.device + 8);
@@ -332,7 +366,7 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     let got = mem.get_slice(data2, payload.len()).unwrap();
     assert_eq!(got, payload.as_slice());
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(read_u32_le(&mem, USED_RING + 4 + 1 * 8 + 4).unwrap(), 0);
+    assert_eq!(read_u32_le(&mem, USED_RING + 4 + 8 + 4).unwrap(), 0);
 
     // FLUSH request.
     mem.write(status, &[0xff]).unwrap();

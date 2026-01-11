@@ -319,12 +319,8 @@ impl AeroGpuCommandProcessor {
     }
 
     fn destroy_shared_surface_handle(&mut self, handle: u32) -> Option<u32> {
-        let Some(underlying) = self.shared_surface_handles.remove(&handle) else {
-            return None;
-        };
-        let Some(count) = self.shared_surface_refcounts.get_mut(&underlying) else {
-            return None;
-        };
+        let underlying = self.shared_surface_handles.remove(&handle)?;
+        let count = self.shared_surface_refcounts.get_mut(&underlying)?;
 
         *count = count.saturating_sub(1);
         if *count != 0 {

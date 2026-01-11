@@ -794,7 +794,7 @@ mod tests {
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         cpu.a20_enabled = mem.a20_enabled();
         let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
-        mem.write_u8(dap_addr + 0, 0x10);
+        mem.write_u8(dap_addr, 0x10);
         mem.write_u8(dap_addr + 1, 0x00);
         mem.write_u16(dap_addr + 2, 1); // count
         mem.write_u16(dap_addr + 4, 0x1000); // offset
@@ -945,7 +945,7 @@ mod tests {
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         cpu.a20_enabled = mem.a20_enabled();
         let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0700);
-        mem.write_u8(dap_addr + 0, 0x10);
+        mem.write_u8(dap_addr, 0x10);
         mem.write_u8(dap_addr + 1, 0x00);
         mem.write_u16(dap_addr + 2, 1); // count
         mem.write_u16(dap_addr + 4, 0x1000); // offset

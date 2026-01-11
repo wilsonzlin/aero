@@ -83,18 +83,19 @@ fn disk_layer_state_roundtrip_remote() {
 
 #[test]
 fn ide_state_roundtrip() {
-    let mut ide = IdeControllerState::default();
-    ide.command = 0xec;
-    ide.status = 0x50;
-    ide.error = 0x01;
-    ide.sector_count = 8;
-    ide.lba = 0x1234_5678;
-    ide.dma_active = true;
-    ide.in_flight = Some(IdeInFlightCommandState {
-        lba: 0xdead_beef,
-        sector_count: 16,
-        is_write: true,
-    });
+    let ide = IdeControllerState {
+        command: 0xec,
+        status: 0x50,
+        error: 0x01,
+        sector_count: 8,
+        lba: 0x1234_5678,
+        dma_active: true,
+        in_flight: Some(IdeInFlightCommandState {
+            lba: 0xdead_beef,
+            sector_count: 16,
+            is_write: true,
+        }),
+    };
 
     let snap = ide.save_state();
     let mut restored = IdeControllerState::default();
@@ -165,15 +166,17 @@ fn nvme_state_roundtrip() {
 
 #[test]
 fn network_stack_roundtrip_with_policy() {
-    let mut net = NetworkStackState::default();
-    net.mac_addr = [10, 11, 12, 13, 14, 15];
-    net.dhcp_lease = Some(DhcpLease {
-        ip: Ipv4Addr::new(192, 168, 0, 2),
-        gateway: Ipv4Addr::new(192, 168, 0, 1),
-        netmask: Ipv4Addr::new(255, 255, 255, 0),
-        lease_time_secs: 3600,
-        acquired_at_tick: 123,
-    });
+    let mut net = NetworkStackState {
+        mac_addr: [10, 11, 12, 13, 14, 15],
+        dhcp_lease: Some(DhcpLease {
+            ip: Ipv4Addr::new(192, 168, 0, 2),
+            gateway: Ipv4Addr::new(192, 168, 0, 1),
+            netmask: Ipv4Addr::new(255, 255, 255, 0),
+            lease_time_secs: 3600,
+            acquired_at_tick: 123,
+        }),
+        ..Default::default()
+    };
     net.nat.insert(
         NatKey {
             proto: NatProtocol::Tcp,

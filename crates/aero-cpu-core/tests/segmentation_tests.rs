@@ -5,6 +5,7 @@ use aero_cpu_core::segmentation::{AccessType, LoadReason, Seg};
 use aero_cpu_core::state::{CpuMode, CpuState, CR0_PG, CR4_PAE, EFER_LME};
 use aero_cpu_core::Exception;
 
+#[allow(clippy::too_many_arguments)]
 fn make_descriptor(
     base: u32,
     limit_raw: u32,

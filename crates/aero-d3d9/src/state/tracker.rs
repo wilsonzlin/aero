@@ -222,25 +222,13 @@ impl From<&BlendState> for BlendPipelineState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct SamplerState {
     pub address_u: u32,
     pub address_v: u32,
     pub min_filter: u32,
     pub mag_filter: u32,
     pub mip_filter: u32,
-}
-
-impl Default for SamplerState {
-    fn default() -> Self {
-        Self {
-            address_u: 0,
-            address_v: 0,
-            min_filter: 0,
-            mag_filter: 0,
-            mip_filter: 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -257,7 +245,7 @@ pub struct VertexBufferLayoutKey {
     pub attributes: Vec<VertexAttributeKey>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct RenderTargetState {
     /// D3D9 allows up to 4 MRTs, but we keep the formats as a dense list starting
     /// from slot 0.
@@ -265,17 +253,6 @@ pub struct RenderTargetState {
     pub depth_stencil_format: Option<wgpu::TextureFormat>,
     pub srgb_write_enable: bool,
     pub color_write_masks: Vec<ColorWriteMask>,
-}
-
-impl Default for RenderTargetState {
-    fn default() -> Self {
-        Self {
-            color_formats: Vec::new(),
-            depth_stencil_format: None,
-            srgb_write_enable: false,
-            color_write_masks: Vec::new(),
-        }
-    }
 }
 
 /// Full D3D9 state snapshot needed to compute a pipeline key and dynamic state.

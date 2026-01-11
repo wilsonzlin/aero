@@ -1,5 +1,3 @@
-#![cfg(feature = "aerogpu-exec")]
-
 use std::collections::{HashMap, VecDeque};
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;

@@ -319,8 +319,8 @@ impl CpuBus for FlatBus<'_> {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for i in 0..len {
-            buf[i] = self.read_u8(vaddr.wrapping_add(i as u64))?;
+        for (i, slot) in buf.iter_mut().take(len).enumerate() {
+            *slot = self.read_u8(vaddr.wrapping_add(i as u64))?;
         }
         Ok(buf)
     }

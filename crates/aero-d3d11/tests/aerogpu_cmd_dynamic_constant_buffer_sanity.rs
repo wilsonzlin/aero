@@ -59,7 +59,7 @@ fn begin_cmd(stream: &mut Vec<u8>, opcode: u32) -> usize {
     start
 }
 
-fn end_cmd(stream: &mut Vec<u8>, start: usize) {
+fn end_cmd(stream: &mut [u8], start: usize) {
     let size = (stream.len() - start) as u32;
     stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size.to_le_bytes());

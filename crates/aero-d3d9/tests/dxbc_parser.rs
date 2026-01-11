@@ -16,7 +16,7 @@ fn parses_vs_2_0_fixture() {
     assert_eq!(shader.shader_model, ShaderModel { major: 2, minor: 0 });
     assert_eq!(shader.key.0, 0x6010_9961_99f0_3b79);
 
-    assert_eq!(shader.unknown_chunks, vec![FourCc::from_str("JUNK")]);
+    assert_eq!(shader.unknown_chunks, vec![FourCc::from("JUNK")]);
 
     let refl = shader
         .reflection

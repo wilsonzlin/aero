@@ -215,14 +215,14 @@ impl Default for Debugger {
 }
 
 fn watchpoint_kind_matches(access: WatchpointKind, configured: WatchpointKind) -> bool {
-    match (access, configured) {
-        (WatchpointKind::Read, WatchpointKind::Read) => true,
-        (WatchpointKind::Write, WatchpointKind::Write) => true,
-        (WatchpointKind::Read, WatchpointKind::ReadWrite) => true,
-        (WatchpointKind::Write, WatchpointKind::ReadWrite) => true,
-        (WatchpointKind::ReadWrite, _) => true,
-        _ => false,
-    }
+    matches!(
+        (access, configured),
+        (WatchpointKind::Read, WatchpointKind::Read)
+            | (WatchpointKind::Write, WatchpointKind::Write)
+            | (WatchpointKind::Read, WatchpointKind::ReadWrite)
+            | (WatchpointKind::Write, WatchpointKind::ReadWrite)
+            | (WatchpointKind::ReadWrite, _)
+    )
 }
 
 fn ranges_overlap(a: MemoryRange, b: MemoryRange) -> bool {
@@ -322,7 +322,7 @@ impl Tracer {
         }
 
         self.sample_counter = self.sample_counter.wrapping_add(1);
-        self.sample_counter % rate as u64 == 0
+        self.sample_counter.is_multiple_of(rate as u64)
     }
 }
 

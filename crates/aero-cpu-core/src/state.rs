@@ -1682,13 +1682,13 @@ mod tests {
         assert_eq!(offset_of!(CpuState, rip), CPU_RIP_OFF);
         assert_eq!(offset_of!(CpuState, rflags), CPU_RFLAGS_OFF);
 
-        for i in 0..GPR_COUNT {
-            assert_eq!(CPU_GPR_OFF[i], CPU_GPR_BASE_OFF + i * 8);
+        for (i, &off) in CPU_GPR_OFF.iter().enumerate().take(GPR_COUNT) {
+            assert_eq!(off, CPU_GPR_BASE_OFF + i * 8);
         }
 
         let xmm_base = offset_of!(CpuState, sse) + offset_of!(SseState, xmm);
-        for i in 0..16 {
-            assert_eq!(CPU_XMM_OFF[i], xmm_base + i * core::mem::size_of::<u128>());
+        for (i, &off) in CPU_XMM_OFF.iter().enumerate() {
+            assert_eq!(off, xmm_base + i * core::mem::size_of::<u128>());
         }
     }
 

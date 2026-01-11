@@ -1259,6 +1259,7 @@ impl InFlightSubmission {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -1846,6 +1847,6 @@ impl AerogpuSubmissionTrace {
             // Close the last frame even if the guest didn't submit a present.
             self.writer.present(self.frame_index)?;
         }
-        Ok(self.writer.finish()?)
+        self.writer.finish()
     }
 }

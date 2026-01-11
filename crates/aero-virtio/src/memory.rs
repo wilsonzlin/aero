@@ -17,6 +17,10 @@ pub trait GuestMemory {
     /// Total length of the guest memory address space handled by this object.
     fn len(&self) -> u64;
 
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Copy bytes from guest memory into `dst`.
     fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError>;
 

@@ -30,7 +30,7 @@ fn build_alloc_table_bytes(
 
     for (i, (alloc_id, gpa, size)) in entries.iter().copied().enumerate() {
         let base = AerogpuAllocTableHeader::SIZE_BYTES + i * (entry_stride_bytes as usize);
-        write_u32(&mut buf, base + 0, alloc_id);
+        write_u32(&mut buf, base, alloc_id);
         write_u32(&mut buf, base + 4, 0); // flags
         write_u64(&mut buf, base + 8, gpa);
         write_u64(&mut buf, base + 16, size);

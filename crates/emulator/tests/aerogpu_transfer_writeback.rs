@@ -72,11 +72,13 @@ fn drive_until_fence(mem: &mut Bus, dev: &mut AeroGpuPciDevice, fence: u64) {
 fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -92,7 +94,7 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     let entry_stride = 64u32;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -213,7 +215,7 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -258,11 +260,13 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -277,7 +281,7 @@ fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
     let entry_count = 8u32;
     let entry_stride = 64u32;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -369,7 +373,7 @@ fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -408,11 +412,13 @@ fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_respects_offsets() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -427,7 +433,7 @@ fn aerogpu_copy_buffer_writeback_respects_offsets() {
     let entry_count = 8u32;
     let entry_stride = 64u32;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -525,7 +531,7 @@ fn aerogpu_copy_buffer_writeback_respects_offsets() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -578,11 +584,13 @@ fn aerogpu_copy_buffer_writeback_respects_offsets() {
 fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -597,7 +605,7 @@ fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
     let entry_count = 8u32;
     let entry_stride = 64u32;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -730,7 +738,7 @@ fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -791,11 +799,13 @@ fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -810,7 +820,7 @@ fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
     let entry_count = 8u32;
     let entry_stride = 64u32;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -878,7 +888,7 @@ fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
 
     // Submit descriptor at slot 0 (no alloc table required because both buffers are host-backed).
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -914,11 +924,13 @@ fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
 fn aerogpu_copy_texture2d_writeback_requires_guest_backing() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -933,7 +945,7 @@ fn aerogpu_copy_texture2d_writeback_requires_guest_backing() {
     let entry_count = 8u32;
     let entry_stride = 64u32;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1005,7 +1017,7 @@ fn aerogpu_copy_texture2d_writeback_requires_guest_backing() {
 
     // Submit descriptor at slot 0 (no alloc table required because both textures are host-backed).
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id

@@ -45,15 +45,13 @@ fn instantiate(
     let mut linker = Linker::new(&engine);
 
     let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
     // Helpers: operate directly on the imported linear memory.
-    define_mem_helpers(&mut store, &mut linker, memory.clone());
+    define_mem_helpers(&mut store, &mut linker, memory);
 
     // mmu_translate / mmio exits.
-    define_mmu_translate(&mut store, &mut linker, memory.clone());
+    define_mmu_translate(&mut store, &mut linker, memory);
     define_mmio_exit(&mut store, &mut linker);
 
     // page_fault and jit_exit are present for ABI completeness.
@@ -146,7 +144,7 @@ fn define_mem_helpers(
             .expect("memory write in bounds");
     }
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -166,7 +164,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -186,7 +184,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -206,7 +204,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -226,7 +224,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -246,7 +244,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -266,7 +264,7 @@ fn define_mem_helpers(
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -328,7 +326,7 @@ fn define_mmu_translate(
 
                     let vaddr_u = vaddr as u64;
                     let vpn = vaddr_u >> aero_jit_x86::legacy::PAGE_SHIFT;
-                    let idx = (vpn & aero_jit_x86::legacy::JIT_TLB_INDEX_MASK) as u64;
+                    let idx = vpn & aero_jit_x86::legacy::JIT_TLB_INDEX_MASK;
 
                     let salt = read_u64_from_memory(
                         &mut caller,
@@ -405,7 +403,7 @@ fn run_wasm(
 
     cpu.write_to_mem(&mut mem, 0);
 
-    let pages = ((mem.len() + 65535) / 65536) as u32;
+    let pages = mem.len().div_ceil(65_536) as u32;
     let ram_size = mem.len() as u64 - cpu.ram_base;
     let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
     memory.write(&mut store, 0, &mem).unwrap();

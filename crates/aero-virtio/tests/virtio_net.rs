@@ -148,12 +148,12 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -244,7 +244,7 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     write_u16_le(&mut mem, tx_used + 2, 0).unwrap();
 
     dev.bar0_write(
-        caps.notify + 1 * u64::from(caps.notify_mult),
+        caps.notify + u64::from(caps.notify_mult),
         &1u16.to_le_bytes(),
         &mut mem,
     );
@@ -257,7 +257,7 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     let rx_hdr_addr = 0x7200;
     let rx_payload_addr = 0x7300;
     mem.write(rx_hdr_addr, &vec![0xaa; hdr.len()]).unwrap();
-    mem.write(rx_payload_addr, &vec![0xbb; 64]).unwrap();
+    mem.write(rx_payload_addr, &[0xbb; 64]).unwrap();
 
     write_desc(
         &mut mem,
@@ -333,12 +333,12 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -372,9 +372,9 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
     // Post an RX buffer that is large enough for small frames but not for a 60-byte frame.
     let rx_hdr_addr = 0x4000;
     let rx_payload_addr = 0x4100;
-    mem.write(rx_hdr_addr, &vec![0xaa; VirtioNetHdr::BASE_LEN])
+    mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN])
         .unwrap();
-    mem.write(rx_payload_addr, &vec![0xbb; 32]).unwrap();
+    mem.write(rx_payload_addr, &[0xbb; 32]).unwrap();
 
     write_desc(
         &mut mem,
@@ -401,11 +401,7 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
     write_u16_le(&mut mem, rx_used, 0).unwrap();
     write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
 
-    dev.bar0_write(
-        caps.notify + 0 * u64::from(caps.notify_mult),
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
 
     // Provide a 60-byte frame. The device must drop it and must NOT consume the chain.
     backing.borrow_mut().rx_packets.push(vec![0u8; 60]);
@@ -450,11 +446,11 @@ fn virtio_net_tx_chain_with_writable_descriptor_is_dropped_but_completes() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -518,7 +514,7 @@ fn virtio_net_tx_chain_with_writable_descriptor_is_dropped_but_completes() {
     write_u16_le(&mut mem, tx_used + 2, 0).unwrap();
 
     dev.bar0_write(
-        caps.notify + 1 * u64::from(caps.notify_mult),
+        caps.notify + u64::from(caps.notify_mult),
         &1u16.to_le_bytes(),
         &mut mem,
     );
@@ -552,11 +548,11 @@ fn virtio_net_tx_drops_invalid_sized_frames_but_completes_chain() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -628,7 +624,7 @@ fn virtio_net_tx_drops_invalid_sized_frames_but_completes_chain() {
     write_u16_le(&mut mem, tx_used + 2, 0).unwrap();
 
     dev.bar0_write(
-        caps.notify + 1 * u64::from(caps.notify_mult),
+        caps.notify + u64::from(caps.notify_mult),
         &1u16.to_le_bytes(),
         &mut mem,
     );
@@ -665,11 +661,11 @@ fn virtio_net_rx_drops_invalid_sized_frames_without_consuming_chain() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -702,9 +698,9 @@ fn virtio_net_rx_drops_invalid_sized_frames_without_consuming_chain() {
     // Post a receive buffer with ample capacity.
     let rx_hdr_addr = 0x4000;
     let rx_payload_addr = 0x4100;
-    mem.write(rx_hdr_addr, &vec![0xaa; VirtioNetHdr::BASE_LEN])
+    mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN])
         .unwrap();
-    mem.write(rx_payload_addr, &vec![0xbb; 2048]).unwrap();
+    mem.write(rx_payload_addr, &[0xbb; 2048]).unwrap();
 
     write_desc(
         &mut mem,
@@ -731,11 +727,7 @@ fn virtio_net_rx_drops_invalid_sized_frames_without_consuming_chain() {
     write_u16_le(&mut mem, rx_used, 0).unwrap();
     write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
 
-    dev.bar0_write(
-        caps.notify + 0 * u64::from(caps.notify_mult),
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
     assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 0);
 
     // Undersized (<14) frame: must be dropped without consuming the chain.

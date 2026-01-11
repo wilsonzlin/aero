@@ -231,7 +231,7 @@ impl D3D11Runtime {
         let bytes_per_pixel = 4u32;
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
         let buffer_size = padded_bytes_per_row as u64 * height as u64;
 
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -354,7 +354,7 @@ impl D3D11Runtime {
         }
         let byte_len = payload[fixed_words] as usize;
         let bytes_start = fixed_words + 1;
-        let bytes_words = (byte_len + 3) / 4;
+        let bytes_words = byte_len.div_ceil(4);
         if payload.len() < bytes_start + bytes_words {
             bail!(
                 "truncated byte payload: need {} words, have {}",
@@ -411,7 +411,7 @@ impl D3D11Runtime {
             .size;
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
         let size_bytes = bytes.len() as u64;
-        if offset % alignment != 0 || size_bytes % alignment != 0 {
+        if !offset.is_multiple_of(alignment) || !size_bytes.is_multiple_of(alignment) {
             bail!(
                 "UpdateBuffer offset/size must be {alignment}-byte aligned (offset={offset} size_bytes={size_bytes})"
             );
@@ -554,10 +554,10 @@ impl D3D11Runtime {
         // workloads frequently use tightly-packed rows that are not 256-aligned, so we repack into
         // an aligned scratch buffer when needed.
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let needs_repack = height > 1 && (src_bytes_per_row % align != 0);
+        let needs_repack = height > 1 && !src_bytes_per_row.is_multiple_of(align);
 
         let (repacked, upload_bytes_per_row) = if needs_repack {
-            let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+            let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
             let mut tmp = vec![0u8; padded_bytes_per_row as usize * height as usize];
             for row in 0..height as usize {
                 let src_start = row * src_bytes_per_row as usize;
@@ -1000,7 +1000,10 @@ impl D3D11Runtime {
         }
 
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-        if src_offset % alignment != 0 || dst_offset % alignment != 0 || size % alignment != 0 {
+        if !src_offset.is_multiple_of(alignment)
+            || !dst_offset.is_multiple_of(alignment)
+            || !size.is_multiple_of(alignment)
+        {
             bail!(
                 "CopyBufferToBuffer offsets and size must be {alignment}-byte aligned (src_offset={src_offset} dst_offset={dst_offset} size={size})"
             );

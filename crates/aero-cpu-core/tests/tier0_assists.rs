@@ -290,12 +290,13 @@ fn tier0_assists_rdtscp_reads_ia32_tsc_aux_from_cpu_state() {
     let mut bus = FlatTestBus::new(BUS_SIZE);
 
     // WRMSR IA32_TSC_AUX=0xAABBCCDD; RDTSCP; mov [0x500], ecx; ret
+    let msr_bytes = msr::IA32_TSC_AUX.to_le_bytes();
     let code: Vec<u8> = vec![
         0xB9, // mov ecx, imm32
-        (msr::IA32_TSC_AUX as u32).to_le_bytes()[0],
-        (msr::IA32_TSC_AUX as u32).to_le_bytes()[1],
-        (msr::IA32_TSC_AUX as u32).to_le_bytes()[2],
-        (msr::IA32_TSC_AUX as u32).to_le_bytes()[3],
+        msr_bytes[0],
+        msr_bytes[1],
+        msr_bytes[2],
+        msr_bytes[3],
         0xB8,
         0xDD,
         0xCC,

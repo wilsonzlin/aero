@@ -116,7 +116,7 @@ fn process_list(
                     continue;
                 }
                 exprs.insert(key, *dst);
-                output.push(inst.clone());
+                output.push(*inst);
             }
             Instr::LoadReg { dst, reg } => {
                 let idx = reg.as_u8() as usize;
@@ -125,7 +125,7 @@ fn process_list(
                     *changed = true;
                     continue;
                 }
-                output.push(inst.clone());
+                output.push(*inst);
                 reg_state[idx] = Some(Operand::Value(*dst));
             }
             Instr::StoreReg { reg, src } => {
@@ -137,7 +137,6 @@ fn process_list(
                     reg: *reg,
                     src: src2,
                 });
-                reg_state[reg.as_u8() as usize] = Some(src2);
                 reg_state[reg.as_u8() as usize] = Some(src2);
             }
             Instr::LoadMem { dst, addr, width } => {
@@ -274,7 +273,7 @@ fn process_list(
                 });
             }
             Instr::GuardCodeVersion { .. } => {
-                output.push(inst.clone());
+                output.push(*inst);
             }
         }
     }

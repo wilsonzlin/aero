@@ -103,10 +103,10 @@ fn cvt_i64_to_f64(cpu: &mut CpuState, src: i64) -> f64 {
     let shift = (msb as i32) - 52;
 
     let (mut mantissa_full, rem) = if shift <= 0 {
-        ((mag << (-shift as u32)) as u64, 0u64)
+        (mag << (-shift as u32), 0u64)
     } else {
         let shift = shift as u32;
-        ((mag >> shift) as u64, mag & ((1u64 << shift) - 1))
+        (mag >> shift, mag & ((1u64 << shift) - 1))
     };
 
     if rem != 0 {

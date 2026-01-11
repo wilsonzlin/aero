@@ -40,8 +40,8 @@ impl TileDiff {
             return vec![Rect::new(0, 0, self.width, self.height)];
         }
 
-        let tiles_x = (self.width + TILE_SIZE - 1) / TILE_SIZE;
-        let tiles_y = (self.height + TILE_SIZE - 1) / TILE_SIZE;
+        let tiles_x = self.width.div_ceil(TILE_SIZE);
+        let tiles_y = self.height.div_ceil(TILE_SIZE);
 
         let mut dirty = Vec::new();
         for ty in 0..tiles_y {
@@ -51,7 +51,7 @@ impl TileDiff {
                 let w = (self.width - x).min(TILE_SIZE);
                 let h = (self.height - y).min(TILE_SIZE);
 
-                if self.tile_differs(frame_data, stride, x, y, w, h, row_bytes) {
+                if self.tile_differs(frame_data, stride, x, y, w, h) {
                     dirty.push(Rect::new(x, y, w, h));
                 }
             }
@@ -69,8 +69,8 @@ impl TileDiff {
         y: u32,
         w: u32,
         h: u32,
-        packed_row_bytes: usize,
     ) -> bool {
+        let packed_row_bytes = self.width as usize * self.bytes_per_pixel;
         let bpp = self.bytes_per_pixel;
         let row_len = w as usize * bpp;
 

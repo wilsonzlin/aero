@@ -96,7 +96,7 @@ fn tier0_assists_protected_int_iret_no_privilege_change() {
     bus.load(HANDLER_BASE, &handler);
 
     // Minimal GDT: null + ring0 code + ring0 data.
-    bus.write_u64(GDT_BASE + 0x00, 0).unwrap();
+    bus.write_u64(GDT_BASE, 0).unwrap();
     bus.write_u64(GDT_BASE + 0x08, seg_desc(0, 0xFFFFF, 0xA, 0))
         .unwrap();
     bus.write_u64(GDT_BASE + 0x10, seg_desc(0, 0xFFFFF, 0x2, 0))
@@ -165,7 +165,7 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
 
     // Build a small GDT with flat ring0/ring3 segments.
     // 0x00 null
-    bus.write_u64(GDT_BASE + 0x00, 0).unwrap();
+    bus.write_u64(GDT_BASE, 0).unwrap();
     // 0x08 ring0 code (exec+read)
     bus.write_u64(GDT_BASE + 0x08, seg_desc(0, 0xFFFFF, 0xA, 0))
         .unwrap();
@@ -250,7 +250,7 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     assert_eq!(bus.read_u32(frame_base).unwrap(), (CODE_BASE + 2) as u32); // return EIP
     assert_eq!(bus.read_u32(frame_base + 4).unwrap() as u16, 0x1B); // old CS
     assert_eq!(
-        bus.read_u32(frame_base + 8).unwrap() & 0xFFFF_FFFF,
+        bus.read_u32(frame_base + 8).unwrap(),
         (RFLAGS_RESERVED1 | RFLAGS_IF) as u32
     ); // old EFLAGS
     assert_eq!(bus.read_u32(frame_base + 12).unwrap(), sp_pushed as u32); // old ESP

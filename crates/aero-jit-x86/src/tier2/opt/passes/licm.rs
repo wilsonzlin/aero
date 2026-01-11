@@ -20,9 +20,9 @@ pub fn run(trace: &mut TraceIr) -> bool {
             if let Some(dst) = inst.dst() {
                 invariant_values.insert(dst);
             }
-            hoisted.push(inst.clone());
+            hoisted.push(*inst);
         } else {
-            new_body.push(inst.clone());
+            new_body.push(*inst);
         }
     }
 

@@ -159,7 +159,7 @@ fn write_tx_ctx_desc(
     let tucso = tucss + if tcp { 16 } else { 6 };
     let tucse = (frame_len - 1) as u16;
 
-    dma.write(addr + 0, &[ipcss, ipcso]);
+    dma.write(addr, &[ipcss, ipcso]);
     dma.write(addr + 2, &ipcse.to_le_bytes());
     dma.write(addr + 4, &[tucss, tucso]);
     dma.write(addr + 6, &tucse.to_le_bytes());
@@ -174,7 +174,7 @@ fn write_tx_ctx_desc(
 }
 
 fn write_tx_data_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, len: u16, cmd: u8, popts: u8) {
-    dma.write(addr + 0, &buf_addr.to_le_bytes());
+    dma.write(addr, &buf_addr.to_le_bytes());
     dma.write(addr + 8, &len.to_le_bytes());
     dma.write(addr + 10, &[0x30]); // DTYP=3 (data)
     dma.write(addr + 11, &[cmd]);

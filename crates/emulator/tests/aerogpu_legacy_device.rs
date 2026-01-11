@@ -99,14 +99,14 @@ fn doorbell_updates_ring_head_and_fence_irq() {
 
     // Ring entry at index 0 (24 bytes):
     // submit.type=1, flags=0, fence=42, desc_size=32, desc_gpa=0x2000
-    mem.write_u32(ring_gpa + 0, 1);
+    mem.write_u32(ring_gpa, 1);
     mem.write_u32(ring_gpa + 4, 0);
     mem.write_u32(ring_gpa + 8, 42);
     mem.write_u32(ring_gpa + 12, 32);
     mem.write_u64(ring_gpa + 16, desc_gpa);
 
     // Submission descriptor header at desc_gpa (32 bytes). Only version/fence are validated.
-    mem.write_u32(desc_gpa + 0, 1); // version
+    mem.write_u32(desc_gpa, 1); // version
     mem.write_u32(desc_gpa + 4, 1); // type (render)
     mem.write_u32(desc_gpa + 8, 42); // fence
     mem.write_u32(desc_gpa + 12, 0);
@@ -157,8 +157,10 @@ fn scanout_x8r8g8b8_converts_to_rgba() {
 
 #[test]
 fn vblank_tick_updates_counters_and_latches_irq_status() {
-    let mut cfg = AeroGpuLegacyDeviceConfig::default();
-    cfg.vblank_hz = Some(10);
+    let cfg = AeroGpuLegacyDeviceConfig {
+        vblank_hz: Some(10),
+        ..Default::default()
+    };
     let mut mem = VecMemory::new(0x1000);
     let mut dev = AeroGpuLegacyPciDevice::new(cfg, 0);
 
@@ -235,8 +237,10 @@ fn features_regs_advertise_vblank_when_enabled() {
 #[test]
 fn features_regs_clear_vblank_when_disabled() {
     let mut mem = VecMemory::new(0x1000);
-    let mut cfg = AeroGpuLegacyDeviceConfig::default();
-    cfg.vblank_hz = None;
+    let cfg = AeroGpuLegacyDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
     let mut dev = AeroGpuLegacyPciDevice::new(cfg, 0);
 
     let features_lo = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_LO as u64, 4) as u64;

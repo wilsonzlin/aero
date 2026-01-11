@@ -431,7 +431,7 @@ mod tests {
         tcp[14..16].copy_from_slice(&4096u16.to_be_bytes());
         packet.extend_from_slice(&tcp);
 
-        packet.extend(std::iter::repeat(0x42u8).take(payload_len));
+        packet.extend(std::iter::repeat_n(0x42u8, payload_len));
         packet
     }
 

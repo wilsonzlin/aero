@@ -5,11 +5,7 @@ fn enumerate_bus0(cfg: &mut PciConfigMechanism1, bus: &mut PciBus) -> Vec<(PciBd
     let mut found = Vec::new();
     for device in 0u8..32 {
         for function in 0u8..8 {
-            let addr = 0x8000_0000
-                | (0u32 << 16)
-                | (u32::from(device) << 11)
-                | (u32::from(function) << 8)
-                | 0;
+            let addr = 0x8000_0000 | (u32::from(device) << 11) | (u32::from(function) << 8);
 
             cfg.io_write(bus, 0xCF8, 4, addr);
             let id = cfg.io_read(bus, 0xCFC, 4);

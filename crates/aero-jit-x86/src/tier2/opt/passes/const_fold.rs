@@ -82,10 +82,10 @@ fn fold_inst(
         }
         Instr::Const { dst, value } => {
             consts.insert(*dst, *value);
-            out.push(inst.clone());
+            out.push(*inst);
         }
         Instr::LoadReg { .. } | Instr::LoadFlag { .. } | Instr::GuardCodeVersion { .. } => {
-            out.push(inst.clone());
+            out.push(*inst);
         }
         Instr::LoadMem { dst, addr, width } => {
             let addr2 = resolve_operand(*addr, repl, consts);

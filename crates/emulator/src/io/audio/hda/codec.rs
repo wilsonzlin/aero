@@ -144,7 +144,7 @@ impl HdaCodec {
         let payload = (verb & 0xFF) as u8;
 
         // Some verbs use a 16-bit payload split across verb_id low 8 bits and payload.
-        let payload16 = ((verb_id as u16 & 0xFF) << 8) | payload as u16;
+        let payload16 = ((verb_id & 0xFF) << 8) | u16::from(payload);
 
         let node_id = nid.0;
         let kind = match self.nodes.get(&node_id) {
@@ -236,13 +236,7 @@ impl HdaCodec {
                     0
                 }
             }
-            0x08 => {
-                if nid == 1 {
-                    0 // Audio Function Group Capabilities (minimal)
-                } else {
-                    0
-                }
-            }
+            0x08 => 0, // Audio Function Group Capabilities (minimal)
             0x09 => audio_widget_caps(kind),
             0x0A => match nid {
                 2 => supported_pcm(),

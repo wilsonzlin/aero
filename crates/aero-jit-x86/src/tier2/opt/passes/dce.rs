@@ -43,7 +43,7 @@ pub fn run(trace: &mut TraceIr) -> bool {
     let mut new_body_rev: Vec<Instr> = Vec::with_capacity(trace.body.len());
     for inst in trace.body.iter().rev() {
         if keep_inst(inst, &mut live) {
-            new_body_rev.push(inst.clone());
+            new_body_rev.push(*inst);
         } else {
             changed = true;
         }
@@ -53,7 +53,7 @@ pub fn run(trace: &mut TraceIr) -> bool {
     let mut new_prologue_rev: Vec<Instr> = Vec::with_capacity(trace.prologue.len());
     for inst in trace.prologue.iter().rev() {
         if keep_inst(inst, &mut live) {
-            new_prologue_rev.push(inst.clone());
+            new_prologue_rev.push(*inst);
         } else {
             changed = true;
         }
@@ -70,7 +70,7 @@ pub fn run(trace: &mut TraceIr) -> bool {
 fn keep_inst(inst: &Instr, live: &mut [bool]) -> bool {
     let dst = inst.dst();
     let needed = inst.has_side_effects()
-        || dst.map_or(false, |d| live.get(d.index()).copied().unwrap_or(false));
+        || dst.is_some_and(|d| live.get(d.index()).copied().unwrap_or(false));
 
     if !needed {
         return false;

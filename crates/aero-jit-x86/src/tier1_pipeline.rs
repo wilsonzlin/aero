@@ -210,9 +210,7 @@ fn shrink_page_versions(
     }
 
     let start_page = code_paddr >> PAGE_SHIFT;
-    let end = code_paddr
-        .checked_add(byte_len as u64 - 1)
-        .unwrap_or(u64::MAX);
+    let end = code_paddr.saturating_add(byte_len as u64 - 1);
     let end_page = end >> PAGE_SHIFT;
 
     page_versions.retain(|snap| snap.page >= start_page && snap.page <= end_page);

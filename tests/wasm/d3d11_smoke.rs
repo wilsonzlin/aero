@@ -242,7 +242,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         assert_eq!(stats.bind_groups.entries, 2);
 
         let pixels = rt.read_texture_rgba8(RT).await.unwrap();
-        assert_eq!(pixels.len(), 2 * 1 * 4);
+        assert_eq!(pixels.len(), 2 * 4);
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
         assert_eq!(&pixels[4..8], &[0, 255, 0, 255]);
     });

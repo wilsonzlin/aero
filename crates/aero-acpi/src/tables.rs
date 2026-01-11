@@ -1274,8 +1274,10 @@ mod tests {
 
     #[test]
     fn dsdt_uses_pcie_pci_hid_when_ecam_enabled() {
-        let mut cfg = AcpiConfig::default();
-        cfg.pcie_ecam_base = 0xC000_0000;
+        let cfg = AcpiConfig {
+            pcie_ecam_base: 0xC000_0000,
+            ..Default::default()
+        };
 
         let dsdt = build_dsdt(&cfg);
 

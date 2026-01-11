@@ -37,8 +37,8 @@ impl memory::MmioHandler for RecordingMmio {
 
         let mut buf = [0xFFu8; 8];
         let off = offset as usize;
-        for i in 0..size.min(8) {
-            buf[i] = state.mem.get(off + i).copied().unwrap_or(0xFF);
+        for (i, slot) in buf.iter_mut().enumerate().take(size.min(8)) {
+            *slot = state.mem.get(off + i).copied().unwrap_or(0xFF);
         }
         u64::from_le_bytes(buf)
     }
@@ -49,9 +49,9 @@ impl memory::MmioHandler for RecordingMmio {
 
         let bytes = value.to_le_bytes();
         let off = offset as usize;
-        for i in 0..size.min(8) {
+        for (i, src) in bytes.iter().enumerate().take(size.min(8)) {
             if let Some(dst) = state.mem.get_mut(off + i) {
-                *dst = bytes[i];
+                *dst = *src;
             }
         }
     }

@@ -170,8 +170,8 @@ mod tests {
 
     #[test]
     fn layout_key_is_order_independent() {
-        let mut a = vec![ubo_entry(2), ubo_entry(0), ubo_entry(1)];
-        let mut b = vec![ubo_entry(0), ubo_entry(1), ubo_entry(2)];
+        let mut a = [ubo_entry(2), ubo_entry(0), ubo_entry(1)];
+        let mut b = [ubo_entry(0), ubo_entry(1), ubo_entry(2)];
 
         a.sort_by_key(|e| e.binding);
         b.sort_by_key(|e| e.binding);

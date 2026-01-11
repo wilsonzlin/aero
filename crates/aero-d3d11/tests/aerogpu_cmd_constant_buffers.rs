@@ -47,7 +47,7 @@ fn begin_cmd(stream: &mut Vec<u8>, opcode: u32) -> usize {
     start
 }
 
-fn end_cmd(stream: &mut Vec<u8>, start: usize) {
+fn end_cmd(stream: &mut [u8], start: usize) {
     let size = (stream.len() - start) as u32;
     stream[start + 4..start + 8].copy_from_slice(&size.to_le_bytes());
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
@@ -779,7 +779,7 @@ fn aerogpu_cmd_rebinds_allocation_backed_constant_buffer_between_draws_uploads_s
         exec.poll_wait();
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();
-        assert_eq!(pixels.len(), 2 * 1 * 4);
+        assert_eq!(pixels.len(), 2 * 4);
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
         assert_eq!(&pixels[4..8], &[255, 0, 0, 255]);
     });

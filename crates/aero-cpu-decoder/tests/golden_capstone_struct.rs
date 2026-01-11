@@ -168,7 +168,7 @@ fn golden_decode_operands_match_capstone_x86_64() {
             bytes
         );
 
-        let detail = cs.insn_detail(&cap_ins).expect("capstone detail");
+        let detail = cs.insn_detail(cap_ins).expect("capstone detail");
         let arch_detail = detail.arch_detail();
         let x86_detail = arch_detail.x86().expect("x86 detail");
         let cap_ops: Vec<X86Operand> = x86_detail.operands().collect();

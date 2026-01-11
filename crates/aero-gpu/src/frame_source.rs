@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn from_shared_memory_reads_frames_and_dirty_tiles() {
         let layout = SharedFramebufferLayout::new_rgba8(32, 32, 32).unwrap();
-        let word_len = (layout.total_byte_len() + 3) / 4;
+        let word_len = layout.total_byte_len().div_ceil(4);
         let mut words = vec![0u32; word_len];
 
         let shared = unsafe {
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn dirty_rects_for_presenter_returns_rects_for_partial_updates() {
         let layout = SharedFramebufferLayout::new_rgba8(64, 32, 32).unwrap();
-        let word_len = (layout.total_byte_len() + 3) / 4;
+        let word_len = layout.total_byte_len().div_ceil(4);
         let mut words = vec![0u32; word_len];
 
         let shared = unsafe {
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn inspector_detects_publish_order_mismatch() {
         let layout = SharedFramebufferLayout::new_rgba8(16, 16, 0).unwrap();
-        let word_len = (layout.total_byte_len() + 3) / 4;
+        let word_len = layout.total_byte_len().div_ceil(4);
         let mut words = vec![0u32; word_len];
         let shared = unsafe {
             SharedFramebuffer::from_raw_parts(words.as_mut_ptr() as *mut u8, layout).unwrap()

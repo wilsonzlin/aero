@@ -130,7 +130,7 @@ impl AerogpuResourceManager {
             bail!("CreateBuffer: size_bytes must be > 0");
         }
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-        if size_bytes % alignment != 0 {
+        if !size_bytes.is_multiple_of(alignment) {
             bail!("CreateBuffer: size_bytes must be a multiple of {alignment} (got {size_bytes})");
         }
 
@@ -158,6 +158,7 @@ impl AerogpuResourceManager {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_texture2d(
         &mut self,
         handle: AerogpuHandle,
@@ -452,7 +453,9 @@ impl AerogpuResourceManager {
                 bail!("UploadResource: buffer {handle} is backed by a guest allocation");
             }
             let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-            if range.offset_bytes % alignment != 0 || range.size_bytes % alignment != 0 {
+            if !range.offset_bytes.is_multiple_of(alignment)
+                || !range.size_bytes.is_multiple_of(alignment)
+            {
                 bail!(
                     "UploadResource: buffer offset_bytes and size_bytes must be {alignment}-byte aligned (offset_bytes={} size_bytes={})",
                     range.offset_bytes,
@@ -796,9 +799,9 @@ fn texture_mip_row_pitch_bytes(desc: &Texture2dDesc, mip_level: u32) -> Result<u
     }
 
     let width = mip_extent(desc.width, mip_level);
-    Ok(width
+    width
         .checked_mul(bpp)
-        .ok_or_else(|| anyhow!("row_pitch overflow"))?)
+        .ok_or_else(|| anyhow!("row_pitch overflow"))
 }
 
 fn texture_subresource_size_bytes(desc: &Texture2dDesc, mip_level: u32) -> Result<u64> {
@@ -853,11 +856,11 @@ fn upload_texture_from_linear_bytes(
                 .ok_or_else(|| anyhow!("bytes_per_row overflow"))?;
 
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-            let needs_repack = height > 1 && (row_pitch % align != 0);
+            let needs_repack = height > 1 && !row_pitch.is_multiple_of(align);
 
             let mut repacked = None;
             let upload_bytes_per_row = if needs_repack {
-                let padded = ((unpadded_bytes_per_row + align - 1) / align) * align;
+                let padded = unpadded_bytes_per_row.div_ceil(align) * align;
                 let mut tmp = vec![0u8; padded as usize * height as usize];
                 for y in 0..height as usize {
                     let src_start = y * row_pitch as usize;

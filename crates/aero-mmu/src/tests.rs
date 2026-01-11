@@ -706,7 +706,7 @@ fn fuzz_long4_4kb_walk_matches_reference_model() {
         mmu.set_cr0(CR0_PG | if wp { CR0_WP } else { 0 });
 
         for _ in 0..200 {
-            let vaddr = (rng.next_u64() & 0x1ff_fff) as u64;
+            let vaddr = rng.next_u64() & 0x1ff_fff;
             let access = match rng.next_u64() % 3 {
                 0 => AccessType::Read,
                 1 => AccessType::Write,

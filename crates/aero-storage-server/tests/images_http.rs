@@ -294,10 +294,7 @@ async fn range_header_too_large_returns_413() {
 async fn range_header_too_many_ranges_returns_413() {
     let (app, _dir) = setup_app(1024).await;
 
-    let mut parts = Vec::with_capacity(aero_http_range::MAX_RANGE_SPECS + 1);
-    for _ in 0..(aero_http_range::MAX_RANGE_SPECS + 1) {
-        parts.push("0-0");
-    }
+    let parts = vec!["0-0"; aero_http_range::MAX_RANGE_SPECS + 1];
     let range = format!("bytes={}", parts.join(","));
 
     let res = app

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::io::{Cursor, Read, Seek, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};

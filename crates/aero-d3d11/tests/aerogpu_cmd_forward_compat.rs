@@ -23,14 +23,14 @@ fn begin_cmd(stream: &mut Vec<u8>, opcode: u32) -> usize {
     start
 }
 
-fn end_cmd(stream: &mut Vec<u8>, start: usize) {
+fn end_cmd(stream: &mut [u8], start: usize) {
     let size = (stream.len() - start) as u32;
     stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size.to_le_bytes());
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
 }
 
-fn end_stream(stream: &mut Vec<u8>) {
+fn end_stream(stream: &mut [u8]) {
     let size_bytes = stream.len() as u32;
     stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size_bytes.to_le_bytes());

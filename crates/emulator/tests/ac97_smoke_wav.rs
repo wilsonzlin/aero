@@ -145,7 +145,7 @@ fn smoke_dma_outputs_wav() {
     let words_per_buf = (frames_per_buf * 2) as u32;
 
     // Entry 0.
-    mem.write_u32(bdl_addr + 0, buf0_addr as u32);
+    mem.write_u32(bdl_addr, buf0_addr as u32);
     mem.write_u32(bdl_addr + 4, words_per_buf | BDL_IOC);
     // Entry 1.
     mem.write_u32(bdl_addr + 8, buf1_addr as u32);

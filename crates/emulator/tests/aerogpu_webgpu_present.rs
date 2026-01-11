@@ -72,7 +72,7 @@ fn webgpu_backend_copies_present_to_guest_scanout() {
     .unwrap();
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size_bytes);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -111,7 +111,7 @@ fn webgpu_backend_copies_present_to_guest_scanout() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(desc_gpa, AeroGpuSubmitDesc::SIZE_BYTES);
     mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);

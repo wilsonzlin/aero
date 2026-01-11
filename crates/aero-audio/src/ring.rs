@@ -80,7 +80,7 @@ impl AudioRingBuffer {
 
     /// Push interleaved stereo samples.
     pub fn push_interleaved_stereo(&mut self, samples: &[f32]) {
-        assert!(samples.len() % self.channels == 0);
+        assert!(samples.len().is_multiple_of(self.channels));
         let frames = samples.len() / self.channels;
         if frames == 0 {
             return;

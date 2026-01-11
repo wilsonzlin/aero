@@ -466,8 +466,8 @@ impl VirtioGpuDevice {
         }
 
         // Bounds checks.
-        if rect.x.checked_add(rect.width).unwrap_or(u32::MAX) > res.width
-            || rect.y.checked_add(rect.height).unwrap_or(u32::MAX) > res.height
+        if rect.x.saturating_add(rect.width) > res.width
+            || rect.y.saturating_add(rect.height) > res.height
         {
             return Ok(encode_resp_hdr_from_req(
                 req,
@@ -614,8 +614,8 @@ impl VirtioGpuDevice {
         };
 
         // Bounds checks.
-        if rect.x.checked_add(rect.width).unwrap_or(u32::MAX) > res.width
-            || rect.y.checked_add(rect.height).unwrap_or(u32::MAX) > res.height
+        if rect.x.saturating_add(rect.width) > res.width
+            || rect.y.saturating_add(rect.height) > res.height
         {
             return Ok(encode_resp_hdr_from_req(
                 req,
@@ -709,7 +709,7 @@ fn default_edid_1024x768() -> [u8; 128] {
     // Detailed timing descriptor 1: 1024x768 @ 60Hz (VESA).
     // Pixel clock: 65.00 MHz (6500 * 10kHz) => 0x1964 (LE).
     let dtd = 54;
-    edid[dtd + 0] = 0x64;
+    edid[dtd] = 0x64;
     edid[dtd + 1] = 0x19;
     // H active/blanking: 1024 / 320.
     edid[dtd + 2] = 0x00; // 1024 LSB
@@ -735,14 +735,14 @@ fn default_edid_1024x768() -> [u8; 128] {
 
     // Descriptor 2: monitor name "AERO".
     let name = 72;
-    edid[name + 0..name + 18].copy_from_slice(&[
+    edid[name..name + 18].copy_from_slice(&[
         0x00, 0x00, 0x00, 0xfc, 0x00, b'A', b'E', b'R', b'O', b'\n', 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00,
     ]);
 
     // Descriptors 3/4 unused.
     for base in [90usize, 108usize] {
-        edid[base + 0..base + 18].copy_from_slice(&[
+        edid[base..base + 18].copy_from_slice(&[
             0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00,
         ]);

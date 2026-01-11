@@ -54,7 +54,7 @@ impl Mixer {
         }
 
         let len = streams[0].len();
-        if len % self.channels != 0 {
+        if !len.is_multiple_of(self.channels) {
             return Err(MixError::InputLengthNotAligned {
                 expected_multiple: self.channels,
             });
@@ -63,7 +63,7 @@ impl Mixer {
             if s.len() != len {
                 return Err(MixError::StreamLengthMismatch);
             }
-            if s.len() % self.channels != 0 {
+            if !s.len().is_multiple_of(self.channels) {
                 return Err(MixError::InputLengthNotAligned {
                     expected_multiple: self.channels,
                 });
@@ -194,7 +194,7 @@ mod tests {
         let mut d = Dither::new(1);
         for _ in 0..1000 {
             let v = d.next_tpdf();
-            assert!(v >= -1.0 && v <= 1.0);
+            assert!((-1.0..=1.0).contains(&v));
         }
     }
 }

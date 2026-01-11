@@ -114,7 +114,7 @@ fn parse_signature_chunk_impl(
             "param_offset {param_offset} points into signature header (need >= {SIGNATURE_HEADER_LEN})"
         )));
     }
-    if (param_offset_usize % 4) != 0 {
+    if !param_offset_usize.is_multiple_of(4) {
         return Err(DxbcError::invalid_chunk(format!(
             "param_offset {param_offset} is not 4-byte aligned"
         )));
@@ -359,11 +359,7 @@ fn read_u32_le_entry(
     })
 }
 
-fn read_cstring_entry<'a>(
-    bytes: &'a [u8],
-    offset: usize,
-    entry_index: usize,
-) -> Result<&'a str, DxbcError> {
+fn read_cstring_entry(bytes: &[u8], offset: usize, entry_index: usize) -> Result<&str, DxbcError> {
     read_cstring(bytes, offset, "semantic_name").map_err(|e| {
         DxbcError::invalid_chunk(format!(
             "entry {entry_index} semantic_name: {}",

@@ -760,19 +760,19 @@ fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
 
     let mut out = [String::new(), String::new(), String::new(), String::new()];
     let mut next = 0usize;
-    for dst_comp in 0..4usize {
+    for (dst_comp, slot) in out.iter_mut().enumerate() {
         let want = p
             .components
             .iter()
             .take(p.component_count)
             .any(|&c| c as usize == dst_comp);
         if want {
-            out[dst_comp] = src[next].clone();
+            *slot = src[next].clone();
             next += 1;
         } else if dst_comp == 3 {
-            out[dst_comp] = "1.0".to_owned();
+            *slot = "1.0".to_owned();
         } else {
-            out[dst_comp] = "0.0".to_owned();
+            *slot = "0.0".to_owned();
         }
     }
 

@@ -11,21 +11,11 @@ use crate::pipeline_key::{
 use crate::stats::PipelineCacheStats;
 use crate::GpuCapabilities;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PipelineCacheConfig {
     pub max_shader_modules: Option<NonZeroUsize>,
     pub max_render_pipelines: Option<NonZeroUsize>,
     pub max_compute_pipelines: Option<NonZeroUsize>,
-}
-
-impl Default for PipelineCacheConfig {
-    fn default() -> Self {
-        Self {
-            max_shader_modules: None,
-            max_render_pipelines: None,
-            max_compute_pipelines: None,
-        }
-    }
 }
 
 #[derive(Debug)]

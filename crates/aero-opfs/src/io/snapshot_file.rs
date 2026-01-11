@@ -300,7 +300,7 @@ where
                 .create(true)
                 .truncate(true)
                 .open(path)?;
-            return Ok(Self::from_handle(file));
+            Ok(Self::from_handle(file))
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -450,14 +450,10 @@ where
                 self.pos = offset;
                 return Ok(offset);
             }
-            SeekFrom::Current(_) => i128::try_from(current_pos).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "stream position overflow")
-            })?,
+            SeekFrom::Current(_) => i128::from(current_pos),
             SeekFrom::End(_) => {
                 let size = self.handle_mut()?.get_size()?;
-                i128::try_from(size).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "stream length overflow")
-                })?
+                i128::from(size)
             }
         };
 

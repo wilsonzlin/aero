@@ -65,7 +65,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     // Fallback: build directly with wasm-pack (single-threaded only).
-    if variants.iter().any(|v| *v == "threaded") {
+    if variants.contains(&"threaded") {
         return Err(XtaskError::Message(
             "threaded wasm builds require `web/scripts/build_wasm.mjs`".to_string(),
         ));

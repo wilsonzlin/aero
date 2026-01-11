@@ -67,8 +67,8 @@ fn golden_decode_len_matches_capstone_x86_64() {
         let cap_len = cap_ins.bytes().len();
 
         // Sanity: architectural max length.
-        assert!(our_len >= 1 && our_len <= MAX_INSTRUCTION_LEN);
-        assert!(cap_len >= 1 && cap_len <= MAX_INSTRUCTION_LEN);
+        assert!((1..=MAX_INSTRUCTION_LEN).contains(&our_len));
+        assert!((1..=MAX_INSTRUCTION_LEN).contains(&cap_len));
 
         assert_eq!(
             our_len, cap_len,

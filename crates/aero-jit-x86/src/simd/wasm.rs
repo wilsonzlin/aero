@@ -418,7 +418,7 @@ fn emit_shift_bytes_imm(
         return Ok(());
     }
 
-    let shift = imm as u8;
+    let shift = imm;
 
     let mut lanes = [0u8; 16];
     for i in 0..16u8 {

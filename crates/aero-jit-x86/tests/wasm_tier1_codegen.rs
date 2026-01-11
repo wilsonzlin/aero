@@ -36,11 +36,9 @@ fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), i64>) 
 
     // Guest memory in page 0, CpuState at CPU_PTR in page 1, and room for the JIT context.
     let memory = Memory::new(&mut store, MemoryType::new(4, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
-    define_mem_helpers(&mut store, &mut linker, memory.clone());
+    define_mem_helpers(&mut store, &mut linker, memory);
 
     linker
         .define(
@@ -105,7 +103,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
             .expect("memory write in bounds");
     }
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -119,7 +117,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -133,7 +131,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -147,7 +145,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -161,7 +159,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -175,7 +173,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -189,7 +187,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
         )
         .unwrap();
 
-    let mem = memory.clone();
+    let mem = memory;
     linker
         .define(
             IMPORT_MODULE,
@@ -301,8 +299,10 @@ fn wasm_tier1_call_helper_bails_out_to_interpreter_without_trapping() {
         next_rip: entry + 4,
     });
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     let bus = SimpleBus::new(0x10000);
 
     let (next_rip, out_cpu, _) = run_wasm(&ir, &cpu, &bus);
@@ -337,9 +337,11 @@ fn wasm_tier1_inline_tlb_option_is_ignored_for_memory_free_blocks() {
     // so it will fail if the code generator still emits inline-TLB imports for a memory-free block.
     let (mut store, memory, func) = instantiate(&wasm);
 
-    let mut cpu = CpuState::default();
-    cpu.rip = 0x1000;
-    cpu.rflags = abi::RFLAGS_RESERVED1;
+    let cpu = CpuState {
+        rip: 0x1000,
+        rflags: abi::RFLAGS_RESERVED1,
+        ..Default::default()
+    };
     let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
     write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
     memory
@@ -368,8 +370,10 @@ fn wasm_tier1_mov_add_cmp_sete_ret() {
     ];
 
     let entry = 0x1000u64;
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     write_gpr(&mut cpu, Gpr::Rsp, 0x8000);
 
     let mut bus = SimpleBus::new(0x10000);
@@ -386,8 +390,10 @@ fn wasm_tier1_cmp_jne_not_taken() {
         0x75, 0x05, // jne +5
     ];
     let entry = 0x3000u64;
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
 
     let bus = SimpleBus::new(0x10000);
     assert_ir_wasm_matches_interp(&code, entry, cpu, bus);
@@ -401,8 +407,10 @@ fn wasm_tier1_lea_sib_ret() {
     ];
     let entry = 0x4000u64;
 
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     write_gpr(&mut cpu, Gpr::Rsp, 0x8800);
     write_gpr(&mut cpu, Gpr::Rcx, 0x100);
     write_gpr(&mut cpu, Gpr::Rdx, 0x2);

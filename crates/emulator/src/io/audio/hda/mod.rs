@@ -359,10 +359,10 @@ mod tests {
         // Configure CORB and RIRB with two entries each (size code 0).
         let corb_base = 0x2000u64;
         let rirb_base = 0x3000u64;
-        hda.mmio_write(HDA_CORBLBASE, 4, corb_base as u64);
+        hda.mmio_write(HDA_CORBLBASE, 4, corb_base);
         hda.mmio_write(HDA_CORBUBASE, 4, 0);
         hda.mmio_write(HDA_CORBSIZE, 1, 0);
-        hda.mmio_write(HDA_RIRBLBASE, 4, rirb_base as u64);
+        hda.mmio_write(HDA_RIRBLBASE, 4, rirb_base);
         hda.mmio_write(HDA_RIRBUBASE, 4, 0);
         hda.mmio_write(HDA_RIRBSIZE, 1, 0);
         hda.mmio_write(HDA_RINTCNT, 2, 1);
@@ -372,8 +372,8 @@ mod tests {
         hda.mmio_write(HDA_RIRBCTL, 1, (RIRBCTL_RUN | RIRBCTL_INTCTL) as u64);
 
         // Write a GET_PARAMETER(VENDOR_ID) verb to CORB entry 1 and advance WP to 1.
-        let verb = (0xF00u32 << 8) | 0x00;
-        let cmd = ((0u32) << 28) | ((0u32) << 20) | verb;
+        let verb = 0xF00u32 << 8;
+        let cmd = verb;
         mem.write_u32(corb_base + 4, cmd);
         hda.mmio_write(HDA_CORBWP, 2, 1);
 
@@ -406,7 +406,7 @@ mod tests {
 
         // Two BDL entries (LVI = 1). Only second has IOC.
         // Entry 0.
-        mem.write_u64(bdl_base + 0, buf0);
+        mem.write_u64(bdl_base, buf0);
         mem.write_u32(bdl_base + 8, 8);
         mem.write_u32(bdl_base + 12, 0);
         // Entry 1.
@@ -418,7 +418,7 @@ mod tests {
         mem.write_physical(buf1, &[9, 10, 11, 12, 13, 14, 15, 16]);
 
         // Program stream descriptor.
-        hda.mmio_write(HDA_SD0BDPL, 4, bdl_base as u64);
+        hda.mmio_write(HDA_SD0BDPL, 4, bdl_base);
         hda.mmio_write(HDA_SD0BDPU, 4, 0);
         hda.mmio_write(HDA_SD0LVI, 2, 1);
         hda.mmio_write(HDA_SD0CBL, 4, 32); // bigger than total BDL length; no wrap in this test
@@ -460,16 +460,16 @@ mod tests {
         let posbuf_base = 0x7000u64;
         mem.write_u32(posbuf_base, 0xdead_beef);
         hda.mmio_write(HDA_DPUBASE, 4, 0);
-        hda.mmio_write(HDA_DPLBASE, 4, posbuf_base as u64);
+        hda.mmio_write(HDA_DPLBASE, 4, posbuf_base);
 
         let bdl_base = 0x4000u64;
         let buf0 = 0x5000u64;
-        mem.write_u64(bdl_base + 0, buf0);
+        mem.write_u64(bdl_base, buf0);
         mem.write_u32(bdl_base + 8, 8);
         mem.write_u32(bdl_base + 12, 0);
         mem.write_physical(buf0, &[1, 2, 3, 4, 5, 6, 7, 8]);
 
-        hda.mmio_write(HDA_SD0BDPL, 4, bdl_base as u64);
+        hda.mmio_write(HDA_SD0BDPL, 4, bdl_base);
         hda.mmio_write(HDA_SD0BDPU, 4, 0);
         hda.mmio_write(HDA_SD0LVI, 2, 0);
         hda.mmio_write(HDA_SD0CBL, 4, 16);
@@ -490,13 +490,13 @@ mod tests {
 
         let posbuf_base = 0x7000u64;
         hda.mmio_write(HDA_DPUBASE, 4, 0);
-        hda.mmio_write(HDA_DPLBASE, 4, (posbuf_base | DPLBASE_ENABLE as u64) as u64);
+        hda.mmio_write(HDA_DPLBASE, 4, posbuf_base | DPLBASE_ENABLE as u64);
 
         let bdl_base = 0x4000u64;
         let buf0 = 0x5000u64;
         let buf1 = 0x6000u64;
 
-        mem.write_u64(bdl_base + 0, buf0);
+        mem.write_u64(bdl_base, buf0);
         mem.write_u32(bdl_base + 8, 300);
         mem.write_u32(bdl_base + 12, 0);
         mem.write_u64(bdl_base + 16, buf1);
@@ -506,7 +506,7 @@ mod tests {
         mem.write_physical(buf0, &[0xaa; 300]);
         mem.write_physical(buf1, &[0xbb; 300]);
 
-        hda.mmio_write(HDA_SD0BDPL, 4, bdl_base as u64);
+        hda.mmio_write(HDA_SD0BDPL, 4, bdl_base);
         hda.mmio_write(HDA_SD0BDPU, 4, 0);
         hda.mmio_write(HDA_SD0LVI, 2, 1);
         hda.mmio_write(HDA_SD0CBL, 4, 600);
@@ -542,12 +542,12 @@ mod tests {
         let buf0 = 0x5000u64;
 
         // One BDL entry, IOC set.
-        mem.write_u64(bdl_base + 0, buf0);
+        mem.write_u64(bdl_base, buf0);
         mem.write_u32(bdl_base + 8, 8);
         mem.write_u32(bdl_base + 12, 1);
 
         // Program stream 1 descriptor.
-        hda.mmio_write(HDA_SD1BDPL, 4, bdl_base as u64);
+        hda.mmio_write(HDA_SD1BDPL, 4, bdl_base);
         hda.mmio_write(HDA_SD1BDPU, 4, 0);
         hda.mmio_write(HDA_SD1LVI, 2, 0);
         hda.mmio_write(HDA_SD1CBL, 4, 32);

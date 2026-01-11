@@ -269,7 +269,7 @@ impl Machine {
             }
             Mnemonic::Wrmsr => {
                 let idx = self.cpu.read_reg(Register::ECX) as u32;
-                let val = ((self.cpu.read_reg(Register::EDX) as u64) << 32)
+                let val = (self.cpu.read_reg(Register::EDX) << 32)
                     | (self.cpu.read_reg(Register::EAX) & 0xFFFF_FFFF);
                 if idx == 0x10 {
                     self.cpu.msr.tsc = val;
@@ -591,8 +591,8 @@ impl CpuBus for Bus<'_> {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for i in 0..len {
-            buf[i] = self.read_u8(vaddr.wrapping_add(i as u64))?;
+        for (i, slot) in buf.iter_mut().take(len).enumerate() {
+            *slot = self.read_u8(vaddr.wrapping_add(i as u64))?;
         }
         Ok(buf)
     }
@@ -1681,7 +1681,7 @@ fn run_qemu_real(test: &[u8], init: RealRegs16) -> Option<RealRegs16> {
     let img_path = "target/qemu-conformance.img";
     let out_path = "target/qemu-debugcon.bin";
     let img = build_conformance_boot_sector(init, test);
-    std::fs::write(img_path, &img).ok()?;
+    std::fs::write(img_path, img).ok()?;
     let _ = std::fs::remove_file(out_path);
 
     let _output = std::process::Command::new("qemu-system-i386")

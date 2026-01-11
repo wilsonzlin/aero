@@ -182,7 +182,7 @@ impl AerogpuCmdRuntime {
             .ok_or_else(|| anyhow!("unknown buffer handle {handle}"))?;
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
         let size_bytes = data.len() as u64;
-        if offset % alignment != 0 || size_bytes % alignment != 0 {
+        if !offset.is_multiple_of(alignment) || !size_bytes.is_multiple_of(alignment) {
             bail!(
                 "write_buffer: offset and size must be {alignment}-byte aligned (offset={offset} size_bytes={size_bytes})"
             );
@@ -458,60 +458,56 @@ impl AerogpuCmdRuntime {
         let depth_stencil_state = depth_state.clone();
 
         // Fetch or create pipeline.
-        let pipeline = {
-            let owned_vertex_layouts = owned_vertex_layouts;
-            let color_target_states = color_target_states;
-            self.pipelines.get_or_create_render_pipeline(
-                &self.device,
-                key,
-                move |device, vs_module, fs_module| {
-                    let pipeline_layout =
-                        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                            label: Some("aero-d3d11 aerogpu pipeline layout"),
-                            bind_group_layouts: &[],
-                            push_constant_ranges: &[],
-                        });
+        let pipeline = self.pipelines.get_or_create_render_pipeline(
+            &self.device,
+            key,
+            move |device, vs_module, fs_module| {
+                let pipeline_layout =
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aero-d3d11 aerogpu pipeline layout"),
+                        bind_group_layouts: &[],
+                        push_constant_ranges: &[],
+                    });
 
-                    let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
-                        .iter()
-                        .map(|l| wgpu::VertexBufferLayout {
-                            array_stride: l.array_stride,
-                            step_mode: l.step_mode,
-                            attributes: &l.attributes,
-                        })
-                        .collect();
-
-                    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                        label: Some("aero-d3d11 aerogpu render pipeline"),
-                        layout: Some(&pipeline_layout),
-                        vertex: wgpu::VertexState {
-                            module: vs_module,
-                            entry_point: "vs_main",
-                            buffers: &vertex_buffers,
-                            compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        },
-                        fragment: Some(wgpu::FragmentState {
-                            module: fs_module,
-                            entry_point: "fs_main",
-                            targets: &color_target_states,
-                            compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        }),
-                        primitive: wgpu::PrimitiveState {
-                            topology: primitive_topology,
-                            front_face,
-                            cull_mode,
-                            ..Default::default()
-                        },
-                        depth_stencil: depth_stencil_state,
-                        multisample: wgpu::MultisampleState {
-                            count: 1,
-                            ..Default::default()
-                        },
-                        multiview: None,
+                let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
+                    .iter()
+                    .map(|l| wgpu::VertexBufferLayout {
+                        array_stride: l.array_stride,
+                        step_mode: l.step_mode,
+                        attributes: &l.attributes,
                     })
-                },
-            )?
-        };
+                    .collect();
+
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("aero-d3d11 aerogpu render pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: vs_module,
+                        entry_point: "vs_main",
+                        buffers: &vertex_buffers,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: fs_module,
+                        entry_point: "fs_main",
+                        targets: &color_target_states,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: primitive_topology,
+                        front_face,
+                        cull_mode,
+                        ..Default::default()
+                    },
+                    depth_stencil: depth_stencil_state,
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    multiview: None,
+                })
+            },
+        )?;
 
         // Encode the draw.
         let mut encoder = self
@@ -664,7 +660,7 @@ impl AerogpuCmdRuntime {
         let bytes_per_pixel = 4u32;
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
         let buffer_size = padded_bytes_per_row as u64 * height as u64;
 
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -829,14 +825,16 @@ fn build_vertex_state(
     })
 }
 
-fn build_color_attachments<'a>(
-    resources: &'a AerogpuResources,
-    state: &D3D11ShadowState,
-) -> Result<(
+type ColorAttachments<'a> = (
     Vec<Option<wgpu::RenderPassColorAttachment<'a>>>,
     Vec<ColorTargetKey>,
     (u32, u32),
-)> {
+);
+
+fn build_color_attachments<'a>(
+    resources: &'a AerogpuResources,
+    state: &D3D11ShadowState,
+) -> Result<ColorAttachments<'a>> {
     let mut attachments = Vec::new();
     let mut keys = Vec::new();
 

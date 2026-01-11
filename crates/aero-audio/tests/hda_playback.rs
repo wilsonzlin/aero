@@ -40,7 +40,7 @@ fn hda_dma_tone_reaches_ring_buffer() {
     }
 
     // One BDL entry pointing at the PCM buffer, IOC=1.
-    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u64(bdl_base, pcm_base);
     mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base + 12, 1);
 
@@ -121,7 +121,7 @@ fn hda_resamples_stream_to_configured_output_rate() {
     }
 
     // One BDL entry pointing at the PCM buffer, IOC=1.
-    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u64(bdl_base, pcm_base);
     mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
     mem.write_u32(bdl_base + 12, 1);
 

@@ -138,9 +138,9 @@ fn virtio_snd_pci_contract_v1_features_and_queue_sizes() {
 
     let mut mem = GuestRam::new(0x4000);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
 
     let features = u64::from(f0) | (u64::from(f1) << 32);
@@ -210,32 +210,64 @@ fn configure_queue(
     write_u16_le(mem, used + 2, 0).unwrap();
 }
 
-fn submit_chain(
-    dev: &mut VirtioPciDevice,
-    mem: &mut GuestRam,
-    caps: &Caps,
+struct QueueSubmitter {
     queue_index: u16,
     desc_table: u64,
     avail_addr: u64,
     avail_idx: u16,
-    out_addr: u64,
-    out_len: u32,
-    in_addr: u64,
-    in_len: u32,
-) {
-    write_desc(mem, desc_table, 0, out_addr, out_len, VIRTQ_DESC_F_NEXT, 1);
-    write_desc(mem, desc_table, 1, in_addr, in_len, VIRTQ_DESC_F_WRITE, 0);
+}
 
-    // Add to avail ring.
-    let elem_addr = avail_addr + 4 + u64::from(avail_idx) * 2;
-    write_u16_le(mem, elem_addr, 0).unwrap();
-    write_u16_le(mem, avail_addr + 2, avail_idx.wrapping_add(1)).unwrap();
+impl QueueSubmitter {
+    fn new(queue_index: u16, desc_table: u64, avail_addr: u64) -> Self {
+        Self {
+            queue_index,
+            desc_table,
+            avail_addr,
+            avail_idx: 0,
+        }
+    }
 
-    dev.bar0_write(
-        caps.notify + u64::from(queue_index) * u64::from(caps.notify_mult),
-        &queue_index.to_le_bytes(),
-        mem,
-    );
+    fn submit_out_in(
+        &mut self,
+        dev: &mut VirtioPciDevice,
+        mem: &mut GuestRam,
+        caps: &Caps,
+        out_desc: (u64, u32),
+        in_desc: (u64, u32),
+    ) {
+        let (out_addr, out_len) = out_desc;
+        let (in_addr, in_len) = in_desc;
+        write_desc(
+            mem,
+            self.desc_table,
+            0,
+            out_addr,
+            out_len,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            mem,
+            self.desc_table,
+            1,
+            in_addr,
+            in_len,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        // Add to avail ring.
+        let elem_addr = self.avail_addr + 4 + u64::from(self.avail_idx) * 2;
+        write_u16_le(mem, elem_addr, 0).unwrap();
+        self.avail_idx = self.avail_idx.wrapping_add(1);
+        write_u16_le(mem, self.avail_addr + 2, self.avail_idx).unwrap();
+
+        dev.bar0_write(
+            caps.notify + u64::from(self.queue_index) * u64::from(caps.notify_mult),
+            &self.queue_index.to_le_bytes(),
+            mem,
+        );
+    }
 }
 
 #[test]
@@ -261,12 +293,12 @@ fn virtio_snd_eventq_buffers_are_not_completed_without_events() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -340,7 +372,7 @@ fn virtio_snd_device_cfg_matches_contract_v1() {
     let caps = parse_caps(&dev);
 
     // Contract v1 device config: jacks=0, streams=2, chmaps=0.
-    assert_eq!(bar_read_u32(&mut dev, caps.device + 0), 0);
+    assert_eq!(bar_read_u32(&mut dev, caps.device), 0);
     assert_eq!(bar_read_u32(&mut dev, caps.device + 4), 2);
     assert_eq!(bar_read_u32(&mut dev, caps.device + 8), 0);
 
@@ -384,12 +416,12 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -436,11 +468,12 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
         tx_avail,
         tx_used,
     );
+    let mut tx_queue = QueueSubmitter::new(VIRTIO_SND_QUEUE_TX, tx_desc, tx_avail);
 
     // Drive the minimal control state machine: SET_PARAMS -> PREPARE -> START.
     let ctrl_req = 0x7000;
     let ctrl_resp = 0x7100;
-    let mut ctrl_avail_idx = 0u16;
+    let mut ctrl_queue = QueueSubmitter::new(VIRTIO_SND_QUEUE_CONTROL, ctrl_desc, ctrl_avail);
 
     let mut set_params = [0u8; 24];
     set_params[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
@@ -453,20 +486,13 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
     set_params[22] = VIRTIO_SND_PCM_RATE_48000;
     mem.write(ctrl_req, &set_params).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        set_params.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, set_params.len() as u32),
+        (ctrl_resp, 64),
     );
-    ctrl_avail_idx += 1;
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
         VIRTIO_SND_S_OK
@@ -475,20 +501,13 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
     let prepare = [VIRTIO_SND_R_PCM_PREPARE.to_le_bytes(), 0u32.to_le_bytes()].concat();
     mem.write(ctrl_req, &prepare).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        prepare.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, prepare.len() as u32),
+        (ctrl_resp, 64),
     );
-    ctrl_avail_idx += 1;
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
         VIRTIO_SND_S_OK
@@ -497,18 +516,12 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
     let start = [VIRTIO_SND_R_PCM_START.to_le_bytes(), 0u32.to_le_bytes()].concat();
     mem.write(ctrl_req, &start).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        start.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, start.len() as u32),
+        (ctrl_resp, 64),
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -528,18 +541,12 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
     mem.write(tx_payload, &tx_bytes).unwrap();
     mem.write(tx_status, &[0xffu8; 8]).unwrap();
 
-    submit_chain(
+    tx_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_TX,
-        tx_desc,
-        tx_avail,
-        0,
-        tx_payload,
-        tx_bytes.len() as u32,
-        tx_status,
-        8,
+        (tx_payload, tx_bytes.len() as u32),
+        (tx_status, 8),
     );
 
     let status_bytes = mem.get_slice(tx_status, 8).unwrap();
@@ -581,11 +588,11 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
     bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
@@ -631,11 +638,12 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
         tx_avail,
         tx_used,
     );
+    let mut tx_queue = QueueSubmitter::new(VIRTIO_SND_QUEUE_TX, tx_desc, tx_avail);
 
     // Drive the minimal control state machine: SET_PARAMS -> PREPARE -> START.
     let ctrl_req = 0x7000;
     let ctrl_resp = 0x7100;
-    let mut ctrl_avail_idx = 0u16;
+    let mut ctrl_queue = QueueSubmitter::new(VIRTIO_SND_QUEUE_CONTROL, ctrl_desc, ctrl_avail);
 
     let mut set_params = [0u8; 24];
     set_params[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
@@ -648,20 +656,13 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
     set_params[22] = VIRTIO_SND_PCM_RATE_48000;
     mem.write(ctrl_req, &set_params).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        set_params.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, set_params.len() as u32),
+        (ctrl_resp, 64),
     );
-    ctrl_avail_idx += 1;
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
         VIRTIO_SND_S_OK
@@ -670,20 +671,13 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
     let prepare = [VIRTIO_SND_R_PCM_PREPARE.to_le_bytes(), 0u32.to_le_bytes()].concat();
     mem.write(ctrl_req, &prepare).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        prepare.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, prepare.len() as u32),
+        (ctrl_resp, 64),
     );
-    ctrl_avail_idx += 1;
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
         VIRTIO_SND_S_OK
@@ -692,18 +686,12 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
     let start = [VIRTIO_SND_R_PCM_START.to_le_bytes(), 0u32.to_le_bytes()].concat();
     mem.write(ctrl_req, &start).unwrap();
     mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
-    submit_chain(
+    ctrl_queue.submit_out_in(
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        start.len() as u32,
-        ctrl_resp,
-        64,
+        (ctrl_req, start.len() as u32),
+        (ctrl_resp, 64),
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -720,7 +708,6 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
     let src_frames_per_chunk = 240usize;
     let total_src_frames = src_frames_per_chunk * 2;
 
-    let mut tx_avail_idx = 0u16;
     for chunk in 0..2usize {
         let base_frame = chunk * src_frames_per_chunk;
 
@@ -737,20 +724,13 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
         mem.write(tx_payload, &tx_bytes).unwrap();
         mem.write(tx_status, &[0xffu8; 8]).unwrap();
 
-        submit_chain(
+        tx_queue.submit_out_in(
             &mut dev,
             &mut mem,
             &caps,
-            VIRTIO_SND_QUEUE_TX,
-            tx_desc,
-            tx_avail,
-            tx_avail_idx,
-            tx_payload,
-            tx_bytes.len() as u32,
-            tx_status,
-            8,
+            (tx_payload, tx_bytes.len() as u32),
+            (tx_status, 8),
         );
-        tx_avail_idx += 1;
 
         let status_bytes = mem.get_slice(tx_status, 8).unwrap();
         assert_eq!(

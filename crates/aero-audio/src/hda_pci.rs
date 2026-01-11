@@ -69,8 +69,8 @@ impl MmioHandler for HdaPciDevice {
         match size {
             1 | 2 | 4 => self.controller.mmio_read(offset, size),
             8 => {
-                let lo = self.controller.mmio_read(offset, 4) as u64;
-                let hi = self.controller.mmio_read(offset + 4, 4) as u64;
+                let lo = self.controller.mmio_read(offset, 4);
+                let hi = self.controller.mmio_read(offset + 4, 4);
                 lo | (hi << 32)
             }
             _ => {
@@ -94,9 +94,9 @@ impl MmioHandler for HdaPciDevice {
             }
             _ => {
                 let bytes = value.to_le_bytes();
-                for i in 0..size.min(8) {
+                for (i, byte) in bytes.iter().take(size.min(8)).enumerate() {
                     self.controller
-                        .mmio_write(offset + i as u64, 1, bytes[i] as u64);
+                        .mmio_write(offset + i as u64, 1, (*byte) as u64);
                 }
             }
         }

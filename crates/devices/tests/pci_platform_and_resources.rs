@@ -46,24 +46,14 @@ fn platform_devices_enumerate_via_config_mechanism_1() {
     let mut cfg = PciConfigMechanism1::new();
 
     // Read vendor/device of host bridge 00:00.0.
-    cfg.io_write(
-        &mut bus,
-        0xCF8,
-        4,
-        0x8000_0000 | (0 << 16) | (0 << 11) | (0 << 8) | 0,
-    );
+    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_0000);
     let id = cfg.io_read(&mut bus, 0xCFC, 4);
     // Note: low 16 bits are vendor, high 16 bits are device.
     assert_eq!(id & 0xFFFF, 0x8086);
     assert_ne!((id >> 16) & 0xFFFF, 0xFFFF);
 
     // Class code at 0x08: revision/prog_if/subclass/class.
-    cfg.io_write(
-        &mut bus,
-        0xCF8,
-        4,
-        0x8000_0000 | (0 << 16) | (0 << 11) | (0 << 8) | 0x08,
-    );
+    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_0000 | 0x08);
     let class = cfg.io_read(&mut bus, 0xCFC, 4);
     let class_code = (class >> 24) as u8;
     let subclass = (class >> 16) as u8;
@@ -71,21 +61,11 @@ fn platform_devices_enumerate_via_config_mechanism_1() {
     assert_eq!(subclass, 0x00);
 
     // ISA/LPC bridge at 00:1f.0.
-    cfg.io_write(
-        &mut bus,
-        0xCF8,
-        4,
-        0x8000_0000 | (0 << 16) | (0x1f << 11) | (0 << 8) | 0,
-    );
+    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_0000 | (0x1f << 11));
     let id = cfg.io_read(&mut bus, 0xCFC, 4);
     assert_eq!(id & 0xFFFF, 0x8086);
 
-    cfg.io_write(
-        &mut bus,
-        0xCF8,
-        4,
-        0x8000_0000 | (0 << 16) | (0x1f << 11) | (0 << 8) | 0x08,
-    );
+    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_0000 | (0x1f << 11) | 0x08);
     let class = cfg.io_read(&mut bus, 0xCFC, 4);
     let class_code = (class >> 24) as u8;
     let subclass = (class >> 16) as u8;

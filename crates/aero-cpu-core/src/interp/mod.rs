@@ -186,7 +186,7 @@ pub(crate) fn read_xmm_operand_u64<B: Bus>(cpu: &CpuState, bus: &mut B, src: Xmm
 #[cfg(feature = "legacy-interp")]
 #[inline]
 pub(crate) fn check_alignment(enforce: bool, addr: u64, align: u64) -> Result<(), Exception> {
-    if enforce && (addr % align != 0) {
+    if enforce && !addr.is_multiple_of(align) {
         return Err(Exception::gp0());
     }
     Ok(())

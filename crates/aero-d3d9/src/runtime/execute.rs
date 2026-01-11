@@ -14,15 +14,9 @@ use crate::state::{
     translate_pipeline_state, PipelineCache, PipelineKey,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RuntimeConfig {
     pub validation: bool,
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        Self { validation: false }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1122,7 +1116,7 @@ impl D3D9Runtime {
 
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
         let size_bytes = data.len() as u64;
-        if offset % alignment != 0 || size_bytes % alignment != 0 {
+        if !offset.is_multiple_of(alignment) || !size_bytes.is_multiple_of(alignment) {
             return Err(RuntimeError::Validation(format!(
                 "buffer writes must be {alignment}-byte aligned (offset={offset} size_bytes={size_bytes})"
             )));

@@ -62,7 +62,7 @@ enum RenderMode {
     SvgaLinear { width: u32, height: u32, bpp: u16 },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct VbeRegs {
     xres: u16,
     yres: u16,
@@ -73,22 +73,6 @@ struct VbeRegs {
     virt_height: u16,
     x_offset: u16,
     y_offset: u16,
-}
-
-impl Default for VbeRegs {
-    fn default() -> Self {
-        Self {
-            xres: 0,
-            yres: 0,
-            bpp: 0,
-            enable: 0,
-            bank: 0,
-            virt_width: 0,
-            virt_height: 0,
-            x_offset: 0,
-            y_offset: 0,
-        }
-    }
 }
 
 impl VbeRegs {
@@ -154,6 +138,12 @@ pub struct VgaDevice {
     dirty: bool,
 }
 
+impl Default for VgaDevice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VgaDevice {
     pub fn new() -> Self {
         let mut device = Self {
@@ -200,8 +190,8 @@ impl VgaDevice {
     /// Convenience helper: configure the register file for VGA text mode 80x25.
     pub fn set_text_mode_80x25(&mut self) {
         // Attribute mode control: bit0=0 => text.
-        self.attribute[0x10] = 0x00 | (1 << 2); // line graphics enable
-                                                // Identity palette mapping for indices 0..15.
+        self.attribute[0x10] = 1 << 2; // line graphics enable
+                                       // Identity palette mapping for indices 0..15.
         for i in 0..16 {
             self.attribute[i] = i as u8;
         }
@@ -734,7 +724,7 @@ impl VgaDevice {
         self.back.fill(0);
         let width_usize = width as usize;
         let height_usize = height as usize;
-        let bytes_per_line = (width_usize + 7) / 8;
+        let bytes_per_line = width_usize.div_ceil(8);
 
         for y in 0..height_usize {
             for x in 0..width_usize {
@@ -1108,7 +1098,7 @@ mod tests {
 
         // Write "A" in the top-left cell with light grey on blue.
         let base = 0xB8000u32;
-        dev.mem_write_u8(base + 0, b'A');
+        dev.mem_write_u8(base, b'A');
         dev.mem_write_u8(base + 1, 0x1F);
 
         dev.present();
@@ -1168,7 +1158,7 @@ mod tests {
         dev.port_write(0x01CF, 2, 0x0041);
 
         // Write a red pixel at (0,0) in BGRX format.
-        dev.mem_write_u8(SVGA_LFB_BASE + 0, 0x00); // B
+        dev.mem_write_u8(SVGA_LFB_BASE, 0x00); // B
         dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x00); // G
         dev.mem_write_u8(SVGA_LFB_BASE + 2, 0xFF); // R
         dev.mem_write_u8(SVGA_LFB_BASE + 3, 0x00); // X

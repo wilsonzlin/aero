@@ -186,11 +186,7 @@ fn fadt_exposes_acpi_pm_blocks_and_reset_register() {
     assert_ne!(flags & (1 << 10), 0, "RESET_REG_SUP flag must be set");
 
     // ResetReg is a Generic Address Structure (GAS).
-    assert_eq!(
-        fadt[RESET_REG_OFFSET + 0],
-        0x01,
-        "ResetReg must be System I/O"
-    );
+    assert_eq!(fadt[RESET_REG_OFFSET], 0x01, "ResetReg must be System I/O");
     assert_eq!(
         fadt[RESET_REG_OFFSET + 1],
         8,
@@ -263,7 +259,7 @@ fn placement_is_aligned_and_non_overlapping() {
     );
 
     // Ensure the reclaimable tables don't overlap each other.
-    let mut ranges = vec![
+    let mut ranges = [
         ("DSDT", tables.dsdt_addr, tables.dsdt.len() as u64),
         ("FADT", tables.fadt_addr, tables.fadt.len() as u64),
         ("MADT", tables.madt_addr, tables.madt.len() as u64),

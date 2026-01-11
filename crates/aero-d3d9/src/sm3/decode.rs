@@ -330,7 +330,7 @@ impl RegisterFile {
             },
             9 => Self::DepthOut,
             10 => Self::Sampler,
-            11 | 12 | 13 => Self::Const,
+            11..=13 => Self::Const,
             14 => Self::ConstBool,
             15 => Self::Loop,
             17 => Self::MiscType,
@@ -451,7 +451,7 @@ pub enum TextureType {
 }
 
 pub fn decode_u8_le_bytes(bytes: &[u8]) -> Result<DecodedShader, DecodeError> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(DecodeError {
             token_index: 0,
             message: format!("bytecode length {} is not a multiple of 4", bytes.len()),
@@ -610,7 +610,7 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
         let (operands, dcl, comment_data) =
             decode_operands_and_extras(opcode_token, opcode, stage, major, operand_tokens)
                 .map_err(|mut err| {
-                    err.token_index = location.token_index + 1 + err.token_index;
+                    err.token_index += location.token_index + 1;
                     err
                 })?;
 
@@ -635,13 +635,15 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
     })
 }
 
+type OperandsAndExtras = (Vec<Operand>, Option<DclInfo>, Option<Vec<u32>>);
+
 fn decode_operands_and_extras(
     opcode_token: u32,
     opcode: Opcode,
     stage: ShaderStage,
     major: u8,
     operand_tokens: &[u32],
-) -> Result<(Vec<Operand>, Option<DclInfo>, Option<Vec<u32>>), DecodeError> {
+) -> Result<OperandsAndExtras, DecodeError> {
     let mut operands = Vec::new();
     let mut dcl = None;
     let comment_data = None;
@@ -738,7 +740,7 @@ fn decode_operands_and_extras(
             //   - src0
             //   - src1
             //   - imm32(compare_op)
-            let cmp = ((opcode_token >> 16) & 0x7) as u32;
+            let cmp = (opcode_token >> 16) & 0x7;
             operands.push(Operand::Imm32(cmp));
         }
         Opcode::Loop => {
@@ -830,7 +832,7 @@ fn decode_operands_and_extras(
                 &[OperandKind::Dst, OperandKind::Src, OperandKind::Src],
                 &mut operands,
             )?;
-            let cmp = ((opcode_token >> 16) & 0x7) as u32;
+            let cmp = (opcode_token >> 16) & 0x7;
             operands.push(Operand::Imm32(cmp));
         }
         Opcode::Tex => {
@@ -865,7 +867,7 @@ fn decode_operands_and_extras(
                 });
             }
             // texldp is encoded by a flag in opcode_token[16].
-            let project = ((opcode_token >> 16) & 0x1) as u32;
+            let project = (opcode_token >> 16) & 0x1;
             operands.push(Operand::Imm32(project));
         }
         Opcode::TexLdd => {
@@ -1083,7 +1085,7 @@ fn decode_register_ref(
         message: "unexpected end of operand tokens".to_owned(),
     })?;
 
-    let index = (token & REGNUM_MASK) as u32;
+    let index = token & REGNUM_MASK;
     let regtype_raw = (((token & REGTYPE_MASK) >> REGTYPE_SHIFT)
         | ((token & REGTYPE_MASK2) >> REGTYPE_SHIFT2)) as u8;
     let file = RegisterFile::from_raw(regtype_raw, stage, major, ctx);
@@ -1139,9 +1141,9 @@ fn decode_register_ref(
 
 fn decode_swizzle(swizzle: u8) -> Swizzle {
     let mut comps = [SwizzleComponent::X; 4];
-    for i in 0..4 {
+    for (i, comp) in comps.iter_mut().enumerate() {
         let bits = (swizzle >> (i * 2)) & 0x3;
-        comps[i] = match bits {
+        *comp = match bits {
             0 => SwizzleComponent::X,
             1 => SwizzleComponent::Y,
             2 => SwizzleComponent::Z,

@@ -115,7 +115,7 @@ impl Speed {
         if denom == 0 {
             return u64::MAX;
         }
-        let host_ns = (numer + denom - 1) / denom;
+        let host_ns = numer.div_ceil(denom);
         if host_ns > u64::MAX as u128 {
             u64::MAX
         } else {
