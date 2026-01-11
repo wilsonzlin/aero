@@ -38,7 +38,13 @@ For CI determinism (and to avoid accidentally shipping dev/test drivers), `ci/bu
 builds drivers that are explicitly opted into CI packaging by placing `ci-package.json` at the driver
 root.
 
-See: `drivers/_template/ci-package.json` and `ci/driver-package.schema.json`.
+See:
+
+- `ci/driver-package.schema.json`
+- Template manifests under `drivers/_template/`:
+  - `ci-package.json` (minimal)
+  - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
+  - `ci-package.wdf-example.json` (WDF coinstaller example)
 
 ### Legacy WDK BUILD / NMake wrapper projects
 
