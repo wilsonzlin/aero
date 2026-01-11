@@ -383,6 +383,13 @@ At the browser layer, WebUSB returns a `USBTransferStatus` (`"ok" | "stall" | "b
 The WebUSB host integration should normalize those outcomes into `UsbHostResult` values, then send
 `UsbHostCompletion::Completed { id, result }` back to the Rust device model.
 
+Recommended normalization rules:
+
+- `status === "ok"` → `OkIn { data }` / `OkOut { bytes_written }`
+- `status === "stall"` → `Stall`
+- `status === "babble"` → `Error("babble")` (or `Timeout`), until we model babble explicitly at the UHCI level
+- thrown `DOMException` / other failures → `Error(...)` or `Timeout` (policy decision; current Rust mapping treats both as `STALL`)
+
 Guest-visible behavior is then derived from the Rust mapping in
 `crates/emulator/src/io/usb/passthrough.rs`:
 
