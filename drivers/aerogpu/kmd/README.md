@@ -33,7 +33,7 @@ The Win7 AeroGPU KMD supports two AeroGPU PCI/MMIO ABIs:
 
 The Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the canonical, versioned device:
 
-* `PCI\\VEN_A3A0&DEV_0001` (versioned ABI)
+* `PCI\VEN_A3A0&DEV_0001` (versioned ABI)
 
 The legacy bring-up device is still supported by the KMD for bring-up/compatibility, but requires:
 
@@ -51,7 +51,7 @@ During `DxgkDdiStartDevice`, the KMD reads BAR0 `AEROGPU_MMIO_REG_MAGIC`:
 Some legacy device models (including the in-tree emulator legacy device) also expose the versioned
 `FEATURES_*`, `IRQ_*`, and `SCANOUT0_VBLANK_*` registers. The KMD will opportunistically use these
 when present (and the reported feature bits contain no unknown values) so Win7 can receive vblank
-interrupts and query scanline state even on `PCI\\VEN_1AED&DEV_0001`.
+interrupts and query scanline state even on `PCI\VEN_1AED&DEV_0001`.
 
 See:
 * `drivers/aerogpu/protocol/README.md` for ABI details.

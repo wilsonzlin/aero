@@ -9,13 +9,13 @@ It talks to the installed AeroGPU driver via **`DxgkDdiEscape`** using `D3DKMTEs
 The in-tree AeroGPU Win7 KMD supports both the **versioned** and **legacy bring-up** AeroGPU PCI devices, auto-detected
 via BAR0 MMIO magic:
 
-- **Versioned ABI device**: `PCI\\VEN_A3A0&DEV_0001` ("AGPU")  
+- **Versioned ABI device**: `PCI\VEN_A3A0&DEV_0001` ("AGPU")  
   Ring = `aerogpu_ring_header` + `aerogpu_submit_desc` slots.
 - **Legacy bring-up ABI device** ("ARGP", deprecated)  
   Ring = legacy `aerogpu_legacy_ring_entry` entries (see `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h` and `docs/abi/aerogpu-pci-identity.md`).
   Note: the emulator legacy device model is optional (feature `emulator/aerogpu-legacy`).
 
-Note: the shipped Win7 driver packages (`drivers/aerogpu/packaging/win7`) bind to the canonical `PCI\\VEN_A3A0&DEV_0001`
+Note: the shipped Win7 driver packages (`drivers/aerogpu/packaging/win7`) bind to the canonical `PCI\VEN_A3A0&DEV_0001`
 HWID only. Installing against the legacy bring-up device model requires the legacy INFs under
 `drivers/aerogpu/packaging/win7/legacy/` and enabling the emulator legacy device model (feature `emulator/aerogpu-legacy`).
 
