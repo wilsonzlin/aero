@@ -236,7 +236,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1
 Notes:
 
 - `ci/package-guest-tools.ps1` stages drivers into the packager input layout (`x86/<driver>/...`, `amd64/<driver>/...`),
-  copies `guest-tools/`, and (when `-SigningPolicy` is not `none`) replaces any placeholder certs with `out/certs/aero-test.cer`
+  copies `guest-tools/`, and (when `-SigningPolicy` resolves to `test`) replaces any placeholder certs with `out/certs/aero-test.cer`
   so the resulting ISO matches the signed driver catalogs.
 - The wrapper drives inclusion/validation via a packager spec (`-SpecPath`):
   - Local default: `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation).
