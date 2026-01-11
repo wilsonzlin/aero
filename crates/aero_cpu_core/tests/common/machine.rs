@@ -143,7 +143,9 @@ impl Tier0Machine {
 
     fn handle_assist(&mut self, reason: AssistReason) {
         let ip = self.cpu.rip();
-        let fetch_addr = self.cpu.seg_base_reg(Register::CS).wrapping_add(ip);
+        let fetch_addr = self
+            .cpu
+            .apply_a20(self.cpu.seg_base_reg(Register::CS).wrapping_add(ip));
         let bytes = self.bus.fetch(fetch_addr, 15).expect("fetch");
         let decoded = aero_x86::decode(&bytes, ip, self.cpu.bitness()).expect("decode");
         let next_ip = ip.wrapping_add(decoded.len as u64) & self.cpu.mode.ip_mask();

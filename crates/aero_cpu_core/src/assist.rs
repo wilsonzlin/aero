@@ -51,7 +51,7 @@ pub fn handle_assist<B: CpuBus>(
     _reason: AssistReason,
 ) -> Result<(), Exception> {
     let ip = state.rip();
-    let fetch_addr = state.seg_base_reg(Register::CS).wrapping_add(ip);
+    let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
     let bytes = bus.fetch(fetch_addr, 15).map_err(|e| {
         state.apply_exception_side_effects(&e);
         e
