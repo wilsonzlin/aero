@@ -1662,10 +1662,10 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
 // via a named file mapping) to derive 31-bit alloc_id values for shared
 // allocations.
 //
-// The mapping name is intentionally stable and generic: the UMD can be loaded
-// into multiple guest processes (and different in-guest UMD versions may
-// coexist briefly), and the same counter is also reused to allocate protocol
-// object handles (see `allocate_global_handle()`).
+// The mapping name is stable across processes in the current session and is
+// keyed by the adapter LUID so multiple adapters don't alias the same counter.
+// The same counter is also reused to allocate protocol object handles (see
+// `allocate_global_handle()`).
 uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
   if (!adapter) {
     return 0;
@@ -1678,11 +1678,33 @@ uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
     if (!adapter->share_token_view) {
       wchar_t name[128];
       // Keep the object name stable across processes within a session.
+      // Multiple adapters can disambiguate via LUID when available.
       swprintf(name,
                sizeof(name) / sizeof(name[0]),
-               L"Local\\AeroGPU.GlobalHandleCounter");
+               L"Local\\AeroGPU.D3D9.ShareToken.%08X%08X",
+               static_cast<unsigned>(adapter->luid.HighPart),
+               static_cast<unsigned>(adapter->luid.LowPart));
 
-      HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+      // This mapping backs the cross-process alloc_id allocator used for D3D9Ex
+      // shared surfaces. DWM may open and submit shared allocations from many
+      // *different* processes in a single batch, so alloc_id values must be
+      // unique across guest processes, not just within one process.
+      //
+      // Use a permissive DACL so the mapping can be opened by other processes in
+      // the session (e.g. DWM, sandboxed apps, different integrity levels).
+      SECURITY_ATTRIBUTES sa{};
+      sa.nLength = sizeof(sa);
+      sa.bInheritHandle = FALSE; // avoid leaking the handle across CreateProcess
+
+      SECURITY_DESCRIPTOR sd{};
+      if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
+          SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
+        sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
+      } else {
+        sa.lpSecurityDescriptor = nullptr; // best-effort; fallback handles failures
+      }
+
+      HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
       if (mapping) {
         void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
         if (view) {
@@ -1706,28 +1728,29 @@ uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
     }
   }
 
-  // If we fail to set up the cross-process allocator (should be rare), fall
-  // back to a per-process counter and fold PID bits into the *low* bits. Call
-  // sites that derive a 31-bit `alloc_id` via
-  // `token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX` must still get a cross-process-stable
-  // identifier (DWM can reference many shared allocations from different
-  // processes in a single submission).
+  // If we fail to set up the cross-process allocator, we must still return a
+  // value that produces an alloc_id unlikely to collide across processes.
   //
-  // Note: This scheme is only used if CreateFileMapping/MapViewOfFile fail.
-  // The named mapping is the preferred allocator because it is monotonic across
-  // processes and avoids PID reuse/sequence wrap concerns in long sessions.
-  const uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
-  const uint32_t pid_bits = (pid >> 2) & 0x1FFFFu;
-  uint32_t seq = static_cast<uint32_t>(
-      adapter->next_share_token.fetch_add(1, std::memory_order_relaxed)) &
-                 0x3FFFu;
-  if (seq == 0) {
-    seq = static_cast<uint32_t>(
-        adapter->next_share_token.fetch_add(1, std::memory_order_relaxed)) &
-          0x3FFFu;
+  // NOTE: alloc_id is derived by masking to 31 bits
+  // (`token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX`). A previous PID+counter fallback
+  // placed the PID in the high 32 bits, which are discarded by the mask, making
+  // collisions across processes *deterministic* (every process would generate
+  // alloc_id=1,2,3,...).
+  static std::once_flag warn_once;
+  std::call_once(warn_once, [] {
+    logf("aerogpu-d3d9: alloc_id allocator: shared mapping unavailable; using RNG fallback\n");
+  });
+
+  // Best-effort: use the same crypto RNG strategy as the shared-surface
+  // ShareTokenAllocator so collisions across processes are vanishingly unlikely.
+  for (;;) {
+    const uint64_t token = adapter->share_token_allocator.allocate_share_token();
+    const uint32_t alloc_id =
+        static_cast<uint32_t>(token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
+    if (alloc_id != 0) {
+      return token;
+    }
   }
-  const uint32_t alloc_id = (pid_bits << 14) | seq;
-  return static_cast<uint64_t>(alloc_id);
 #else
   (void)adapter;
   static std::atomic<uint64_t> next_token{1};
