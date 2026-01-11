@@ -78,9 +78,15 @@ type MicRingBufferView = {
   sampleRate: number;
 };
 
+type WasmMicBridgeHandle = {
+  read_f32_into(out: Float32Array): number;
+  free?: () => void;
+};
+
 let micRingBuffer: MicRingBufferView | null = null;
 let micScratch = new Float32Array();
 let loopbackScratch = new Float32Array();
+let wasmMicBridge: WasmMicBridgeHandle | null = null;
 
 let wasmApi: WasmApi | null = null;
 
@@ -140,6 +146,37 @@ function micRingBufferReadInto(rb: MicRingBufferView, out: Float32Array): number
   return toRead;
 }
 
+function detachMicBridge(): void {
+  if (wasmMicBridge && typeof wasmMicBridge.free === "function") {
+    wasmMicBridge.free();
+  }
+  wasmMicBridge = null;
+}
+
+function maybeInitMicBridge(): void {
+  if (wasmMicBridge) return;
+  const apiAny = wasmApi as unknown as Record<string, unknown> | null;
+  const mic = micRingBuffer;
+  if (!apiAny || !mic) return;
+
+  try {
+    if (typeof apiAny.attach_mic_bridge === "function") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wasmMicBridge = (apiAny.attach_mic_bridge as any)(mic.sab) as WasmMicBridgeHandle;
+      return;
+    }
+
+    const MicBridge = apiAny.MicBridge as { fromSharedBuffer?: unknown } | undefined;
+    if (MicBridge && typeof MicBridge.fromSharedBuffer === "function") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wasmMicBridge = (MicBridge.fromSharedBuffer as any)(mic.sab) as WasmMicBridgeHandle;
+    }
+  } catch (err) {
+    console.warn("Failed to attach WASM mic bridge:", err);
+    detachMicBridge();
+  }
+}
+
 function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
   const ringBuffer = msg.ringBuffer;
   if (ringBuffer !== null) {
@@ -150,6 +187,10 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
     if (!(ringBuffer instanceof Sab)) {
       throw new Error("setMicrophoneRingBuffer expects a SharedArrayBuffer or null.");
     }
+  }
+
+  if ((micRingBuffer?.sab ?? null) !== ringBuffer) {
+    detachMicBridge();
   }
 
   micRingBuffer = null;
@@ -168,6 +209,8 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
 
   const data = new Float32Array(ringBuffer, MIC_HEADER_BYTES, capacity);
   micRingBuffer = { sab: ringBuffer, header, data, capacity, sampleRate: (msg.sampleRate ?? 0) | 0 };
+
+  maybeInitMicBridge();
 }
 
 function audioFramesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
@@ -377,7 +420,19 @@ function pumpMicLoopback(maxWriteFrames: number): number {
     const frames = Math.min(remaining, maxChunkFrames);
     if (micScratch.length < frames) micScratch = new Float32Array(frames);
 
-    const read = micRingBufferReadInto(mic, micScratch.subarray(0, frames));
+    const micSlice = micScratch.subarray(0, frames);
+    let read = 0;
+    if (wasmMicBridge) {
+      try {
+        read = wasmMicBridge.read_f32_into(micSlice) | 0;
+      } catch (err) {
+        console.warn("WASM mic bridge read failed; falling back to JS ring reader:", err);
+        detachMicBridge();
+      }
+    }
+    if (!wasmMicBridge) {
+      read = micRingBufferReadInto(mic, micSlice);
+    }
     if (read === 0) break;
 
     const outSamples = read * cc;
@@ -547,6 +602,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
 
         wasmApi = api;
         maybeInitAudioOutput();
+        maybeInitMicBridge();
         const value = api.add(20, 22);
         ctx.postMessage({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
       } catch (err) {
