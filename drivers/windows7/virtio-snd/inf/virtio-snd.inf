@@ -12,15 +12,21 @@ CatalogFile = virtio-snd.cat
 %ProviderName% = VirtioSndModels,NTx86,NTamd64
 
 [VirtioSndModels.NTx86]
-; TODO: Confirm PCI device IDs against the Virtio specification.
-; - Modern virtio PCI IDs are typically 0x1040 + VIRTIO_ID_*
-; - Transitional virtio PCI IDs are typically 0x1000 + (VIRTIO_ID_* - 1)
+; Aero Windows 7 Virtio contract v1 defines virtio-snd as a **virtio-pci modern**
+; device (MMIO BAR0 + vendor-specific capabilities), Vendor ID 0x1AF4, Device ID
+; 0x1059, Revision ID 0x01 (see `docs/windows7-virtio-driver-contract.md`).
+;
+; This driver is modern-transport-only and MUST NOT bind to virtio-pci
+; transitional/legacy IDs (for virtio-snd that would be DEV_1018).
+;
+; The REV_01 match is listed first to prefer contract v1 devices; the driver still
+; validates Revision ID at runtime.
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
 
 [VirtioSndModels.NTamd64]
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
 
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
