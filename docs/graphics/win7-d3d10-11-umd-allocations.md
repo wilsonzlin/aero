@@ -18,9 +18,11 @@ It is written against Win7-era user-mode DDI headers:
 
 The goal is that a developer with the Win7-era DDI headers can implement a correct `CreateResource` allocation flow without chasing definitions across multiple headers.
 
-For the **combined** reference that also covers Win7 `Map`/`Unmap` (`D3DDDICB_LOCK`/`D3DDDICB_UNLOCK`), pitch return rules, and staging readback synchronization, see:
+See also:
 
-* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md`
+* `docs/graphics/win7-d3d11-map-unmap.md` — Win7 `Map`/`Unmap` (`pfnLockCb`/`pfnUnlockCb`), pitch rules, and staging readback synchronization.
+* `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md` — submission callback contracts (DMA buffer acquisition, render/present, fence waits).
+* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — deprecated redirect to the focused docs above (kept for link compatibility).
 
 ## Related AeroGPU code/docs (cross-links)
 
