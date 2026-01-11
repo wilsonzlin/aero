@@ -260,7 +260,7 @@ static const KSPIN_DESCRIPTOR g_VirtIoSndTopoPinDescriptors[] = {
 
 static const PCPIN_DESCRIPTOR g_VirtIoSndTopoPins[] = {
     {1, 1, 0, NULL, g_VirtIoSndTopoPinDescriptors[VIRTIOSND_TOPO_PIN_BRIDGE]},
-    {1, 1, 0, NULL, g_VirtIoSndTopoPinDescriptors[VIRTIOSND_TOPO_PIN_SPEAKER]},
+    {1, 1, 0, &g_VirtIoSndTopoAutomation, g_VirtIoSndTopoPinDescriptors[VIRTIOSND_TOPO_PIN_SPEAKER]},
 };
 
 static const PCCONNECTION_DESCRIPTOR g_VirtIoSndTopoConnections[] = {
