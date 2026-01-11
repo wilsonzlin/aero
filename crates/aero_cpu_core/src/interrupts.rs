@@ -13,7 +13,6 @@ use aero_x86::Register;
 use crate::exceptions::{Exception, InterruptSource, PendingEvent};
 use crate::mem::CpuBus;
 use crate::state::{self, gpr, CpuMode, RFLAGS_IF, RFLAGS_RESERVED1, RFLAGS_TF};
-use crate::system::{Tss32, Tss64};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CpuExit {
@@ -107,10 +106,6 @@ pub struct PendingEventState {
 
     // --- IRET bookkeeping ---
     interrupt_frames: Vec<InterruptFrame>,
-
-    /// Ring stack configuration.
-    pub tss32: Option<Tss32>,
-    pub tss64: Option<Tss64>,
 }
 
 impl PendingEventState {
@@ -543,132 +538,12 @@ fn deliver_protected_mode<B: CpuBus>(
     let old_esp = state.read_gpr32(gpr::RSP);
 
     if new_cpl < current_cpl {
-        let (new_ss, new_esp) = match pending.tss32 {
-            Some(tss) => match tss.stack_for_cpl(new_cpl) {
-                Some(stack) => stack,
-                None => {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    )
-                }
-            },
-            None => {
-                if state.tables.tr.is_unusable()
-                    || !state.tables.tr.is_present()
-                    || (state.tables.tr.selector >> 3) == 0
-                    || state.tables.tr.s()
-                    || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
-                {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                if new_cpl > 2 {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                let base = state.tables.tr.base;
-                let esp_off = 4u64 + (new_cpl as u64) * 8;
-                let ss_off = 8u64 + (new_cpl as u64) * 8;
-                let limit = state.tables.tr.limit as u64;
-                if esp_off.checked_add(3).map_or(true, |end| end > limit)
-                    || ss_off.checked_add(1).map_or(true, |end| end > limit)
-                {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-
-                let esp_addr = match base.checked_add(esp_off) {
-                    Some(addr) => addr,
-                    None => {
-                        return deliver_exception(
-                            bus,
-                            state,
-                            pending,
-                            Exception::InvalidTss,
-                            saved_rip,
-                            Some(0),
-                        )
-                    }
-                };
-                let new_esp = match bus.read_u32(esp_addr) {
-                    Ok(val) => val,
-                    Err(_) => {
-                        return deliver_exception(
-                            bus,
-                            state,
-                            pending,
-                            Exception::InvalidTss,
-                            saved_rip,
-                            Some(0),
-                        )
-                    }
-                };
-
-                let ss_addr = match base.checked_add(ss_off) {
-                    Some(addr) => addr,
-                    None => {
-                        return deliver_exception(
-                            bus,
-                            state,
-                            pending,
-                            Exception::InvalidTss,
-                            saved_rip,
-                            Some(0),
-                        )
-                    }
-                };
-                let new_ss = match bus.read_u16(ss_addr) {
-                    Ok(val) => val,
-                    Err(_) => {
-                        return deliver_exception(
-                            bus,
-                            state,
-                            pending,
-                            Exception::InvalidTss,
-                            saved_rip,
-                            Some(0),
-                        )
-                    }
-                };
-
-                if new_ss == 0 {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-
-                (new_ss, new_esp)
-            }
+        let (new_ss_raw, new_esp) = match tss32_stack_for_cpl(bus, state, new_cpl) {
+            Ok(stack) => stack,
+            Err(()) => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
         };
-
+        // Hardware forces SS.RPL == CPL for the new stack segment.
+        let new_ss = (new_ss_raw & !0b11) | (new_cpl as u16);
         state.segments.ss.selector = new_ss;
         state.write_gpr32(gpr::RSP, new_esp);
         stack_switched = true;
@@ -786,181 +661,15 @@ fn deliver_long_mode<B: CpuBus>(
     let mut used_ist = false;
     if gate.ist != 0 {
         used_ist = true;
-        let new_rsp = match pending.tss64 {
-            Some(tss) => match tss.ist_stack(gate.ist) {
-                Some(rsp) => rsp,
-                None => {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    )
-                }
-            },
-            None => {
-                if state.tables.tr.is_unusable()
-                    || !state.tables.tr.is_present()
-                    || (state.tables.tr.selector >> 3) == 0
-                    || state.tables.tr.s()
-                    || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
-                {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                let base = state.tables.tr.base;
-                let off = 0x24u64 + (gate.ist as u64 - 1) * 8;
-                let limit = state.tables.tr.limit as u64;
-                if off.checked_add(7).map_or(true, |end| end > limit) {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                let addr = match base.checked_add(off) {
-                    Some(addr) => addr,
-                    None => {
-                        return deliver_exception(
-                            bus,
-                            state,
-                            pending,
-                            Exception::InvalidTss,
-                            saved_rip,
-                            Some(0),
-                        )
-                    }
-                };
-                let rsp = match bus.read_u64(addr) {
-                    Ok(val) => val,
-                    Err(_) => {
-                        return deliver_exception(
-                            bus,
-                            state,
-                            pending,
-                            Exception::InvalidTss,
-                            saved_rip,
-                            Some(0),
-                        )
-                    }
-                };
-                if rsp == 0 {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                rsp
-            }
+        let new_rsp = match tss64_ist_stack(bus, state, gate.ist) {
+            Ok(rsp) if rsp != 0 => rsp,
+            _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     } else if new_cpl < current_cpl {
-        let new_rsp = match pending.tss64 {
-            Some(tss) => match tss.rsp_for_cpl(new_cpl) {
-                Some(rsp) if rsp != 0 => rsp,
-                _ => {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    )
-                }
-            },
-            None => {
-                if state.tables.tr.is_unusable()
-                    || !state.tables.tr.is_present()
-                    || (state.tables.tr.selector >> 3) == 0
-                    || state.tables.tr.s()
-                    || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
-                {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                if new_cpl > 2 {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                let base = state.tables.tr.base;
-                let off = 4u64 + (new_cpl as u64) * 8;
-                let limit = state.tables.tr.limit as u64;
-                if off.checked_add(7).map_or(true, |end| end > limit) {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                let addr = match base.checked_add(off) {
-                    Some(addr) => addr,
-                    None => {
-                        return deliver_exception(
-                            bus,
-                            state,
-                            pending,
-                            Exception::InvalidTss,
-                            saved_rip,
-                            Some(0),
-                        )
-                    }
-                };
-                let rsp = match bus.read_u64(addr) {
-                    Ok(val) => val,
-                    Err(_) => {
-                        return deliver_exception(
-                            bus,
-                            state,
-                            pending,
-                            Exception::InvalidTss,
-                            saved_rip,
-                            Some(0),
-                        )
-                    }
-                };
-                if rsp == 0 {
-                    return deliver_exception(
-                        bus,
-                        state,
-                        pending,
-                        Exception::InvalidTss,
-                        saved_rip,
-                        Some(0),
-                    );
-                }
-                rsp
-            }
+        let new_rsp = match tss64_rsp_for_cpl(bus, state, new_cpl) {
+            Ok(rsp) if rsp != 0 => rsp,
+            _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     }
@@ -1280,4 +989,92 @@ fn is_canonical(addr: u64) -> bool {
     } else {
         upper == 0xFFFF
     }
+}
+
+fn tss32_stack_for_cpl<B: CpuBus>(
+    bus: &mut B,
+    state: &state::CpuState,
+    cpl: u8,
+) -> Result<(u16, u32), ()> {
+    if state.tables.tr.is_unusable()
+        || !state.tables.tr.is_present()
+        || (state.tables.tr.selector >> 3) == 0
+        || state.tables.tr.s()
+        || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
+    {
+        return Err(());
+    }
+    if cpl > 2 {
+        return Err(());
+    }
+    let base = state.tables.tr.base;
+    let ring_off = (cpl as u64) * 8;
+    let esp_off = 4u64 + ring_off;
+    let ss_off = 8u64 + ring_off;
+    let limit = state.tables.tr.limit as u64;
+    if esp_off.checked_add(3).map_or(true, |end| end > limit)
+        || ss_off.checked_add(1).map_or(true, |end| end > limit)
+    {
+        return Err(());
+    }
+    let esp_addr = base.checked_add(esp_off).ok_or(())?;
+    let ss_addr = base.checked_add(ss_off).ok_or(())?;
+    let esp = bus.read_u32(esp_addr).map_err(|_| ())?;
+    let ss = bus.read_u16(ss_addr).map_err(|_| ())?;
+    if ss == 0 {
+        return Err(());
+    }
+    Ok((ss, esp))
+}
+
+fn tss64_rsp_for_cpl<B: CpuBus>(
+    bus: &mut B,
+    state: &state::CpuState,
+    cpl: u8,
+) -> Result<u64, ()> {
+    if state.tables.tr.is_unusable()
+        || !state.tables.tr.is_present()
+        || (state.tables.tr.selector >> 3) == 0
+        || state.tables.tr.s()
+        || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
+    {
+        return Err(());
+    }
+    if cpl > 2 {
+        return Err(());
+    }
+    let base = state.tables.tr.base;
+    let off = 4u64 + (cpl as u64) * 8;
+    let limit = state.tables.tr.limit as u64;
+    if off.checked_add(7).map_or(true, |end| end > limit) {
+        return Err(());
+    }
+    let addr = base.checked_add(off).ok_or(())?;
+    bus.read_u64(addr).map_err(|_| ())
+}
+
+fn tss64_ist_stack<B: CpuBus>(
+    bus: &mut B,
+    state: &state::CpuState,
+    ist: u8,
+) -> Result<u64, ()> {
+    if state.tables.tr.is_unusable()
+        || !state.tables.tr.is_present()
+        || (state.tables.tr.selector >> 3) == 0
+        || state.tables.tr.s()
+        || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
+    {
+        return Err(());
+    }
+    if !(1..=7).contains(&ist) {
+        return Err(());
+    }
+    let base = state.tables.tr.base;
+    let off = 0x24u64 + (ist as u64 - 1) * 8;
+    let limit = state.tables.tr.limit as u64;
+    if off.checked_add(7).map_or(true, |end| end > limit) {
+        return Err(());
+    }
+    let addr = base.checked_add(off).ok_or(())?;
+    bus.read_u64(addr).map_err(|_| ())
 }
