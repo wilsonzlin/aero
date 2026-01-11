@@ -35,7 +35,7 @@ The initial feature claim is **D3D_FEATURE_LEVEL_10_0**:
 This UMD emits `drivers/aerogpu/protocol/aerogpu_cmd.h` packets and references objects using **protocol resource handles** (`aerogpu_handle_t`), not an “allocation list index” model:
 
 - Packets reference resources via `resource_handle` / `buffer_handle` / `texture_handle` fields.
-- When a resource is backed by guest memory, create packets may set `backing_alloc_id` (and `backing_offset_bytes`). `backing_alloc_id` is resolved via the optional per-submission `aerogpu_alloc_table` supplied by the KMD in `aerogpu_submit_desc` (see `drivers/aerogpu/protocol/aerogpu_ring.h`).
+- When a resource is backed by guest memory, create packets may set `backing_alloc_id` (and `backing_offset_bytes`). Resolving `backing_alloc_id` requires sideband information from the KMD (planned via the optional per-submission `aerogpu_alloc_table` in the versioned ring ABI; the current bring-up UMD uses host-allocated resources and sets `backing_alloc_id = 0`).
 - `aerogpu_handle_t` values are protocol object IDs; they are intentionally **not** WDDM allocation handles/IDs.
 
 The core emission happens in `src/aerogpu_d3d10_11_umd.cpp` by building a linear command buffer consisting of:

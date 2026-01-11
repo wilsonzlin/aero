@@ -7,10 +7,14 @@ The UMD’s job is to:
 1. expose the D3D9 adapter/device entrypoints expected by the Win7 D3D9 runtime, and
 2. translate D3D9 DDI calls into the **AeroGPU high-level command stream** (`drivers/aerogpu/protocol/aerogpu_cmd.h`).
 
-The kernel-mode driver (KMD) is responsible for accepting submissions and forwarding them to the emulator via the ring/submission ABI (`drivers/aerogpu/protocol/aerogpu_ring.h`). The command stream does **not** reference resources by “allocation-list index”; instead it uses two separate ID spaces:
+The kernel-mode driver (KMD) is responsible for accepting submissions and forwarding them to the emulator. The UMD only targets the **command stream** ABI (`aerogpu_cmd.h`); the KMD↔emulator submission transport is an implementation detail of the KMD.
+
+As of today, the in-tree Win7 KMD still uses the **legacy bring-up transport ABI** (`drivers/aerogpu/protocol/aerogpu_protocol.h`). The newer **versioned** ring/MMIO transport (`drivers/aerogpu/protocol/aerogpu_pci.h` + `aerogpu_ring.h`) is the long-term target. See `drivers/aerogpu/kmd/README.md` for current status.
+
+The command stream does **not** reference resources by “allocation-list index”; instead it uses two separate ID spaces:
 
 - **Protocol resource handles** (`aerogpu_handle_t`, exposed in packets as `resource_handle` / `buffer_handle` / `texture_handle`, etc): these are 32-bit, UMD-chosen handles that identify logical GPU objects in the command stream.
-- **Backing allocation IDs** (`alloc_id`): a stable, KMD-owned ID for a WDDM allocation (not a process-local handle and not a per-submit index). When a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero `alloc_id`. The KMD supplies an optional per-submission `aerogpu_alloc_table` (see `aerogpu_ring.h`) that resolves `alloc_id → {gpa, size_bytes, flags}` for the allocations referenced by that submission.
+- **Backing allocation IDs** (`alloc_id`): a stable, KMD-owned ID for a WDDM allocation (not a process-local handle and not a per-submit index). When a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero `alloc_id`. Resolving `alloc_id → {gpa, size_bytes, flags}` requires sideband information from the KMD (planned via the optional per-submission `aerogpu_alloc_table` in the versioned ring ABI; the current bring-up UMD uses host-allocated resources and sets `backing_alloc_id = 0`).
 
 ### Shared surfaces (D3D9Ex / DWM)
 
