@@ -75,6 +75,11 @@ The UMD prints three key call sites:
 * `RotateResourceIdentities` (the set of swapchain buffer identities, before/after rotation)
 * `Present` (which backbuffer identity is presented and with what sync interval)
 
+> Note: depending on which UMD build you are running, the `Present` trace line may
+> print the presented resource as either `src_handle=<id>` (WDK-backed DDIs) or
+> `backbuffer_handle=<id>` (portable ABI subset). They refer to the same protocol
+> resource handle space.
+
 To identify *which* `CreateResource` calls are swapchain backbuffers:
 
 1. Find the handles printed by `RotateResourceIdentities`.

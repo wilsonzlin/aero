@@ -230,7 +230,10 @@ def main(argv: List[str]) -> int:
     re_created_tex = re.compile(r"trace_resources:\s+=> created tex2d handle=(\d+) size=(\d+)x(\d+) row_pitch=(\d+)")
     re_created_buf = re.compile(r"trace_resources:\s+=> created buffer handle=(\d+) size=(\d+)")
     re_rotate_slot = re.compile(r"trace_resources:\s+[+\\-]>?\s*slot\[(\d+)\]=(\d+)")
-    re_present = re.compile(r"trace_resources:\s+(D3D10\\.1|D3D10|D3D11)\s+Present sync=(\d+)\s+src_handle=(\d+)")
+    # WDK-backed DDIs include an explicit API prefix and use `src_handle`.
+    re_present_wdk = re.compile(r"trace_resources:\s+(D3D10\\.1|D3D10|D3D11)\s+Present sync=(\d+)\s+src_handle=(\d+)")
+    # Portable ABI subset logs omit the API prefix and use `backbuffer_handle`.
+    re_present_portable = re.compile(r"trace_resources:\s+Present sync=(\d+)\s+(?:src_handle|backbuffer_handle)=(\d+)")
 
     for line in lines:
         maybe_create = parse_create_resource(line)
@@ -266,12 +269,19 @@ def main(argv: List[str]) -> int:
                 rotate_handles.append(handle)
             continue
 
-        m = re_present.search(line)
+        m = re_present_wdk.search(line)
         if m:
             api = m.group(1)
             sync = int(m.group(2), 10)
             src_handle = int(m.group(3), 10)
             presents.append((api, sync, src_handle))
+            continue
+
+        m = re_present_portable.search(line)
+        if m:
+            sync = int(m.group(1), 10)
+            src_handle = int(m.group(2), 10)
+            presents.append(("unknown", sync, src_handle))
             continue
 
     # If CreateResource was seen but we never observed a "created handle" line, keep it as dangling.
