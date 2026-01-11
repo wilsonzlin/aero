@@ -324,6 +324,7 @@ jobs:
           # Only run CI when we have *CI-buildable* driver targets as discovered by ci/build-drivers.ps1:
           #   - drivers/<name>/<name>.sln OR drivers/<name>/*.vcxproj
           #   - drivers/<group>/<name>/<name>.sln OR drivers/<group>/<name>/*.vcxproj
+          #   - drivers/windows7/virtio/<name>/<name>.sln OR drivers/windows7/virtio/<name>/*.vcxproj
           #
           # We intentionally ignore classic WDK 7.1 NMake wrapper projects that invoke build.exe
           # (Keyword=MakeFileProj / ConfigurationType=Makefile), because this workflow provisions
@@ -348,6 +349,19 @@ jobs:
               $t2 = Try-GetDriverBuildTarget -Directory $dir2 -DriversRootResolved $driversRootResolved
               if ($null -ne $t2) {
                 [void]$targets.Add($t2)
+                continue
+              }
+
+              # Allow a single extra nesting level for clean-room virtio drivers under:
+              #   drivers/windows7/virtio/<name>
+              if ($dir1.Name -ieq 'windows7' -and $dir2.Name -ieq 'virtio') {
+                $level3 = @(Get-ChildItem -LiteralPath $dir2.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
+                foreach ($dir3 in $level3) {
+                  $t3 = Try-GetDriverBuildTarget -Directory $dir3 -DriversRootResolved $driversRootResolved
+                  if ($null -ne $t3) {
+                    [void]$targets.Add($t3)
+                  }
+                }
               }
             }
           }
@@ -377,7 +391,7 @@ jobs:
         }
 
           if ($buildable.Count -eq 0) {
-            Write-Host "No CI-buildable Win7 driver targets were found (expected MSBuild-based solution/project with an .inf under drivers/<name>/ or drivers/<group>/<name>/; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
+            Write-Host "No CI-buildable Win7 driver targets were found (expected MSBuild-based solution/project with an .inf under drivers/<name>/, drivers/<group>/<name>/, or drivers/windows7/virtio/<name>/; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
