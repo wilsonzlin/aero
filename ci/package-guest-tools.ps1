@@ -43,7 +43,13 @@ param(
   [string] $OutDir = "out/artifacts",
   [string] $Version,
   [string] $BuildId,
-  [Nullable[long]] $SourceDateEpoch
+  [Nullable[long]] $SourceDateEpoch,
+
+  # Machine-readable device contract used to generate the packaged config/devices.cmd.
+  #
+  # Defaults to the canonical Aero device contract, but callers that package upstream
+  # virtio-win drivers may need to override service names (e.g. viostor/netkvm).
+  [string] $WindowsDeviceContractPath = "docs/windows-device-contract.json"
 )
 
 Set-StrictMode -Version Latest
@@ -723,7 +729,7 @@ if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
   throw "Missing packager Cargo.toml: '$packagerManifest'."
 }
 
-$windowsDeviceContractResolved = Resolve-RepoPath -Path "docs/windows-device-contract.json"
+$windowsDeviceContractResolved = Resolve-RepoPath -Path $WindowsDeviceContractPath
 if (-not (Test-Path -LiteralPath $windowsDeviceContractResolved -PathType Leaf)) {
   throw "Missing Windows device contract JSON: '$windowsDeviceContractResolved'."
 }
