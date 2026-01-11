@@ -401,8 +401,10 @@ impl AeroGpuExecutor {
             let mut decode_errors = Vec::new();
             let (alloc_table_header, allocs) =
                 decode_alloc_table(mem, regs.abi_version, &desc, &mut decode_errors);
+            let capture_cmd_stream = self.cfg.keep_last_submissions > 0
+                || self.cfg.fence_completion == AeroGpuFenceCompletionMode::Deferred;
             let (cmd_stream_header, cmd_stream) =
-                decode_cmd_stream(mem, regs.abi_version, &desc, &mut decode_errors);
+                decode_cmd_stream(mem, regs.abi_version, &desc, &mut decode_errors, capture_cmd_stream);
 
             if !decode_errors.is_empty() {
                 regs.stats.malformed_submissions =
@@ -813,6 +815,7 @@ fn decode_cmd_stream(
     _device_abi_version: u32,
     desc: &AeroGpuSubmitDesc,
     decode_errors: &mut Vec<AeroGpuSubmissionDecodeError>,
+    capture_bytes: bool,
 ) -> (Option<AeroGpuCmdStreamHeader>, Vec<u8>) {
     if desc.cmd_gpa == 0 && desc.cmd_size_bytes == 0 {
         return (None, Vec::new());
@@ -842,6 +845,36 @@ fn decode_cmd_stream(
             }
         }
         return (header, Vec::new());
+    }
+
+    if !capture_bytes {
+        let cmd_size = desc.cmd_size_bytes as usize;
+        if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
+            decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::TooSmall,
+            ));
+            return (None, Vec::new());
+        }
+
+        let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+        mem.read_physical(desc.cmd_gpa, &mut prefix);
+        let header = match decode_cmd_stream_header_le(&prefix) {
+            Ok(header) => AeroGpuCmdStreamHeader::from(header),
+            Err(_) => {
+                decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                    AeroGpuCmdStreamDecodeError::BadHeader,
+                ));
+                return (None, Vec::new());
+            }
+        };
+
+        if header.size_bytes > desc.cmd_size_bytes {
+            decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
+            ));
+        }
+
+        return (Some(header), Vec::new());
     }
 
     let Ok(cmd_size) = usize::try_from(desc.cmd_size_bytes) else {
