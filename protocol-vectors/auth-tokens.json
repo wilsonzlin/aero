@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "sessionTokens": {
+    "testSecret": "test-session-secret",
+    "vectors": [
+      {
+        "name": "valid",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.zcesNltUxXmW1SpDGWoATMZj1GLX1LMz0TIdVRzO8l8",
+        "sid": "sid-1234567890",
+        "exp": 1700000060,
+        "nowMs": 1700000000000
+      },
+      {
+        "name": "invalidBase64url.signature",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.!",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64url.payload",
+        "secret": "test-session-secret",
+        "token": "invalid!payload._oBcRLie1_KGm7HifmJyDVAsAUvnwmsOroHf3fwc5KQ",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "badSignature",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.zcesNltUxXmW1SpDGWoATMZj1GLX1LMz0TIdVRzO8lA",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "expired",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTY5OTk5OTk5OX0.CwC51wLWfrZdFrFA-3E4JSPLbDjqYrgcJe6dgUU0eYI",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongVersion",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoyLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.nrhCa5Ych3Oto898qF3p-kyVwslzv0rLLOCewNjAa90",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "missingSid",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJleHAiOjE3MDAwMDAwNjB9.OqChdEAZsGIt-2WBifZzDiq-YLbvfl5Xjlj387giJ9A",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "missingExp",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCJ9.k-Tdx_zyU69AhBb7p2GR4v8oxh7JRI1A7tbXlm_LTZ4",
+        "nowMs": 1700000000000,
+        "expectError": true
+      }
+    ]
+  },
+  "jwtTokens": {
+    "testSecret": "test-jwt-secret",
+    "vectors": [
+      {
+        "name": "valid",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.tVuxJptb-YWFqluNxv89qG0sd_jFcDIzVGn2ojD9wGg",
+        "nowSec": 1700000000,
+        "sid": "sid-1234567890",
+        "exp": 1700000060,
+        "iat": 1700000000,
+        "origin": "https://app.example.test",
+        "aud": "aero-udp-relay",
+        "iss": "aero-gateway"
+      },
+      {
+        "name": "badSignature",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.tVuxJptb-YWFqluNxv89qG0sd_jFcDIzVGn2ojD9wGA",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "expired",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTY5OTk5OTk5OSwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.R3mPvJyzjde3jDsJiIkzzGxRAyAzTB3akVnV1GZMUkc",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "missingSid",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwib3JpZ2luIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0IiwiYXVkIjoiYWVyby11ZHAtcmVsYXkiLCJpc3MiOiJhZXJvLWdhdGV3YXkifQ.bdqBOL9NtxeA-v5MSNV99FBUYcZ4HadTHON5VDXhLfc",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "missingIat",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MDAwMDAwNjAsInNpZCI6InNpZC0xMjM0NTY3ODkwIiwib3JpZ2luIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0IiwiYXVkIjoiYWVyby11ZHAtcmVsYXkiLCJpc3MiOiJhZXJvLWdhdGV3YXkifQ.39OgH2-Bucy4mvm_4b6oJ8YYRFmqp2cha4sBSTk4WaM",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "missingExp",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsInNpZCI6InNpZC0xMjM0NTY3ODkwIiwib3JpZ2luIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0IiwiYXVkIjoiYWVyby11ZHAtcmVsYXkiLCJpc3MiOiJhZXJvLWdhdGV3YXkifQ.8XgVDfd1mFI1cm8UM-R3PQSTqYEsNKtNte4g62ElYW8",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongAlg",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.xxNREd57JHOFSEUoDFwMVDQ-xAYddSly_c1i09zWfXc",
+        "nowSec": 1700000000,
+        "expectError": true
+      }
+    ]
+  }
+}
