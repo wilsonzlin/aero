@@ -28,6 +28,8 @@ References:
 
 - A QEMU build new enough to expose a virtio-snd PCI device.
   - Known-good reference: QEMU **8.2.x**.
+  - Must support `disable-legacy=on` and `x-pci-revision=0x01` on the virtio-snd PCI device so it
+    matches the Aero contract v1 HWID (`DEV_1059&REV_01`).
 - A Windows 7 SP1 VM disk image (x86 or x64).
 - The virtio-snd driver package directory for the target architecture (must contain `aero-virtio-snd.inf` + `virtiosnd.sys`):
   - Repo layout (staging): `drivers/windows7/virtio-snd/inf/`
@@ -104,7 +106,7 @@ The virtio specification defines two PCI device IDs for virtio-snd:
 
 The Aero Win7 contract v1 INFs are intentionally strict:
 
-- `inf/aero-virtio-snd.inf` matches only `PCI\VEN_1AF4&DEV_1059&REV_01`
+- `aero-virtio-snd.inf` matches only `PCI\VEN_1AF4&DEV_1059&REV_01`
   (optionally subsystem-qualified as `...&SUBSYS_00191AF4&REV_01`).
 - Transitional `DEV_1018` devices are **out of scope** for `AERO-W7-VIRTIO` v1 and will not bind.
 
@@ -113,6 +115,13 @@ contract v1 revision, for example:
 
 ```bash
 -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
+```
+
+Tip: confirm your QEMU build supports these properties with (replace `virtio-sound-pci` with the
+device name from above if needed):
+
+```bash
+qemu-system-x86_64 -device virtio-sound-pci,help
 ```
 
 ## Verifying HWID in Device Manager
@@ -132,9 +141,11 @@ Expected values include at least one of:
 More specific forms may also appear (with `SUBSYS_...` / `REV_..`). The Aero INF matches the revision-gated
 forms for the modern ID (`DEV_1059`).
 
+If you see `PCI\VEN_1AF4&DEV_1018` (transitional) or `REV_00`, update the QEMU command line to include
+`disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device (or upgrade QEMU if those properties are missing).
+
 The automated Win7 host harness probes QEMU for supported virtio-snd device properties (via
-`-device virtio-sound-pci,help`) and enables contract-v1 identification when supported (for example
-`disable-legacy=on` and `x-pci-revision=0x01`).
+`-device virtio-sound-pci,help`) and enables contract-v1 identification when supported.
 
 - `drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1`
 - `drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py`
@@ -284,8 +295,8 @@ Then review:
   
 - Confirm the device HWID Windows sees (Device Manager → Properties → Details → Hardware Ids).
 - Confirm QEMU is exposing virtio-snd as expected (and you used the correct QEMU device name).
-- Confirm the HWID matches `inf/aero-virtio-snd.inf` (`DEV_1059&REV_01`, optionally subsystem-qualified).
-- If Windows shows `DEV_1018`, the device is transitional; use `disable-legacy=on` so Windows enumerates `DEV_1059`.
+- Confirm the HWID matches `aero-virtio-snd.inf` (`DEV_1059&REV_01`, optionally subsystem-qualified).
+- If Windows shows `DEV_1018` or `REV_00`, ensure your QEMU command line sets `disable-legacy=on` and `x-pci-revision=0x01` for the virtio-snd device.
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
 
@@ -295,7 +306,8 @@ If the PCI device binds successfully but **no render endpoint** shows up:
 - Confirm the driver is installing a complete PortCls/WaveRT stack:
   - A WaveRT render miniport alone is not sufficient; Windows typically also expects the correct KS filter categories and (often) a topology miniport.
 - Re-check the INF:
-  - The Aero INF matches `DEV_1059&REV_01` (optionally `SUBSYS_00191AF4&REV_01`) for contract v1. If the driver does not bind, confirm you are pointing Windows at the correct `aero-virtio-snd.inf`.
+  - The Aero INF matches `DEV_1059&REV_01` (optionally `SUBSYS_00191AF4&REV_01`) for contract v1.
+    If the driver does not bind, confirm you are pointing Windows at the correct `aero-virtio-snd.inf`.
   - The INF must register the correct audio/KS interfaces for render (e.g. `KSCATEGORY_AUDIO`, `KSCATEGORY_RENDER`).
 
 If you are iterating on INF/miniport registration, remove the device from Device Manager (and delete the driver package if requested) before reinstalling so updated INF state is applied.

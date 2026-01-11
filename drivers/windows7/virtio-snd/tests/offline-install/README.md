@@ -244,7 +244,9 @@ Once the system boots with virtio-snd hardware present:
   Inspect `%WINDIR%\inf\setupapi.dev.log` and search for:
   
   - `aero-virtio-snd.inf`, or
-  - the device hardware ID (for virtio-snd: `PCI\VEN_1AF4&DEV_1059` and typically `&REV_01`; `&SUBSYS_...` qualifiers may also appear). If you see `DEV_1018`, the device is transitional and the Aero contract v1 INF will not bind.
+  - the device hardware ID (for Aero contract v1 virtio-snd: `PCI\VEN_1AF4&DEV_1059&REV_01`; `SUBSYS_...` qualifiers may also appear)
+
+  Note: If the device enumerates as `DEV_1018` (transitional) or `REV_00`, the Aero INF is intentionally strict and will not bind. For QEMU, use `disable-legacy=on` and `x-pci-revision=0x01` on the virtio-snd device.
 
 If the driver package is staged but the device doesn’t bind:
 
