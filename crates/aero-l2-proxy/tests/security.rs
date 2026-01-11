@@ -101,6 +101,28 @@ async fn origin_required_by_default_rejects_missing_origin() {
 }
 
 #[tokio::test]
+async fn wildcard_allowed_origins_still_requires_origin_header() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let req = base_ws_request(addr);
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected missing Origin to be rejected even with wildcard allowlist");
+    assert_http_status(err, StatusCode::FORBIDDEN);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn origin_allowlist_and_open_mode() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
