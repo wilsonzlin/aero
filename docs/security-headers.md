@@ -106,11 +106,11 @@ Recommended baseline:
 
 - `Referrer-Policy: no-referrer` (privacy-first; alternatively `strict-origin-when-cross-origin`)
 - `X-Content-Type-Options: nosniff`
-- `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+- `Permissions-Policy: camera=(), geolocation=(), microphone=(self)`
 
 Notes:
 
-- Disable `microphone` by default. If/when the project adds live audio input, relax the policy deliberately (e.g. `microphone=(self)`).
+- If you do not need microphone capture, you can disable it with `microphone=()`. Aero’s web UI uses the microphone only when the user explicitly enables it.
 
 ---
 

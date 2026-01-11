@@ -17,7 +17,7 @@ function setCrossOriginIsolationHeaders(res) {
 function setCommonSecurityHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)");
 }
 
 function setContentSecurityPolicy(res) {

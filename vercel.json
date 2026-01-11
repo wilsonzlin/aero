@@ -36,7 +36,7 @@
         },
         {
           "key": "Permissions-Policy",
-          "value": "camera=(), microphone=(), geolocation=()"
+          "value": "camera=(), geolocation=(), microphone=(self)"
         },
         {
           "key": "Cache-Control",
@@ -81,7 +81,7 @@
         },
         {
           "key": "Permissions-Policy",
-          "value": "camera=(), microphone=(), geolocation=()"
+          "value": "camera=(), geolocation=(), microphone=(self)"
         },
         {
           "key": "Cache-Control",
@@ -122,7 +122,7 @@
         },
         {
           "key": "Permissions-Policy",
-          "value": "camera=(), microphone=(), geolocation=()"
+          "value": "camera=(), geolocation=(), microphone=(self)"
         },
         {
           "key": "Cache-Control",

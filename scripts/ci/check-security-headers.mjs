@@ -194,6 +194,10 @@ const targets = [
   { type: 'vite', path: 'web/vite.config.ts' },
   // Deployment templates that must stay in sync with the canonical headers.
   { type: 'headers', path: 'web/public/_headers' },
+  { type: 'headers', path: 'deploy/cloudflare-pages/_headers' },
+  { type: 'netlify', path: 'netlify.toml' },
+  { type: 'vercel', path: 'deploy/vercel.json' },
+  // The primary Vercel deployment config lives at repo root.
   { type: 'vercel', path: 'vercel.json' },
   { type: 'nginx', path: 'deploy/nginx/nginx.conf' },
   { type: 'caddy', path: 'deploy/caddy/Caddyfile' },

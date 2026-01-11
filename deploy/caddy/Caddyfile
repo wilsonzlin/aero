@@ -20,7 +20,7 @@
 		# Basic hardening.
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
-		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
 
 		# CSP: allow same-origin ESM, WASM JIT via `wasm-unsafe-eval`, and module workers.
 		#
