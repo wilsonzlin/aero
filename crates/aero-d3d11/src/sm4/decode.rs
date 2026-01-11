@@ -313,6 +313,16 @@ fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4Deco
     // Optional explicit LOD operand.
     let explicit_lod = decode_src(r)?;
     if r.is_eof() {
+        // Reject `ld` variants that include a non-scalar trailing operand (e.g. `Load(.., offset)`).
+        // Those forms are not implemented yet and should not be mis-decoded as an explicit LOD.
+        if !explicit_lod
+            .swizzle
+            .0
+            .iter()
+            .all(|&c| c == explicit_lod.swizzle.0[0])
+        {
+            return Ok(Sm4Inst::Unknown { opcode: OPCODE_LD });
+        }
         return Ok(Sm4Inst::Ld {
             dst,
             coord,
@@ -539,6 +549,16 @@ fn try_decode_ld_like(
         Err(_) => return Ok(None),
     };
     if r.is_eof() {
+        // Avoid misclassifying `ld` variants with a non-scalar trailing operand as explicit-LOD
+        // texture loads.
+        if !explicit_lod
+            .swizzle
+            .0
+            .iter()
+            .all(|&c| c == explicit_lod.swizzle.0[0])
+        {
+            return Ok(None);
+        }
         return Ok(Some(Sm4Inst::Ld {
             dst,
             coord,

@@ -910,3 +910,47 @@ fn decodes_ld_with_explicit_lod_operand() {
         }
     );
 }
+
+#[test]
+fn does_not_decode_ld_with_offset_like_trailing_operand_as_explicit_lod() {
+    let mut body = Vec::<u32>::new();
+
+    // ld r0, r1, t0, r2.xy (this resembles `Texture2D.Load(..., offset)` which is not implemented).
+    let offset = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut ld = vec![opcode_token(
+        OPCODE_LD,
+        (1 + 2 + 2 + 2 + offset.len()) as u32,
+    )];
+    ld.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ld.extend_from_slice(&offset);
+    body.extend_from_slice(&ld);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = program.decode().expect("decode");
+
+    assert!(matches!(
+        module.instructions[0],
+        Sm4Inst::Unknown { opcode: OPCODE_LD }
+    ));
+}
