@@ -39,6 +39,11 @@ if not exist "%SYS_FILE%" (
   exit /b 1
 )
 
+rem Delete any existing catalogs first so the post-Inf2Cat existence checks
+rem cannot be satisfied by stale artifacts from a previous run.
+if exist "%AERO_CAT%" del /f /q "%AERO_CAT%" >nul 2>nul
+if exist "%LEGACY_CAT%" del /f /q "%LEGACY_CAT%" >nul 2>nul
+
 where Inf2Cat.exe >nul 2>nul
 if errorlevel 1 (
   echo ERROR: Inf2Cat.exe not found in PATH.
