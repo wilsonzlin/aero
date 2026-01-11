@@ -226,7 +226,9 @@ Aero mapping (current code):
       is how “WebUSB Promise pending” is represented).
     - `ControlResponse::Data(bytes)` → SETUP TD ACKs and the bytes become the source for subsequent
       IN DATA TDs.
-    - `ControlResponse::Ack` → SETUP TD ACKs and the control transfer skips to STATUS.
+    - `ControlResponse::Ack` → SETUP TD ACKs. If `wLength > 0`, the control pipe still completes a
+      one-shot **DATA (IN)** stage with a zero-length packet (ZLP), then proceeds to STATUS.
+      Otherwise (`wLength == 0`) it skips directly to STATUS.
     - `ControlResponse::Stall` → SETUP TD stalls.
   - For **Control-OUT** requests with `wLength > 0`, SETUP TD ACKs and the control pipe transitions to
     “collect OUT data bytes”.
