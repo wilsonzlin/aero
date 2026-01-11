@@ -18,7 +18,9 @@ describe("cloudfront signing", () => {
 
     const url = buildCloudFrontUrl({
       cloudfrontDomain: "d111111abcdef8.cloudfront.net",
-      path: "/images/u/i/v/disk.img",
+      // Wildcard resource: required so a single cookie set can cover `disk.img`,
+      // `manifest.json`, and `chunks/*` for chunked delivery.
+      path: "/images/u/i/v/*",
     });
 
     const expiresAt = new Date("2030-01-01T00:00:00.000Z");
@@ -34,9 +36,8 @@ describe("cloudfront signing", () => {
     const names = cookies.map((cookie) => cookie.name);
     expect(names).toContain("CloudFront-Key-Pair-Id");
     expect(names).toContain("CloudFront-Signature");
-    expect(names.some((name) => name === "CloudFront-Expires" || name === "CloudFront-Policy")).toBe(
-      true
-    );
+    expect(names).toContain("CloudFront-Policy");
+    expect(names).not.toContain("CloudFront-Expires");
 
     const formatted = formatSetCookie(cookies[0]);
     expect(formatted).toContain(`${cookies[0].name}=`);

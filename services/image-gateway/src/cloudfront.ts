@@ -15,6 +15,10 @@ export type StreamAuth =
   | { type: "url"; expiresAt: string }
   | { type: "none" };
 
+function epochSeconds(date: Date): number {
+  return Math.floor(date.getTime() / 1000);
+}
+
 function normalizeDomainToBaseUrl(domain: string): string {
   if (domain.startsWith("https://") || domain.startsWith("http://")) return domain;
   return `https://${domain}`;
@@ -39,11 +43,24 @@ export function createSignedCookies(params: {
   cookieSameSite?: CookieSameSite;
   cookiePartitioned?: boolean;
 }): SignedCookie[] {
+  // We intentionally use a custom policy so callers can scope cookies to a wildcard resource
+  // (e.g. `https://cdn.example.com/images/<owner>/<image>/<version>/*`). This enables using
+  // a single signed-cookie set for `disk.img`, `manifest.json`, and `chunks/*`.
+  const policy = JSON.stringify({
+    Statement: [
+      {
+        Resource: params.url,
+        Condition: {
+          DateLessThan: { "AWS:EpochTime": epochSeconds(params.expiresAt) },
+        },
+      },
+    ],
+  });
+
   const cookies = getSignedCookies({
-    url: params.url,
+    policy,
     keyPairId: params.keyPairId,
     privateKey: params.privateKeyPem,
-    dateLessThan: params.expiresAt.toISOString(),
   });
 
   const sameSite = params.cookieSameSite ?? "None";
