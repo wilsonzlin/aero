@@ -560,6 +560,38 @@ fn tss64_rsp0_and_ist_reads() {
 }
 
 #[test]
+fn tss64_read_helpers_reject_non_canonical_stack_pointers() {
+    let mut cpu = CpuState::new(CpuMode::Real);
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x8000);
+    let gdt_base = 0x100;
+    let tss_base = 0x2000u64;
+
+    let null = 0u64;
+    let code64 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, true, false, true);
+    let (tss_low, tss_high) = make_system_descriptor_16(tss_base, 0x67, 0x9, 0, true);
+    setup_gdt(&mut bus, gdt_base, &[null, code64, tss_low, tss_high]);
+    cpu.set_gdtr(gdt_base, (4 * 8 - 1) as u16);
+
+    cpu.set_cr4(cpu.control.cr4 | CR4_PAE);
+    cpu.set_efer(cpu.msr.efer | EFER_LME);
+    cpu.set_cr0(cpu.control.cr0 | CR0_PG);
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+    assert_eq!(cpu.cpu_mode(), CpuMode::Long);
+
+    cpu.load_tr(&mut bus, 0x10).unwrap();
+
+    let non_canonical = 0x0001_0000_0000_0000u64;
+    bus.load(tss_base + 4, &non_canonical.to_le_bytes());
+    assert_eq!(cpu.tss64_rsp0(&mut bus), Err(Exception::ts(0)));
+
+    bus.load(tss_base + 0x24, &non_canonical.to_le_bytes());
+    assert_eq!(cpu.tss64_ist(&mut bus, 1), Err(Exception::ts(0)));
+}
+
+#[test]
 fn tss64_read_helpers_enforce_tr_limit() {
     let mut cpu = CpuState::new(CpuMode::Real);
     cpu.set_protected_enable(true);

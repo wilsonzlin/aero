@@ -160,6 +160,17 @@ pub fn parse_descriptor_8(raw_low: u64) -> Descriptor {
     }
 }
 
+fn is_canonical(addr: u64) -> bool {
+    // Canonical if bits 63:48 are sign-extension of bit 47.
+    let sign = (addr >> 47) & 1;
+    let upper = addr >> 48;
+    if sign == 0 {
+        upper == 0
+    } else {
+        upper == 0xFFFF
+    }
+}
+
 pub fn parse_system_descriptor_16(raw_low: u64, raw_high: u64) -> SystemDescriptor {
     let (base_low, limit_raw, mut attrs) = parse_common_fields(raw_low);
     let base_high = (raw_high & 0xFFFF_FFFF) as u64;
@@ -429,7 +440,11 @@ impl CpuState {
             return Err(Exception::ts(0));
         }
         // 64-bit TSS: RSP0 at +4.
-        bus.read_u64(base + 4)
+        let rsp0 = bus.read_u64(base + 4)?;
+        if rsp0 == 0 || !is_canonical(rsp0) {
+            return Err(Exception::ts(0));
+        }
+        Ok(rsp0)
     }
 
     /// Reads the IST entry (1..=7) from a 64-bit TSS.
@@ -451,7 +466,11 @@ impl CpuState {
         if off.checked_add(7).map_or(true, |end| end > limit) {
             return Err(Exception::ts(0));
         }
-        bus.read_u64(base + off)
+        let rsp = bus.read_u64(base + off)?;
+        if rsp == 0 || !is_canonical(rsp) {
+            return Err(Exception::ts(0));
+        }
+        Ok(rsp)
     }
 
     /// Placeholder hook for the TSS I/O bitmap base.
