@@ -1168,7 +1168,7 @@ function renderAudioPanel(): HTMLElement {
       const output = await createAudioOutput({
         sampleRate: 48_000,
         latencyHint: "interactive",
-        ringBufferFrames: 16_384, // ~340ms @ 48k; gives the worker/WASM init some slack.
+        ringBufferFrames: 131_072, // ~2.7s @ 48k; gives the worker/WASM init ample slack in CI/headless.
       });
 
       // Expose for Playwright smoke tests / e2e assertions.
