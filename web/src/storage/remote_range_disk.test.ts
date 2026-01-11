@@ -464,4 +464,35 @@ describe("RemoteRangeDisk", () => {
 
     await expect(disk.readSectors(0, new Uint8Array(4096))).rejects.toThrow(/Content-Range mismatch/i);
   });
+
+  it("clearCache drops cached blocks and forces refetch", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      imageKey: "clear-cache",
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    const first = new Uint8Array(4096);
+    await disk.readSectors(0, first);
+    expect(first).toEqual(data.subarray(0, first.byteLength));
+    expect(server.stats.rangeGets).toBe(1);
+
+    await disk.clearCache();
+
+    const second = new Uint8Array(4096);
+    await disk.readSectors(0, second);
+    expect(second).toEqual(data.subarray(0, second.byteLength));
+    expect(server.stats.rangeGets).toBe(2);
+  });
 });
