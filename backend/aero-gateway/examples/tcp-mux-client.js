@@ -93,7 +93,7 @@ function encodeOpenPayload({ host, port, metadata }) {
 //
 // This script bootstraps an `aero_session` cookie via `POST /session`, then
 // opens a `/tcp-mux` WebSocket using the canonical `aero-tcp-mux-v1` framing.
-const [, , gatewayBase = "http://127.0.0.1:8080", targetHost = "127.0.0.1", targetPortStr = "7"] = process.argv;
+const [, , gatewayBase = "http://127.0.0.1:8080", targetHost = "example.com", targetPortStr = "80"] = process.argv;
 const targetPort = Number.parseInt(targetPortStr, 10);
 
 const cookie = await bootstrapSessionCookie(gatewayBase);
@@ -108,11 +108,14 @@ ws.binaryType = "arraybuffer";
 ws.on("open", () => {
   const streamId = 1;
   ws.send(encodeFrame(MsgType.OPEN, streamId, encodeOpenPayload({ host: targetHost, port: targetPort })));
-  ws.send(encodeFrame(MsgType.DATA, streamId, Buffer.from("hello from tcp-mux\n", "utf8")));
+  const request = `GET / HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\n\r\n`;
+  ws.send(encodeFrame(MsgType.DATA, streamId, Buffer.from(request, "utf8")));
 
+  // Closing is optional here because we set "Connection: close". We still send
+  // a FIN after a short delay to demonstrate half-close propagation.
   setTimeout(() => {
     ws.send(encodeFrame(MsgType.CLOSE, streamId, Buffer.from([CloseFlags.FIN])));
-  }, 250);
+  }, 1000);
 });
 
 let pending = Buffer.alloc(0);
