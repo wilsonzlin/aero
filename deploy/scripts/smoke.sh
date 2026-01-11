@@ -101,7 +101,7 @@ for headers in "$root_headers" "$health_headers" "$wasm_headers"; do
 
   assert_header_exact "X-Content-Type-Options" "nosniff" "$headers"
   assert_header_exact "Referrer-Policy" "no-referrer" "$headers"
-  assert_header_exact "Permissions-Policy" "camera=(), geolocation=(), microphone=(self)" "$headers"
+  assert_header_exact "Permissions-Policy" "camera=(), geolocation=(), microphone=(self), usb=(self)" "$headers"
 
   if ! echo "$headers" | grep -Eiq "^Content-Security-Policy: .*connect-src 'self'"; then
     echo "deploy smoke: missing/invalid Content-Security-Policy connect-src" >&2
