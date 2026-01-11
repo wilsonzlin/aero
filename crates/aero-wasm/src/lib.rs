@@ -2,6 +2,12 @@
 
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
+mod guest_layout;
+
+#[cfg(target_arch = "wasm32")]
+mod runtime_alloc;
+
 #[cfg(any(target_arch = "wasm32", test))]
 mod demo_renderer;
 
@@ -80,35 +86,6 @@ pub fn version() -> u32 {
 // Guest RAM vs runtime layout contract
 // -------------------------------------------------------------------------------------------------
 
-/// WebAssembly linear memory page size (wasm32 / wasm64).
-#[cfg(target_arch = "wasm32")]
-const WASM_PAGE_BYTES: u64 = 64 * 1024;
-
-/// Max pages addressable by wasm32 (2^32 bytes).
-#[cfg(target_arch = "wasm32")]
-const MAX_WASM32_PAGES: u64 = 65536;
-
-/// Bytes reserved at the bottom of the linear memory for the Rust/WASM runtime.
-///
-/// Guest physical address 0 maps to `guest_base = align_up(RUNTIME_RESERVED_BYTES, 64KiB)`.
-///
-/// NOTE: Keep this in sync with `web/src/runtime/shared_layout.ts` (`RUNTIME_RESERVED_BYTES`).
-#[cfg(target_arch = "wasm32")]
-const RUNTIME_RESERVED_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
-
-#[cfg(target_arch = "wasm32")]
-fn align_up(value: u64, alignment: u64) -> u64 {
-    if alignment == 0 {
-        return value;
-    }
-    let rem = value % alignment;
-    if rem == 0 {
-        value
-    } else {
-        value + (alignment - rem)
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct GuestRamLayout {
@@ -150,16 +127,16 @@ impl GuestRamLayout {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
-    let guest_base = align_up(RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES);
-    let base_pages = guest_base / WASM_PAGE_BYTES;
+    let guest_base = guest_layout::align_up(guest_layout::RUNTIME_RESERVED_BYTES, guest_layout::WASM_PAGE_BYTES);
+    let base_pages = guest_base / guest_layout::WASM_PAGE_BYTES;
 
     // `desired_bytes` is u32 so it cannot represent 4GiB; align up safely in u64.
-    let desired_bytes_aligned = align_up(desired_bytes as u64, WASM_PAGE_BYTES);
-    let desired_pages = desired_bytes_aligned / WASM_PAGE_BYTES;
+    let desired_bytes_aligned = guest_layout::align_up(desired_bytes as u64, guest_layout::WASM_PAGE_BYTES);
+    let desired_pages = desired_bytes_aligned / guest_layout::WASM_PAGE_BYTES;
 
-    let total_pages = (base_pages + desired_pages).min(MAX_WASM32_PAGES);
+    let total_pages = (base_pages + desired_pages).min(guest_layout::MAX_WASM32_PAGES);
     let guest_pages = total_pages.saturating_sub(base_pages);
-    let guest_size = guest_pages * WASM_PAGE_BYTES;
+    let guest_size = guest_pages * guest_layout::WASM_PAGE_BYTES;
 
     GuestRamLayout {
         guest_base: guest_base as u32,

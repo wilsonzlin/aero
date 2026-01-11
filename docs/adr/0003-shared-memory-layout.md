@@ -64,6 +64,7 @@ Contract:
 - Guest physical address `paddr` maps to linear address `guest_base + paddr`.
 - JS/TS code must bounds-check guest accesses against `[0, guest_size)` and reject anything outside.
 - The coordinator stores `{ guest_base, guest_size }` into the control/status `SharedArrayBuffer` so all workers (TS + WASM) agree on the mapping.
+- The WASM build uses a **bounded global allocator** so Rust heap allocations cannot grow past `runtime_reserved` and silently corrupt guest RAM.
 
 Reference implementation:
 

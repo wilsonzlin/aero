@@ -1,0 +1,32 @@
+//! Shared constants for the wasm32 guest RAM layout contract.
+//!
+//! Keep this module small and dependency-free: it is used by both the
+//! `guest_ram_layout` API and the wasm32 runtime allocator enforcement.
+
+#![cfg(target_arch = "wasm32")]
+
+/// WebAssembly linear memory page size (wasm32 / wasm64).
+pub const WASM_PAGE_BYTES: u64 = 64 * 1024;
+
+/// Max pages addressable by wasm32 (2^32 bytes).
+pub const MAX_WASM32_PAGES: u64 = 65536;
+
+/// Bytes reserved at the bottom of the linear memory for the Rust/WASM runtime.
+///
+/// Guest physical address 0 maps to `guest_base = align_up(RUNTIME_RESERVED_BYTES, 64KiB)`.
+///
+/// NOTE: Keep this in sync with `web/src/runtime/shared_layout.ts` (`RUNTIME_RESERVED_BYTES`).
+pub const RUNTIME_RESERVED_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
+
+pub const fn align_up(value: u64, alignment: u64) -> u64 {
+    if alignment == 0 {
+        return value;
+    }
+    let rem = value % alignment;
+    if rem == 0 {
+        value
+    } else {
+        value + (alignment - rem)
+    }
+}
+
