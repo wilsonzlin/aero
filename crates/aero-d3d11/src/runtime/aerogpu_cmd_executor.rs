@@ -1370,7 +1370,9 @@ impl AerogpuD3d11Executor {
                                     if min_depth > max_depth {
                                         std::mem::swap(&mut min_depth, &mut max_depth);
                                     }
-                                    pass.set_viewport(left, top, width, height, min_depth, max_depth);
+                                    pass.set_viewport(
+                                        left, top, width, height, min_depth, max_depth,
+                                    );
                                 }
                             } else {
                                 pass.set_viewport(
