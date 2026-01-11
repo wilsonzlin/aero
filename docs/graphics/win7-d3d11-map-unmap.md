@@ -42,6 +42,18 @@ The D3D11 runtime calls these UMD entrypoints through the immediate-context func
 * `D3D11DDI_DEVICECONTEXTFUNCS::pfnMap`
 * `D3D11DDI_DEVICECONTEXTFUNCS::pfnUnmap`
 
+Depending on the negotiated `D3D11DDI_INTERFACE_VERSION`, the Win7 runtime may also route specific Map patterns through additional entrypoints that should forward to the same underlying implementation/semantics:
+
+* Staging helpers:
+  * `D3D11DDI_DEVICECONTEXTFUNCS::pfnStagingResourceMap`
+  * `D3D11DDI_DEVICECONTEXTFUNCS::pfnStagingResourceUnmap`
+* Dynamic buffer helpers:
+  * `D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferMapDiscard`
+  * `D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferMapNoOverwrite`
+  * `D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicIABufferUnmap`
+  * `D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicConstantBufferMapDiscard`
+  * `D3D11DDI_DEVICECONTEXTFUNCS::pfnDynamicConstantBufferUnmap`
+
 The Win7-era `d3d11umddi.h` prototypes are conceptually:
 
 ```c
@@ -74,7 +86,7 @@ The runtime exposes callback tables to the UMD during device creation (`D3D11DDI
 For exact field names across Win7 WDK revisions (and a probe tool you can build against your installed headers), see:
 
 * [`win7-d3d10-11-umd-callbacks-and-fences.md`](./win7-d3d10-11-umd-callbacks-and-fences.md)
-* `drivers/aerogpu/tools/win7_wdk_probe/` (also prints `sizeof`/`offsetof` for `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK`)
+* [`drivers/aerogpu/tools/win7_wdk_probe`](../../drivers/aerogpu/tools/win7_wdk_probe/README.md) (also prints `sizeof`/`offsetof` for `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK`)
 
 Map/Unmap uses at least:
 
@@ -149,7 +161,7 @@ For the `d3d11_triangle` / `readback_sanity` staging readback path, **`RowPitch`
 On Win7, a D3D11 `Map` call is implemented by translating the map request to a runtime `pfnLockCb` request:
 
 * `D3D11_MAP_*` → `D3DDDICB_LOCKFLAGS` (`ReadOnly`, `Discard`, `NoOverwrite`, …)
-* `D3D11_MAP_FLAG_DO_NOT_WAIT` → `D3DDDICB_LOCKFLAGS::DonotWait`
+* `D3D11_MAP_FLAG_DO_NOT_WAIT` → `D3DDDICB_LOCKFLAGS::DoNotWait` (header spelling can vary)
 
 ### 3.2 Map-type table
 
@@ -172,12 +184,12 @@ Notes:
 
 | API flag | `D3DDDICB_LOCKFLAGS` bit | Required return on contention |
 |---|---|---|
-| `D3D11_MAP_FLAG_DO_NOT_WAIT` | `DonotWait = 1` | `DXGI_ERROR_WAS_STILL_DRAWING` |
+| `D3D11_MAP_FLAG_DO_NOT_WAIT` | `DoNotWait = 1` | `DXGI_ERROR_WAS_STILL_DRAWING` |
 
 Required behavior:
 
 * If DO_NOT_WAIT is set, the UMD **must not block** inside `pfnMap`.
-* The UMD must attempt `pfnLockCb` with `DonotWait = 1`.
+* The UMD must attempt `pfnLockCb` with `DoNotWait = 1`.
 * If the runtime reports the allocation is still in use (i.e. the lock would block), `pfnMap` must return `DXGI_ERROR_WAS_STILL_DRAWING` (not `S_FALSE`, not `E_FAIL`).
 
 ---
@@ -334,7 +346,9 @@ HRESULT APIENTRY Map(hContext, hResource, Subresource, MapType, MapFlags, pOut) 
   lock.hAllocation = res->allocation_handle;
   lock.SubresourceIndex = Subresource;
   lock.Flags = translate_map_to_lockflags(MapType);
-  lock.Flags.DonotWait = do_not_wait ? 1 : 0;
+  // Field spelling varies by WDK revision (`DoNotWait` / `DonotWait`); use the
+  // exact name exposed by the header you build against.
+  lock.Flags.DoNotWait = do_not_wait ? 1 : 0;
 
   HRESULT hr = callbacks->pfnLockCb(/* see header: typically hRTDevice */, &lock);
   if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
