@@ -114,6 +114,7 @@ type l2BackendDialInfo struct {
 	Origin            string
 	TokenQuery        string
 	SubprotocolHeader string
+	Cookie            string
 }
 
 func startTestL2BackendWithQueryToken(t *testing.T, expectedToken string) (wsURL string, upgradeCount *atomic.Int64, dialInfo *atomic.Value) {
@@ -139,6 +140,7 @@ func startTestL2BackendWithQueryToken(t *testing.T, expectedToken string) (wsURL
 			Origin:            strings.TrimSpace(r.Header.Get("Origin")),
 			TokenQuery:        r.URL.Query().Get("token"),
 			SubprotocolHeader: r.Header.Get("Sec-WebSocket-Protocol"),
+			Cookie:            strings.TrimSpace(r.Header.Get("Cookie")),
 		})
 
 		if expectedToken != "" && r.URL.Query().Get("token") != expectedToken {
@@ -637,5 +639,84 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 	}
 	if strings.Contains(info.SubprotocolHeader, "aero-l2-token.") {
 		t.Fatalf("expected no aero-l2-token subprotocol when backend token is unset (got %q)", info.SubprotocolHeader)
+	}
+}
+
+func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
+	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
+
+	relayCfg := relay.DefaultConfig()
+	relayCfg.L2BackendWSURL = backendURL
+	relayCfg.L2BackendForwardAeroSession = true
+	destPolicy := policy.NewDevDestinationPolicy()
+	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := true
+	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
+	if err != nil {
+		t.Fatalf("create data channel: %v", err)
+	}
+
+	openCh := make(chan struct{})
+	gotCh := make(chan []byte, 1)
+
+	dc.OnOpen(func() { close(openCh) })
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if msg.IsString {
+			return
+		}
+		select {
+		case gotCh <- append([]byte(nil), msg.Data...):
+		default:
+		}
+	})
+
+	headers := http.Header{
+		"Cookie": []string{"aero_session=sess123; other=ignored"},
+	}
+	exchangeOfferWithHeaders(t, baseURL+"/offer", headers, pc)
+
+	select {
+	case <-openCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for l2 datachannel open")
+	}
+
+	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	if err := dc.Send(ping); err != nil {
+		t.Fatalf("send ping: %v", err)
+	}
+
+	var got []byte
+	select {
+	case got = <-gotCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for pong")
+	}
+
+	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("pong mismatch: %x != %x", got, want)
+	}
+
+	if gotUpgrades := upgrades.Load(); gotUpgrades == 0 {
+		t.Fatalf("expected relay to dial backend websocket (got %d upgrades)", gotUpgrades)
+	}
+
+	infoAny := dialInfo.Load()
+	info, ok := infoAny.(l2BackendDialInfo)
+	if !ok {
+		t.Fatalf("unexpected dialInfo type: %T", infoAny)
+	}
+	if info.Cookie != "aero_session=sess123" {
+		t.Fatalf("backend Cookie=%q, want %q", info.Cookie, "aero_session=sess123")
 	}
 }
