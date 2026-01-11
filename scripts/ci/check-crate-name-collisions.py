@@ -50,8 +50,11 @@ class Pkg:
 def cargo_metadata() -> dict:
     try:
         proc = subprocess.run(
-            # Use `--locked` to enforce the repository-wide Cargo.lock policy (ADR 0012)
-            # and to ensure CI doesn't silently re-resolve dependencies if a lockfile is stale.
+            # This check only needs the workspace package list, so use `--no-deps` for speed.
+            #
+            # We still pass `--locked` to align with Aero's Cargo.lock policy (ADR 0012) and to
+            # fail fast if lockfiles are missing. Lockfile drift is enforced elsewhere in CI via
+            # `cargo metadata --locked` *without* `--no-deps`.
             ["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps"],
             check=True,
             stdout=subprocess.PIPE,
