@@ -42,6 +42,80 @@ if (!/^\d+\.\d+\.\d+$/.test(pinnedNode)) {
   process.exit(1);
 }
 
+const pinnedMajor = Number(pinnedNode.split(".")[0]);
+if (!Number.isInteger(pinnedMajor) || pinnedMajor <= 0) {
+  console.error(`error: invalid Node major version parsed from .nvmrc: ${JSON.stringify(pinnedNode)}`);
+  process.exit(1);
+}
+
+const expectedEngines = [`>=${pinnedNode} <${pinnedMajor + 1}`, `>=${pinnedNode} <${pinnedMajor + 1}.0.0`];
+
+// Ensure the repo's package.json "engines" stays in sync with the pinned .nvmrc
+// so local tooling + CI agree on what's supported.
+const rootPackageJsonPath = path.join(repoRoot, "package.json");
+let rootPackageJson;
+try {
+  rootPackageJson = JSON.parse(fs.readFileSync(rootPackageJsonPath, "utf8"));
+} catch (err) {
+  console.error(`error: unable to read/parse ${rel(rootPackageJsonPath)}`);
+  process.exit(1);
+}
+
+const rootEngines = rootPackageJson?.engines?.node;
+if (typeof rootEngines !== "string" || rootEngines.trim() === "") {
+  console.error(`error: ${rel(rootPackageJsonPath)} is missing engines.node`);
+  process.exit(1);
+}
+if (!expectedEngines.includes(rootEngines.trim())) {
+  console.error(`error: ${rel(rootPackageJsonPath)} engines.node is out of sync with .nvmrc`);
+  console.error(`- .nvmrc: ${pinnedNode}`);
+  console.error(`- engines.node: ${rootEngines}`);
+  console.error(`- expected: one of ${expectedEngines.map((v) => JSON.stringify(v)).join(", ")}`);
+  process.exit(1);
+}
+
+function getWorkspacePatterns(workspaces) {
+  if (Array.isArray(workspaces)) return workspaces;
+  if (workspaces && typeof workspaces === "object" && Array.isArray(workspaces.packages)) return workspaces.packages;
+  return [];
+}
+
+function expandWorkspacePattern(pattern) {
+  const normalized = pattern.replace(/\\/g, "/");
+  if (!normalized.includes("*")) return [normalized];
+
+  // Support the common "dir/*" form used by npm workspaces.
+  if (normalized.endsWith("/*") && !normalized.slice(0, -2).includes("*")) {
+    const base = normalized.slice(0, -2);
+    const absBase = path.join(repoRoot, base);
+    if (!fs.existsSync(absBase)) return [];
+    return fs
+      .readdirSync(absBase, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(base, entry.name).replace(/\\/g, "/"));
+  }
+
+  // Anything more complex is ignored (keep this check lightweight).
+  return [];
+}
+
+// Ensure every workspace package.json declares the same engines.node string as the
+// repo root (so CI-executed packages don't drift).
+const workspacePatterns = getWorkspacePatterns(rootPackageJson.workspaces);
+const workspaceDirs = workspacePatterns.flatMap(expandWorkspacePattern);
+for (const dir of workspaceDirs) {
+  const pkgPath = path.join(repoRoot, dir, "package.json");
+  if (!fs.existsSync(pkgPath)) continue;
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  const engines = pkg?.engines?.node;
+  if (engines !== rootEngines) {
+    console.error(`error: engines.node mismatch in ${rel(pkgPath)}`);
+    console.error(`- expected: ${rootEngines}`);
+    console.error(`- actual:   ${engines ?? "(missing)"}`);
+    process.exit(1);
+  }
+}
+
 if (!fs.existsSync(workflowsDir)) {
   console.error(`error: workflows directory not found: ${rel(workflowsDir)}`);
   process.exit(1);
