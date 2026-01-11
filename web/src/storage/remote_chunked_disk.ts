@@ -2,7 +2,8 @@ import { openFileHandle, removeOpfsEntry } from "../platform/opfs";
 import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";
-import { pickDefaultBackend, type DiskBackend } from "./metadata";
+import { RemoteCacheManager, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
+import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR, pickDefaultBackend, type DiskBackend } from "./metadata";
 
 export type ChunkedDiskManifestV1 = {
   schema: "aero.chunked-disk-image.v1";
@@ -25,17 +26,7 @@ type ParsedChunkedDiskManifest = {
   chunkSha256: Array<string | null>;
 };
 
-type RemoteChunkedDiskCacheMeta = {
-  version: 1;
-  manifestUrl: string;
-  totalSize: number;
-  chunkSize: number;
-  chunkCount: number;
-  chunkIndexWidth: number;
-  downloaded: ByteRange[];
-  accessCounter: number;
-  chunkLastAccess: Record<string, number>;
-};
+type RemoteChunkedDiskCacheMeta = RemoteCacheMetaV1;
 
 export type RemoteChunkedDiskOptions = {
   /**
@@ -149,14 +140,118 @@ class OpfsStore implements BinaryStore {
   }
 }
 
+const REMOTE_CACHE_ROOT_PATH = `${OPFS_AERO_DIR}/${OPFS_DISKS_DIR}/${OPFS_REMOTE_CACHE_DIR}`;
+
+class StoreNotFoundError extends Error {
+  override name = "NotFoundError";
+}
+
+function joinOpfsPath(prefix: string, name: string): string {
+  if (!prefix) return name;
+  return `${prefix}/${name}`;
+}
+
+class StoreFile implements RemoteCacheFile {
+  constructor(private readonly data: Uint8Array) {}
+
+  get size(): number {
+    return this.data.byteLength;
+  }
+
+  async text(): Promise<string> {
+    return new TextDecoder().decode(this.data);
+  }
+
+  async arrayBuffer(): Promise<ArrayBuffer> {
+    return this.data.slice().buffer;
+  }
+}
+
+class StoreWritable implements RemoteCacheWritableFileStream {
+  private readonly chunks: Uint8Array[] = [];
+  private closed = false;
+
+  constructor(
+    private readonly store: BinaryStore,
+    private readonly path: string,
+    baseData?: Uint8Array,
+  ) {
+    if (baseData && baseData.byteLength > 0) {
+      this.chunks.push(baseData);
+    }
+  }
+
+  async write(data: string | Uint8Array): Promise<void> {
+    if (this.closed) throw new Error("writable already closed");
+    if (typeof data === "string") {
+      this.chunks.push(new TextEncoder().encode(data));
+    } else {
+      this.chunks.push(data);
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    const total = this.chunks.reduce((sum, c) => sum + c.byteLength, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of this.chunks) {
+      out.set(c, off);
+      off += c.byteLength;
+    }
+    await this.store.write(this.path, out);
+  }
+}
+
+class StoreFileHandle implements RemoteCacheFileHandle {
+  constructor(
+    private readonly store: BinaryStore,
+    private readonly path: string,
+  ) {}
+
+  async getFile(): Promise<RemoteCacheFile> {
+    const bytes = await this.store.read(this.path);
+    if (!bytes) throw new StoreNotFoundError(`missing file: ${this.path}`);
+    return new StoreFile(bytes);
+  }
+
+  async createWritable(options?: { keepExistingData?: boolean }): Promise<RemoteCacheWritableFileStream> {
+    const base =
+      options?.keepExistingData === true
+        ? await this.store.read(this.path).then((b) => (b ? b.slice() : undefined))
+        : undefined;
+    return new StoreWritable(this.store, this.path, base);
+  }
+}
+
+class StoreDirHandle implements RemoteCacheDirectoryHandle {
+  constructor(
+    private readonly store: BinaryStore,
+    private readonly prefix: string,
+  ) {}
+
+  async getDirectoryHandle(name: string, _options?: { create?: boolean }): Promise<RemoteCacheDirectoryHandle> {
+    return new StoreDirHandle(this.store, joinOpfsPath(this.prefix, name));
+  }
+
+  async getFileHandle(name: string, _options?: { create?: boolean }): Promise<RemoteCacheFileHandle> {
+    return new StoreFileHandle(this.store, joinOpfsPath(this.prefix, name));
+  }
+
+  async removeEntry(name: string, options?: { recursive?: boolean }): Promise<void> {
+    await this.store.remove(joinOpfsPath(this.prefix, name), { recursive: options?.recursive === true });
+  }
+}
+
 type ChunkCache = {
   getChunk(chunkIndex: number): Promise<Uint8Array | null>;
   putChunk(chunkIndex: number, bytes: Uint8Array): Promise<void>;
   flush(): Promise<void>;
   clear(): Promise<void>;
-  close?: () => void;
   getCachedBytes(): number;
   getCacheLimitBytes(): number | null;
+  close?: () => void;
 };
 
 class IdbChunkCache implements ChunkCache {
@@ -381,17 +476,16 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
     .join("");
 }
 
-async function stableCacheKey(url: string): Promise<string> {
-  // Use SHA-256 when available, fall back to a filesystem-safe encoding.
+function stableImageIdFromUrl(url: string): string {
+  // Use URL parsing when possible so we can drop querystring auth material.
+  // Fall back to string splitting for odd / non-standard URLs.
   try {
-    const data = new TextEncoder().encode(url);
-    const digest = await crypto.subtle.digest("SHA-256", data);
-    const bytes = new Uint8Array(digest);
-    return Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+    const base = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+    const u = base ? new URL(url, base) : new URL(url);
+    return `${u.origin}${u.pathname}`;
   } catch {
-    return encodeURIComponent(url).replaceAll("%", "_").slice(0, 128);
+    const noHash = url.split("#", 1)[0] ?? url;
+    return (noHash.split("?", 1)[0] ?? noHash).trim();
   }
 }
 
@@ -417,7 +511,6 @@ async function retryWithBackoff<T>(
 }
 
 class RemoteChunkCache implements ChunkCache {
-  private metaLoaded = false;
   private meta: RemoteChunkedDiskCacheMeta;
   private rangeSet = new RangeSet();
   private metaWriteChain: Promise<void> = Promise.resolve();
@@ -425,22 +518,19 @@ class RemoteChunkCache implements ChunkCache {
 
   constructor(
     private readonly store: BinaryStore,
+    private readonly manager: RemoteCacheManager,
     private readonly cacheKey: string,
-    private readonly manifestUrl: string,
+    private readonly cacheKeyParts: RemoteCacheKeyParts,
+    private readonly validators: { sizeBytes: number; etag: string | null; lastModified: string | null },
     private readonly manifest: ParsedChunkedDiskManifest,
     private readonly cacheLimitBytes: number | null,
+    meta: RemoteChunkedDiskCacheMeta,
   ) {
-    this.meta = {
-      version: 1,
-      manifestUrl,
-      totalSize: manifest.totalSize,
-      chunkSize: manifest.chunkSize,
-      chunkCount: manifest.chunkCount,
-      chunkIndexWidth: manifest.chunkIndexWidth,
-      downloaded: [],
-      accessCounter: 0,
-      chunkLastAccess: {},
-    };
+    this.meta = meta;
+    this.meta.accessCounter ??= 0;
+    this.meta.chunkLastAccess ??= {};
+    for (const r of meta.cachedRanges) this.rangeSet.insert(r.start, r.end);
+    this.cachedBytes = this.rangeSet.totalLen();
   }
 
   getCachedBytes(): number {
@@ -452,11 +542,7 @@ class RemoteChunkCache implements ChunkCache {
   }
 
   private chunkPath(chunkIndex: number): string {
-    return `state/remote-cache/${this.cacheKey}/chunks/${chunkIndex}.bin`;
-  }
-
-  private metaPath(): string {
-    return `state/remote-cache/${this.cacheKey}/meta.json`;
+    return `${REMOTE_CACHE_ROOT_PATH}/${this.cacheKey}/chunks/${chunkIndex}.bin`;
   }
 
   private chunkRange(chunkIndex: number): ByteRange {
@@ -466,40 +552,12 @@ class RemoteChunkCache implements ChunkCache {
   }
 
   private noteAccess(chunkIndex: number): void {
-    this.meta.accessCounter += 1;
-    this.meta.chunkLastAccess[String(chunkIndex)] = this.meta.accessCounter;
-  }
-
-  async loadMeta(): Promise<void> {
-    if (this.metaLoaded) return;
-    this.metaLoaded = true;
-
-    const raw = await this.store.read(this.metaPath());
-    if (!raw) return;
-
-    try {
-      const parsed = JSON.parse(new TextDecoder().decode(raw)) as RemoteChunkedDiskCacheMeta;
-      const compatible =
-        parsed &&
-        parsed.version === 1 &&
-        parsed.manifestUrl === this.manifestUrl &&
-        parsed.totalSize === this.manifest.totalSize &&
-        parsed.chunkSize === this.manifest.chunkSize &&
-        parsed.chunkCount === this.manifest.chunkCount &&
-        parsed.chunkIndexWidth === this.manifest.chunkIndexWidth;
-      if (!compatible) return;
-      this.meta = parsed;
-      for (const r of parsed.downloaded) {
-        this.rangeSet.insert(r.start, r.end);
-      }
-      this.cachedBytes = this.rangeSet.totalLen();
-    } catch {
-      // ignore corrupt meta
-    }
+    this.meta.accessCounter = (this.meta.accessCounter ?? 0) + 1;
+    (this.meta.chunkLastAccess ??= {})[String(chunkIndex)] = this.meta.accessCounter;
+    this.meta.lastAccessedAtMs = Date.now();
   }
 
   async getChunk(chunkIndex: number): Promise<Uint8Array | null> {
-    await this.loadMeta();
     const r = this.chunkRange(chunkIndex);
     if (!this.rangeSet.containsRange(r.start, r.end)) return null;
 
@@ -509,8 +567,8 @@ class RemoteChunkCache implements ChunkCache {
       // Heal: metadata said cached but file missing/corrupt.
       await this.store.remove(this.chunkPath(chunkIndex)).catch(() => {});
       this.rangeSet.remove(r.start, r.end);
-      delete this.meta.chunkLastAccess[String(chunkIndex)];
-      this.meta.downloaded = this.rangeSet.getRanges();
+      delete (this.meta.chunkLastAccess ?? {})[String(chunkIndex)];
+      this.meta.cachedRanges = this.rangeSet.getRanges();
       this.cachedBytes = this.rangeSet.totalLen();
       await this.persistMeta();
       return null;
@@ -522,7 +580,6 @@ class RemoteChunkCache implements ChunkCache {
   }
 
   async putChunk(chunkIndex: number, bytes: Uint8Array): Promise<void> {
-    await this.loadMeta();
     const r = this.chunkRange(chunkIndex);
     const expectedLen = r.end - r.start;
     if (bytes.length !== expectedLen) {
@@ -533,33 +590,28 @@ class RemoteChunkCache implements ChunkCache {
     this.rangeSet.insert(r.start, r.end);
     this.cachedBytes = this.rangeSet.totalLen();
     this.noteAccess(chunkIndex);
-    this.meta.downloaded = this.rangeSet.getRanges();
+    this.meta.cachedRanges = this.rangeSet.getRanges();
     await this.persistMeta();
     await this.enforceCacheLimit(chunkIndex);
   }
 
   async flush(): Promise<void> {
-    await this.loadMeta();
     await this.persistMeta();
   }
 
   async clear(): Promise<void> {
-    await this.store.remove(`state/remote-cache/${this.cacheKey}`, { recursive: true });
-    this.meta = {
-      version: 1,
-      manifestUrl: this.manifestUrl,
-      totalSize: this.manifest.totalSize,
-      chunkSize: this.manifest.chunkSize,
-      chunkCount: this.manifest.chunkCount,
-      chunkIndexWidth: this.manifest.chunkIndexWidth,
-      downloaded: [],
-      accessCounter: 0,
-      chunkLastAccess: {},
-    };
+    await this.manager.clearCache(this.cacheKey);
+    const reopened = await this.manager.openCache(this.cacheKeyParts, {
+      chunkSizeBytes: this.manifest.chunkSize,
+      validators: this.validators,
+    });
+    this.meta = reopened.meta;
+    this.meta.accessCounter ??= 0;
+    this.meta.chunkLastAccess ??= {};
+
     this.rangeSet = new RangeSet();
     this.cachedBytes = 0;
     this.metaWriteChain = Promise.resolve();
-    this.metaLoaded = true;
   }
 
   private async persistMeta(): Promise<void> {
@@ -570,9 +622,7 @@ class RemoteChunkCache implements ChunkCache {
         // Keep the chain alive even if a previous write failed.
       })
       .then(async () => {
-        const json = JSON.stringify(this.meta, null, 2);
-        const data = new TextEncoder().encode(json);
-        await this.store.write(this.metaPath(), data);
+        await this.manager.writeMeta(this.cacheKey, this.meta);
       });
     await this.metaWriteChain;
   }
@@ -582,7 +632,7 @@ class RemoteChunkCache implements ChunkCache {
     while (this.cachedBytes > this.cacheLimitBytes) {
       let lruChunk: number | null = null;
       let lruCounter = Number.POSITIVE_INFINITY;
-      for (const [chunkStr, counter] of Object.entries(this.meta.chunkLastAccess)) {
+      for (const [chunkStr, counter] of Object.entries(this.meta.chunkLastAccess ?? {})) {
         const idx = Number(chunkStr);
         if (!Number.isFinite(idx) || idx === protectedChunk) continue;
         if (counter < lruCounter) {
@@ -595,8 +645,8 @@ class RemoteChunkCache implements ChunkCache {
       const r = this.chunkRange(lruChunk);
       await this.store.remove(this.chunkPath(lruChunk)).catch(() => {});
       this.rangeSet.remove(r.start, r.end);
-      delete this.meta.chunkLastAccess[String(lruChunk)];
-      this.meta.downloaded = this.rangeSet.getRanges();
+      delete (this.meta.chunkLastAccess ?? {})[String(lruChunk)];
+      this.meta.cachedRanges = this.rangeSet.getRanges();
       this.cachedBytes = this.rangeSet.totalLen();
       await this.persistMeta();
     }
@@ -693,19 +743,40 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const json = (await resp.json()) as unknown;
     const manifest = parseManifest(json);
 
-    const cacheKey = await stableCacheKey(manifestUrl);
+    const manifestV1 = json as ChunkedDiskManifestV1;
+    const imageId =
+      typeof manifestV1.imageId === "string" && manifestV1.imageId.trim().length > 0
+        ? manifestV1.imageId
+        : stableImageIdFromUrl(manifestUrl);
+    const cacheKeyParts: RemoteCacheKeyParts = { imageId, version: manifestV1.version, deliveryType: "chunked" };
+    const validators = {
+      sizeBytes: manifest.totalSize,
+      etag: resp.headers.get("etag"),
+      lastModified: resp.headers.get("last-modified"),
+    };
+
     let cache: ChunkCache;
     if (options.store) {
       // Tests can inject an in-memory store to avoid depending on OPFS/IDB.
-      const opfsCache = new RemoteChunkCache(resolved.store, cacheKey, manifestUrl, manifest, resolved.cacheLimitBytes);
-      await opfsCache.loadMeta();
-      cache = opfsCache;
+      const manager = new RemoteCacheManager(new StoreDirHandle(resolved.store, REMOTE_CACHE_ROOT_PATH));
+      const opened = await manager.openCache(cacheKeyParts, { chunkSizeBytes: manifest.chunkSize, validators });
+      cache = new RemoteChunkCache(
+        resolved.store,
+        manager,
+        opened.cacheKey,
+        cacheKeyParts,
+        validators,
+        manifest,
+        resolved.cacheLimitBytes,
+        opened.meta,
+      );
     } else if (resolved.cacheBackend === "idb" && typeof indexedDB !== "undefined") {
+      const cacheKey = await RemoteCacheManager.deriveCacheKey(cacheKeyParts);
       const idbCache = await IdbRemoteChunkCache.open({
         cacheKey,
         signature: {
-          imageId: (json as ChunkedDiskManifestV1).imageId ?? manifestUrl,
-          version: (json as ChunkedDiskManifestV1).version,
+          imageId,
+          version: manifestV1.version,
           etag: resp.headers.get("etag"),
           sizeBytes: manifest.totalSize,
           chunkSize: manifest.chunkSize,
@@ -715,10 +786,18 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       const status = await idbCache.getStatus();
       cache = new IdbChunkCache(idbCache, manifest, status);
     } else {
-      const store = hasOpfsRoot() ? new OpfsStore() : new MemoryStore();
-      const opfsCache = new RemoteChunkCache(store, cacheKey, manifestUrl, manifest, resolved.cacheLimitBytes);
-      await opfsCache.loadMeta();
-      cache = opfsCache;
+      const manager = new RemoteCacheManager(new StoreDirHandle(resolved.store, REMOTE_CACHE_ROOT_PATH));
+      const opened = await manager.openCache(cacheKeyParts, { chunkSizeBytes: manifest.chunkSize, validators });
+      cache = new RemoteChunkCache(
+        resolved.store,
+        manager,
+        opened.cacheKey,
+        cacheKeyParts,
+        validators,
+        manifest,
+        resolved.cacheLimitBytes,
+        opened.meta,
+      );
     }
 
     return new RemoteChunkedDisk(manifestUrl, manifest, cache, {
