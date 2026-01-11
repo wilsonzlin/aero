@@ -824,4 +824,59 @@ mod tests {
         let resp = snd.handle_control_request(&req);
         assert_eq!(status(&resp), VIRTIO_SND_S_NOT_SUPP);
     }
+
+    #[test]
+    fn control_pcm_info_reports_playback_and_capture_streams() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+
+        let mut req = Vec::new();
+        req.extend_from_slice(&VIRTIO_SND_R_PCM_INFO.to_le_bytes());
+        req.extend_from_slice(&0u32.to_le_bytes()); // start_id
+        req.extend_from_slice(&2u32.to_le_bytes()); // count
+
+        let resp = snd.handle_control_request(&req);
+        assert_eq!(status(&resp), VIRTIO_SND_S_OK);
+        assert_eq!(resp.len(), 4 + 32 + 32);
+
+        let playback = &resp[4..4 + 32];
+        assert_eq!(
+            u32::from_le_bytes(playback[0..4].try_into().unwrap()),
+            PLAYBACK_STREAM_ID
+        );
+        assert_eq!(playback[24], VIRTIO_SND_D_OUTPUT);
+        assert_eq!(playback[25], PLAYBACK_CHANNELS);
+        assert_eq!(playback[26], PLAYBACK_CHANNELS);
+
+        let capture = &resp[4 + 32..4 + 64];
+        assert_eq!(
+            u32::from_le_bytes(capture[0..4].try_into().unwrap()),
+            CAPTURE_STREAM_ID
+        );
+        assert_eq!(capture[24], VIRTIO_SND_D_INPUT);
+        assert_eq!(capture[25], CAPTURE_CHANNELS);
+        assert_eq!(capture[26], CAPTURE_CHANNELS);
+    }
+
+    #[test]
+    fn control_pcm_info_respects_requested_range() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+
+        let mut req = Vec::new();
+        req.extend_from_slice(&VIRTIO_SND_R_PCM_INFO.to_le_bytes());
+        req.extend_from_slice(&CAPTURE_STREAM_ID.to_le_bytes()); // start_id
+        req.extend_from_slice(&1u32.to_le_bytes()); // count
+
+        let resp = snd.handle_control_request(&req);
+        assert_eq!(status(&resp), VIRTIO_SND_S_OK);
+        assert_eq!(resp.len(), 4 + 32);
+
+        let entry = &resp[4..];
+        assert_eq!(
+            u32::from_le_bytes(entry[0..4].try_into().unwrap()),
+            CAPTURE_STREAM_ID
+        );
+        assert_eq!(entry[24], VIRTIO_SND_D_INPUT);
+        assert_eq!(entry[25], CAPTURE_CHANNELS);
+        assert_eq!(entry[26], CAPTURE_CHANNELS);
+    }
 }
