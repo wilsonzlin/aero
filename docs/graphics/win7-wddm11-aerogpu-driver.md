@@ -810,7 +810,15 @@ struct aerogpu_submit_desc {
   uint64_t reserved0;
 };
 ```
-  
+
+Descriptor validation rules (see `drivers/aerogpu/protocol/aerogpu_ring.h`):
+
+- `cmd_gpa` and `cmd_size_bytes` must be both zero (empty submission) or both non-zero.
+- When `cmd_gpa/cmd_size_bytes` are non-zero, `cmd_gpa + cmd_size_bytes` must not overflow.
+- `alloc_table_gpa` and `alloc_table_size_bytes` must be both zero (absent) or both non-zero (present).
+- When `alloc_table_gpa/alloc_table_size_bytes` are non-zero, `alloc_table_gpa + alloc_table_size_bytes`
+  must not overflow.
+
 The command buffer referenced by `cmd_gpa/cmd_size_bytes` is an AeroGPU command stream (`struct aerogpu_cmd_stream_header` + packets) defined in `drivers/aerogpu/protocol/aerogpu_cmd.h`.
   
 ### 7.4 Fence/completion signaling path
