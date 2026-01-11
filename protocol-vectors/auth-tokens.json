@@ -178,6 +178,36 @@
         "iat": 1700000000
       },
       {
+        "name": "valid.originOnly",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLW9yaWdpbi1vbmx5Iiwib3JpZ2luIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0In0.QboipMbxWFkaynPW8TZOk7z4t6FrpMi0RSuybtiaOro",
+        "nowSec": 1700000000,
+        "sid": "sid-origin-only",
+        "exp": 1700000060,
+        "iat": 1700000000,
+        "origin": "https://app.example.test"
+      },
+      {
+        "name": "valid.audIssOnly",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLWF1ZC1pc3Mtb25seSIsImF1ZCI6ImFlcm8tdWRwLXJlbGF5IiwiaXNzIjoiYWVyby1nYXRld2F5In0.ETzelhNkmne8Oei4mEK6Uz8h6FUDsvdKhG65p64l6Bc",
+        "nowSec": 1700000000,
+        "sid": "sid-aud-iss-only",
+        "exp": 1700000060,
+        "iat": 1700000000,
+        "aud": "aero-udp-relay",
+        "iss": "aero-gateway"
+      },
+      {
+        "name": "valid.shortTtl",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDAwMSwic2lkIjoic2lkLXNob3J0LXR0bCJ9.kKOp53E2dM4Xw_UdrMPCK6L6Vkx0OXEReyfsVR39ekw",
+        "nowSec": 1700000000,
+        "sid": "sid-short-ttl",
+        "exp": 1700000001,
+        "iat": 1700000000
+      },
+      {
         "name": "badSignature",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.tVuxJptb-YWFqluNxv89qG0sd_jFcDIzVGn2ojD9wGA",
@@ -188,6 +218,20 @@
         "name": "expired",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTY5OTk5OTk5OSwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.R3mPvJyzjde3jDsJiIkzzGxRAyAzTB3akVnV1GZMUkc",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "notYetValid.nbfInFuture",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLW5iZi1mdXR1cmUiLCJuYmYiOjE3MDAwMDAwMTB9.wHfMmprNn0u42UzxWZqTcspQ6l20wXQA8OyEgIhKiNA",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.nbfString",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLW5iZi1zdHJpbmciLCJuYmYiOiIxNzAwMDAwMDEwIn0.pX95gUrPzM6X6Kt982DtGHOsMM5fQ2BCya6n1rugEJ0",
         "nowSec": 1700000000,
         "expectError": true
       },
