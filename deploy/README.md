@@ -363,22 +363,27 @@ You can validate that the TLS + upgrade path works with a CLI client like
 # If you haven't trusted the local Caddy CA yet, you may need:
 #   NODE_TLS_REJECT_UNAUTHORIZED=0
 #
+# Step 1: create a cookie-backed session (copy the `aero_session=...` value from Set-Cookie).
+curl -k -i -X POST https://localhost/session -H 'content-type: application/json' -d '{}'
+#
 # Canonical (v1):
 #   /tcp?v=1&host=<hostname-or-ip>&port=<port>
-NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&host=example.com&port=80"
+NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat \
+  -c "wss://localhost/tcp?v=1&host=example.com&port=80" \
+  -H "Cookie: aero_session=<paste-from-Set-Cookie>" \
+  -o https://localhost
 
 # Compatibility form (legacy; also supported by the gateway):
-# NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&target=example.com:80"
+# NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat \
+#   -c "wss://localhost/tcp?v=1&target=example.com:80" \
+#   -H "Cookie: aero_session=<paste-from-Set-Cookie>" \
+#   -o https://localhost
 ```
 
 If you see a successful handshake but the connection immediately closes, the
 gateway may be rejecting the query parameters or target.
 
-> Note: the gateway requires a cookie-backed session for `/tcp`. Create one first with:
->
-> ```bash
-> curl -k -i -X POST https://localhost/session -H 'content-type: application/json' -d '{}'
-> ```
+> Note: `/tcp` is a privileged endpoint; the gateway rejects upgrades without an `aero_session` cookie.
 
 ## L2 tunnel proxy (/l2)
 
