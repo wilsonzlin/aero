@@ -412,6 +412,10 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetAutoGenFilterType (stub)";
     case D3d9TraceFunc::DeviceGenerateMipSubLevels:
       return "Device::GenerateMipSubLevels (stub)";
+    case D3d9TraceFunc::DeviceSetPriority:
+      return "Device::SetPriority (stub)";
+    case D3d9TraceFunc::DeviceGetPriority:
+      return "Device::GetPriority (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

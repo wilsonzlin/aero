@@ -247,6 +247,8 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnSetGPUThreadPriority);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetGPUThreadPriority);
 AEROGPU_DEFINE_HAS_MEMBER(pfnCheckResourceResidency);
 AEROGPU_DEFINE_HAS_MEMBER(pfnQueryResourceResidency);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetPriority);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetPriority);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetDisplayModeEx);
 AEROGPU_DEFINE_HAS_MEMBER(pfnComposeRects);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetConvolutionMonoKernel);
@@ -434,6 +436,8 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceS
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetAutoGenFilterType, D3d9TraceFunc::DeviceSetAutoGenFilterType, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetAutoGenFilterType, D3d9TraceFunc::DeviceGetAutoGenFilterType, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGenerateMipSubLevels, D3d9TraceFunc::DeviceGenerateMipSubLevels, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetPriority, D3d9TraceFunc::DeviceSetPriority, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPriority, D3d9TraceFunc::DeviceGetPriority, D3DERR_NOTAVAILABLE);
 
 // Cursor, palette, and clip-status management is not implemented yet, but these
 // can be treated as benign no-ops for bring-up.
@@ -9096,6 +9100,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   if constexpr (aerogpu_has_member_pfnQueryResourceResidency<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnQueryResourceResidency, device_query_resource_residency);
+  }
+  if constexpr (aerogpu_has_member_pfnSetPriority<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnSetPriority,
+                           aerogpu_d3d9_stub_pfnSetPriority<decltype(pDeviceFuncs->pfnSetPriority)>::pfnSetPriority);
+  }
+  if constexpr (aerogpu_has_member_pfnGetPriority<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetPriority,
+                           aerogpu_d3d9_stub_pfnGetPriority<decltype(pDeviceFuncs->pfnGetPriority)>::pfnGetPriority);
   }
   if constexpr (aerogpu_has_member_pfnGetDisplayModeEx<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetDisplayModeEx, device_get_display_mode_ex);

@@ -192,6 +192,7 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnSetNPatchMode` / `pfnSetStreamSourceFreq` / `pfnSetGammaRamp` (no-op, returns `S_OK`)
 - `pfnSetConvolutionMonoKernel` (no-op, returns `S_OK`)
 - `pfnSetAutoGenFilterType`, `pfnGetAutoGenFilterType`, `pfnGenerateMipSubLevels` (stubbed for completeness)
+- `pfnSetPriority` / `pfnGetPriority` (stubbed for completeness)
 - `pfnCreateStateBlock` / `pfnDeleteStateBlock` / `pfnCaptureStateBlock` / `pfnApplyStateBlock` / `pfnValidateDevice`
   (returns `D3DERR_NOTAVAILABLE`)
 - `pfnSetSoftwareVertexProcessing`, `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`,
