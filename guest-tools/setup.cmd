@@ -254,6 +254,7 @@ endlocal & exit /b 0
 call :log ""
 call :log "==================== Summary ===================="
 call :log "OS architecture: %OS_ARCH%"
+call :log "Effective signing_policy: %SIGNING_POLICY%"
 call :log "Storage service: %AERO_VIRTIO_BLK_SERVICE%"
 if "%ARG_SKIP_STORAGE%"=="1" (
   call :log "Storage preseed: skipped (/skipstorage)"
