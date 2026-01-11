@@ -1381,6 +1381,12 @@ pub struct AeroApi {
     version: String,
 }
 
+impl Default for AeroApi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[wasm_bindgen]
 impl AeroApi {
     #[wasm_bindgen(constructor)]
@@ -1392,12 +1398,6 @@ impl AeroApi {
 
     pub fn version(&self) -> String {
         self.version.clone()
-    }
-}
-
-impl Default for AeroApi {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
