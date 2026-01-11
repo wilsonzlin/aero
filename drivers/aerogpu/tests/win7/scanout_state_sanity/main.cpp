@@ -44,16 +44,8 @@ static int RunScanoutStateSanity(int argc, char** argv) {
   }
 
   aerogpu_escape_query_scanout_out q;
-  ZeroMemory(&q, sizeof(q));
-  q.hdr.version = AEROGPU_ESCAPE_VERSION;
-  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-  q.hdr.size = sizeof(q);
-  q.hdr.reserved0 = 0;
-  q.vidpn_source_id = 0;
-  q.reserved0 = 0;
-
   NTSTATUS st = 0;
-  const bool ok = aerogpu_test::kmt::AerogpuEscapeWithTimeout(&kmt, adapter, &q, sizeof(q), 2000, &st);
+  const bool ok = aerogpu_test::kmt::AerogpuQueryScanout(&kmt, adapter, 0, &q, &st);
 
   aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
   aerogpu_test::kmt::UnloadD3DKMT(&kmt);

@@ -373,6 +373,31 @@ static inline bool AerogpuQueryFence(const D3DKMT_FUNCS* f,
   return true;
 }
 
+static inline bool AerogpuQueryScanout(const D3DKMT_FUNCS* f,
+                                       D3DKMT_HANDLE adapter,
+                                       uint32_t vidpn_source_id,
+                                       aerogpu_escape_query_scanout_out* out_scanout,
+                                       NTSTATUS* out_status) {
+  if (out_scanout) {
+    ZeroMemory(out_scanout, sizeof(*out_scanout));
+  }
+  if (!out_scanout) {
+    if (out_status) {
+      *out_status = kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  out_scanout->hdr.version = AEROGPU_ESCAPE_VERSION;
+  out_scanout->hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  out_scanout->hdr.size = sizeof(*out_scanout);
+  out_scanout->hdr.reserved0 = 0;
+  out_scanout->vidpn_source_id = vidpn_source_id;
+  out_scanout->reserved0 = 0;
+
+  return AerogpuEscapeWithTimeout(f, adapter, out_scanout, sizeof(*out_scanout), 2000, out_status);
+}
+
 static inline bool AerogpuDumpRingV2(const D3DKMT_FUNCS* f,
                                      D3DKMT_HANDLE adapter,
                                      uint32_t ring_id,
