@@ -83,7 +83,11 @@ function createFrameWaiter(ws: WebSocket): FrameWaiter {
 
   ws.on("message", (data, isBinary) => {
     assert.equal(isBinary, true);
-    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+    const buf = Buffer.isBuffer(data)
+      ? data
+      : Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.from(data as ArrayBuffer);
     const frames = parser.push(buf);
     for (const frame of frames) {
       const waiterIdx = waiters.findIndex((w) => w.predicate(frame));
