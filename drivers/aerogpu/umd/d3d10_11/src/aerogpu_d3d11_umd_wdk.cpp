@@ -1133,10 +1133,15 @@ static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   return ctx ? ctx->dev : nullptr;
 }
 
-static void ReportNotImpl(D3D11DDI_HDEVICE) {
-  // Most device-level void DDIs are object destruction. Avoid reporting an error
-  // from stubs so teardown paths remain robust even when the runtime probes
-  // unimplemented features.
+static void ReportNotImpl(D3D11DDI_HDEVICE hDevice) {
+  // Device-level void DDIs have no HRESULT return channel. Prefer to report
+  // unsupported operations through SetErrorCb so the runtime can fail cleanly.
+  //
+  // Note: Destroy* entrypoints are overridden to use no-op stubs (see
+  // `AEROGPU_D3D11_DEVICEFUNCS_NOOP_FIELDS`) so teardown paths do not spam
+  // SetErrorCb for benign cleanup.
+  auto* dev = hDevice.pDrvPrivate ? FromHandle<D3D11DDI_HDEVICE, Device>(hDevice) : nullptr;
+  SetError(dev, E_NOTIMPL);
 }
 
 static void ReportNotImpl(D3D11DDI_HDEVICECONTEXT hCtx) {
@@ -1752,6 +1757,37 @@ static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   X(pfnEndEvent)                                                                                                     \
   X(pfnSetResourceMinLOD)
 
+// Device-level functions that should never trip the runtime error state when
+// stubbed. These are primarily Destroy* entrypoints that may be called during
+// cleanup/reset even after a higher-level failure.
+#define AEROGPU_D3D11_DEVICEFUNCS_NOOP_FIELDS(X)                                                                    \
+  X(pfnDestroyDevice)                                                                                                \
+  X(pfnDestroyResource)                                                                                              \
+  X(pfnDestroyShaderResourceView)                                                                                    \
+  X(pfnDestroyRenderTargetView)                                                                                      \
+  X(pfnDestroyDepthStencilView)                                                                                      \
+  X(pfnDestroyUnorderedAccessView)                                                                                   \
+  X(pfnDestroyVertexShader)                                                                                          \
+  X(pfnDestroyPixelShader)                                                                                           \
+  X(pfnDestroyGeometryShader)                                                                                        \
+  X(pfnDestroyHullShader)                                                                                            \
+  X(pfnDestroyDomainShader)                                                                                          \
+  X(pfnDestroyComputeShader)                                                                                         \
+  X(pfnDestroyClassLinkage)                                                                                          \
+  X(pfnDestroyClassInstance)                                                                                         \
+  X(pfnDestroyElementLayout)                                                                                         \
+  X(pfnDestroySampler)                                                                                               \
+  X(pfnDestroyBlendState)                                                                                            \
+  X(pfnDestroyRasterizerState)                                                                                       \
+  X(pfnDestroyDepthStencilState)                                                                                     \
+  X(pfnDestroyQuery)                                                                                                 \
+  X(pfnDestroyPredicate)                                                                                             \
+  X(pfnDestroyCounter)                                                                                               \
+  X(pfnDestroyDeviceContext)                                                                                         \
+  X(pfnDestroyDeferredContext)                                                                                       \
+  X(pfnDestroyCommandList)                                                                                           \
+  X(pfnDestroyDeviceContextState)
+
 static void InitDeviceFuncsWithStubs(D3D11DDI_DEVICEFUNCS* out) {
   if (!out) {
     return;
@@ -1761,6 +1797,12 @@ static void InitDeviceFuncsWithStubs(D3D11DDI_DEVICEFUNCS* out) {
   __if_exists(D3D11DDI_DEVICEFUNCS::field) { out->field = &DdiStub<decltype(out->field)>::Call; }
   AEROGPU_D3D11_DEVICEFUNCS_FIELDS(AEROGPU_ASSIGN_DEVICE_STUB)
 #undef AEROGPU_ASSIGN_DEVICE_STUB
+
+  // Ensure benign cleanup paths never spam SetErrorCb.
+#define AEROGPU_ASSIGN_DEVICE_NOOP(field)                                                                           \
+  __if_exists(D3D11DDI_DEVICEFUNCS::field) { out->field = &DdiNoopStub<decltype(out->field)>::Call; }
+  AEROGPU_D3D11_DEVICEFUNCS_NOOP_FIELDS(AEROGPU_ASSIGN_DEVICE_NOOP)
+#undef AEROGPU_ASSIGN_DEVICE_NOOP
 }
 
 static void InitDeviceContextFuncsWithStubs(D3D11DDI_DEVICECONTEXTFUNCS* out) {
