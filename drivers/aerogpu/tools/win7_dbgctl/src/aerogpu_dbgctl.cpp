@@ -316,16 +316,8 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   out->vidpn_source_id = vidpnSourceId;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
-  if (st == STATUS_NOT_SUPPORTED) {
-    // Some KMDs return STATUS_NOT_SUPPORTED when AEROGPU_FEATURE_VBLANK isn't
-    // advertised; treat as a successful query of "unsupported".
-    ZeroMemory(out, sizeof(*out));
-    out->vidpn_source_id = vidpnSourceId;
-    out->flags = 0;
-    return true;
-  }
   if (!NT_SUCCESS(st)) {
-    PrintNtStatus(L"D3DKMTEscape(query-vblank) failed", f, st);
+    PrintNtStatus(L"D3DKMTEscape(dump-vblank) failed", f, st);
     return false;
   }
   return true;

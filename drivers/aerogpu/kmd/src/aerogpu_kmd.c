@@ -1959,6 +1959,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_DEVICE_NOT_READY;
         }
 
+        if (!adapter->UsingNewAbi) {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         aerogpu_escape_query_vblank_out* out = (aerogpu_escape_query_vblank_out*)pEscape->pPrivateDriverData;
 
         /* Only VidPn source 0 is currently implemented. */
