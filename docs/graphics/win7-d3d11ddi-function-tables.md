@@ -123,7 +123,8 @@ Practical stub tip:
 * Many state-setting DDIs are called with **NULL** handles specifically to unbind/reset state.
   For those “unbind” patterns, it’s usually better to treat the call as a no-op success (no `SetErrorCb`),
   otherwise you can end up reporting errors during normal initialization/`ClearState` even though the app is not using the missing feature.
-  * Examples seen in practice on Win7: HS/DS/CS binds (tessellation/compute), `SoSetTargets`, and `SetPredication`.
+  * Examples seen in practice on Win7: HS/DS/CS binds (tessellation/compute), `SoSetTargets`, `SetPredication`,
+    and debug markers / discards (`SetMarker`/`BeginEvent`/`EndEvent`, `DiscardResource`, `DiscardView`).
 
 ---
 
