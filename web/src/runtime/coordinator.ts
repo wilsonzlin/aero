@@ -314,6 +314,11 @@ export class WorkerCoordinator {
     return Atomics.load(this.shared.status, StatusIndex.AudioUnderrunCount) >>> 0;
   }
 
+  getAudioProducerOverrunCount(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.AudioOverrunCount) >>> 0;
+  }
+
   getIoWorker(): Worker | null {
     return this.workers.io?.worker ?? null;
   }

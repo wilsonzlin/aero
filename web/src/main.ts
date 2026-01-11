@@ -1606,7 +1606,8 @@ function renderAudioPanel(): HTMLElement {
           `underruns: ${metrics.underrunCount}\n` +
           `overruns: ${metrics.overrunCount}\n` +
           `producer.bufferLevelFrames: ${workerCoordinator.getAudioProducerBufferLevelFrames()}\n` +
-          `producer.underruns: ${workerCoordinator.getAudioProducerUnderrunCount()}`;
+          `producer.underruns: ${workerCoordinator.getAudioProducerUnderrunCount()}\n` +
+          `producer.overruns: ${workerCoordinator.getAudioProducerOverrunCount()}`;
       }, 50);
 
       status.textContent = "Audio initialized (worker tone backend).";

@@ -213,6 +213,7 @@ function detachAudioOutput(): void {
   if (typeof status !== "undefined") {
     Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
     Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
+    Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
   }
 }
 
@@ -486,9 +487,15 @@ async function runLoop(): Promise<void> {
         if (now >= nextAudioFillDeadlineMs) {
           let level = 0;
           let underruns = 0;
-          const bridge = workletBridge as { buffer_level_frames?: () => number; underrun_count?: () => number };
+          let overruns = 0;
+          const bridge = workletBridge as {
+            buffer_level_frames?: () => number;
+            underrun_count?: () => number;
+            overrun_count?: () => number;
+          };
           if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
           if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
+          if (typeof bridge.overrun_count === "function") overruns = bridge.overrun_count() | 0;
 
           const targetFrames = Math.min(audioCapacityFrames, Math.floor(audioDstSampleRate / 5)); // ~200ms
           const need = Math.max(0, targetFrames - level);
@@ -502,8 +509,10 @@ async function runLoop(): Promise<void> {
           // Export a tiny amount of producer-side telemetry for the UI.
           if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
           if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
+          if (typeof bridge.overrun_count === "function") overruns = bridge.overrun_count() | 0;
           Atomics.store(status, StatusIndex.AudioBufferLevelFrames, level);
           Atomics.store(status, StatusIndex.AudioUnderrunCount, underruns);
+          Atomics.store(status, StatusIndex.AudioOverrunCount, overruns);
 
           nextAudioFillDeadlineMs = now + audioFillIntervalMs;
         }
@@ -511,6 +520,7 @@ async function runLoop(): Promise<void> {
         nextAudioFillDeadlineMs = 0;
         Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
         Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
+        Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
       }
 
       if (now >= nextHeartbeatMs) {

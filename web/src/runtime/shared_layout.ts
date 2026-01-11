@@ -26,6 +26,7 @@ export enum StatusIndex {
   // audio for the AudioWorklet ring buffer.
   AudioBufferLevelFrames = 4,
   AudioUnderrunCount = 5,
+  AudioOverrunCount = 6,
 
   CpuReady = 8,
   GpuReady = 9,
