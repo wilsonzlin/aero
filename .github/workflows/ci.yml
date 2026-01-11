@@ -230,19 +230,27 @@ jobs:
         run: mkdir -p test-results
 
       - name: cargo nextest (workspace)
-        run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-features --exclude aero-storage-server --junit-path test-results/rust-workspace.xml
+        run: |
+          set -euo pipefail
+          NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-features --exclude aero-storage-server --message-format libtest-json | python3 scripts/ci/nextest_libtest_json_to_junit.py --output test-results/rust-workspace.xml
 
       - name: cargo test (doc tests)
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-features --doc
 
       - name: cargo nextest (guest tools packager)
-        run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/packaging/aero_packager/Cargo.toml --junit-path test-results/rust-aero-packager.xml
+        run: |
+          set -euo pipefail
+          NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/packaging/aero_packager/Cargo.toml --message-format libtest-json | python3 scripts/ci/nextest_libtest_json_to_junit.py --output test-results/rust-aero-packager.xml
 
       - name: cargo nextest (disk-gateway reference server)
-        run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path server/disk-gateway/Cargo.toml --junit-path test-results/rust-disk-gateway.xml
+        run: |
+          set -euo pipefail
+          NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path server/disk-gateway/Cargo.toml --message-format libtest-json | python3 scripts/ci/nextest_libtest_json_to_junit.py --output test-results/rust-disk-gateway.xml
 
       - name: cargo nextest (aero-storage-server)
-        run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-storage-server --all-features --junit-path test-results/rust-aero-storage-server.xml
+        run: |
+          set -euo pipefail
+          NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-storage-server --all-features --message-format libtest-json | python3 scripts/ci/nextest_libtest_json_to_junit.py --output test-results/rust-aero-storage-server.xml
 
       - name: Publish Rust test report
         if: always()
