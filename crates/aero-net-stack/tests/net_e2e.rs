@@ -592,9 +592,22 @@ async fn tcp_ws_handler(
 }
 
 async fn handle_tcp_ws(socket: WebSocket, query: TcpProxyQuery) {
-    let (host, port) = match (query.host.as_deref(), query.port, query.target.as_deref()) {
-        (Some(host), Some(port), _) => (host.to_string(), port),
-        (_, _, Some(target)) => match parse_target(target) {
+    let TcpProxyQuery {
+        v,
+        host,
+        port,
+        target,
+    } = query;
+    if let Some(v) = v {
+        // The test harness only implements the v=1 gateway `/tcp` query contract.
+        if v != 1 {
+            return;
+        }
+    }
+
+    let (host, port) = match (host, port, target) {
+        (Some(host), Some(port), _) => (host, port),
+        (_, _, Some(target)) => match parse_target(&target) {
             Ok(v) => v,
             Err(_) => return,
         },
@@ -635,7 +648,7 @@ async fn handle_tcp_ws(socket: WebSocket, query: TcpProxyQuery) {
             };
 
             if ws_sender
-                .send(AxumMessage::Binary(buf[..n].to_vec().into()))
+                .send(AxumMessage::Binary(buf[..n].to_vec()))
                 .await
                 .is_err()
             {
@@ -959,6 +972,7 @@ fn wrap_udp_ipv4_eth(
     .unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wrap_tcp_ipv4_eth(
     src_mac: MacAddr,
     dst_mac: MacAddr,
