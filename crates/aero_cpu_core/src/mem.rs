@@ -179,6 +179,11 @@ pub trait CpuBus {
     }
 
     /// Whether this bus can perform fast contiguous repeated sets/fills in RAM.
+    ///
+    /// This is a hint only: callers may still invoke [`CpuBus::bulk_set`] when
+    /// this returns `false` and will get correct results (via the default scalar
+    /// fallback implementation), but Tier-0 fast paths will typically avoid
+    /// attempting the bulk call in that case.
     fn supports_bulk_set(&self) -> bool {
         false
     }
@@ -193,12 +198,10 @@ pub trait CpuBus {
         if repeat == 0 || pattern.is_empty() {
             return Ok(true);
         }
-
         let total = pattern
             .len()
             .checked_mul(repeat)
             .ok_or(Exception::MemoryFault)?;
-
         // Bounds-check destination range without panicking on overflow.
         let total_u64 = total as u64;
         dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;

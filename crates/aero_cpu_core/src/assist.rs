@@ -714,7 +714,7 @@ fn instr_outs<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction)
 }
 
 // -------------------------------------------------------------------------------------------------
-// Interrupt flag manipulation + real-mode INT/IRET
+// Interrupt flag manipulation + INT/IRET
 // -------------------------------------------------------------------------------------------------
 
 fn instr_cli(state: &mut CpuState) -> Result<(), Exception> {
@@ -750,10 +750,6 @@ fn instr_int<B: CpuBus>(
     instr: &Instruction,
     return_ip: u64,
 ) -> Result<(), Exception> {
-    if state.mode != CpuMode::Real && state.mode != CpuMode::Vm86 {
-        return Err(Exception::Unimplemented("INT in protected/long mode"));
-    }
-
     let vector: u8 = match instr.mnemonic() {
         Mnemonic::Int => instr.immediate8(),
         Mnemonic::Int3 => 3,
@@ -768,6 +764,19 @@ fn instr_int<B: CpuBus>(
         _ => return Err(Exception::InvalidOpcode),
     };
 
+    match state.mode {
+        CpuMode::Real | CpuMode::Vm86 => return instr_int_real(state, bus, vector, return_ip),
+        CpuMode::Protected => return instr_int_protected(state, bus, vector, return_ip),
+        CpuMode::Long => return Err(Exception::Unimplemented("INT in long mode")),
+    }
+}
+
+fn instr_int_real<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    vector: u8,
+    return_ip: u64,
+) -> Result<(), Exception> {
     let flags = state.rflags() as u16;
     let cs = state.segments.cs.selector;
     let ip = (return_ip & 0xFFFF) as u16;
@@ -790,10 +799,14 @@ fn instr_int<B: CpuBus>(
 }
 
 fn instr_iret<B: CpuBus>(state: &mut CpuState, bus: &mut B, _instr: &Instruction) -> Result<(), Exception> {
-    if state.mode != CpuMode::Real && state.mode != CpuMode::Vm86 {
-        return Err(Exception::Unimplemented("IRET in protected/long mode"));
+    match state.mode {
+        CpuMode::Real | CpuMode::Vm86 => instr_iret_real(state, bus),
+        CpuMode::Protected => instr_iret_protected(state, bus, _instr),
+        CpuMode::Long => Err(Exception::Unimplemented("IRET in long mode")),
     }
+}
 
+fn instr_iret_real<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<(), Exception> {
     let ip = pop_u16(state, bus)?;
     let cs = pop_u16(state, bus)?;
     let flags = pop_u16(state, bus)?;
@@ -802,6 +815,189 @@ fn instr_iret<B: CpuBus>(state: &mut CpuState, bus: &mut B, _instr: &Instruction
     state.set_rip(ip as u64);
     // IRET restores FLAGS (16-bit in real mode).
     let new_flags = (state.rflags() & !0xFFFF) | (flags as u64);
+    state.set_rflags(new_flags);
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GateType {
+    Interrupt,
+    Trap,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IdtGate32 {
+    offset: u32,
+    selector: u16,
+    gate_type: GateType,
+    dpl: u8,
+    present: bool,
+}
+
+fn read_idt_gate32<B: CpuBus>(state: &CpuState, bus: &mut B, vector: u8) -> Result<IdtGate32, Exception> {
+    let entry_size = 8u64;
+    let offset = (vector as u64) * entry_size;
+    if offset + (entry_size - 1) > state.tables.idtr.limit as u64 {
+        return Err(Exception::gp0());
+    }
+    let addr = state.tables.idtr.base + offset;
+
+    let offset_low = bus.read_u16(addr)? as u32;
+    let selector = bus.read_u16(addr + 2)?;
+    let type_attr = bus.read_u8(addr + 5)?;
+    let offset_high = bus.read_u16(addr + 6)? as u32;
+    let offset = offset_low | (offset_high << 16);
+
+    let present = (type_attr & 0x80) != 0;
+    let dpl = ((type_attr >> 5) & 0x3) as u8;
+    let gate_type = match type_attr & 0x0F {
+        0xE => GateType::Interrupt,
+        0xF => GateType::Trap,
+        _ => return Err(Exception::gp0()),
+    };
+
+    Ok(IdtGate32 {
+        offset,
+        selector,
+        gate_type,
+        dpl,
+        present,
+    })
+}
+
+fn read_descriptor_low_for_selector<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    selector: u16,
+) -> Result<ParsedDesc, Exception> {
+    let index = (selector >> 3) as u64;
+    if index == 0 {
+        return Err(Exception::gp(selector));
+    }
+    let (table_base, table_limit) = table_for_selector(state, selector)?;
+    let byte_off = index * 8;
+    if byte_off + 7 > table_limit as u64 {
+        return Err(Exception::gp(selector));
+    }
+    let raw = bus.read_u64(table_base + byte_off)?;
+    Ok(parse_descriptor_low(raw))
+}
+
+fn tss32_ring0_stack<B: CpuBus>(state: &CpuState, bus: &mut B) -> Result<(u16, u32), Exception> {
+    if state.tables.tr.is_unusable() {
+        return Err(Exception::ts(0));
+    }
+    let base = state.tables.tr.base;
+    let esp0 = bus.read_u32(base + 4)?;
+    let ss0 = bus.read_u16(base + 8)?;
+    Ok((ss0, esp0))
+}
+
+fn instr_int_protected<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    vector: u8,
+    return_ip: u64,
+) -> Result<(), Exception> {
+    let gate = read_idt_gate32(state, bus, vector)?;
+    if !gate.present {
+        // IDT entry not present.
+        return Err(Exception::np((vector as u16) * 8));
+    }
+
+    let cpl = state.cpl();
+    if cpl > gate.dpl {
+        // Software interrupt privilege check.
+        return Err(Exception::gp0());
+    }
+    if gate.selector == 0 {
+        return Err(Exception::gp0());
+    }
+
+    let cs_desc = read_descriptor_low_for_selector(state, bus, gate.selector)?;
+    if !cs_desc.s || (cs_desc.typ & 0b1000) == 0 {
+        return Err(Exception::gp(gate.selector));
+    }
+    if !cs_desc.present {
+        return Err(Exception::np(gate.selector));
+    }
+
+    let new_cpl = cs_desc.dpl;
+    let op_bits = state.bitness();
+    let op_size = (op_bits / 8) as u32;
+
+    let flags_full = state.rflags();
+    let flags_push = flags_full & mask_bits(op_bits);
+
+    let old_cs = state.segments.cs.selector;
+    let old_ss = state.segments.ss.selector;
+    let old_sp = state.stack_ptr() & mask_bits(op_bits);
+
+    if new_cpl < cpl {
+        if new_cpl != 0 {
+            return Err(Exception::Unimplemented("INT privilege switch to CPL!=0"));
+        }
+        let (ss0, esp0) = tss32_ring0_stack(state, bus)?;
+        let ss0 = (ss0 & !0b11) | (new_cpl as u16);
+
+        // Switch to the ring-0 stack before pushing the frame.
+        load_segment_descriptor(state, bus, Register::SS, ss0, true)?;
+        state.write_reg(Register::ESP, esp0 as u64);
+
+        push_sized(state, bus, old_ss as u64, op_size)?;
+        push_sized(state, bus, old_sp, op_size)?;
+    }
+
+    push_sized(state, bus, flags_push, op_size)?;
+    push_sized(state, bus, old_cs as u64, op_size)?;
+    push_sized(state, bus, return_ip & mask_bits(op_bits), op_size)?;
+
+    let mut next_flags = flags_full;
+    if gate.gate_type == GateType::Interrupt {
+        next_flags &= !RFLAGS_IF;
+    }
+    next_flags &= !RFLAGS_TF;
+    state.set_rflags(next_flags);
+
+    let cs_sel = (gate.selector & !0b11) | (new_cpl as u16);
+    load_segment_descriptor(state, bus, Register::CS, cs_sel, false)?;
+    state.set_rip(gate.offset as u64);
+    Ok(())
+}
+
+fn instr_iret_protected<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction) -> Result<(), Exception> {
+    let op_bits = match instr.mnemonic() {
+        Mnemonic::Iret => 16,
+        Mnemonic::Iretd => 32,
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    let op_size = (op_bits / 8) as u32;
+
+    let new_ip = pop_sized(state, bus, op_size)? & mask_bits(op_bits);
+    let new_cs = (pop_sized(state, bus, op_size)? & 0xFFFF) as u16;
+    let new_flags = pop_sized(state, bus, op_size)? & mask_bits(op_bits);
+
+    let return_cpl = (new_cs & 0x3) as u8;
+    let current_cpl = state.cpl();
+
+    let mut new_sp = None;
+    let mut new_ss = None;
+    if return_cpl > current_cpl {
+        let sp = pop_sized(state, bus, op_size)? & mask_bits(op_bits);
+        let ss = (pop_sized(state, bus, op_size)? & 0xFFFF) as u16;
+        new_sp = Some(sp);
+        new_ss = Some(ss);
+    }
+
+    // Load CS first so RIP masking uses the correct width.
+    load_segment_descriptor(state, bus, Register::CS, new_cs, false)?;
+    state.set_rip(new_ip);
+
+    if let (Some(sp), Some(ss)) = (new_sp, new_ss) {
+        load_segment_descriptor(state, bus, Register::SS, ss, true)?;
+        state.set_stack_ptr(sp);
+    }
+
     state.set_rflags(new_flags);
     Ok(())
 }
@@ -912,6 +1108,25 @@ fn load_segment_descriptor<B: CpuBus>(
     let desc = parse_descriptor_low(raw);
     if !desc.s {
         return Err(Exception::gp(selector));
+    }
+    // Minimal type validation for core segment registers.
+    //
+    // This keeps far transfers / interrupts from loading obviously invalid
+    // descriptors and matches the cases Windows relies on during boot.
+    match seg {
+        Register::CS => {
+            // Executable bit must be set for code segments.
+            if (desc.typ & 0b1000) == 0 {
+                return Err(Exception::gp(selector));
+            }
+        }
+        Register::SS => {
+            // Stack segments must be writable data segments.
+            if (desc.typ & 0b1000) != 0 || (desc.typ & 0b0010) == 0 {
+                return Err(Exception::gp(selector));
+            }
+        }
+        _ => {}
     }
     if !desc.present {
         return if is_stack {

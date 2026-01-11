@@ -89,7 +89,13 @@ fn exec_decoded<B: CpuBus>(
             exec_wait(state)?;
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Hlt => Ok(ExecOutcome::Halt),
+        Mnemonic::Hlt => {
+            // HLT is privileged outside real mode.
+            if state.cpl() != 0 {
+                return Err(Exception::gp0());
+            }
+            Ok(ExecOutcome::Halt)
+        }
         Mnemonic::In
         | Mnemonic::Out
         | Mnemonic::Insb

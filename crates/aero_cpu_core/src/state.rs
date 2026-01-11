@@ -866,22 +866,32 @@ impl CpuState {
     }
 
     /// Recomputes [`CpuState::mode`] from control registers, EFER and CS
-     /// descriptor cache.
+    /// descriptor cache.
     ///
     /// This should be called after writes to CR0/CR4/EFER or after loading CS.
     #[inline]
     pub fn update_mode(&mut self) -> CpuMode {
         if (self.control.cr0 & CR0_PE) == 0 {
+            // IA32_EFER.LMA is cleared whenever protected mode is disabled.
+            self.msr.efer &= !EFER_LMA;
             self.mode = CpuMode::Real;
             return self.mode;
         }
 
-        let ia32e_active = (self.msr.efer & EFER_LMA) != 0
-            || ((self.msr.efer & EFER_LME) != 0
-                && (self.control.cr0 & CR0_PG) != 0
-                && (self.control.cr4 & CR4_PAE) != 0);
+        // Keep IA32_EFER.LMA coherent with the architectural enable conditions.
+        //
+        // On real hardware LMA becomes active once paging is enabled with EFER.LME=1 and CR4.PAE=1
+        // (and clears as soon as the conditions are no longer met).
+        let ia32e_enabled = (self.msr.efer & EFER_LME) != 0
+            && (self.control.cr0 & CR0_PG) != 0
+            && (self.control.cr4 & CR4_PAE) != 0;
+        if ia32e_enabled {
+            self.msr.efer |= EFER_LMA;
+        } else {
+            self.msr.efer &= !EFER_LMA;
+        }
 
-        if ia32e_active && self.segments.cs.is_long() {
+        if ia32e_enabled && self.segments.cs.is_long() {
             self.mode = CpuMode::Long;
             return self.mode;
         }
@@ -1669,5 +1679,35 @@ mod tests {
 
         assert_eq!(cpu.seg_base_reg(Register::FS), cpu.msr.fs_base);
         assert_eq!(cpu.seg_base_reg(Register::GS), cpu.msr.gs_base);
+    }
+
+    #[test]
+    fn update_mode_tracks_efer_lma() {
+        let mut cpu = CpuState::new(CpuMode::Bit32);
+
+        // Enable protected mode first.
+        cpu.control.cr0 |= CR0_PE;
+        cpu.update_mode();
+        assert_eq!(cpu.mode, CpuMode::Protected);
+
+        // Enable IA-32e conditions (EFER.LME + CR4.PAE + CR0.PG). In a full CPU model this would
+        // place the core in compatibility mode until a 64-bit code segment is loaded. We only
+        // model the LMA bit here.
+        cpu.msr.efer |= EFER_LME;
+        cpu.control.cr4 |= CR4_PAE;
+        cpu.control.cr0 |= CR0_PG;
+        cpu.update_mode();
+        assert_ne!(cpu.msr.efer & EFER_LMA, 0);
+
+        // Clearing paging should clear LMA.
+        cpu.control.cr0 &= !CR0_PG;
+        cpu.update_mode();
+        assert_eq!(cpu.msr.efer & EFER_LMA, 0);
+
+        // Disabling protected mode also clears LMA.
+        cpu.control.cr0 &= !CR0_PE;
+        cpu.update_mode();
+        assert_eq!(cpu.mode, CpuMode::Real);
+        assert_eq!(cpu.msr.efer & EFER_LMA, 0);
     }
 }
