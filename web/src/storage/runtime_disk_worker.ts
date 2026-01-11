@@ -156,7 +156,46 @@ function emptyIoTelemetry(): DiskIoTelemetry {
 
 async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSizeBytes?: number): Promise<DiskEntry> {
   if (meta.source === "remote") {
-    throw new Error("remote disks are not supported by this worker yet");
+    if (meta.cache.backend !== "opfs") {
+      throw new Error(`unsupported remote cache backend ${meta.cache.backend} (expected opfs)`);
+    }
+    if (meta.remote.delivery !== "range") {
+      throw new Error(`unsupported remote delivery ${meta.remote.delivery} (expected range)`);
+    }
+
+    const expectedValidator = meta.remote.validator?.etag
+      ? { kind: "etag" as const, value: meta.remote.validator.etag }
+      : meta.remote.validator?.lastModified
+        ? { kind: "lastModified" as const, value: meta.remote.validator.lastModified }
+        : undefined;
+
+    const backend: DiskBackendSnapshot = {
+      kind: "remote",
+      diskKind: meta.kind,
+      sizeBytes: meta.sizeBytes,
+      base: {
+        imageId: meta.remote.imageId,
+        version: meta.remote.version,
+        deliveryType: meta.remote.delivery,
+        ...(expectedValidator ? { expectedValidator } : {}),
+        chunkSize: meta.cache.chunkSizeBytes,
+      },
+      overlay: {
+        fileName: meta.cache.overlayFileName,
+        diskSizeBytes: meta.sizeBytes,
+        blockSizeBytes: meta.cache.overlayBlockSizeBytes,
+      },
+      cache: { fileName: meta.cache.fileName },
+    };
+
+    const readOnly = meta.kind === "cd" || meta.format === "iso";
+    return await openDiskFromSnapshot({
+      handle: 0,
+      readOnly,
+      sectorSize: 512,
+      capacityBytes: meta.sizeBytes,
+      backend,
+    });
   }
   const readOnly = meta.kind === "cd" || meta.format === "iso";
 
