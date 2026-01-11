@@ -183,7 +183,7 @@ cp deploy/.env.example deploy/.env
 - `AERO_L2_ALLOWED_ORIGINS_EXTRA` (default: empty)
   - Optional comma-prefixed origins appended to the L2 proxy Origin allowlist.
   - Example: `,https://localhost:5173`
-- `AERO_L2_AUTH_MODE` (default: empty / `none`)
+- `AERO_L2_AUTH_MODE` (default: `none`)
   - Authentication mode for `/l2` (handled by `crates/aero-l2-proxy`).
   - Supported values: `none`, `cookie`, `api_key`, `jwt`, `cookie_or_jwt`, `cookie_or_api_key`.
 - `AERO_L2_SESSION_SECRET` (optional override)
@@ -200,9 +200,9 @@ cp deploy/.env.example deploy/.env
     `aero-l2-tunnel-v1`; prefer this form when possible to avoid putting secrets in URLs/logs).
 - `AERO_L2_TOKEN` (optional, legacy)
   - Legacy alias for API-key auth.
-  - When `AERO_L2_AUTH_MODE` is unset, setting `AERO_L2_TOKEN` implicitly enables `api_key` mode with
-    that value (equivalent to `AERO_L2_AUTH_MODE=api_key` + `AERO_L2_API_KEY=<value>`).
-  - Also accepted as a fallback value for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE=api_key`.
+  - `deploy/docker-compose.yml` defaults `AERO_L2_AUTH_MODE=none`, so `AERO_L2_TOKEN` has no effect unless you
+    explicitly enable token auth (e.g. `AERO_L2_AUTH_MODE=api_key`).
+  - Accepted as a fallback value for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE=api_key`.
   - Ignored when `AERO_L2_AUTH_MODE` is set to `cookie`, `jwt`, `cookie_or_jwt`, `cookie_or_api_key`, or `none`.
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.

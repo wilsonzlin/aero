@@ -218,9 +218,8 @@ services:
 
       # Legacy token (backwards compatibility).
       #
-      # If AERO_L2_AUTH_MODE is unset, setting AERO_L2_TOKEN implicitly enables
-      # API-key auth using this value (equivalent to AERO_L2_AUTH_MODE=api_key +
-      # AERO_L2_API_KEY=<value>).
+      # Note: this compose file defaults AERO_L2_AUTH_MODE=none, so setting AERO_L2_TOKEN has no
+      # effect unless you explicitly enable token auth (e.g. `AERO_L2_AUTH_MODE=api_key`).
       #
       # Clients then provide the credential via:
       # - `?token=<value>` (or `?apiKey=<value>`), OR
