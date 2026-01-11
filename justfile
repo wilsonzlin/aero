@@ -81,7 +81,7 @@ setup:
     echo "error: rustup is required (https://rustup.rs)" >&2
     exit 1
   fi
-  stable_toolchain="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]\+\)".*/\1/p' rust-toolchain.toml | head -n1)"
+  stable_toolchain="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]\+\)".*/\1/p' rust-toolchain.toml | head -n1)"
   if [[ -z "${stable_toolchain}" ]]; then
     echo "error: unable to determine [toolchain].channel from rust-toolchain.toml" >&2
     exit 1
