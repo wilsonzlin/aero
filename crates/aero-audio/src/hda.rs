@@ -4,7 +4,7 @@ use crate::ring::AudioRingBuffer;
 use crate::sink::AudioSink;
 
 /// Size of the HDA MMIO region.
-pub const HDA_MMIO_SIZE: usize = 0x1000;
+pub const HDA_MMIO_SIZE: usize = 0x4000;
 
 // Global register offsets (subset).
 const REG_GCAP: u64 = 0x00;
@@ -564,6 +564,17 @@ impl HdaController {
     }
 
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        let end = match offset.checked_add(size as u64) {
+            Some(end) => end,
+            None => return 0,
+        };
+        if end > HDA_MMIO_SIZE as u64 {
+            return 0;
+        }
+
         match (offset, size) {
             (REG_GCAP, 2) => self.gcap as u64,
             (REG_VMIN, 1) => self.vmin as u64,
@@ -615,6 +626,17 @@ impl HdaController {
     }
 
     pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
+        let end = match offset.checked_add(size as u64) {
+            Some(end) => end,
+            None => return,
+        };
+        if end > HDA_MMIO_SIZE as u64 {
+            return;
+        }
+
         match (offset, size) {
             (REG_GCTL, 4) => {
                 let v = value as u32;
