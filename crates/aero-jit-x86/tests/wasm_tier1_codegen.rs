@@ -5,6 +5,7 @@ mod tier1_common;
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::tier1::ir::interp::execute_block;
+use aero_jit_x86::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
 use aero_jit_x86::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
@@ -272,6 +273,35 @@ fn assert_ir_wasm_matches_interp(code: &[u8], entry_rip: u64, cpu: CpuState, mut
     assert_eq!(next_rip, interp_cpu.rip);
     assert_eq!(out_cpu, interp_cpu);
     assert_eq!(out_mem, interp_bus.mem());
+}
+
+#[test]
+fn wasm_tier1_call_helper_bails_out_to_interpreter_without_trapping() {
+    let entry = 0x4000u64;
+
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W64, 0x1234);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v,
+    );
+    // Helper calls are not expected in the current Tier-1 translation, but the WASM codegen should
+    // treat them defensively as a runtime bailout instead of panicking.
+    b.call_helper("test_helper", Vec::new(), None);
+    let ir = b.finish(IrTerminator::ExitToInterpreter { next_rip: entry });
+
+    let mut cpu = CpuState::default();
+    cpu.rip = entry;
+    let bus = SimpleBus::new(0x10000);
+
+    let (next_rip, out_cpu, _) = run_wasm(&ir, &cpu, &bus);
+    assert_eq!(next_rip, entry);
+    assert_eq!(out_cpu.rip, entry);
+    assert_eq!(out_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234);
 }
 
 #[test]
