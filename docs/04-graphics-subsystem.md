@@ -1166,6 +1166,7 @@ These metrics feed:
 - See [`docs/graphics/win7-wddm11-aerogpu-driver.md`](./graphics/win7-wddm11-aerogpu-driver.md) for the Windows 7 WDDM 1.1 (KMD+UMD) architecture and command transport boundary.
 - For Windows 7 Aero bring-up, see [Win7 D3D9Ex UMD minimal surface](./graphics/win7-d3d9ex-umd-minimal.md)
 - For Windows 7 D3D10/D3D11 UMD bring-up (DDI entrypoints, DXGI swapchain expectations), see [Win7 D3D10/11 UMD minimal surface](./graphics/win7-d3d10-11-umd-minimal.md)
+- For a concrete Win7 D3D11 `d3d11umddi.h` function-table checklist (which entries must be non-null vs safely stubbable for FL10_0), see [Win7 D3D11 DDI function tables](./graphics/win7-d3d11ddi-function-tables.md)
 - See [Direct3D 10/11 Translation](./16-d3d10-11-translation.md) for SM4/SM5 pipeline/resource details
 - See [Guest GPU driver strategy](./graphics/guest-gpu-driver-strategy.md) for Windows guest driver options (virtio-gpu reuse vs custom WDDM)
 - See [Win7 vblank/present timing requirements](./graphics/win7-vblank-present-requirements.md) for the minimal contract needed to keep DWM (Aero) composition stable.
