@@ -32,6 +32,7 @@ If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterfa
 - **Protected interface classes:** WebUSB cannot access some interface classes (HID, mass storage, audio/video, etc.). Prefer a vendor-specific interface (class `0xFF`) or a more appropriate Web API (e.g. WebHID/WebSerial).
 - **Isochronous endpoints (audio/video):** if you see `NotSupportedError` mentioning isochronous transfers, the device likely can't be used via WebUSB (WebUSB is generally control/bulk/interrupt only).
 - **Endpoint / transfer errors:** if you see `InvalidAccessError` / `OperationError`, double-check that you're using the correct interface and endpoint numbers (and that the interface is claimed). If transfers fail intermittently, try unplug/replug and consider `device.reset()` / close+reopen.
+- **Device busy / not readable:** `NotReadableError` or `NetworkError` on `open()` / `claimInterface()` can mean the host OS driver (or another application) has the device open exclusively. Close other apps, unplug/replug, and verify driver binding/permissions (WinUSB / udev).
 - **Windows (WinUSB):** WebUSB typically requires the relevant interface to be bound to **WinUSB**.
   - For development: tools like **Zadig** can install WinUSB for a specific VID/PID/interface.
   - For production devices: ship **Microsoft OS 2.0 descriptors** / WinUSB Compatible ID descriptors so Windows binds WinUSB automatically.

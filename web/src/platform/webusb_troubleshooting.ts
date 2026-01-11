@@ -177,6 +177,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     mentionsClaimInterface ||
     mentionsOpen ||
     (mentionsPermissionDenied && includesAny(msgLower, ["claim", "interface", "open"])) ||
+    name === "NotReadableError" ||
     name === "NetworkError";
 
   // --- Titles (short, user-facing) ---
@@ -211,6 +212,10 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     case "OperationError":
       title = "WebUSB device operation failed";
       details = "The device did not complete the requested operation (transfer/open/claim).";
+      break;
+    case "NotReadableError":
+      title = "Unable to access the USB device";
+      details = "The device may be busy, already opened by another process, or blocked by OS driver/permissions.";
       break;
     case "NotAllowedError":
       title = "WebUSB permission was denied";

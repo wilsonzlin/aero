@@ -179,3 +179,16 @@ test("explainWebUsbError: DataCloneError suggests keeping WebUSB on the main thr
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("structured")));
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("main thread")));
 });
+
+test("explainWebUsbError: NotReadableError includes driver/permissions hints", () => {
+  const res = withUserAgent("Node.js/25", () =>
+    explainWebUsbError({
+      name: "NotReadableError",
+      message: "Failed to open device.",
+    }),
+  );
+
+  assert.ok(res.title.toLowerCase().includes("access") || res.title.toLowerCase().includes("open"));
+  assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("udev")));
+});
