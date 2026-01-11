@@ -758,6 +758,7 @@ mod tests {
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
     const TEST_HANDLE: u32 = 1;
+    const TEST_TEX_HANDLE: u32 = 2;
     const TEST_ALLOC_ID: u32 = 42;
 
     fn alloc_entry(alloc_id: u32, size_bytes: u64) -> AeroGpuSubmissionAllocation {
@@ -874,5 +875,81 @@ mod tests {
         let dirty = w.finish();
         proc.process_submission_with_allocations(&dirty, None, /*signal_fence=*/ 2)
             .unwrap();
+    }
+
+    #[test]
+    fn create_texture2d_requires_alloc_table_when_backing_alloc_id_nonzero() {
+        let mut w = AerogpuCmdWriter::new();
+        w.create_texture2d(
+            TEST_TEX_HANDLE,
+            /*usage_flags=*/ 0,
+            /*format=*/ 0,
+            /*width=*/ 1,
+            /*height=*/ 1,
+            /*mip_levels=*/ 1,
+            /*array_layers=*/ 1,
+            /*row_pitch_bytes=*/ 4,
+            TEST_ALLOC_ID,
+            0,
+        );
+        let bytes = w.finish();
+
+        let mut proc = AeroGpuCommandProcessor::new();
+        let err = proc
+            .process_submission_with_allocations(&bytes, None, /*signal_fence=*/ 1)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            CommandProcessorError::MissingAllocationTable(TEST_ALLOC_ID)
+        );
+    }
+
+    #[test]
+    fn create_texture2d_reports_unknown_alloc_id() {
+        let mut w = AerogpuCmdWriter::new();
+        w.create_texture2d(
+            TEST_TEX_HANDLE,
+            /*usage_flags=*/ 0,
+            /*format=*/ 0,
+            /*width=*/ 1,
+            /*height=*/ 1,
+            /*mip_levels=*/ 1,
+            /*array_layers=*/ 1,
+            /*row_pitch_bytes=*/ 4,
+            TEST_ALLOC_ID,
+            0,
+        );
+        let bytes = w.finish();
+
+        let mut proc = AeroGpuCommandProcessor::new();
+        let allocs = [alloc_entry(TEST_ALLOC_ID + 1, 4)];
+        let err = proc
+            .process_submission_with_allocations(&bytes, Some(&allocs), /*signal_fence=*/ 1)
+            .unwrap_err();
+        assert_eq!(err, CommandProcessorError::UnknownAllocId(TEST_ALLOC_ID));
+    }
+
+    #[test]
+    fn create_texture2d_rejects_missing_row_pitch_for_guest_backing() {
+        let mut w = AerogpuCmdWriter::new();
+        w.create_texture2d(
+            TEST_TEX_HANDLE,
+            /*usage_flags=*/ 0,
+            /*format=*/ 0,
+            /*width=*/ 1,
+            /*height=*/ 1,
+            /*mip_levels=*/ 1,
+            /*array_layers=*/ 1,
+            /*row_pitch_bytes=*/ 0,
+            TEST_ALLOC_ID,
+            0,
+        );
+        let bytes = w.finish();
+
+        let mut proc = AeroGpuCommandProcessor::new();
+        let err = proc
+            .process_submission_with_allocations(&bytes, None, /*signal_fence=*/ 1)
+            .unwrap_err();
+        assert_eq!(err, CommandProcessorError::InvalidCreateTexture2d);
     }
 }
