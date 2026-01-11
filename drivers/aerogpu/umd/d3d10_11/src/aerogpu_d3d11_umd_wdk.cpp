@@ -54,6 +54,10 @@ constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au);
   #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
 #endif
 
+#ifndef WAIT_TIMEOUT
+  #define WAIT_TIMEOUT 258L
+#endif
+
 constexpr uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -527,6 +531,12 @@ template <typename T>
 struct has_pfnDestroySynchronizationObjectCb<T, std::void_t<decltype(std::declval<T>().pfnDestroySynchronizationObjectCb)>>
     : std::true_type {};
 
+template <typename T, typename = void>
+struct has_pfnWaitForSynchronizationObjectCb : std::false_type {};
+template <typename T>
+struct has_pfnWaitForSynchronizationObjectCb<T, std::void_t<decltype(std::declval<T>().pfnWaitForSynchronizationObjectCb)>>
+    : std::true_type {};
+
 template <typename CallbacksT>
 HRESULT create_device_from_callbacks(const CallbacksT& callbacks, void* hAdapter, D3DKMT_HANDLE* hDeviceOut) {
   if (!hDeviceOut) {
@@ -734,13 +744,46 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
     return E_FAIL;
   }
 
+  const D3DKMT_HANDLE handles[1] = {static_cast<D3DKMT_HANDLE>(dev->kmt_fence_syncobj)};
+  const UINT64 fence_values[1] = {fence_value};
+
+  // Prefer the runtime callback (it handles WOW64 thunking correctly).
+  if constexpr (has_pfnWaitForSynchronizationObjectCb<D3DDDI_DEVICECALLBACKS>::value) {
+    auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+    if (cb && cb->pfnWaitForSynchronizationObjectCb && dev->runtime_device) {
+      D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
+      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
+        args.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+      }
+      args.ObjectCount = 1;
+      args.ObjectHandleArray = handles;
+      args.FenceValueArray = fence_values;
+      args.Timeout = timeout;
+
+      const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb,
+                                           MakeRtDeviceHandle(dev),
+                                           MakeRtDeviceHandle10(dev),
+                                           &args);
+      // Different Win7-era WDKs disagree on which HRESULT represents a timeout.
+      // Map the common wait-timeout HRESULTs to DXGI_ERROR_WAS_STILL_DRAWING so
+      // higher-level D3D code can use this for Map(DO_NOT_WAIT) behavior.
+      if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
+          hr == static_cast<HRESULT>(0x10000102L)) {
+        return kDxgiErrorWasStillDrawing;
+      }
+      if (FAILED(hr)) {
+        return hr;
+      }
+
+      atomic_max_u64(&dev->last_completed_fence, fence_value);
+      return S_OK;
+    }
+  }
+
   const auto& procs = GetAeroGpuD3dkmtProcs();
   if (!procs.pfn_wait_for_syncobj) {
     return E_FAIL;
   }
-
-  const D3DKMT_HANDLE handles[1] = {static_cast<D3DKMT_HANDLE>(dev->kmt_fence_syncobj)};
-  const UINT64 fence_values[1] = {fence_value};
 
   D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
   args.ObjectCount = 1;
