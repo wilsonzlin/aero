@@ -142,7 +142,7 @@ typedef struct _LUID {
 //
 // Treat them as synonyms so build systems can use either.
 #if !defined(AEROGPU_UMD_USE_WDK_HEADERS)
-  #if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI && AEROGPU_D3D9_USE_WDK_DDI
+  #if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     #define AEROGPU_UMD_USE_WDK_HEADERS 1
   #else
     #define AEROGPU_UMD_USE_WDK_HEADERS 0
