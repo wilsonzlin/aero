@@ -75,7 +75,11 @@ const l2 = new WebSocketL2TunnelClient("ws://127.0.0.1:8090", (ev) => {
 });
 
 l2.connect();
-nicTx = (frame) => l2.sendFrame(frame);
+// `sendFrame()` returns a boolean indicating whether the frame was accepted into
+// the client's outbound queue; most callers can ignore it.
+nicTx = (frame) => {
+  l2.sendFrame(frame);
+};
 ```
 
 If the proxy requires token-based auth (`AERO_L2_AUTH_MODE=api_key|jwt`, or the legacy
@@ -90,6 +94,16 @@ const l2 = new WebSocketL2TunnelClient("ws://127.0.0.1:8090", sink, {
   tokenTransport: "subprotocol",
 });
 ```
+
+#### Browser-side observability (worker runtime)
+
+When running the full worker-based emulator runtime, the I/O worker emits low-rate `log` events on
+the runtime event ring to help debug L2 tunnel bring-up/backpressure:
+
+- Look for `[io] l2: ...` logs in the dev console (e.g. `l2: open tx=... rx=... drop+{...}`).
+- Connection transitions (`l2: connecting/open/closed/error`) are logged immediately.
+- When drop deltas are non-zero, the periodic stats log is emitted at `WARN` so it also appears in
+  the coordinator's nonfatal stream.
 
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
 
