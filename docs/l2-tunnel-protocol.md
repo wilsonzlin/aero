@@ -179,7 +179,8 @@ Unknown `type` values SHOULD be ignored/dropped (to allow forward-compatible ext
 
 Recommended behavior:
 
-- Client sends `PING` every **10–30 seconds**.
+- Client sends `PING` periodically (e.g. every **5–15 seconds**; implementations may randomize
+  within a range to avoid synchronized thundering herds).
 - Server responds with `PONG` immediately.
 - If no `PONG` is received within a timeout (e.g. 2× interval), the client SHOULD reconnect.
 
