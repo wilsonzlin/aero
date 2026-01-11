@@ -72,6 +72,21 @@ jobs:
           mkdir -p out/guest-tools-packager
           cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/packaging/aero_packager/Cargo.toml 2>&1 | tee out/guest-tools-packager/cargo-test.log
 
+      - name: Smoke package real guest-tools/ directory (using dummy driver fixtures)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/guest-tools-packager
+          rm -rf out/guest-tools-packager/smoke
+          cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/packaging/aero_packager/Cargo.toml -- \
+            --drivers-dir tools/packaging/aero_packager/testdata/drivers \
+            --guest-tools-dir guest-tools \
+            --spec tools/packaging/aero_packager/testdata/spec.json \
+            --out-dir out/guest-tools-packager/smoke \
+            --version 0.0.0 \
+            --build-id ci \
+            --source-date-epoch 0 2>&1 | tee out/guest-tools-packager/package-smoke.log
+
       - name: Validate Guest Tools config vs packaging spec
         shell: bash
         run: |
