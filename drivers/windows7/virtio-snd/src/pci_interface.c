@@ -67,6 +67,7 @@ VirtIoSndAcquirePciBusInterface(
 
     irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
     irp->IoStatus.Information = 0;
+    irp->RequestorMode = KernelMode;
 
     stack = IoGetNextIrpStackLocation(irp);
     stack->MajorFunction = IRP_MJ_PNP;
