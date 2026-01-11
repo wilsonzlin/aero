@@ -1297,6 +1297,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_decodes_unit_exponent_even_when_high_nibble_is_set() {
+        // Some HID stacks/encoders incorrectly emit Unit Exponent as a signed i8, so `-1` becomes
+        // `0xFF`. HID 1.11 defines Unit Exponent as a 4-bit signed nibble; the parser should mask
+        // off the high nibble and still decode correctly.
+        let desc = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x02, // Usage (Mouse)
+            0xA1, 0x01, // Collection (Application)
+            0x55, 0xFF, // Unit Exponent (-1) incorrectly encoded as i8
+            0x15, 0x00, // Logical Minimum (0)
+            0x25, 0x01, // Logical Maximum (1)
+            0x75, 0x01, // Report Size (1)
+            0x95, 0x01, // Report Count (1)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0xC0, // End Collection
+        ];
+
+        let parsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(parsed.collections[0].input_reports[0].items[0].unit_exponent, -1);
+    }
+
+    #[test]
     fn synth_rejects_unit_exponent_out_of_range() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
