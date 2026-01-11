@@ -888,7 +888,14 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
         ringSt = AeroGpuV1RingInit(adapter);
         if (NT_SUCCESS(ringSt)) {
-            ringSt = AeroGpuV1FencePageInit(adapter);
+            /*
+             * Fence page is optional; if the device does not advertise
+             * AEROGPU_FEATURE_FENCE_PAGE, fall back to polling COMPLETED_FENCE
+             * via MMIO.
+             */
+            if (adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE) {
+                ringSt = AeroGpuV1FencePageInit(adapter);
+            }
         }
         if (NT_SUCCESS(ringSt)) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
