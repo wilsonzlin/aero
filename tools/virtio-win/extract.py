@@ -217,7 +217,17 @@ def _find_child_dir(node: _IsoNode, names: Iterable[str]) -> Optional[_IsoNode]:
 def _validate_iso_paths_safe(paths: Iterable[str]) -> None:
     bad: list[str] = []
     for p in paths:
-        parts = _split_any_sep(p)
+        p_norm = p.strip().replace("\\", "/")
+        if p_norm.startswith("//"):
+            bad.append(p)
+            continue
+        # Reject drive-letter absolute paths like `C:/...` which some extractors may
+        # treat as absolute paths on Windows.
+        if len(p_norm) >= 3 and p_norm[1] == ":" and p_norm[2] == "/" and p_norm[0].isalpha():
+            bad.append(p)
+            continue
+
+        parts = _split_any_sep(p_norm)
         if any(part in (".", "..") for part in parts):
             bad.append(p)
     if bad:
@@ -227,7 +237,7 @@ def _validate_iso_paths_safe(paths: Iterable[str]) -> None:
         if len(bad) > len(head):
             extra = f"\n... and {len(bad) - len(head)} more"
         raise SystemExit(
-            "virtio-win ISO contains unsafe path components ('.' or '..'):\n"
+            "virtio-win ISO contains unsafe paths:\n"
             f"{formatted}{extra}"
         )
 
