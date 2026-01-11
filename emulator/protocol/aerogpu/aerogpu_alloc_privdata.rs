@@ -1,6 +1,6 @@
 //! AeroGPU allocation private driver data (KMD → UMD).
 //!
-//! Source of truth: `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`.
+//! Source of truth: `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` (`aerogpu_alloc_privdata`).
 
 /// Magic for [`AerogpuAllocPrivdata`] (`"ALPD"` little-endian).
 pub const AEROGPU_ALLOC_PRIVDATA_MAGIC: u32 = 0x4450_4C41;
