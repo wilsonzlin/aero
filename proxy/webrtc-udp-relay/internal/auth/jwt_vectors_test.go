@@ -39,6 +39,7 @@ type jwtTokenClaims struct {
 type authTokenVectorsFile struct {
 	Schema    int `json:"schema"`
 	JWTTokens struct {
+		TestSecret string      `json:"testSecret"`
 		Vectors []jwtVector `json:"vectors"`
 	} `json:"jwtTokens"`
 }
@@ -175,6 +176,46 @@ func TestJWTVerifierProtocolVectors(t *testing.T) {
 			assertOptStringEqual(t, "aud", claims.Aud, v.Aud)
 			assertOptStringEqual(t, "iss", claims.Iss, v.Iss)
 		})
+	}
+}
+
+func TestJWTProtocolVectorsMatchConformanceVectors(t *testing.T) {
+	conformance := loadJWTVectors(t)
+	if conformance.Version != 1 {
+		t.Fatalf("unexpected conformance vectors version: %d", conformance.Version)
+	}
+
+	protocol := loadAuthTokenVectors(t)
+	if protocol.Schema != 1 {
+		t.Fatalf("unexpected protocol vectors schema: %d", protocol.Schema)
+	}
+
+	if protocol.JWTTokens.TestSecret != conformance.RelayJWT.Secret {
+		t.Fatalf(
+			"secret mismatch: protocol=%q conformance=%q",
+			protocol.JWTTokens.TestSecret,
+			conformance.RelayJWT.Secret,
+		)
+	}
+
+	find := func(name string) jwtVector {
+		for _, v := range protocol.JWTTokens.Vectors {
+			if v.Name == name {
+				return v
+			}
+		}
+		t.Fatalf("missing protocol vector %q", name)
+		return jwtVector{}
+	}
+
+	if got := find("valid").Token; got != conformance.RelayJWT.Tokens.Valid.Token {
+		t.Fatalf("valid token mismatch")
+	}
+	if got := find("expired").Token; got != conformance.RelayJWT.Tokens.Expired.Token {
+		t.Fatalf("expired token mismatch")
+	}
+	if got := find("badSignature").Token; got != conformance.RelayJWT.Tokens.BadSignature.Token {
+		t.Fatalf("badSignature token mismatch")
 	}
 }
 
