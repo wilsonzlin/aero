@@ -1,9 +1,12 @@
 #include "../include/aerogpu_d3d9_umd.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <memory>
+#include <thread>
 
+#include "aerogpu_dbgctl_escape.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
 #include "aerogpu_wddm_alloc.h"
@@ -56,6 +59,292 @@ uint32_t f32_bits(float v) {
   static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
   std::memcpy(&bits, &v, sizeof(bits));
   return bits;
+}
+
+// D3DPRESENT_* flags (numeric values from d3d9.h). We only need DONOTWAIT for
+// max-frame-latency throttling.
+constexpr uint32_t kD3dPresentDoNotWait = 0x00000001u; // D3DPRESENT_DONOTWAIT
+
+// D3DERR_WASSTILLDRAWING (0x8876021C). Returned by PresentEx when DONOTWAIT is
+// specified and the present is throttled.
+constexpr HRESULT kD3dErrWasStillDrawing = static_cast<HRESULT>(-2005532132);
+
+constexpr uint32_t kMaxFrameLatencyMin = 1;
+constexpr uint32_t kMaxFrameLatencyMax = 16;
+
+// Bounded wait for PresentEx throttling. This must be finite to avoid hangs in
+// DWM/PresentEx call sites if the GPU stops making forward progress.
+constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
+
+uint64_t monotonic_ms() {
+#if defined(_WIN32)
+  return static_cast<uint64_t>(GetTickCount64());
+#else
+  using namespace std::chrono;
+  return static_cast<uint64_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+#endif
+}
+
+uint64_t qpc_now() {
+#if defined(_WIN32)
+  LARGE_INTEGER li;
+  QueryPerformanceCounter(&li);
+  return static_cast<uint64_t>(li.QuadPart);
+#else
+  using namespace std::chrono;
+  return static_cast<uint64_t>(duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count());
+#endif
+}
+
+void sleep_ms(uint32_t ms) {
+#if defined(_WIN32)
+  Sleep(ms);
+#else
+  std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+#endif
+}
+
+#if defined(_WIN32)
+using NTSTATUS = LONG;
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+
+using D3DKMT_HANDLE = UINT;
+
+typedef struct D3DKMT_OPENADAPTERFROMHDC {
+  HDC hDc;
+  D3DKMT_HANDLE hAdapter;
+  LUID AdapterLuid;
+  UINT VidPnSourceId;
+} D3DKMT_OPENADAPTERFROMHDC;
+
+typedef struct D3DKMT_CLOSEADAPTER {
+  D3DKMT_HANDLE hAdapter;
+} D3DKMT_CLOSEADAPTER;
+
+typedef enum D3DKMT_ESCAPETYPE {
+  D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
+} D3DKMT_ESCAPETYPE;
+
+typedef struct D3DKMT_ESCAPEFLAGS {
+  union {
+    struct {
+      UINT HardwareAccess : 1;
+      UINT Reserved : 31;
+    };
+    UINT Value;
+  };
+} D3DKMT_ESCAPEFLAGS;
+
+typedef struct D3DKMT_ESCAPE {
+  D3DKMT_HANDLE hAdapter;
+  D3DKMT_HANDLE hDevice;
+  D3DKMT_HANDLE hContext;
+  D3DKMT_ESCAPETYPE Type;
+  D3DKMT_ESCAPEFLAGS Flags;
+  VOID* pPrivateDriverData;
+  UINT PrivateDriverDataSize;
+} D3DKMT_ESCAPE;
+
+typedef NTSTATUS(WINAPI* PFND3DKMTOpenAdapterFromHdc)(D3DKMT_OPENADAPTERFROMHDC* pData);
+typedef NTSTATUS(WINAPI* PFND3DKMTCloseAdapter)(D3DKMT_CLOSEADAPTER* pData);
+typedef NTSTATUS(WINAPI* PFND3DKMTEscape)(D3DKMT_ESCAPE* pData);
+
+struct D3DKMT_FUNCS {
+  HMODULE gdi32 = NULL;
+  PFND3DKMTOpenAdapterFromHdc OpenAdapterFromHdc = nullptr;
+  PFND3DKMTCloseAdapter CloseAdapter = nullptr;
+  PFND3DKMTEscape Escape = nullptr;
+};
+
+D3DKMT_FUNCS& d3dkmt_funcs() {
+  static D3DKMT_FUNCS funcs;
+  return funcs;
+}
+
+bool ensure_d3dkmt_loaded() {
+  D3DKMT_FUNCS& f = d3dkmt_funcs();
+  if (f.OpenAdapterFromHdc && f.CloseAdapter && f.Escape) {
+    return true;
+  }
+
+  if (!f.gdi32) {
+    f.gdi32 = GetModuleHandleW(L"gdi32.dll");
+    if (!f.gdi32) {
+      f.gdi32 = LoadLibraryW(L"gdi32.dll");
+    }
+  }
+  if (!f.gdi32) {
+    return false;
+  }
+
+  f.OpenAdapterFromHdc = reinterpret_cast<PFND3DKMTOpenAdapterFromHdc>(GetProcAddress(f.gdi32, "D3DKMTOpenAdapterFromHdc"));
+  f.CloseAdapter = reinterpret_cast<PFND3DKMTCloseAdapter>(GetProcAddress(f.gdi32, "D3DKMTCloseAdapter"));
+  f.Escape = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(f.gdi32, "D3DKMTEscape"));
+  return f.OpenAdapterFromHdc && f.CloseAdapter && f.Escape;
+}
+
+bool kmd_open_adapter_from_hdc(HDC hdc, D3DKMT_HANDLE* out_adapter) {
+  if (!hdc || !out_adapter) {
+    return false;
+  }
+  if (!ensure_d3dkmt_loaded()) {
+    return false;
+  }
+
+  D3DKMT_OPENADAPTERFROMHDC open{};
+  open.hDc = hdc;
+  NTSTATUS st = d3dkmt_funcs().OpenAdapterFromHdc(&open);
+  if (!NT_SUCCESS(st)) {
+    return false;
+  }
+
+  *out_adapter = open.hAdapter;
+  return true;
+}
+
+void kmd_close_adapter(D3DKMT_HANDLE adapter) {
+  if (!adapter) {
+    return;
+  }
+  if (!ensure_d3dkmt_loaded()) {
+    return;
+  }
+
+  D3DKMT_CLOSEADAPTER close{};
+  close.hAdapter = adapter;
+  d3dkmt_funcs().CloseAdapter(&close);
+}
+
+bool kmd_escape(D3DKMT_HANDLE adapter, void* data, UINT size) {
+  if (!adapter || !data || !size) {
+    return false;
+  }
+  if (!ensure_d3dkmt_loaded()) {
+    return false;
+  }
+
+  D3DKMT_ESCAPE e{};
+  e.hAdapter = adapter;
+  e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+  e.Flags.Value = 0;
+  e.pPrivateDriverData = data;
+  e.PrivateDriverDataSize = size;
+
+  NTSTATUS st = d3dkmt_funcs().Escape(&e);
+  return NT_SUCCESS(st);
+}
+#endif // defined(_WIN32)
+
+struct FenceSnapshot {
+  uint64_t last_submitted = 0;
+  uint64_t last_completed = 0;
+};
+
+FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
+  FenceSnapshot snap{};
+  if (!adapter) {
+    return snap;
+  }
+
+#if defined(_WIN32)
+  if (adapter->kmt_adapter_open) {
+    aerogpu_escape_query_fence_out q{};
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+
+    if (kmd_escape(static_cast<D3DKMT_HANDLE>(adapter->kmt_adapter), &q, sizeof(q))) {
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      adapter->last_submitted_fence = std::max<uint64_t>(adapter->last_submitted_fence, static_cast<uint64_t>(q.last_submitted_fence));
+      adapter->completed_fence = std::max<uint64_t>(adapter->completed_fence, static_cast<uint64_t>(q.last_completed_fence));
+    }
+  }
+#endif
+
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    snap.last_submitted = adapter->last_submitted_fence;
+    snap.last_completed = adapter->completed_fence;
+  }
+  return snap;
+}
+
+void retire_completed_presents_locked(Device* dev) {
+  if (!dev || !dev->adapter) {
+    return;
+  }
+
+  const uint64_t completed = refresh_fence_snapshot(dev->adapter).last_completed;
+  while (!dev->inflight_present_fences.empty() && dev->inflight_present_fences.front() <= completed) {
+    dev->inflight_present_fences.pop_front();
+  }
+}
+
+bool wait_for_fence(Adapter* adapter, uint64_t fence, uint32_t timeout_ms) {
+  if (!adapter || !fence) {
+    return true;
+  }
+
+  const uint64_t deadline = monotonic_ms() + timeout_ms;
+  while (monotonic_ms() < deadline) {
+    if (refresh_fence_snapshot(adapter).last_completed >= fence) {
+      return true;
+    }
+    sleep_ms(1);
+  }
+  return refresh_fence_snapshot(adapter).last_completed >= fence;
+}
+
+HRESULT throttle_presents_locked(Device* dev, uint32_t d3d9_present_flags) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (!dev->adapter) {
+    return E_FAIL;
+  }
+
+  // Clamp in case callers pass unexpected values.
+  if (dev->max_frame_latency < kMaxFrameLatencyMin) {
+    dev->max_frame_latency = kMaxFrameLatencyMin;
+  }
+  if (dev->max_frame_latency > kMaxFrameLatencyMax) {
+    dev->max_frame_latency = kMaxFrameLatencyMax;
+  }
+
+  retire_completed_presents_locked(dev);
+
+  if (dev->inflight_present_fences.size() < dev->max_frame_latency) {
+    return S_OK;
+  }
+
+  const bool dont_wait = (d3d9_present_flags & kD3dPresentDoNotWait) != 0;
+  if (dont_wait) {
+    return kD3dErrWasStillDrawing;
+  }
+
+  // Wait for at least one present fence to retire, but never indefinitely.
+  const uint64_t deadline = monotonic_ms() + kPresentThrottleMaxWaitMs;
+  while (dev->inflight_present_fences.size() >= dev->max_frame_latency) {
+    const uint64_t now = monotonic_ms();
+    if (now >= deadline) {
+      // Forward progress failed; drop the oldest fence to ensure PresentEx
+      // returns quickly. This preserves overall system responsiveness at the
+      // expense of perfect throttling accuracy under GPU hangs.
+      dev->inflight_present_fences.pop_front();
+      break;
+    }
+
+    const uint64_t oldest = dev->inflight_present_fences.front();
+    const uint32_t time_left = static_cast<uint32_t>(std::min<uint64_t>(deadline - now, kPresentThrottleMaxWaitMs));
+    (void)wait_for_fence(dev->adapter, oldest, time_left);
+    retire_completed_presents_locked(dev);
+  }
+
+  return S_OK;
 }
 
 uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format) {
@@ -334,6 +623,7 @@ uint64_t submit(Device* dev) {
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     fence = adapter->next_fence++;
+    adapter->last_submitted_fence = fence;
     adapter->completed_fence = fence;
   }
   adapter->fence_cv.notify_all();
@@ -361,6 +651,13 @@ HRESULT flush_locked(Device* dev) {
 
 HRESULT AEROGPU_D3D9_CALL adapter_close(AEROGPU_D3D9DDI_HADAPTER hAdapter) {
   auto* adapter = as_adapter(hAdapter);
+#if defined(_WIN32)
+  if (adapter && adapter->kmt_adapter_open) {
+    kmd_close_adapter(static_cast<D3DKMT_HANDLE>(adapter->kmt_adapter));
+    adapter->kmt_adapter_open = false;
+    adapter->kmt_adapter = 0;
+  }
+#endif
   delete adapter;
   return S_OK;
 }
@@ -1095,6 +1392,38 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_present_ex(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    const AEROGPU_D3D9DDIARG_PRESENTEX* pPresentEx) {
+  if (!hDevice || !pPresentEx) {
+    return E_INVALIDARG;
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  HRESULT hr = throttle_presents_locked(dev, pPresentEx->d3d9_present_flags);
+  if (hr != S_OK) {
+    return hr;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
+  cmd->scanout_id = 0;
+  cmd->flags = (pPresentEx->sync_interval == 1) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+  cmd->d3d9_present_flags = pPresentEx->d3d9_present_flags;
+  cmd->reserved0 = 0;
+
+  const uint64_t submit_fence = submit(dev);
+  const uint64_t present_fence = std::max<uint64_t>(submit_fence, refresh_fence_snapshot(dev->adapter).last_submitted);
+  if (present_fence) {
+    dev->inflight_present_fences.push_back(present_fence);
+  }
+
+  dev->present_count++;
+  dev->last_present_qpc = qpc_now();
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_present(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     const AEROGPU_D3D9DDIARG_PRESENT* pPresent) {
@@ -1105,13 +1434,83 @@ HRESULT AEROGPU_D3D9_CALL device_present(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  HRESULT hr = throttle_presents_locked(dev, pPresent->flags);
+  if (hr != S_OK) {
+    return hr;
+  }
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
   cmd->scanout_id = 0;
   cmd->flags = (pPresent->sync_interval == 1) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
   cmd->d3d9_present_flags = pPresent->flags;
   cmd->reserved0 = 0;
 
-  submit(dev);
+  const uint64_t submit_fence = submit(dev);
+  const uint64_t present_fence = std::max<uint64_t>(submit_fence, refresh_fence_snapshot(dev->adapter).last_submitted);
+  if (present_fence) {
+    dev->inflight_present_fences.push_back(present_fence);
+  }
+
+  dev->present_count++;
+  dev->last_present_qpc = qpc_now();
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_maximum_frame_latency(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    uint32_t max_frame_latency) {
+  if (!hDevice) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (max_frame_latency == 0) {
+    return E_INVALIDARG;
+  }
+  dev->max_frame_latency = std::clamp(max_frame_latency, kMaxFrameLatencyMin, kMaxFrameLatencyMax);
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_maximum_frame_latency(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    uint32_t* pMaxFrameLatency) {
+  if (!hDevice || !pMaxFrameLatency) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  *pMaxFrameLatency = dev->max_frame_latency;
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_present_stats(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDI_PRESENTSTATS* pStats) {
+  if (!hDevice || !pStats) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  std::memset(pStats, 0, sizeof(*pStats));
+  pStats->PresentCount = dev->present_count;
+  pStats->PresentRefreshCount = dev->present_count;
+  pStats->SyncRefreshCount = dev->present_count;
+  pStats->SyncQPCTime = static_cast<int64_t>(dev->last_present_qpc);
+  pStats->SyncGPUTime = 0;
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_last_present_count(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    uint32_t* pLastPresentCount) {
+  if (!hDevice || !pLastPresentCount) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  *pLastPresentCount = dev->present_count;
   return S_OK;
 }
 
@@ -1187,11 +1586,10 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   // If no output buffer provided, just report readiness via HRESULT.
   const bool need_data = pGetQueryData->pData && pGetQueryData->data_size;
 
-  std::unique_lock<std::mutex> lock(adapter->fence_mutex);
-  if (adapter->completed_fence < q->fence_value) {
-    // Blocking wait is acceptable for bring-up; avoid deadlock by waiting on a
-    // CV that is only signalled by submit().
-    adapter->fence_cv.wait(lock, [&] { return adapter->completed_fence >= q->fence_value; });
+  const uint64_t completed = refresh_fence_snapshot(adapter).last_completed;
+  if (completed < q->fence_value) {
+    // Never block indefinitely in a DDI call. The D3D9 runtime will poll again.
+    return S_FALSE;
   }
 
   if (need_data) {
@@ -1248,7 +1646,12 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnDrawPrimitive = device_draw_primitive;
   pDeviceFuncs->pfnDrawIndexedPrimitive = device_draw_indexed_primitive;
   pDeviceFuncs->pfnPresent = device_present;
+  pDeviceFuncs->pfnPresentEx = device_present_ex;
   pDeviceFuncs->pfnFlush = device_flush;
+  pDeviceFuncs->pfnSetMaximumFrameLatency = device_set_maximum_frame_latency;
+  pDeviceFuncs->pfnGetMaximumFrameLatency = device_get_maximum_frame_latency;
+  pDeviceFuncs->pfnGetPresentStats = device_get_present_stats;
+  pDeviceFuncs->pfnGetLastPresentCount = device_get_last_present_count;
 
   pDeviceFuncs->pfnCreateQuery = device_create_query;
   pDeviceFuncs->pfnDestroyQuery = device_destroy_query;
@@ -1279,6 +1682,18 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
   }
 
   auto* adapter = new aerogpu::Adapter();
+#if defined(_WIN32)
+  {
+    // Prefer using the real KMD fence counter when available. This enables
+    // D3D9Ex max-frame-latency throttling and present statistics to track real
+    // GPU progress.
+    UINT kmt_adapter = 0;
+    if (pOpenAdapter->hDc && aerogpu::kmd_open_adapter_from_hdc(pOpenAdapter->hDc, &kmt_adapter)) {
+      adapter->kmt_adapter = kmt_adapter;
+      adapter->kmt_adapter_open = true;
+    }
+  }
+#endif
   pOpenAdapter->hAdapter = adapter;
 
   std::memset(pAdapterFuncs, 0, sizeof(*pAdapterFuncs));

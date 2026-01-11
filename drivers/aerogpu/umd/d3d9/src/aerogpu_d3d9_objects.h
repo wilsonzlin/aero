@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <vector>
 
@@ -94,7 +95,14 @@ struct Adapter {
   std::mutex fence_mutex;
   std::condition_variable fence_cv;
   uint64_t next_fence = 1;
+  uint64_t last_submitted_fence = 0;
   uint64_t completed_fence = 0;
+
+  // Optional D3DKMT adapter handle for the bring-up fence query escape path.
+  // This is populated opportunistically during OpenAdapter2 when running on
+  // Windows, and is ignored in non-Windows builds.
+  uint32_t kmt_adapter = 0;
+  bool kmt_adapter_open = false;
 };
 
 struct DeviceStateStream {
@@ -112,6 +120,16 @@ struct Device {
   std::mutex mutex;
 
   CmdWriter cmd;
+
+  // D3D9Ex throttling + present statistics.
+  //
+  // These fields model the D3D9Ex "maximum frame latency" behavior used by DWM:
+  // we allow up to max_frame_latency in-flight presents, each tracked by a KMD
+  // fence ID (or a bring-up stub fence in non-WDDM builds).
+  uint32_t max_frame_latency = 3;
+  std::deque<uint64_t> inflight_present_fences;
+  uint32_t present_count = 0;
+  uint64_t last_present_qpc = 0;
 
   // Cached pipeline state.
   Resource* render_targets[4] = {nullptr, nullptr, nullptr, nullptr};
