@@ -121,10 +121,10 @@ To make ABI drift obvious *before* you debug a Win7 loader crash, the repo inclu
      - `AEROGPU_D3D9_WDK_ABI_ENFORCE_EXPECTED` (set when `/p:AeroGpuUseWdkHeaders=1`).
 
 4. **Rebuild the UMD**:
-   - In WDK mode (`/p:AeroGpuUseWdkHeaders=1`), the build will fail if:
-     - the WDK headers/toolchain no longer match the expected Win7 ABI, or
-     - AeroGPU’s portable `AEROGPU_D3D9DDIARG_*` structs are no longer prefix-compatible with the WDK structs
-       for the fields the UMD consumes.
+    - In WDK mode (`/p:AeroGpuUseWdkHeaders=1`), the build will fail if:
+      - the WDK headers/toolchain no longer match the expected Win7 ABI, or
+      - the UMD no longer compiles cleanly against the canonical Win7 D3D9UMDDI headers (the code uses
+        member-name tolerant accessors to handle minor header drift).
 
 ### Notes
 
