@@ -74,6 +74,7 @@
     <ClCompile Include="src\aerovblk.c" />
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\virtio\virtio-core\portable\virtio_pci_identity.c" />
     <ClCompile Include="..\..\windows7\virtio-modern\common\src\aero_virtio_pci_modern.c" />
   </ItemGroup>
 

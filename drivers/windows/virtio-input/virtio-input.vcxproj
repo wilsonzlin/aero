@@ -57,7 +57,7 @@
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>src;..\..\win7\virtio\virtio-core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;..\..\win7\virtio\virtio-core\include;..\virtio\common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>KMDF_VERSION_MAJOR=$(KMDF_VERSION_MAJOR);KMDF_VERSION_MINOR=$(KMDF_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -68,7 +68,7 @@
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>src;..\..\win7\virtio\virtio-core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;..\..\win7\virtio\virtio-core\include;..\virtio\common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>KMDF_VERSION_MAJOR=$(KMDF_VERSION_MAJOR);KMDF_VERSION_MINOR=$(KMDF_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -87,9 +87,11 @@
     <ClCompile Include="src\virtio_input.c" />
     <ClCompile Include="..\virtio\kmdf\virtio_pci_interrupts.c" />
     <ClCompile Include="src\virtio_statusq.c" />
+    <ClCompile Include="..\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\src\virtio_pci_caps.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\src\virtio_pci_modern.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c" />
     <ClCompile Include="src\log.c" />
     <ClCompile Include="src\hid.c" />
     <ClCompile Include="src\descriptor.c" />

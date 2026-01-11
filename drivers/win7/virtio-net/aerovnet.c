@@ -339,6 +339,48 @@ static ULONG AerovNetPciReadConfig(
     return Adapter->PciInterface.ReadConfig(Adapter->PciInterface.Context, PCI_WHICHSPACE_CONFIG, Buffer, Offset, Length);
 }
 
+static NDIS_STATUS AerovNetValidatePciIdentity(_In_ const AEROVNET_ADAPTER* Adapter)
+{
+    UCHAR cfg[64];
+    ULONG bytesRead;
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+    static const uint16_t allowedIds[] = { AEROVNET_PCI_DEVICE_ID };
+
+    if (Adapter == NULL) {
+        return NDIS_STATUS_FAILURE;
+    }
+
+    RtlZeroMemory(cfg, sizeof(cfg));
+    bytesRead = AerovNetPciReadConfig(Adapter, cfg, 0, sizeof(cfg));
+    if (bytesRead == 0) {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_ERROR_LEVEL,
+            "aerovnet: failed to read PCI config space for identity validation\n");
+        return NDIS_STATUS_FAILURE;
+    }
+
+    RtlZeroMemory(&id, sizeof(id));
+    res = virtio_pci_identity_validate_aero_contract_v1(cfg, bytesRead, allowedIds, RTL_NUMBER_OF(allowedIds), &id);
+    if (res != VIRTIO_PCI_IDENTITY_OK) {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_ERROR_LEVEL,
+            "aerovnet: unsupported device identity (vendor=%04x device=%04x rev=%02x, expected vendor=%04x device=%04x rev=%02x): %s\n",
+            (unsigned)id.vendor_id,
+            (unsigned)id.device_id,
+            (unsigned)id.revision_id,
+            (unsigned)AEROVNET_PCI_VENDOR_ID,
+            (unsigned)AEROVNET_PCI_DEVICE_ID,
+            (unsigned)AEROVNET_PCI_REVISION_ID_V1,
+            virtio_pci_identity_result_str(res));
+        return NDIS_STATUS_NOT_SUPPORTED;
+    }
+
+    return NDIS_STATUS_SUCCESS;
+}
+
 static NTSTATUS AerovNetReadBarBases(_Inout_ AEROVNET_ADAPTER* Adapter, _Out_writes_(VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT) ULONGLONG* BarBasesOut)
 {
     ULONG barRegs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -2538,6 +2580,26 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(
     if (status != NDIS_STATUS_SUCCESS) {
         AerovNetCleanupAdapter(adapter);
         return status;
+    }
+
+    /*
+     * Validate PCI identity (AERO-W7-VIRTIO v1) before mapping BAR0/MMIO.
+     *
+     * INF matching alone is insufficient because we also must enforce
+     * Revision ID == 0x01 and modern-only device IDs.
+     */
+    {
+        NTSTATUS st = AerovNetAcquirePciInterface(adapter);
+        if (!NT_SUCCESS(st)) {
+            AerovNetCleanupAdapter(adapter);
+            return NDIS_STATUS_FAILURE;
+        }
+
+        status = AerovNetValidatePciIdentity(adapter);
+        if (status != NDIS_STATUS_SUCCESS) {
+            AerovNetCleanupAdapter(adapter);
+            return status;
+        }
     }
 
     status = AerovNetParseResources(adapter, MiniportInitParameters->AllocatedResources);

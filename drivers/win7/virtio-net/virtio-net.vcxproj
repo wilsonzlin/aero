@@ -67,14 +67,15 @@
   <ItemGroup>
     <ClInclude Include="aerovnet.h" />
     <None Include="aerovnet.inf" />
+    <ClInclude Include="..\virtio\virtio-core\portable\virtio_pci_identity.h" />
   </ItemGroup>
 
   <ItemGroup>
     <ClCompile Include="aerovnet.c" />
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\virtio\virtio-core\portable\virtio_pci_identity.c" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
-

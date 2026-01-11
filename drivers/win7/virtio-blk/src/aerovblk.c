@@ -1024,6 +1024,45 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension,
     devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
     RtlZeroMemory(devExt, sizeof(*devExt));
 
+    RtlZeroMemory(pciCfg, sizeof(pciCfg));
+    if (StorPortGetBusData(devExt,
+                           PCIConfiguration,
+                           configInfo->SystemIoBusNumber,
+                           configInfo->SlotNumber,
+                           pciCfg,
+                           sizeof(pciCfg)) != sizeof(pciCfg)) {
+        return SP_RETURN_NOT_FOUND;
+    }
+
+    /*
+     * Enforce AERO-W7-VIRTIO contract v1 identity before mapping BARs/MMIO.
+     *
+     * Even though the INF matches the expected PCI IDs, drivers must still
+     * refuse unknown contract versions (Revision ID encodes the major).
+     */
+    {
+        virtio_pci_identity_t id;
+        virtio_pci_identity_result_t idRes;
+        static const uint16_t allowedIds[] = { 0x1042 };
+
+        RtlZeroMemory(&id, sizeof(id));
+        idRes = virtio_pci_identity_validate_aero_contract_v1(
+            pciCfg,
+            sizeof(pciCfg),
+            allowedIds,
+            RTL_NUMBER_OF(allowedIds),
+            &id);
+        if (idRes != VIRTIO_PCI_IDENTITY_OK) {
+            AEROVBLK_LOG(
+                "AERO-W7-VIRTIO identity mismatch: vendor=%04x device=%04x rev=%02x (%s)",
+                (UINT)id.vendor_id,
+                (UINT)id.device_id,
+                (UINT)id.revision_id,
+                virtio_pci_identity_result_str(idRes));
+            return SP_RETURN_NOT_FOUND;
+        }
+    }
+
     base = StorPortGetDeviceBase(devExt,
                                  configInfo->AdapterInterfaceType,
                                  configInfo->SystemIoBusNumber,
@@ -1036,21 +1075,6 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension,
 
     devExt->Bar0Va = base;
     devExt->Bar0Length = range->RangeLength;
-
-    RtlZeroMemory(pciCfg, sizeof(pciCfg));
-    if (StorPortGetBusData(devExt,
-                           PCIConfiguration,
-                           configInfo->SystemIoBusNumber,
-                           configInfo->SlotNumber,
-                           pciCfg,
-                           sizeof(pciCfg)) != sizeof(pciCfg)) {
-        return SP_RETURN_NOT_FOUND;
-    }
-
-    if (pciCfg[0x08] != (UCHAR)AEROVBLK_PCI_REVISION_ID) {
-        /* Revision ID encodes contract major version. */
-        return SP_RETURN_NOT_FOUND;
-    }
 
     AerovblkParseBarAddrs(pciCfg, sizeof(pciCfg), barAddrs);
 

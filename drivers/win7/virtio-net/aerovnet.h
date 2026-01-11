@@ -13,6 +13,7 @@
 
 #include "../virtio/virtio-core/include/virtio_spec.h"
 #include "../virtio/virtio-core/portable/virtio_pci_cap_parser.h"
+#include "../virtio/virtio-core/portable/virtio_pci_identity.h"
 
 #include "../../windows/virtio/common/virtqueue_split.h"
 

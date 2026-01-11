@@ -9,6 +9,7 @@
 #include "aero_virtio_pci_modern.h" /* drivers/windows7/virtio-modern/common/include */
 #include "virtqueue_split.h" /* drivers/windows/virtio/common */
 #include "virtio_pci_cap_parser.h" /* drivers/win7/virtio/virtio-core/portable */
+#include "virtio_pci_identity.h" /* drivers/win7/virtio/virtio-core/portable */
 
 #if DBG
 #define AEROVBLK_LOG(fmt, ...) DbgPrint("aerovblk: " fmt "\n", __VA_ARGS__)

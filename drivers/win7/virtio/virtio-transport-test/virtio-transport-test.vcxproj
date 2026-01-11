@@ -128,6 +128,7 @@
 
   <ItemGroup>
     <ClInclude Include="..\virtio-core\include\virtio_pci_modern.h" />
+    <ClInclude Include="..\virtio-core\portable\virtio_pci_identity.h" />
     <None Include="virtio-transport-test.inf" />
   </ItemGroup>
 
