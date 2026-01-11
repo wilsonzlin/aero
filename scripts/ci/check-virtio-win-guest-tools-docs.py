@@ -70,6 +70,10 @@ def check_docs() -> list[str]:
             re.compile(r"(?i)`?-Profile\s+minimal`?\s*\(default\)"),
         ),
         (
+            "claims `minimal` is default",
+            re.compile(r"(?i)`?minimal`?\s*\(default\)"),
+        ),
+        (
             "claims Default(-Profile minimal)",
             re.compile(r"(?i)\bDefault\s*\(\s*`?-Profile\s+minimal`?\s*\)"),
         ),
@@ -101,8 +105,14 @@ def check_docs() -> list[str]:
     for path in doc_paths:
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines()
+        matched_ranges: list[tuple[int, int]] = []
         for label, pat in patterns:
             for m in pat.finditer(text):
+                # Avoid spamming multiple errors for the same underlying match (e.g. the generic
+                # `minimal (default)` pattern is a substring of `-Profile minimal (default)`).
+                if any(start <= m.start() and m.end() <= end for start, end in matched_ranges):
+                    continue
+                matched_ranges.append((m.start(), m.end()))
                 lineno = text.count("\n", 0, m.start()) + 1
                 # Show a compact excerpt since matches may span multiple lines.
                 excerpt = re.sub(r"\s+", " ", m.group(0)).strip()
