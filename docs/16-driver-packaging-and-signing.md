@@ -28,14 +28,14 @@ Supported fields:
 - `infFiles` (optional): explicit list of `.inf` files to stage (paths relative to the driver directory). If omitted, CI discovers all `.inf` files under the driver directory.
   - Use this for drivers that ship multiple INFs (feature variants, optional components) where staging all of them together is undesirable (e.g. multiple INFs with the same HWIDs).
   - If present, the list must be non-empty.
-  - Paths must stay under the driver directory (no absolute paths / `..` traversal).
+  - Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).
 - `wow64Files` (optional): list of **file names** to copy from the driver’s **x86** build output into the **x64** staged package directory *before* INF stamping + Inf2Cat.
   - Intended for x64 driver packages that also need 32-bit user-mode components (WOW64 UMD DLLs).
   - Entries must be `.dll` file names.
   - Entries must be file names only (no path separators).
   - Requires x86 build outputs to be present (even if you are only generating/staging x64 packages).
   - WOW64 payloads are copied into the x64 package root; ensure the 32-bit DLL names do not collide with 64-bit build outputs (use distinct names such as a `_x64` suffix for 64-bit DLLs).
-- `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<driver>/`) and must not escape it (no absolute paths / `..` traversal).
+- `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<driver>/`) and must resolve under it (no absolute paths; cannot escape the driver directory).
   - CI refuses to include common binary extensions via `additionalFiles` (currently: `.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`).
 - `wdfCoInstaller` (optional): declare that this driver needs the WDF coinstaller and which KMDF version/DLL name.
   - If `dllName` is omitted, CI derives it from `kmdfVersion` (e.g. `1.11` → `WdfCoInstaller01011.dll`).
