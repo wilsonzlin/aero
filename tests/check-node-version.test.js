@@ -67,3 +67,4 @@ test("check-node-version: warns but does not fail on newer major versions", () =
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stderr, /differs from CI baseline/i);
 });
+

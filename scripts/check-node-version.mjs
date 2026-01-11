@@ -92,7 +92,11 @@ if (tooOld) {
     process.exit(1);
   }
 } else if (current.raw !== expected.raw) {
-  console.warn("note: Node.js version differs from CI baseline.");
+  if (current.major !== expected.major) {
+    console.warn("note: Node.js major version differs from CI baseline.");
+  } else {
+    console.warn("note: Node.js version differs from CI baseline.");
+  }
   console.warn(`- Detected: v${current.raw}`);
   console.warn(`- CI uses:  v${expected.raw} (from .nvmrc)`);
   console.warn(`- Recommended: ${recommendedRange}`);
