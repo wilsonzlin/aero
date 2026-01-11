@@ -10,6 +10,7 @@ import { MicCapture } from "./audio/mic_capture";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
+import { mountWebHidPassthroughPanel, WebHidPassthroughManager } from "./platform/webhid_passthrough";
 import { initAeroStatusApi } from "./api/status";
 import { AeroConfigManager } from "./config/manager";
 import { InputCapture } from "./input/input_capture";
@@ -248,6 +249,7 @@ function render(): void {
     renderRemoteDiskPanel(),
     renderAudioPanel(),
     renderMicrophonePanel(),
+    renderWebHidPassthroughPanel(),
     renderInputPanel(),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
@@ -1763,6 +1765,12 @@ function renderMicrophonePanel(): HTMLElement {
     statsLine,
     status,
   );
+}
+
+function renderWebHidPassthroughPanel(): HTMLElement {
+  const host = el("div");
+  mountWebHidPassthroughPanel(host, new WebHidPassthroughManager());
+  return el("div", { class: "panel" }, host);
 }
 
 function renderMicrobenchPanel(): HTMLElement {
