@@ -25,7 +25,13 @@ export type PlatformFeatureReport = {
   wasmThreads: boolean;
   /** Whether WebGPU is exposed (`navigator.gpu`). */
   webgpu: boolean;
-  /** Whether WebUSB is exposed (`navigator.usb`). */
+  /**
+   * Whether WebUSB is exposed (`navigator.usb`) in this context.
+   *
+   * WebUSB is only available in secure contexts (HTTPS / localhost), so we gate
+   * on `globalThis.isSecureContext === true` in addition to checking for the
+   * `navigator.usb` API surface.
+   */
   webusb: boolean;
   /** Whether WebGL2 is available (via `getContext("webgl2")`). */
   webgl2: boolean;
@@ -142,7 +148,11 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
   const wasmThreads = detectWasmThreads(crossOriginIsolated, sharedArrayBuffer);
 
   const webgpu = typeof navigator !== "undefined" && !!(navigator as Navigator & { gpu?: unknown }).gpu;
-  const webusb = typeof navigator !== "undefined" && "usb" in navigator;
+  const webusb =
+    typeof navigator !== "undefined" &&
+    globalThis.isSecureContext === true &&
+    "usb" in navigator &&
+    !!(navigator as Navigator & { usb?: unknown }).usb;
   const webgl2 = detectWebGl2();
   const opfs =
     typeof navigator !== "undefined" &&

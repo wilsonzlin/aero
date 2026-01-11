@@ -7,13 +7,14 @@ const originalValidate = WebAssembly.validate;
 afterEach(() => {
   WebAssembly.validate = originalValidate;
   delete (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated;
+  delete (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext;
 
   // Node.js provides a `navigator` getter; it is extensible, so we can delete any
   // stubbed properties after each test.
   if (typeof navigator !== "undefined") {
     delete (navigator as unknown as { gpu?: unknown }).gpu;
-    delete (navigator as unknown as { usb?: unknown }).usb;
     delete (navigator as unknown as { storage?: unknown }).storage;
+    delete (navigator as unknown as { usb?: unknown }).usb;
   }
 
   delete (globalThis as typeof globalThis & { AudioWorkletNode?: unknown }).AudioWorkletNode;
@@ -49,6 +50,7 @@ describe("detectPlatformFeatures", () => {
   it("detects exposed browser APIs via globals (navigator.*, Audio*, OffscreenCanvas)", () => {
     WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
     (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated = true;
+    (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext = true;
 
     // Node's global `navigator` is extensible. Stub the fields used by our detector.
     (navigator as unknown as { gpu?: unknown }).gpu = {};
@@ -71,5 +73,19 @@ describe("detectPlatformFeatures", () => {
     // We explicitly forced these via stubs above.
     expect(report.crossOriginIsolated).toBe(true);
     expect(report.wasmSimd).toBe(false);
+  });
+
+  it("detects WebUSB only in secure contexts with navigator.usb exposed", () => {
+    WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
+
+    // Baseline: insecure context (default in Node) => WebUSB gated off.
+    (navigator as unknown as { usb?: unknown }).usb = {};
+    const insecure = detectPlatformFeatures();
+    expect(insecure.webusb).toBe(false);
+
+    // Secure context + navigator.usb => WebUSB available.
+    (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext = true;
+    const secure = detectPlatformFeatures();
+    expect(secure.webusb).toBe(true);
   });
 });

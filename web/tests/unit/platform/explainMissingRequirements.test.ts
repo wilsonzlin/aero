@@ -32,6 +32,7 @@ describe("explainMissingRequirements", () => {
           jit_dynamic_wasm: true,
           webgpu: true,
           webgl2: true,
+          webusb: true,
           opfs: true,
           opfsSyncAccessHandle: true,
           audioWorklet: true,
