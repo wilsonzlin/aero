@@ -4,6 +4,7 @@ import type { Presenter, PresenterInitOptions, PresenterScaleMode, PresenterScre
 import { PresenterError } from './presenter';
 
 type Viewport = { x: number; y: number; w: number; h: number };
+type DirtyRect = { x: number; y: number; w: number; h: number };
 
 const DEFAULT_CLEAR_COLOR: [number, number, number, number] = [0, 0, 0, 1];
 
@@ -158,6 +159,18 @@ export class RawWebGl2Presenter implements Presenter {
   }
 
   public present(frame: number | ArrayBuffer | ArrayBufferView, stride: number): void {
+    this.presentInternal(frame, stride, null);
+  }
+
+  public presentDirtyRects(frame: number | ArrayBuffer | ArrayBufferView, stride: number, dirtyRects: DirtyRect[]): void {
+    this.presentInternal(frame, stride, dirtyRects);
+  }
+
+  private presentInternal(
+    frame: number | ArrayBuffer | ArrayBufferView,
+    stride: number,
+    dirtyRects: DirtyRect[] | null,
+  ): void {
     const gl = this.gl;
     if (!this.canvas || !gl || !this.program || !this.vao || !this.frameTexture) {
       throw new PresenterError('not_initialized', 'RawWebGl2Presenter.present() called before init()');
@@ -180,12 +193,32 @@ export class RawWebGl2Presenter implements Presenter {
     // Allow tight packing regardless of stride padding.
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.pixelStorei(gl.UNPACK_ROW_LENGTH, stride / 4);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
-
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.srcWidth, this.srcHeight, gl.RGBA, gl.UNSIGNED_BYTE, data);
-    // Reset state that can surprise other code paths sharing the context.
-    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+
+    if (!dirtyRects || dirtyRects.length === 0) {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.srcWidth, this.srcHeight, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    } else {
+      for (const rect of dirtyRects) {
+        const x = Math.max(0, rect.x | 0);
+        const y = Math.max(0, rect.y | 0);
+        let w = Math.max(0, rect.w | 0);
+        let h = Math.max(0, rect.h | 0);
+        if (x >= this.srcWidth || y >= this.srcHeight) continue;
+        if (x + w > this.srcWidth) w = Math.max(0, this.srcWidth - x);
+        if (y + h > this.srcHeight) h = Math.max(0, this.srcHeight - y);
+        if (w === 0 || h === 0) continue;
+
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, x);
+        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data);
+      }
+
+      // Reset state that can surprise other code paths sharing the context.
+      gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+      gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+    }
+
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
 
     assertWebGlOk(gl, 'texSubImage2D');
 

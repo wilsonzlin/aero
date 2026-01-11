@@ -176,6 +176,7 @@ let framesDropped = 0;
 
 let lastSeenSeq = 0;
 let lastPresentedSeq = 0;
+let lastUploadDirtyRects: DirtyRect[] | null = null;
 
 let lastMetricsPostAtMs = 0;
 const METRICS_POST_INTERVAL_MS = 250;
@@ -911,6 +912,7 @@ const estimateFullFrameUploadBytes = (width: number, height: number): number => 
 
 const presentOnce = async (): Promise<boolean> => {
   const t0 = performance.now();
+  lastUploadDirtyRects = null;
 
   try {
     const frame = getCurrentFrameInfo();
@@ -918,6 +920,7 @@ const presentOnce = async (): Promise<boolean> => {
     if (isDeviceLost) return false;
 
     if (presentFn) {
+      lastUploadDirtyRects = dirtyRects;
       const result = await presentFn(dirtyRects);
       return typeof result === "boolean" ? result : true;
     }
@@ -932,7 +935,15 @@ const presentOnce = async (): Promise<boolean> => {
         presenter.resize(frame.width, frame.height, outputDpr);
       }
 
-      presenter.present(frame.pixels, frame.strideBytes);
+      const dirtyPresenter = presenter as Presenter & {
+        presentDirtyRects?: (frame: number | ArrayBuffer | ArrayBufferView, stride: number, dirtyRects: DirtyRect[]) => void;
+      };
+      if (dirtyRects && dirtyRects.length > 0 && typeof dirtyPresenter.presentDirtyRects === "function") {
+        dirtyPresenter.presentDirtyRects(frame.pixels, frame.strideBytes, dirtyRects);
+        lastUploadDirtyRects = dirtyRects;
+      } else {
+        presenter.present(frame.pixels, frame.strideBytes);
+      }
       return true;
     }
 
@@ -1201,7 +1212,7 @@ const handleTick = async () => {
 
         const frame = getCurrentFrameInfo();
         const textureUploadBytes = frame?.sharedLayout
-          ? estimateTextureUploadBytes(frame.sharedLayout, frame.dirtyRects ?? null)
+          ? estimateTextureUploadBytes(frame.sharedLayout, lastUploadDirtyRects)
           : frame
             ? estimateFullFrameUploadBytes(frame.width, frame.height)
             : 0;
