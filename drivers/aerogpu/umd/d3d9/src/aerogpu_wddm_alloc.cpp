@@ -225,6 +225,24 @@ struct has_member_ReadOnly : std::false_type {};
 template <typename T>
 struct has_member_ReadOnly<T, std::void_t<decltype(std::declval<T&>().ReadOnly)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_CreateResource : std::false_type {};
+
+template <typename T>
+struct has_member_CreateResource<T, std::void_t<decltype(std::declval<T&>().CreateResource)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_CreateShared : std::false_type {};
+
+template <typename T>
+struct has_member_CreateShared<T, std::void_t<decltype(std::declval<T&>().CreateShared)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_CreateSharedResource : std::false_type {};
+
+template <typename T>
+struct has_member_CreateSharedResource<T, std::void_t<decltype(std::declval<T&>().CreateSharedResource)>> : std::true_type {};
+
 // D3DLOCK_* flags (numeric values from d3d9.h). Only the bits we care about are
 // defined here to keep the allocation helper self-contained.
 constexpr uint32_t kD3DLOCK_READONLY = 0x00000010u;
@@ -267,6 +285,44 @@ void set_lock_flags(FlagsT& flags, uint32_t lock_flags) {
   }
 }
 
+template <typename FlagsT>
+void set_allocate_flags(FlagsT& flags, bool is_shared) {
+  constexpr bool has_bitfields =
+      has_member_CreateResource<FlagsT>::value ||
+      has_member_CreateShared<FlagsT>::value ||
+      has_member_CreateSharedResource<FlagsT>::value;
+  if constexpr (has_bitfields) {
+    if constexpr (has_member_CreateResource<FlagsT>::value) {
+      flags.CreateResource = 1u;
+    }
+    if constexpr (has_member_CreateShared<FlagsT>::value) {
+      flags.CreateShared = is_shared ? 1u : 0u;
+    }
+    if constexpr (has_member_CreateSharedResource<FlagsT>::value) {
+      flags.CreateSharedResource = is_shared ? 1u : 0u;
+    }
+  } else if constexpr (has_member_Value<FlagsT>::value &&
+                       std::is_integral_v<std::remove_reference_t<decltype(std::declval<FlagsT&>().Value)>>) {
+    // Best-effort fallback: assume CreateResource is bit 0 and CreateShared is
+    // bit 1 (matches Win7-era DXGK/D3D flag layouts).
+    uint32_t value = 0;
+    value |= 0x1u;
+    if (is_shared) {
+      value |= 0x2u;
+    }
+    flags.Value = static_cast<decltype(flags.Value)>(value);
+  } else if constexpr (std::is_integral_v<std::remove_reference_t<FlagsT>>) {
+    uint32_t value = 0x1u;
+    if (is_shared) {
+      value |= 0x2u;
+    }
+    flags = static_cast<std::remove_reference_t<FlagsT>>(value);
+  } else {
+    (void)flags;
+    (void)is_shared;
+  }
+}
+
 } // namespace
 
 template <typename CallbackFn>
@@ -280,6 +336,7 @@ HRESULT invoke_create_allocation_cb(CallbackFn cb,
   using ArgPtr = typename fn_first_param<Fn>::type;
   using Args = std::remove_pointer_t<ArgPtr>;
   Args data{};
+  const bool is_shared = (priv && (priv->flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) != 0);
 
   if constexpr (has_member_hDevice<Args>::value) {
     data.hDevice = hDevice;
@@ -289,6 +346,11 @@ HRESULT invoke_create_allocation_cb(CallbackFn cb,
   }
   if constexpr (has_member_hKMResource<Args>::value) {
     data.hKMResource = 0;
+  }
+  if constexpr (has_member_Flags<Args>::value) {
+    set_allocate_flags(data.Flags, is_shared);
+  } else if constexpr (has_member_flags<Args>::value) {
+    set_allocate_flags(data.flags, is_shared);
   }
 
   if constexpr (!has_member_pAllocationInfo<Args>::value) {
