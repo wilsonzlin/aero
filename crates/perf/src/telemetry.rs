@@ -68,7 +68,7 @@ impl Telemetry {
         let window = now.duration_since(prev.at);
         *guard = Some(JitRollingState { at: now, totals });
 
-        let window_ms = window.as_millis() as u64;
+        let window_ms = window.as_millis().min(u64::MAX as u128) as u64;
         let window_s = window.as_secs_f64();
         if window_s <= 0.0 {
             return JitRollingExport {

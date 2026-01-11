@@ -50,7 +50,7 @@ impl NetStackBackend {
     /// timing between [`NetworkBackend::transmit`] and [`NetStackBackend::push_*`] calls can use
     /// this value as its time base.
     pub fn now_ms(&self) -> Millis {
-        self.start.elapsed().as_millis() as u64
+        self.start.elapsed().as_millis().min(u64::MAX as u128) as u64
     }
 
     /// Process an outbound (guest → host) Ethernet frame using an explicit `now_ms`.
