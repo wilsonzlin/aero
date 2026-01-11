@@ -229,6 +229,25 @@ try {
     $VirtioWinRoot = "$($vol.DriveLetter):\"
   } else {
     $VirtioWinRoot = (Resolve-Path $VirtioWinRoot).Path
+
+    # If the directory came from `tools/virtio-win/extract.py`, reuse its recorded ISO
+    # provenance (so non-Windows builds still record the original ISO hash).
+    $provenancePath = Join-Path $VirtioWinRoot "virtio-win-provenance.json"
+    if (Test-Path -LiteralPath $provenancePath -PathType Leaf) {
+      try {
+        $prov = Get-Content -LiteralPath $provenancePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ($prov -and $prov.virtio_win_iso) {
+          if (-not $isoPath -and $prov.virtio_win_iso.path) {
+            $isoPath = "" + $prov.virtio_win_iso.path
+          }
+          if (-not $isoHash -and $prov.virtio_win_iso.sha256) {
+            $isoHash = ("" + $prov.virtio_win_iso.sha256).ToLowerInvariant()
+          }
+        }
+      } catch {
+        Write-Warning "Failed to parse virtio-win provenance file: $provenancePath ($($_.Exception.Message))"
+      }
+    }
   }
 
   if (-not (Test-Path $OutDir)) {
