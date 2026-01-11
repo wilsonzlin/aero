@@ -613,6 +613,13 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
     }
 
     if (this.token !== undefined) {
+      // Avoid accidentally sending multiple/conflicting credential parameters when callers pass
+      // a base URL that already contains legacy `token`/`apiKey` query params.
+      //
+      // In particular, `crates/aero-l2-proxy` prefers `apiKey` over `token` in API-key auth mode,
+      // so leaving an old `apiKey` value on the URL could cause auth failures even when the caller
+      // provides a new token (via query or Sec-WebSocket-Protocol).
+      url.searchParams.delete("apiKey");
       if (this.tokenTransport === "subprotocol") {
         // If the caller provided `token` and requested subprotocol transport,
         // ensure we do not leak/override with a `?token=` value that may already

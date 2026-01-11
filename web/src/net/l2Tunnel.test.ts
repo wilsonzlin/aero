@@ -316,12 +316,16 @@ describe("net/l2Tunnel", () => {
     g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
 
     const events: L2TunnelEvent[] = [];
-    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2?token=old&foo=bar", (ev) => events.push(ev), {
+    const client = new WebSocketL2TunnelClient(
+      "wss://gateway.example.com/l2?token=old&apiKey=old&foo=bar",
+      (ev) => events.push(ev),
+      {
       keepaliveMinMs: 60_000,
       keepaliveMaxMs: 60_000,
       token: "sekrit",
       tokenTransport: "subprotocol",
-    });
+      },
+    );
 
     try {
       client.connect();
