@@ -79,9 +79,10 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|...
 
 Notes:
 - If virtio-snd playback is not enabled via `--test-snd` / `--require-snd` (and no capture flags are set), the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
 - If virtio-snd playback is enabled via `--test-snd` / `--require-snd` and the PCI device is missing, the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing`.
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`.
+  (In this case, the capture marker uses `...|device_missing` and is `SKIP` by default unless `--require-snd-capture` is set.)
 - If the virtio-snd PCI device is present but not bound to the expected driver, the tool emits a reason code:
   - `wrong_service` (bound to an unexpected service)
   - `driver_not_bound` (no `SPDRP_SERVICE` / no driver installed)
