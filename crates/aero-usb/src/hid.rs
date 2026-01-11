@@ -811,11 +811,17 @@ impl IoSnapshot for UsbHidKeyboard {
         w.field_bytes(TAG_EP0, encode_ep0(&self.ep0));
 
         w.field_u8(TAG_MODIFIERS, self.modifiers);
-        w.field_bytes(TAG_PRESSED_KEYS, Encoder::new().vec_u8(&self.pressed_keys).finish());
+        w.field_bytes(
+            TAG_PRESSED_KEYS,
+            Encoder::new().vec_u8(&self.pressed_keys).finish(),
+        );
         w.field_bytes(TAG_LAST_REPORT, self.last_report.to_vec());
 
         let pending: Vec<Vec<u8>> = self.pending_reports.iter().map(|r| r.to_vec()).collect();
-        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+        w.field_bytes(
+            TAG_PENDING_REPORTS,
+            Encoder::new().vec_bytes(&pending).finish(),
+        );
 
         w.finish()
     }
@@ -1440,7 +1446,10 @@ impl IoSnapshot for UsbHidMouse {
         w.field_i32(TAG_WHEEL, self.wheel);
 
         let pending: Vec<Vec<u8>> = self.pending_reports.iter().map(|r| r.to_vec()).collect();
-        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+        w.field_bytes(
+            TAG_PENDING_REPORTS,
+            Encoder::new().vec_bytes(&pending).finish(),
+        );
 
         w.finish()
     }
@@ -2105,7 +2114,10 @@ impl IoSnapshot for UsbHidGamepad {
         w.field_bytes(TAG_REPORT, self.report.to_bytes().to_vec());
 
         let pending: Vec<Vec<u8>> = self.pending_reports.iter().map(|r| r.to_vec()).collect();
-        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+        w.field_bytes(
+            TAG_PENDING_REPORTS,
+            Encoder::new().vec_bytes(&pending).finish(),
+        );
 
         w.finish()
     }
@@ -2165,7 +2177,9 @@ impl IoSnapshot for UsbHidGamepad {
             let mut d = Decoder::new(buf);
             for report in d.vec_bytes()? {
                 if report.len() != 8 {
-                    return Err(SnapshotError::InvalidFieldEncoding("gamepad pending report"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "gamepad pending report",
+                    ));
                 }
                 let mut arr = [0u8; 8];
                 arr.copy_from_slice(&report);
@@ -2957,7 +2971,11 @@ impl IoSnapshot for UsbHidCompositeInput {
         );
 
         w.field_u8(TAG_MOUSE_BUTTONS, self.mouse_buttons);
-        let pending_mouse: Vec<Vec<u8>> = self.pending_mouse_reports.iter().map(|r| r.to_vec()).collect();
+        let pending_mouse: Vec<Vec<u8>> = self
+            .pending_mouse_reports
+            .iter()
+            .map(|r| r.to_vec())
+            .collect();
         w.field_bytes(
             TAG_PENDING_MOUSE_REPORTS,
             Encoder::new().vec_bytes(&pending_mouse).finish(),
@@ -3042,7 +3060,9 @@ impl IoSnapshot for UsbHidCompositeInput {
         }
         if let Some(buf) = r.bytes(TAG_KEYBOARD_LAST_REPORT) {
             if buf.len() != 8 {
-                return Err(SnapshotError::InvalidFieldEncoding("composite keyboard_last_report"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "composite keyboard_last_report",
+                ));
             }
             self.keyboard_last_report.copy_from_slice(buf);
         }
@@ -3083,7 +3103,9 @@ impl IoSnapshot for UsbHidCompositeInput {
 
         if let Some(buf) = r.bytes(TAG_GAMEPAD_REPORT) {
             if buf.len() != 8 {
-                return Err(SnapshotError::InvalidFieldEncoding("composite gamepad report"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "composite gamepad report",
+                ));
             }
             let buttons = u16::from_le_bytes([buf[0], buf[1]]);
             let mut hat = buf[2] & 0x0F;

@@ -1,5 +1,7 @@
 use aero_io_snapshot::io::state::IoSnapshot;
-use aero_usb::hid::{GamepadReport, UsbHidCompositeInput, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse};
+use aero_usb::hid::{
+    GamepadReport, UsbHidCompositeInput, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse,
+};
 use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
 
 fn control_no_data<D: UsbDevice>(dev: &mut D, setup: SetupPacket) {
@@ -168,7 +170,7 @@ fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
         &mut restored,
         SetupPacket {
             request_type: 0xA1,
-            request: 0x01, // GET_REPORT
+            request: 0x01,    // GET_REPORT
             value: 2u16 << 8, // Output report
             index: 0,
             length: 1,
@@ -178,9 +180,15 @@ fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
     assert_eq!(leds, [0x05]);
 
     let mut buf = [0u8; 8];
-    assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Ack { bytes: 8 });
+    assert_eq!(
+        restored.handle_in(1, &mut buf),
+        UsbHandshake::Ack { bytes: 8 }
+    );
     assert_eq!(buf, [0, 0, 0x04, 0, 0, 0, 0, 0]);
-    assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Ack { bytes: 8 });
+    assert_eq!(
+        restored.handle_in(1, &mut buf),
+        UsbHandshake::Ack { bytes: 8 }
+    );
     assert_eq!(buf, [0; 8]);
     assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Nak);
 }
@@ -229,7 +237,10 @@ fn hid_mouse_snapshot_roundtrip_preserves_boot_protocol_and_reports() {
     assert_eq!(restored.address(), 6);
 
     let mut buf = [0u8; 4];
-    assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Ack { bytes: 3 });
+    assert_eq!(
+        restored.handle_in(1, &mut buf),
+        UsbHandshake::Ack { bytes: 3 }
+    );
     assert_eq!(&buf[..3], [0x00, 10, 251]);
     assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Nak);
 }
@@ -290,9 +301,15 @@ fn hid_gamepad_snapshot_roundtrip_preserves_report_queue() {
     assert_eq!(report, [0x35, 0x12, 0x03, 10, 246, 5, 251, 0]);
 
     let mut buf = [0u8; 8];
-    assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Ack { bytes: 8 });
+    assert_eq!(
+        restored.handle_in(1, &mut buf),
+        UsbHandshake::Ack { bytes: 8 }
+    );
     assert_eq!(buf, [0x34, 0x12, 0x03, 10, 246, 5, 251, 0]);
-    assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Ack { bytes: 8 });
+    assert_eq!(
+        restored.handle_in(1, &mut buf),
+        UsbHandshake::Ack { bytes: 8 }
+    );
     assert_eq!(buf, [0x35, 0x12, 0x03, 10, 246, 5, 251, 0]);
     assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Nak);
 }
@@ -369,7 +386,10 @@ fn hid_composite_snapshot_roundtrip_preserves_multiple_queues() {
     assert_eq!(leds, [0x0A]);
 
     let mut kb = [0u8; 8];
-    assert_eq!(restored.handle_in(1, &mut kb), UsbHandshake::Ack { bytes: 8 });
+    assert_eq!(
+        restored.handle_in(1, &mut kb),
+        UsbHandshake::Ack { bytes: 8 }
+    );
     assert_eq!(kb, [0, 0, 0x04, 0, 0, 0, 0, 0]);
 
     let mut mouse_buf = [0u8; 4];
@@ -380,7 +400,9 @@ fn hid_composite_snapshot_roundtrip_preserves_multiple_queues() {
     assert_eq!(&mouse_buf[..3], [0x00, 10, 251]);
 
     let mut gp = [0u8; 8];
-    assert_eq!(restored.handle_in(3, &mut gp), UsbHandshake::Ack { bytes: 8 });
+    assert_eq!(
+        restored.handle_in(3, &mut gp),
+        UsbHandshake::Ack { bytes: 8 }
+    );
     assert_eq!(gp, [1, 0, 8, 0, 0, 0, 0, 0]);
 }
-
