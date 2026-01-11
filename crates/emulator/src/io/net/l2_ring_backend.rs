@@ -4,4 +4,3 @@
 //! historical module name introduced during early bring-up.
 
 pub use super::ring_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats};
-

@@ -129,8 +129,7 @@ impl PciDeviceProfile {
                 PciBarKind::Io => config.set_bar_definition(
                     bar.index,
                     PciBarDefinition::Io {
-                        size: u32::try_from(bar.size)
-                            .expect("PCI IO BAR size should fit in u32"),
+                        size: u32::try_from(bar.size).expect("PCI IO BAR size should fit in u32"),
                     },
                 ),
                 PciBarKind::Mem32 => config.set_bar_definition(
