@@ -292,7 +292,8 @@ VirtIoSndTransportResetDevice(_Inout_ PVIRTIOSND_TRANSPORT Transport)
     return STATUS_IO_TIMEOUT;
 }
 
-static VOID
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
 VirtIoSndTransportAddStatus(_Inout_ PVIRTIOSND_TRANSPORT Transport, _In_ UCHAR Bits)
 {
     UCHAR status;
@@ -306,6 +307,13 @@ VirtIoSndTransportAddStatus(_Inout_ PVIRTIOSND_TRANSPORT Transport, _In_ UCHAR B
     status |= Bits;
     VirtIoSndWriteDeviceStatus(Transport, status);
     KeMemoryBarrier();
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtIoSndTransportSetDriverOk(_Inout_ PVIRTIOSND_TRANSPORT Transport)
+{
+    VirtIoSndTransportAddStatus(Transport, VIRTIO_STATUS_DRIVER_OK);
 }
 
 static UCHAR

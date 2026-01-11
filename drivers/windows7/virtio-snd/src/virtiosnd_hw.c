@@ -44,17 +44,7 @@ static VOID VirtIoSndResetDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION D
 
 static VOID VirtIoSndFailDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
-    UCHAR status;
-
-    if (Dx->Transport.CommonCfg == NULL) {
-        return;
-    }
-
-    KeMemoryBarrier();
-    status = VirtIoSndReadDeviceStatus(&Dx->Transport);
-    status |= VIRTIO_STATUS_FAILED;
-    VirtIoSndWriteDeviceStatus(&Dx->Transport, status);
-    KeMemoryBarrier();
+    VirtIoSndTransportAddStatus(&Dx->Transport, VIRTIO_STATUS_FAILED);
 }
 
 static VOID VirtIoSndDestroyQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
@@ -290,7 +280,6 @@ NTSTATUS VirtIoSndStartHardware(
     PCM_RESOURCE_LIST TranslatedResources)
 {
     NTSTATUS status;
-    UCHAR devStatus;
 
     if (Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -348,11 +337,8 @@ NTSTATUS VirtIoSndStartHardware(
         goto fail;
     }
 
-    KeMemoryBarrier();
-    devStatus = VirtIoSndReadDeviceStatus(&Dx->Transport);
-    devStatus |= VIRTIO_STATUS_DRIVER_OK;
-    VirtIoSndWriteDeviceStatus(&Dx->Transport, devStatus);
-    KeMemoryBarrier();
+    /* The device is now ready for normal operation. */
+    VirtIoSndTransportSetDriverOk(&Dx->Transport);
 
     VIRTIOSND_TRACE("device_status=0x%02X\n", (UINT)VirtIoSndReadDeviceStatus(&Dx->Transport));
 

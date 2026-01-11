@@ -98,6 +98,24 @@ NTSTATUS
 VirtIoSndTransportNegotiateFeatures(_Inout_ PVIRTIOSND_TRANSPORT Transport, _Out_ UINT64 *NegotiatedOut);
 
 /*
+ * Adds status bits to the device_status register (OR).
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtIoSndTransportAddStatus(_Inout_ PVIRTIOSND_TRANSPORT Transport, _In_ UCHAR Bits);
+
+/*
+ * Convenience helper: transitions the device to DRIVER_OK once queues are set up.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtIoSndTransportSetDriverOk(_Inout_ PVIRTIOSND_TRANSPORT Transport);
+
+/*
  * Reads the size of a virtqueue (queue_size) for the given index.
  * Returns STATUS_NOT_FOUND if the queue does not exist (size==0).
  */
