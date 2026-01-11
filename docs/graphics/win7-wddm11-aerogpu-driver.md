@@ -752,34 +752,43 @@ msbuild drivers\aerogpu\aerogpu.sln /m /t:Build /p:Configuration=Release /p:Plat
 See `drivers/aerogpu/README.md` for driver layout/entrypoints and `docs/16-windows7-driver-build-and-signing.md` for the current packaging/signing workflow.
  
 ### 9.2 Test signing + installation workflow
- 
+  
  For development we rely on **test signing**.
  
-1. Create a test certificate (self-signed is fine for local testing).
- 2. Sign:
-    - `aerogpu.sys`
-    - `aerogpu_d3d9_x64.dll` and `aerogpu_d3d9.dll`
-    - generate/sign `aerogpu.cat`
-3. Enable test signing:
+ Recommended workflow (sign on the build host, install in the Win7 VM):
  
-```bat
-bcdedit /set testsigning on
-shutdown /r /t 0
-```
+ 1. On the Windows 10/11 build host, build + generate catalogs + test-sign:
  
-4. Install the certificate into:
-   - Trusted Root Certification Authorities
-   - Trusted Publishers
- 
- 5. Install the driver package:
- 
-```bat
- pnputil -i -a aerogpu.inf
+ ```powershell
+ .\ci\install-wdk.ps1
+ .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers aerogpu
+ .\ci\make-catalogs.ps1 -ToolchainJson .\out\toolchain.json
+ .\ci\sign-drivers.ps1 -ToolchainJson .\out\toolchain.json
  ```
  
-**Note:** x64 requires proper signing/test mode; do not rely on “F8 disable enforcement” as a workflow.
+ 2. Copy into the Win7 VM:
+    - the signed package directory: `out/packages/aerogpu/x86/` or `out/packages/aerogpu/x64/`
+    - the signing cert: `out/certs/aero-test.cer`
  
----
+ 3. In the Win7 VM (as Administrator), trust the certificate and enable test signing:
+ 
+ ```bat
+ cd drivers\aerogpu\packaging\win7
+ trust_test_cert.cmd aero-test.cer
+ shutdown /r /t 0
+ ```
+ 
+ 4. After reboot, install:
+ 
+ ```bat
+ install.cmd
+ ```
+ 
+ (Or `install.cmd aerogpu_dx11.inf` if installing the optional D3D10/11 UMD variant.)
+  
+ **Note:** x64 requires proper signing/test mode; do not rely on “F8 disable enforcement” as a workflow.
+  
+ ---
  
 ## 10. Validation strategy (minimal acceptance tests)
  
