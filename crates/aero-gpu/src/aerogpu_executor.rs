@@ -1308,11 +1308,11 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Ok(());
         }
 
-        let writeback_requested = (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
-        let writeback = writeback_requested;
         // WebGPU buffer mapping is promise-based on wasm, but this executor is synchronous today.
         // Until the wasm execution path is made async, ignore WRITEBACK_DST rather than failing the
         // submission.
+        #[cfg(not(target_arch = "wasm32"))]
+        let writeback = (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
         #[cfg(target_arch = "wasm32")]
         let writeback = false;
         if (flags & !cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
@@ -1477,11 +1477,11 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Ok(());
         }
 
-        let writeback_requested = (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
-        let writeback = writeback_requested;
         // WebGPU buffer mapping is promise-based on wasm, but this executor is synchronous today.
         // Until the wasm execution path is made async, ignore WRITEBACK_DST rather than failing the
         // submission.
+        #[cfg(not(target_arch = "wasm32"))]
+        let writeback = (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
         #[cfg(target_arch = "wasm32")]
         let writeback = false;
         if (flags & !cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {

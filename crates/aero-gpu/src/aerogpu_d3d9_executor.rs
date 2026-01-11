@@ -1940,11 +1940,11 @@ impl AerogpuD3d9Executor {
                     if size_bytes == 0 {
                         return Ok(());
                     }
-                    let writeback_requested = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
-                    let writeback = writeback_requested;
                     // WebGPU buffer mapping is promise-based on wasm, but this executor is
                     // synchronous today. Until the wasm path is made async, ignore WRITEBACK_DST
                     // rather than failing the submission.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
                     #[cfg(target_arch = "wasm32")]
                     let writeback = false;
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
@@ -2160,11 +2160,11 @@ impl AerogpuD3d9Executor {
                     if width == 0 || height == 0 {
                         return Ok(());
                     }
-                    let writeback_requested = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
-                    let writeback = writeback_requested;
                     // WebGPU buffer mapping is promise-based on wasm, but this executor is
                     // synchronous today. Until the wasm path is made async, ignore WRITEBACK_DST
                     // rather than failing the submission.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
                     #[cfg(target_arch = "wasm32")]
                     let writeback = false;
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {

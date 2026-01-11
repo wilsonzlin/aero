@@ -23,7 +23,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
-use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
+use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
+#[cfg(not(target_arch = "wasm32"))]
+use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_FLAG_READONLY;
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
@@ -1831,13 +1833,11 @@ impl AerogpuD3d11Executor {
         let size_bytes = cmd.size_bytes;
         let flags = cmd.flags;
 
-        let writeback_requested = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
-        let writeback = writeback_requested;
         // WebGPU buffer mapping is promise-based on wasm, but this executor is synchronous today.
         // Until the wasm execution path is made async, ignore WRITEBACK_DST rather than failing the
         // entire submission.
-        #[cfg(target_arch = "wasm32")]
-        let writeback = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
         if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
             bail!("COPY_BUFFER: unknown flags {flags:#x}");
         }
@@ -1865,24 +1865,6 @@ impl AerogpuD3d11Executor {
         // Ensure the source buffer reflects any CPU writes from guest memory before copying.
         self.ensure_buffer_uploaded(encoder, src_buffer, allocs, guest_mem)?;
 
-        let dst_backing = if writeback {
-            let dst = self
-                .resources
-                .buffers
-                .get(&dst_buffer)
-                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
-            dst.backing.ok_or_else(|| {
-                anyhow!(
-                    "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
-                )
-            })?
-        } else {
-            ResourceBacking {
-                alloc_id: 0,
-                offset_bytes: 0,
-            }
-        };
-
         // If the destination is guest-backed and has pending uploads outside the copied region,
         // upload them now so untouched bytes remain correct.
         let needs_dst_upload = {
@@ -1902,6 +1884,7 @@ impl AerogpuD3d11Executor {
             self.ensure_buffer_uploaded(encoder, dst_buffer, allocs, guest_mem)?;
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         let mut staging: Option<wgpu::Buffer> = None;
         let mut copy_size_aligned = size_bytes;
 
@@ -1966,6 +1949,7 @@ impl AerogpuD3d11Executor {
                 copy_size_aligned,
             );
 
+            #[cfg(not(target_arch = "wasm32"))]
             if writeback {
                 let staging_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("aerogpu_cmd copy_buffer writeback staging"),
@@ -1990,6 +1974,19 @@ impl AerogpuD3d11Executor {
         if writeback {
             let Some(staging) = staging else {
                 bail!("COPY_BUFFER: internal error: missing staging buffer for writeback");
+            };
+
+            let dst_backing = {
+                let dst = self
+                    .resources
+                    .buffers
+                    .get(&dst_buffer)
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
+                dst.backing.ok_or_else(|| {
+                    anyhow!(
+                        "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
+                    )
+                })?
             };
 
             let dst_gpa = allocs.validate_write_range(
@@ -2071,13 +2068,11 @@ impl AerogpuD3d11Executor {
         let height = cmd.height;
         let flags = cmd.flags;
 
-        let writeback_requested = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
-        let writeback = writeback_requested;
         // WebGPU buffer mapping is promise-based on wasm, but this executor is synchronous today.
         // Until the wasm execution path is made async, ignore WRITEBACK_DST rather than failing the
         // entire submission.
-        #[cfg(target_arch = "wasm32")]
-        let writeback = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
         if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
             bail!("COPY_TEXTURE2D: unknown flags {flags:#x}");
         }
@@ -2088,6 +2083,7 @@ impl AerogpuD3d11Executor {
             bail!("COPY_TEXTURE2D: resource handles must be non-zero");
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         if writeback && (dst_mip_level != 0 || dst_array_layer != 0) {
             bail!(
                 "COPY_TEXTURE2D: WRITEBACK_DST is only supported for dst_mip_level=0 and dst_array_layer=0 (got mip={} layer={})",
@@ -2124,6 +2120,7 @@ impl AerogpuD3d11Executor {
 
         let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
 
+        #[cfg(not(target_arch = "wasm32"))]
         let (dst_backing, dst_row_pitch_bytes) = if writeback {
             let dst = self
                 .resources
@@ -2148,6 +2145,7 @@ impl AerogpuD3d11Executor {
             )
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         let mut staging: Option<(wgpu::Buffer, u32, u32, u32)> = None;
 
         {
@@ -2248,6 +2246,7 @@ impl AerogpuD3d11Executor {
                 },
             );
 
+            #[cfg(not(target_arch = "wasm32"))]
             if writeback {
                 let bytes_per_pixel = bytes_per_texel(dst.desc.format)?;
                 let unpadded_bpr = width
@@ -4522,6 +4521,7 @@ impl AllocTable {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn validate_write_range(&self, alloc_id: u32, offset: u64, size: u64) -> Result<u64> {
         if alloc_id == 0 {
             bail!("alloc_id must be non-zero");
