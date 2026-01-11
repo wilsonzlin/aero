@@ -445,6 +445,20 @@ packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
   - `win7-aero-guest-tools.json`
   - `win7-aero-virtio.json`
 
+Separately, CI also runs the `Windows device contract` workflow (`.github/workflows/windows-device-contract.yml`),
+which runs the Rust validator:
+
+```bash
+cargo run -p device_contract_validator --locked
+```
+
+This provides an additional guardrail that the **Windows device contract manifests** remain consistent with:
+
+- Guest Tools config (`guest-tools/config/devices.cmd`)
+- Packager specs (`tools/packaging/specs/*.json`)
+- In-tree Win7 driver INFs (`drivers/**`)
+- Emulator PCI ID constants (best-effort static checks)
+
 You can run the same check locally:
 
 ```bash
