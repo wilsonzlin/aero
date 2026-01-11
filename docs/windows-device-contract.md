@@ -266,6 +266,7 @@ Consumers must not assume any particular device ordering and must tolerate new d
 - `hardware_id_patterns` are Windows PnP PCI hardware ID strings using backslashes (e.g. `"PCI\\VEN_1AF4&DEV_1042&REV_01"`).
   - They are intended to be **directly usable** in INF matching and transformable into registry key names for `CriticalDeviceDatabase`.
   - Tools must treat them as case-insensitive.
+  - Consumers MUST treat this list as an **unordered set** (do not assume ordering); tools like Guest Tools may sort/deduplicate patterns before use.
 
 ### Hardware ID pattern policy (normative)
 
