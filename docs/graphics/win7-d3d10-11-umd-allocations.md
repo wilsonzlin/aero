@@ -174,6 +174,17 @@ The only “real” outputs from `pfnAllocateCb` that the UMD must preserve are:
 
 Everything else is driver-owned bookkeeping.
 
+> AeroGPU note (stable `alloc_id`): the returned allocation handle (`D3DKMT_HANDLE`) is used by the UMD
+> for later callbacks like `pfnLockCb`/`pfnUnlockCb`, but it is **not** the stable `alloc_id` used by the
+> AeroGPU host allocation table.
+>
+> On Win7/WDDM 1.1, the KMD later sees a different identity (`DXGK_ALLOCATIONLIST::hAllocation`, typically
+> a pointer) when building the per-submit allocation table. Therefore, do **not** derive AeroGPU
+> `alloc_id`/`backing_alloc_id` from the numeric value of `D3DKMT_HANDLE`.
+>
+> Instead, use the WDDM allocation **private driver data** blob (see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
+> and `docs/graphics/aerogpu-backing-alloc-id.md`).
+
 ---
 
 ## 3) Runtime callback prototypes (Win7-era headers)
@@ -361,6 +372,11 @@ Fields (subset relevant to the UMD allocation contract; see `win7_wdk_probe` for
   * **In**: bitmask of memory segments this allocation may be placed into for CPU writes.
 * `VOID* pPrivateDriverData`
   * Optional per-allocation private data blob for KMD (copied by the runtime during `pfnAllocateCb`).
+  * AeroGPU uses this blob to persist stable allocation IDs and (for shared resources) `share_token`
+    values across create/open:
+    * `aerogpu_wddm_alloc_priv` / `aerogpu_wddm_alloc_priv_v2` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
+  * Contract rule: treat this as **UMD → KMD input**; do not rely on the KMD writing back into the buffer
+    and expecting the UMD to observe the modified bytes.
 * `UINT PrivateDriverDataSize`
   * Size of `pPrivateDriverData` in bytes.
 
