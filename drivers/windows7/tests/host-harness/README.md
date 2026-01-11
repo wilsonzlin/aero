@@ -195,7 +195,8 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
 
-By default the guest selftest runs the virtio-snd section. To exercise it, make sure you:
+By default the guest selftest runs the virtio-snd section (and will FAIL if no virtio-snd render endpoint is present).
+To exercise it, make sure you:
 - include the virtio-snd driver in the drivers directory you provision into the guest, and
 - attach a virtio-snd device when running the harness (`-WithVirtioSnd` / `--with-virtio-snd`).
 

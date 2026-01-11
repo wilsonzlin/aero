@@ -48,6 +48,9 @@ AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line.
 
+Note: The virtio-snd test is enabled by default and will FAIL if no virtio-snd render endpoint is present. If you need
+to keep older images passing until virtio-snd is provisioned, run the guest tool with `--disable-snd`.
+
 ### Building (Windows)
 
 See `guest-selftest/README.md`.
@@ -65,6 +68,7 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
   - virtio-blk disk
   - virtio-net NIC (user-mode networking / slirp)
   - virtio-input keyboard + mouse devices (`virtio-keyboard-pci`, `virtio-mouse-pci`)
+  - (optional) virtio-snd device (when enabled via `-WithVirtioSnd` / `--with-virtio-snd`)
   - COM1 redirected to a host log file
 - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL`.
 - Exits with `0` on PASS, non-zero on FAIL/timeout.

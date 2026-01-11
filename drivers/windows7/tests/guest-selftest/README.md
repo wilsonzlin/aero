@@ -43,6 +43,9 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
+Notes:
+- If the virtio-snd test is disabled via `--disable-snd`, the tool will emit `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
+
 ## Building
 
 ### Prereqs
@@ -90,6 +93,13 @@ copy aero-virtio-selftest.exe C:\AeroTests\
 
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
+```
+
+To skip virtio-snd (not recommended unless your QEMU runner cannot attach virtio-snd yet):
+
+```bat
+schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --disable-snd --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
 
 If the VM has multiple disks (e.g. IDE boot disk + separate virtio data disk), you can force the virtio-blk test location:
