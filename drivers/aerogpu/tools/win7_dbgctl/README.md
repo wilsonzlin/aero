@@ -6,14 +6,17 @@ It talks to the installed AeroGPU driver via **`DxgkDdiEscape`** using `D3DKMTEs
 
 ## Supported device models / ABIs
 
-The current AeroGPU Win7 KMD targets the **versioned** AeroGPU PCI device:
+The in-tree AeroGPU Win7 KMD supports both the **versioned** and **legacy bring-up** AeroGPU PCI devices, auto-detected
+via BAR0 MMIO magic:
 
-- `PCI\\VEN_A3A0&DEV_0001` ("AGPU")  
-  Versioned AeroGPU ABI (ring = `aerogpu_ring_header` + `aerogpu_submit_desc` slots).
+- **Versioned ABI device**: `PCI\\VEN_A3A0&DEV_0001` ("AGPU")  
+  Ring = `aerogpu_ring_header` + `aerogpu_submit_desc` slots.
+- **Legacy bring-up ABI device**: `PCI\\VEN_1AED&DEV_0001` ("ARGP")  
+  Ring = legacy `aerogpu_legacy_ring_entry` entries (see `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h`).
 
 `--query-version` (alias: `--query-device`), `--query-fence`, `--dump-ring`, and `--selftest` rely on dbgctl escape
-packets implemented by the installed KMD. `aerogpu_dbgctl` keeps backwards-compatible decoding for older/legacy drivers
-where possible, but modern stacks are expected to use the versioned ABI.
+packets implemented by the installed KMD. The tool is primarily developed against the versioned ("AGPU") path, but
+keeps best-effort compatibility decoding for legacy ("ARGP") devices and older KMD builds.
 
 ## Features
 
