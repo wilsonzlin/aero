@@ -7,9 +7,9 @@
 //! [`crate::state::CpuState`] via the Tier-0 interpreter + assist layer and the
 //! tiered JIT runtime.
 //!
-//! The legacy `system::Cpu` model is retained behind the `legacy-interp`
-//! feature (default-off). The only always-available items in this module are
-//! the TSS helper types used by Tier-0 interrupt delivery (`Tss32`, `Tss64`).
+//! This module is retained behind the `legacy-interp` feature (default-off) as
+//! part of the legacy interpreter stack. New code should use the canonical CPU
+//! stack (`state::CpuState` + Tier-0 + tiered runtime) instead.
 
 #[cfg(feature = "legacy-interp")]
 use crate::cpuid::{cpuid, CpuFeatures, CpuidResult};
