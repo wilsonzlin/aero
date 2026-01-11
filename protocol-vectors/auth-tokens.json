@@ -75,6 +75,13 @@
         "expectError": true
       },
       {
+        "name": "invalidJson.payloadNotObject",
+        "secret": "test-session-secret",
+        "token": "W10.hGaJws6vO3cAENGw9U5mi_sMKbjNkZc9Drzdb8pyX4g",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
         "name": "badSignature",
         "secret": "test-session-secret",
         "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.zcesNltUxXmW1SpDGWoATMZj1GLX1LMz0TIdVRzO8lA",
@@ -127,6 +134,20 @@
         "name": "wrongType.vString",
         "secret": "test-session-secret",
         "token": "eyJ2IjoiMSIsInNpZCI6InNpZC0xMjM0NTY3ODkwIiwiZXhwIjoxNzAwMDAwMDYwfQ.NvwHz1febRax7c7jmdzQqga9VjHpKyZdmDsl7bgbx70",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidSid.emptyString",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiIiLCJleHAiOjE3MDAwMDAwNjB9.7c-g2qKFFOGH-AjdgfrYzYT05ZfjkhB066UfJikjDq8",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "expired.atBoundary",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtYm91bmRhcnkiLCJleHAiOjE3MDAwMDAwMDB9.UgE5v69A6XO4ob-zt5ZlBHuzquItoWD8_dq7p4rz2vM",
         "nowMs": 1700000000000,
         "expectError": true
       }
@@ -265,6 +286,69 @@
         "name": "invalidJson.payloadNotObject",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.W10.-3FuqGEp1plhTcn_8cBdu2knFs9R0t9Dh8g03A-cfy0",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidJson.header",
+        "secret": "test-jwt-secret",
+        "token": "bm90LWpzb24.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.3UPCqD4MzP98b_oscFnIUEluk6h3QxJRgKMc66Cgo-4",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidJson.headerNotObject",
+        "secret": "test-jwt-secret",
+        "token": "W10.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.LuST5kFvH3a5UeAWf5p2VkAwaafY3BWMiJKPQpa6-Po",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "missingAlg.header",
+        "secret": "test-jwt-secret",
+        "token": "eyJ0eXAiOiJKV1QifQ.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.G9DZER9S8P3qIESeXopa98tmKpoGff8bAchs2x72nR8",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64url.header",
+        "secret": "test-jwt-secret",
+        "token": "invalid!header.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.7CrM13ZYq4JGjRp27hVmgm9YwPutHrS9BUS3mJpgB3c",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlLength.header",
+        "secret": "test-jwt-secret",
+        "token": "a.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.pyCMuMwNcdVQNQ-jMW5tGiwKhUDTabfJKDu0sse2YVk",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "malformed.emptyHeader",
+        "secret": "test-jwt-secret",
+        "token": ".eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.glZzf6uBolpXk2b4ad13YEATyAVS9S9PwqLfQ1-aTSI",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "malformed.emptyPayload",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..bTLKQkLg2vdL18jHbIDJVfWI7X7aV8fHgFfELVDGqvs",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "malformed.emptySignature",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "malformed.tooManyParts",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.sig.extra",
         "nowSec": 1700000000,
         "expectError": true
       },
