@@ -17,6 +17,7 @@ use super::{
     USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS,
     USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
 };
+use super::report_descriptor;
 
 const INTERRUPT_IN_EP: u8 = 0x81;
 const INTERRUPT_OUT_EP: u8 = 0x01;
@@ -55,6 +56,9 @@ pub struct UsbHidPassthrough {
 
     has_interrupt_out: bool,
     report_ids_in_use: bool,
+    input_report_lengths: HashMap<u8, usize>,
+    output_report_lengths: HashMap<u8, usize>,
+    feature_report_lengths: HashMap<u8, usize>,
     max_pending_input_reports: usize,
     max_pending_output_reports: usize,
 
@@ -220,7 +224,8 @@ impl UsbHidPassthrough {
             .into_boxed_slice(),
         );
 
-        let report_ids_in_use = report_descriptor_uses_report_ids(hid_report_descriptor.as_ref());
+        let (report_ids_in_use, input_report_lengths, output_report_lengths, feature_report_lengths) =
+            report_descriptor_report_lengths(hid_report_descriptor.as_ref());
 
         Self {
             address: 0,
@@ -239,6 +244,9 @@ impl UsbHidPassthrough {
             serial_string_descriptor,
             has_interrupt_out,
             report_ids_in_use,
+            input_report_lengths,
+            output_report_lengths,
+            feature_report_lengths,
             max_pending_input_reports: DEFAULT_MAX_PENDING_INPUT_REPORTS,
             max_pending_output_reports: DEFAULT_MAX_PENDING_OUTPUT_REPORTS,
             pending_input_reports: VecDeque::new(),
@@ -267,6 +275,30 @@ impl UsbHidPassthrough {
             self.pending_output_reports.pop_front();
         }
         self.pending_output_reports.push_back(report);
+    }
+
+    fn report_length(&self, report_type: u8, report_id: u8) -> Option<usize> {
+        match report_type {
+            1 => self.input_report_lengths.get(&report_id).copied(),
+            2 => self.output_report_lengths.get(&report_id).copied(),
+            3 => self.feature_report_lengths.get(&report_id).copied(),
+            _ => None,
+        }
+    }
+
+    fn default_report(&self, report_type: u8, report_id: u8, w_length: u16) -> Vec<u8> {
+        let requested = w_length as usize;
+        let expected = self.report_length(report_type, report_id).unwrap_or(requested);
+        let len = expected.min(requested);
+        if len == 0 {
+            return Vec::new();
+        }
+
+        let mut data = vec![0u8; len];
+        if report_id != 0 {
+            data[0] = report_id;
+        }
+        data
     }
 
     fn string_descriptor(&self, index: u8) -> Option<Vec<u8>> {
@@ -539,9 +571,9 @@ impl UsbDeviceModel for UsbHidPassthrough {
                             .last_input_reports
                             .get(&report_id)
                             .cloned()
-                            .unwrap_or_else(|| default_input_report(report_id, setup.w_length)),
-                        // Minimal behavior for output/feature: return zeros.
-                        2 | 3 => vec![0; setup.w_length as usize],
+                            .unwrap_or_else(|| self.default_report(report_type, report_id, setup.w_length)),
+                        // Minimal behavior for output/feature: return zeros (with correct length when known).
+                        2 | 3 => self.default_report(report_type, report_id, setup.w_length),
                         _ => return ControlResponse::Stall,
                     };
                     ControlResponse::Data(clamp_response(data, setup.w_length))
@@ -663,18 +695,6 @@ impl UsbDeviceModel for UsbHidPassthrough {
     }
 }
 
-fn default_input_report(report_id: u8, w_length: u16) -> Vec<u8> {
-    let len = w_length as usize;
-    if len == 0 {
-        return Vec::new();
-    }
-    let mut data = vec![0u8; len];
-    if report_id != 0 {
-        data[0] = report_id;
-    }
-    data
-}
-
 fn sanitize_max_packet_size(max_packet_size: u16) -> u16 {
     match max_packet_size {
         8 | 16 | 32 | 64 => max_packet_size,
@@ -788,6 +808,116 @@ fn build_config_descriptor(
     out
 }
 
+fn report_descriptor_report_lengths(
+    report_descriptor_bytes: &[u8],
+) -> (bool, HashMap<u8, usize>, HashMap<u8, usize>, HashMap<u8, usize>) {
+    let Ok(collections) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
+        return (
+            report_descriptor_uses_report_ids(report_descriptor_bytes),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+    };
+
+    let mut report_ids_in_use = false;
+    let mut input_bits: HashMap<u8, u64> = HashMap::new();
+    let mut output_bits: HashMap<u8, u64> = HashMap::new();
+    let mut feature_bits: HashMap<u8, u64> = HashMap::new();
+
+    for collection in &collections {
+        accumulate_report_bits(
+            collection,
+            &mut report_ids_in_use,
+            &mut input_bits,
+            &mut output_bits,
+            &mut feature_bits,
+        );
+    }
+
+    (
+        report_ids_in_use,
+        bits_to_report_lengths(&input_bits),
+        bits_to_report_lengths(&output_bits),
+        bits_to_report_lengths(&feature_bits),
+    )
+}
+
+fn bits_to_report_lengths(bits: &HashMap<u8, u64>) -> HashMap<u8, usize> {
+    let mut out = HashMap::new();
+    for (&report_id, &total_bits) in bits {
+        let mut bytes = ((total_bits + 7) / 8) as usize;
+        if report_id != 0 {
+            bytes = bytes.saturating_add(1);
+        }
+        out.insert(report_id, bytes);
+    }
+    out
+}
+
+fn accumulate_report_bits(
+    collection: &report_descriptor::HidCollectionInfo,
+    report_ids_in_use: &mut bool,
+    input_bits: &mut HashMap<u8, u64>,
+    output_bits: &mut HashMap<u8, u64>,
+    feature_bits: &mut HashMap<u8, u64>,
+) {
+    for report in &collection.input_reports {
+        let Ok(report_id) = u8::try_from(report.report_id) else {
+            *report_ids_in_use = true;
+            continue;
+        };
+        if report_id != 0 {
+            *report_ids_in_use = true;
+        }
+        add_bits(input_bits, report_id, report_bits(report));
+    }
+    for report in &collection.output_reports {
+        let Ok(report_id) = u8::try_from(report.report_id) else {
+            *report_ids_in_use = true;
+            continue;
+        };
+        if report_id != 0 {
+            *report_ids_in_use = true;
+        }
+        add_bits(output_bits, report_id, report_bits(report));
+    }
+    for report in &collection.feature_reports {
+        let Ok(report_id) = u8::try_from(report.report_id) else {
+            *report_ids_in_use = true;
+            continue;
+        };
+        if report_id != 0 {
+            *report_ids_in_use = true;
+        }
+        add_bits(feature_bits, report_id, report_bits(report));
+    }
+
+    for child in &collection.children {
+        accumulate_report_bits(
+            child,
+            report_ids_in_use,
+            input_bits,
+            output_bits,
+            feature_bits,
+        );
+    }
+}
+
+fn add_bits(map: &mut HashMap<u8, u64>, report_id: u8, bits: u64) {
+    map.entry(report_id)
+        .and_modify(|v| *v = v.saturating_add(bits))
+        .or_insert(bits);
+}
+
+fn report_bits(report: &report_descriptor::HidReportInfo) -> u64 {
+    report
+        .items
+        .iter()
+        .map(|item| u64::from(item.report_size).saturating_mul(u64::from(item.report_count)))
+        .fold(0u64, |acc, v| acc.saturating_add(v))
+}
+
 fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
     let mut i = 0usize;
     while i < report_descriptor.len() {
@@ -814,7 +944,19 @@ fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
 
         // Global item, tag 8 = Report ID.
         if b & 0xFC == 0x84 {
-            return true;
+            if size == 0 {
+                return true;
+            }
+            if i + size > report_descriptor.len() {
+                break;
+            }
+            let mut value: u32 = 0;
+            for (shift, byte) in report_descriptor[i..i + size].iter().enumerate() {
+                value |= (*byte as u32) << (shift * 8);
+            }
+            if value != 0 {
+                return true;
+            }
         }
 
         i = i.saturating_add(size);
@@ -934,6 +1076,40 @@ mod tests {
             dev.poll_interrupt_in(INTERRUPT_IN_EP).unwrap(),
             vec![0x11, 0x22]
         );
+    }
+
+    #[test]
+    fn get_report_returns_zero_filled_report_of_descriptor_length() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".to_string(),
+            "Product".to_string(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Descriptor defines report ID 1 with 4 bytes of payload.
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (1u16 << 8) | 1u16, // Input, report ID 1
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![1, 0, 0, 0, 0]);
     }
 
     #[test]
