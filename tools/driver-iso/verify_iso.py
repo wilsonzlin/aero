@@ -28,10 +28,15 @@ def _list_iso_files_with_xorriso(iso_path: Path) -> set[str]:
 
     proc = subprocess.run(
         [xorriso, "-indev", str(iso_path), "-find", "/", "-type", "f", "-print"],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if proc.returncode != 0:
+        raise SystemExit(
+            "xorriso failed while listing ISO files:\n"
+            f"{proc.stderr.strip() or proc.stdout.strip() or '<no output>'}"
+        )
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
@@ -72,10 +77,15 @@ def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
             script,
             str(iso_path),
         ],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if proc.returncode != 0:
+        raise SystemExit(
+            "PowerShell Mount-DiskImage failed while listing ISO files:\n"
+            f"{proc.stderr.strip() or proc.stdout.strip() or '<no output>'}"
+        )
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
