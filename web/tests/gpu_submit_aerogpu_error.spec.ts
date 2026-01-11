@@ -171,7 +171,7 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
           const headerBytes = 8 * 4;
           const sharedFramebuffer = new SharedArrayBuffer(headerBytes + strideBytes * H);
           const header = new Int32Array(sharedFramebuffer, 0, 8);
-          // Header fields from `src/display/framebuffer_protocol.ts` (inlined).
+          // Header fields from src/display/framebuffer_protocol.ts (inlined).
           header[0] = 0x4f524541; // FRAMEBUFFER_MAGIC ("AERO")
           header[1] = 1; // FRAMEBUFFER_VERSION
           header[2] = W;
@@ -275,4 +275,3 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
   expect(result.errors.length).toBeGreaterThan(0);
   expect(result.pass).toBe(true);
 });
-

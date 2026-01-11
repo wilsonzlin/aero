@@ -9,7 +9,7 @@ test("gpu worker can present shared-layout framebuffer and screenshot matches", 
   // Expected hash for the RGBA pattern below (SHA-256 over raw bytes).
   const expectedHash = "0ede29c88978d2dfc76557e5b7c8d2114aaf78e2278aa5c1348da7726f8fdd1f";
 
-  const screenshot = await page.evaluate(
+  const result = await page.evaluate(
     async ({ width, height, expectedHash }) => {
       const shared = await import("/src/ipc/shared-layout.ts");
       const fp = await import("/src/shared/frameProtocol.ts");
@@ -129,15 +129,18 @@ test("gpu worker can present shared-layout framebuffer and screenshot matches", 
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
 
+      const frameDirty = Atomics.load(header, shared.SharedFramebufferHeaderIndex.FRAME_DIRTY);
+
       worker.postMessage({ type: "shutdown" });
       worker.terminate();
 
-      return { width: screenshot.width, height: screenshot.height, hash };
+      return { width: screenshot.width, height: screenshot.height, hash, frameDirty };
     },
     { width, height, expectedHash },
   );
 
-  expect(screenshot.width).toBe(width);
-  expect(screenshot.height).toBe(height);
-  expect(screenshot.hash).toBe(expectedHash);
+  expect(result.width).toBe(width);
+  expect(result.height).toBe(height);
+  expect(result.hash).toBe(expectedHash);
+  expect(result.frameDirty).toBe(0);
 });

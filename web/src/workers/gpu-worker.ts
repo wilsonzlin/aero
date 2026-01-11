@@ -1028,9 +1028,27 @@ const presentOnce = async (): Promise<boolean> => {
     const dirtyRects = frame?.dirtyRects ?? null;
     if (isDeviceLost) return false;
 
+    const clearSharedFramebufferDirty = () => {
+      if (!frame?.sharedLayout || !sharedFramebufferViews) return;
+      // `frame_dirty` is a producer->consumer "new frame" flag. Clearing it is
+      // optional, but doing so allows producers to detect consumer liveness (and
+      // some implementations may wait for it).
+      //
+      // Avoid clearing a newer frame: only clear if we still observe the same
+      // published sequence number after the upload/present work completes.
+      const header = sharedFramebufferViews.header;
+      const seqNow = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+      if (seqNow !== frame.frameSeq) return;
+      Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+      Atomics.notify(header, SharedFramebufferHeaderIndex.FRAME_DIRTY);
+    };
+
     if (presentFn) {
       lastUploadDirtyRects = dirtyRects;
       const result = await presentFn(dirtyRects);
+      if (typeof result === "boolean" ? result : true) {
+        clearSharedFramebufferDirty();
+      }
       return typeof result === "boolean" ? result : true;
     }
 
@@ -1053,11 +1071,13 @@ const presentOnce = async (): Promise<boolean> => {
       } else {
         presenter.present(frame.pixels, frame.strideBytes);
       }
+      clearSharedFramebufferDirty();
       return true;
     }
 
     // Headless: treat as successfully presented so the shared frame state can
     // transition back to PRESENTED and avoid DIRTY→tick spam.
+    clearSharedFramebufferDirty();
     return true;
   } finally {
     telemetry.recordPresentLatencyMs(performance.now() - t0);
