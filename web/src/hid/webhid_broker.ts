@@ -192,6 +192,10 @@ export class WebHidBroker {
 
     await this.manager.attachKnownDevice(device);
 
+    // The WebHID `@types/w3c-web-hid` definitions mark many collection fields as optional,
+    // but real Chromium devices always populate them. `normalizeCollections` expects a
+    // fully-populated shape matching the Rust contract, so cast and let the normalizer
+    // throw if a browser provides incomplete metadata.
     const collections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[]);
     const hasInterruptOut = computeHasInterruptOut(collections);
 
@@ -217,8 +221,9 @@ export class WebHidBroker {
 
       const view = event.data;
       if (!(view instanceof DataView)) return;
-      const buffer = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
-      const data = new Uint8Array(buffer);
+      const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+      const data = new Uint8Array(src.byteLength);
+      data.set(src);
 
       const msg: HidInputReportMessage = {
         type: "hid.inputReport",

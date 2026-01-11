@@ -26,7 +26,9 @@ export type HidInputReportMessage = {
   type: "hid.inputReport";
   deviceId: number;
   reportId: number;
-  data: Uint8Array;
+  // This buffer is transferred between threads; it should always be backed by an ArrayBuffer
+  // (not a SharedArrayBuffer).
+  data: Uint8Array<ArrayBuffer>;
   /**
    * Optional timestamp (DOMHighResTimeStamp). `Event.timeStamp` is relative to
    * page start, so consumers should treat this as best-effort debugging data.
@@ -39,7 +41,9 @@ export type HidSendReportMessage = {
   deviceId: number;
   reportType: HidReportType;
   reportId: number;
-  data: Uint8Array;
+  // This buffer is transferred between threads; it should always be backed by an ArrayBuffer
+  // (not a SharedArrayBuffer).
+  data: Uint8Array<ArrayBuffer>;
 };
 
 export type HidLogMessage = {
@@ -187,4 +191,3 @@ export function isHidProxyMessage(value: unknown): value is HidProxyMessage {
     isHidErrorMessage(value)
   );
 }
-
