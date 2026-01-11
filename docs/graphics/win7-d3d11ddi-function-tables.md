@@ -270,12 +270,12 @@ Win7-specific gotchas:
   * `D3D10DDIARG_PRESENT` is used even for D3D11 devices.
   * buffer rotation uses `pfnRotateResourceIdentities`.
 
-### 1.2 Interface version negotiation (`D3D11DDI_INTERFACE_VERSION`)
+### 1.2 Interface version negotiation (`D3D11DDI_INTERFACE_VERSION` / `D3D11DDI_SUPPORTED`)
 
 The Win7 D3D11 runtime uses `D3D10DDIARG_OPENADAPTER::Interface` / `::Version` as an ABI negotiation step:
 
-* `Interface` must be `D3D11DDI_INTERFACE`
-* `Version` determines the expected struct layout for the device/context function tables
+* `Interface` must be `D3D11DDI_INTERFACE_VERSION` (this selects the D3D11 DDI)
+* `Version` is negotiated against `D3D11DDI_SUPPORTED` and determines the expected struct layout for the device/context function tables
 
 If you accept an unsupported `Version`, the runtime may interpret your filled
 `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` with the wrong layout and crash.
@@ -283,9 +283,7 @@ If you accept an unsupported `Version`, the runtime may interpret your filled
 Recommended driver behavior:
 
 * `OpenAdapter11` validates the incoming interface/version.
-* If the runtime requests a newer `Version` than you support, either:
-  * return `E_INVALIDARG` (hard fail), or
-  * clamp `pOpenData->Version` down to your supported version (a common D3D10.x pattern, but still something you should test).
+* If the runtime requests a newer `Version` than you support, clamp `pOpenData->Version` down to your supported version (commonly `D3D11DDI_SUPPORTED`), matching the D3D10.x negotiation pattern.
 * Store the negotiated `Version` in adapter-private state and ensure `pfnCreateDevice` fills
   `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` matching that struct layout.
 

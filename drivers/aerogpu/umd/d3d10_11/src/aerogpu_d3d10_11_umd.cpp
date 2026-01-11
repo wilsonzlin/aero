@@ -87,7 +87,7 @@ constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au);
 // Win7 D3D11 runtime requests a specific user-mode DDI interface version. If we
 // accept a version, we must fill function tables whose struct layout matches
 // that version (otherwise the runtime can crash during device creation).
-constexpr UINT kAeroGpuWin7D3D11DdiInterfaceVersion = D3D11DDI_INTERFACE_VERSION;
+constexpr UINT kAeroGpuWin7D3D11DdiSupportedVersion = D3D11DDI_SUPPORTED;
 
 // Compile-time sanity (avoid sizeof assertions; layouts vary across WDKs).
 static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICEFUNCS::pfnCreateResource)>,
@@ -2967,7 +2967,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   if (!adapter) {
     return E_FAIL;
   }
-  if (adapter->d3d11_ddi_interface_version != kAeroGpuWin7D3D11DdiInterfaceVersion) {
+  if (adapter->d3d11_ddi_interface_version != kAeroGpuWin7D3D11DdiSupportedVersion) {
     return E_NOINTERFACE;
   }
 
@@ -3173,14 +3173,14 @@ HRESULT OpenAdapter11Wdk(D3D10DDIARG_OPENADAPTER* pOpenData) {
   // Interface-version negotiation: Win7 D3D11 runtime tells us which DDI
   // interface version it will use. If we accept a version, we must fill device
   // and context function tables matching that version's struct layout.
-  if (pOpenData->Interface != D3D11DDI_INTERFACE) {
+  if (pOpenData->Interface != D3D11DDI_INTERFACE_VERSION) {
     return E_INVALIDARG;
   }
-  if (pOpenData->Version < kAeroGpuWin7D3D11DdiInterfaceVersion) {
-    return E_NOINTERFACE;
+  if (pOpenData->Version < kAeroGpuWin7D3D11DdiSupportedVersion) {
+    return E_INVALIDARG;
   }
-  if (pOpenData->Version > kAeroGpuWin7D3D11DdiInterfaceVersion) {
-    pOpenData->Version = kAeroGpuWin7D3D11DdiInterfaceVersion;
+  if (pOpenData->Version > kAeroGpuWin7D3D11DdiSupportedVersion) {
+    pOpenData->Version = kAeroGpuWin7D3D11DdiSupportedVersion;
   }
 
   auto* adapter = new AeroGpuAdapter();
