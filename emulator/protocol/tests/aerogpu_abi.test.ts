@@ -288,8 +288,7 @@ function parseCcmdOpcodeConstNames(): string[] {
   return [...names].sort();
 }
 
-function parseCcmdStructDefNames(): string[] {
-  const headerPath = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_cmd.h");
+function parseCStructDefNames(headerPath: string): string[] {
   const text = fs.readFileSync(headerPath, "utf8");
 
   const names = new Set<string>();
@@ -328,6 +327,10 @@ function parseCcmdStructDefNames(): string[] {
   }
 
   return [...names].sort();
+}
+
+function parseCcmdStructDefNames(): string[] {
+  return parseCStructDefNames(path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_cmd.h"));
 }
 
 function upperSnakeToPascalCase(s: string): string {
@@ -448,6 +451,10 @@ function formatCNameToTsKey(cName: string): string {
 test("TypeScript layout matches C headers", () => {
   const abi = abiDump();
 
+  const pciHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_pci.h");
+  const ringHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_ring.h");
+  const cmdHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_cmd.h");
+
   const size = (name: string) => {
     const v = abi.sizes.get(name);
     assert.ok(v !== undefined, `missing SIZE for ${name}`);
@@ -533,6 +540,10 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_selftest_inout"), 32);
   assert.equal(size("aerogpu_escape_query_vblank_out"), 56);
   assert.equal(size("aerogpu_escape_map_shared_handle_inout"), 32);
+
+  // Coverage guard: `aerogpu_pci.h` currently defines constants/enums only (no ABI structs).
+  // If this changes, the TS mirror + ABI dump helper must be updated accordingly.
+  assertNameSetEq([], parseCStructDefNames(pciHeader), "aerogpu_pci.h struct coverage");
 
   // Key offsets.
   assert.equal(off("aerogpu_cmd_stream_header", "magic"), AEROGPU_CMD_STREAM_HEADER_OFF_MAGIC);
@@ -883,6 +894,17 @@ test("TypeScript layout matches C headers", () => {
     assert.equal(actualSize, expectedSize, `${sizeConstName} must match sizeof(${structName})`);
   }
 
+  // Coverage guard: same for `aerogpu_ring.h`.
+  const ringAny = aerogpuRing as unknown as Record<string, unknown>;
+  for (const structName of parseCStructDefNames(ringHeader)) {
+    const suffix = structName.replace(/^aerogpu_/, "").toUpperCase();
+    const sizeConstName = `AEROGPU_${suffix}_SIZE`;
+    const expectedSize = size(structName);
+    const actualSize = ringAny[sizeConstName];
+    assert.equal(typeof actualSize, "number", `missing TS struct size constant ${sizeConstName}`);
+    assert.equal(actualSize, expectedSize, `${sizeConstName} must match sizeof(${structName})`);
+  }
+
   assert.equal(konst("AEROGPU_CLEAR_COLOR"), BigInt(AEROGPU_CLEAR_COLOR));
   assert.equal(konst("AEROGPU_CLEAR_DEPTH"), BigInt(AEROGPU_CLEAR_DEPTH));
   assert.equal(konst("AEROGPU_CLEAR_STENCIL"), BigInt(AEROGPU_CLEAR_STENCIL));
@@ -1014,10 +1036,6 @@ test("TypeScript layout matches C headers", () => {
   //
   // These checks are header-driven: any addition/removal/change to the canonical headers in
   // `drivers/aerogpu/protocol/` must be reflected in the TS mirrors in `emulator/protocol/aerogpu/`.
-  const pciHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_pci.h");
-  const ringHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_ring.h");
-  const cmdHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_cmd.h");
-
   const expectedPciConsts = [
     ...parseCDefineConstNames(pciHeader),
     ...parseCEnumConstNames(pciHeader, "enum aerogpu_format", "AEROGPU_FORMAT_"),
@@ -1069,7 +1087,6 @@ test("TypeScript layout matches C headers", () => {
   assertNameSetEq(pciSeen, expectedPciConsts, "aerogpu_pci.h constants");
 
   // aerogpu_ring.h constants
-  const ringAny = aerogpuRing as unknown as Record<string, unknown>;
   const ringSeen: string[] = [];
   for (const name of expectedRingConsts) {
     const expected = konst(name);
