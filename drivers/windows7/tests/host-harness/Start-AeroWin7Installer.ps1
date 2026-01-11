@@ -78,6 +78,9 @@ Write-Host "4) After first boot, run: <CD>:\\AERO\\provision\\provision.cmd (as 
 Write-Host "5) Reboot. Then run Invoke-AeroVirtioWin7Tests.ps1 on the host to get deterministic PASS/FAIL via COM1 serial."
 Write-Host ""
 
+# Ensure the QEMU binary supports the modern-only + contract revision properties we rely on.
+Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem
+
 # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042) per AERO-W7-VIRTIO v1.
 # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
 # drivers bind under QEMU.

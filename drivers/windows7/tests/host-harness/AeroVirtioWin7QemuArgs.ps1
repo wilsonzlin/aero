@@ -14,6 +14,62 @@
 # Revision ID 0x01, but some QEMU virtio devices report REV_00 by default. Force
 # `x-pci-revision=0x01` so strict contract drivers bind under QEMU.
 
+function Get-AeroWin7QemuDeviceHelpText {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$QemuSystem,
+    [Parameter(Mandatory = $true)]
+    [string]$DeviceName
+  )
+
+  $help = & $QemuSystem -device "$DeviceName,help" 2>&1
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0) {
+    $helpText = ($help | Out-String).Trim()
+    throw "Failed to query QEMU device help for '$DeviceName' ($QemuSystem). Output:`n$helpText"
+  }
+
+  return ($help | Out-String)
+}
+
+function Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$QemuSystem,
+
+    # If set, also validate virtio-input device availability/properties (keyboard + mouse).
+    [Parameter(Mandatory = $false)]
+    [switch]$WithVirtioInput
+  )
+
+  $devices = @(
+    @{ Name = "virtio-net-pci"; RequireDisableLegacy = $true },
+    @{ Name = "virtio-blk-pci"; RequireDisableLegacy = $true }
+  )
+
+  if ($WithVirtioInput) {
+    $devices += @(
+      @{ Name = "virtio-keyboard-pci"; RequireDisableLegacy = $true },
+      @{ Name = "virtio-mouse-pci"; RequireDisableLegacy = $true }
+    )
+  }
+
+  foreach ($d in $devices) {
+    $name = $d.Name
+    $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $name
+
+    if ($d.RequireDisableLegacy -and ($helpText -notmatch "(?m)^\s*disable-legacy\b")) {
+      throw "QEMU device '$name' does not expose 'disable-legacy'. AERO-W7-VIRTIO v1 requires modern-only virtio-pci enumeration. Upgrade QEMU."
+    }
+
+    if ($helpText -notmatch "(?m)^\s*x-pci-revision\b") {
+      throw "QEMU device '$name' does not expose 'x-pci-revision'. AERO-W7-VIRTIO v1 requires PCI Revision ID 0x01. Upgrade QEMU."
+    }
+  }
+}
+
 function New-AeroWin7VirtioNetDeviceArg {
   [CmdletBinding()]
   param(

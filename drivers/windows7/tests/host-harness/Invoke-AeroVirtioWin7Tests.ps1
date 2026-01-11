@@ -521,6 +521,8 @@ $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 try {
   $serialChardev = "file,id=charserial0,path=$SerialLogPath"
   $netdev = "user,id=net0"
+  # Ensure the QEMU binary supports the modern-only + contract revision properties we rely on.
+  Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem -WithVirtioInput
   # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042/DEV_1052) per AERO-W7-VIRTIO v1.
   # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
   # drivers bind under QEMU.

@@ -105,6 +105,56 @@ def _stop_process(proc: subprocess.Popen[bytes]) -> None:
             pass
 
 
+def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
+    try:
+        proc = subprocess.run(
+            [qemu_system, "-device", f"{device_name},help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(f"qemu-system binary not found: {qemu_system}") from e
+    except OSError as e:
+        raise RuntimeError(f"failed to run '{qemu_system} -device {device_name},help': {e}") from e
+
+    if proc.returncode != 0:
+        out = (proc.stdout or "").strip()
+        raise RuntimeError(
+            f"failed to query QEMU device help for '{device_name}' (exit={proc.returncode}). Output:\n{out}"
+        )
+
+    return proc.stdout or ""
+
+
+def _assert_qemu_supports_aero_w7_virtio_contract_v1(qemu_system: str) -> None:
+    """
+    Fail fast with a clear error if the user's QEMU binary can't run the harness in
+    a strict AERO-W7-VIRTIO v1 environment.
+    """
+
+    required = [
+        ("virtio-net-pci", True),
+        ("virtio-blk-pci", True),
+        ("virtio-keyboard-pci", True),
+        ("virtio-mouse-pci", True),
+    ]
+
+    for device_name, require_disable_legacy in required:
+        help_text = _qemu_device_help_text(qemu_system, device_name)
+        if require_disable_legacy and "disable-legacy" not in help_text:
+            raise RuntimeError(
+                f"QEMU device '{device_name}' does not expose 'disable-legacy'. "
+                "AERO-W7-VIRTIO v1 requires modern-only virtio-pci enumeration. Upgrade QEMU."
+            )
+        if "x-pci-revision" not in help_text:
+            raise RuntimeError(
+                f"QEMU device '{device_name}' does not expose 'x-pci-revision'. "
+                "AERO-W7-VIRTIO v1 requires PCI Revision ID 0x01. Upgrade QEMU."
+            )
+
+
 def _detect_virtio_snd_device(qemu_system: str) -> str:
     # QEMU device naming has changed over time. Prefer the modern name but fall back
     # if a distro build exposes a legacy alias.
@@ -205,6 +255,12 @@ def main() -> int:
             parser.error("--virtio-snd-verify-wav requires --with-virtio-snd/--enable-virtio-snd")
         if args.virtio_snd_audio_backend != "wav":
             parser.error("--virtio-snd-verify-wav requires --virtio-snd-audio-backend=wav")
+
+    try:
+        _assert_qemu_supports_aero_w7_virtio_contract_v1(args.qemu_system)
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
 
     disk_image = Path(args.disk_image).resolve()
     serial_log = Path(args.serial_log).resolve()
