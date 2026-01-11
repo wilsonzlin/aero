@@ -118,8 +118,10 @@ Already implemented:
 - **Main-thread ↔ I/O worker WebHID broker (TypeScript)**
   - `WebHidBroker` (`web/src/hid/webhid_broker.ts`) + protocol (`web/src/hid/hid_proxy_protocol.ts`)
     forward report traffic:
-    - Preferred fast path (when `crossOriginIsolated`): SharedArrayBuffer ring buffers negotiated by
-      `hid.ringAttach` (see [Forwarding mechanism](#forwarding-mechanism)).
+    - Preferred fast path (when `crossOriginIsolated`): SharedArrayBuffer ring buffers:
+      - `hid.ring.init` (IPC `RingBuffer`) for high-frequency **input reports** (main → worker)
+      - `hid.ringAttach` (`HidReportRing`) for **output/feature reports** (worker → main)
+      (see [Forwarding mechanism](#forwarding-mechanism)).
     - Fallback/legacy path: `postMessage` forwarding (`hid.inputReport` / `hid.sendReport`).
 - **Worker-side WASM bridge (TypeScript)**
   - `web/src/workers/io.worker.ts` creates a WASM `WebHidPassthroughBridge` per attached device and
