@@ -145,7 +145,8 @@ trust_test_cert.cmd aero-test.cer
 shutdown /r /t 0
 ```
 
-> Tip: `trust_test_cert.cmd` lives in this directory. Copy it into the VM next to `aero-test.cer` (or pass an explicit cert path).
+> Tip: `trust_test_cert.cmd` lives in this directory. Copy it into the VM (or pass an explicit path).
+> If you omit the cert argument, it will also search for `aero-test.cer` in parent directories (useful for bundle/ISO layouts).
 
 4. After reboot, install the **signed** package by pointing at the INF in the copied package directory:
 

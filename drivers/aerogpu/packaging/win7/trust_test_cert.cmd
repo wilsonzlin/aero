@@ -49,6 +49,7 @@ if not defined CERT_FILE (
   rem to manually specify a relative path.
   for %%P in ("." ".." "..\.." "..\..\.." "..\..\..\.." "..\..\..\..\.." "..\..\..\..\..\.." "..\..\..\..\..\..\..") do (
     if not defined CERT_FILE if exist "%%~fP\aero-test.cer" set "CERT_FILE=%%~fP\aero-test.cer"
+    if not defined CERT_FILE if exist "%%~fP\aerogpu_test.cer" set "CERT_FILE=%%~fP\aerogpu_test.cer"
   )
 )
 if not defined CERT_FILE (
@@ -108,9 +109,10 @@ exit /b 0
 echo Usage:
 echo   trust_test_cert.cmd [cert.cer] [--no-bcdedit]
 echo.
-echo If cert.cer is omitted, this script will try:
+echo If cert.cer is omitted, this script searches for:
 echo   - aero-test.cer
 echo   - aerogpu_test.cer
+echo next to this script and in parent directories.
 exit /b 0
 
 :Fail
