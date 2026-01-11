@@ -1028,6 +1028,15 @@ impl AerogpuD3d9Executor {
         *self.resource_refcounts.entry(handle).or_insert(0) += 1;
     }
 
+    fn invalidate_bind_groups(&mut self) {
+        self.bind_group = None;
+        self.bind_group_dirty = true;
+        for ctx in self.contexts.values_mut() {
+            ctx.bind_group = None;
+            ctx.bind_group_dirty = true;
+        }
+    }
+
     fn destroy_resource_handle(&mut self, handle: u32) {
         if handle == 0 {
             return;
@@ -1039,12 +1048,7 @@ impl AerogpuD3d9Executor {
 
         // Texture bindings (and therefore bind groups) may reference the destroyed handle. Drop
         // cached bind groups so subsequent draws re-resolve handles against the updated table.
-        self.bind_group = None;
-        self.bind_group_dirty = true;
-        for ctx in self.contexts.values_mut() {
-            ctx.bind_group = None;
-            ctx.bind_group_dirty = true;
-        }
+        self.invalidate_bind_groups();
 
         let Some(count) = self.resource_refcounts.get_mut(&underlying) else {
             return;
@@ -2816,6 +2820,11 @@ impl AerogpuD3d9Executor {
                     self.resource_handles
                         .insert(out_resource_handle, underlying);
                     *self.resource_refcounts.entry(underlying).or_insert(0) += 1;
+                    // Bringing a previously-unknown alias handle into existence changes how
+                    // `SetTexture` bindings resolve. Drop any cached bind groups (including for
+                    // other contexts) so subsequent draws re-resolve handles against the updated
+                    // alias table.
+                    self.invalidate_bind_groups();
                 }
 
                 Ok(())
