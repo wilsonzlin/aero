@@ -103,6 +103,7 @@
   <ItemGroup>
     <ClCompile Include="portable\virtio_pci_cap_parser.c" />
     <ClCompile Include="portable\virtio_pci_aero_layout.c" />
+    <ClCompile Include="portable\virtio_pci_identity.c" />
     <ClCompile Include="src\virtio_pci_caps.c" />
     <ClCompile Include="src\virtio_pci_modern.c" />
   </ItemGroup>
@@ -113,6 +114,7 @@
     <ClInclude Include="include\virtio_spec.h" />
     <ClInclude Include="portable\virtio_pci_cap_parser.h" />
     <ClInclude Include="portable\virtio_pci_aero_layout.h" />
+    <ClInclude Include="portable\virtio_pci_identity.h" />
     <None Include="makefile" />
     <None Include="sources" />
   </ItemGroup>

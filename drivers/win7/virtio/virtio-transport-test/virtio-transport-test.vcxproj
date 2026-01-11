@@ -121,6 +121,7 @@
   <ItemGroup>
     <ClCompile Include="src\virtio_transport_test.c" />
     <ClCompile Include="..\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\virtio-core\portable\virtio_pci_identity.c" />
     <ClCompile Include="..\virtio-core\src\virtio_pci_caps.c" />
     <ClCompile Include="..\virtio-core\src\virtio_pci_modern.c" />
   </ItemGroup>
