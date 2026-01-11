@@ -65,13 +65,23 @@
           }
         }
       },
-      "gpu": {
-        "metrics": {
-          "frameTimeMsP95": {
-            "better": "lower",
-            "maxRegressionPct": 0.15,
-            "extremeCvThreshold": 0.5
-          },
+        "gpu": {
+          "metrics": {
+            "fpsAvg": {
+              "better": "higher",
+              "maxRegressionPct": 0.15,
+              "informational": true
+            },
+            "frameTimeMsP50": {
+              "better": "lower",
+              "maxRegressionPct": 0.15,
+              "informational": true
+            },
+            "frameTimeMsP95": {
+              "better": "lower",
+              "maxRegressionPct": 0.15,
+              "extremeCvThreshold": 0.5
+            },
           "shaderTranslationMsMean": {
             "better": "lower",
             "maxRegressionPct": 0.15,
@@ -262,6 +272,16 @@
       },
       "gpu": {
         "metrics": {
+          "fpsAvg": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "informational": true
+          },
+          "frameTimeMsP50": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "informational": true
+          },
           "frameTimeMsP95": {
             "better": "lower",
             "maxRegressionPct": 0.05,
