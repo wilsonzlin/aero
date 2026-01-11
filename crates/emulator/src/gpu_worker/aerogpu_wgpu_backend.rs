@@ -167,7 +167,9 @@ mod tests {
     use super::*;
 
     use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
-    use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocTableHeader, AEROGPU_ALLOC_TABLE_MAGIC};
+    use aero_protocol::aerogpu::aerogpu_ring::{
+        AerogpuAllocTableHeader, AEROGPU_ALLOC_TABLE_MAGIC,
+    };
 
     #[test]
     fn decode_alloc_table_bytes_recovers_from_misaligned_buffers() {

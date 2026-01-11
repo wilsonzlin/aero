@@ -253,7 +253,13 @@ impl Tier2WasmCodegen {
         exports.export(EXPORT_TRACE_FN, ExportKind::Func, imported.count);
         module.section(&exports);
 
-        let layout = Layout::new(plan, value_count, i64_locals, needs_code_version_table, options);
+        let layout = Layout::new(
+            plan,
+            value_count,
+            i64_locals,
+            needs_code_version_table,
+            options,
+        );
         let written_cached_regs = compute_written_cached_regs(trace, plan);
 
         let mut f = Function::new(vec![(i64_locals, ValType::I64)]);
@@ -287,7 +293,9 @@ impl Tier2WasmCodegen {
                 2,
             )));
             f.instruction(&Instruction::I64ExtendI32U);
-            f.instruction(&Instruction::LocalSet(layout.code_version_table_ptr_local()));
+            f.instruction(&Instruction::LocalSet(
+                layout.code_version_table_ptr_local(),
+            ));
 
             f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
             f.instruction(&Instruction::I32Load(memarg(
@@ -295,7 +303,9 @@ impl Tier2WasmCodegen {
                 2,
             )));
             f.instruction(&Instruction::I64ExtendI32U);
-            f.instruction(&Instruction::LocalSet(layout.code_version_table_len_local()));
+            f.instruction(&Instruction::LocalSet(
+                layout.code_version_table_len_local(),
+            ));
         }
 
         if options.inline_tlb {
@@ -449,14 +459,14 @@ impl Layout {
         let mut next = rflags_base + 1;
 
         let (code_version_table_ptr, code_version_table_len) = if needs_code_version_table {
-                let ptr = next;
-                next += 1;
-                let len = next;
-                next += 1;
-                (Some(ptr), Some(len))
-            } else {
-                (None, None)
-            };
+            let ptr = next;
+            next += 1;
+            let len = next;
+            next += 1;
+            (Some(ptr), Some(len))
+        } else {
+            (None, None)
+        };
 
         let (ram_base, tlb_salt, scratch_vaddr, scratch_vpn, scratch_tlb_data) =
             if options.inline_tlb {

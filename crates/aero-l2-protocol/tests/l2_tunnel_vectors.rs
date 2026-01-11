@@ -56,7 +56,8 @@ fn l2_tunnel_v1_vectors() {
         let wire = decode_b64(wire_b64);
 
         if v.expect_error.unwrap_or(false) {
-            let err = decode_message(&wire).expect_err(&format!("vector {} expected error", v.name));
+            let err =
+                decode_message(&wire).expect_err(&format!("vector {} expected error", v.name));
             if let Some(substr) = v.error_contains {
                 let msg = err.to_string();
                 assert!(
@@ -91,8 +92,10 @@ fn l2_tunnel_v1_vectors() {
             L2_TUNNEL_TYPE_FRAME => encode_frame(&payload).expect("encode frame"),
             L2_TUNNEL_TYPE_PING => encode_ping(Some(&payload)).expect("encode ping"),
             L2_TUNNEL_TYPE_PONG => encode_pong(Some(&payload)).expect("encode pong"),
-            L2_TUNNEL_TYPE_ERROR => encode_with_limits(msg_type, flags, &payload, &Limits::default())
-                .expect("encode error"),
+            L2_TUNNEL_TYPE_ERROR => {
+                encode_with_limits(msg_type, flags, &payload, &Limits::default())
+                    .expect("encode error")
+            }
             _ => encode_with_limits(msg_type, flags, &payload, &Limits::default())
                 .expect("encode message"),
         };

@@ -38,7 +38,7 @@ fn request_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         Some(adapter) => adapter,
         None => {
             if require_webgpu {
-                panic!("AERO_REQUIRE_WEBGPU=1 but wgpu request_adapter returned None");
+                panic!("AERO_REQUIRE_WEBGPU is enabled but wgpu request_adapter returned None");
             }
             eprintln!("skipping WebGPU-dependent test: no suitable adapter");
             return None;
@@ -56,7 +56,7 @@ fn request_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         Ok(device) => Some(device),
         Err(err) => {
             if require_webgpu {
-                panic!("AERO_REQUIRE_WEBGPU=1 but request_device failed: {err:?}");
+                panic!("AERO_REQUIRE_WEBGPU is enabled but request_device failed: {err:?}");
             }
             eprintln!("skipping WebGPU-dependent test: request_device failed: {err:?}");
             None

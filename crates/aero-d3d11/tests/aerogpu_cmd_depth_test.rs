@@ -306,4 +306,3 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
         }
     });
 }
-

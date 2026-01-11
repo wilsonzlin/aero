@@ -677,7 +677,11 @@ impl AeroGpuSoftwareExecutor {
 
             for i in 0..4 {
                 let (src_factor, dst_factor, op) = if i == 3 {
-                    (blend.src_factor_alpha, blend.dst_factor_alpha, blend.blend_op_alpha)
+                    (
+                        blend.src_factor_alpha,
+                        blend.dst_factor_alpha,
+                        blend.blend_op_alpha,
+                    )
                 } else {
                     (blend.src_factor, blend.dst_factor, blend.blend_op)
                 };

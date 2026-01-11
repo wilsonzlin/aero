@@ -1,9 +1,9 @@
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
-use aero_net_stack::StackConfig;
 use aero_l2_proxy::{
     start_server, AllowedOrigins, EgressPolicy, ProxyConfig, SecurityConfig, TUNNEL_SUBPROTOCOL,
 };
+use aero_net_stack::StackConfig;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,

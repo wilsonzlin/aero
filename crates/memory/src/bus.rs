@@ -466,13 +466,9 @@ impl PhysicalMemoryBus {
             // higher-level callers request an arbitrary byte count (e.g. DMA-style reads).
             let size = [8usize, 4, 2, 1]
                 .into_iter()
-                .find(|&candidate| {
-                    remaining >= candidate && (addr % candidate as u64) == 0
-                })
+                .find(|&candidate| remaining >= candidate && (addr % candidate as u64) == 0)
                 .unwrap_or(1);
-            let value = self.mmio_regions[region_idx]
-                .handler
-                .read(addr, size);
+            let value = self.mmio_regions[region_idx].handler.read(addr, size);
             let bytes = value.to_le_bytes();
             dst[pos..pos + size].copy_from_slice(&bytes[..size]);
             pos += size;
@@ -486,9 +482,7 @@ impl PhysicalMemoryBus {
             let remaining = src.len() - pos;
             let size = [8usize, 4, 2, 1]
                 .into_iter()
-                .find(|&candidate| {
-                    remaining >= candidate && (addr % candidate as u64) == 0
-                })
+                .find(|&candidate| remaining >= candidate && (addr % candidate as u64) == 0)
                 .unwrap_or(1);
             let mut buf = [0u8; 8];
             buf[..size].copy_from_slice(&src[pos..pos + size]);
@@ -889,7 +883,10 @@ mod tests {
         bus.write_physical_u64(0x1001, 0x1122_3344_5566_7788);
 
         let state = mmio_state.lock().unwrap();
-        assert_eq!(&state.mem[1..9], &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]);
+        assert_eq!(
+            &state.mem[1..9],
+            &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
+        );
     }
 }
 

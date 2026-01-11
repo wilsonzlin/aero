@@ -954,7 +954,9 @@ fn d3d9_copy_texture2d_writeback_respects_copy_region() {
     let pixel = [255u8, 0, 0, 255];
 
     let guest_memory = VecGuestMemory::new(0x4000);
-    guest_memory.write(DST_GPA, &vec![0xEEu8; backing_len]).unwrap();
+    guest_memory
+        .write(DST_GPA, &vec![0xEEu8; backing_len])
+        .unwrap();
     let alloc_table = AllocTable::new([(
         DST_ALLOC_ID,
         AllocEntry {
@@ -1027,10 +1029,11 @@ fn d3d9_copy_texture2d_writeback_respects_copy_region() {
         .expect("execute should succeed");
 
     let mut out = vec![0u8; backing_len];
-    guest_memory.read(DST_GPA, &mut out).expect("read dst backing");
+    guest_memory
+        .read(DST_GPA, &mut out)
+        .expect("read dst backing");
     let mut expected = vec![0xEEu8; backing_len];
-    let dst_off =
-        (dst_y as usize) * (row_pitch as usize) + (dst_x as usize) * pixel.len();
+    let dst_off = (dst_y as usize) * (row_pitch as usize) + (dst_x as usize) * pixel.len();
     expected[dst_off..dst_off + pixel.len()].copy_from_slice(&pixel);
     assert_eq!(out, expected);
 }

@@ -74,9 +74,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
-    hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     hid::passthrough::UsbHidPassthrough,
     hid::webhid,
+    hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     usb::{UsbDevice, UsbHandshake},
 };
 
@@ -930,8 +930,8 @@ impl UsbPassthroughDemo {
     }
 
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
-        let completion: UsbHostCompletion =
-            serde_wasm_bindgen::from_value(completion).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.inner.push_completion(completion);
         Ok(())
     }

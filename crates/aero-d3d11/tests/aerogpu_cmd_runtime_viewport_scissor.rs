@@ -217,4 +217,3 @@ fn aerogpu_cmd_runtime_clamps_scissor_to_render_target() {
         }
     });
 }
-

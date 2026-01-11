@@ -564,7 +564,9 @@ fn uhci_suspended_hid_device_can_remote_wake_and_trigger_resume_irq() {
     let mut mem = Bus::new(0x1000);
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     let keyboard = UsbHidKeyboardHandle::new();
-    uhci.controller.hub_mut().attach(0, Box::new(keyboard.clone()));
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
     uhci.controller.hub_mut().force_enable_for_tests(0);
 
     // Configure the device and enable remote wakeup.

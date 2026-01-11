@@ -485,7 +485,8 @@ mod tests {
         mem.write_u16_le(avail, flags).unwrap();
         mem.write_u16_le(avail + 2, heads.len() as u16).unwrap();
         for (idx, head) in heads.iter().enumerate() {
-            mem.write_u16_le(avail + 4 + (idx as u64) * 2, *head).unwrap();
+            mem.write_u16_le(avail + 4 + (idx as u64) * 2, *head)
+                .unwrap();
         }
     }
 

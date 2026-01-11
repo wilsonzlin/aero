@@ -235,7 +235,8 @@ fn pc_platform_routes_hda_intx_via_ioapic_in_apic_mode() {
     pc.memory.write_u16(bar0_base + 0x4a, 0x00ff); // CORBRP
     pc.memory.write_u16(bar0_base + 0x58, 0x00ff); // RIRBWP
 
-    pc.memory.write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL: GIE + CIE
+    pc.memory
+        .write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL: GIE + CIE
     pc.memory.write_u8(bar0_base + 0x5c, 0x03); // RIRBCTL: RUN + RINTCTL
     pc.memory.write_u8(bar0_base + 0x4c, 0x02); // CORBCTL: RUN
     pc.memory.write_u16(bar0_base + 0x48, 0x0000); // CORBWP
