@@ -268,7 +268,8 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
   - Clients can provide credentials via `?apiKey=<value>` / `?token=<value>` query params, or
     `Sec-WebSocket-Protocol: aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`).
 - `jwt`: requires `AERO_L2_JWT_SECRET` and a JWT provided via `?token=<value>` / `?apiKey=<value>`
-  or `Sec-WebSocket-Protocol: aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`; requires a header-safe token value).
+  or `Sec-WebSocket-Protocol: aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`; requires the
+  token be valid for the WebSocket subprotocol token grammar).
   - Optional defense-in-depth claim enforcement: `AERO_L2_JWT_AUDIENCE` / `AERO_L2_JWT_ISSUER`.
 - `cookie_or_jwt`: accepts either a valid gateway session cookie or a valid JWT.
   - Requires both the cookie signing secret (`AERO_L2_SESSION_SECRET` or `SESSION_SECRET` /
@@ -279,6 +280,9 @@ Notes:
 - When using an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>`, the negotiated
   subprotocol MUST still be `aero-l2-tunnel-v1`; the token entry is used only for authentication and
   MUST NOT replace the tunnel framing subprotocol.
+- Prefer the `Sec-WebSocket-Protocol` mechanism when possible to avoid putting secrets in URLs/logs;
+  query params remain supported for compatibility and for credentials that cannot be represented as
+  WebSocket subprotocol tokens (HTTP token / RFC 7230 `tchar`).
 - `AERO_L2_TOKEN` is a legacy alias for API-key auth when `AERO_L2_AUTH_MODE` is unset (and is also
   accepted as a fallback value for `AERO_L2_API_KEY`).
 
