@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
@@ -80,7 +82,13 @@ fn d3d9_executor_contexts_do_not_leak_constants() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping context isolation test: wgpu adapter not found");
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::d3d9_executor_contexts_do_not_leak_constants"
+                ),
+                "wgpu adapter not found",
+            );
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),

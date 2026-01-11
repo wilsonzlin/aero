@@ -350,7 +350,13 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
         let (device, queue) = match create_device_queue().await {
             Some(v) => v,
             None => {
-                eprintln!("skipping alloc table remap test: no wgpu adapter available");
+                common::skip_or_panic(
+                    concat!(
+                        module_path!(),
+                        "::alloc_table_is_resolved_per_submission_instead_of_caching_gpa"
+                    ),
+                    "no wgpu adapter available",
+                );
                 return;
             }
         };
