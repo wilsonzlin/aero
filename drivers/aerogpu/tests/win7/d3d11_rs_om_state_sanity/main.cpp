@@ -29,6 +29,13 @@ VSOut vs_main(VSIn input) {
   return o;
 }
 
+VSOut vs_depth_clip_main(VSIn input) {
+  VSOut o;
+  o.pos = float4(input.pos.xy, 2.0f, 1.0f);
+  o.color = input.color;
+  return o;
+}
+
 float4 ps_main(VSOut input) : SV_Target {
   return input.color;
 }
@@ -186,6 +193,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   // Compile shaders at runtime (no fxc.exe build-time dependency).
   const std::wstring dir = aerogpu_test::GetModuleDir();
   std::vector<unsigned char> vs_bytes;
+  std::vector<unsigned char> vs_depth_clip_bytes;
   std::vector<unsigned char> ps_bytes;
   std::string shader_err;
   if (!aerogpu_test::CompileHlslToBytecode(kStateHlsl,
@@ -195,7 +203,16 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                            "vs_4_0_level_9_1",
                                            &vs_bytes,
                                            &shader_err)) {
-    return reporter.Fail("failed to compile vertex shader: %s", shader_err.c_str());
+    return reporter.Fail("failed to compile vertex shader (vs_main): %s", shader_err.c_str());
+  }
+  if (!aerogpu_test::CompileHlslToBytecode(kStateHlsl,
+                                           strlen(kStateHlsl),
+                                           "d3d11_rs_om_state_sanity.hlsl",
+                                           "vs_depth_clip_main",
+                                           "vs_4_0_level_9_1",
+                                           &vs_depth_clip_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile vertex shader (vs_depth_clip_main): %s", shader_err.c_str());
   }
   if (!aerogpu_test::CompileHlslToBytecode(kStateHlsl,
                                            strlen(kStateHlsl),
@@ -211,6 +228,12 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   hr = device->CreateVertexShader(&vs_bytes[0], vs_bytes.size(), NULL, vs.put());
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateVertexShader", hr);
+  }
+
+  ComPtr<ID3D11VertexShader> vs_depth_clip;
+  hr = device->CreateVertexShader(&vs_depth_clip_bytes[0], vs_depth_clip_bytes.size(), NULL, vs_depth_clip.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateVertexShader(vs_depth_clip)", hr);
   }
 
   ComPtr<ID3D11PixelShader> ps;
@@ -410,6 +433,16 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     return reporter.FailHresult("CreateRasterizerState(no cull)", hr);
   }
 
+  // Rasterizer state: no culling, depth clip disabled (used for depth clip test).
+  D3D11_RASTERIZER_DESC rs_desc_no_depth_clip = rs_desc_no_cull;
+  rs_desc_no_depth_clip.DepthClipEnable = FALSE;
+
+  ComPtr<ID3D11RasterizerState> rs_no_cull_no_depth_clip;
+  hr = device->CreateRasterizerState(&rs_desc_no_depth_clip, rs_no_cull_no_depth_clip.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateRasterizerState(no depth clip)", hr);
+  }
+
   // Blend state: standard alpha blending.
   D3D11_BLEND_DESC blend_desc;
   ZeroMemory(&blend_desc, sizeof(blend_desc));
@@ -439,7 +472,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11BlendState> green_write_mask;
   hr = device->CreateBlendState(&green_mask_desc, green_write_mask.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBlendState(write mask)", hr);
+    return reporter.FailHresult("CreateBlendState(write mask)", hr);
   }
 
   // Blend state: uses constant blend factor (SrcBlend=BLEND_FACTOR, DestBlend=INV_BLEND_FACTOR).
@@ -451,7 +484,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11BlendState> blend_factor_state;
   hr = device->CreateBlendState(&factor_desc, blend_factor_state.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBlendState(blend factor)", hr);
+    return reporter.FailHresult("CreateBlendState(blend factor)", hr);
   }
 
   const FLOAT clear_red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -837,7 +870,100 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
   }
 
-  // Subtest 3: Blend (green with alpha=0.5 over red should yield ~yellow).
+  // Subtest 3: Depth clipping toggle (DepthClipEnable).
+  {
+    context->VSSetShader(vs_depth_clip.get(), NULL, 0);
+    context->OMSetBlendState(NULL, blend_factor, 0xFFFFFFFFu);
+    context->RSSetScissorRects(1, &full_rect);
+
+    UINT stride = sizeof(Vertex);
+    UINT offset = 0;
+    ID3D11Buffer* vbs[] = {vb_fs.get()};
+    context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+
+    // With depth clipping enabled, the primitive is outside the 0<=z<=w clip volume and should be discarded.
+    context->RSSetState(rs_no_cull.get());
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    D3D11_MAPPED_SUBRESOURCE map;
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(
+          &reporter, kTestName, "Map(staging) [depth clip enabled]", hr, device.get());
+    }
+
+    const int cx = kWidth / 2;
+    const int cy = kHeight / 2;
+    const uint32_t center_clipped = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_depth_clip_enabled.bmp");
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: depth-clip-enabled BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_red = 0xFFFF0000u;
+    if ((center_clipped & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      return reporter.Fail(
+          "depth clip failed (expected clipped): center(%d,%d)=0x%08lX expected ~0x%08lX",
+          cx,
+          cy,
+          (unsigned long)center_clipped,
+          (unsigned long)expected_red);
+    }
+
+    // With depth clipping disabled, the primitive should rasterize even though z is out of range.
+    context->RSSetState(rs_no_cull_no_depth_clip.get());
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(
+          &reporter, kTestName, "Map(staging) [depth clip disabled]", hr, device.get());
+    }
+
+    const uint32_t center_unclipped = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_depth_clip_disabled.bmp");
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: depth-clip-disabled BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_green = 0xFF00FF00u;
+    if ((center_unclipped & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      return reporter.Fail(
+          "depth clip failed (expected visible when disabled): center(%d,%d)=0x%08lX expected ~0x%08lX",
+          cx,
+          cy,
+          (unsigned long)center_unclipped,
+          (unsigned long)expected_green);
+    }
+
+    context->VSSetShader(vs.get(), NULL, 0);
+  }
+
+  // Subtest 4: Blend (green with alpha=0.5 over red should yield ~yellow).
   {
     UINT stride = sizeof(Vertex);
     UINT offset = 0;
