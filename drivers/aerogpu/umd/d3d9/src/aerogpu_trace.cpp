@@ -390,6 +390,20 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetFVF (stub)";
     case D3d9TraceFunc::DeviceGetVertexDecl:
       return "Device::GetVertexDecl (stub)";
+    case D3d9TraceFunc::DeviceGetStreamSource:
+      return "Device::GetStreamSource (stub)";
+    case D3d9TraceFunc::DeviceGetStreamSourceFreq:
+      return "Device::GetStreamSourceFreq (stub)";
+    case D3d9TraceFunc::DeviceGetIndices:
+      return "Device::GetIndices (stub)";
+    case D3d9TraceFunc::DeviceGetShader:
+      return "Device::GetShader (stub)";
+    case D3d9TraceFunc::DeviceGetShaderConstF:
+      return "Device::GetShaderConstF (stub)";
+    case D3d9TraceFunc::DeviceGetShaderConstI:
+      return "Device::GetShaderConstI (stub)";
+    case D3d9TraceFunc::DeviceGetShaderConstB:
+      return "Device::GetShaderConstB (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

@@ -242,6 +242,13 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnGetCurrentTexturePalette);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetNPatchMode);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetFVF);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetVertexDecl);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetStreamSource);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetStreamSourceFreq);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetIndices);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetShader);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetShaderConstF);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetShaderConstI);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetShaderConstB);
 
 // OpenResource arg fields (vary across WDK versions).
 AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
@@ -412,6 +419,13 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetNPatchMode, D3d9TraceFunc::DeviceGetNPatchMode, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetFVF, D3d9TraceFunc::DeviceGetFVF, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetVertexDecl, D3d9TraceFunc::DeviceGetVertexDecl, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetStreamSource, D3d9TraceFunc::DeviceGetStreamSource, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetStreamSourceFreq, D3d9TraceFunc::DeviceGetStreamSourceFreq, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetIndices, D3d9TraceFunc::DeviceGetIndices, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShader, D3d9TraceFunc::DeviceGetShader, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstF, D3d9TraceFunc::DeviceGetShaderConstF, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstI, D3d9TraceFunc::DeviceGetShaderConstI, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstB, D3d9TraceFunc::DeviceGetShaderConstB, D3DERR_NOTAVAILABLE);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
@@ -7993,6 +8007,40 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnGetVertexDecl<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetVertexDecl,
                            aerogpu_d3d9_stub_pfnGetVertexDecl<decltype(pDeviceFuncs->pfnGetVertexDecl)>::pfnGetVertexDecl);
+  }
+  if constexpr (aerogpu_has_member_pfnGetStreamSource<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetStreamSource,
+                           aerogpu_d3d9_stub_pfnGetStreamSource<decltype(
+                               pDeviceFuncs->pfnGetStreamSource)>::pfnGetStreamSource);
+  }
+  if constexpr (aerogpu_has_member_pfnGetStreamSourceFreq<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetStreamSourceFreq,
+                           aerogpu_d3d9_stub_pfnGetStreamSourceFreq<decltype(
+                               pDeviceFuncs->pfnGetStreamSourceFreq)>::pfnGetStreamSourceFreq);
+  }
+  if constexpr (aerogpu_has_member_pfnGetIndices<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetIndices,
+        aerogpu_d3d9_stub_pfnGetIndices<decltype(pDeviceFuncs->pfnGetIndices)>::pfnGetIndices);
+  }
+  if constexpr (aerogpu_has_member_pfnGetShader<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetShader,
+                           aerogpu_d3d9_stub_pfnGetShader<decltype(pDeviceFuncs->pfnGetShader)>::pfnGetShader);
+  }
+  if constexpr (aerogpu_has_member_pfnGetShaderConstF<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetShaderConstF,
+                           aerogpu_d3d9_stub_pfnGetShaderConstF<decltype(
+                               pDeviceFuncs->pfnGetShaderConstF)>::pfnGetShaderConstF);
+  }
+  if constexpr (aerogpu_has_member_pfnGetShaderConstI<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetShaderConstI,
+                           aerogpu_d3d9_stub_pfnGetShaderConstI<decltype(
+                               pDeviceFuncs->pfnGetShaderConstI)>::pfnGetShaderConstI);
+  }
+  if constexpr (aerogpu_has_member_pfnGetShaderConstB<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetShaderConstB,
+                           aerogpu_d3d9_stub_pfnGetShaderConstB<decltype(
+                               pDeviceFuncs->pfnGetShaderConstB)>::pfnGetShaderConstB);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnCreateSwapChain, device_create_swap_chain);

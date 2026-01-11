@@ -161,6 +161,8 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
   `pfnGetRenderTarget` / `pfnGetDepthStencil`, `pfnGetTexture`, `pfnGetTextureStageState`, `pfnGetSamplerState`,
   `pfnGetRenderState`, `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`, `pfnGetNPatchMode`,
   `pfnGetFVF` / `pfnGetVertexDecl` (returns `D3DERR_NOTAVAILABLE`)
+- `pfnGetStreamSource` / `pfnGetStreamSourceFreq`, `pfnGetIndices`, `pfnGetShader`, `pfnGetShaderConstF/I/B`
+  (returns `D3DERR_NOTAVAILABLE`)
 
 ### Caps/feature gating
 

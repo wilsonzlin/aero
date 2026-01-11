@@ -163,6 +163,13 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceGetNPatchMode,
   DeviceGetFVF,
   DeviceGetVertexDecl,
+  DeviceGetStreamSource,
+  DeviceGetStreamSourceFreq,
+  DeviceGetIndices,
+  DeviceGetShader,
+  DeviceGetShaderConstF,
+  DeviceGetShaderConstI,
+  DeviceGetShaderConstB,
 
   kCount,
 };
