@@ -261,7 +261,7 @@ Key required features for Win7-era shaders:
 - Arithmetic: `add/mul/mad/min/max/rcp/rsq/sqrt`
 - Control flow: `if/else/endif`, `loop/endloop`, `break`, `discard`
 - Interpolation modifiers for PS inputs
-- Texture sampling ops (sample/sample_l/sample_d)
+- Texture ops (sample/sample_l/sample_d, ld/`Texture*.Load`)
 - Integer ops and bitcasts (used heavily in packing/unpacking)
 
 ### Resource binding mapping
