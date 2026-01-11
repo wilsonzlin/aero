@@ -62,6 +62,8 @@ namespace {
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
+constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
+    static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
 constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
 struct AeroGpuAdapter;
@@ -2681,6 +2683,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
   if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
       hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L) ||
+      hr == kHrNtStatusGraphicsGpuBusy ||
       (do_not_wait && hr == kHrPending)) {
     hr = kDxgiErrorWasStillDrawing;
   }

@@ -27,6 +27,9 @@ namespace {
 
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
+constexpr HRESULT kHrNtStatusTimeout = static_cast<HRESULT>(0x10000102L); // HRESULT_FROM_NT(STATUS_TIMEOUT)
+constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
+    static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
 
 constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
@@ -1588,7 +1591,7 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
       // Map the common wait-timeout HRESULTs to DXGI_ERROR_WAS_STILL_DRAWING so
       // higher-level D3D code can use this for Map(DO_NOT_WAIT) behavior.
       if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-          hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L) ||
+          hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == kHrNtStatusTimeout || hr == kHrNtStatusGraphicsGpuBusy ||
           (timeout_ms == 0 && hr == kHrPending)) {
         return kDxgiErrorWasStillDrawing;
       }
@@ -1674,7 +1677,8 @@ uint64_t WddmSubmit::QueryCompletedFence() {
           completed = std::max(completed, last_submitted_fence_);
           need_kmt_fallback = false;
         } else if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-                   hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L) || hr == kHrPending) {
+                   hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == kHrNtStatusTimeout || hr == kHrNtStatusGraphicsGpuBusy ||
+                   hr == kHrPending) {
           need_kmt_fallback = false;
         }
       }
