@@ -1599,10 +1599,9 @@ void InitDeviceFuncsWithStubs(FuncsT* funcs) {
   }
 }
 
-// Minimal CPU-side CopyResource implementation used by the Win7 triangle tests.
-// The runtime copies the swapchain backbuffer into a staging texture and then
-// maps it for readback; until the full WDDM submission path is wired, emulate
-// that flow by copying the CPU backing storage.
+// Minimal CopyResource implementation used by the Win7 triangle tests.
+// Emit a COPY_* command so the host executor can perform the copy (and, for
+// staging resources, write back the results into guest memory).
 template <typename FnPtr>
 struct CopyResourceImpl;
 
@@ -1661,50 +1660,74 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
       return finish(E_INVALIDARG);
     }
 
-    try {
-      if (dst->kind == ResourceKind::Buffer && src->kind == ResourceKind::Buffer) {
-        const uint64_t copy_bytes = std::min<uint64_t>(dst->size_bytes, src->size_bytes);
-        if (copy_bytes) {
-          if (dst->storage.size() < static_cast<size_t>(dst->size_bytes)) {
-            dst->storage.resize(static_cast<size_t>(dst->size_bytes), 0);
-          }
-          if (src->storage.size() < static_cast<size_t>(copy_bytes)) {
-            src->storage.resize(static_cast<size_t>(copy_bytes), 0);
-          }
-          std::memcpy(dst->storage.data(), src->storage.data(), static_cast<size_t>(copy_bytes));
-        }
-      } else if (dst->kind == ResourceKind::Texture2D && src->kind == ResourceKind::Texture2D) {
-        if (dst->row_pitch_bytes == 0) {
-          dst->row_pitch_bytes = dst->width * 4;
-        }
-        if (src->row_pitch_bytes == 0) {
-          src->row_pitch_bytes = src->width * 4;
-        }
-
-        const uint32_t copy_w = std::min(dst->width, src->width);
-        const uint32_t copy_h = std::min(dst->height, src->height);
-        const uint32_t row_bytes = copy_w * 4;
-
-        const uint64_t dst_total = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(dst->height);
-        const uint64_t src_total = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(src->height);
-        if (dst_total <= static_cast<uint64_t>(SIZE_MAX) && dst->storage.size() < static_cast<size_t>(dst_total)) {
-          dst->storage.resize(static_cast<size_t>(dst_total), 0);
-        }
-        if (src_total <= static_cast<uint64_t>(SIZE_MAX) && src->storage.size() < static_cast<size_t>(src_total)) {
-          src->storage.resize(static_cast<size_t>(src_total), 0);
-        }
-
-        for (uint32_t y = 0; y < copy_h; ++y) {
-          const uint8_t* src_row = src->storage.data() + static_cast<size_t>(y) * src->row_pitch_bytes;
-          uint8_t* dst_row = dst->storage.data() + static_cast<size_t>(y) * dst->row_pitch_bytes;
-          std::memcpy(dst_row, src_row, row_bytes);
-        }
-      }
-    } catch (...) {
-      return finish(E_OUTOFMEMORY);
+    if (!dev) {
+      return finish(E_INVALIDARG);
+    }
+    if (dst->kind != src->kind) {
+      return finish(E_INVALIDARG);
     }
 
-    return finish(S_OK);
+    TrackWddmAllocForSubmitLocked(dev, dst);
+    TrackWddmAllocForSubmitLocked(dev, src);
+
+    if (dst->kind == ResourceKind::Buffer) {
+      const uint64_t bytes = std::min(dst->size_bytes, src->size_bytes);
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+      if (!cmd) {
+        return finish(E_OUTOFMEMORY);
+      }
+      cmd->dst_buffer = dst->handle;
+      cmd->src_buffer = src->handle;
+      cmd->dst_offset_bytes = 0;
+      cmd->src_offset_bytes = 0;
+      cmd->size_bytes = bytes;
+      uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+      if (dst->backing_alloc_id != 0 && dst->bind_flags == 0) {
+        copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+      }
+      cmd->flags = copy_flags;
+      cmd->reserved0 = 0;
+      return finish(S_OK);
+    }
+
+    if (dst->kind == ResourceKind::Texture2D) {
+      if (dst->dxgi_format != src->dxgi_format) {
+        return finish(E_INVALIDARG);
+      }
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu(dst->dxgi_format);
+      if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+        return finish(E_NOTIMPL);
+      }
+
+      const uint32_t copy_w = std::min(dst->width, src->width);
+      const uint32_t copy_h = std::min(dst->height, src->height);
+
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+      if (!cmd) {
+        return finish(E_OUTOFMEMORY);
+      }
+      cmd->dst_texture = dst->handle;
+      cmd->src_texture = src->handle;
+      cmd->dst_mip_level = 0;
+      cmd->dst_array_layer = 0;
+      cmd->src_mip_level = 0;
+      cmd->src_array_layer = 0;
+      cmd->dst_x = 0;
+      cmd->dst_y = 0;
+      cmd->src_x = 0;
+      cmd->src_y = 0;
+      cmd->width = copy_w;
+      cmd->height = copy_h;
+      uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+      if (dst->backing_alloc_id != 0 && dst->bind_flags == 0) {
+        copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+      }
+      cmd->flags = copy_flags;
+      cmd->reserved0 = 0;
+      return finish(S_OK);
+    }
+
+    return finish(E_NOTIMPL);
   }
 };
 
@@ -4799,13 +4822,31 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       }
     }
 
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+    const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+    if (bpp == 0 || row_bytes_u64 == 0 || row_bytes_u64 > UINT32_MAX) {
+      set_error(dev, E_INVALIDARG);
+      return;
+    }
+    const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+    if (res->row_pitch_bytes < row_bytes) {
+      set_error(dev, E_FAIL);
+      return;
+    }
+
     const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
     const size_t src_pitch =
-        pArgs->RowPitch ? static_cast<size_t>(pArgs->RowPitch) : static_cast<size_t>(res->row_pitch_bytes);
+        pArgs->RowPitch ? static_cast<size_t>(pArgs->RowPitch) : static_cast<size_t>(row_bytes);
+    if (src_pitch < row_bytes) {
+      set_error(dev, E_INVALIDARG);
+      return;
+    }
+    std::memset(res->storage.data(), 0, res->storage.size());
     for (uint32_t y = 0; y < res->height; y++) {
       std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
                   src + static_cast<size_t>(y) * src_pitch,
-                  res->row_pitch_bytes);
+                  row_bytes);
     }
     emit_upload_resource_locked(dev, res, 0, res->storage.size());
     return;

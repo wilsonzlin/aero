@@ -270,6 +270,7 @@ For AeroGPU’s command stream, D3D10/11 resources (buffers, textures) are expec
 * `backing_alloc_id == alloc_id` (stable `u32`; `0` means “host allocated”).
 * On Win7/WDDM 1.1, the UMD provides this ID to the KMD via the **allocation private driver data blob** (`aerogpu_wddm_alloc_priv.alloc_id` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
   * This is required because the numeric value of the UMD-visible allocation handle (`D3DKMT_HANDLE` from `pfnAllocateCb`) is **not** the same identity the KMD later sees in `DXGK_ALLOCATIONLIST`.
+* On every submission, the UMD must provide a `D3DDDI_ALLOCATIONLIST` containing the referenced `hAllocation` handles so the KMD can read the private driver data and build the per-submit allocation table.
 * The KMD then emits a per-submit allocation table mapping `alloc_id → {gpa, size}`; the host resolves guest memory by `alloc_id`, not by allocation-list position.
 
 See also:
