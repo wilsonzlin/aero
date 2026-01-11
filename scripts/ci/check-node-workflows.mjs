@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -116,44 +117,47 @@ for (const dir of workspaceDirs) {
   }
 }
 
-function checkDockerfileNodeFrom(fileRel) {
+function listRepoFiles() {
+  try {
+    const out = execSync("git ls-files", { cwd: repoRoot, encoding: "utf8" });
+    return out.split(/\r?\n/).filter(Boolean);
+  } catch {
+    // Best-effort fallback for environments that do not have git metadata.
+    return [];
+  }
+}
+
+function listDockerfiles() {
+  const files = listRepoFiles();
+  const dockerfiles = files.filter((file) => path.basename(file) === "Dockerfile");
+  if (dockerfiles.length) return dockerfiles;
+
+  // Keep the legacy explicit list so local runs outside git still validate the
+  // Dockerfiles that currently pin Node.
+  return ["backend/aero-gateway/Dockerfile", "server/Dockerfile", "tools/net-proxy-server/Dockerfile"].filter((file) =>
+    fs.existsSync(path.join(repoRoot, file)),
+  );
+}
+
+function checkDockerfilePinnedNode(fileRel) {
   const filePath = path.join(repoRoot, fileRel);
   if (!fs.existsSync(filePath)) return;
 
   const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  /** @type {{line: number, version: string} | null} */
+  let nodeVersionArg = null;
   for (let i = 0; i < lines.length; i += 1) {
-    const match = lines[i].match(/^\s*FROM\s+(?:--platform=\S+\s+)?node:([^\s]+)\b/);
+    const match = lines[i].match(/^\s*ARG\s+NODE_VERSION\s*=\s*(\S+)\s*(?:#.*)?$/);
     if (!match) continue;
 
-    const tag = match[1];
-    const versionMatch = tag.match(/^(\d+\.\d+\.\d+)\b/);
-    const version = versionMatch ? versionMatch[1] : null;
-    if (!version) {
-      console.error(`error: Dockerfile Node base image must use an exact semver tag`);
-      console.error(`- file: ${rel(filePath)}:${i + 1}`);
-      console.error(`- found: node:${tag}`);
-      console.error(`- expected: node:${pinnedNode}-<variant> (or similar)`);
-      process.exit(1);
-    }
-    if (version !== pinnedNode) {
-      console.error(`error: Dockerfile Node version is out of sync with .nvmrc`);
+    const version = match[1];
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+      console.error(`error: Dockerfile NODE_VERSION arg must be an exact semver version`);
       console.error(`- file: ${rel(filePath)}:${i + 1}`);
       console.error(`- found: ${version}`);
       console.error(`- expected: ${pinnedNode}`);
       process.exit(1);
     }
-  }
-}
-
-function checkDockerfileArgNodeVersion(fileRel) {
-  const filePath = path.join(repoRoot, fileRel);
-  if (!fs.existsSync(filePath)) return;
-
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    const match = lines[i].match(/^\s*ARG\s+NODE_VERSION\s*=\s*(\d+\.\d+\.\d+)\s*$/);
-    if (!match) continue;
-    const version = match[1];
     if (version !== pinnedNode) {
       console.error(`error: Dockerfile NODE_VERSION arg is out of sync with .nvmrc`);
       console.error(`- file: ${rel(filePath)}:${i + 1}`);
@@ -161,20 +165,55 @@ function checkDockerfileArgNodeVersion(fileRel) {
       console.error(`- expected: ${pinnedNode}`);
       process.exit(1);
     }
-    return;
+    if (!nodeVersionArg) nodeVersionArg = { line: i, version };
   }
 
-  console.error(`error: Dockerfile is missing a default ARG NODE_VERSION=<pinned> declaration`);
-  console.error(`- file: ${rel(filePath)}`);
-  console.error(`- expected: ARG NODE_VERSION=${pinnedNode}`);
-  process.exit(1);
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(/^\s*FROM\s+(?:--platform=\S+\s+)?node:([^\s]+)\b/);
+    if (!match) continue;
+
+    const tag = match[1];
+    const versionMatch = tag.match(/^(\d+\.\d+\.\d+)\b/);
+    const version = versionMatch ? versionMatch[1] : null;
+    if (version) {
+      if (version !== pinnedNode) {
+        console.error(`error: Dockerfile Node version is out of sync with .nvmrc`);
+        console.error(`- file: ${rel(filePath)}:${i + 1}`);
+        console.error(`- found: ${version}`);
+        console.error(`- expected: ${pinnedNode}`);
+        process.exit(1);
+      }
+      continue;
+    }
+
+    const usesNodeVersionArg = tag.startsWith("${NODE_VERSION}") || tag.startsWith("$NODE_VERSION");
+    if (usesNodeVersionArg) {
+      if (!nodeVersionArg) {
+        console.error(`error: Dockerfile uses node:${tag} but is missing a default ARG NODE_VERSION=<pinned> declaration`);
+        console.error(`- file: ${rel(filePath)}:${i + 1}`);
+        console.error(`- expected: ARG NODE_VERSION=${pinnedNode}`);
+        process.exit(1);
+      }
+      if (nodeVersionArg.line > i) {
+        console.error(`error: Dockerfile ARG NODE_VERSION must be declared before it is used in FROM`);
+        console.error(`- file: ${rel(filePath)}:${i + 1}`);
+        console.error(`- arg declared at: ${rel(filePath)}:${nodeVersionArg.line + 1}`);
+        process.exit(1);
+      }
+      continue;
+    }
+
+    console.error(`error: Dockerfile Node base image must use an exact semver tag`);
+    console.error(`- file: ${rel(filePath)}:${i + 1}`);
+    console.error(`- found: node:${tag}`);
+    console.error(`- expected: node:${pinnedNode}-<variant> (or similar), or node:\${NODE_VERSION}-<variant> with ARG NODE_VERSION=${pinnedNode}`);
+    process.exit(1);
+  }
 }
 
-// Dockerfiles that embed a Node version should stay in sync with `.nvmrc`, otherwise
-// local builds and CI may run subtly different toolchains.
-checkDockerfileArgNodeVersion("backend/aero-gateway/Dockerfile");
-checkDockerfileNodeFrom("server/Dockerfile");
-checkDockerfileNodeFrom("tools/net-proxy-server/Dockerfile");
+for (const dockerfile of listDockerfiles()) {
+  checkDockerfilePinnedNode(dockerfile);
+}
 
 if (!fs.existsSync(workflowsDir)) {
   console.error(`error: workflows directory not found: ${rel(workflowsDir)}`);
