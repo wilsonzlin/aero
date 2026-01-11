@@ -184,6 +184,25 @@ static int RunD3D11Triangle(int argc, char** argv) {
     if (umd_rc != 0) {
       return umd_rc;
     }
+
+    // This test is specifically intended to exercise the D3D11 runtime path (d3d11.dll), which
+    // should in turn use the UMD's OpenAdapter11 entrypoint.
+    if (!GetModuleHandleW(L"d3d11.dll")) {
+      return aerogpu_test::Fail(kTestName, "d3d11.dll is not loaded");
+    }
+    HMODULE umd = GetModuleHandleW(aerogpu_test::ExpectedAeroGpuD3D10UmdModuleBaseName());
+    if (!umd) {
+      return aerogpu_test::Fail(kTestName, "failed to locate loaded AeroGPU D3D10/11 UMD module");
+    }
+    FARPROC open_adapter_11 = GetProcAddress(umd, "OpenAdapter11");
+    if (!open_adapter_11) {
+      // On x86, stdcall decoration may be present depending on how the DLL was linked.
+      open_adapter_11 = GetProcAddress(umd, "_OpenAdapter11@4");
+    }
+    if (!open_adapter_11) {
+      return aerogpu_test::Fail(
+          kTestName, "expected AeroGPU D3D10/11 UMD to export OpenAdapter11 (D3D11 entrypoint)");
+    }
   }
 
   ComPtr<ID3D11Texture2D> backbuffer;
@@ -297,10 +316,18 @@ static int RunD3D11Triangle(int argc, char** argv) {
   const FLOAT clear_rgba[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   context->ClearRenderTargetView(rtv.get(), clear_rgba);
   context->Draw(3, 0);
+  // Avoid any ambiguity around copying from a still-bound render target.
+  context->OMSetRenderTargets(0, NULL, NULL);
 
   // Read back the center pixel before present.
   D3D11_TEXTURE2D_DESC bb_desc;
   backbuffer->GetDesc(&bb_desc);
+  if (bb_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+    return aerogpu_test::Fail(kTestName,
+                              "unexpected backbuffer format: %u (expected DXGI_FORMAT_B8G8R8A8_UNORM=%u)",
+                              (unsigned)bb_desc.Format,
+                              (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM);
+  }
 
   D3D11_TEXTURE2D_DESC st_desc = bb_desc;
   st_desc.BindFlags = 0;
@@ -322,6 +349,18 @@ static int RunD3D11Triangle(int argc, char** argv) {
   hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
     return FailD3D11WithRemovedReason(kTestName, "Map(staging)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(staging.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
+  }
+  const UINT min_row_pitch = bb_desc.Width * 4;
+  if (map.RowPitch < min_row_pitch) {
+    context->Unmap(staging.get(), 0);
+    return aerogpu_test::Fail(kTestName,
+                              "Map(staging) returned too-small RowPitch=%u (min=%u)",
+                              (unsigned)map.RowPitch,
+                              (unsigned)min_row_pitch);
   }
 
   const int cx = (int)bb_desc.Width / 2;
