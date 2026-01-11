@@ -301,7 +301,11 @@ HRESULT get_caps(Adapter*, const D3D9DDIARG_GETCAPS* pGetCaps) {
     }
     default:
       logf("aerogpu-d3d9: GetCaps unknown type=%u size=%u\n", pGetCaps->Type, pGetCaps->DataSize);
-      return E_INVALIDARG;
+      // Be permissive: unknown caps types should not break DWM/device bring-up.
+      // Return a zeroed buffer to signal "no extra capabilities" rather than
+      // failing the call.
+      std::memset(pGetCaps->pData, 0, pGetCaps->DataSize);
+      return S_OK;
   }
 }
 
