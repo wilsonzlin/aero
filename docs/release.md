@@ -46,6 +46,24 @@ GitHub Actions produces these artifacts via:
   - `ghcr.io/<owner>/aero-gateway:<tag>` (e.g. `v0.1.0`)
   - `ghcr.io/<owner>/aero-gateway:<version>` (e.g. `0.1.0`)
 
+### Tagging / versioning behavior
+
+#### Web artifact naming
+
+`release-web.yml` names the uploaded zip using the Git ref:
+
+- For tag releases: `aero-web-v0.1.0.zip`
+- For manual runs: `aero-web-<ref>.zip` (unless you also provide the optional `tag` input)
+
+#### Gateway image tags
+
+`release-gateway.yml` publishes multiple tags for convenience:
+
+- `v0.1.0` (raw git tag)
+- `0.1.0`, `0.1`, `0` (semver forms)
+- `sha-<short>` (always)
+- `latest` **only on pushes to `main`** (default branch)
+
 ---
 
 ## Web deployment (Netlify / Vercel / Cloudflare Pages)
@@ -165,3 +183,12 @@ See `deploy/k8s/README.md` for ingress/TLS examples and COOP/COEP header strateg
   - `gitSha`
   - `builtAt`
 
+---
+
+## Reproducibility / pinned toolchains
+
+Release workflows intentionally use the same pinned toolchain policy as CI:
+
+- Node.js is pinned via the repo root [`.nvmrc`](../.nvmrc).
+- Rust stable is pinned in [`rust-toolchain.toml`](../rust-toolchain.toml).
+- The pinned nightly used for threaded WASM lives in [`scripts/toolchains.json`](../scripts/toolchains.json) (`rust.nightlyWasm`).
