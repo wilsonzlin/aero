@@ -99,6 +99,9 @@ if /i "%ARCH%"=="x64" (
   )
 )
 
+rem Optional: validate D3D10/11 UMD export tables (helps catch stdcall decoration issues early).
+call :maybe_verify_d3d10_exports || exit /b 1
+
 rem Optional: stage dbgctl bring-up tool (if already built).
 if exist "%DBGCTL_EXE%" (
   copy /y "%DBGCTL_EXE%" "%PKG_DIR%\" >nul
@@ -125,6 +128,48 @@ if exist "%PKG_DIR%\aerogpu_d3d10.dll" (
   echo   install.cmd
 )
 exit /b 0
+
+rem -----------------------------------------------------------------------------
+:maybe_verify_d3d10_exports
+rem -----------------------------------------------------------------------------
+where dumpbin.exe >nul 2>nul
+if errorlevel 1 (
+  echo NOTE: dumpbin.exe not found; skipping D3D10/11 UMD export validation.
+  exit /b 0
+)
+
+if exist "%PKG_DIR%\aerogpu_d3d10.dll" (
+  call :verify_d3d10_exports_x86 "%PKG_DIR%\aerogpu_d3d10.dll" || exit /b 1
+)
+if exist "%PKG_DIR%\aerogpu_d3d10_x64.dll" (
+  call :verify_d3d10_exports_x64 "%PKG_DIR%\aerogpu_d3d10_x64.dll" || exit /b 1
+)
+exit /b 0
+
+rem -----------------------------------------------------------------------------
+:verify_d3d10_exports_x86
+rem -----------------------------------------------------------------------------
+setlocal EnableExtensions EnableDelayedExpansion
+set "DLL=%~1"
+echo [VERIFY] dumpbin /exports "%DLL%"
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"OpenAdapter10$" >nul || (endlocal & echo ERROR: missing export OpenAdapter10 in "%DLL%" & exit /b 1)
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"OpenAdapter10_2$" >nul || (endlocal & echo ERROR: missing export OpenAdapter10_2 in "%DLL%" & exit /b 1)
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"OpenAdapter11$" >nul || (endlocal & echo ERROR: missing export OpenAdapter11 in "%DLL%" & exit /b 1)
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"_OpenAdapter10@4$" >nul || (endlocal & echo ERROR: missing export _OpenAdapter10@4 in "%DLL%" & exit /b 1)
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"_OpenAdapter10_2@4$" >nul || (endlocal & echo ERROR: missing export _OpenAdapter10_2@4 in "%DLL%" & exit /b 1)
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"_OpenAdapter11@4$" >nul || (endlocal & echo ERROR: missing export _OpenAdapter11@4 in "%DLL%" & exit /b 1)
+endlocal & exit /b 0
+
+rem -----------------------------------------------------------------------------
+:verify_d3d10_exports_x64
+rem -----------------------------------------------------------------------------
+setlocal EnableExtensions EnableDelayedExpansion
+set "DLL=%~1"
+echo [VERIFY] dumpbin /exports "%DLL%"
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"OpenAdapter10$" >nul || (endlocal & echo ERROR: missing export OpenAdapter10 in "%DLL%" & exit /b 1)
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"OpenAdapter10_2$" >nul || (endlocal & echo ERROR: missing export OpenAdapter10_2 in "%DLL%" & exit /b 1)
+dumpbin /nologo /exports "%DLL%" | findstr /r /c:"OpenAdapter11$" >nul || (endlocal & echo ERROR: missing export OpenAdapter11 in "%DLL%" & exit /b 1)
+endlocal & exit /b 0
 
 :usage
 echo Usage:
