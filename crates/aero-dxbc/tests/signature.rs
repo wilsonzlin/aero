@@ -339,9 +339,13 @@ fn parse_signature_chunk_two_entries_v1_layout() {
     assert_eq!(sig.entries[0].semantic_name, "POSITION");
     assert_eq!(sig.entries[0].mask, 0xF);
     assert_eq!(sig.entries[0].read_write_mask, 0xF);
+    assert_eq!(sig.entries[0].system_value_type, 0);
+    assert_eq!(sig.entries[0].component_type, 3);
     assert_eq!(sig.entries[1].semantic_name, "TEXCOORD");
     assert_eq!(sig.entries[1].mask, 0x3);
     assert_eq!(sig.entries[1].read_write_mask, 0x3);
+    assert_eq!(sig.entries[1].system_value_type, 0);
+    assert_eq!(sig.entries[1].component_type, 3);
 }
 
 #[test]
@@ -696,6 +700,17 @@ fn signature_chunk_bad_semantic_offset_is_rejected() {
     let err = parse_signature_chunk(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::InvalidChunk { .. }));
     assert!(err.context().contains("semantic_name"));
+}
+
+#[test]
+fn signature_chunk_semantic_name_offset_into_header_is_rejected() {
+    let mut bytes = build_signature_chunk();
+    // Overwrite entry 0 semantic_name_offset to point into the 8-byte header.
+    bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
+
+    let err = parse_signature_chunk(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::InvalidChunk { .. }));
+    assert!(err.context().contains("points into signature header"));
 }
 
 #[test]
