@@ -1,0 +1,48 @@
+# AeroGPU Win7 guest-side validation suite manifest
+#
+# One test name per line in the desired execution order. Both `build_all_vs2010.cmd`
+# and `run_all.cmd` consume this file so adding a new test only requires editing
+# this manifest.
+#
+# Comments:
+#   - Lines starting with `#` or `;` are ignored.
+#
+# Notes:
+#   - `timeout_runner` is a helper (produces `aerogpu_timeout_runner.exe`) and is
+#     intentionally NOT listed here because it is not a test.
+#
+
+# D3D9 / DWM / vblank / scanline
+d3d9ex_dwm_probe
+d3d9ex_event_query
+vblank_wait_sanity
+wait_vblank_pacing
+vblank_wait_pacing
+get_scanline_sanity
+d3d9_raster_status_sanity
+d3d9_raster_status_pacing
+dwm_flush_pacing
+d3d9ex_triangle
+d3d9ex_stretchrect
+d3d9ex_query_latency
+d3d9ex_shared_surface
+d3d9ex_shared_surface_ipc
+d3d9ex_shared_allocations
+
+# D3D10 / D3D10.1
+d3d10_triangle
+d3d10_1_triangle
+
+# D3D11
+# Some entries may not exist yet; build_all/run_all will pick them up automatically once present.
+d3d11_triangle
+d3d11_caps_smoke
+d3d11_rs_om_state_sanity
+d3d11_geometry_shader_smoke
+d3d11_swapchain_rotate_sanity
+d3d11_map_dynamic_buffer_sanity
+d3d11_update_subresource_texture_sanity
+d3d11_texture_sampling_sanity
+d3d11_dynamic_constant_buffer_sanity
+d3d11_depth_test_sanity
+readback_sanity

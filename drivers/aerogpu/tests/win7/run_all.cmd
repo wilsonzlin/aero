@@ -17,6 +17,13 @@ for %%A in (%*) do (
 )
 if defined SHOW_HELP goto :help
 
+set "ROOT=%~dp0"
+set "MANIFEST=%ROOT%tests_manifest.txt"
+if not exist "%MANIFEST%" (
+  echo ERROR: tests manifest not found: %MANIFEST%
+  exit /b 1
+)
+
 rem The suite uses --timeout-ms=NNNN to configure aerogpu_timeout_runner.exe; avoid forwarding that
 rem flag into tests (vblank_wait_sanity has its own --timeout-ms for per-wait timeouts).
 set "TEST_ARGS="
@@ -43,34 +50,9 @@ if exist "%RUNNER%" (
   echo INFO: timeout runner not found; running tests without enforced timeout
 )
 
-call :run_test d3d9ex_dwm_probe !TEST_ARGS!
-call :run_test d3d9ex_event_query !TEST_ARGS!
-call :run_test vblank_wait_sanity !TEST_ARGS!
-call :run_test wait_vblank_pacing !TEST_ARGS!
-call :run_test vblank_wait_pacing !TEST_ARGS!
-call :run_test get_scanline_sanity !TEST_ARGS!
-call :run_test d3d9_raster_status_sanity !TEST_ARGS!
-call :run_test d3d9_raster_status_pacing !TEST_ARGS!
-call :run_test dwm_flush_pacing !TEST_ARGS!
-call :run_test d3d9ex_triangle !TEST_ARGS!
-call :run_test d3d9ex_stretchrect !TEST_ARGS!
-call :run_test d3d9ex_query_latency !TEST_ARGS!
-call :run_test d3d9ex_shared_surface !TEST_ARGS!
-call :run_test d3d9ex_shared_surface_ipc !TEST_ARGS!
-call :run_test d3d9ex_shared_allocations !TEST_ARGS!
-call :run_test d3d10_triangle !TEST_ARGS!
-call :run_test d3d10_1_triangle !TEST_ARGS!
-call :run_test d3d11_triangle !TEST_ARGS!
-call :run_test d3d11_caps_smoke !TEST_ARGS!
-call :run_test d3d11_rs_om_state_sanity !TEST_ARGS!
-call :run_test d3d11_geometry_shader_smoke !TEST_ARGS!
-call :run_test d3d11_swapchain_rotate_sanity !TEST_ARGS!
-call :run_test d3d11_map_dynamic_buffer_sanity !TEST_ARGS!
-call :run_test d3d11_update_subresource_texture_sanity !TEST_ARGS!
-call :run_test d3d11_texture_sampling_sanity !TEST_ARGS!
-call :run_test d3d11_dynamic_constant_buffer_sanity !TEST_ARGS!
-call :run_test d3d11_depth_test_sanity !TEST_ARGS!
-call :run_test readback_sanity !TEST_ARGS!
+for /f "usebackq tokens=1" %%A in ("%MANIFEST%") do (
+  call :run_manifest_line "%%A" !TEST_ARGS!
+)
 
 echo.
 if %FAILURES%==0 (
@@ -81,6 +63,18 @@ if %FAILURES%==0 (
   exit /b 1
 )
 
+:run_manifest_line
+set "NAME=%~1"
+shift
+if "%NAME%"=="" exit /b 0
+if "%NAME:~0,1%"=="#" exit /b 0
+if "%NAME:~0,1%"==";" exit /b 0
+if /I "%NAME%"=="rem" exit /b 0
+if "%NAME:~0,2%"=="::" exit /b 0
+
+call :run_test "%NAME%" %*
+exit /b 0
+
 :run_test
 set "NAME=%~1"
 set "EXE=%BIN%\\%NAME%.exe"
@@ -88,8 +82,12 @@ shift
 echo.
 echo === Running %NAME% ===
 if not exist "%EXE%" (
-  echo FAIL: %NAME% ^(missing binary: %EXE%^) 
-  set /a FAILURES+=1
+  if exist "%ROOT%%NAME%\" (
+    echo FAIL: %NAME% ^(missing binary: %EXE%^) 
+    set /a FAILURES+=1
+  ) else (
+    echo INFO: skipping %NAME% ^(not present in this checkout^)
+  )
   exit /b 0
 )
 

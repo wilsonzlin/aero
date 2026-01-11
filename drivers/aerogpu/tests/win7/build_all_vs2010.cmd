@@ -3,37 +3,48 @@ setlocal
 
 echo === Building AeroGPU Win7 test suite (VS2010) ===
 
-call "%~dp0timeout_runner\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9ex_dwm_probe\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9ex_event_query\\build_vs2010.cmd" || exit /b 1
-call "%~dp0vblank_wait_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0wait_vblank_pacing\\build_vs2010.cmd" || exit /b 1
-call "%~dp0dwm_flush_pacing\\build_vs2010.cmd" || exit /b 1
-call "%~dp0get_scanline_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9_raster_status_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9_raster_status_pacing\\build_vs2010.cmd" || exit /b 1
-call "%~dp0vblank_wait_pacing\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9ex_triangle\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9ex_stretchrect\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9ex_query_latency\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9ex_shared_surface\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9ex_shared_surface_ipc\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d9ex_shared_allocations\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d10_triangle\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d10_1_triangle\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_triangle\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_caps_smoke\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_rs_om_state_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_geometry_shader_smoke\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_swapchain_rotate_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_map_dynamic_buffer_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_update_subresource_texture_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0readback_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_texture_sampling_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_dynamic_constant_buffer_sanity\\build_vs2010.cmd" || exit /b 1
-call "%~dp0d3d11_depth_test_sanity\\build_vs2010.cmd" || exit /b 1
+set "ROOT=%~dp0"
+set "MANIFEST=%ROOT%tests_manifest.txt"
+
+if not exist "%MANIFEST%" (
+  echo ERROR: tests manifest not found: %MANIFEST%
+  exit /b 1
+)
+
+echo.
+echo === Building timeout_runner ===
+call "%ROOT%timeout_runner\build_vs2010.cmd" || exit /b 1
+
+for /f "usebackq tokens=1" %%A in ("%MANIFEST%") do (
+  call :build_test "%%A" || exit /b 1
+)
 
 echo.
 echo Build complete. Binaries are in: %~dp0bin\
+exit /b 0
+
+:build_test
+set "NAME=%~1"
+if "%NAME%"=="" exit /b 0
+if "%NAME:~0,1%"=="#" exit /b 0
+if "%NAME:~0,1%"==";" exit /b 0
+if /I "%NAME%"=="rem" exit /b 0
+if "%NAME:~0,2%"=="::" exit /b 0
+
+set "TESTDIR=%ROOT%%NAME%"
+if not exist "%TESTDIR%\" (
+  echo INFO: skipping %NAME% ^(not present^)
+  exit /b 0
+)
+
+set "BUILDCMD=%TESTDIR%\build_vs2010.cmd"
+if not exist "%BUILDCMD%" (
+  echo ERROR: %NAME%: missing build script: %BUILDCMD%
+  exit /b 1
+)
+
+echo.
+echo === Building %NAME% ===
+call "%BUILDCMD%" || exit /b 1
 exit /b 0
 

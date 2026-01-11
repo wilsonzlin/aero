@@ -10,6 +10,8 @@ For D3D11 UMD bring-up (Win7 FL10_0), including which `d3d11umddi.h` function-ta
 
 The suite also includes an optional `aerogpu_timeout_runner.exe` helper (built by default) used by `run_all.cmd` to enforce a per-test timeout. Override the default timeout by setting `AEROGPU_TEST_TIMEOUT_MS` in the environment.
 
+Both `build_all_vs2010.cmd` and `run_all.cmd` are driven by `tests_manifest.txt`, which defines the ordered list of tests in the suite.
+
 Common flags:
 
   * `--dump` – write test-specific dump artifacts next to the executable (usually `*.bmp`; some tests write raw `*.bin`).
@@ -33,6 +35,7 @@ Common flags:
 drivers/aerogpu/tests/win7/
   build_all_vs2010.cmd
   run_all.cmd
+  tests_manifest.txt
   common/
   timeout_runner/
   d3d9ex_dwm_probe/
@@ -95,6 +98,13 @@ Outputs are placed in:
 ```
 drivers\aerogpu\tests\win7\bin\
 ```
+
+## Adding a new test
+
+1. Add a new directory containing `main.cpp` and a `build_vs2010.cmd` that outputs `bin\<test_name>.exe`.
+2. Add `<test_name>` to `tests_manifest.txt` at the desired position.
+
+No other scripts need to be edited: both `build_all_vs2010.cmd` and `run_all.cmd` iterate the manifest.
 
 ## Run
 
