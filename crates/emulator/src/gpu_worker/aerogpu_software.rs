@@ -3023,11 +3023,13 @@ impl AeroGpuSoftwareExecutor {
                     };
 
                 let state = packet_cmd.state;
+                let flags = u32::from_le(state.flags);
                 self.state.rasterizer = RasterizerState {
                     cull_mode: u32::from_le(state.cull_mode),
                     front_ccw: u32::from_le(state.front_ccw) != 0,
                     scissor_enable: u32::from_le(state.scissor_enable) != 0,
-                    depth_clip_enable: u32::from_le(state.reserved0) != 0,
+                    depth_clip_enable: (flags & cmd::AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE)
+                        == 0,
                 };
             }
             cmd::AerogpuCmdOpcode::SetDepthStencilState => {
