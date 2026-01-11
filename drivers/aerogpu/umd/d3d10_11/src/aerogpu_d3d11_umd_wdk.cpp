@@ -4270,6 +4270,178 @@ void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRe
   cmd->height = r.bottom - r.top;
 }
 
+static uint32_t D3D11CullModeToAerogpu(uint32_t cull_mode) {
+  switch (static_cast<D3D11_CULL_MODE>(cull_mode)) {
+    case D3D11_CULL_NONE:
+      return AEROGPU_CULL_NONE;
+    case D3D11_CULL_FRONT:
+      return AEROGPU_CULL_FRONT;
+    case D3D11_CULL_BACK:
+      return AEROGPU_CULL_BACK;
+    default:
+      break;
+  }
+  return AEROGPU_CULL_BACK;
+}
+
+static uint32_t D3D11BlendFactorToAerogpu(uint32_t factor, uint32_t fallback) {
+  switch (static_cast<D3D11_BLEND>(factor)) {
+    case D3D11_BLEND_ZERO:
+      return AEROGPU_BLEND_ZERO;
+    case D3D11_BLEND_ONE:
+      return AEROGPU_BLEND_ONE;
+    case D3D11_BLEND_SRC_ALPHA:
+      return AEROGPU_BLEND_SRC_ALPHA;
+    case D3D11_BLEND_INV_SRC_ALPHA:
+      return AEROGPU_BLEND_INV_SRC_ALPHA;
+    case D3D11_BLEND_DEST_ALPHA:
+      return AEROGPU_BLEND_DEST_ALPHA;
+    case D3D11_BLEND_INV_DEST_ALPHA:
+      return AEROGPU_BLEND_INV_DEST_ALPHA;
+    default:
+      break;
+  }
+  return fallback;
+}
+
+static uint32_t D3D11BlendOpToAerogpu(uint32_t blend_op) {
+  switch (static_cast<D3D11_BLEND_OP>(blend_op)) {
+    case D3D11_BLEND_OP_ADD:
+      return AEROGPU_BLEND_OP_ADD;
+    case D3D11_BLEND_OP_SUBTRACT:
+      return AEROGPU_BLEND_OP_SUBTRACT;
+    case D3D11_BLEND_OP_REV_SUBTRACT:
+      return AEROGPU_BLEND_OP_REV_SUBTRACT;
+    case D3D11_BLEND_OP_MIN:
+      return AEROGPU_BLEND_OP_MIN;
+    case D3D11_BLEND_OP_MAX:
+      return AEROGPU_BLEND_OP_MAX;
+    default:
+      break;
+  }
+  return AEROGPU_BLEND_OP_ADD;
+}
+
+static uint32_t D3D11CompareFuncToAerogpu(uint32_t func) {
+  switch (static_cast<D3D11_COMPARISON_FUNC>(func)) {
+    case D3D11_COMPARISON_NEVER:
+      return AEROGPU_COMPARE_NEVER;
+    case D3D11_COMPARISON_LESS:
+      return AEROGPU_COMPARE_LESS;
+    case D3D11_COMPARISON_EQUAL:
+      return AEROGPU_COMPARE_EQUAL;
+    case D3D11_COMPARISON_LESS_EQUAL:
+      return AEROGPU_COMPARE_LESS_EQUAL;
+    case D3D11_COMPARISON_GREATER:
+      return AEROGPU_COMPARE_GREATER;
+    case D3D11_COMPARISON_NOT_EQUAL:
+      return AEROGPU_COMPARE_NOT_EQUAL;
+    case D3D11_COMPARISON_GREATER_EQUAL:
+      return AEROGPU_COMPARE_GREATER_EQUAL;
+    case D3D11_COMPARISON_ALWAYS:
+      return AEROGPU_COMPARE_ALWAYS;
+    default:
+      break;
+  }
+  return AEROGPU_COMPARE_ALWAYS;
+}
+
+static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
+  if (!dev) {
+    return;
+  }
+
+  uint32_t cull_mode = static_cast<uint32_t>(D3D11_CULL_BACK);
+  uint32_t front_ccw = 0u;
+  uint32_t scissor_enable = 0u;
+  uint32_t depth_clip_enable = 1u;
+  if (rs) {
+    cull_mode = rs->cull_mode;
+    front_ccw = rs->front_ccw;
+    scissor_enable = rs->scissor_enable;
+    depth_clip_enable = rs->depth_clip_enable;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.fill_mode = AEROGPU_FILL_SOLID;
+  cmd->state.cull_mode = D3D11CullModeToAerogpu(cull_mode);
+  cmd->state.front_ccw = front_ccw ? 1u : 0u;
+  cmd->state.scissor_enable = scissor_enable ? 1u : 0u;
+  cmd->state.depth_bias = 0;
+  cmd->state.reserved0 = depth_clip_enable ? 1u : 0u;
+}
+
+static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
+  if (!dev) {
+    return;
+  }
+
+  uint32_t blend_enable = 0u;
+  uint32_t src_blend = static_cast<uint32_t>(D3D11_BLEND_ONE);
+  uint32_t dst_blend = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+  uint32_t blend_op = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+  uint32_t write_mask = 0xFu;
+  if (bs) {
+    blend_enable = bs->blend_enable;
+    src_blend = bs->src_blend;
+    dst_blend = bs->dest_blend;
+    blend_op = bs->blend_op;
+    write_mask = bs->render_target_write_mask;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.enable = blend_enable ? 1u : 0u;
+  cmd->state.src_factor = D3D11BlendFactorToAerogpu(src_blend, AEROGPU_BLEND_ONE);
+  cmd->state.dst_factor = D3D11BlendFactorToAerogpu(dst_blend, AEROGPU_BLEND_ZERO);
+  cmd->state.blend_op = D3D11BlendOpToAerogpu(blend_op);
+  cmd->state.color_write_mask = static_cast<uint8_t>(write_mask & 0xFu);
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+  cmd->state.reserved0[2] = 0;
+}
+
+static void EmitDepthStencilStateLocked(Device* dev, const DepthStencilState* dss) {
+  if (!dev) {
+    return;
+  }
+
+  uint32_t depth_enable = 1u;
+  uint32_t depth_write_mask = static_cast<uint32_t>(D3D11_DEPTH_WRITE_MASK_ALL);
+  uint32_t depth_func = static_cast<uint32_t>(D3D11_COMPARISON_LESS);
+  uint32_t stencil_enable = 0u;
+  if (dss) {
+    depth_enable = dss->depth_enable;
+    depth_write_mask = dss->depth_write_mask;
+    depth_func = dss->depth_func;
+    stencil_enable = dss->stencil_enable;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.depth_enable = depth_enable ? 1u : 0u;
+  cmd->state.depth_write_enable = depth_write_mask ? 1u : 0u;
+  cmd->state.depth_func = D3D11CompareFuncToAerogpu(depth_func);
+  cmd->state.stencil_enable = stencil_enable ? 1u : 0u;
+  cmd->state.stencil_read_mask = 0xFF;
+  cmd->state.stencil_write_mask = 0xFF;
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+}
+
 void AEROGPU_APIENTRY SetRasterizerState11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRASTERIZERSTATE hState) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
@@ -4277,8 +4449,8 @@ void AEROGPU_APIENTRY SetRasterizerState11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DD
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_rs =
-      hState.pDrvPrivate ? FromHandle<D3D11DDI_HRASTERIZERSTATE, RasterizerState>(hState) : nullptr;
+  dev->current_rs = hState.pDrvPrivate ? FromHandle<D3D11DDI_HRASTERIZERSTATE, RasterizerState>(hState) : nullptr;
+  EmitRasterizerStateLocked(dev, dev->current_rs);
 }
 
 void AEROGPU_APIENTRY SetBlendState11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -4301,10 +4473,11 @@ void AEROGPU_APIENTRY SetBlendState11(D3D11DDI_HDEVICECONTEXT hCtx,
     dev->current_blend_factor[3] = 1.0f;
   }
   dev->current_sample_mask = sample_mask;
+  EmitBlendStateLocked(dev, dev->current_bs);
 }
 void AEROGPU_APIENTRY SetDepthStencilState11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                             D3D11DDI_HDEPTHSTENCILSTATE hState,
-                                             UINT stencil_ref) {
+                                              D3D11DDI_HDEPTHSTENCILSTATE hState,
+                                              UINT stencil_ref) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
@@ -4313,6 +4486,7 @@ void AEROGPU_APIENTRY SetDepthStencilState11(D3D11DDI_HDEVICECONTEXT hCtx,
   dev->current_dss =
       hState.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILSTATE, DepthStencilState>(hState) : nullptr;
   dev->current_stencil_ref = stencil_ref;
+  EmitDepthStencilStateLocked(dev, dev->current_dss);
 }
 
 void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
@@ -4412,6 +4586,10 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
     rt_cmd->colors[i] = 0;
   }
+
+  EmitBlendStateLocked(dev, nullptr);
+  EmitDepthStencilStateLocked(dev, nullptr);
+  EmitRasterizerStateLocked(dev, nullptr);
 
   EmitBindShadersLocked(dev);
 }
