@@ -15,6 +15,23 @@ import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 
 type UsbDeviceInfo = { vendorId: number; productId: number; productName?: string };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function extractActionId(action: unknown): number | null {
+  if (!isRecord(action)) return null;
+  const id = action.id;
+  return typeof id === "number" && Number.isFinite(id) ? id : null;
+}
+
+function extractActionKind(action: unknown): UsbHostAction["kind"] | null {
+  if (!isRecord(action)) return null;
+  const kind = action.kind;
+  if (kind === "controlIn" || kind === "controlOut" || kind === "bulkIn" || kind === "bulkOut") return kind;
+  return null;
+}
+
 type QueueItem = {
   action: UsbHostAction;
   resolve: (completion: UsbHostCompletion) => void;
@@ -275,6 +292,19 @@ export class UsbBroker {
             const msg: UsbCompletionMessage = { type: "usb.completion", completion };
             this.postToPort(port, msg);
           });
+          return;
+        }
+
+        // If the message uses the `usb.action` envelope but fails schema validation, synthesize an
+        // error completion (when possible) so worker-side runtimes don't deadlock waiting for a reply.
+        if (isRecord(data) && data.type === "usb.action") {
+          const actionRaw = data.action;
+          const id = extractActionId(actionRaw);
+          const kind = extractActionKind(actionRaw);
+          if (id !== null && kind !== null) {
+            const completion = usbErrorCompletion(kind, id, "Invalid UsbHostAction received from worker.");
+            this.postToPort(port, { type: "usb.completion", completion } satisfies UsbCompletionMessage);
+          }
           return;
         }
 

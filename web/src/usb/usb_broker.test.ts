@@ -390,6 +390,24 @@ describe("usb/UsbBroker", () => {
     }
   });
 
+  it("responds with an error completion when a usb.action envelope is received with an invalid action payload", async () => {
+    stubNavigatorUsb(new EventTarget());
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 7, endpoint: 1, length: "bad" } });
+    await Promise.resolve();
+
+    const completions = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.completion");
+    expect(completions).toEqual([
+      { type: "usb.completion", completion: { kind: "bulkIn", id: 7, status: "error", message: "Invalid UsbHostAction received from worker." } },
+    ]);
+  });
+
   it("does not resend usb.selected when attaching the same port twice", async () => {
     vi.doMock("./webusb_backend", () => ({
       WebUsbBackend: class {
