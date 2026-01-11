@@ -186,6 +186,18 @@ DNS-over-HTTPS:
 - `DNS_ALLOW_ANY=1` to allow `ANY` queries (default: blocked)
 - `DNS_ALLOW_PRIVATE_PTR=1` to allow PTR queries to private ranges (default: blocked)
 
+### UDP relay integration (optional)
+
+When configured, the gateway includes an `udpRelay` field in `POST /session` responses, allowing the browser to discover the UDP relay service (`proxy/webrtc-udp-relay`) and obtain short-lived credentials.
+
+- `UDP_RELAY_BASE_URL` (default: unset)
+- `UDP_RELAY_AUTH_MODE` (`none`, `api_key`, or `jwt`; default: `none`)
+- `UDP_RELAY_API_KEY` (used when `UDP_RELAY_AUTH_MODE=api_key`)
+- `UDP_RELAY_JWT_SECRET` (used when `UDP_RELAY_AUTH_MODE=jwt`, HS256)
+- `UDP_RELAY_TOKEN_TTL_SECONDS` (default: `300`)
+- `UDP_RELAY_AUDIENCE` (optional; JWT `aud`)
+- `UDP_RELAY_ISSUER` (optional; JWT `iss`)
+
 ### Built-in TLS (HTTPS/WSS)
 
 - `TLS_ENABLED=1|0` (default: `0`)
