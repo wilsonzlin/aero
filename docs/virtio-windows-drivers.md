@@ -93,7 +93,8 @@ Guest Tools uses:
 - `AERO_VIRTIO_BLK_SERVICE` to configure the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase`.
 - `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect (include `&REV_01` if your INFs match on revision).
 
-Note: `config/devices.cmd` is generated at packaging time from `docs/windows-device-contract.json` (the machine-readable device contract).
+Note: `guest-tools/config/devices.cmd` is generated from `docs/windows-device-contract.json`
+(see `scripts/generate-guest-tools-devices-cmd.py`) and may be regenerated during Guest Tools packaging.
 
 When packaging Guest Tools from **virtio-win** drivers, `aero_packager` overrides the
 `AERO_VIRTIO_*_SERVICE` values in the packaged `config/devices.cmd` so `setup.cmd` validates and
