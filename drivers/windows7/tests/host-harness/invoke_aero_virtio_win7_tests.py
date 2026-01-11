@@ -28,8 +28,8 @@ It:
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
   - in transitional mode virtio-input is skipped (with a warning) if QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci
 - captures QEMU stderr to `<serial-base>.qemu.stderr.log` (next to the serial log) for debugging early exits
-- when running on a non-Windows host, uses a QMP unix socket to request a graceful shutdown so side-effectful devices
-  (notably the `wav` audiodev backend) can flush/finalize their output files before verification
+- requests a graceful QEMU shutdown via QMP so side-effectful devices (notably the `wav` audiodev backend) can
+  flush/finalize their output files before verification (unix socket on POSIX; TCP loopback fallback on Windows)
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
     virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP), and virtio-net
@@ -123,6 +123,20 @@ class _WaveFileInfo:
     data_size: int
 
 
+@dataclass(frozen=True)
+class _QmpEndpoint:
+    unix_socket: Optional[Path] = None
+    tcp_host: Optional[str] = None
+    tcp_port: Optional[int] = None
+
+    def qemu_arg(self) -> str:
+        if self.unix_socket is not None:
+            return f"unix:{self.unix_socket},server,nowait"
+        if self.tcp_host is not None and self.tcp_port is not None:
+            return f"tcp:{self.tcp_host}:{self.tcp_port},server,nowait"
+        raise AssertionError("invalid QMP endpoint")
+
+
 def _read_new_bytes(path: Path, pos: int) -> tuple[bytes, int]:
     try:
         with path.open("rb") as f:
@@ -169,19 +183,27 @@ def _qmp_read_json(sock: socket.socket, *, timeout_seconds: float = 2.0) -> dict
                 continue
 
 
-def _try_qmp_quit(qmp_socket: Path) -> bool:
+def _try_qmp_quit(endpoint: _QmpEndpoint) -> bool:
     """
     Attempt to shut QEMU down gracefully via QMP.
 
     This is primarily to ensure side-effectful devices (notably the `wav` audiodev backend)
     flush/finalize their output files before the host harness verifies them.
     """
-    if not qmp_socket.exists():
-        return False
-
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.connect(str(qmp_socket))
+        if endpoint.unix_socket is not None:
+            if not endpoint.unix_socket.exists():
+                return False
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(str(endpoint.unix_socket))
+        else:
+            host = endpoint.tcp_host or "127.0.0.1"
+            port = endpoint.tcp_port
+            if port is None:
+                return False
+            s = socket.create_connection((host, port), timeout=2.0)
+
+        with s:
             # Greeting.
             _qmp_read_json(s)
             s.sendall(b'{"execute":"qmp_capabilities"}\n')
@@ -191,6 +213,15 @@ def _try_qmp_quit(qmp_socket: Path) -> bool:
             return True
     except Exception:
         return False
+
+
+def _find_free_tcp_port() -> Optional[int]:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return int(s.getsockname()[1])
+    except Exception:
+        return None
 
 
 def _qemu_quote_keyval_value(value: str) -> str:
@@ -519,35 +550,32 @@ def main() -> int:
     except FileNotFoundError:
         pass
 
-    # QMP socket used to request a graceful shutdown (so the wav audiodev can flush/finalize).
-    # We use a UNIX domain socket, so only enable this on non-Windows hosts.
-    use_qmp = os.name != "nt"
+    # QMP endpoint used to request a graceful shutdown (so the wav audiodev can flush/finalize).
+    #
+    # - On POSIX hosts prefer a UNIX domain socket (avoids picking a TCP port).
+    # - Fall back to a loopback TCP socket on Windows (and when the unix socket path is unsafe).
+    qmp_endpoint: Optional[_QmpEndpoint] = None
     qmp_socket: Optional[Path] = None
-    if use_qmp:
+    if os.name != "nt":
         qmp_socket = serial_log.with_name(serial_log.stem + ".qmp.sock")
         # UNIX domain sockets have a small path length limit (typically ~108 bytes). Avoid failing
         # QEMU startup if the user provided an unusually long serial log path.
         qmp_path_str = str(qmp_socket)
-        if len(qmp_path_str) >= 100 or "," in qmp_path_str:
-            print(
-                f"WARNING: disabling QMP shutdown due to unsupported socket path: {qmp_path_str}",
-                file=sys.stderr,
-            )
-            use_qmp = False
-            qmp_socket = None
-        elif len(qmp_path_str.encode("utf-8")) >= 100:
-            # Extremely defensive: QEMU/libc uses a byte length limit.
-            print(
-                f"WARNING: disabling QMP shutdown due to long socket path: {qmp_path_str}",
-                file=sys.stderr,
-            )
-            use_qmp = False
+        if len(qmp_path_str) >= 100 or "," in qmp_path_str or len(qmp_path_str.encode("utf-8")) >= 100:
             qmp_socket = None
         else:
             try:
                 qmp_socket.unlink()
             except FileNotFoundError:
                 pass
+            qmp_endpoint = _QmpEndpoint(unix_socket=qmp_socket)
+
+    if qmp_endpoint is None:
+        port = _find_free_tcp_port()
+        if port is None:
+            print("WARNING: disabling QMP shutdown because a free TCP port could not be allocated", file=sys.stderr)
+        else:
+            qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
 
     http_log_path: Optional[Path] = None
     if args.http_log:
@@ -642,8 +670,8 @@ def main() -> int:
                 "none",
                 "-no-reboot",
             ]
-            if use_qmp and qmp_socket is not None:
-                qemu_args += ["-qmp", f"unix:{qmp_socket},server,nowait"]
+            if qmp_endpoint is not None:
+                qemu_args += ["-qmp", qmp_endpoint.qemu_arg()]
             qemu_args += [
                 "-chardev",
                 serial_chardev,
@@ -713,8 +741,8 @@ def main() -> int:
                 "none",
                 "-no-reboot",
             ]
-            if use_qmp and qmp_socket is not None:
-                qemu_args += ["-qmp", f"unix:{qmp_socket},server,nowait"]
+            if qmp_endpoint is not None:
+                qemu_args += ["-qmp", qmp_endpoint.qemu_arg()]
             qemu_args += [
                 "-chardev",
                 serial_chardev,
@@ -1316,7 +1344,7 @@ def main() -> int:
         finally:
             # Prefer a graceful QMP shutdown so that the wav audiodev backend can finalize its header.
             if proc.poll() is None:
-                if use_qmp and qmp_socket is not None and _try_qmp_quit(qmp_socket):
+                if qmp_endpoint is not None and _try_qmp_quit(qmp_endpoint):
                     try:
                         proc.wait(timeout=10)
                     except Exception:
@@ -1328,7 +1356,7 @@ def main() -> int:
                 stderr_f.close()
             except Exception:
                 pass
-            if use_qmp and qmp_socket is not None:
+            if qmp_socket is not None:
                 try:
                     qmp_socket.unlink()
                 except FileNotFoundError:
