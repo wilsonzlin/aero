@@ -46,6 +46,7 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     KIRQL InterruptIrql;
     KINTERRUPT_MODE InterruptMode;
     KAFFINITY InterruptAffinity;
+    BOOLEAN InterruptShareVector;
 
     VIRTIOSND_DMA_CONTEXT DmaCtx;
 

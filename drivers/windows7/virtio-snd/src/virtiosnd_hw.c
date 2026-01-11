@@ -45,7 +45,7 @@ static NTSTATUS VirtIoSndConnectInterrupt(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx
         Dx->InterruptIrql,
         Dx->InterruptIrql,
         Dx->InterruptMode,
-        TRUE,
+        Dx->InterruptShareVector,
         Dx->InterruptAffinity,
         FALSE);
 
@@ -211,13 +211,15 @@ static NTSTATUS VirtIoSndParseInterruptResource(_Inout_ PVIRTIOSND_DEVICE_EXTENS
             Dx->InterruptIrql = (KIRQL)desc[i].u.Interrupt.Level;
             Dx->InterruptAffinity = (KAFFINITY)desc[i].u.Interrupt.Affinity;
             Dx->InterruptMode = (desc[i].Flags & CM_RESOURCE_INTERRUPT_LATCHED) ? Latched : LevelSensitive;
+            Dx->InterruptShareVector = (desc[i].ShareDisposition == CmResourceShareDispositionShared) ? TRUE : FALSE;
 
             VIRTIOSND_TRACE(
-                "INTx resource: vector=%lu irql=%lu affinity=%I64x flags=0x%x\n",
+                "INTx resource: vector=%lu irql=%lu affinity=%I64x flags=0x%x share=%u\n",
                 Dx->InterruptVector,
                 (ULONG)Dx->InterruptIrql,
                 (ULONGLONG)Dx->InterruptAffinity,
-                (ULONG)desc[i].Flags);
+                (ULONG)desc[i].Flags,
+                Dx->InterruptShareVector);
 
             return STATUS_SUCCESS;
         }
@@ -312,6 +314,11 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     InterlockedExchange(&Dx->Stopping, 1);
 
     VirtIoSndDisconnectInterrupt(Dx);
+    if (KeRemoveQueueDpc(&Dx->InterruptDpc)) {
+        if (InterlockedDecrement(&Dx->DpcInFlight) == 0) {
+            KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
+        }
+    }
 
     (VOID)KeWaitForSingleObject(&Dx->DpcIdleEvent, Executive, KernelMode, FALSE, NULL);
     Dx->PendingIsrStatus = 0;
