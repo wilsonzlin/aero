@@ -59,6 +59,28 @@ jobs:
           drivers/scripts/make-driver-pack.sh --virtio-win-iso "$tmp/virtio-win.iso" --out-dir "$tmp/out" -- --NoZip
           test -f "$tmp/out/aero-win7-driver-pack/manifest.json"
 
+      - name: Smoke test make-virtio-driver-iso.sh (pwsh on Linux, synthetic ISO)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v pwsh >/dev/null 2>&1; then
+            echo "pwsh not found on PATH; skipping make-virtio-driver-iso.sh smoke test."
+            exit 0
+          fi
+          tmp="$(mktemp -d)"
+          stage="$tmp/iso-root"
+          mkdir -p "$stage/viostor/w7/amd64" "$stage/viostor/w7/x86" "$stage/NetKVM/w7/amd64" "$stage/NetKVM/w7/x86"
+          echo "viostor amd64" > "$stage/viostor/w7/amd64/viostor.inf"
+          echo "viostor x86" > "$stage/viostor/w7/x86/viostor.inf"
+          echo "netkvm amd64" > "$stage/NetKVM/w7/amd64/netkvm.inf"
+          echo "netkvm x86" > "$stage/NetKVM/w7/x86/netkvm.inf"
+          echo "license" > "$stage/LICENSE"
+          echo "1.2.3" > "$stage/VERSION"
+          xorriso -as mkisofs -iso-level 3 -J -R -V VIRTIOWIN_TEST -o "$tmp/virtio-win.iso" "$stage"
+          drivers/scripts/make-virtio-driver-iso.sh --virtio-win-iso "$tmp/virtio-win.iso" --out-iso "$tmp/aero-virtio.iso"
+          test -f "$tmp/aero-virtio.iso"
+          python3 tools/driver-iso/verify_iso.py --require-arch both --iso "$tmp/aero-virtio.iso"
+
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
