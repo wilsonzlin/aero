@@ -14,8 +14,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
     } else if (key === "text") {
       node.textContent = String(value);
     } else if (key.startsWith("on") && typeof value === "function") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node as any)[key.toLowerCase()] = value;
+      (node as unknown as Record<string, unknown>)[key.toLowerCase()] = value;
     } else {
       node.setAttribute(key, String(value));
     }
@@ -220,10 +219,8 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
       // Node's MessagePort keeps the event loop alive once started. Unit tests run in
       // the `node` environment; unref to avoid leaking handles.
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (channel.port1 as any).unref?.();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (channel.port2 as any).unref?.();
+        (channel.port1 as unknown as { unref?: () => void }).unref?.();
+        (channel.port2 as unknown as { unref?: () => void }).unref?.();
       } catch {
         // ignore
       }

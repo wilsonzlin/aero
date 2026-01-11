@@ -24,8 +24,7 @@ type UsbForgettableDevice = USBDevice & { forget: () => Promise<void> };
 function canForgetUsbDevice(device: USBDevice): device is UsbForgettableDevice {
   // `USBDevice.forget()` is currently Chromium-specific. Keep this check tolerant
   // so the broker continues to work on browsers without the API.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return typeof (device as any).forget === "function";
+  return typeof (device as unknown as { forget?: unknown }).forget === "function";
 }
 
 function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -90,8 +89,7 @@ export class UsbBroker {
     } catch (err) {
       const wrapped = new Error("navigator.usb.getDevices() failed.");
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (wrapped as any).cause = err;
+        (wrapped as Error & { cause?: unknown }).cause = err;
       } catch {
         // ignore
       }
