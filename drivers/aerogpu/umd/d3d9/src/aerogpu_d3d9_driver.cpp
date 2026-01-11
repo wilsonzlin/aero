@@ -11263,7 +11263,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   if (!create_context_has_persistent_submit_buffers) {
     aerogpu::logf("aerogpu-d3d9: CreateContext did not provide persistent submit buffers; "
-                  "will use Allocate/GetCommandBuffer (cmd=%p size=%u alloc=%p entries=%u patch=%p entries=%u dma_priv=%p bytes=%u)\n",
+                  "will use Allocate/GetCommandBuffer (dma=%p cmd=%p size=%u alloc=%p entries=%u patch=%p entries=%u dma_priv=%p bytes=%u)\n",
+                  dev->wddm_context.pDmaBuffer,
                   dev->wddm_context.pCommandBuffer,
                   static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
                   dev->wddm_context.pAllocationList,
@@ -11352,10 +11353,11 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
 
   aerogpu::logf("aerogpu-d3d9: CreateDevice wddm_device=0x%08x hContext=0x%08x hSyncObject=0x%08x "
-                "cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u dma_priv=%p bytes=%u\n",
+                "dma=%p cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u dma_priv=%p bytes=%u\n",
                 static_cast<unsigned>(dev->wddm_device),
                 static_cast<unsigned>(dev->wddm_context.hContext),
                 static_cast<unsigned>(dev->wddm_context.hSyncObject),
+                dev->wddm_context.pDmaBuffer,
                 dev->wddm_context.pCommandBuffer,
                 static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
                 dev->wddm_context.pAllocationList,
@@ -11937,7 +11939,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
             !dev->wddm_context.pDmaBufferPrivateData ||
             dev->wddm_context.DmaBufferPrivateDataSize < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
           aerogpu::logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
-                        "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u dma_priv=%p bytes=%u (need>=%u) sync=0x%08x\n",
+                        "dma=%p cmd=%p size=%u alloc=%p size=%u patch=%p size=%u dma_priv=%p bytes=%u (need>=%u) sync=0x%08x\n",
+                        dev->wddm_context.pDmaBuffer,
                         dev->wddm_context.pCommandBuffer,
                         static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
                         dev->wddm_context.pAllocationList,
@@ -12002,10 +12005,11 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
           }
 
           aerogpu::logf("aerogpu-d3d9: CreateDevice wddm_device=0x%08x hContext=0x%08x hSyncObject=0x%08x "
-                        "cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u dma_priv=%p bytes=%u\n",
+                        "dma=%p cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u dma_priv=%p bytes=%u\n",
                         static_cast<unsigned>(dev->wddm_device),
                         static_cast<unsigned>(dev->wddm_context.hContext),
                         static_cast<unsigned>(dev->wddm_context.hSyncObject),
+                        dev->wddm_context.pDmaBuffer,
                         dev->wddm_context.pCommandBuffer,
                         static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
                         dev->wddm_context.pAllocationList,
