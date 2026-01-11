@@ -123,8 +123,34 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
         "aerogpu.inf must contain {expected_hwid_short:?}"
     );
 
+    // Keep the human-readable contract document in sync too (at least for the AeroGPU row).
+    let contract_md_path = root.join("docs/windows-device-contract.md");
+    let contract_md_text = std::fs::read_to_string(&contract_md_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", contract_md_path.display()));
+    let aerogpu_row = contract_md_text
+        .lines()
+        .find(|line| line.contains("| Aero GPU |"))
+        .unwrap_or_else(|| panic!("missing Aero GPU row in {}", contract_md_path.display()));
+    assert!(
+        aerogpu_row.contains("A3A0:0001"),
+        "Aero GPU row must contain `A3A0:0001` (got: {aerogpu_row:?})"
+    );
+    assert!(
+        aerogpu_row.contains("03/00/00"),
+        "Aero GPU row must contain `03/00/00` (got: {aerogpu_row:?})"
+    );
+    assert!(
+        aerogpu_row.contains("aerogpu.inf"),
+        "Aero GPU row must contain `aerogpu.inf` (got: {aerogpu_row:?})"
+    );
+    assert!(
+        aerogpu_row.contains("aerogpu"),
+        "Aero GPU row must contain the `aerogpu` service name (got: {aerogpu_row:?})"
+    );
+
     // Make sure we don't keep stale contract text around under a different name.
     assert!(!contains_needle(&contract_text, "A0E0"));
+    assert!(!contains_needle(&contract_md_text, "A0E0"));
 }
 
 fn contains_needle(haystack: &str, needle: &str) -> bool {
