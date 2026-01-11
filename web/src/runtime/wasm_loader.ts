@@ -63,6 +63,7 @@ export interface WasmApi {
         write_f32_interleaved(samples: Float32Array): number;
         buffer_level_frames(): number;
         underrun_count(): number;
+        overrun_count(): number;
         free(): void;
     };
     create_worklet_bridge?: (capacityFrames: number, channelCount: number) => unknown;

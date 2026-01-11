@@ -81,6 +81,7 @@ const AUDIO_HEADER_BYTES = AUDIO_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
 const AUDIO_READ_FRAME_INDEX = 0;
 const AUDIO_WRITE_FRAME_INDEX = 1;
 const AUDIO_UNDERRUN_COUNT_INDEX = 2;
+const AUDIO_OVERRUN_COUNT_INDEX = 3;
 
 function audioFramesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
   return (writeFrameIndex - readFrameIndex) >>> 0;
@@ -124,6 +125,10 @@ class JsWorkletBridge {
     return Atomics.load(this.header, AUDIO_UNDERRUN_COUNT_INDEX) >>> 0;
   }
 
+  overrun_count(): number {
+    return Atomics.load(this.header, AUDIO_OVERRUN_COUNT_INDEX) >>> 0;
+  }
+
   write_f32_interleaved(input: Float32Array): number {
     const requestedFrames = Math.floor(input.length / this.channel_count);
     if (requestedFrames === 0) return 0;
@@ -133,6 +138,8 @@ class JsWorkletBridge {
 
     const free = audioFramesFree(read, write, this.capacity_frames);
     const framesToWrite = Math.min(requestedFrames, free);
+    const droppedFrames = requestedFrames - framesToWrite;
+    if (droppedFrames > 0) Atomics.add(this.header, AUDIO_OVERRUN_COUNT_INDEX, droppedFrames);
     if (framesToWrite === 0) return 0;
 
     const writePos = write % this.capacity_frames;
