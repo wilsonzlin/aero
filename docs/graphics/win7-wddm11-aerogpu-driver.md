@@ -697,7 +697,7 @@ The guest binds to a project-specific PCI display controller. The canonical iden
   
 BARs / interrupts:
   
-- BAR0 (`AEROGPU_PCI_BAR0_INDEX`, index 0): MMIO register block, **at least 64 KiB** (`AEROGPU_PCI_BAR0_SIZE_BYTES` is currently 64 KiB). The device must not assume “4 KiB is enough”; the remaining space is reserved for forward-compatible register growth.
+- BAR0 (`AEROGPU_PCI_BAR0_INDEX`, index 0): MMIO register block, **at least 64 KiB** (`AEROGPU_PCI_BAR0_SIZE_BYTES` is currently 64 KiB). The remaining space is reserved for forward-compatible register growth.
 - Interrupt: level-triggered line IRQ is acceptable for MVP; MSI/MSI-X can be added later. Interrupt causes are surfaced via `AEROGPU_MMIO_REG_IRQ_*`.
   
 ### 7.2 BAR0 MMIO register block (A3A0)
