@@ -15,6 +15,7 @@ pub const ERROR_CODE_ORIGIN_DENIED: u16 = 5;
 pub const ERROR_CODE_QUOTA_BYTES: u16 = 6;
 pub const ERROR_CODE_QUOTA_FPS: u16 = 7;
 pub const ERROR_CODE_QUOTA_CONNECTIONS: u16 = 8;
+pub const ERROR_CODE_BACKPRESSURE: u16 = 9;
 
 /// Encode an `ERROR` payload using the structured binary form:
 ///

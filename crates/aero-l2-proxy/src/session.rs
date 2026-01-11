@@ -78,6 +78,7 @@ enum SessionEvent {
 enum QuotaExceeded {
     Bytes,
     FramesPerSecond,
+    Backpressure,
 }
 
 impl QuotaExceeded {
@@ -85,6 +86,7 @@ impl QuotaExceeded {
         match self {
             QuotaExceeded::Bytes => protocol::ERROR_CODE_QUOTA_BYTES,
             QuotaExceeded::FramesPerSecond => protocol::ERROR_CODE_QUOTA_FPS,
+            QuotaExceeded::Backpressure => protocol::ERROR_CODE_BACKPRESSURE,
         }
     }
 
@@ -92,6 +94,7 @@ impl QuotaExceeded {
         match self {
             QuotaExceeded::Bytes => "byte quota exceeded",
             QuotaExceeded::FramesPerSecond => "frame rate quota exceeded",
+            QuotaExceeded::Backpressure => "outbound websocket backpressure",
         }
     }
 }
@@ -274,11 +277,19 @@ async fn send_ws_message(
     if let Some(exceeded) = quotas.on_outbound_message(&msg) {
         return Err(exceeded);
     }
-    ws_out_tx
-        .send(msg)
-        .await
-        .map_err(|_| QuotaExceeded::Bytes)?;
-    Ok(())
+    match ws_out_tx.try_send(msg) {
+        Ok(()) => Ok(()),
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err(QuotaExceeded::Backpressure),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
+            // The writer task might be stalled (client not reading); never block the session
+            // indefinitely on the bounded channel.
+            let send_timeout = Duration::from_secs(1);
+            match timeout(send_timeout, ws_out_tx.send(msg)).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(_)) | Err(_) => Err(QuotaExceeded::Backpressure),
+            }
+        }
+    }
 }
 
 pub(crate) async fn run_session(
@@ -1209,6 +1220,27 @@ mod tests {
         .expect(
             "close_policy_violation should not hang when the outbound channel is backpressured",
         );
+    }
+
+    #[tokio::test]
+    async fn send_ws_message_returns_backpressure_when_ws_channel_full() {
+        let (ws_out_tx, _ws_out_rx) = mpsc::channel::<Message>(1);
+        ws_out_tx
+            .send(Message::Text("block".to_string()))
+            .await
+            .unwrap();
+
+        let mut quotas = SessionQuotas::new(0, 0);
+        let err = tokio::time::timeout(
+            Duration::from_secs(3),
+            send_ws_message(&ws_out_tx, Message::Text("next".to_string()), &mut quotas),
+        )
+        .await
+        .expect("send_ws_message should not hang when the outbound channel is full")
+        .expect_err("expected send_ws_message to fail when the outbound channel is full");
+
+        assert_eq!(err.code(), protocol::ERROR_CODE_BACKPRESSURE);
+        assert_eq!(err.reason(), "outbound websocket backpressure");
     }
 
     #[tokio::test]

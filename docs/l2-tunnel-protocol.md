@@ -156,6 +156,7 @@ When using the structured binary form, `code` is a stable `u16` error code.
 | 6 | `quota_bytes` | Total byte quota exceeded. |
 | 7 | `quota_fps` | Frame rate quota exceeded. |
 | 8 | `quota_connections` | Connection/session concurrency quota exceeded. |
+| 9 | `backpressure` | Proxy cannot enqueue outbound messages (client not reading / internal buffer full). |
 
 ---
 
