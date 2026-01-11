@@ -1,0 +1,12 @@
+[
+{{- range $i, $lib := . -}}
+  {{- if $i }},{{ end }}
+  {
+    "name": {{ printf "%q" $lib.Name }},
+    "version": {{ printf "%q" $lib.Version }},
+    "license": {{ printf "%q" $lib.LicenseName }},
+    "licenseUrl": {{ printf "%q" $lib.LicenseURL }},
+    "licensePath": {{ printf "%q" $lib.LicensePath }}
+  }
+{{- end }}
+]

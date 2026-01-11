@@ -126,6 +126,40 @@ adding the `automerge-deps` label.
 Auto-merge logic lives in `.github/workflows/dependabot-auto-merge.yml`. The
 allowlist is intentionally narrow; widen it only with intent.
 
+### License allowlist (copyleft avoidance)
+
+Aero’s IP posture explicitly forbids **GPL/LGPL/AGPL** (and similar copyleft)
+contamination. CI enforces a strict **license allowlist** for third-party
+dependencies across ecosystems.
+
+Allowed licenses are expressed as SPDX identifiers (or SPDX expressions):
+
+- `Apache-2.0`
+- `MIT`
+- `BSD-2-Clause`, `BSD-3-Clause`
+- `ISC`
+- `0BSD`
+- `Zlib`
+- `CC0-1.0`
+- `CC-BY-3.0` (SPDX metadata packages in the npm ecosystem)
+- `BSL-1.0`
+- `Unicode-3.0`, `Unicode-DFS-2016`
+- `BlueOak-1.0.0` (permissive; appears in the existing npm dependency graph)
+
+How CI evaluates dependency licenses:
+
+- **Dual-licensed** dependencies are allowed when their SPDX expression can be
+  satisfied using allowlisted terms (e.g. `MIT OR Apache-2.0` is OK; `MIT OR
+  GPL-3.0` is also OK because you can opt into MIT).
+- **Conjunctive** expressions require every term to be allowlisted (e.g. `MIT AND
+  Zlib` is OK; `MIT AND GPL-3.0` is not).
+- **Unknown/missing** license metadata is treated as a CI failure. Fix it by
+  switching dependencies or by ensuring upstream provides correct SPDX metadata
+  (and re-run the check).
+- **Vendored code** must include its license text in-tree and must use an
+  allowlisted license. If you vendor code, include attribution + the license
+  file(s) alongside the vendored directory.
+
 ### License + vulnerability gating
 
 CI enforces a dependency policy to help keep the project compatible with the
@@ -134,8 +168,13 @@ early:
 
 - Rust: `cargo-deny` (`deny.toml`) checks license allowlist + banned sources
   (no git deps by default) + RustSec advisories.
+- npm: `scripts/ci/check-npm-licenses.mjs` checks dependency licenses against
+  the allowlist (fails on copyleft/unknown licenses). This runs on PRs so
+  Dependabot auto-merge is gated by it.
 - Go: `govulncheck` runs for `proxy/webrtc-udp-relay` when Go deps/code change,
   plus nightly/manual runs to catch newly published advisories.
+- Go: `go-licenses` checks module dependency licenses for
+  `proxy/webrtc-udp-relay` against the allowlist.
 - npm: a scheduled `npm audit` runs against the lockfile for high/critical
   issues (nightly/manual only to avoid PR noise).
 
