@@ -22,6 +22,7 @@ see [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterface()` fail with an opaque `DOMException`:
 
 - For a quick browser-level smoke test, use the in-app **WebUSB** panel (main UI) or open the standalone diagnostics page: `/webusb_diagnostics.html`.
+  - The diagnostics page can also list `navigator.usb.getDevices()` (already-granted devices) and copy a JSON summary for bug reports.
 - **Secure context required:** WebUSB requires `https://` or `http://localhost` (`isSecureContext === true`).
 - **User gesture required:** `navigator.usb.requestDevice()` must be triggered by a user gesture (e.g. a button click).
   - Call `requestDevice()` directly from the gesture handler; if you `await` before calling it, the user gesture can be lost.

@@ -197,7 +197,8 @@ The diagnostics page:
 - Calls `navigator.usb.requestDevice(...)` via a broad filter.
 - Prints the selected device’s configurations / interfaces / endpoints.
 - Marks interfaces that are likely **WebUSB-protected** (e.g. HID / Mass Storage) vs **claimable**.
-- Offers a best-effort “open + claim” button for the first claimable interface.
+- Offers a best-effort “open + claim” probe (prefers bidirectional bulk endpoints when available).
+- Can list `navigator.usb.getDevices()` and copy a JSON summary to include in bug reports.
 
 ## WASM builds (threaded vs single fallback)
 
