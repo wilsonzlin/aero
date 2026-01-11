@@ -188,6 +188,9 @@
   </Target>
 
   <ItemGroup>
+    <ClCompile Include="src\aerogpu_d3d10_11_umd.cpp">
+      <ExcludedFromBuild Condition="'$(AeroGpuUseWdkHeaders)'=='1'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\aerogpu_d3d10_11_log.cpp" />
     <ClCompile Include="src\aerogpu_d3d10_11_wddm_submit.cpp">
       <ExcludedFromBuild Condition="'$(AeroGpuUseWdkHeaders)'!='1'">true</ExcludedFromBuild>
