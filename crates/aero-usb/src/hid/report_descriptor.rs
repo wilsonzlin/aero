@@ -1021,6 +1021,16 @@ pub fn synthesize_report_descriptor(
     for collection in collections {
         synthesize_collection(&mut out, collection)?;
     }
+    if out.len() > u16::MAX as usize {
+        return Err(HidDescriptorError::at(
+            "reportDescriptor",
+            format!(
+                "HID report descriptor length {} exceeds u16::MAX ({})",
+                out.len(),
+                u16::MAX
+            ),
+        ));
+    }
     Ok(out)
 }
 
@@ -1536,6 +1546,55 @@ mod tests {
             Err(HidDescriptorError::Validation { path, message }) => {
                 assert_eq!(path, "collections[0].inputReports[0].items[257]");
                 assert!(message.contains("total report bit length overflows u32"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_report_descriptor_length_overflow() {
+        // Each explicit `Usage` local item is 2 bytes when the usage fits in u8 (prefix + 1-byte
+        // payload). Emit enough usages to exceed the u16 report descriptor length field.
+        let usages = vec![0u32; 32_768];
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 1,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages,
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "reportDescriptor");
+                assert!(message.contains("length"));
+                assert!(message.contains("u16::MAX"));
             }
             other => panic!("expected validation error, got {other:?}"),
         }

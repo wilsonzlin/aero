@@ -177,6 +177,12 @@ impl UsbHidPassthrough {
             .map(build_string_descriptor_utf16le)
             .map(|v| Rc::<[u8]>::from(v.into_boxed_slice()));
 
+        // USB HID encodes the report descriptor length as a u16 (wDescriptorLength). Truncate
+        // oversized descriptors so the device's own descriptors remain self-consistent.
+        let mut hid_report_descriptor = hid_report_descriptor;
+        if hid_report_descriptor.len() > u16::MAX as usize {
+            hid_report_descriptor.truncate(u16::MAX as usize);
+        }
         let hid_report_descriptor: Rc<[u8]> = Rc::from(hid_report_descriptor.into_boxed_slice());
 
         let i_serial = if serial_string_descriptor.is_some() {
@@ -768,7 +774,7 @@ fn build_device_descriptor(
 }
 
 fn build_hid_descriptor(report_descriptor: &[u8]) -> Vec<u8> {
-    let report_len = report_descriptor.len() as u16;
+    let report_len = u16::try_from(report_descriptor.len()).unwrap_or(u16::MAX);
     let mut out = Vec::with_capacity(9);
     out.extend_from_slice(&[
         0x09,                    // bLength

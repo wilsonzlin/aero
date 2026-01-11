@@ -320,6 +320,8 @@ reports):
 - `reportCount` MUST be in `0..=65535` (policy cap).
 - `reportSize * reportCount` MUST fit in `u32`.
 - The total bit length of a given `(kind, reportId)` across the descriptor MUST fit in `u32`.
+- The synthesized report descriptor byte length MUST fit in `u16` (`<= 65535`) because USB HID
+  encodes it as a 16-bit `wDescriptorLength` field in the HID descriptor.
 
 ### Min/max ordering
 

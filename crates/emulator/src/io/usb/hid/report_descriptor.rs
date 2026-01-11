@@ -1102,6 +1102,16 @@ pub fn synthesize_report_descriptor(
     for collection in collections {
         synthesize_collection(&mut out, collection)?;
     }
+    if out.len() > u16::MAX as usize {
+        return Err(HidDescriptorError::at(
+            "reportDescriptor",
+            format!(
+                "HID report descriptor length {} exceeds u16::MAX ({})",
+                out.len(),
+                u16::MAX
+            ),
+        ));
+    }
     Ok(out)
 }
 
@@ -1996,6 +2006,32 @@ mod tests {
         assert!(err
             .message
             .contains("total report bit length overflows u32"));
+    }
+
+    #[test]
+    fn synth_rejects_report_descriptor_length_overflow() {
+        // Each explicit `Usage` local item is 2 bytes when the usage fits in u8 (prefix + 1-byte
+        // payload). Emit enough usages to exceed the u16 report descriptor length field.
+        let mut item = simple_item(1, 1);
+        item.usages = vec![0u32; 32_768];
+
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![item],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "reportDescriptor");
+        assert!(err.message.contains("length"));
+        assert!(err.message.contains("u16::MAX"));
     }
 
     #[test]
