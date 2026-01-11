@@ -52,6 +52,15 @@ function normalizeEtag(etag: string): string {
   return `"${trimmed.replace(/"/g, "")}"`;
 }
 
+function sendIfRangePreconditionFailed(reply: FastifyReply, etag: string): void {
+  reply.status(412).header("etag", normalizeEtag(etag)).send({
+    error: {
+      code: "PRECONDITION_FAILED",
+      message: "If-Range does not match current ETag",
+    },
+  });
+}
+
 function requireImage(store: ImageStore, imageId: string): ImageRecord {
   const record = store.get(imageId);
   if (!record) throw new ApiError(404, "Image not found", "NOT_FOUND");
@@ -465,6 +474,64 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       }
     }
 
+    const ifRange =
+      requestedRange && typeof req.headers["if-range"] === "string"
+        ? req.headers["if-range"]
+        : undefined;
+
+    let ifMatch: string | undefined;
+    if (ifRange) {
+      const normalizedIfRange = normalizeEtag(ifRange);
+      let currentEtag = record.etag;
+
+      // Fall back to an S3 HEAD if we don't have an in-memory validator.
+      if (!currentEtag) {
+        let head: HeadObjectCommandOutput;
+        try {
+          head = await deps.s3.send(
+            new HeadObjectCommand({
+              Bucket: deps.config.s3Bucket,
+              Key: record.s3Key,
+            })
+          );
+        } catch (err) {
+          const maybeStatus = (
+            err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+          ).$metadata?.httpStatusCode;
+          if (typeof maybeStatus === "number" && maybeStatus === 404) {
+            throw new ApiError(404, "Image object not found", "NOT_FOUND");
+          }
+          throw err;
+        }
+
+        currentEtag = typeof head.ETag === "string" ? head.ETag : undefined;
+        const size = typeof head.ContentLength === "number" ? head.ContentLength : undefined;
+        const lastModified =
+          head.LastModified instanceof Date ? head.LastModified.toISOString() : undefined;
+
+        deps.store.update(imageId, {
+          etag: currentEtag,
+          size,
+          lastModified,
+        });
+      }
+
+      if (!currentEtag) {
+        throw new ApiError(502, "Unable to determine current image ETag", "S3_ERROR");
+      }
+
+      const normalizedCurrentEtag = normalizeEtag(currentEtag);
+      if (normalizedIfRange !== normalizedCurrentEtag) {
+        sendIfRangePreconditionFailed(reply, normalizedCurrentEtag);
+        return;
+      }
+
+      // Enforce If-Range semantics atomically at S3: if the object changes between our
+      // validation step and GetObject, S3 will return 412 instead of streaming bytes for the
+      // new version.
+      ifMatch = normalizedCurrentEtag;
+    }
+
     let s3Res: GetObjectCommandOutput;
     try {
       s3Res = await deps.s3.send(
@@ -472,6 +539,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
           Bucket: deps.config.s3Bucket,
           Key: record.s3Key,
           Range: requestedRange,
+          ...(ifMatch ? { IfMatch: ifMatch } : {}),
         })
       );
     } catch (err) {
@@ -479,6 +547,43 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
       ).$metadata?.httpStatusCode;
       if (typeof maybeStatus === "number") {
+        if (maybeStatus === 412) {
+          // An If-Range request must never fall back to streaming the full object. Return a
+          // precondition failure with the current ETag so the client can refresh its cache key.
+          let currentEtag: string | undefined;
+          try {
+            const head = await deps.s3.send(
+              new HeadObjectCommand({
+                Bucket: deps.config.s3Bucket,
+                Key: record.s3Key,
+              })
+            );
+            currentEtag = typeof head.ETag === "string" ? head.ETag : undefined;
+            if (currentEtag) {
+              deps.store.update(imageId, { etag: currentEtag });
+            }
+          } catch (headErr) {
+            const headStatus = (
+              headErr as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+            ).$metadata?.httpStatusCode;
+            if (typeof headStatus === "number" && headStatus === 404) {
+              throw new ApiError(404, "Image object not found", "NOT_FOUND");
+            }
+          }
+
+          const etagToReturn = currentEtag ?? record.etag;
+          if (etagToReturn) {
+            sendIfRangePreconditionFailed(reply, etagToReturn);
+            return;
+          }
+
+          // We couldn't get a validator, but we still must not stream the full object.
+          throw new ApiError(
+            412,
+            "If-Range precondition failed but no ETag is available",
+            "PRECONDITION_FAILED"
+          );
+        }
         if (maybeStatus === 416) {
           const totalSize = record.size;
           const headers: Record<string, string> = {

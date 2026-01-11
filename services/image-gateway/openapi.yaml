@@ -364,6 +364,8 @@ paths:
       description: |
         Development-only fallback that proxies bytes through the service.
         Only single-range `Range: bytes=start-end` requests are supported.
+        When `If-Range` is provided, the service returns `412 Precondition Failed` instead of
+        falling back to a full-body `200` response.
       parameters:
         - $ref: "#/components/parameters/XUserId"
         - name: imageId
@@ -377,6 +379,14 @@ paths:
           schema:
             type: string
           description: Standard HTTP Range header (e.g. "bytes=0-1048575")
+        - name: If-Range
+          in: header
+          required: false
+          schema:
+            type: string
+          description: |
+            ETag validator for a ranged request. When supplied alongside `Range`, the service
+            returns `412 Precondition Failed` if the current image ETag does not match.
       responses:
         "200":
           description: Full object
@@ -392,6 +402,17 @@ paths:
               schema:
                 type: string
                 format: binary
+        "412":
+          description: Precondition Failed (If-Range did not match current ETag)
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: Current ETag for the image object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         default:
           description: Error
           content:

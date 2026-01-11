@@ -1,4 +1,4 @@
-import { HeadBucketCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadBucketCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { describe, expect, it } from "vitest";
 
@@ -124,6 +124,112 @@ describe("app", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({
       error: { code: "BAD_REQUEST" },
+    });
+  });
+
+  it("allows ranged GET when If-Range matches the current ETag", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag"',
+    });
+
+    let getObjectCalls = 0;
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          getObjectCalls += 1;
+          expect(command.input.Range).toBe("bytes=0-4");
+          expect(command.input.IfMatch).toBe('"etag"');
+          return {
+            Body: Buffer.from("hello"),
+            ContentRange: "bytes 0-4/10",
+            ContentLength: 5,
+            ETag: '"etag"',
+            ContentType: "application/octet-stream",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-4",
+        "if-range": '"etag"',
+      },
+    });
+
+    expect(getObjectCalls).toBe(1);
+    expect(res.statusCode).toBe(206);
+    expect(res.headers["content-range"]).toBe("bytes 0-4/10");
+    expect(res.headers["etag"]).toBe('"etag"');
+    expect(res.payload).toBe("hello");
+  });
+
+  it("returns 412 when If-Range does not match and does not call S3 GetObject", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v2",
+      s3Key: "images/user-1/image-1/v2/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag-current"',
+    });
+
+    let getObjectCalls = 0;
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          getObjectCalls += 1;
+          throw new Error("GetObject should not be called for If-Range mismatches");
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-4",
+        "if-range": '"etag-old"',
+      },
+    });
+
+    expect(getObjectCalls).toBe(0);
+    expect(res.statusCode).toBe(412);
+    expect(res.headers["etag"]).toBe('"etag-current"');
+    expect(res.headers["access-control-expose-headers"]).toContain("etag");
+    expect(res.json()).toMatchObject({
+      error: { code: "PRECONDITION_FAILED" },
     });
   });
 
