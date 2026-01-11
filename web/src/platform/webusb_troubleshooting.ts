@@ -325,6 +325,9 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     );
   }
 
+  if (ppBlocksUsb) {
+    addHint("This document's Permissions Policy blocks WebUSB (`document.permissionsPolicy.allowsFeature('usb')` is false).");
+  }
   if (mentionsPermissionsPolicy || ppBlocksUsb) {
     addHint(
       "WebUSB can be blocked by Permissions Policy / enterprise policy. If you're running in an iframe, ensure the frame is allowed to use WebUSB (e.g. `allow=\"usb\"`) and that response headers permit it.",

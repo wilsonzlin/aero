@@ -293,9 +293,25 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     const secure = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;
     const hasUsb = typeof navigator !== "undefined" && "usb" in navigator && !!(navigator as Navigator & { usb?: unknown }).usb;
     const userActivation = typeof navigator !== "undefined" ? navigator.userActivation : undefined;
+    const ppUsb = (() => {
+      if (typeof document === "undefined") return null;
+      const doc = document as unknown as {
+        permissionsPolicy?: { allowsFeature?: (feature: string) => boolean };
+        featurePolicy?: { allowsFeature?: (feature: string) => boolean };
+      };
+      const policy = doc.permissionsPolicy ?? doc.featurePolicy;
+      if (!policy || typeof policy.allowsFeature !== "function") return null;
+      try {
+        return policy.allowsFeature("usb");
+      } catch {
+        return null;
+      }
+    })();
+    const ppText = ppUsb === null ? "unknown" : ppUsb ? "yes" : "no";
     const envInfo =
       `isSecureContext=${secure}\n` +
       `crossOriginIsolated=${report.crossOriginIsolated}\n` +
+      `permissionsPolicy.usb=${ppText}\n` +
       `userActivation.isActive=${userActivation?.isActive ?? "n/a"}\n` +
       `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? "n/a"}\n`;
 
