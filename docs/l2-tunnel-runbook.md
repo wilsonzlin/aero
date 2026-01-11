@@ -61,6 +61,7 @@ Expected behavior:
 - Proxy serves operational endpoints:
   - `GET /healthz` – liveness
   - `GET /readyz` – readiness (Rust proxy only)
+  - `GET /version` – build/version info (Rust proxy only)
   - `GET /metrics` – Prometheus metrics
 - Proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
 

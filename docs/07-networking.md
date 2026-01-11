@@ -1087,6 +1087,7 @@ The production L2 proxy (`crates/aero-l2-proxy`) also exposes basic operational 
 
 - `GET /healthz` – liveness
 - `GET /readyz` – readiness
+- `GET /version` – build/version info
 - `GET /metrics` – Prometheus metrics (tunnel/session counters + stack/proxy activity)
 
 It also supports optional per-session traffic capture for debugging:
