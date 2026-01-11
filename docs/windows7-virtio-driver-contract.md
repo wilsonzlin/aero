@@ -647,6 +647,11 @@ Receive behavior (device):
 - The device completes the chain with `used.len = 10 + frame_len`.
 - If the provided buffers are insufficient, the device MUST drop the incoming frame and MUST NOT consume a chain for it.
 
+> Implementation note (non-normative): Aero’s virtio-net model will drop a received frame immediately
+> (without consuming the RX chain) if the next available chain does not have enough writable capacity
+> for `10 + frame_len`. If no RX chains are available, the device may queue frames until buffers
+> arrive.
+
 ### 3.3 virtio-input (keyboard/mouse)
 
 Contract v1 exposes **two virtio-input PCI functions**:
