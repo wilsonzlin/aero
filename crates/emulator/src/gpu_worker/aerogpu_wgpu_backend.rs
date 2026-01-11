@@ -234,6 +234,25 @@ mod tests {
     };
     use memory::Bus;
 
+    fn require_webgpu() -> bool {
+        let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
+            return false;
+        };
+
+        let v = raw.trim();
+        v == "1"
+            || v.eq_ignore_ascii_case("true")
+            || v.eq_ignore_ascii_case("yes")
+            || v.eq_ignore_ascii_case("on")
+    }
+
+    fn skip_or_panic(test_name: &str, reason: &str) {
+        if require_webgpu() {
+            panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
+        }
+        eprintln!("skipping {test_name}: {reason}");
+    }
+
     #[test]
     fn decode_alloc_table_bytes_recovers_from_misaligned_buffers() {
         let header_size = AerogpuAllocTableHeader::SIZE_BYTES;
@@ -268,7 +287,19 @@ mod tests {
 
     #[test]
     fn submit_surfaces_execution_errors_via_completion() {
-        let mut backend = AerogpuWgpuBackend::new().unwrap();
+        let mut backend = match AerogpuWgpuBackend::new() {
+            Ok(backend) => backend,
+            Err(err) => {
+                skip_or_panic(
+                    concat!(
+                        module_path!(),
+                        "::submit_surfaces_execution_errors_via_completion"
+                    ),
+                    &format!("wgpu unavailable ({err:#})"),
+                );
+                return;
+            }
+        };
         let mut mem = Bus::new(0x1000);
 
         // Intentionally malformed command stream: too small to contain even the header.
