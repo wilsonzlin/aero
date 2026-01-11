@@ -220,7 +220,8 @@ pub fn validate_collections(
 
     Ok(ValidationSummary {
         has_report_ids: state.saw_nonzero_report_id,
-        max_input_report_bytes: u32::try_from(max_input_report_bytes(collections)).unwrap_or(u32::MAX),
+        max_input_report_bytes: u32::try_from(max_input_report_bytes(collections))
+            .unwrap_or(u32::MAX),
         max_output_report_bytes: u32::try_from(max_output_report_bytes(collections))
             .unwrap_or(u32::MAX),
         max_feature_report_bytes: u32::try_from(max_feature_report_bytes(collections))

@@ -68,7 +68,10 @@ impl CommonL2Env {
     fn new() -> Self {
         Self {
             _max_connections: EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0"),
-            _max_connections_per_session: EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0"),
+            _max_connections_per_session: EnvVarGuard::set(
+                "AERO_L2_MAX_CONNECTIONS_PER_SESSION",
+                "0",
+            ),
             _max_bytes: EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0"),
             _max_fps: EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0"),
             _ping_interval: EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0"),

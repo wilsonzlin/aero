@@ -200,9 +200,21 @@ fn convert_collection(collection: &HidCollectionInfo) -> report_descriptor::HidC
         usage: collection.usage,
         collection_type: collection.collection_type.code(),
         children: collection.children.iter().map(convert_collection).collect(),
-        input_reports: collection.input_reports.iter().map(convert_report).collect(),
-        output_reports: collection.output_reports.iter().map(convert_report).collect(),
-        feature_reports: collection.feature_reports.iter().map(convert_report).collect(),
+        input_reports: collection
+            .input_reports
+            .iter()
+            .map(convert_report)
+            .collect(),
+        output_reports: collection
+            .output_reports
+            .iter()
+            .map(convert_report)
+            .collect(),
+        feature_reports: collection
+            .feature_reports
+            .iter()
+            .map(convert_report)
+            .collect(),
     }
 }
 

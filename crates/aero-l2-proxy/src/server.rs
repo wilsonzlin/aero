@@ -365,9 +365,17 @@ async fn handle_l2_ws(socket: WebSocket, state: AppState, auth_sid: Option<Strin
     let auth_sid_log = auth_sid.as_deref().unwrap_or("none");
     tracing::info!(session_id, auth_sid = auth_sid_log, "l2 session connected");
     if let Err(err) = session::run_session(socket, state, session_id, auth_sid.clone()).await {
-        tracing::debug!(session_id, auth_sid = auth_sid_log, "l2 session ended: {err:#}");
+        tracing::debug!(
+            session_id,
+            auth_sid = auth_sid_log,
+            "l2 session ended: {err:#}"
+        );
     }
-    tracing::info!(session_id, auth_sid = auth_sid_log, "l2 session disconnected");
+    tracing::info!(
+        session_id,
+        auth_sid = auth_sid_log,
+        "l2 session disconnected"
+    );
 }
 
 fn enforce_security(
@@ -380,7 +388,8 @@ fn enforce_security(
     // credentials, even if the request is also missing/invalid Origin (see tests/security.rs).
     let token_present = token_present(state.cfg.security.auth_mode, headers, uri);
     let cookie_present = session_cookie_present(headers);
-    let origin_normalized_for_jwt = origin_from_headers(headers).and_then(crate::origin::normalize_origin);
+    let origin_normalized_for_jwt =
+        origin_from_headers(headers).and_then(crate::origin::normalize_origin);
 
     let mut auth_sid: Option<String> = None;
     match state.cfg.security.auth_mode {
@@ -476,11 +485,29 @@ fn enforce_security(
             auth_sid = sid;
         }
         crate::config::AuthMode::Jwt => {
-            let (sid, expected_origin) = verify_jwt_sid(state, headers, uri, &origin_normalized_for_jwt, token_present, cookie_present, client_ip)?;
+            let (sid, expected_origin) = verify_jwt_sid(
+                state,
+                headers,
+                uri,
+                &origin_normalized_for_jwt,
+                token_present,
+                cookie_present,
+                client_ip,
+            )?;
             auth_sid = Some(sid);
             if let Some(expected_origin) = expected_origin {
-                if origin_claim_mismatch(state.cfg.security.open, origin_normalized_for_jwt.as_deref(), &expected_origin) {
-                    reject_jwt_origin_mismatch(state, headers, token_present, cookie_present, client_ip)?;
+                if origin_claim_mismatch(
+                    state.cfg.security.open,
+                    origin_normalized_for_jwt.as_deref(),
+                    &expected_origin,
+                ) {
+                    reject_jwt_origin_mismatch(
+                        state,
+                        headers,
+                        token_present,
+                        cookie_present,
+                        client_ip,
+                    )?;
                 }
             }
         }
@@ -553,8 +580,18 @@ fn enforce_security(
                 )?;
                 auth_sid = Some(sid);
                 if let Some(expected_origin) = expected_origin {
-                    if origin_claim_mismatch(state.cfg.security.open, origin_normalized_for_jwt.as_deref(), &expected_origin) {
-                        reject_jwt_origin_mismatch(state, headers, token_present, cookie_present, client_ip)?;
+                    if origin_claim_mismatch(
+                        state.cfg.security.open,
+                        origin_normalized_for_jwt.as_deref(),
+                        &expected_origin,
+                    ) {
+                        reject_jwt_origin_mismatch(
+                            state,
+                            headers,
+                            token_present,
+                            cookie_present,
+                            client_ip,
+                        )?;
                     }
                 }
             }
@@ -874,7 +911,8 @@ fn reject_jwt_origin_mismatch(
     client_ip: IpAddr,
 ) -> Result<(), Box<axum::response::Response>> {
     state.metrics.upgrade_reject_auth_invalid();
-    state.metrics
+    state
+        .metrics
         .auth_rejected(AuthRejectReason::JwtOriginMismatch);
     tracing::warn!(
         reason = "jwt_origin_mismatch",
@@ -1062,7 +1100,9 @@ fn token_present(
     uri: &axum::http::Uri,
 ) -> bool {
     match auth_mode {
-        crate::config::AuthMode::ApiKey | crate::config::AuthMode::Jwt | crate::config::AuthMode::CookieOrJwt => {
+        crate::config::AuthMode::ApiKey
+        | crate::config::AuthMode::Jwt
+        | crate::config::AuthMode::CookieOrJwt => {
             token_present_in_query(uri, "apiKey")
                 || token_present_in_query(uri, "token")
                 || token_present_in_subprotocol(headers)

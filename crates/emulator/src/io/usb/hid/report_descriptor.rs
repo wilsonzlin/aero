@@ -242,12 +242,7 @@ fn validate_collection(
 
     validate_report_list(&collection.input_reports, "inputReports", path, state)?;
     validate_report_list(&collection.output_reports, "outputReports", path, state)?;
-    validate_report_list(
-        &collection.feature_reports,
-        "featureReports",
-        path,
-        state,
-    )?;
+    validate_report_list(&collection.feature_reports, "featureReports", path, state)?;
 
     for (child_idx, child) in collection.children.iter().enumerate() {
         path.push_indexed("children", child_idx);
@@ -635,13 +630,11 @@ pub fn parse_report_descriptor(
                             usages,
                         };
 
-                        let current = collection_stack
-                            .last_mut()
-                            .ok_or_else(|| {
-                                HidDescriptorError::parse(
-                                    "main item encountered outside any collection",
-                                )
-                            })?;
+                        let current = collection_stack.last_mut().ok_or_else(|| {
+                            HidDescriptorError::parse(
+                                "main item encountered outside any collection",
+                            )
+                        })?;
 
                         let report = match tag {
                             8 => get_or_create_report(&mut current.input_reports, global.report_id),
@@ -696,11 +689,9 @@ pub fn parse_report_descriptor(
                         }
 
                         local.reset();
-                        let finished = collection_stack
-                            .pop()
-                            .ok_or_else(|| {
-                                HidDescriptorError::parse("unbalanced HID collection stack")
-                            })?;
+                        let finished = collection_stack.pop().ok_or_else(|| {
+                            HidDescriptorError::parse("unbalanced HID collection stack")
+                        })?;
                         if let Some(parent) = collection_stack.last_mut() {
                             parent.children.push(finished);
                         } else {
@@ -715,45 +706,43 @@ pub fn parse_report_descriptor(
                 }
             }
             // Global items.
-            1 => {
-                match tag {
-                    0 => global.usage_page = parse_unsigned(data),
-                    1 => global.logical_minimum = parse_signed(data),
-                    2 => global.logical_maximum = parse_signed(data),
-                    3 => global.physical_minimum = parse_signed(data),
-                    4 => global.physical_maximum = parse_signed(data),
-                    5 => global.unit_exponent = parse_unit_exponent(data)?,
-                    6 => global.unit = parse_unsigned(data),
-                    7 => global.report_size = parse_unsigned(data),
-                    8 => global.report_id = parse_unsigned(data),
-                    9 => global.report_count = parse_unsigned(data),
-                    10 => {
-                        if !data.is_empty() {
-                            return Err(HidDescriptorError::parse(format!(
-                                "invalid item size {} for Push",
-                                data.len()
-                            )));
-                        }
-                        global_stack.push(global.clone());
-                    }
-                    11 => {
-                        if !data.is_empty() {
-                            return Err(HidDescriptorError::parse(format!(
-                                "invalid item size {} for Pop",
-                                data.len()
-                            )));
-                        }
-                        global = global_stack
-                            .pop()
-                            .ok_or_else(|| HidDescriptorError::parse("global Push/Pop stack underflow"))?;
-                    }
-                    _ => {
+            1 => match tag {
+                0 => global.usage_page = parse_unsigned(data),
+                1 => global.logical_minimum = parse_signed(data),
+                2 => global.logical_maximum = parse_signed(data),
+                3 => global.physical_minimum = parse_signed(data),
+                4 => global.physical_maximum = parse_signed(data),
+                5 => global.unit_exponent = parse_unit_exponent(data)?,
+                6 => global.unit = parse_unsigned(data),
+                7 => global.report_size = parse_unsigned(data),
+                8 => global.report_id = parse_unsigned(data),
+                9 => global.report_count = parse_unsigned(data),
+                10 => {
+                    if !data.is_empty() {
                         return Err(HidDescriptorError::parse(format!(
-                            "unsupported HID item: type={item_type} tag={tag}"
+                            "invalid item size {} for Push",
+                            data.len()
                         )));
                     }
+                    global_stack.push(global.clone());
                 }
-            }
+                11 => {
+                    if !data.is_empty() {
+                        return Err(HidDescriptorError::parse(format!(
+                            "invalid item size {} for Pop",
+                            data.len()
+                        )));
+                    }
+                    global = global_stack.pop().ok_or_else(|| {
+                        HidDescriptorError::parse("global Push/Pop stack underflow")
+                    })?;
+                }
+                _ => {
+                    return Err(HidDescriptorError::parse(format!(
+                        "unsupported HID item: type={item_type} tag={tag}"
+                    )));
+                }
+            },
             // Local items.
             2 => {
                 match tag {
@@ -1986,7 +1975,9 @@ mod tests {
 
         let err = synthesize_report_descriptor(&collections).unwrap_err();
         assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
-        assert!(err.message.contains("isRange=true requires usages.len() >= 2"));
+        assert!(err
+            .message
+            .contains("isRange=true requires usages.len() >= 2"));
     }
 
     #[test]

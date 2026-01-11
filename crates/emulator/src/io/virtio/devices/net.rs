@@ -1339,12 +1339,8 @@ mod tests {
         let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
 
         let mut backend = TestBackend::default();
-        backend
-            .rx_frames
-            .push_back(vec![0x55u8; MAX_FRAME_LEN + 1]); // oversized
-        backend
-            .rx_frames
-            .push_back(vec![0x66u8; MIN_FRAME_LEN - 1]); // undersized
+        backend.rx_frames.push_back(vec![0x55u8; MAX_FRAME_LEN + 1]); // oversized
+        backend.rx_frames.push_back(vec![0x66u8; MIN_FRAME_LEN - 1]); // undersized
 
         let frame = vec![0x77u8; MIN_FRAME_LEN];
         backend.rx_frames.push_back(frame.clone());
@@ -1355,7 +1351,10 @@ mod tests {
         assert!(backend.rx_frames.is_empty());
 
         assert_eq!(mem.read_u16_le(used + 2).unwrap(), 1);
-        assert_eq!(mem.read_u32_le(used + 8).unwrap(), (VirtioNetHeader::SIZE + frame.len()) as u32);
+        assert_eq!(
+            mem.read_u32_le(used + 8).unwrap(),
+            (VirtioNetHeader::SIZE + frame.len()) as u32
+        );
 
         let mut payload = vec![0u8; frame.len()];
         mem.read_into(payload_addr, &mut payload).unwrap();
