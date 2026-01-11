@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createAudioOutput, writeRingBufferInterleaved } from "../src/platform/audio.ts";
+import { createAudioOutput, startAudioPerfSampling, writeRingBufferInterleaved } from "../src/platform/audio.ts";
 
 test("AudioOutput exposes getOverrunCount() reading ring buffer header[3]", async () => {
   const originalAudioContext = (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
@@ -96,3 +96,71 @@ test("writeRingBufferInterleaved() increments overrunCount when frames are dropp
   assert.equal(Atomics.load(header, 3) >>> 0, 2);
 });
 
+test("startAudioPerfSampling() emits audio.* counters and prefers worklet underrunCount", async () => {
+  class FakePort {
+    private readonly listeners = new Set<(event: { data: unknown }) => void>();
+    addEventListener(type: string, listener: (event: { data: unknown }) => void): void {
+      if (type !== "message") return;
+      this.listeners.add(listener);
+    }
+    removeEventListener(type: string, listener: (event: { data: unknown }) => void): void {
+      if (type !== "message") return;
+      this.listeners.delete(listener);
+    }
+    start(): void {}
+    dispatchMessage(data: unknown): void {
+      for (const listener of this.listeners) listener({ data });
+    }
+  }
+
+  const port = new FakePort();
+  const metrics = {
+    bufferLevelFrames: 10,
+    capacityFrames: 100,
+    underrunCount: 1,
+    overrunCount: 2,
+    sampleRate: 48_000,
+    state: "running" as const,
+  };
+
+  const output = {
+    enabled: true,
+    context: { sampleRate: metrics.sampleRate, state: metrics.state },
+    node: { port },
+    ringBuffer: { capacityFrames: metrics.capacityFrames },
+    resume: async () => {},
+    close: async () => {},
+    writeInterleaved: () => 0,
+    getBufferLevelFrames: () => metrics.bufferLevelFrames,
+    getUnderrunCount: () => metrics.underrunCount,
+    getOverrunCount: () => metrics.overrunCount,
+    getMetrics: () => metrics,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+
+  const calls: Array<{ name: string; value: number }> = [];
+  const perf = {
+    counter: (name: string, value: number) => {
+      calls.push({ name, value });
+    },
+  };
+
+  const stop = startAudioPerfSampling(output, perf, 20);
+  try {
+    assert.deepEqual(calls.slice(0, 4), [
+      { name: "audio.bufferLevelFrames", value: 10 },
+      { name: "audio.underruns", value: 1 },
+      { name: "audio.overruns", value: 2 },
+      { name: "audio.sampleRate", value: 48_000 },
+    ]);
+
+    port.dispatchMessage({ type: "underrun", underrunCount: 123 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const underrunValues = calls.filter((c) => c.name === "audio.underruns").map((c) => c.value);
+    assert.equal(underrunValues[0], 1);
+    assert.ok(underrunValues.includes(123));
+  } finally {
+    stop();
+  }
+});
