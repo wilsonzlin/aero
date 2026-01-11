@@ -423,7 +423,8 @@ paths:
       summary: Range proxy fallback (streams bytes from S3 using GetObject + Range)
       description: |
         Development-only fallback that proxies bytes through the service.
-        Only single-range `Range: bytes=start-end` requests are supported.
+        Only single-range `Range: bytes=start-end` (or `bytes=start-`) requests are supported.
+        Malformed, multi-range, or unsatisfiable ranges return `416 Range Not Satisfiable`.
         When `If-Range` is provided, the service returns `412 Precondition Failed` instead of
         falling back to a full-body `200` response.
       parameters:
@@ -438,7 +439,9 @@ paths:
           required: false
           schema:
             type: string
-          description: Standard HTTP Range header (e.g. "bytes=0-1048575")
+          description: |
+            Standard HTTP Range header.
+            Only single byte ranges are supported (e.g. "bytes=0-1048575" or "bytes=1048576-").
         - name: If-Range
           in: header
           required: false
@@ -473,6 +476,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+        "416":
+          description: Range Not Satisfiable
+          headers:
+            Content-Range:
+              schema:
+                type: string
+              description: RFC-style unsatisfiable range indicator (e.g. "bytes */<size>")
         default:
           description: Error
           content:
