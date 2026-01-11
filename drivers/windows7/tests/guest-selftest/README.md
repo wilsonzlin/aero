@@ -34,12 +34,14 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
-  - By default the test is reported as **SKIP**; when enabled, missing device or playback failure is **FAIL**.
+  - By default, this test is reported as **SKIP**; enable it with `--test-snd` (alias: `--require-snd`).
+    When enabled, missing virtio-snd or playback failure causes the overall selftest to **FAIL**.
   - Also emits a separate `virtio-snd-capture` marker by attempting to detect a virtio-snd **capture** endpoint
     (MMDevice `eCapture`).
     - Missing capture is reported as **SKIP** by default; use `--require-snd-capture` to make it **FAIL**.
     - Use `--test-snd-capture` to run a shared-mode WASAPI capture smoke test when a capture endpoint exists
       (otherwise **SKIP**).
+  - Use `--disable-snd` to force **SKIP** for both playback and capture.
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
@@ -62,11 +64,12 @@ AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
 Notes:
-- If virtio-snd is not enabled via `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
-- If the virtio-snd capture endpoint is missing, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP`
+- If virtio-snd is not enabled via `--test-snd` / `--require-snd`, the tool emits
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
+- If the virtio-snd capture endpoint is missing, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing`
   (unless `--require-snd-capture` is set).
-- If the virtio-snd test is disabled via `--disable-snd`, the tool also emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
-  Capture is also skipped in this mode.
+- If the virtio-snd test is disabled via `--disable-snd`, the tool emits
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
 
 ## Building
 
