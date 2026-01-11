@@ -56,7 +56,7 @@ Modern virtio transport (bring-up notes):
 - Connects **INTx** and routes used-ring completions to the control/TX/RX protocol engines in a DPC
 - Includes control/TX/RX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c` / `virtiosnd_rx.c`) and thin wrappers:
   - `VirtIoSndHwSendControl`, `VirtIoSndHwSubmitTx` (playback)
-  - `VirtIoSndHwSubmitRxSg` + `VirtIoSndHwSetRxCompletionCallback` (capture)
+  - `VirtIoSndInitRxEngine`, `VirtIoSndHwSubmitRxSg` + `VirtIoSndHwSetRxCompletionCallback` (capture)
   Capture endpoint plumbing (PortCls pin) is not implemented yet.
 
 ## Design notes
