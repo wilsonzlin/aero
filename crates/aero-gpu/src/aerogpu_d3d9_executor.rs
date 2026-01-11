@@ -726,9 +726,7 @@ impl AerogpuD3d9Executor {
         receiver
             .recv()
             .map_err(|_| AerogpuD3d9Error::Validation("map_async sender dropped".into()))?
-            .map_err(|err| {
-                AerogpuD3d9Error::Validation(format!("map_async failed: {err:?}"))
-            })?;
+            .map_err(|err| AerogpuD3d9Error::Validation(format!("map_async failed: {err:?}")))?;
 
         let mapped = slice.get_mapped_range();
         let out = mapped.to_vec();
@@ -1834,8 +1832,7 @@ impl AerogpuD3d9Executor {
                     );
 
                     if writeback {
-                        let dst_backing =
-                            dst_backing.expect("validated dst_backing for writeback");
+                        let dst_backing = dst_backing.expect("validated dst_backing for writeback");
                         if ctx.guest_memory.is_none() {
                             return Err(AerogpuD3d9Error::MissingGuestMemory(dst_texture));
                         }
@@ -1848,9 +1845,8 @@ impl AerogpuD3d9Executor {
                         })?;
                         let padded_bpr = align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
-                        let dst_x_bytes = (dst_x as u64)
-                            .checked_mul(bpp as u64)
-                            .ok_or_else(|| {
+                        let dst_x_bytes =
+                            (dst_x as u64).checked_mul(bpp as u64).ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: dst_x byte offset overflow".into(),
                                 )
@@ -1958,7 +1954,9 @@ impl AerogpuD3d9Executor {
                         AerogpuD3d9Error::Validation("COPY_TEXTURE2D: dst_y overflow".into())
                     })?;
                     let row_off = (row_index as u64).checked_mul(row_pitch).ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("COPY_TEXTURE2D: dst row offset overflow".into())
+                        AerogpuD3d9Error::Validation(
+                            "COPY_TEXTURE2D: dst row offset overflow".into(),
+                        )
                     })?;
                     let dst_gpa = plan
                         .backing

@@ -750,8 +750,8 @@ fn d3d9_copy_buffer_writeback_writes_guest_backing() {
     )]);
 
     let pattern = [
-        0xDEu8, 0xAD, 0xBE, 0xEF, 0xAA, 0xBB, 0xCC, 0xDD, 0x10, 0x20, 0x30, 0x40, 0x55, 0x66,
-        0x77, 0x88,
+        0xDEu8, 0xAD, 0xBE, 0xEF, 0xAA, 0xBB, 0xCC, 0xDD, 0x10, 0x20, 0x30, 0x40, 0x55, 0x66, 0x77,
+        0x88,
     ];
     let stream = build_stream(|out| {
         emit_packet(out, OPC_CREATE_BUFFER, |out| {
@@ -795,7 +795,9 @@ fn d3d9_copy_buffer_writeback_writes_guest_backing() {
         .expect("execute should succeed");
 
     let mut out = vec![0u8; pattern.len()];
-    guest_memory.read(DST_GPA, &mut out).expect("read guest backing");
+    guest_memory
+        .read(DST_GPA, &mut out)
+        .expect("read guest backing");
     assert_eq!(&out, &pattern);
 }
 
@@ -906,7 +908,9 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
         .expect("execute should succeed");
 
     let mut out = vec![0u8; (row_pitch * height) as usize];
-    guest_memory.read(DST_GPA, &mut out).expect("read dst backing");
+    guest_memory
+        .read(DST_GPA, &mut out)
+        .expect("read dst backing");
     let mut expected = vec![0xEEu8; (row_pitch * height) as usize];
     expected[0..bpr as usize].copy_from_slice(&src_tex_data[0..bpr as usize]);
     expected[row_pitch as usize..row_pitch as usize + bpr as usize]
