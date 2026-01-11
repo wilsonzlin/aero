@@ -23,7 +23,6 @@
  */
 
 #include <ntddk.h>
-#include <wdmguid.h>
 
 #include "virtio_spec.h"
 #include "virtio_pci_cap_parser.h"
@@ -147,4 +146,3 @@ VOID
 VirtIoSndTransportNotifyQueue(_In_ const VIRTIOSND_TRANSPORT *Transport,
                               _In_ USHORT QueueIndex,
                               _In_ USHORT QueueNotifyOff);
-

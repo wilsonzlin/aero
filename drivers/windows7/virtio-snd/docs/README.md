@@ -8,9 +8,13 @@ The driver currently:
 
 - Loads on Windows 7 SP1 (x86/x64)
 - Attaches to the PCI PDO
-- Handles basic PnP (START/STOP/REMOVE) and maps BAR resources (best-effort)
+- Handles basic PnP (START/STOP/REMOVE)
+- Implements the Aero contract v1 **virtio-pci modern** transport core:
+  - parses vendor capabilities (COMMON/NOTIFY/ISR/DEVICE)
+  - maps BAR0 MMIO and validates the fixed Aero layout
+  - negotiates required features (`VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC`)
 
-It **does not** yet implement virtio-pci transport, virtqueues, or any PortCls miniports, so it will not expose audio endpoints yet.
+It **does not** yet connect interrupts, set up virtqueues, or implement any PortCls miniports, so it will not expose audio endpoints yet.
 
 ## Compatibility / Aero contract v1
 
