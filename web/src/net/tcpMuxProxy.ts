@@ -222,6 +222,12 @@ type StreamState = {
   closed: boolean;
 };
 
+type QueuedFrame = {
+  msgType: TcpMuxMsgType;
+  streamId: number;
+  frame: Uint8Array;
+};
+
 export class WebSocketTcpMuxProxyClient {
   onOpen?: (streamId: number) => void;
   onData?: (streamId: number, data: Uint8Array) => void;
@@ -234,7 +240,7 @@ export class WebSocketTcpMuxProxyClient {
 
   private readonly streams = new Map<number, StreamState>();
 
-  private queued: Uint8Array[] = [];
+  private queued: QueuedFrame[] = [];
   private queuedBytes = 0;
   private flushScheduled = false;
 
@@ -287,7 +293,7 @@ export class WebSocketTcpMuxProxyClient {
     try {
       const payload = encodeTcpMuxOpenPayload({ host, port, metadata });
       const frame = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, payload);
-      this.enqueue(streamId, frame);
+      this.enqueue(TcpMuxMsgType.OPEN, streamId, frame);
     } catch (err) {
       this.maybeNotifyOpen(streamId);
       this.onError?.(streamId, { code: 0, message: (err as Error).message });
@@ -308,7 +314,7 @@ export class WebSocketTcpMuxProxyClient {
     for (let off = 0; off < bytes.byteLength; off += this.maxDataChunkBytes) {
       const chunk = bytes.subarray(off, Math.min(bytes.byteLength, off + this.maxDataChunkBytes));
       const frame = encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, chunk);
-      this.enqueue(streamId, frame);
+      this.enqueue(TcpMuxMsgType.DATA, streamId, frame);
       if (st.closed) return;
     }
   }
@@ -319,12 +325,12 @@ export class WebSocketTcpMuxProxyClient {
 
     const flags = mode.rst ? TcpMuxCloseFlags.RST : TcpMuxCloseFlags.FIN;
     const frame = encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, streamId, encodeTcpMuxClosePayload(flags));
-    this.enqueue(streamId, frame);
+    this.enqueue(TcpMuxMsgType.CLOSE, streamId, frame);
 
     if ((flags & TcpMuxCloseFlags.RST) !== 0) {
       // The gateway does not send an explicit CLOSE ack for RST; treat as
       // locally closed as soon as we enqueue it.
-      this.closeStream(streamId);
+      this.closeStream(streamId, { keepQueuedClose: true });
       return;
     }
 
@@ -336,7 +342,7 @@ export class WebSocketTcpMuxProxyClient {
     return this.closed;
   }
 
-  private enqueue(streamId: number, frame: Uint8Array): void {
+  private enqueue(msgType: TcpMuxMsgType, streamId: number, frame: Uint8Array): void {
     if (this.queuedBytes + frame.byteLength > this.maxQueuedBytes) {
       // Local backpressure/overflow: fail the stream (or session) immediately.
       this.maybeNotifyOpen(streamId);
@@ -345,7 +351,7 @@ export class WebSocketTcpMuxProxyClient {
       return;
     }
 
-    this.queued.push(frame);
+    this.queued.push({ msgType, streamId, frame });
     this.queuedBytes += frame.byteLength;
     this.scheduleFlush(0);
   }
@@ -375,9 +381,9 @@ export class WebSocketTcpMuxProxyClient {
         return;
       }
 
-      const frame = this.queued.shift()!;
-      this.queuedBytes -= frame.byteLength;
-      this.ws.send(frame);
+      const entry = this.queued.shift()!;
+      this.queuedBytes -= entry.frame.byteLength;
+      this.ws.send(entry.frame);
     }
   }
 
@@ -414,6 +420,9 @@ export class WebSocketTcpMuxProxyClient {
       this.closeStream(streamId);
     }
     this.streams.clear();
+
+    this.queued = [];
+    this.queuedBytes = 0;
   }
 
   private handleMuxFrame(frame: TcpMuxFrame): void {
@@ -443,7 +452,11 @@ export class WebSocketTcpMuxProxyClient {
       }
       case TcpMuxMsgType.PING: {
         // Keepalive/RTT probe.
-        this.enqueue(frame.streamId, encodeTcpMuxFrame(TcpMuxMsgType.PONG, frame.streamId, frame.payload));
+        this.enqueue(
+          TcpMuxMsgType.PONG,
+          frame.streamId,
+          encodeTcpMuxFrame(TcpMuxMsgType.PONG, frame.streamId, frame.payload),
+        );
         return;
       }
       case TcpMuxMsgType.PONG: {
@@ -462,12 +475,29 @@ export class WebSocketTcpMuxProxyClient {
     this.onOpen?.(streamId);
   }
 
-  private closeStream(streamId: number): void {
+  private closeStream(streamId: number, opts: { keepQueuedClose?: boolean } = {}): void {
+    this.purgeQueuedFrames(streamId, { keepCloseFrames: opts.keepQueuedClose ?? false });
     const st = this.streams.get(streamId);
     if (!st || st.closed) return;
     st.closed = true;
     this.onClose?.(streamId);
     this.streams.delete(streamId);
+  }
+
+  private purgeQueuedFrames(streamId: number, opts: { keepCloseFrames: boolean }): void {
+    if (this.queued.length === 0) return;
+    const keepCloseFrames = opts.keepCloseFrames;
+    const remaining: QueuedFrame[] = [];
+    let remainingBytes = 0;
+    for (const entry of this.queued) {
+      if (entry.streamId === streamId && !(keepCloseFrames && entry.msgType === TcpMuxMsgType.CLOSE)) {
+        continue;
+      }
+      remaining.push(entry);
+      remainingBytes += entry.frame.byteLength;
+    }
+    this.queued = remaining;
+    this.queuedBytes = remainingBytes;
   }
 }
 
