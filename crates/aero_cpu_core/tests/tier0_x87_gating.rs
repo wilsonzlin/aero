@@ -1,7 +1,7 @@
 use aero_cpu_core::interp::tier0::exec::{step, StepExit};
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::state::{CpuMode, CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS};
-use aero_cpu_core::Exception;
+use aero_cpu_core::{CpuBus, Exception};
 use aero_x86::Register;
 
 fn exec_single(code: &[u8], state: &mut CpuState) -> Result<StepExit, Exception> {
@@ -176,4 +176,59 @@ fn fnstsw_no_wait_does_not_raise_mf_and_writes_ax() {
     let ax = state.read_reg(Register::AX) as u16;
     assert_ne!(ax, 0xBEEF);
     assert_ne!(ax & 0x3F, 0);
+}
+
+#[test]
+fn fclex_wait_form_raises_mf_before_clearing_exceptions() {
+    // fclex (wait + fnclex)
+    let code = [0x9B, 0xDB, 0xE2];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+
+    assert_eq!(exec_single(&code, &mut state), Err(Exception::X87Fpu));
+    assert_eq!(state.fpu.fsw & 0x3F, 0x0001);
+}
+
+#[test]
+fn fstcw_wait_form_raises_mf_before_writing_memory() {
+    // fstcw word ptr [0x100] (wait + fnstcw)
+    let code = [0x9B, 0xD9, 0x3D, 0x00, 0x01, 0x00, 0x00];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    bus.write_u16(0x100, 0xBEEF).unwrap();
+
+    state.segments.cs.base = 0;
+    state.write_reg(Register::CS, 0);
+    state.set_rip(0);
+
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::X87Fpu));
+    assert_eq!(bus.read_u16(0x100).unwrap(), 0xBEEF);
+}
+
+#[test]
+fn fnstcw_no_wait_writes_memory_even_if_exception_pending() {
+    // fnstcw word ptr [0x100]
+    let code = [0xD9, 0x3D, 0x00, 0x01, 0x00, 0x00];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // distinct CW value
+    state.fpu.fsw = 0x0001; // pending invalid operation
+
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+    bus.write_u16(0x100, 0xBEEF).unwrap();
+
+    state.segments.cs.base = 0;
+    state.write_reg(Register::CS, 0);
+    state.set_rip(0);
+
+    assert_eq!(step(&mut state, &mut bus), Ok(StepExit::Continue));
+    assert_eq!(bus.read_u16(0x100).unwrap(), 0x037E);
 }
