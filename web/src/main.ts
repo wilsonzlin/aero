@@ -758,12 +758,12 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
             steps = state.steps;
             serialBytes = state.serialBytes;
             output.textContent =
-            `steps=${steps.toLocaleString()} ` +
-            `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
-        },
-        onError: (message) => setError(message),
-        onFatalError: (err) => handleWorkerFatal(err),
-      });
+              `steps=${steps.toLocaleString()} ` +
+              `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
+          },
+          onError: (err) => setError(err.message),
+          onFatalError: (err) => handleWorkerFatal(err),
+        });
     } catch (err) {
       clearAutosaveTimer();
       const message = err instanceof Error ? err.message : String(err);

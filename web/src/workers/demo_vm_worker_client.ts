@@ -3,6 +3,7 @@ import {
   type DemoVmWorkerInitResult,
   type DemoVmWorkerMessage,
   type DemoVmWorkerRequest,
+  type DemoVmWorkerSerializedError,
   type DemoVmWorkerSerialOutputLenResult,
   type DemoVmWorkerSerialStatsResult,
   type DemoVmWorkerStepResult,
@@ -17,7 +18,7 @@ type PendingEntry = {
 
 type DemoVmWorkerClientOptions = {
   onStatus?: (status: DemoVmWorkerStepResult) => void;
-  onError?: (message: string) => void;
+  onError?: (error: DemoVmWorkerSerializedError) => void;
   onFatalError?: (err: Error) => void;
 };
 
@@ -29,7 +30,7 @@ export class DemoVmWorkerClient {
   #pending = new Map<number, PendingEntry>();
   #destroyed = false;
   #onStatus?: (status: DemoVmWorkerStepResult) => void;
-  #onError?: (message: string) => void;
+  #onError?: (error: DemoVmWorkerSerializedError) => void;
   #onFatalError?: (err: Error) => void;
 
   constructor(options: DemoVmWorkerClientOptions = {}) {
@@ -100,7 +101,18 @@ export class DemoVmWorkerClient {
       if (!pendingReq) return;
       this.#pending.delete(msg.id);
       if (msg.ok) pendingReq.resolve(msg.result);
-      else pendingReq.reject(new Error(msg.error));
+      else {
+        const err = new Error(msg.error.message);
+        err.name = msg.error.name;
+        if (msg.error.stack) {
+          try {
+            err.stack = msg.error.stack;
+          } catch {
+            // ignore (some runtimes expose stack as readonly)
+          }
+        }
+        pendingReq.reject(err);
+      }
       return;
     }
 
@@ -110,7 +122,7 @@ export class DemoVmWorkerClient {
     }
 
     if (msg.type === "error") {
-      this.#onError?.(msg.message);
+      this.#onError?.(msg.error);
     }
   }
 

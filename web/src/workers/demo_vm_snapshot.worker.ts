@@ -6,6 +6,7 @@ import type {
   DemoVmWorkerMessage,
   DemoVmWorkerRequest,
   DemoVmWorkerRpcResultErr,
+  DemoVmWorkerSerializedError,
   DemoVmWorkerSerialOutputLenResult,
   DemoVmWorkerSerialStatsResult,
   DemoVmWorkerStepResult,
@@ -47,8 +48,22 @@ function post(msg: DemoVmWorkerMessage): void {
   ctx.postMessage(msg);
 }
 
-function postError(message: string): void {
-  post({ type: "error", message });
+function serializeError(err: unknown): DemoVmWorkerSerializedError {
+  if (err instanceof Error) {
+    return {
+      name: err.name || "Error",
+      message: err.message,
+      stack: err.stack,
+    };
+  }
+  return {
+    name: "Error",
+    message: String(err),
+  };
+}
+
+function postError(err: unknown): void {
+  post({ type: "error", error: serializeError(err) });
 }
 
 function ensureVm(): InstanceType<WasmApi["DemoVm"]> {
@@ -84,7 +99,7 @@ function startStepLoop(): void {
       }
       post({ type: "status", steps: stepsTotal, serialBytes });
     } catch (err) {
-      postError(err instanceof Error ? err.message : String(err));
+      postError(err);
       // If we fail while stepping, stop the loop so we don't spam errors.
       stopStepLoop();
     }
@@ -271,7 +286,7 @@ async function handleRequest(req: DemoVmWorkerRequest): Promise<unknown> {
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const req = ev.data as DemoVmWorkerRequest;
   if (!req || typeof req !== "object" || typeof (req as { type?: unknown }).type !== "string") {
-    postError("Invalid message received by demo VM snapshot worker.");
+    postError(new Error("Invalid message received by demo VM snapshot worker."));
     return;
   }
 
@@ -281,9 +296,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const result = await handleRequest(req);
         post({ type: "rpcResult", id: req.id, ok: true, result } satisfies DemoVmWorkerMessage);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        post({ type: "rpcResult", id: req.id, ok: false, error: message } satisfies DemoVmWorkerRpcResultErr);
-        postError(message);
+        const serialized = serializeError(err);
+        post({ type: "rpcResult", id: req.id, ok: false, error: serialized } satisfies DemoVmWorkerRpcResultErr);
+        post({ type: "error", error: serialized } satisfies DemoVmWorkerMessage);
       } finally {
         if (shouldClose) {
           ctx.close();
@@ -293,6 +308,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     .catch((err) => {
       // Defensive: this should be unreachable because we catch per-command errors
       // above, but keep the chain alive if something unexpected slips through.
-      postError(err instanceof Error ? err.message : String(err));
+      postError(err);
     });
 };

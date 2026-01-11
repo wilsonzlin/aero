@@ -18,11 +18,12 @@ export type DemoVmWorkerRequest =
   | DemoVmWorkerShutdownRequest;
 
 export type DemoVmWorkerRpcResultOk<T> = { type: "rpcResult"; id: number; ok: true; result: T };
-export type DemoVmWorkerRpcResultErr = { type: "rpcResult"; id: number; ok: false; error: string };
+export type DemoVmWorkerSerializedError = { name: string; message: string; stack?: string };
+export type DemoVmWorkerRpcResultErr = { type: "rpcResult"; id: number; ok: false; error: DemoVmWorkerSerializedError };
 export type DemoVmWorkerRpcResult<T> = DemoVmWorkerRpcResultOk<T> | DemoVmWorkerRpcResultErr;
 
 export type DemoVmWorkerStatusMessage = { type: "status"; steps: number; serialBytes: number | null };
-export type DemoVmWorkerErrorMessage = { type: "error"; message: string };
+export type DemoVmWorkerErrorMessage = { type: "error"; error: DemoVmWorkerSerializedError };
 
 export type DemoVmWorkerMessage = DemoVmWorkerRpcResult<unknown> | DemoVmWorkerStatusMessage | DemoVmWorkerErrorMessage;
 
