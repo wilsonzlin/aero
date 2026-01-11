@@ -274,6 +274,9 @@ Consumers must not assume any particular device ordering and must tolerate new d
   - Patterns that include the contract major version as a PCI Revision ID suffix: `&REV_RR`.
   - For `AERO-W7-VIRTIO` contract v1, this is `&REV_01`.
   - These patterns are intended for **automation** (Guest Tools generation, conformance checks), because they avoid accidentally matching non-contract devices (for example, QEMU’s default virtio PCI `REV_00`).
+- **Preferred strict patterns (device identity / avoiding false positives):**
+  - When available, automation SHOULD prefer the most specific form: `&SUBSYS_SSSSVVVV&REV_RR`.
+  - This is especially important for devices with multiple contract instances under the same Vendor/Device ID (notably `virtio-input` keyboard vs mouse).
 - **Convenience patterns (non-binding / compatibility):**
   - Patterns that omit `&REV_` and/or `&SUBSYS_`.
   - These are useful for broad matching (manual driver install, defensive `CriticalDeviceDatabase` seeding), but they may match non-Aero devices or future contract versions.
