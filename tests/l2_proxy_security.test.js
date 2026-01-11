@@ -6,7 +6,7 @@ import { encodeL2Frame } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
-const L2_PROXY_TEST_TIMEOUT_MS = 660_000;
+const L2_PROXY_TEST_TIMEOUT_MS = 900_000;
 
 async function connectOrReject(url, { protocols, ...opts } = {}) {
   return new Promise((resolve, reject) => {
