@@ -391,9 +391,10 @@ fn enforce_security(
                 .unwrap_or("");
             let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
             let cookie_present = session_token.is_some();
+            let now_ms = now_ms();
             let sid = session_token
                 .as_deref()
-                .and_then(|token| verify_session_token(token, secret));
+                .and_then(|token| verify_session_token(token, secret, now_ms));
             if sid.is_none() {
                 if cookie_present {
                     state.metrics.upgrade_reject_auth_invalid();
@@ -427,9 +428,10 @@ fn enforce_security(
             let secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
             let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
             let token_present = token.is_some();
+            let now_secs = now_unix_seconds();
             let ok = token
                 .as_deref()
-                .is_some_and(|token| verify_jwt(token, secret));
+                .is_some_and(|token| verify_jwt(token, secret, now_secs));
             if !ok {
                 if token_present {
                     state.metrics.upgrade_reject_auth_invalid();
@@ -469,15 +471,17 @@ fn enforce_security(
                 .unwrap_or("");
             let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
             let cookie_present = session_token.is_some();
+            let now_ms = now_ms();
             let sid = session_token
                 .as_deref()
-                .and_then(|token| verify_session_token(token, cookie_secret));
+                .and_then(|token| verify_session_token(token, cookie_secret, now_ms));
             if sid.is_none() {
                 let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
                 let token_present = token.is_some();
+                let now_secs = now_unix_seconds();
                 let jwt_ok = token
                     .as_deref()
-                    .is_some_and(|token| verify_jwt(token, jwt_secret));
+                    .is_some_and(|token| verify_jwt(token, jwt_secret, now_secs));
                 if !jwt_ok {
                     if cookie_present || token_present {
                         state.metrics.upgrade_reject_auth_invalid();
@@ -893,7 +897,7 @@ fn cookie_value(cookie_header: &str, key: &str) -> Option<String> {
     None
 }
 
-fn verify_session_token(token: &str, secret: &[u8]) -> Option<String> {
+fn verify_session_token(token: &str, secret: &[u8], now_ms: u64) -> Option<String> {
     let (payload_b64, sig_b64) = token.split_once('.')?;
 
     let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -912,11 +916,6 @@ fn verify_session_token(token: &str, secret: &[u8]) -> Option<String> {
         return None;
     }
 
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|dur| dur.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0);
     let expires_at_ms = payload.exp.saturating_mul(1000);
     if expires_at_ms <= now_ms {
         return None;
@@ -925,7 +924,7 @@ fn verify_session_token(token: &str, secret: &[u8]) -> Option<String> {
     Some(payload.sid)
 }
 
-fn verify_jwt(token: &str, secret: &[u8]) -> bool {
+fn verify_jwt(token: &str, secret: &[u8], now_secs: u64) -> bool {
     let mut parts = token.split('.');
     let Some(header_b64) = parts.next() else {
         return false;
@@ -968,12 +967,123 @@ fn verify_jwt(token: &str, secret: &[u8]) -> bool {
         return true;
     };
 
-    let now_secs = SystemTime::now()
+    exp > now_secs
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|dur| dur.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+fn now_unix_seconds() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
         .map(|dur| dur.as_secs())
-        .unwrap_or(0);
-    exp > now_secs
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{verify_jwt, verify_session_token};
+    use serde::Deserialize;
+
+    const VECTORS_JSON: &str = include_str!("../../conformance/test-vectors/aero-vectors-v1.json");
+
+    #[derive(Debug, Deserialize)]
+    struct RootVectors {
+        version: u32,
+        aero_session: SessionVectors,
+        #[serde(rename = "aero-udp-relay-jwt-hs256")]
+        relay_jwt: JwtVectors,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct SessionVectors {
+        secret: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+        tokens: SessionTokenSet,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct SessionTokenSet {
+        valid: SessionTokenVector,
+        expired: SessionTokenVector,
+        #[serde(rename = "badSignature")]
+        bad_signature: SessionTokenVector,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct SessionTokenVector {
+        token: String,
+        claims: SessionClaims,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct SessionClaims {
+        sid: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct JwtVectors {
+        secret: String,
+        #[serde(rename = "nowUnix")]
+        now_unix: u64,
+        tokens: JwtTokenSet,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct JwtTokenSet {
+        valid: JwtTokenVector,
+        expired: JwtTokenVector,
+        #[serde(rename = "badSignature")]
+        bad_signature: JwtTokenVector,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct JwtTokenVector {
+        token: String,
+    }
+
+    #[test]
+    fn auth_verifiers_match_vectors() {
+        let vectors: RootVectors = serde_json::from_str(VECTORS_JSON).expect("parse vectors json");
+        assert_eq!(vectors.version, 1, "unexpected vector file version");
+
+        let secret = vectors.aero_session.secret.as_bytes();
+        let now_ms = vectors.aero_session.now_ms;
+
+        let sid = verify_session_token(&vectors.aero_session.tokens.valid.token, secret, now_ms)
+            .expect("expected valid session token");
+        assert_eq!(sid, vectors.aero_session.tokens.valid.claims.sid);
+        assert!(
+            verify_session_token(&vectors.aero_session.tokens.expired.token, secret, now_ms).is_none(),
+            "expected expired session token to be rejected"
+        );
+        assert!(
+            verify_session_token(&vectors.aero_session.tokens.bad_signature.token, secret, now_ms).is_none(),
+            "expected bad-signature session token to be rejected"
+        );
+
+        let jwt_secret = vectors.relay_jwt.secret.as_bytes();
+        let now_unix = vectors.relay_jwt.now_unix;
+        assert!(
+            verify_jwt(&vectors.relay_jwt.tokens.valid.token, jwt_secret, now_unix),
+            "expected valid jwt token"
+        );
+        assert!(
+            !verify_jwt(&vectors.relay_jwt.tokens.expired.token, jwt_secret, now_unix),
+            "expected expired jwt token to be rejected"
+        );
+        assert!(
+            !verify_jwt(&vectors.relay_jwt.tokens.bad_signature.token, jwt_secret, now_unix),
+            "expected bad-signature jwt token to be rejected"
+        );
+    }
 }
 
 fn percent_decode(input: &str) -> String {
