@@ -36,6 +36,24 @@ In practice, different header/runtime combinations can expose different callback
 
 The UMD logs the available callback pointers once at `CreateDevice` so Win7 bring-up can confirm which path the runtime is using.
 
+### DMA buffer private data (UMD→dxgkrnl→KMD) and security
+
+Win7/WDDM submission callbacks include a `pDmaBufferPrivateData` pointer + size.
+dxgkrnl copies these bytes from user mode into kernel mode for every submission,
+so the UMD must ensure they are **deterministic** and do not contain
+uninitialized stack/heap bytes.
+
+The AeroGPU D3D9 UMD initializes this blob immediately before each submission via
+`InitWin7DmaBufferPrivateData()` (`src/aerogpu_d3d9_dma_priv.h`):
+
+- validates the pointer is non-NULL and the size is at least
+  `AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES` (16), otherwise fails the
+  submit cleanly (log-once),
+- zeros the 16-byte ABI prefix, and
+- stamps a deterministic `AEROGPU_DMA_PRIV` header (including the submission
+  type: render vs present) so even SubmitCommandCb-only runtimes convey a valid
+  submit type to the KMD.
+
 ### Runtime variance: patch list + sync object
 
 Win7 D3D9 runtimes (and different WDK header/interface vintages) can legitimately vary in the WDDM submission buffers returned by `CreateContext`:
