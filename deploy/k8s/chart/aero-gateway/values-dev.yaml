@@ -10,6 +10,8 @@ ingress:
   host: "aero.local"
   tls:
     enabled: false
+  # Security headers (including CSP) are enabled by default; keep TLS disabled
+  # only for local iteration (browser `crossOriginIsolated` requires HTTPS).
 
 secrets:
   data:

@@ -136,6 +136,22 @@ ingress:
     corp: same-origin
     originAgentCluster: "?1"
 
+  # Security headers injected at the ingress/proxy layer.
+  #
+  # The gateway sets some baseline headers itself, but CSP is typically an edge
+  # concern when serving the frontend from the same origin.
+  securityHeaders:
+    enabled: true
+    xContentTypeOptions: nosniff
+    referrerPolicy: no-referrer
+    permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+    # Keep this aligned with `scripts/headers.json` / `docs/security-headers.md`.
+    #
+    # Note: `connect-src 'self'` is sufficient for single-origin deployments;
+    # the `aero-gateway.invalid` placeholders are safe no-ops that make it obvious
+    # where to extend the policy when needed.
+    contentSecurityPolicy: "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
+
   traefik:
     createMiddleware: true
     middlewareApiVersion: traefik.io/v1alpha1

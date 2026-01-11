@@ -24,7 +24,7 @@ Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-ga
 - `deploy/caddy/Caddyfile` – TLS termination, COOP/COEP headers, reverse proxy rules
 - `deploy/scripts/smoke.sh` – builds + boots the compose stack and asserts key headers
 - `deploy/static/index.html` – a small **smoke test page** to validate `window.crossOriginIsolated`
-- `deploy/k8s/` – Kubernetes/Helm deployment for `aero-gateway` with Ingress TLS + COOP/COEP headers
+- `deploy/k8s/` – Kubernetes/Helm deployment for `aero-gateway` with Ingress TLS + COOP/COEP/CSP headers
 
 For CSP details and tradeoffs (including why Aero needs `'wasm-unsafe-eval'` for WASM-based JIT),
 see: `docs/security-headers.md`.
@@ -48,6 +48,29 @@ Examples / reference-only:
   - `deploy/cloudflare-pages/_headers`
   - `deploy/netlify.toml`
   - `deploy/vercel.json`
+
+## CI validation (Terraform + Helm)
+
+CI validates the deployment artifacts under:
+
+- `infra/` (Terraform formatting + validation)
+- `deploy/k8s/` (Helm lint + template rendering + Kubernetes schema validation)
+- top-level deployment manifests (basic hygiene labelling; see `scripts/ci/check-deploy-manifests.mjs`)
+
+Reproduce locally:
+
+```bash
+# Terraform (requires `terraform`)
+cd infra/aws-s3-cloudfront-range
+terraform fmt -check -recursive
+terraform init -backend=false -input=false
+terraform validate
+
+# Helm/Kubernetes (requires `helm` + `kubeconform`)
+CHART=deploy/k8s/chart/aero-gateway
+helm lint "$CHART" -f "$CHART/values-dev.yaml"
+helm lint "$CHART" -f "$CHART/values-prod.yaml"
+```
 
 ## Production DNS requirements
 

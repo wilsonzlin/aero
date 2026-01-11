@@ -1,3 +1,6 @@
+# EXAMPLE: Minimal Compose file for running `server/` locally.
+# For production-grade TLS + COOP/COEP/CSP edge deployment, use `deploy/docker-compose.yml`.
+
 services:
   aero-server:
     build:
@@ -12,4 +15,3 @@ services:
       # AERO_PROXY_ALLOW_HOSTS: "*"
       # AERO_PROXY_ALLOW_PORTS: "80,443"
       AERO_PROXY_PORT: "8080"
-

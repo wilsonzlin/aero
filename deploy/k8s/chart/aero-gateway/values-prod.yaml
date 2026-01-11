@@ -22,6 +22,9 @@ ingress:
   tls:
     enabled: true
     secretName: "aero-tls"
+  # COOP/COEP/CSP headers are enabled by default; override
+  # `ingress.securityHeaders.contentSecurityPolicy` if your environment requires
+  # additional `connect-src` origins.
 
 # Recommended for multi-replica deployments.
 redis:

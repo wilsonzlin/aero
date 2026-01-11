@@ -8,7 +8,7 @@ The chart includes:
 - `Ingress` example (defaults to `ingress-nginx`) that:
   - terminates TLS (optional in dev; recommended in prod)
   - supports WebSocket upgrades (Aero uses `wss://<host>/tcp?v=1&host=<dst>&port=<dstPort>`)
-  - can inject COOP/COEP headers required for `SharedArrayBuffer` / `crossOriginIsolated`
+  - can inject security headers (COOP/COEP/CORP/OAC + CSP) required for `SharedArrayBuffer` / `crossOriginIsolated`
 - Optional in-cluster Redis (useful when running multiple gateway replicas)
 - Optional `NetworkPolicy` template to help restrict ingress/egress
 
@@ -23,6 +23,28 @@ The chart includes:
 - TLS certificate:
   - via cert-manager (recommended), or
   - manually created `Secret` of type `kubernetes.io/tls`
+
+## CI validation (Helm + Kubernetes schema)
+
+This repository's CI validates that the Helm chart renders correctly and produces valid Kubernetes objects.
+
+To reproduce locally (requires `helm` + `kubeconform`):
+
+```bash
+CHART=deploy/k8s/chart/aero-gateway
+
+helm lint "$CHART" -f "$CHART/values-dev.yaml"
+helm lint "$CHART" -f "$CHART/values-prod.yaml"
+
+helm template aero-gateway "$CHART" -n aero -f "$CHART/values-dev.yaml" > /tmp/aero-dev.yaml
+helm template aero-gateway "$CHART" -n aero -f "$CHART/values-prod.yaml" > /tmp/aero-prod.yaml
+
+kubeconform -strict -ignore-missing-schemas -kubernetes-version 1.28.0 -summary /tmp/aero-dev.yaml
+kubeconform -strict -ignore-missing-schemas -kubernetes-version 1.28.0 -summary /tmp/aero-prod.yaml
+
+# Validate the non-Helm manifests in this repo too:
+kubeconform -strict -ignore-missing-schemas -kubernetes-version 1.28.0 -summary deploy/k8s/aero-storage-server
+```
 
 ## Optional: install ingress-nginx (example)
 
@@ -107,6 +129,8 @@ secrets:
 #     enabled: true
 # ingress:
 #   coopCoep:
+#     enabled: false
+#   securityHeaders:
 #     enabled: false
 #
 # Recommended for multi-replica deployments (session storage, rate limiting, etc.)
@@ -342,7 +366,7 @@ you may see `401 Unauthorized` instead. In that case, first obtain a cookie usin
 gateway's session endpoint, then retry with a WebSocket client that can send custom
 headers (e.g. `wscat -H 'Cookie: ...'`).
 
-## Ingress notes (COOP/COEP header injection)
+## Ingress notes (security header injection)
 
 ### ingress-nginx
 

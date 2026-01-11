@@ -123,3 +123,10 @@ add_header Cross-Origin-Embedder-Policy "{{ .Values.ingress.coopCoep.coep }}" al
 add_header Cross-Origin-Resource-Policy "{{ .Values.ingress.coopCoep.corp }}" always;
 add_header Origin-Agent-Cluster "{{ .Values.ingress.coopCoep.originAgentCluster }}" always;
 {{- end -}}
+
+{{- define "aero-gateway.securityHeadersSnippet" -}}
+add_header X-Content-Type-Options "{{ .Values.ingress.securityHeaders.xContentTypeOptions }}" always;
+add_header Referrer-Policy "{{ .Values.ingress.securityHeaders.referrerPolicy }}" always;
+add_header Permissions-Policy "{{ .Values.ingress.securityHeaders.permissionsPolicy }}" always;
+add_header Content-Security-Policy "{{ .Values.ingress.securityHeaders.contentSecurityPolicy }}" always;
+{{- end -}}

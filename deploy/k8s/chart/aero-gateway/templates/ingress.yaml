@@ -13,19 +13,26 @@
     {{- $mode = "traefik" -}}
   {{- else -}}
     {{- $mode = "nginx" -}}
-  {{- end -}}
+{{- end -}}
 {{- end -}}
 {{- $annotations := dict -}}
+{{- $snippetParts := list -}}
 {{- if and .Values.ingress.websocket.enabled (eq $mode "nginx") -}}
 {{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-http-version" "1.1" -}}
 {{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-read-timeout" (printf "%d" .Values.ingress.websocket.readTimeoutSeconds) -}}
 {{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-send-timeout" (printf "%d" .Values.ingress.websocket.sendTimeoutSeconds) -}}
 {{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-buffering" "off" -}}
 {{- end -}}
-{{- if and .Values.ingress.coopCoep.enabled (eq $mode "nginx") -}}
-{{- $_ := set $annotations "nginx.ingress.kubernetes.io/configuration-snippet" (include "aero-gateway.coopCoepSnippet" .) -}}
+{{- if .Values.ingress.coopCoep.enabled -}}
+{{- $snippetParts = append $snippetParts (include "aero-gateway.coopCoepSnippet" .) -}}
 {{- end -}}
-{{- if and .Values.ingress.coopCoep.enabled (eq $mode "traefik") (default true .Values.ingress.traefik.createMiddleware) -}}
+{{- if (default false .Values.ingress.securityHeaders.enabled) -}}
+{{- $snippetParts = append $snippetParts (include "aero-gateway.securityHeadersSnippet" .) -}}
+{{- end -}}
+{{- if and (gt (len $snippetParts) 0) (eq $mode "nginx") -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/configuration-snippet" (join "\n" $snippetParts) -}}
+{{- end -}}
+{{- if and (or .Values.ingress.coopCoep.enabled (default false .Values.ingress.securityHeaders.enabled)) (eq $mode "traefik") (default true .Values.ingress.traefik.createMiddleware) -}}
 {{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.middlewares" (printf "%s-%s-headers@kubernetescrd" .Release.Namespace $fullName) -}}
 {{- end -}}
 {{- range $key, $value := .Values.ingress.annotations -}}

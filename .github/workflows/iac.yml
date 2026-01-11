@@ -1,0 +1,146 @@
+name: IaC (Terraform + Helm/K8s)
+
+on:
+  pull_request:
+    paths:
+      - infra/**
+      - deploy/k8s/**
+      - deploy/docker-compose.yml
+      - docker-compose.yml
+      - compose.yaml
+      - scripts/ci/check-deploy-manifests.mjs
+      - .github/workflows/iac.yml
+  schedule:
+    # Weekly safety net: catch drift (Helm/K8s API changes, Terraform/provider updates, etc).
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: iac-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Terraform (fmt + validate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - infra/aws-s3-cloudfront-range
+    env:
+      TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          terraform_wrapper: false
+
+      - name: Prepare Terraform plugin cache
+        shell: bash
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: ${{ runner.os }}-terraform-${{ hashFiles('infra/**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      - name: terraform fmt (check)
+        working-directory: ${{ matrix.module }}
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (backend disabled)
+        working-directory: ${{ matrix.module }}
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        working-directory: ${{ matrix.module }}
+        run: terraform validate -no-color
+
+  k8s:
+    name: Helm + kubeconform
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      K8S_VERSION: "1.28.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Install kubeconform
+        shell: bash
+        run: |
+          set -euo pipefail
+          KUBECONFORM_VERSION="0.6.6"
+          curl -sSL -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar -C /tmp -xzf /tmp/kubeconform.tar.gz kubeconform
+          sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      - name: helm lint (dev + prod)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHART="deploy/k8s/chart/aero-gateway"
+          helm lint "$CHART" -f "$CHART/values-dev.yaml"
+          helm lint "$CHART" -f "$CHART/values-prod.yaml"
+
+      - name: helm template + kubeconform (dev + prod)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHART="deploy/k8s/chart/aero-gateway"
+
+          for values in values-dev.yaml values-prod.yaml; do
+            out="/tmp/aero-gateway-${values%.yaml}.yaml"
+            helm template aero-gateway "$CHART" -n aero -f "$CHART/$values" > "$out"
+
+            kubeconform \
+              -strict \
+              -ignore-missing-schemas \
+              -kubernetes-version "$K8S_VERSION" \
+              -summary \
+              "$out"
+
+            # Ensure cross-origin isolation + CSP strategy is present in the ingress layer
+            # (COOP/COEP/CORP/OAC + CSP).
+            grep -q "Cross-Origin-Opener-Policy" "$out"
+            grep -q "Cross-Origin-Embedder-Policy" "$out"
+            grep -q "Content-Security-Policy" "$out"
+          done
+
+      - name: kubeconform (raw manifests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubeconform -strict -ignore-missing-schemas -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
+          kubeconform -strict -ignore-missing-schemas -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
+
+  deploy-hygiene:
+    name: Deploy manifest hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check deployment manifest labels
+        run: node scripts/ci/check-deploy-manifests.mjs

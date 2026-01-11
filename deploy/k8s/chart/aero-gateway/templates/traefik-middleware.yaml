@@ -2,11 +2,11 @@
 {{- if eq $mode "auto" -}}
   {{- if contains "traefik" (default "" .Values.ingress.className) -}}
     {{- $mode = "traefik" -}}
-  {{- else -}}
-    {{- $mode = "nginx" -}}
-  {{- end -}}
+{{- else -}}
+  {{- $mode = "nginx" -}}
 {{- end -}}
-{{- if and .Values.ingress.enabled .Values.ingress.coopCoep.enabled (eq $mode "traefik") (default true .Values.ingress.traefik.createMiddleware) -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled (or .Values.ingress.coopCoep.enabled (default false .Values.ingress.securityHeaders.enabled)) (eq $mode "traefik") (default true .Values.ingress.traefik.createMiddleware) -}}
 apiVersion: {{ .Values.ingress.traefik.middlewareApiVersion }}
 kind: Middleware
 metadata:
@@ -16,8 +16,16 @@ metadata:
 spec:
   headers:
     customResponseHeaders:
+      {{- if .Values.ingress.coopCoep.enabled }}
       Cross-Origin-Opener-Policy: {{ .Values.ingress.coopCoep.coop | quote }}
       Cross-Origin-Embedder-Policy: {{ .Values.ingress.coopCoep.coep | quote }}
       Cross-Origin-Resource-Policy: {{ .Values.ingress.coopCoep.corp | quote }}
       Origin-Agent-Cluster: {{ .Values.ingress.coopCoep.originAgentCluster | quote }}
+      {{- end }}
+      {{- if (default false .Values.ingress.securityHeaders.enabled) }}
+      X-Content-Type-Options: {{ .Values.ingress.securityHeaders.xContentTypeOptions | quote }}
+      Referrer-Policy: {{ .Values.ingress.securityHeaders.referrerPolicy | quote }}
+      Permissions-Policy: {{ .Values.ingress.securityHeaders.permissionsPolicy | quote }}
+      Content-Security-Policy: {{ .Values.ingress.securityHeaders.contentSecurityPolicy | quote }}
+      {{- end }}
 {{- end }}

@@ -1,3 +1,6 @@
+# CANONICAL: Edge deployment for Aero (TLS termination + COOP/COEP/CSP security headers).
+# Root-level compose files are service-specific examples; see `deploy/README.md`.
+
 name: aero
 
 services:

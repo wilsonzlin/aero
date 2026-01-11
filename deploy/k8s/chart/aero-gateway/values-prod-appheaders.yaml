@@ -3,6 +3,7 @@
 # Strategy:
 # - Disable ingress COOP/COEP injection
 # - Enable application-level COOP/COEP via CROSS_ORIGIN_ISOLATION=1
+# - (Optional) Disable ingress security header snippets if your controller rejects them
 #
 # Copy locally and replace placeholders before deploying.
 
@@ -23,6 +24,11 @@ ingress:
     enabled: true
     secretName: "aero-tls"
   coopCoep:
+    enabled: false
+  # Some ingress controllers disable snippet annotations entirely. In that case,
+  # disable ingress-level security header injection too (CSP must be set by your
+  # edge proxy / frontend hosting layer).
+  securityHeaders:
     enabled: false
 
 redis:

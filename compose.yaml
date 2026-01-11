@@ -1,3 +1,6 @@
+# EXAMPLE: Minimal Compose file for running `crates/aero-storage-server` locally.
+# For production deployment manifests, see `deploy/` (and `deploy/k8s/` for Kubernetes).
+
 services:
   aero-storage-server:
     build:
@@ -12,4 +15,3 @@ services:
       - ./images:/images
     ports:
       - "8080:8080"
-

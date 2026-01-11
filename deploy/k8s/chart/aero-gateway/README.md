@@ -20,5 +20,6 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
 - `ingress.host`
 - `ingress.tls.enabled` / `ingress.tls.secretName` (or `certManager.enabled=true`)
 - `ingress.coopCoep.enabled` (or `gateway.crossOriginIsolation.enabled=true`)
+- `ingress.securityHeaders.enabled` / `ingress.securityHeaders.contentSecurityPolicy`
 - `secrets.create` / `secrets.existingSecret`
 - `redis.enabled`
