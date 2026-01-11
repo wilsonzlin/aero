@@ -102,6 +102,8 @@ let ioCmdRing: RingBuffer | null = null;
 let ioEvtRing: RingBuffer | null = null;
 let hidInRing: RingBuffer | null = null;
 let hidProxyInputRing: RingBuffer | null = null;
+let hidProxyInputRingForwarded = 0;
+let hidProxyInputRingInvalid = 0;
 const pendingIoEvents: Uint8Array[] = [];
 
 const DISK_ERROR_NO_ACTIVE_DISK = 1;
@@ -1252,6 +1254,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if (isHidRingInitMessage(data)) {
       const msg = data as HidRingInitMessage;
       hidProxyInputRing = new RingBuffer(msg.sab, msg.offsetBytes);
+      hidProxyInputRingForwarded = 0;
+      hidProxyInputRingInvalid = 0;
       return;
     }
 
@@ -1482,6 +1486,13 @@ function startIoIpcServer(): void {
         }
         if (res.invalid > 0) {
           Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, res.invalid);
+        }
+        hidProxyInputRingForwarded += res.forwarded;
+        hidProxyInputRingInvalid += res.invalid;
+        if (import.meta.env.DEV && (res.forwarded > 0 || res.invalid > 0) && (hidProxyInputRingForwarded & 0xff) === 0) {
+          console.debug(
+            `[io.worker] hid.ring.init drained forwarded=${hidProxyInputRingForwarded} invalid=${hidProxyInputRingInvalid}`,
+          );
         }
       }
       hidGuest.poll?.();

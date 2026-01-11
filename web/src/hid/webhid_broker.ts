@@ -39,6 +39,7 @@ export type WebHidInputReportRingStats = Readonly<{
   enabled: boolean;
   pushed: number;
   dropped: number;
+  fallback: number;
 }>;
 
 function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
@@ -72,6 +73,7 @@ export class WebHidBroker {
   #inputReportRing: RingBuffer | null = null;
   #inputReportRingPushed = 0;
   #inputReportRingDropped = 0;
+  #inputReportFallback = 0;
   readonly #inputReportRingCapacityBytes: number;
   #status: Int32Array | null = null;
 
@@ -150,6 +152,7 @@ export class WebHidBroker {
     this.#status = status;
     this.#inputReportRingPushed = 0;
     this.#inputReportRingDropped = 0;
+    this.#inputReportFallback = 0;
   }
 
   getInputReportRingStats(): WebHidInputReportRingStats {
@@ -157,6 +160,7 @@ export class WebHidBroker {
       enabled: this.#inputReportRing !== null,
       pushed: this.#inputReportRingPushed,
       dropped: this.#inputReportRingDropped,
+      fallback: this.#inputReportFallback,
     };
   }
 
@@ -278,6 +282,7 @@ export class WebHidBroker {
     this.#inputReportRing = new RingBuffer(sab, 0);
     this.#inputReportRingPushed = 0;
     this.#inputReportRingDropped = 0;
+    this.#inputReportFallback = 0;
 
     const msg: HidRingInitMessage = { type: "hid.ring.init", sab, offsetBytes: 0 };
     this.#postToWorker(worker, msg);
@@ -430,6 +435,7 @@ export class WebHidBroker {
         data,
         tsMs,
       };
+      this.#inputReportFallback += 1;
       this.#postToWorker(activeWorker, msg, [data.buffer]);
     };
 
