@@ -231,6 +231,10 @@ describe("WebUsbBackend.execute controlOut translations", () => {
         configurations: [config1 as unknown as USBConfiguration, config2 as unknown as USBConfiguration],
         open: vi.fn(async () => {}),
         claimInterface: vi.fn(async () => {}),
+        releaseInterface: vi.fn(async (ifaceNum: number) => {
+          expect(ifaceNum).toBe(1);
+          iface1.claimed = false;
+        }),
         selectConfiguration: vi.fn(async (value: number) => {
           expect(value).toBe(2);
           (device as any).configuration = config2;
@@ -248,6 +252,7 @@ describe("WebUsbBackend.execute controlOut translations", () => {
         data: new Uint8Array(),
       });
 
+      expect(device.releaseInterface).toHaveBeenCalledTimes(1);
       expect(device.selectConfiguration).toHaveBeenCalledTimes(1);
       expect(device.controlTransferOut).not.toHaveBeenCalled();
       expect(res).toEqual({ kind: "controlOut", id: 1, status: "success", bytesWritten: 0 });

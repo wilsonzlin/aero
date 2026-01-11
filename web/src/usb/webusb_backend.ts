@@ -365,6 +365,20 @@ export class WebUsbBackend {
             emptyData
           ) {
             const configValue = setup.wValue & 0xff;
+            const existingConfiguration = this.device.configuration;
+            if (existingConfiguration) {
+              for (const iface of existingConfiguration.interfaces) {
+                if (!iface.claimed) continue;
+                try {
+                  await this.device.releaseInterface(iface.interfaceNumber);
+                } catch (err) {
+                  throw wrapWithCause(
+                    `Failed to release USB interface ${iface.interfaceNumber} before selecting configuration ${configValue}`,
+                    err,
+                  );
+                }
+              }
+            }
             try {
               await this.device.selectConfiguration(configValue);
             } catch (err) {
@@ -372,7 +386,7 @@ export class WebUsbBackend {
             }
             // Selecting a configuration resets all claims; keep our local cache coherent.
             this.claimedInterfaces.clear();
-            this.claimedConfigurationValue = configValue;
+            this.claimedConfigurationValue = this.device.configuration?.configurationValue ?? null;
             return { kind: "controlOut", id: action.id, status: "success", bytesWritten: 0 };
           }
 
