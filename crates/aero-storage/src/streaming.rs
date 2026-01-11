@@ -474,10 +474,11 @@ impl JsonMetaStore {
     }
 
     fn load(&self) -> Result<Option<CacheMeta>, StreamingDiskError> {
-        if !self.path.exists() {
-            return Ok(None);
-        }
-        let raw = fs::read_to_string(&self.path)?;
+        let raw = match fs::read_to_string(&self.path) {
+            Ok(raw) => raw,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
         match serde_json::from_str(&raw) {
             Ok(meta) => Ok(Some(meta)),
             Err(_) => {
@@ -500,7 +501,11 @@ impl JsonMetaStore {
         match fs::rename(&tmp, &self.path) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                fs::remove_file(&self.path)?;
+                match fs::remove_file(&self.path) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => return Err(err.into()),
+                }
                 fs::rename(&tmp, &self.path)?;
             }
             Err(err) => return Err(err.into()),
@@ -509,8 +514,10 @@ impl JsonMetaStore {
     }
 
     fn remove(&self) -> Result<(), StreamingDiskError> {
-        if self.path.exists() {
-            fs::remove_file(&self.path)?;
+        match fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
         }
         Ok(())
     }
