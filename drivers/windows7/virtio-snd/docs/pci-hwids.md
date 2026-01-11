@@ -97,6 +97,12 @@ Many QEMU device models report `REV_00` by default. The shipped Aero INF is revi
 (`REV_01`) and the driver validates the Revision ID at runtime, so it will not bind to stock QEMU
 unless you override the revision.
 
+When testing under QEMU, prefer:
+
+```bash
+-device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
+```
+
 If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
 
 * If your QEMU build supports overriding PCI identification fields, set the revision/subsystem to

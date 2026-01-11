@@ -109,21 +109,23 @@ which is **virtio-pci modern only**:
 - Modern virtio-snd device ID: `PCI\VEN_1AF4&DEV_1059`
 - Contract major version is encoded in the PCI Revision ID: `REV_01`
 
-The Aero Win7 contract v1 INFs are intentionally strict:
+The recommended Aero INF (`inf/aero-virtio-snd.inf`) is intentionally strict:
 
-- `aero-virtio-snd.inf` matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
+- It matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
   - An optional subsystem-qualified match (`...&SUBSYS_00191AF4&REV_01`) is present but commented out.
-- Transitional `DEV_1018` devices are **out of scope** for `AERO-W7-VIRTIO` v1 and will not bind.
 
-If Windows shows `DEV_1018` or `REV_00`, configure QEMU to expose a modern-only device and the
-contract v1 revision (the command lines above already do this), for example:
+Transitional `DEV_1018` devices are **out of scope** for `AERO-W7-VIRTIO` v1 and will not bind to the strict INF
+(use the `virtio-snd.inf` alias only if you explicitly need compatibility with transitional devices).
+
+If Windows shows `DEV_1018` or `REV_00`, configure QEMU to expose a modern-only device and the contract v1 revision
+(the command lines above already do this), for example:
 
 ```bash
 -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
 ```
 
-Tip: confirm your QEMU build supports these properties with (replace `virtio-sound-pci` with the
-device name from above if needed):
+Tip: confirm your QEMU build supports these properties with (replace `virtio-sound-pci` with the device name from
+above if needed):
 
 ```bash
 qemu-system-x86_64 -device virtio-sound-pci,help
@@ -143,7 +145,7 @@ Before installing the driver (or when troubleshooting binding), confirm the devi
 3. Right-click → **Properties** → **Details** tab.
 4. In the **Property** dropdown, select **Hardware Ids**.
 
-Expected values include at least one of:
+Expected values include:
 
 - `PCI\VEN_1AF4&DEV_1059&REV_01` (Aero contract v1; required for `aero-virtio-snd.inf`)
 - `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (if the device exposes the Aero subsystem ID)

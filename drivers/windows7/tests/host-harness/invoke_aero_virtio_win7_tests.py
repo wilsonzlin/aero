@@ -187,6 +187,9 @@ def _assert_qemu_supports_aero_w7_virtio_contract_v1(qemu_system: str, *, with_v
         ("virtio-mouse-pci", True),
     ]
 
+    if with_virtio_snd:
+        required.append((_detect_virtio_snd_device(qemu_system), True))
+
     for device_name, require_disable_legacy in required:
         help_text = _qemu_device_help_text(qemu_system, device_name)
         if require_disable_legacy and "disable-legacy" not in help_text:
@@ -405,7 +408,9 @@ def main() -> int:
             virtio_snd_args: list[str] = []
             if args.enable_virtio_snd:
                 try:
-                    device_arg = _get_qemu_virtio_sound_device_arg(args.qemu_system)
+                    device_arg = _get_qemu_virtio_sound_device_arg(
+                        args.qemu_system, disable_legacy=False, pci_revision=None
+                    )
                 except RuntimeError as e:
                     print(f"ERROR: {e}", file=sys.stderr)
                     return 2
@@ -468,7 +473,9 @@ def main() -> int:
             virtio_snd_args: list[str] = []
             if args.enable_virtio_snd:
                 try:
-                    device_arg = _get_qemu_virtio_sound_device_arg(args.qemu_system)
+                    device_arg = _get_qemu_virtio_sound_device_arg(
+                        args.qemu_system, disable_legacy=True, pci_revision=aero_pci_rev
+                    )
                 except RuntimeError as e:
                     print(f"ERROR: {e}", file=sys.stderr)
                     return 2
@@ -876,7 +883,9 @@ def _print_qemu_stderr_tail(path: Path) -> None:
         sys.stdout.buffer.write(tail)
 
 
-def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
+def _get_qemu_virtio_sound_device_arg(
+    qemu_system: str, *, disable_legacy: bool, pci_revision: Optional[str]
+) -> str:
     """
     Return the virtio-snd PCI device arg string.
 

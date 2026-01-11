@@ -33,6 +33,7 @@ There are currently **two virtio transport implementations** in-tree:
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
   - `src/virtiosnd_hw.c`
   - `src/virtiosnd_queue_split.c`
+  - `drivers/windows/virtio/common/virtqueue_split.c` (shared split-ring implementation)
   - `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
   - `src/virtiosnd_intx.c`
 - Shared virtio support code linked in from:
@@ -193,14 +194,14 @@ Contract v1 requirements include:
   - `controlq = 64`
   - `eventq = 64` (initialized; currently unused unless the device model emits events)
   - `txq = 256`
-  - `rxq = 64` (initialized; RX engine exists, capture endpoint integration is TBD)
+- `rxq = 64` (initialized; RX engine exists, capture endpoint integration is TBD)
 
 Driver stance (for strict contract-v1 support):
 
-- The modern virtio-pci path is expected to negotiate only the features required
-  for correctness. For contract v1 this means enabling `VIRTIO_F_VERSION_1` and
-  `VIRTIO_F_RING_INDIRECT_DESC` and leaving `VIRTIO_F_RING_EVENT_IDX` disabled
-  even if a device offers it (for example due to a buggy/emerging device model).
+- Negotiate only the features required for correctness. For contract v1 this
+  means enabling `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_INDIRECT_DESC` and
+  leaving `VIRTIO_F_RING_EVENT_IDX` disabled even if a device offers it (for
+  example due to a buggy/emerging device model).
 - Always size ring allocations from the device-reported `common_cfg.queue_size` after selecting
   each queue. Treat unexpected values (for example smaller than required by the contract, or
   inconsistent `queue_notify_off`) as an incompatibility during bring-up.

@@ -30,9 +30,15 @@ drivers/windows7/tests/
 - Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
-- Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when enabled via `--test-snd` / `--require-snd`.
-  - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059` or `PCI\\VEN_1AF4&DEV_1018`).
-    - When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL.
+- (Optional) Runs a virtio-snd test (PCI detection + endpoint enumeration + short playback).
+  - By default the tool emits `virtio-snd|SKIP` (and `virtio-snd-capture|SKIP|flag_not_set`); enable playback with
+    `--test-snd` / `--require-snd`.
+  - Detects the virtio-snd PCI function by hardware ID:
+    - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
+    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
+      `PCI\VEN_1AF4&DEV_1018`.
+      - For debugging/backcompat only, you can explicitly allow transitional matching with `--allow-virtio-snd-transitional`.
+  - When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL. Use `--disable-snd` to force SKIP.
 - Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
 - Logs to:
   - stdout
@@ -58,8 +64,9 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and 
 (virtio-blk + virtio-input + virtio-snd + virtio-net) were emitted so older selftest binaries can’t accidentally pass.
 
 Note:
-- By default, virtio-snd playback is skipped (emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`). Enable it with
-  `--test-snd` / `--require-snd`. Use `--disable-snd` to force `SKIP` for both playback and capture.
+- By default, virtio-snd playback is skipped (emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`) and capture is reported as
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`. Enable playback with `--test-snd` / `--require-snd`.
+  Use `--disable-snd` to force SKIP for both playback and capture.
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed).

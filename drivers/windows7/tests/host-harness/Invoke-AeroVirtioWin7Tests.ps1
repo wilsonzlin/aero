@@ -344,7 +344,9 @@ function Wait-AeroSelftestResult {
 
 function Get-AeroVirtioSoundDeviceArg {
   param(
-    [Parameter(Mandatory = $true)] [string]$QemuSystem
+    [Parameter(Mandatory = $true)] [string]$QemuSystem,
+    # If true, require modern-only virtio-pci enumeration (disable-legacy=on) and contract revision (x-pci-revision=0x01).
+    [Parameter(Mandatory = $true)] [bool]$ModernOnly
   )
 
   # Determine which QEMU virtio-snd PCI device name is available and validate it supports
@@ -643,7 +645,7 @@ try {
         }
       }
 
-      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $false
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice
@@ -708,7 +710,7 @@ try {
         }
       }
 
-      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $true
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice
