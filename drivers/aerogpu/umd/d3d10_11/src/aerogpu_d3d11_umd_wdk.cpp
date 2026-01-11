@@ -3107,68 +3107,30 @@ void AEROGPU_APIENTRY DrawIndexedInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
   cmd->first_instance = StartInstanceLocation;
 }
 
+void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                               D3D11DDI_HRESOURCE hDstResource,
+                                               UINT dst_subresource,
+                                               UINT dst_x,
+                                               UINT dst_y,
+                                               UINT dst_z,
+                                               D3D11DDI_HRESOURCE hSrcResource,
+                                               UINT src_subresource,
+                                               const D3D10_DDI_BOX* pSrcBox);
+
 void AEROGPU_APIENTRY CopyResource11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hDstResource, D3D11DDI_HRESOURCE hSrcResource) {
-  auto* dev = DeviceFromContext(hCtx);
-  if (!dev) {
-    return;
-  }
-
-  auto* dst = hDstResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(hDstResource) : nullptr;
-  auto* src = hSrcResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(hSrcResource) : nullptr;
-  if (!dst || !src) {
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  if (dst->kind == ResourceKind::Buffer && src->kind == ResourceKind::Buffer) {
-    const uint64_t bytes = std::min(dst->size_bytes, src->size_bytes);
-    if (bytes && dst->storage.size() >= bytes && src->storage.size() >= bytes) {
-      std::memcpy(dst->storage.data(), src->storage.data(), static_cast<size_t>(bytes));
-    }
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
-    cmd->dst_buffer = dst->handle;
-    cmd->src_buffer = src->handle;
-    cmd->dst_offset_bytes = 0;
-    cmd->src_offset_bytes = 0;
-    cmd->size_bytes = bytes;
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
-    cmd->reserved0 = 0;
-    TrackStagingWriteLocked(dev, dst);
-    return;
-  }
-
-  if (dst->kind == ResourceKind::Texture2D && src->kind == ResourceKind::Texture2D) {
-    if (dst->storage.size() == src->storage.size()) {
-      std::memcpy(dst->storage.data(), src->storage.data(), dst->storage.size());
-    }
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
-    cmd->dst_texture = dst->handle;
-    cmd->src_texture = src->handle;
-    cmd->dst_mip_level = 0;
-    cmd->dst_array_layer = 0;
-    cmd->src_mip_level = 0;
-    cmd->src_array_layer = 0;
-    cmd->dst_x = 0;
-    cmd->dst_y = 0;
-    cmd->src_x = 0;
-    cmd->src_y = 0;
-    cmd->width = dst->width;
-    cmd->height = dst->height;
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
-    cmd->reserved0 = 0;
-    TrackStagingWriteLocked(dev, dst);
-    return;
-  }
+  // In the AeroGPU bring-up path, CopyResource is equivalent to a CopySubresourceRegion
+  // with subresource 0, dst offsets (0,0,0), and no source box.
+  CopySubresourceRegion11(hCtx, hDstResource, 0, 0, 0, 0, hSrcResource, 0, nullptr);
 }
 
 void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              D3D11DDI_HRESOURCE hDstResource,
-                                             UINT,
+                                             UINT dst_subresource,
                                              UINT dst_x,
                                              UINT dst_y,
-                                             UINT,
+                                             UINT dst_z,
                                              D3D11DDI_HRESOURCE hSrcResource,
-                                             UINT,
+                                             UINT src_subresource,
                                              const D3D10_DDI_BOX* pSrcBox) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
@@ -3182,9 +3144,19 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     return;
   }
 
+  if (dst_subresource != 0 || src_subresource != 0 || dst_z != 0) {
+    SetError(dev, E_NOTIMPL);
+    return;
+  }
+
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (dst->kind == ResourceKind::Buffer && src->kind == ResourceKind::Buffer) {
+    if (dst_y != 0) {
+      SetError(dev, E_NOTIMPL);
+      return;
+    }
+
     const uint64_t src_left = pSrcBox ? static_cast<uint64_t>(pSrcBox->left) : 0;
     const uint64_t src_right = pSrcBox ? static_cast<uint64_t>(pSrcBox->right) : src->size_bytes;
     const uint64_t dst_off = static_cast<uint64_t>(dst_x);
@@ -3218,10 +3190,23 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   if (dst->kind == ResourceKind::Texture2D && src->kind == ResourceKind::Texture2D) {
+    if (dst->dxgi_format != src->dxgi_format) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+
     const uint32_t src_left = pSrcBox ? static_cast<uint32_t>(pSrcBox->left) : 0;
     const uint32_t src_top = pSrcBox ? static_cast<uint32_t>(pSrcBox->top) : 0;
     const uint32_t src_right = pSrcBox ? static_cast<uint32_t>(pSrcBox->right) : src->width;
     const uint32_t src_bottom = pSrcBox ? static_cast<uint32_t>(pSrcBox->bottom) : src->height;
+
+    if (pSrcBox) {
+      // Only support 2D boxes for Texture2D copies.
+      if (pSrcBox->front != 0 || pSrcBox->back != 1) {
+        SetError(dev, E_NOTIMPL);
+        return;
+      }
+    }
 
     if (src_right < src_left || src_bottom < src_top) {
       SetError(dev, E_INVALIDARG);
@@ -3232,10 +3217,15 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     const uint32_t copy_height = std::min(src_bottom - src_top, dst->height > dst_y ? (dst->height - dst_y) : 0u);
 
     const uint32_t aer_fmt = dxgi_format_to_aerogpu(dst->dxgi_format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      SetError(dev, E_NOTIMPL);
+      return;
+    }
     const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
     const size_t row_bytes = static_cast<size_t>(copy_width) * bpp;
 
-    if (row_bytes && dst->row_pitch_bytes >= row_bytes && src->row_pitch_bytes >= row_bytes &&
+    if (row_bytes && dst->row_pitch_bytes >= static_cast<size_t>(dst_x) * bpp + row_bytes &&
+        src->row_pitch_bytes >= static_cast<size_t>(src_left) * bpp + row_bytes &&
         dst_y + copy_height <= dst->height && src_top + copy_height <= src->height) {
       for (uint32_t y = 0; y < copy_height; y++) {
         const size_t dst_off =

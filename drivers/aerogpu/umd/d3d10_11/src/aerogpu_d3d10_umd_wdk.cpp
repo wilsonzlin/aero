@@ -1010,9 +1010,36 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
   }
 }
 
+void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
+                                    D3D10DDI_HRESOURCE hDst,
+                                    UINT dst_subresource,
+                                    UINT dstX,
+                                    UINT dstY,
+                                    UINT dstZ,
+                                    D3D10DDI_HRESOURCE hSrc,
+                                    UINT src_subresource,
+                                    const D3D10_DDI_BOX* pSrcBox);
+
 void APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hDst, D3D10DDI_HRESOURCE hSrc) {
+  CopySubresourceRegion(hDevice, hDst, 0, 0, 0, 0, hSrc, 0, nullptr);
+}
+
+void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
+                                    D3D10DDI_HRESOURCE hDst,
+                                    UINT dst_subresource,
+                                    UINT dstX,
+                                    UINT dstY,
+                                    UINT dstZ,
+                                    D3D10DDI_HRESOURCE hSrc,
+                                    UINT src_subresource,
+                                    const D3D10_DDI_BOX* pSrcBox) {
   if (!hDevice.pDrvPrivate || !hDst.pDrvPrivate || !hSrc.pDrvPrivate) {
     SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+
+  if (dst_subresource != 0 || src_subresource != 0) {
+    SetError(hDevice, E_NOTIMPL);
     return;
   }
 
@@ -1025,28 +1052,162 @@ void APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hDst, D3
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  try {
-    dst->storage = src->storage;
-  } catch (...) {
-    SetError(hDevice, E_OUTOFMEMORY);
-  }
-}
 
-void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
-                                    D3D10DDI_HRESOURCE hDst,
-                                    UINT,
-                                    UINT dstX,
-                                    UINT dstY,
-                                    UINT dstZ,
-                                    D3D10DDI_HRESOURCE hSrc,
-                                    UINT,
-                                    const D3D10_DDI_BOX* pSrcBox) {
-  // Common bring-up path: full-copy region with no box and zero destination offset.
-  if (dstX != 0 || dstY != 0 || dstZ != 0 || pSrcBox) {
-    SetError(hDevice, E_NOTIMPL);
+  if (dst->kind != src->kind) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
-  CopyResource(hDevice, hDst, hSrc);
+
+  if (dst->kind == ResourceKind::Buffer) {
+    if (dstY != 0 || dstZ != 0) {
+      SetError(hDevice, E_NOTIMPL);
+      return;
+    }
+
+    const uint64_t dst_off = static_cast<uint64_t>(dstX);
+    const uint64_t src_left = pSrcBox ? static_cast<uint64_t>(pSrcBox->left) : 0;
+    const uint64_t src_right = pSrcBox ? static_cast<uint64_t>(pSrcBox->right) : src->size_bytes;
+
+    if (src_right < src_left) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+
+    const uint64_t requested = src_right - src_left;
+    const uint64_t max_src = (src_left < src->size_bytes) ? (src->size_bytes - src_left) : 0;
+    const uint64_t max_dst = (dst_off < dst->size_bytes) ? (dst->size_bytes - dst_off) : 0;
+    const uint64_t bytes = std::min(std::min(requested, max_src), max_dst);
+
+    if (dst->storage.size() < static_cast<size_t>(dst->size_bytes)) {
+      try {
+        dst->storage.resize(static_cast<size_t>(dst->size_bytes), 0);
+      } catch (...) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+    }
+    if (src->storage.size() < static_cast<size_t>(src->size_bytes)) {
+      try {
+        src->storage.resize(static_cast<size_t>(src->size_bytes), 0);
+      } catch (...) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+    }
+
+    if (bytes && dst_off + bytes <= dst->storage.size() && src_left + bytes <= src->storage.size()) {
+      std::memcpy(dst->storage.data() + static_cast<size_t>(dst_off),
+                  src->storage.data() + static_cast<size_t>(src_left),
+                  static_cast<size_t>(bytes));
+    }
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    cmd->dst_buffer = dst->handle;
+    cmd->src_buffer = src->handle;
+    cmd->dst_offset_bytes = dst_off;
+    cmd->src_offset_bytes = src_left;
+    cmd->size_bytes = bytes;
+    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->reserved0 = 0;
+    return;
+  }
+
+  if (dst->kind == ResourceKind::Texture2D) {
+    if (dstZ != 0) {
+      SetError(hDevice, E_NOTIMPL);
+      return;
+    }
+
+    if (dst->dxgi_format != src->dxgi_format) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu(dst->dxgi_format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      SetError(hDevice, E_NOTIMPL);
+      return;
+    }
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+
+    const uint32_t src_left = pSrcBox ? static_cast<uint32_t>(pSrcBox->left) : 0;
+    const uint32_t src_top = pSrcBox ? static_cast<uint32_t>(pSrcBox->top) : 0;
+    const uint32_t src_right = pSrcBox ? static_cast<uint32_t>(pSrcBox->right) : src->width;
+    const uint32_t src_bottom = pSrcBox ? static_cast<uint32_t>(pSrcBox->bottom) : src->height;
+
+    if (pSrcBox) {
+      // Only support 2D boxes.
+      if (pSrcBox->front != 0 || pSrcBox->back != 1) {
+        SetError(hDevice, E_NOTIMPL);
+        return;
+      }
+      if (src_right < src_left || src_bottom < src_top) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+    }
+
+    const uint32_t copy_width = std::min(src_right - src_left, dst->width > dstX ? (dst->width - dstX) : 0u);
+    const uint32_t copy_height = std::min(src_bottom - src_top, dst->height > dstY ? (dst->height - dstY) : 0u);
+    const size_t row_bytes = static_cast<size_t>(copy_width) * bpp;
+
+    if (dst->row_pitch_bytes == 0) {
+      dst->row_pitch_bytes = dst->width * bpp;
+    }
+    if (src->row_pitch_bytes == 0) {
+      src->row_pitch_bytes = src->width * bpp;
+    }
+
+    const uint64_t dst_total = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(dst->height);
+    const uint64_t src_total = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(src->height);
+    if (dst_total <= static_cast<uint64_t>(SIZE_MAX) && dst->storage.size() < static_cast<size_t>(dst_total)) {
+      try {
+        dst->storage.resize(static_cast<size_t>(dst_total), 0);
+      } catch (...) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+    }
+    if (src_total <= static_cast<uint64_t>(SIZE_MAX) && src->storage.size() < static_cast<size_t>(src_total)) {
+      try {
+        src->storage.resize(static_cast<size_t>(src_total), 0);
+      } catch (...) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+    }
+
+    if (row_bytes && dst->row_pitch_bytes >= dstX * bpp + row_bytes && src->row_pitch_bytes >= src_left * bpp + row_bytes) {
+      for (uint32_t y = 0; y < copy_height; y++) {
+        const size_t dst_off =
+            static_cast<size_t>(dstY + y) * dst->row_pitch_bytes + static_cast<size_t>(dstX) * bpp;
+        const size_t src_off =
+            static_cast<size_t>(src_top + y) * src->row_pitch_bytes + static_cast<size_t>(src_left) * bpp;
+        if (dst_off + row_bytes <= dst->storage.size() && src_off + row_bytes <= src->storage.size()) {
+          std::memcpy(dst->storage.data() + dst_off, src->storage.data() + src_off, row_bytes);
+        }
+      }
+    }
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    cmd->dst_texture = dst->handle;
+    cmd->src_texture = src->handle;
+    cmd->dst_mip_level = 0;
+    cmd->dst_array_layer = 0;
+    cmd->src_mip_level = 0;
+    cmd->src_array_layer = 0;
+    cmd->dst_x = dstX;
+    cmd->dst_y = dstY;
+    cmd->src_x = src_left;
+    cmd->src_y = src_top;
+    cmd->width = copy_width;
+    cmd->height = copy_height;
+    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->reserved0 = 0;
+    return;
+  }
+
+  SetError(hDevice, E_NOTIMPL);
 }
 
 SIZE_T APIENTRY CalcPrivateRenderTargetViewSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATERENDERTARGETVIEW*) {
