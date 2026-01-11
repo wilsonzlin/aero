@@ -613,10 +613,11 @@ Traditional WDDM drivers rely on `PATCHLOCATIONLIST` to relocate GPU addresses i
   
 ```
 struct aerogpu_alloc_entry {
-  u32 alloc_id;
-  u32 flags;
-  u64 gpa;
-  u64 size_bytes;
+  uint32_t alloc_id; /* 0 is invalid */
+  uint32_t flags; /* AEROGPU_ALLOC_FLAG_* */
+  uint64_t gpa;
+  uint64_t size_bytes;
+  uint64_t reserved0; /* must be 0 */
 };
 ```
   
