@@ -49,6 +49,7 @@ export function createHotspotsPanel(options) {
 
   render();
   const timer = setInterval(render, refreshMs);
+  timer.unref?.();
   // Allow callers to stop updates by removing the element.
   root.addEventListener(
     'DOMNodeRemoved',
@@ -60,4 +61,3 @@ export function createHotspotsPanel(options) {
 
   return root;
 }
-

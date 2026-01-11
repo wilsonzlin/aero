@@ -339,6 +339,7 @@ export class VmCoordinator extends EventTarget {
     this._watchdogTimer = setInterval(() => {
       this._checkWatchdog();
     }, intervalMs);
+    this._watchdogTimer.unref?.();
   }
 
   _checkWatchdog() {
@@ -397,6 +398,7 @@ export class VmCoordinator extends EventTarget {
           }
           entry.reject(new Error(message));
         }, timeoutMs);
+        timer.unref?.();
       }
     });
   }
