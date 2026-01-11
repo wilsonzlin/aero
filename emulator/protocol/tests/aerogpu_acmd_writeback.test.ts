@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   AEROGPU_COPY_FLAG_WRITEBACK_DST,
   AerogpuCmdWriter,
+  AerogpuSamplerAddressMode,
+  AerogpuSamplerFilter,
+  AerogpuShaderStage,
 } from "../aerogpu/aerogpu_cmd.ts";
 import { AEROGPU_ABI_VERSION_U32, AerogpuFormat } from "../aerogpu/aerogpu_pci.ts";
 import {
@@ -114,3 +117,47 @@ test("ACMD COPY_TEXTURE2D writeback packs rows using row_pitch_bytes and encodes
   assert.deepEqual(Array.from(guest.subarray(300 + 4 + 8, 300 + 4 + 12)), [0, 0, 0, 0]);
 });
 
+test("ACMD binding table packets are ignored but validated by the browser executor", () => {
+  const w = new AerogpuCmdWriter();
+  w.createSampler(
+    1,
+    AerogpuSamplerFilter.Linear,
+    AerogpuSamplerAddressMode.Repeat,
+    AerogpuSamplerAddressMode.ClampToEdge,
+    AerogpuSamplerAddressMode.MirrorRepeat,
+  );
+  w.setSamplers(AerogpuShaderStage.Pixel, 0, [1]);
+  w.setConstantBuffers(AerogpuShaderStage.Vertex, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16 }]);
+  w.destroySampler(1);
+
+  const state = createAerogpuCpuExecutorState();
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable: null, guestU8: null });
+});
+
+test("ACMD SET_SAMPLERS rejects truncated handle payloads", () => {
+  const w = new AerogpuCmdWriter();
+  w.setSamplers(AerogpuShaderStage.Pixel, 0, [1]);
+  const bytes = w.finish();
+  // Patch sampler_count from 1 -> 2 without extending the packet.
+  new DataView(bytes.buffer).setUint32(24 + 16, 2, true);
+
+  const state = createAerogpuCpuExecutorState();
+  assert.throws(
+    () => executeAerogpuCmdStream(state, bytes.buffer, { allocTable: null, guestU8: null }),
+    /SET_SAMPLERS/,
+  );
+});
+
+test("ACMD SET_CONSTANT_BUFFERS rejects truncated binding payloads", () => {
+  const w = new AerogpuCmdWriter();
+  w.setConstantBuffers(AerogpuShaderStage.Vertex, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16 }]);
+  const bytes = w.finish();
+  // Patch buffer_count from 1 -> 2 without extending the packet.
+  new DataView(bytes.buffer).setUint32(24 + 16, 2, true);
+
+  const state = createAerogpuCpuExecutorState();
+  assert.throws(
+    () => executeAerogpuCmdStream(state, bytes.buffer, { allocTable: null, guestU8: null }),
+    /SET_CONSTANT_BUFFERS/,
+  );
+});

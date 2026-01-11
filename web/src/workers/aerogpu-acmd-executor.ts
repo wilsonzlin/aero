@@ -7,13 +7,18 @@ import {
   AEROGPU_CMD_COPY_BUFFER_SIZE,
   AEROGPU_CMD_COPY_TEXTURE2D_SIZE,
   AEROGPU_CMD_CREATE_BUFFER_SIZE,
+  AEROGPU_CMD_CREATE_SAMPLER_SIZE,
   AEROGPU_CMD_CREATE_TEXTURE2D_SIZE,
   AEROGPU_CMD_DESTROY_RESOURCE_SIZE,
+  AEROGPU_CMD_DESTROY_SAMPLER_SIZE,
   AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_PRESENT_SIZE,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
+  AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE,
   AEROGPU_CMD_SET_RENDER_TARGETS_SIZE,
+  AEROGPU_CMD_SET_SAMPLERS_SIZE,
   AEROGPU_CMD_UPLOAD_RESOURCE_SIZE,
+  AEROGPU_CONSTANT_BUFFER_BINDING_SIZE,
   AEROGPU_COPY_FLAG_WRITEBACK_DST,
   AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
@@ -191,6 +196,10 @@ const AEROGPU_CMD_COPY_TEXTURE2D = AerogpuCmdOpcode.CopyTexture2d;
 const AEROGPU_CMD_SET_RENDER_TARGETS = AerogpuCmdOpcode.SetRenderTargets;
 const AEROGPU_CMD_PRESENT = AerogpuCmdOpcode.Present;
 const AEROGPU_CMD_PRESENT_EX = AerogpuCmdOpcode.PresentEx;
+const AEROGPU_CMD_CREATE_SAMPLER = AerogpuCmdOpcode.CreateSampler;
+const AEROGPU_CMD_DESTROY_SAMPLER = AerogpuCmdOpcode.DestroySampler;
+const AEROGPU_CMD_SET_SAMPLERS = AerogpuCmdOpcode.SetSamplers;
+const AEROGPU_CMD_SET_CONSTANT_BUFFERS = AerogpuCmdOpcode.SetConstantBuffers;
 
 const AEROGPU_FORMAT_B8G8R8A8_UNORM = AerogpuFormat.B8G8R8A8Unorm;
 const AEROGPU_FORMAT_B8G8R8X8_UNORM = AerogpuFormat.B8G8R8X8Unorm;
@@ -346,6 +355,50 @@ export const executeAerogpuCmdStream = (
         const buf: AeroGpuCpuBuffer = { sizeBytes, usageFlags, data: new Uint8Array(sizeBytes) };
         buf.backing = backing;
         state.buffers.set(handle, buf);
+        break;
+      }
+
+      case AEROGPU_CMD_CREATE_SAMPLER: {
+        if (cmdSizeBytes < AEROGPU_CMD_CREATE_SAMPLER_SIZE) {
+          throw new Error(`aerogpu: CREATE_SAMPLER packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        // Sampler objects are currently ignored by the CPU executor. Still validate packet sizing
+        // so corrupted streams fail fast.
+        break;
+      }
+
+      case AEROGPU_CMD_DESTROY_SAMPLER: {
+        if (cmdSizeBytes < AEROGPU_CMD_DESTROY_SAMPLER_SIZE) {
+          throw new Error(`aerogpu: DESTROY_SAMPLER packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        break;
+      }
+
+      case AEROGPU_CMD_SET_SAMPLERS: {
+        if (cmdSizeBytes < AEROGPU_CMD_SET_SAMPLERS_SIZE) {
+          throw new Error(`aerogpu: SET_SAMPLERS packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const samplerCount = readU32LeChecked(dv, offset + 16, end, "sampler_count");
+        const expectedBytes = AEROGPU_CMD_SET_SAMPLERS_SIZE + samplerCount * 4;
+        if (expectedBytes > cmdSizeBytes) {
+          throw new Error(
+            `aerogpu: SET_SAMPLERS payload overruns packet (expected=${expectedBytes}, size_bytes=${cmdSizeBytes})`,
+          );
+        }
+        break;
+      }
+
+      case AEROGPU_CMD_SET_CONSTANT_BUFFERS: {
+        if (cmdSizeBytes < AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE) {
+          throw new Error(`aerogpu: SET_CONSTANT_BUFFERS packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const bufferCount = readU32LeChecked(dv, offset + 16, end, "buffer_count");
+        const expectedBytes = AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + bufferCount * AEROGPU_CONSTANT_BUFFER_BINDING_SIZE;
+        if (expectedBytes > cmdSizeBytes) {
+          throw new Error(
+            `aerogpu: SET_CONSTANT_BUFFERS payload overruns packet (expected=${expectedBytes}, size_bytes=${cmdSizeBytes})`,
+          );
+        }
         break;
       }
 
