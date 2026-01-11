@@ -26,6 +26,10 @@ Implementation references:
 - Browser normalization: `web/src/hid/webhid_normalize.ts`
 - Rust synthesis: `crates/emulator/src/io/usb/hid/report_descriptor.rs`
   - WebHID JSON schema + conversion layer: `crates/emulator/src/io/usb/hid/webhid.rs`
+- Wire contract fixtures:
+  - Fixture JSON: `tests/fixtures/hid/webhid_normalized_mouse.json`
+  - TS contract test: `web/test/webhid_normalize_fixture.test.ts`
+  - Rust contract test: `crates/emulator/tests/webhid_normalized_fixture.rs`
 
 For the end-to-end “real device” passthrough architecture (main thread owns the
 `HIDDevice`, worker models UHCI + a generic HID device), see
@@ -48,7 +52,7 @@ For each `HIDCollectionInfo`:
 1. Emit the collection “header” items:
    - `Usage Page` (from `usagePage`)
    - `Usage` (from `usage`)
-   - `Collection(collectionType)` (from `collectionType`)
+   - `Collection(type)` (from `type`)
 2. Inside the collection, emit the report definitions in a deterministic grouping:
    - all `inputReports`, then all `outputReports`, then all `featureReports`
    - within a given `HIDReportInfo`, preserve the order of `items` (this defines bit/field layout)
@@ -62,12 +66,12 @@ Because WebHID does not expose the original descriptor byte stream, this groupin
 
 ### Collections (`HIDCollectionInfo`)
 
-`HIDCollectionInfo.usagePage/usage/collectionType/children` maps to:
+`HIDCollectionInfo.usagePage/usage/type/children` maps to:
 
 ```
 Usage Page (usagePage)
 Usage (usage)
-Collection (collectionType)
+Collection (type)
   …contents…
 End Collection
 ```
@@ -91,8 +95,8 @@ Collection type codes (as used by the WebHID API, our normalization layer, and b
 
 JSON note:
 
-- In our normalized metadata JSON we store the numeric HID collection type code in `HIDCollectionInfo.collectionType` (`0..=6`).
-- The Rust deserializer also accepts the WebHID string enum in the `type` field for resilience (e.g. older fixtures/tools or hand-authored metadata).
+- In our normalized metadata JSON we keep the WebHID string enum in the `type` field (e.g. `"application"`).
+- The Rust deserializer also accepts a numeric `collectionType` code (`0..=6`) for resilience (e.g. older fixtures/tools or hand-authored metadata).
 
 ### Reports (`HIDReportInfo`)
 
