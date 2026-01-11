@@ -1,5 +1,5 @@
 use aero_usb::hid::passthrough::UsbHidPassthrough;
-use aero_usb::hid::UsbHidKeyboard;
+use aero_usb::hid::{UsbHidCompositeInput, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
 
@@ -50,6 +50,129 @@ fn invalid_set_address_nonzero_windex_stalls_keyboard() {
 #[test]
 fn new_setup_aborts_pending_set_address_keyboard() {
     let mut dev = UsbHidKeyboard::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05, // SET_ADDRESS
+        value: 5,
+        index: 0,
+        length: 0,
+    });
+
+    // Abort the SET_ADDRESS request before the status stage is executed.
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 0,
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Ack { bytes: 0 });
+    assert_eq!(dev.address(), 0);
+}
+
+#[test]
+fn invalid_set_address_nonzero_windex_stalls_mouse() {
+    let mut dev = UsbHidMouse::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05, // SET_ADDRESS
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(dev.address(), 0);
+}
+
+#[test]
+fn new_setup_aborts_pending_set_address_mouse() {
+    let mut dev = UsbHidMouse::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05, // SET_ADDRESS
+        value: 5,
+        index: 0,
+        length: 0,
+    });
+
+    // Abort the SET_ADDRESS request before the status stage is executed.
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 0,
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Ack { bytes: 0 });
+    assert_eq!(dev.address(), 0);
+}
+
+#[test]
+fn invalid_set_address_nonzero_windex_stalls_gamepad() {
+    let mut dev = UsbHidGamepad::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05, // SET_ADDRESS
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(dev.address(), 0);
+}
+
+#[test]
+fn new_setup_aborts_pending_set_address_gamepad() {
+    let mut dev = UsbHidGamepad::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05, // SET_ADDRESS
+        value: 5,
+        index: 0,
+        length: 0,
+    });
+
+    // Abort the SET_ADDRESS request before the status stage is executed.
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 0,
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Ack { bytes: 0 });
+    assert_eq!(dev.address(), 0);
+}
+
+#[test]
+fn invalid_set_address_nonzero_windex_stalls_composite() {
+    let mut dev = UsbHidCompositeInput::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05, // SET_ADDRESS
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(dev.address(), 0);
+}
+
+#[test]
+fn new_setup_aborts_pending_set_address_composite() {
+    let mut dev = UsbHidCompositeInput::new();
 
     dev.handle_setup(SetupPacket {
         request_type: 0x00,
@@ -278,6 +401,127 @@ fn new_setup_aborts_pending_set_configuration_hub() {
 }
 
 #[test]
+fn new_setup_aborts_pending_set_configuration_mouse() {
+    let mut dev = UsbHidMouse::new();
+
+    // Start SET_CONFIGURATION(1) but do not complete the status stage.
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 0,
+        length: 0,
+    });
+
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+}
+
+#[test]
+fn new_setup_aborts_pending_set_configuration_gamepad() {
+    let mut dev = UsbHidGamepad::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 0,
+        length: 0,
+    });
+
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+}
+
+#[test]
+fn new_setup_aborts_pending_set_configuration_composite() {
+    let mut dev = UsbHidCompositeInput::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 0,
+        length: 0,
+    });
+
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+}
+
+#[test]
 fn invalid_set_configuration_nonzero_windex_stalls_keyboard() {
     let mut dev = UsbHidKeyboard::new();
 
@@ -337,6 +581,90 @@ fn invalid_set_configuration_nonzero_windex_stalls_passthrough() {
 #[test]
 fn invalid_set_configuration_nonzero_windex_stalls_hub() {
     let mut dev = UsbHubDevice::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+}
+
+#[test]
+fn invalid_set_configuration_nonzero_windex_stalls_mouse() {
+    let mut dev = UsbHidMouse::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+}
+
+#[test]
+fn invalid_set_configuration_nonzero_windex_stalls_gamepad() {
+    let mut dev = UsbHidGamepad::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x09, // SET_CONFIGURATION
+        value: 1,
+        index: 1, // invalid
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+    assert_eq!(
+        control_in(
+            &mut dev,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x08, // GET_CONFIGURATION
+                value: 0,
+                index: 0,
+                length: 1,
+            }
+        ),
+        vec![0]
+    );
+}
+
+#[test]
+fn invalid_set_configuration_nonzero_windex_stalls_composite() {
+    let mut dev = UsbHidCompositeInput::new();
 
     dev.handle_setup(SetupPacket {
         request_type: 0x00,
