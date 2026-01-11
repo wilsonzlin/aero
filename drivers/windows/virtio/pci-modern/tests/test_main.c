@@ -35,11 +35,16 @@ enum {
 	PCI_STATUS_CAP_LIST = 1u << 4,
 
 	BAR0_LEN = 0x4000,
+	FAKE_MAX_QUEUES = 8,
 };
 
 typedef struct _FAKE_DEV {
 	UINT8 Cfg[256];
 	UINT8 Bar0[BAR0_LEN];
+	UINT64 DeviceFeatures;
+	UINT64 DriverFeatures;
+	UINT16 QueueSize[FAKE_MAX_QUEUES];
+	UINT16 QueueNotifyOff[FAKE_MAX_QUEUES];
 } FAKE_DEV;
 
 static void WriteLe16(UINT8 *p, UINT16 v)
@@ -83,6 +88,10 @@ static void FakeDevInitValid(FAKE_DEV *dev)
 	volatile virtio_pci_common_cfg *common;
 
 	memset(dev, 0, sizeof(*dev));
+	dev->DeviceFeatures = VIRTIO_F_VERSION_1;
+	dev->DriverFeatures = 0;
+	dev->QueueSize[0] = 8;
+	dev->QueueNotifyOff[0] = 0;
 
 	/* PCI header */
 	WriteLe16(&dev->Cfg[PCI_VENDOR_OFF], 0x1AF4);
@@ -103,9 +112,9 @@ static void FakeDevInitValid(FAKE_DEV *dev)
 	/* BAR0 MMIO contents */
 	common = (volatile virtio_pci_common_cfg *)(dev->Bar0 + 0x0000);
 	common->num_queues = 1;
-	common->queue_size = 8;
+	common->queue_size = 0;
 	common->queue_notify_off = 0;
-	common->device_feature = 1; /* keep selectors trivial for unit tests */
+	common->device_feature = 0;
 }
 
 static UINT8 OsPciRead8(void *ctx, UINT16 off)
@@ -154,7 +163,49 @@ static void OsStallUs(void *ctx, UINT32 us)
 
 static void OsMb(void *ctx)
 {
-	(void)ctx;
+	FAKE_DEV *dev = (FAKE_DEV *)ctx;
+	volatile virtio_pci_common_cfg *common;
+	UINT32 sel;
+	UINT16 q;
+	UINT64 feat;
+
+	common = (volatile virtio_pci_common_cfg *)(dev->Bar0 + 0x0000);
+
+	/*
+	 * Emulate the selector semantics of virtio_pci_common_cfg for host tests.
+	 *
+	 * Real hardware exposes device_feature / queue_size / queue_notify_off as
+	 * selector-indexed windows, but our BAR0 is just a byte array.
+	 *
+	 * The transport calls MemoryBarrier() after updating selectors; use that hook
+	 * to update the windows so tests exercise the correct access patterns.
+	 */
+	sel = common->device_feature_select;
+	feat = dev->DeviceFeatures;
+	if (sel == 0) {
+		common->device_feature = (UINT32)(feat & 0xFFFFFFFFull);
+	} else if (sel == 1) {
+		common->device_feature = (UINT32)(feat >> 32);
+	} else {
+		common->device_feature = 0;
+	}
+
+	q = common->queue_select;
+	if (q < common->num_queues && q < FAKE_MAX_QUEUES) {
+		common->queue_size = dev->QueueSize[q];
+		common->queue_notify_off = dev->QueueNotifyOff[q];
+	} else {
+		common->queue_size = 0;
+		common->queue_notify_off = 0;
+	}
+
+	/* Capture driver features written by the transport. */
+	sel = common->driver_feature_select;
+	if (sel == 0) {
+		dev->DriverFeatures = (dev->DriverFeatures & 0xFFFFFFFF00000000ull) | (UINT64)common->driver_feature;
+	} else if (sel == 1) {
+		dev->DriverFeatures = (dev->DriverFeatures & 0x00000000FFFFFFFFull) | ((UINT64)common->driver_feature << 32);
+	}
 }
 
 static void *OsSpinlockCreate(void *ctx)
@@ -407,6 +458,7 @@ static void TestNegotiateFeaturesOk(void)
 	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
 	assert((negotiated & ((UINT64)1u << 29)) == 0);
 	assert((negotiated & ((UINT64)1u << 34)) == 0);
+	assert(dev.DriverFeatures == negotiated);
 	assert((VirtioPciModernTransportGetStatus(&t) & (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK)) ==
 	       (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK));
 
@@ -423,7 +475,7 @@ static void TestNegotiateFeaturesRejectNoVersion1(void)
 
 	FakeDevInitValid(&dev);
 	/* device_features must include VIRTIO_F_VERSION_1 (bit 32). */
-	((volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000))->device_feature = 0;
+	dev.DeviceFeatures = 0;
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
@@ -446,7 +498,7 @@ static void TestNegotiateFeaturesStrictRejectEventIdxOffered(void)
 
 	FakeDevInitValid(&dev);
 	/* Contract v1 devices must not offer EVENT_IDX; STRICT rejects it. */
-	((volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000))->device_feature = (1u << 29) | 1u;
+	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 29);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
@@ -469,7 +521,7 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx(void)
 
 	FakeDevInitValid(&dev);
 	/* Device offers EVENT_IDX. COMPAT mode allows init + negotiation but must not accept it. */
-	((volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000))->device_feature = (1u << 29) | 1u;
+	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 29);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
@@ -481,6 +533,7 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx(void)
 	assert((negotiated & ((UINT64)1u << 29)) == 0);
 	assert((negotiated & ((UINT64)1u << 34)) == 0);
 	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
+	assert(dev.DriverFeatures == negotiated);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -495,7 +548,7 @@ static void TestNegotiateFeaturesStrictRejectPackedRingOffered(void)
 
 	FakeDevInitValid(&dev);
 	/* Contract v1 devices must not offer PACKED ring; STRICT rejects it. */
-	((volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000))->device_feature = 0x5u; /* VERSION_1 + PACKED */
+	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 34);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
@@ -518,7 +571,7 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing(void)
 
 	FakeDevInitValid(&dev);
 	/* Device offers PACKED ring. COMPAT mode allows init + negotiation but must not accept it. */
-	((volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000))->device_feature = 0x5u; /* VERSION_1 + PACKED */
+	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 34);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
@@ -529,6 +582,7 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing(void)
 	assert(st == STATUS_SUCCESS);
 	assert((negotiated & ((UINT64)1u << 34)) == 0);
 	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
+	assert(dev.DriverFeatures == negotiated);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -552,8 +606,6 @@ static void TestQueueSetupAndNotify(void)
 	assert(st == STATUS_SUCCESS);
 
 	common = (volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000);
-	common->queue_size = 8;
-	common->queue_notify_off = 0;
 
 	qsz = 0;
 	st = VirtioPciModernTransportGetQueueSize(&t, 0, &qsz);
@@ -577,7 +629,7 @@ static void TestQueueSetupAndNotify(void)
 	assert(*(UINT16 *)(dev.Bar0 + 0x1000) == 0);
 
 	/* STRICT: reject queue_notify_off mismatch at queue setup time. */
-	common->queue_notify_off = 5;
+	dev.QueueNotifyOff[0] = 5;
 	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa, avail_pa, used_pa);
 	assert(st == STATUS_NOT_SUPPORTED);
 
