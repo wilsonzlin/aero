@@ -136,11 +136,11 @@ use the opt-in legacy package in that case.
 
 ### Expected HWIDs (quick reference)
 
-| Mode | Expected HWID | INF | SYS |
-|---|---|---|---|
-| Aero contract v1 (modern-only; default build) | `PCI\VEN_1AF4&DEV_1059&REV_01` | `aero_virtio_snd.inf` | `aero_virtio_snd.sys` |
-| QEMU transitional (optional) | `PCI\VEN_1AF4&DEV_1018` (transitional; see Device Manager for full list) | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` |
-| QEMU transitional (I/O-port legacy; optional) | `PCI\VEN_1AF4&DEV_1018&REV_00` | `aero-virtio-snd-ioport.inf` | `virtiosnd_ioport.sys` |
+| Mode | Expected HWID | INF | SYS | Installed service |
+|---|---|---|---|---|
+| Aero contract v1 (modern-only; default build) | `PCI\VEN_1AF4&DEV_1059&REV_01` | `aero_virtio_snd.inf` | `aero_virtio_snd.sys` | `aero_virtio_snd` |
+| QEMU transitional (optional) | `PCI\VEN_1AF4&DEV_1018` (transitional; see Device Manager for full list) | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` | `aeroviosnd_legacy` |
+| QEMU transitional (I/O-port legacy; optional) | `PCI\VEN_1AF4&DEV_1018&REV_00` | `aero-virtio-snd-ioport.inf` | `virtiosnd_ioport.sys` | `aeroviosnd_ioport` |
 
 The shipped contract INF (`inf/aero_virtio_snd.inf`) is intentionally strict and matches only:
 
@@ -162,7 +162,7 @@ qemu-system-x86_64 -device virtio-sound-pci,help
 
 Development note: the repo also contains an optional legacy filename alias INF
 (`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf`, it installs the same
-driver/service and binds the same contract-v1 HWIDs as `aero_virtio_snd.inf`, but provides the legacy filename
+driver/service (`aero_virtio_snd`) and binds the same contract-v1 HWIDs as `aero_virtio_snd.inf`, but provides the legacy filename
 for compatibility with older tooling/workflows. The alias INF uses `CatalogFile = aero_virtio_snd.cat` and is
 checked in disabled-by-default to avoid shipping multiple INFs that match the same HWIDs. This legacy INF is
 not staged into the CI driver bundle.
