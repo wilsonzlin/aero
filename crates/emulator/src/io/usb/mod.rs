@@ -1,3 +1,9 @@
+//! Legacy/native USB stack (UHCI, hubs, HID, passthrough helpers).
+//!
+//! The canonical **browser/WASM** USB/UHCI implementation lives in `crates/aero-usb`
+//! (see `docs/adr/0015-canonical-usb-stack.md`). New browser-runtime USB work should
+//! not be implemented here to avoid accumulating parallel USB stacks.
+
 pub mod core;
 pub mod descriptor_fixups;
 pub mod hid;
