@@ -157,6 +157,22 @@ function validateBool(value: unknown, name: string, path: Path): void {
   }
 }
 
+function coerceU32Array(value: unknown): number[] {
+  if (value === null || value === undefined) return [];
+  let values: unknown[];
+  try {
+    values = Array.from(value as unknown as Iterable<unknown>);
+  } catch {
+    return [];
+  }
+  const out: number[] = [];
+  for (const v of values) {
+    if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0 || v > MAX_U32_NUM) continue;
+    out.push(v);
+  }
+  return out;
+}
+
 function normalizeCollectionType(type: HidCollectionTypeLike, path: Path): HidCollectionTypeCode {
   // Some environments surface numeric HID collection type codes directly, while others use the
   // WebHID string enum. Support both to keep the normalizer resilient to typing/library changes.
@@ -279,10 +295,14 @@ function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidRepo
     logicalMaximum: item.logicalMaximum ?? 0,
     physicalMinimum: item.physicalMinimum ?? 0,
     physicalMaximum: item.physicalMaximum ?? 0,
-    strings: Array.from(item.strings ?? []),
+    // WebHID type definitions are inconsistent about the `strings`/`designators` locals: some
+    // model them as string arrays, while others use numeric indices. We don't currently
+    // synthesize these tags, but we still want the normalized JSON contract to match the Rust
+    // schema shape (u32 arrays). Filter non-u32 entries rather than throwing.
+    strings: coerceU32Array((item as unknown as { strings?: unknown }).strings),
     stringMinimum: item.stringMinimum ?? 0,
     stringMaximum: item.stringMaximum ?? 0,
-    designators: Array.from(item.designators ?? []),
+    designators: coerceU32Array((item as unknown as { designators?: unknown }).designators),
     designatorMinimum: item.designatorMinimum ?? 0,
     designatorMaximum: item.designatorMaximum ?? 0,
 

@@ -125,6 +125,25 @@ test("normalizeCollections(validate): rejects non-boolean isAbsolute with a path
   });
 });
 
+test("normalizeCollections(validate): coerces non-numeric strings/designators locals to empty arrays", () => {
+  const badItem = {
+    ...BASE_ITEM,
+    strings: ["foo"] as unknown as never,
+    designators: ["bar"] as unknown as never,
+  } as unknown as HidReportItem;
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 0, items: [badItem] }],
+    },
+  ];
+
+  const normalized = normalizeCollections(collections, { validate: true });
+  const item = normalized[0]!.inputReports[0]!.items[0]!;
+  assert.deepStrictEqual(item.strings, []);
+  assert.deepStrictEqual(item.designators, []);
+});
+
 test("normalizeCollections(validate): rejects logicalMinimum outside i32 with a path", () => {
   const collections: HidCollectionInfo[] = [
     {
