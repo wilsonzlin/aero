@@ -3893,6 +3893,12 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
   std::memset(pCaps->pData, 0, pCaps->DataSize);
 
   switch (pCaps->Type) {
+    case D3D10DDICAPS_TYPE_D3D10_FEATURE_LEVEL:
+      if (pCaps->DataSize >= sizeof(D3D10_FEATURE_LEVEL1)) {
+        *reinterpret_cast<D3D10_FEATURE_LEVEL1*>(pCaps->pData) = D3D10_FEATURE_LEVEL_10_0;
+      }
+      break;
+
     case D3D10DDICAPS_TYPE_FORMAT_SUPPORT:
       if (pCaps->DataSize >= sizeof(D3D10DDIARG_FORMAT_SUPPORT)) {
         auto* fmt = reinterpret_cast<D3D10DDIARG_FORMAT_SUPPORT*>(pCaps->pData);
