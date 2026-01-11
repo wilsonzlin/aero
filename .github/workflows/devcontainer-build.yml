@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".devcontainer/**"
+      - ".nvmrc"
       - "scripts/agent-env.sh"
       - "scripts/toolchains.json"
       - "rust-toolchain.toml"
@@ -13,6 +14,7 @@ on:
     branches: [main]
     paths:
       - ".devcontainer/**"
+      - ".nvmrc"
       - "scripts/agent-env.sh"
       - "scripts/toolchains.json"
       - "rust-toolchain.toml"
