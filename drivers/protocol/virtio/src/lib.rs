@@ -137,6 +137,86 @@ pub struct VirtioNetHdrMrgRxbuf {
   pub num_buffers: u16,
 }
 
+// virtio-snd (Paravirtual Audio) protocol.
+pub const VIRTIO_SND_R_PCM_INFO: u32 = 0x0100;
+pub const VIRTIO_SND_R_PCM_SET_PARAMS: u32 = 0x0101;
+pub const VIRTIO_SND_R_PCM_PREPARE: u32 = 0x0102;
+pub const VIRTIO_SND_R_PCM_RELEASE: u32 = 0x0103;
+pub const VIRTIO_SND_R_PCM_START: u32 = 0x0104;
+pub const VIRTIO_SND_R_PCM_STOP: u32 = 0x0105;
+
+pub const VIRTIO_SND_S_OK: u32 = 0;
+pub const VIRTIO_SND_S_BAD_MSG: u32 = 1;
+pub const VIRTIO_SND_S_NOT_SUPP: u32 = 2;
+pub const VIRTIO_SND_S_IO_ERR: u32 = 3;
+
+pub const VIRTIO_SND_PCM_FMT_S16: u8 = 0x05;
+pub const VIRTIO_SND_PCM_RATE_48000: u8 = 0x07;
+
+pub const VIRTIO_SND_D_OUTPUT: u8 = 0x00;
+
+/// virtio-snd PCM_INFO request (`struct virtio_snd_pcm_info_req`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioSndPcmInfoReq {
+  pub code: u32,
+  pub start_id: u32,
+  pub count: u32,
+}
+
+/// virtio-snd PCM_SET_PARAMS request (`struct virtio_snd_pcm_set_params`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioSndPcmSetParamsReq {
+  pub code: u32,
+  pub stream_id: u32,
+  pub buffer_bytes: u32,
+  pub period_bytes: u32,
+  pub features: u32,
+  pub channels: u8,
+  pub format: u8,
+  pub rate: u8,
+  pub padding: u8,
+}
+
+/// virtio-snd request containing only a stream id (`struct virtio_snd_pcm_hdr`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioSndPcmSimpleReq {
+  pub code: u32,
+  pub stream_id: u32,
+}
+
+/// virtio-snd PCM stream information (`struct virtio_snd_pcm_info`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioSndPcmInfo {
+  pub stream_id: u32,
+  pub features: u32,
+  pub formats: u64,
+  pub rates: u64,
+  pub direction: u8,
+  pub channels_min: u8,
+  pub channels_max: u8,
+  pub reserved: [u8; 5],
+}
+
+/// virtio-snd TX header (`struct virtio_snd_pcm_xfer` header portion).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioSndTxHdr {
+  pub stream_id: u32,
+  pub reserved: u32,
+}
+
+/// virtio-snd PCM status (`struct virtio_snd_pcm_status`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioSndPcmStatus {
+  pub status: u32,
+  pub latency_bytes: u32,
+}
+
 #[cfg(test)]
 extern crate std;
 
@@ -211,5 +291,61 @@ mod tests {
     assert_eq!(size_of::<VirtioNetHdrMrgRxbuf>(), 12);
     assert_eq!(offset_of!(VirtioNetHdrMrgRxbuf, hdr), 0);
     assert_eq!(offset_of!(VirtioNetHdrMrgRxbuf, num_buffers), 10);
+  }
+
+  #[test]
+  fn virtio_snd_pcm_info_req_layout() {
+    assert_eq!(size_of::<VirtioSndPcmInfoReq>(), 12);
+    assert_eq!(offset_of!(VirtioSndPcmInfoReq, code), 0);
+    assert_eq!(offset_of!(VirtioSndPcmInfoReq, start_id), 4);
+    assert_eq!(offset_of!(VirtioSndPcmInfoReq, count), 8);
+  }
+
+  #[test]
+  fn virtio_snd_pcm_set_params_req_layout() {
+    assert_eq!(size_of::<VirtioSndPcmSetParamsReq>(), 24);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, code), 0);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, stream_id), 4);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, buffer_bytes), 8);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, period_bytes), 12);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, features), 16);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, channels), 20);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, format), 21);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, rate), 22);
+    assert_eq!(offset_of!(VirtioSndPcmSetParamsReq, padding), 23);
+  }
+
+  #[test]
+  fn virtio_snd_pcm_simple_req_layout() {
+    assert_eq!(size_of::<VirtioSndPcmSimpleReq>(), 8);
+    assert_eq!(offset_of!(VirtioSndPcmSimpleReq, code), 0);
+    assert_eq!(offset_of!(VirtioSndPcmSimpleReq, stream_id), 4);
+  }
+
+  #[test]
+  fn virtio_snd_pcm_info_layout() {
+    assert_eq!(size_of::<VirtioSndPcmInfo>(), 32);
+    assert_eq!(offset_of!(VirtioSndPcmInfo, stream_id), 0);
+    assert_eq!(offset_of!(VirtioSndPcmInfo, features), 4);
+    assert_eq!(offset_of!(VirtioSndPcmInfo, formats), 8);
+    assert_eq!(offset_of!(VirtioSndPcmInfo, rates), 16);
+    assert_eq!(offset_of!(VirtioSndPcmInfo, direction), 24);
+    assert_eq!(offset_of!(VirtioSndPcmInfo, channels_min), 25);
+    assert_eq!(offset_of!(VirtioSndPcmInfo, channels_max), 26);
+    assert_eq!(offset_of!(VirtioSndPcmInfo, reserved), 27);
+  }
+
+  #[test]
+  fn virtio_snd_tx_hdr_layout() {
+    assert_eq!(size_of::<VirtioSndTxHdr>(), 8);
+    assert_eq!(offset_of!(VirtioSndTxHdr, stream_id), 0);
+    assert_eq!(offset_of!(VirtioSndTxHdr, reserved), 4);
+  }
+
+  #[test]
+  fn virtio_snd_pcm_status_layout() {
+    assert_eq!(size_of::<VirtioSndPcmStatus>(), 8);
+    assert_eq!(offset_of!(VirtioSndPcmStatus, status), 0);
+    assert_eq!(offset_of!(VirtioSndPcmStatus, latency_bytes), 4);
   }
 }
