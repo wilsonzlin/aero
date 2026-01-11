@@ -129,6 +129,11 @@ let didIoDemo = false;
 
 let irqBitmapLo = 0;
 let irqBitmapHi = 0;
+// Per-IRQ reference counts so multiple devices can share a legacy PIC line.
+// The I/O worker emits `irqRaise`/`irqLower` as level transitions for each device.
+// Maintaining a refcount avoids one device deasserting an IRQ line while another
+// is still asserting it.
+const irqRefCounts = new Uint16Array(256);
 
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
@@ -1058,6 +1063,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       ioNetRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
       irqBitmapLo = 0;
       irqBitmapHi = 0;
+      irqRefCounts.fill(0);
       Atomics.store(status, StatusIndex.CpuIrqBitmapLo, 0);
       Atomics.store(status, StatusIndex.CpuIrqBitmapHi, 0);
       Atomics.store(status, StatusIndex.CpuA20Enabled, 0);
@@ -1065,13 +1071,19 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         onIrq: (irq, level) => {
           perf.instant("cpu:io:irq", "t", { irq, level });
           const idx = irq & 0xff;
+          if (level) {
+            if (irqRefCounts[idx] !== 0xffff) irqRefCounts[idx] += 1;
+          } else if (irqRefCounts[idx] > 0) {
+            irqRefCounts[idx] -= 1;
+          }
+          const asserted = irqRefCounts[idx] > 0;
           if (idx < 32) {
             const bit = 1 << idx;
-            irqBitmapLo = level ? (irqBitmapLo | bit) >>> 0 : (irqBitmapLo & ~bit) >>> 0;
+            irqBitmapLo = asserted ? (irqBitmapLo | bit) >>> 0 : (irqBitmapLo & ~bit) >>> 0;
             Atomics.store(status, StatusIndex.CpuIrqBitmapLo, irqBitmapLo | 0);
           } else if (idx < 64) {
             const bit = 1 << (idx - 32);
-            irqBitmapHi = level ? (irqBitmapHi | bit) >>> 0 : (irqBitmapHi & ~bit) >>> 0;
+            irqBitmapHi = asserted ? (irqBitmapHi | bit) >>> 0 : (irqBitmapHi & ~bit) >>> 0;
             Atomics.store(status, StatusIndex.CpuIrqBitmapHi, irqBitmapHi | 0);
           }
         },
