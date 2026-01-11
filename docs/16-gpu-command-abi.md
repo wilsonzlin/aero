@@ -1,248 +1,316 @@
-# 16 - Experimental Virtual GPU Device + Command ABI (`aero-gpu-device`)
+# 16 - AeroGPU Guest↔Emulator Protocol (PCI/MMIO + Submission Ring + Command Stream)
 
-> Status: **experimental / legacy**.
->
-> This document describes the standalone ABI used by `crates/aero-gpu-device` for
-> deterministic host-side tests and trace plumbing.
->
-> It is **NOT** the canonical Windows 7 WDDM AeroGPU guest↔emulator protocol.
+This document describes the **canonical AeroGPU ABI** used by the Windows 7 AeroGPU WDDM
+driver stack and the Aero emulator’s virtual GPU device model.
 
-This document defines an **experimental** emulator-side virtual GPU device model and a guest↔host GPU command ABI.
+## Normative source-of-truth (and generated mirrors)
 
-## Canonical AeroGPU WDDM ABI (source of truth)
+The normative, versioned ABI is the C headers under [`drivers/aerogpu/protocol/`](../drivers/aerogpu/protocol/):
 
-Contributors working on the real Windows 7 WDDM AeroGPU path should use the protocol headers under:
+- [`drivers/aerogpu/protocol/README.md`](../drivers/aerogpu/protocol/README.md) – high-level overview and versioning rules
+- [`drivers/aerogpu/protocol/aerogpu_pci.h`](../drivers/aerogpu/protocol/aerogpu_pci.h) – PCI IDs, BAR0 size, MMIO register map, shared enums
+- [`drivers/aerogpu/protocol/aerogpu_ring.h`](../drivers/aerogpu/protocol/aerogpu_ring.h) – submission ring, submit descriptor, allocation table, fence page
+- [`drivers/aerogpu/protocol/aerogpu_cmd.h`](../drivers/aerogpu/protocol/aerogpu_cmd.h) – command stream packet formats (“AeroGPU IR”)
 
-- [`drivers/aerogpu/protocol/README.md`](../drivers/aerogpu/protocol/README.md)
-  - `aerogpu_pci.h` (PCI IDs + BAR/MMIO)
-  - `aerogpu_ring.h` (submission ring + fences)
-  - `aerogpu_cmd.h` (command stream packets)
-- [`emulator/protocol`](../emulator/protocol) (Rust/TypeScript mirror of the headers)
-- `crates/emulator/src/devices/pci/aerogpu.rs` (emulator implementation)
+Host-side mirrors are provided for parsing/validation:
 
-See [`docs/graphics/aerogpu-protocols.md`](./graphics/aerogpu-protocols.md) for an overview of similarly named
-in-tree protocols.
+- [`emulator/protocol/aerogpu/*.rs`](../emulator/protocol/aerogpu/)
+- [`emulator/protocol/aerogpu/*.ts`](../emulator/protocol/aerogpu/)
 
-The canonical WDDM AeroGPU device models use project-specific (non-PCI-SIG) PCI IDs.
-For the full rationale (why there are two) and the mapping to ABIs/device models, see:
+Related repository docs:
 
-- [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)
+- [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) – mapping of PCI IDs ↔ ABI generations
+- [`docs/graphics/aerogpu-protocols.md`](./graphics/aerogpu-protocols.md) – overview of similarly named protocols
 
-- `0xA3A0:0x0001` – new, versioned ABI (`drivers/aerogpu/protocol/aerogpu_pci.h`)
-- `0x1AED:0x0001` – legacy bring-up ABI (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
+Implementation reference (emulator): `crates/emulator/src/devices/pci/aerogpu.rs`.
 
-## Source of truth (this experimental ABI)
-
-- `crates/aero-gpu-device/src/abi.rs` (FourCC `"AGRN"`/`"AGPC"`)
+If this document disagrees with the headers, **the headers win**.
 
 ---
 
-## 1. Transport: PCI device + MMIO + doorbell
+## 1. PCI identity
 
-The GPU is exposed to the guest as a PCI device with a single MMIO BAR.
+Defined in `aerogpu_pci.h`:
 
-### PCI identification
-
-- Experimental PCI vendor ID: `0xA0E0` *(used only by `aero-gpu-device`, not by the Win7 WDDM driver stack)*
-- Device ID: `0x0001`
+- Vendor ID: `0xA3A0` (`AEROGPU_PCI_VENDOR_ID`)
+- Device ID: `0x0001` (`AEROGPU_PCI_DEVICE_ID`)
+- Subsystem vendor ID: `0xA3A0` (`AEROGPU_PCI_SUBSYSTEM_VENDOR_ID`)
+- Subsystem ID: `0x0001` (`AEROGPU_PCI_SUBSYSTEM_ID`)
 - Class code: `0x03` (Display controller)
-- Subclass: `0x02` (3D controller)
-- BAR0: MMIO registers, 4 KiB
+- Subclass: `0x00` (VGA compatible controller)
+- Programming interface: `0x00`
 
-These values are defined in `aero_gpu_device::abi::pci`.
+BARs:
 
-### Interrupts
-
-The device raises an interrupt when new completion entries are available.
-
-In the current implementation this is modeled as a single INTx-style interrupt line (MSI/MSI-X can be added later without changing the command stream).
+- BAR0: MMIO register block, **64 KiB** (`AEROGPU_PCI_BAR0_SIZE_BYTES`)
 
 ---
 
-## 2. Shared memory regions (guest physical)
+## 2. BAR0 / MMIO register map
 
-The guest allocates shared buffers in guest RAM and programs their **guest physical** base addresses via MMIO:
+Rules (from `aerogpu_pci.h`):
 
-1. **Command ring** (guest → host): variable-length command records.
-2. **Completion ring** (host → guest): variable-length completion records.
-3. **Descriptor region** (guest → host): optional blob storage for future large descriptors/shader bytecode.
+- All registers are **little-endian**.
+- MMIO registers are **32-bit** wide unless documented otherwise.
+- 64-bit values are split into consecutive `*_LO` / `*_HI` 32-bit halves.
 
-The current tests use host-side “synthetic guest” code to write into these rings to validate the ABI end-to-end.
+### 2.1 Discovery / feature registers
 
----
-
-## 3. MMIO register map (BAR0)
-
-All registers are little-endian `u32` accesses.
-
-| Offset | Name | R/W | Description |
+| Offset | Name | Access | Description |
 |---:|---|:--:|---|
-| `0x000` | `REG_ABI_VERSION` | R | `(ABI_MAJOR<<16) \| ABI_MINOR` |
-| `0x100/0x104` | `REG_CMD_RING_BASE_{LO,HI}` | W | Guest physical base address of command ring |
-| `0x108` | `REG_CMD_RING_SIZE` | W | Expected ring size (bytes). Host verifies it matches the ring header. |
-| `0x110/0x114` | `REG_CPL_RING_BASE_{LO,HI}` | W | Guest physical base address of completion ring |
-| `0x118` | `REG_CPL_RING_SIZE` | W | Expected ring size (bytes). |
-| `0x120/0x124` | `REG_DESC_BASE_{LO,HI}` | W | Guest physical base address of descriptor region (optional) |
-| `0x128` | `REG_DESC_SIZE` | W | Size of descriptor region (bytes) |
-| `0x200` | `REG_DOORBELL` | W | Write any value to trigger command processing (batched) |
-| `0x300` | `REG_INT_STATUS` | R | Pending interrupt bits |
-| `0x304` | `REG_INT_MASK` | R/W | Interrupt enable mask |
-| `0x308` | `REG_INT_ACK` | W | Write-1-to-clear interrupt bits |
-| `0x310/0x314` | `REG_LAST_COMPLETED_SEQ_{LO,HI}` | R | Last completed command sequence number |
-| `0x318/0x31C` | `REG_LAST_FAULT_SEQ_{LO,HI}` | R | Last faulting command sequence number |
+| `0x0000` | `AEROGPU_MMIO_REG_MAGIC` | RO | Must read as `AEROGPU_MMIO_MAGIC` (`0x55504741`, `"AGPU"` LE) |
+| `0x0004` | `AEROGPU_MMIO_REG_ABI_VERSION` | RO | `AEROGPU_ABI_VERSION_U32` (`(ABI_MAJOR<<16) \| ABI_MINOR`) |
+| `0x0008` | `AEROGPU_MMIO_REG_FEATURES_LO` | RO | Low 32 bits of the 64-bit feature mask |
+| `0x000C` | `AEROGPU_MMIO_REG_FEATURES_HI` | RO | High 32 bits of the 64-bit feature mask |
 
-Interrupt bits:
+Feature bits (`FEATURES_LO/HI` combined as a 64-bit value):
 
-- `INT_STATUS_CPL_AVAIL` (bit 0): completion entries are available
-- `INT_STATUS_FAULT` (bit 1): at least one command completed with a non-OK status
+- `AEROGPU_FEATURE_FENCE_PAGE` (bit 0): shared fence page is supported
+- `AEROGPU_FEATURE_CURSOR` (bit 1): cursor registers are implemented
+- `AEROGPU_FEATURE_SCANOUT` (bit 2): scanout registers are implemented
+- `AEROGPU_FEATURE_VBLANK` (bit 3): vblank IRQ + vblank timing registers are implemented (see [`vblank.md`](../drivers/aerogpu/protocol/vblank.md))
+
+### 2.2 Ring programming + doorbell
+
+| Offset | Name | Access | Description |
+|---:|---|:--:|---|
+| `0x0100` | `AEROGPU_MMIO_REG_RING_GPA_LO` | RW | Guest physical address of the `aerogpu_ring_header` (low 32 bits) |
+| `0x0104` | `AEROGPU_MMIO_REG_RING_GPA_HI` | RW | Guest physical address of the `aerogpu_ring_header` (high 32 bits) |
+| `0x0108` | `AEROGPU_MMIO_REG_RING_SIZE_BYTES` | RW | Total bytes mapped at `RING_GPA` (must match `aerogpu_ring_header.size_bytes`) |
+| `0x010C` | `AEROGPU_MMIO_REG_RING_CONTROL` | RW | Ring control bits |
+| `0x0200` | `AEROGPU_MMIO_REG_DOORBELL` | WO | Write any value to notify the device that new submissions are available |
+
+`AEROGPU_MMIO_REG_RING_CONTROL` bits:
+
+- `AEROGPU_RING_CONTROL_ENABLE` (bit 0): driver sets to 1 after ring init/programming
+- `AEROGPU_RING_CONTROL_RESET` (bit 1): write 1 to request a ring reset
+
+### 2.3 Fence / completion registers
+
+| Offset | Name | Access | Description |
+|---:|---|:--:|---|
+| `0x0120` | `AEROGPU_MMIO_REG_FENCE_GPA_LO` | RW | GPA of `aerogpu_fence_page` (low 32 bits), if `AEROGPU_FEATURE_FENCE_PAGE` |
+| `0x0124` | `AEROGPU_MMIO_REG_FENCE_GPA_HI` | RW | GPA of `aerogpu_fence_page` (high 32 bits) |
+| `0x0130` | `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO` | RO | Completed fence value (low 32 bits) |
+| `0x0134` | `AEROGPU_MMIO_REG_COMPLETED_FENCE_HI` | RO | Completed fence value (high 32 bits) |
+
+### 2.4 Interrupt registers
+
+| Offset | Name | Access | Description |
+|---:|---|:--:|---|
+| `0x0300` | `AEROGPU_MMIO_REG_IRQ_STATUS` | RO | Pending IRQ cause bits |
+| `0x0304` | `AEROGPU_MMIO_REG_IRQ_ENABLE` | RW | IRQ enable mask |
+| `0x0308` | `AEROGPU_MMIO_REG_IRQ_ACK` | WO | Write-1-to-clear (W1C) `IRQ_STATUS` bits |
+
+IRQ bits (`IRQ_STATUS` / `IRQ_ENABLE`):
+
+- `AEROGPU_IRQ_FENCE` (bit 0): completed fence advanced
+- `AEROGPU_IRQ_SCANOUT_VBLANK` (bit 1): scanout vblank tick (only if `AEROGPU_FEATURE_VBLANK`)
+- `AEROGPU_IRQ_ERROR` (bit 31): fatal device error
+
+The interrupt line is asserted when `(IRQ_STATUS & IRQ_ENABLE) != 0`.
+
+### 2.5 Scanout 0 registers (framebuffer + timing)
+
+> These registers are present only when `AEROGPU_FEATURE_SCANOUT` is set.
+
+Scanout configuration:
+
+| Offset | Name | Access | Description |
+|---:|---|:--:|---|
+| `0x0400` | `AEROGPU_MMIO_REG_SCANOUT0_ENABLE` | RW | 0/1 |
+| `0x0404` | `AEROGPU_MMIO_REG_SCANOUT0_WIDTH` | RW | Width in pixels |
+| `0x0408` | `AEROGPU_MMIO_REG_SCANOUT0_HEIGHT` | RW | Height in pixels |
+| `0x040C` | `AEROGPU_MMIO_REG_SCANOUT0_FORMAT` | RW | `enum aerogpu_format` |
+| `0x0410` | `AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES` | RW | Bytes per row |
+| `0x0414` | `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO` | RW | Framebuffer GPA (low 32 bits) |
+| `0x0418` | `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI` | RW | Framebuffer GPA (high 32 bits) |
+
+Vblank timing registers (only when `AEROGPU_FEATURE_VBLANK` is set; see `vblank.md` for semantics):
+
+| Offset | Name | Access | Description |
+|---:|---|:--:|---|
+| `0x0420` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO` | RO | Vblank sequence (low 32 bits) |
+| `0x0424` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI` | RO | Vblank sequence (high 32 bits) |
+| `0x0428` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO` | RO | Last vblank time in ns (low 32 bits) |
+| `0x042C` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI` | RO | Last vblank time in ns (high 32 bits) |
+| `0x0430` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS` | RO | Nominal vblank period in ns |
+
+### 2.6 Cursor registers
+
+> These registers are present only when `AEROGPU_FEATURE_CURSOR` is set.
+
+| Offset | Name | Access | Description |
+|---:|---|:--:|---|
+| `0x0500` | `AEROGPU_MMIO_REG_CURSOR_ENABLE` | RW | 0/1 |
+| `0x0504` | `AEROGPU_MMIO_REG_CURSOR_X` | RW | Signed X position (pixels) |
+| `0x0508` | `AEROGPU_MMIO_REG_CURSOR_Y` | RW | Signed Y position (pixels) |
+| `0x050C` | `AEROGPU_MMIO_REG_CURSOR_HOT_X` | RW | Hotspot X |
+| `0x0510` | `AEROGPU_MMIO_REG_CURSOR_HOT_Y` | RW | Hotspot Y |
+| `0x0514` | `AEROGPU_MMIO_REG_CURSOR_WIDTH` | RW | Width in pixels |
+| `0x0518` | `AEROGPU_MMIO_REG_CURSOR_HEIGHT` | RW | Height in pixels |
+| `0x051C` | `AEROGPU_MMIO_REG_CURSOR_FORMAT` | RW | `enum aerogpu_format` |
+| `0x0520` | `AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO` | RW | Cursor framebuffer GPA (low 32 bits) |
+| `0x0524` | `AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI` | RW | Cursor framebuffer GPA (high 32 bits) |
+| `0x0528` | `AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES` | RW | Bytes per row |
 
 ---
 
-## 4. Ring buffer layout
+## 3. Submission transport: shared ring + submit descriptors
 
-Both command and completion rings use the same byte-ring structure:
+The device uses a single shared submission ring in guest memory.
+Completion is signaled via a **monotonic 64-bit fence**.
+
+Ring and submission structs are defined in `aerogpu_ring.h`.
+
+### 3.1 Ring layout (`struct aerogpu_ring_header`)
+
+The ring is a contiguous guest memory region starting at `RING_GPA`:
 
 ```
-base_paddr:
-  +0x00  GpuRingHeader (64 bytes)
-  +0x40  data[ring_size_bytes]
+ring_gpa:
+  +0x00  struct aerogpu_ring_header (64 bytes)
+  +0x40  struct aerogpu_submit_desc entries[entry_count]
 ```
 
-### `GpuRingHeader` (64 bytes)
+`aerogpu_ring_header` fields (packed; 64 bytes total):
 
-Fields:
+| Offset | Type | Field | Notes |
+|---:|---|---|---|
+| `0x00` | `u32` | `magic` | Must be `AEROGPU_RING_MAGIC` (`0x474E5241`, `"ARNG"` LE) |
+| `0x04` | `u32` | `abi_version` | Must be `AEROGPU_ABI_VERSION_U32` |
+| `0x08` | `u32` | `size_bytes` | Total bytes of the ring mapping |
+| `0x0C` | `u32` | `entry_count` | Number of slots; must be power-of-two |
+| `0x10` | `u32` | `entry_stride_bytes` | Must be `sizeof(struct aerogpu_submit_desc)` |
+| `0x14` | `u32` | `flags` | Reserved (0) |
+| `0x18` | `volatile u32` | `head` | Device-owned; monotonically increasing submission index |
+| `0x1C` | `volatile u32` | `tail` | Driver-owned; monotonically increasing submission index |
+| `0x20` | `u32` | `reserved0` | Must be 0 |
+| `0x24` | `u32` | `reserved1` | Must be 0 |
+| `0x28` | `u64[3]` | `reserved2` | Must be 0 |
 
-- `magic`: `"AGRN"`
-- `abi_major`, `abi_minor`: ABI version for the ring
-- `ring_size_bytes`: size of the data region (must be ≥ 256 and 8-byte aligned)
-- `head`, `tail`: byte offsets within the data region
+Head/tail semantics:
 
-`head` is written by the consumer, `tail` by the producer.
+- `head` and `tail` are **monotonic indices** (not masked).
+- The ring slot for an index is `(index % entry_count)`.
+- The driver must not advance `tail` so far that it would overwrite unconsumed entries
+  (i.e. it must ensure `(tail - head) < entry_count` modulo `u32` wraparound rules).
 
-### Ring records
+### 3.2 Submitting work
 
-The data region contains a sequence of variable-length **records**.
+For each submission:
 
-Every record begins with:
+1. Write an `aerogpu_submit_desc` into slot `(tail % entry_count)`.
+2. Increment `ring->tail` by 1.
+3. Write any value to `AEROGPU_MMIO_REG_DOORBELL`.
+
+The device consumes entries in order, updating `ring->head`.
+
+### 3.3 Submission descriptor (`struct aerogpu_submit_desc`)
+
+The submit descriptor is fixed-size (packed; 64 bytes):
+
+| Offset | Type | Field | Description |
+|---:|---|---|---|
+| `0x00` | `u32` | `desc_size_bytes` | Must be `sizeof(struct aerogpu_submit_desc)` (64) |
+| `0x04` | `u32` | `flags` | `enum aerogpu_submit_flags` |
+| `0x08` | `u32` | `context_id` | Driver-defined (0 for now) |
+| `0x0C` | `u32` | `engine_id` | `enum aerogpu_engine_id` (only `AEROGPU_ENGINE_0`) |
+| `0x10` | `u64` | `cmd_gpa` | Command buffer guest physical address |
+| `0x18` | `u32` | `cmd_size_bytes` | Command buffer size in bytes |
+| `0x1C` | `u32` | `cmd_reserved0` | Must be 0 |
+| `0x20` | `u64` | `alloc_table_gpa` | Optional allocation table GPA (0 if not present) |
+| `0x28` | `u32` | `alloc_table_size_bytes` | Optional allocation table size (0 if not present) |
+| `0x2C` | `u32` | `alloc_table_reserved0` | Must be 0 |
+| `0x30` | `u64` | `signal_fence` | Fence value to signal when the submission completes |
+| `0x38` | `u64` | `reserved0` | Must be 0 |
+
+Submission flags (`enum aerogpu_submit_flags`):
+
+- `AEROGPU_SUBMIT_FLAG_PRESENT` (bit 0): submission contains a present (hint for scheduling/pacing)
+- `AEROGPU_SUBMIT_FLAG_NO_IRQ` (bit 1): do not raise a fence IRQ for this submission
+
+### 3.4 Optional allocation table
+
+Each submission may reference a sideband allocation table, allowing commands to refer to guest memory via small `alloc_id`s.
+
+The table is a guest-memory blob at `alloc_table_gpa` with:
+
+1. `struct aerogpu_alloc_table_header` (magic `"ALOC"`)
+2. `struct aerogpu_alloc_entry entries[entry_count]`
+
+See `aerogpu_ring.h` for the exact structs and validation rules.
+
+### 3.5 Fence / completion model (+ optional fence page)
+
+Fences are monotonic 64-bit values chosen by the guest driver:
+
+- Each submission provides `signal_fence`.
+- Once that submission finishes, the device updates the completed fence to at least that value.
+
+Completion is observable via:
+
+- MMIO `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO/HI` (**always available**), and
+- optionally a shared `struct aerogpu_fence_page` if the device reports `AEROGPU_FEATURE_FENCE_PAGE`
+  and the driver programs `AEROGPU_MMIO_REG_FENCE_GPA_LO/HI`.
+
+If interrupts are enabled, the device raises `AEROGPU_IRQ_FENCE` when the completed fence advances
+(unless the submission requested `AEROGPU_SUBMIT_FLAG_NO_IRQ`).
+
+### 3.6 Optional fence page (`struct aerogpu_fence_page`)
+
+If the device reports `AEROGPU_FEATURE_FENCE_PAGE`, the driver may program
+`AEROGPU_MMIO_REG_FENCE_GPA_LO/HI` with the GPA of a guest page containing:
+
+- `magic = AEROGPU_FENCE_PAGE_MAGIC` (`0x434E4546`, `"FENC"` LE)
+- `abi_version = AEROGPU_ABI_VERSION_U32`
+- `completed_fence` (volatile `u64`)
+
+`aerogpu_fence_page` fields (packed; 56 bytes used, but the mapping should be a single 4 KiB guest page):
+
+| Offset | Type | Field | Notes |
+|---:|---|---|---|
+| `0x00` | `u32` | `magic` | Must be `AEROGPU_FENCE_PAGE_MAGIC` |
+| `0x04` | `u32` | `abi_version` | Must be `AEROGPU_ABI_VERSION_U32` |
+| `0x08` | `volatile u64` | `completed_fence` | Mirrors MMIO `COMPLETED_FENCE_*` |
+| `0x10` | `u64[5]` | `reserved0` | Must be 0 |
+
+---
+
+## 4. Command stream (“AeroGPU IR”)
+
+Command buffers are byte streams in guest memory, referenced by:
+
+- `aerogpu_submit_desc::cmd_gpa`
+- `aerogpu_submit_desc::cmd_size_bytes`
+
+Command formats are defined in `aerogpu_cmd.h`.
+
+### 4.1 Stream header (`struct aerogpu_cmd_stream_header`)
+
+Every command buffer begins with:
+
+- `magic = AEROGPU_CMD_STREAM_MAGIC` (`0x444D4341`, `"ACMD"` LE)
+- `abi_version = AEROGPU_ABI_VERSION_U32`
+
+The header includes `size_bytes`, the total bytes in the stream including the header, and must
+have all reserved fields zeroed.
+
+### 4.2 Packet framing (`struct aerogpu_cmd_hdr`)
+
+After the stream header is a sequence of packets, each beginning with:
 
 ```
-u32 magic
-u32 size_bytes   // total record size including this header
+struct aerogpu_cmd_hdr {
+  u32 opcode;     // enum aerogpu_cmd_opcode
+  u32 size_bytes; // total packet size including this header
+};
 ```
 
-Records must be 8-byte aligned (`size_bytes % 8 == 0`).
+Forward-compat rules (from `aerogpu_cmd.h`):
 
-To wrap to the beginning of the ring without allowing a record to span the end, the producer writes a pad record:
+- `size_bytes` **includes** the packet header.
+- `size_bytes` must be `>= sizeof(aerogpu_cmd_hdr)` and **4-byte aligned**.
+- Unknown opcodes must be **skipped** using `size_bytes` (do not treat as fatal).
 
-- `magic = "AGPD"`
-- `size_bytes = remaining_bytes_to_end`
-
-The consumer treats `"AGPD"` as an internal marker and resets `head` to 0.
-
----
-
-## 5. Command records (guest → host)
-
-Command record magic: `"AGPC"`
-
-Header layout (`GpuCmdHeader`, 24 bytes total):
-
-| Offset | Type | Field |
-|---:|---|---|
-| 0x00 | `u32` | magic (`"AGPC"`) |
-| 0x04 | `u32` | size_bytes |
-| 0x08 | `u16` | opcode |
-| 0x0A | `u16` | flags (reserved) |
-| 0x0C | `u16` | abi_major |
-| 0x0E | `u16` | abi_minor |
-| 0x10 | `u64` | seq |
-| 0x18 | bytes | payload |
-
-Unknown opcodes are completed with status `UNSUPPORTED` and the device continues processing subsequent commands.
-
----
-
-## 6. Completion records (host → guest)
-
-Completion record magic: `"AGCP"`
-
-Header layout (`GpuCompletion`, 24 bytes total):
-
-| Offset | Type | Field |
-|---:|---|---|
-| 0x00 | `u32` | magic (`"AGCP"`) |
-| 0x04 | `u32` | size_bytes |
-| 0x08 | `u64` | seq |
-| 0x10 | `u16` | opcode |
-| 0x12 | `u16` | reserved |
-| 0x14 | `u32` | status |
-
-Status codes:
-
-- `0`: OK
-- `1`: INVALID_COMMAND
-- `2`: INVALID_RESOURCE
-- `3`: OUT_OF_BOUNDS
-- `4`: UNSUPPORTED
-
----
-
-## 7. Supported opcodes (v1.0)
-
-Early milestones are focused on “draw a triangle and present”.
-
-### Resource management
-
-- `CREATE_BUFFER`
-- `DESTROY_BUFFER`
-- `WRITE_BUFFER` / `READ_BUFFER`
-- `CREATE_TEXTURE2D`
-- `DESTROY_TEXTURE`
-- `WRITE_TEXTURE2D` / `READ_TEXTURE2D`
-
-#### Usage bit expectations (enforced by the WebGPU backend)
-
-To keep the ABI explicit and make backends validate intent:
-
-- `WRITE_BUFFER` requires the buffer to have `TRANSFER_DST`.
-- `READ_BUFFER` requires the buffer to have `TRANSFER_SRC`.
-- `WRITE_TEXTURE2D` requires the texture to have `TRANSFER_DST`.
-- `READ_TEXTURE2D` and `PRESENT` require the texture to have `TRANSFER_SRC`.
-
-### Rendering / state
-
-- `SET_RENDER_TARGET`
-- `CLEAR`
-- `SET_VIEWPORT`
-- `SET_PIPELINE` *(minimal: built-in pipeline selection)*
-- `SET_VERTEX_BUFFER`
-- `DRAW` *(triangle list)*
-- `PRESENT`
-
-### Synchronization
-
-- `FENCE_SIGNAL` *(placeholder in v1.0; real shared fence table can be added later)*
-
----
-
-## 8. Memory ownership + lifetime rules
-
-1. Resource IDs are owned by the guest; the host treats them as opaque handles.
-2. Buffers/textures remain valid until explicitly destroyed.
-3. For `WRITE_*` commands, the guest memory referenced by `src_paddr` must remain valid and unchanged until the corresponding completion is observed.
-4. For `READ_*` commands, the host writes the destination guest memory before posting the completion entry.
-
----
-
-## 9. Host-side validation harness
-
-The crate contains a deterministic software backend and a “synthetic guest” producer to validate:
-
-- Ring mechanics (wrap markers, head/tail updates)
-- Command parsing and bounds checks
-- Completion generation and interrupt signaling
-
-See:
-
-- `aero_gpu_device::guest::SyntheticGuest`
-- `crates/aero-gpu-device/tests/golden_triangle.rs`
+The full opcode list and packet payload layouts live in `aerogpu_cmd.h`.
