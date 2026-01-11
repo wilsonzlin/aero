@@ -11,7 +11,7 @@ blake3 = "1.5.0"
 bytemuck = { version = "1.14", features = ["derive"] }
 futures-intrusive = "0.5"
 half = "2.7.1"
-hashbrown = "0.14"
+hashbrown = "0.16"
 thiserror = "2.0.9"
 tracing = "0.1"
 # WebGPU pipeline creation/state translation.
