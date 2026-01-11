@@ -283,6 +283,58 @@ describe("app", () => {
     expect(res.payload).toBe("0123");
   });
 
+  it("infers Content-Length from Content-Range when S3 omits ContentLength on a ranged response", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const lastModified = new Date("2020-01-01T00:00:00.000Z");
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          return {
+            Body: Readable.from([Buffer.from("0123")]),
+            ContentRange: "bytes 0-3/4",
+            ETag: '"etag"',
+            LastModified: lastModified,
+            ContentType: "application/octet-stream",
+            CacheControl: CACHE_CONTROL_PRIVATE_NO_STORE,
+            ContentEncoding: "identity",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-3",
+      },
+    });
+
+    expect(res.statusCode).toBe(206);
+    expect(res.headers["content-range"]).toBe("bytes 0-3/4");
+    expect(res.headers["content-length"]).toBe("4");
+    expect(res.payload).toBe("0123");
+  });
+
   it("serves a full-body 200 response when Range is omitted", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
