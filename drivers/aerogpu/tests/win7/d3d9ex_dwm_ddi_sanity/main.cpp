@@ -185,6 +185,52 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
   const double kMaxSingleCallMs = 250.0;
 
+  // --- Adapter LUID/display mode queries: DWM uses these to correlate adapters ---
+  LUID adapter_luid;
+  ZeroMemory(&adapter_luid, sizeof(adapter_luid));
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = d3d->GetAdapterLUID(D3DADAPTER_DEFAULT, &adapter_luid);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "GetAdapterLUID appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::GetAdapterLUID", hr);
+    }
+  }
+  if (adapter_luid.LowPart == 0 && adapter_luid.HighPart == 0) {
+    return aerogpu_test::Fail(kTestName, "GetAdapterLUID returned 0 (expected nonzero LUID)");
+  }
+
+  D3DDISPLAYMODEEX adapter_mode;
+  ZeroMemory(&adapter_mode, sizeof(adapter_mode));
+  adapter_mode.Size = sizeof(adapter_mode);
+  D3DDISPLAYROTATION adapter_rotation = D3DDISPLAYROTATION_IDENTITY;
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = d3d->GetAdapterDisplayModeEx(D3DADAPTER_DEFAULT, &adapter_mode, &adapter_rotation);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "GetAdapterDisplayModeEx appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::GetAdapterDisplayModeEx", hr);
+    }
+  }
+  if (adapter_mode.Width == 0 || adapter_mode.Height == 0) {
+    return aerogpu_test::Fail(kTestName,
+                              "GetAdapterDisplayModeEx returned %ux%u (expected nonzero mode)",
+                              (unsigned)adapter_mode.Width,
+                              (unsigned)adapter_mode.Height);
+  }
+
   // --- CheckDeviceState: must be fast and non-fatal (S_OK / S_PRESENT_OCCLUDED) ---
   const int kCheckDeviceStateIters = 200;
   for (int i = 0; i < kCheckDeviceStateIters; ++i) {
