@@ -41,6 +41,7 @@ class FakeElement {
   readonly tagName: string;
   className = "";
   disabled = false;
+  hidden = false;
   private _text = "";
   readonly children: FakeElement[] = [];
   readonly attributes: Record<string, string> = {};
@@ -116,5 +117,50 @@ describe("usb broker panel UI", () => {
     expect(broker.attachKnownDevice).toHaveBeenCalledTimes(1);
     expect(broker.attachKnownDevice).toHaveBeenCalledWith(device);
   });
-});
 
+  it("shows Forget selected device when supported and calls forgetSelectedDevice()", async () => {
+    const device = { vendorId: 0x1234, productId: 0x5678, productName: "Demo" } as unknown as USBDevice;
+    let attachedPort: MessagePort | null = null;
+
+    const broker = {
+      attachKnownDevice: vi.fn(async () => ({ vendorId: device.vendorId, productId: device.productId, productName: device.productName })),
+      detachSelectedDevice: vi.fn(async () => {}),
+      getKnownDevices: vi.fn(async () => [device]),
+      requestDevice: vi.fn(async () => ({ vendorId: device.vendorId, productId: device.productId, productName: device.productName })),
+      attachWorkerPort: vi.fn((port: MessagePort) => {
+        attachedPort = port;
+      }),
+      subscribeToDeviceChanges: vi.fn(() => () => {}),
+      canForgetSelectedDevice: vi.fn(() => true),
+      forgetSelectedDevice: vi.fn(async () => {
+        // Simulate the broker broadcasting a deselection to the attached MessagePort.
+        attachedPort?.postMessage({ type: "usb.selected", ok: false });
+      }),
+    } as any;
+
+    stubNavigator({ usb: {} } as any);
+    stubDocument(new FakeDocument());
+
+    const panel = renderWebUsbBrokerPanel(broker);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(attachedPort).not.toBeNull();
+
+    // Simulate broker selection notification.
+    attachedPort?.postMessage({
+      type: "usb.selected",
+      ok: true,
+      info: { vendorId: device.vendorId, productId: device.productId, productName: device.productName },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const forgetButtons = findAll(panel as any, (el) => el.tagName === "BUTTON" && el.textContent === "Forget selected device");
+    expect(forgetButtons).toHaveLength(1);
+    expect(forgetButtons[0].hidden).toBe(false);
+
+    await (forgetButtons[0].onclick as () => Promise<void>)();
+
+    expect(broker.forgetSelectedDevice).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(forgetButtons[0].hidden).toBe(true);
+  });
+});
