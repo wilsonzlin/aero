@@ -6465,13 +6465,190 @@ HRESULT ensure_resource_storage(AeroGpuResource* res, uint64_t size_bytes) {
   return S_OK;
 }
 
+namespace {
+
+template <typename T, typename = void>
+struct HasField_Value : std::false_type {};
+template <typename T>
+struct HasField_Value<T, std::void_t<decltype(std::declval<T>().Value)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_ReadOnly : std::false_type {};
+template <typename T>
+struct HasField_ReadOnly<T, std::void_t<decltype(std::declval<T>().ReadOnly)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_WriteOnly : std::false_type {};
+template <typename T>
+struct HasField_WriteOnly<T, std::void_t<decltype(std::declval<T>().WriteOnly)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_Write : std::false_type {};
+template <typename T>
+struct HasField_Write<T, std::void_t<decltype(std::declval<T>().Write)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_Discard : std::false_type {};
+template <typename T>
+struct HasField_Discard<T, std::void_t<decltype(std::declval<T>().Discard)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_NoOverwrite : std::false_type {};
+template <typename T>
+struct HasField_NoOverwrite<T, std::void_t<decltype(std::declval<T>().NoOverwrite)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_NoOverWrite : std::false_type {};
+template <typename T>
+struct HasField_NoOverWrite<T, std::void_t<decltype(std::declval<T>().NoOverWrite)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_DoNotWait : std::false_type {};
+template <typename T>
+struct HasField_DoNotWait<T, std::void_t<decltype(std::declval<T>().DoNotWait)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_DonotWait : std::false_type {};
+template <typename T>
+struct HasField_DonotWait<T, std::void_t<decltype(std::declval<T>().DonotWait)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_Subresource : std::false_type {};
+template <typename T>
+struct HasField_Subresource<T, std::void_t<decltype(std::declval<T>().Subresource)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_SubresourceIndex : std::false_type {};
+template <typename T>
+struct HasField_SubresourceIndex<T, std::void_t<decltype(std::declval<T>().SubresourceIndex)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_SubResourceIndex : std::false_type {};
+template <typename T>
+struct HasField_SubResourceIndex<T, std::void_t<decltype(std::declval<T>().SubResourceIndex)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_Offset : std::false_type {};
+template <typename T>
+struct HasField_Offset<T, std::void_t<decltype(std::declval<T>().Offset)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasField_Size : std::false_type {};
+template <typename T>
+struct HasField_Size<T, std::void_t<decltype(std::declval<T>().Size)>> : std::true_type {};
+
+template <typename TLockFlags>
+void SetLockFlagsFromMap(TLockFlags* flags, uint32_t map_type, uint32_t map_flags) {
+  if (!flags) {
+    return;
+  }
+
+  const bool do_not_wait = (map_flags & AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+
+  if constexpr (std::is_integral_v<TLockFlags>) {
+    *flags = static_cast<TLockFlags>(map_type | map_flags);
+    return;
+  }
+
+  constexpr bool kHasAnyKnownFields =
+      HasField_ReadOnly<TLockFlags>::value || HasField_WriteOnly<TLockFlags>::value || HasField_Write<TLockFlags>::value ||
+      HasField_Discard<TLockFlags>::value || HasField_NoOverwrite<TLockFlags>::value || HasField_NoOverWrite<TLockFlags>::value ||
+      HasField_DoNotWait<TLockFlags>::value || HasField_DonotWait<TLockFlags>::value;
+
+  // If we don't understand the flag layout, fall back to writing a raw value
+  // (some header revisions expose `Value`).
+  if constexpr (!kHasAnyKnownFields) {
+    if constexpr (HasField_Value<TLockFlags>::value) {
+      flags->Value = map_type | map_flags;
+    }
+    return;
+  }
+
+  // Translate D3D11/D3D10 MapType to the runtime's LockCb flags.
+  // See docs/graphics/win7-d3d11-map-unmap.md (§3).
+  const bool read_only = (map_type == AEROGPU_DDI_MAP_READ);
+  const bool write_only = (map_type == AEROGPU_DDI_MAP_WRITE ||
+                           map_type == AEROGPU_DDI_MAP_WRITE_DISCARD ||
+                           map_type == AEROGPU_DDI_MAP_WRITE_NO_OVERWRITE);
+  const bool discard = (map_type == AEROGPU_DDI_MAP_WRITE_DISCARD);
+  const bool no_overwrite = (map_type == AEROGPU_DDI_MAP_WRITE_NO_OVERWRITE);
+
+  if constexpr (HasField_ReadOnly<TLockFlags>::value) {
+    flags->ReadOnly = read_only ? 1 : 0;
+  }
+  if constexpr (HasField_WriteOnly<TLockFlags>::value) {
+    flags->WriteOnly = write_only ? 1 : 0;
+  }
+  if constexpr (HasField_Write<TLockFlags>::value) {
+    flags->Write = write_only ? 1 : 0;
+  }
+  if constexpr (HasField_Discard<TLockFlags>::value) {
+    flags->Discard = discard ? 1 : 0;
+  }
+  if constexpr (HasField_NoOverwrite<TLockFlags>::value) {
+    flags->NoOverwrite = no_overwrite ? 1 : 0;
+  }
+  if constexpr (HasField_NoOverWrite<TLockFlags>::value) {
+    flags->NoOverWrite = no_overwrite ? 1 : 0;
+  }
+  if constexpr (HasField_DoNotWait<TLockFlags>::value) {
+    flags->DoNotWait = do_not_wait ? 1 : 0;
+  }
+  if constexpr (HasField_DonotWait<TLockFlags>::value) {
+    flags->DonotWait = do_not_wait ? 1 : 0;
+  }
+}
+
+template <typename TLock>
+void SetLockSubresource(TLock* lock, uint32_t subresource) {
+  if (!lock) {
+    return;
+  }
+  if constexpr (HasField_Subresource<TLock>::value) {
+    lock->Subresource = subresource;
+  } else if constexpr (HasField_SubresourceIndex<TLock>::value) {
+    lock->SubresourceIndex = subresource;
+  } else if constexpr (HasField_SubResourceIndex<TLock>::value) {
+    lock->SubResourceIndex = subresource;
+  }
+}
+
+template <typename TUnlock>
+void SetUnlockSubresource(TUnlock* unlock, uint32_t subresource) {
+  if (!unlock) {
+    return;
+  }
+  if constexpr (HasField_Subresource<TUnlock>::value) {
+    unlock->Subresource = subresource;
+  } else if constexpr (HasField_SubresourceIndex<TUnlock>::value) {
+    unlock->SubresourceIndex = subresource;
+  } else if constexpr (HasField_SubResourceIndex<TUnlock>::value) {
+    unlock->SubResourceIndex = subresource;
+  }
+}
+
+template <typename TLock>
+void SetLockRange(TLock* lock, uint32_t offset, uint32_t size) {
+  if (!lock) {
+    return;
+  }
+  if constexpr (HasField_Offset<TLock>::value) {
+    lock->Offset = offset;
+  }
+  if constexpr (HasField_Size<TLock>::value) {
+    lock->Size = size;
+  }
+}
+
+} // namespace
+
 template <typename TMappedSubresource>
 HRESULT map_resource_locked(AeroGpuDevice* dev,
                             AeroGpuResource* res,
                             uint32_t subresource,
                             uint32_t map_type,
                             uint32_t map_flags,
-                             TMappedSubresource* pMapped) {
+                              TMappedSubresource* pMapped) {
   if (!dev || !res || !pMapped) {
     return E_INVALIDARG;
   }
@@ -6588,6 +6765,9 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   if (res->wddm_allocation && dev->callbacks && dev->callbacks->pfnLockCb && dev->callbacks->pfnUnlockCb) {
     D3DDDICB_LOCK lock = {};
     lock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
+    SetLockSubresource(&lock, subresource);
+    SetLockRange(&lock, /*offset=*/0, /*size=*/0);
+    SetLockFlagsFromMap(&lock.Flags, map_type, map_flags);
     HRESULT hr = dev->callbacks->pfnLockCb(dev->hrt_device, &lock);
     if (FAILED(hr)) {
       return hr;
@@ -6595,6 +6775,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     if (!lock.pData) {
       D3DDDICB_UNLOCK unlock = {};
       unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
+      SetUnlockSubresource(&unlock, subresource);
       dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
       return E_FAIL;
     }
@@ -6756,6 +6937,7 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
   if (had_wddm_lock && res->wddm_allocation && dev->callbacks && dev->callbacks->pfnUnlockCb) {
     D3DDDICB_UNLOCK unlock = {};
     unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
+    SetUnlockSubresource(&unlock, subresource);
     dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
   }
   res->mapped_wddm_ptr = nullptr;

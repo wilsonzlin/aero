@@ -63,7 +63,8 @@
   #endif
 #endif
 
-// DXGI error codes used by Map/Unmap (values from dxgi.h).
+// DXGI_ERROR_WAS_STILL_DRAWING (from dxgi.h). This header is used in
+// configurations that may not include dxgi.h directly.
 #ifndef DXGI_ERROR_WAS_STILL_DRAWING
   #define DXGI_ERROR_WAS_STILL_DRAWING ((HRESULT)0x887A000AL)
 #endif
@@ -141,6 +142,7 @@ typedef struct D3D10DDIARG_OPENADAPTER D3D10DDIARG_OPENADAPTER;
 typedef struct D3D10DDIARG_CREATEDEVICE D3D10DDIARG_CREATEDEVICE;
 typedef struct D3D10DDIARG_GETCAPS D3D10DDIARG_GETCAPS;
 typedef struct D3D11DDIARG_GETCAPS D3D11DDIARG_GETCAPS;
+typedef struct D3DDDI_DEVICECALLBACKS D3DDDI_DEVICECALLBACKS;
 
 // Adapter caps querying (D3D10DDIARG_GETCAPS).
 //
@@ -197,6 +199,7 @@ typedef struct AEROGPU_D3D10_11_DEVICECALLBACKS AEROGPU_D3D10_11_DEVICECALLBACKS
 
 struct D3D10DDIARG_CREATEDEVICE {
   D3D10DDI_HDEVICE hDevice;
+  const D3DDDI_DEVICECALLBACKS *pCallbacks;
   AEROGPU_D3D10_11_DEVICEFUNCS *pDeviceFuncs;
   // Optional callback table supplied by the harness/real runtime.
   //
@@ -432,20 +435,50 @@ typedef struct AEROGPU_DDI_BOX {
   uint32_t back;
 } AEROGPU_DDI_BOX;
 
+// Runtime callback subset used by Map/Unmap.
+//
+// In real WDK builds this comes from `d3dumddi.h`. For the repository build we
+// only need Lock/Unlock.
+#if !(defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS)
+typedef struct D3DDDICB_LOCK {
+  uint32_t hAllocation;
+  uint32_t Flags;
+  uint32_t Subresource;
+  uint32_t Offset;
+  uint32_t Size;
+  void* pData;
+  uint32_t Pitch;
+  uint32_t SlicePitch;
+} D3DDDICB_LOCK;
+
+typedef struct D3DDDICB_UNLOCK {
+  uint32_t hAllocation;
+  uint32_t Subresource;
+} D3DDDICB_UNLOCK;
+
+typedef HRESULT(AEROGPU_APIENTRY* PFND3DDDICB_LOCK)(D3D10DDI_HDEVICE, D3DDDICB_LOCK*);
+typedef HRESULT(AEROGPU_APIENTRY* PFND3DDDICB_UNLOCK)(D3D10DDI_HDEVICE, const D3DDDICB_UNLOCK*);
+
+struct D3DDDI_DEVICECALLBACKS {
+  PFND3DDDICB_LOCK pfnLockCb;
+  PFND3DDDICB_UNLOCK pfnUnlockCb;
+};
+#endif
+
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYDEVICE)(D3D10DDI_HDEVICE);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATERESOURCESIZE)(D3D10DDI_HDEVICE,
                                                                          const AEROGPU_DDIARG_CREATERESOURCE *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATERESOURCE)(D3D10DDI_HDEVICE,
-                                                                 const AEROGPU_DDIARG_CREATERESOURCE *,
-                                                                 D3D10DDI_HRESOURCE);
+                                                                  const AEROGPU_DDIARG_CREATERESOURCE *,
+                                                                  D3D10DDI_HRESOURCE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYRESOURCE)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE);
 
 typedef SIZE_T(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CALCPRIVATESHADERSIZE)(D3D10DDI_HDEVICE,
                                                                        const AEROGPU_DDIARG_CREATESHADER *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEVERTEXSHADER)(D3D10DDI_HDEVICE,
-                                                                     const AEROGPU_DDIARG_CREATESHADER *,
-                                                                     D3D10DDI_HSHADER);
+                                                                      const AEROGPU_DDIARG_CREATESHADER *,
+                                                                      D3D10DDI_HSHADER);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEPIXELSHADER)(D3D10DDI_HDEVICE,
                                                                     const AEROGPU_DDIARG_CREATESHADER *,
                                                                     D3D10DDI_HSHADER);
