@@ -672,82 +672,128 @@ For the concrete “minimal contract” (what Win7 expects) and the recommended 
 ---
  
 ## 7. Command transport boundary (device ↔ emulator)
- 
+  
 ### 7.1 PCI device model
- 
-The guest sees a PCI display controller:
- 
-- PCI class: `0x03` (display), subclass `0x00` (VGA-compatible optional; pure display also acceptable)
-- BAR0: MMIO register block (4KB is enough for MVP)
-- Interrupt: line-based IRQ is acceptable for MVP; MSI can be added later
- 
-### 7.2 MMIO register block (conceptual)
- 
-Minimum registers:
- 
-- **Identification**
-  - `REG_DEVICE_ID`, `REG_VERSION`
- 
-- **Submission ring**
-  - `REG_RING_GPA` (guest physical address of ring buffer)
-  - `REG_RING_SIZE`
-  - `REG_RING_HEAD`, `REG_RING_TAIL`
-  - `REG_DOORBELL` (write to notify new work)
- 
+  
+> **Normative spec:** The canonical, versioned AeroGPU guest↔emulator ABI is defined in:
+>
+> - `drivers/aerogpu/protocol/README.md`
+> - `drivers/aerogpu/protocol/aerogpu_pci.h` (PCI IDs + BAR0 + MMIO regs)
+> - `drivers/aerogpu/protocol/aerogpu_ring.h` (ring + submissions + fence page)
+> - `drivers/aerogpu/protocol/aerogpu_cmd.h` (command stream packets)
+
+The guest binds to a project-specific PCI display controller. The canonical identity is defined in `aerogpu_pci.h`:
+  
+- Vendor ID: `0xA3A0` (`AEROGPU_PCI_VENDOR_ID`)
+- Device ID: `0x0001` (`AEROGPU_PCI_DEVICE_ID`)
+- Subsystem vendor/device: `0xA3A0:0x0001` (`AEROGPU_PCI_SUBSYSTEM_VENDOR_ID` / `AEROGPU_PCI_SUBSYSTEM_ID`)
+- Class code: display controller (base `0x03`), **VGA-compatible** subclass (`0x00`), prog-if `0x00`
+  
+BARs / interrupts:
+  
+- BAR0 (index 0): MMIO register block, **at least 64 KiB** (`AEROGPU_PCI_BAR0_SIZE_BYTES` is currently 64 KiB). The device must not assume “4 KiB is enough”; the remaining space is reserved for forward-compatible register growth.
+- Interrupt: level-triggered line IRQ is acceptable for MVP; MSI/MSI-X can be added later. Interrupt causes are surfaced via `AEROGPU_MMIO_REG_IRQ_*`.
+  
+### 7.2 BAR0 MMIO register block (A3A0)
+  
+BAR0 is a little-endian register file. Unless stated otherwise, registers are 32-bit. 64-bit values are split into LO/HI 32-bit halves at consecutive offsets.
+  
+The register names below are the canonical ones from `drivers/aerogpu/protocol/aerogpu_pci.h`:
+  
+- **Discovery / versioning**
+  - `AEROGPU_MMIO_REG_MAGIC` (RO): must read as `AEROGPU_MMIO_MAGIC` (`"AGPU"`)
+  - `AEROGPU_MMIO_REG_ABI_VERSION` (RO): `AEROGPU_ABI_VERSION_U32` (major.minor)
+  - `AEROGPU_MMIO_REG_FEATURES_LO/HI` (RO): 64-bit feature mask (e.g. `AEROGPU_FEATURE_SCANOUT`, `AEROGPU_FEATURE_VBLANK`, `AEROGPU_FEATURE_FENCE_PAGE`, `AEROGPU_FEATURE_CURSOR`)
+  
+- **Ring programming + doorbell**
+  - `AEROGPU_MMIO_REG_RING_GPA_LO/HI` (RW): GPA of `struct aerogpu_ring_header`
+  - `AEROGPU_MMIO_REG_RING_SIZE_BYTES` (RW): size of the ring mapping in bytes
+  - `AEROGPU_MMIO_REG_RING_CONTROL` (RW): `AEROGPU_RING_CONTROL_ENABLE` / `AEROGPU_RING_CONTROL_RESET`
+  - `AEROGPU_MMIO_REG_DOORBELL` (WO): notify the device after advancing `ring->tail`
+  
 - **Fence / completion**
-  - `REG_FENCE_NEXT` (optional; KMD can allocate fences itself)
-  - `REG_FENCE_COMPLETED` (written by emulator)
- 
+  - `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO/HI` (RO): monotonically increasing completed fence value
+  - `AEROGPU_MMIO_REG_FENCE_GPA_LO/HI` (RW, optional): GPA of `struct aerogpu_fence_page` (only if `AEROGPU_FEATURE_FENCE_PAGE` is set)
+  
 - **Interrupts**
-  - `REG_INT_STATUS`
-  - `REG_INT_MASK`
-  - `REG_INT_ACK`
- 
-- **Scanout**
-  - `REG_SCANOUT_MODE` (w/h/format)
-  - `REG_SCANOUT_PITCH`
-  - `REG_SCANOUT_SURFACE_GPA` (or pointer to page list blob)
- 
-- **Cursor (optional but recommended)**
-  - `REG_CURSOR_ENABLE`, `REG_CURSOR_XY`
-  - `REG_CURSOR_HOTSPOT`
-  - `REG_CURSOR_SURFACE_GPA`
- 
+  - `AEROGPU_MMIO_REG_IRQ_STATUS` (RO): pending causes
+  - `AEROGPU_MMIO_REG_IRQ_ENABLE` (RW): enable mask (line asserted when `(STATUS & ENABLE) != 0`)
+  - `AEROGPU_MMIO_REG_IRQ_ACK` (WO): write-1-to-clear (W1C)
+  - Cause bits:
+    - `AEROGPU_IRQ_FENCE`: completed fence advanced
+    - `AEROGPU_IRQ_SCANOUT_VBLANK`: scanout0 vblank tick (only if `AEROGPU_FEATURE_VBLANK` is set)
+    - `AEROGPU_IRQ_ERROR`: fatal device error
+  
+- **Scanout 0**
+  - `AEROGPU_MMIO_REG_SCANOUT0_ENABLE`
+  - `AEROGPU_MMIO_REG_SCANOUT0_WIDTH` / `_HEIGHT`
+  - `AEROGPU_MMIO_REG_SCANOUT0_FORMAT` (`enum aerogpu_format`)
+  - `AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES`
+  - `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO/HI`
+  - If `AEROGPU_FEATURE_VBLANK` is set (RO):
+    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO/HI`
+    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO/HI`
+    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
+  
+- **Cursor (optional)**
+  - If `AEROGPU_FEATURE_CURSOR` is set:
+    - `AEROGPU_MMIO_REG_CURSOR_ENABLE`
+    - `AEROGPU_MMIO_REG_CURSOR_X` / `_Y`
+    - `AEROGPU_MMIO_REG_CURSOR_HOT_X` / `_HOT_Y`
+    - `AEROGPU_MMIO_REG_CURSOR_WIDTH` / `_HEIGHT`
+    - `AEROGPU_MMIO_REG_CURSOR_FORMAT` (`enum aerogpu_format`)
+    - `AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO/HI`
+    - `AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES`
+  
 ### 7.3 Shared submission ring
- 
-The ring lives in guest RAM so both KMD and emulator can access it.
- 
-Each ring entry (“submission descriptor”) contains:
- 
+  
+The submission transport is a shared ring in guest physical memory, defined in `drivers/aerogpu/protocol/aerogpu_ring.h`.
+  
+- The driver allocates a contiguous region in guest RAM and writes a `struct aerogpu_ring_header` at the start (magic `"ARNG"`, ABI version, entry count/stride, and the volatile `head`/`tail` counters).
+- The ring entries are fixed-size `struct aerogpu_submit_desc` records (64 bytes).
+- `ring->head` and `ring->tail` are monotonic indices; the slot index is `(index % entry_count)`.
+  
+Submission sequence:
+  
+1. Write an `aerogpu_submit_desc` into the `(tail % entry_count)` slot.
+2. Increment `ring->tail`.
+3. Write to `AEROGPU_MMIO_REG_DOORBELL`.
+  
 ```
-struct AerogpuSubmitDesc {
-  u64 fence_id;
- 
-  // Command stream buffer
-  u64 cmd_buf_gpa;
-  u32 cmd_buf_size;
- 
-  // Sideband allocation refs (out-of-line blob)
-  u64 alloc_table_gpa;
-  u32 alloc_table_size;
- 
-  // Optional: context id, flags
-  u32 context_id;
-  u32 flags;
+struct aerogpu_submit_desc {
+  uint32_t desc_size_bytes; /* must be sizeof(struct aerogpu_submit_desc) */
+  uint32_t flags;           /* AEROGPU_SUBMIT_FLAG_* */
+  uint32_t context_id;
+  uint32_t engine_id;       /* AEROGPU_ENGINE_0 */
+
+  uint64_t cmd_gpa;
+  uint32_t cmd_size_bytes;
+  uint32_t cmd_reserved0;
+
+  uint64_t alloc_table_gpa;       /* optional (0 if not present) */
+  uint32_t alloc_table_size_bytes; /* optional (0 if not present) */
+  uint32_t alloc_table_reserved0;
+
+  uint64_t signal_fence; /* guest-chosen fence value to signal on completion */
+  uint64_t reserved0;
 };
 ```
- 
+  
+The command buffer referenced by `cmd_gpa/cmd_size_bytes` is an AeroGPU command stream (`struct aerogpu_cmd_stream_header` + packets) defined in `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+  
 ### 7.4 Fence/completion signaling path
- 
+  
 1. UMD submits work → dxgkrnl → KMD `Render`/`SubmitCommand`.
-2. KMD writes a `AerogpuSubmitDesc` with a monotonically increasing `fence_id`.
+2. KMD writes an `aerogpu_submit_desc` with a monotonically increasing 64-bit `signal_fence`.
 3. Emulator executes and then:
-   - updates `REG_FENCE_COMPLETED = fence_id`
-   - raises interrupt with `INT_FENCE_COMPLETE`
+   - updates `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO/HI` (always), and
+   - optionally updates `aerogpu_fence_page.completed_fence` if a fence page is configured.
+   - if interrupts are enabled and the submission did not request `AEROGPU_SUBMIT_FLAG_NO_IRQ`, raises `AEROGPU_IRQ_FENCE`.
 4. KMD interrupt routine + DPC:
-   - reads completed fence
+   - reads completed fence (MMIO or fence page)
+   - acknowledges via `AEROGPU_MMIO_REG_IRQ_ACK`
    - notifies dxgkrnl so waiting threads unblock and the scheduler advances
- 
+  
 ---
  
 ## 8. Scope control (explicit non-goals for MVP)
