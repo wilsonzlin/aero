@@ -93,4 +93,45 @@ mod tests {
         let idx = ((7 * STRIDE) + (2 * 4)) as usize;
         assert_eq!(&buf[idx..idx + 4], &[62, 42, 25, 255]);
     }
+
+    #[test]
+    fn respects_stride_padding() {
+        // 2x2 image, but with padded rows.
+        const W: u32 = 2;
+        const H: u32 = 2;
+        const STRIDE: u32 = 16;
+
+        let mut buf = [0u8; (STRIDE * H) as usize];
+        let pixels = render_rgba8888(&mut buf, W, H, STRIDE, 0.0);
+        assert_eq!(pixels, 4);
+
+        // Row 0 pixel (0,0): [0,0,0,255]
+        assert_eq!(&buf[0..4], &[0, 0, 0, 255]);
+        // Row 0 pixel (1,0): [1,0,1,255]
+        assert_eq!(&buf[4..8], &[1, 0, 1, 255]);
+
+        // Padding bytes between rows should remain untouched.
+        assert!(buf[8..16].iter().all(|&b| b == 0));
+
+        // Row 1 pixel (0,1) starts at offset STRIDE.
+        let idx = STRIDE as usize;
+        assert_eq!(&buf[idx..idx + 4], &[0, 1, 1, 255]);
+    }
+
+    #[test]
+    fn clamps_height_to_destination_slice() {
+        const W: u32 = 1;
+        const H: u32 = 4;
+        const STRIDE: u32 = 4;
+
+        // Only enough space for 2 rows.
+        let mut buf = [0u8; 8];
+        let pixels = render_rgba8888(&mut buf, W, H, STRIDE, 0.0);
+        assert_eq!(pixels, 2);
+
+        // Row 0 pixel (0,0)
+        assert_eq!(&buf[0..4], &[0, 0, 0, 255]);
+        // Row 1 pixel (0,1)
+        assert_eq!(&buf[4..8], &[0, 1, 1, 255]);
+    }
 }
