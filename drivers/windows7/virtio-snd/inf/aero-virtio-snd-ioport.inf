@@ -11,6 +11,7 @@
 ;   - This is NOT part of the Aero `AERO-W7-VIRTIO` v1 contract (modern-only).
 ;   - The default/shipped package is `aero_virtio_snd.inf` + `aero_virtio_snd.sys` (DEV_1059&REV_01).
 ;   - This package installs a separate binary: `virtiosnd_ioport.sys`.
+;   - This package installs a separate service: `aeroviosnd_ioport`.
 ;
 ; HWID binding policy:
 ;   - Matches transitional ID + revision: PCI\VEN_1AF4&DEV_1018&REV_00

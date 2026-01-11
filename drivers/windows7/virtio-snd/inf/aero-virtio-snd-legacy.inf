@@ -12,6 +12,7 @@
 ;   - Matches transitional ID: PCI\VEN_1AF4&DEV_1018
 ;   - Does NOT match Aero contract-v1 ID: PCI\VEN_1AF4&DEV_1059&REV_01
 ;   - Installs a separate binary: virtiosnd_legacy.sys
+;   - Installs a separate service: aeroviosnd_legacy
 
 [Version]
 Signature   = "$WINDOWS NT$"
