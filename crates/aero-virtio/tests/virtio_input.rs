@@ -485,6 +485,19 @@ fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes
 }
 
 #[test]
+fn virtio_pci_queue_notify_off_matches_queue_index() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    for q in 0u16..2 {
+        bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, q);
+        assert_eq!(bar_read_u16(&mut dev, caps.common + 0x1e), q);
+    }
+}
+
+#[test]
 fn virtio_pci_queue_size_is_read_only() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
@@ -498,6 +511,81 @@ fn virtio_pci_queue_size_is_read_only() {
     // Contract v1 fixes queue sizes; writes must be ignored.
     bar_write_u16(&mut dev, &mut mem, caps.common + 0x18, 8);
     assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), original_size);
+}
+
+#[test]
+fn virtio_pci_notify_accepts_32bit_writes() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // Feature negotiation.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure status queue 1.
+    let desc = 0x5000;
+    let avail = 0x6000;
+    let used = 0x7000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    let buf = 0x8000;
+    mem.write(buf, &[0u8; 4]).unwrap();
+    write_desc(&mut mem, desc, 0, buf, 4, 0, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    // Contract v1 requires notify to accept 32-bit writes too.
+    dev.bar0_write(
+        caps.notify + 1 * u64::from(caps.notify_mult),
+        &1u32.to_le_bytes(),
+        &mut mem,
+    );
+
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
 }
 
 #[test]
