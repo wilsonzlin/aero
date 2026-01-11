@@ -9,6 +9,10 @@ const PTE_P: u64 = 1 << 0;
 const PTE_RW: u64 = 1 << 1;
 const PTE_US: u64 = 1 << 2;
 
+const PTE_P32: u32 = 1 << 0;
+const PTE_RW32: u32 = 1 << 1;
+const PTE_US32: u32 = 1 << 2;
+
 #[derive(Clone, Debug)]
 struct TestMemory {
     data: Vec<u8>,
@@ -83,6 +87,29 @@ fn write_idt_gate64(
 
 fn set_pte(mem: &mut impl MemoryBus, pt_base: u64, page_idx: u64, flags: u64) {
     mem.write_u64(pt_base + page_idx * 8, (page_idx * 0x1000) | flags);
+}
+
+fn write_idt_gate32(
+    mem: &mut impl MemoryBus,
+    base: u64,
+    vector: u8,
+    selector: u16,
+    offset: u32,
+    type_attr: u8,
+) {
+    let addr = base + (vector as u64) * 8;
+    mem.write_u16(addr, (offset & 0xFFFF) as u16);
+    mem.write_u16(addr + 2, selector);
+    mem.write_u8(addr + 4, 0);
+    mem.write_u8(addr + 5, type_attr);
+    mem.write_u16(addr + 6, ((offset >> 16) & 0xFFFF) as u16);
+}
+
+fn set_pte32(mem: &mut impl MemoryBus, pt_base: u64, page_idx: u64, flags: u32) {
+    mem.write_u32(
+        pt_base + page_idx * 4,
+        ((page_idx * 0x1000) as u32) | flags,
+    );
 }
 
 #[test]
@@ -173,3 +200,84 @@ fn long_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -> Res
     Ok(())
 }
 
+#[test]
+fn protected_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -> Result<(), CpuExit> {
+    // Physical memory layout (identity-mapped for low pages):
+    // - Guest pages:
+    //   - 0x0000: user code (unused)
+    //   - 0x1000: IDT (supervisor)
+    //   - 0x2000: handler (supervisor)
+    //   - 0x4000: TSS (supervisor)
+    //   - 0x7000: user stack
+    //   - 0x9000: kernel stack
+    // - Page tables live at high physical addresses and are accessed via CR3.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pd_base = 0x10000u64;
+    let pt_base = 0x11000u64;
+
+    // Top-level PDE permits user access; leaf PTE controls U/S.
+    phys.write_u32(pd_base + 0 * 4, (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32));
+
+    set_pte32(&mut phys, pt_base, 0x0, PTE_P32 | PTE_RW32 | PTE_US32); // user code
+    set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT supervisor-only
+    set_pte32(&mut phys, pt_base, 0x2, PTE_P32 | PTE_RW32); // handler supervisor-only
+    set_pte32(&mut phys, pt_base, 0x4, PTE_P32 | PTE_RW32); // TSS supervisor-only
+    set_pte32(&mut phys, pt_base, 0x7, PTE_P32 | PTE_RW32 | PTE_US32); // user stack
+    set_pte32(&mut phys, pt_base, 0x9, PTE_P32 | PTE_RW32); // kernel stack supervisor-only
+
+    let mut bus = PagingBus::new(phys);
+
+    let idt_base = 0x1000u64;
+    let handler = 0x2000u32;
+    let tss_base = 0x4000u64;
+    let user_stack_top = 0x8000u32;
+    let kernel_stack_top = 0xA000u32;
+
+    // IDT[0x80] -> handler, user-callable interrupt gate.
+    write_idt_gate32(bus.inner_mut(), idt_base, 0x80, 0x08, handler, 0xEE);
+    // Provide a #GP gate so any unexpected faults during delivery don't instantly triple fault.
+    write_idt_gate32(bus.inner_mut(), idt_base, 13, 0x08, handler, 0x8E);
+
+    // TSS.ESP0 and SS0.
+    bus.inner_mut().write_u32(tss_base + 4, kernel_stack_top);
+    bus.inner_mut().write_u16(tss_base + 8, 0x10);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.update_mode();
+
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x07FF;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+
+    cpu.state.segments.cs.selector = 0x1B; // CPL3
+    cpu.state.segments.ss.selector = 0x23;
+    cpu.state.write_gpr32(gpr::RSP, user_stack_top);
+    cpu.state.set_rflags(0x202);
+
+    bus.sync(&cpu.state);
+
+    let return_rip = 0x5555u64;
+    cpu.pending.raise_software_interrupt(0x80, return_rip);
+    cpu.deliver_pending_event(&mut bus)?;
+
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.segments.ss.selector, 0x10);
+    assert_eq!(cpu.state.rip(), handler as u64);
+    assert_eq!(cpu.state.read_gpr32(gpr::RSP), kernel_stack_top - 20);
+
+    // Stack frame (top -> bottom): EIP, CS, EFLAGS, old ESP, old SS.
+    let frame_base = cpu.state.read_gpr32(gpr::RSP) as u64;
+    assert_eq!(bus.read_u32(frame_base).unwrap(), return_rip as u32);
+    assert_eq!(bus.read_u32(frame_base + 4).unwrap(), 0x1B);
+    assert_ne!(bus.read_u32(frame_base + 8).unwrap() & 0x200, 0);
+    assert_eq!(bus.read_u32(frame_base + 12).unwrap(), user_stack_top);
+    assert_eq!(bus.read_u32(frame_base + 16).unwrap(), 0x23);
+
+    Ok(())
+}
