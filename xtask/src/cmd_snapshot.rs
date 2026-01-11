@@ -430,12 +430,14 @@ fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) 
     file.seek(SeekFrom::Start(section.offset))
         .map_err(|e| XtaskError::Message(format!("seek DEVICES: {e}")))?;
 
+    ensure_section_remaining(file, section_end, 4, "device count")?;
     let count = read_u32_le(file)?;
     if count > MAX_DEVICE_COUNT {
         return Err(XtaskError::Message("too many devices".to_string()));
     }
 
     for _ in 0..count {
+        ensure_section_remaining(file, section_end, 4 + 2 + 2 + 8, "device entry header")?;
         let _id = read_u32_le(file)?;
         let _version = read_u16_le(file)?;
         let _flags = read_u16_le(file)?;
@@ -503,4 +505,22 @@ fn read_u64_le(r: &mut impl Read) -> Result<u64> {
     r.read_exact(&mut buf)
         .map_err(|e| XtaskError::Message(format!("read u64: {e}")))?;
     Ok(u64::from_le_bytes(buf))
+}
+
+fn ensure_section_remaining(
+    file: &mut fs::File,
+    section_end: u64,
+    need: u64,
+    what: &str,
+) -> Result<()> {
+    let pos = file
+        .stream_position()
+        .map_err(|e| XtaskError::Message(format!("tell {what}: {e}")))?;
+    let end = pos
+        .checked_add(need)
+        .ok_or_else(|| XtaskError::Message("section offset overflow".to_string()))?;
+    if end > section_end {
+        return Err(XtaskError::Message(format!("{what}: truncated section")));
+    }
+    Ok(())
 }

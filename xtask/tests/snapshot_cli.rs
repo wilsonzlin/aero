@@ -194,6 +194,54 @@ fn corrupt_first_vcpu_internal_len(snapshot: &mut [u8]) {
     snapshot[internal_len_off..internal_len_off + 8].copy_from_slice(&new.to_le_bytes());
 }
 
+fn corrupt_devices_section_len_to_two_and_insert_ram(snapshot: &mut Vec<u8>) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let devices = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::DEVICES)
+        .expect("DEVICES section missing");
+
+    // Section header is immediately before `offset`.
+    let header_start = devices
+        .offset
+        .checked_sub(16)
+        .expect("section offset underflow") as usize;
+    let payload_start = devices.offset as usize;
+
+    // DEVICES header layout: id(u32), version(u16), flags(u16), len(u64).
+    snapshot[header_start + 8..header_start + 16].copy_from_slice(&2u64.to_le_bytes());
+
+    // DEVICES payload is now only 2 bytes (intentionally too short for the u32 device count).
+    snapshot[payload_start..payload_start + 2].fill(0);
+
+    // Insert an unknown 0-length section header immediately after the truncated payload so that
+    // `inspect_snapshot` still sees a structurally valid file.
+    let unknown_header = payload_start + 2;
+    snapshot[unknown_header..unknown_header + 4].copy_from_slice(&0u32.to_le_bytes()); // id
+    snapshot[unknown_header + 4..unknown_header + 6].copy_from_slice(&1u16.to_le_bytes()); // version
+    snapshot[unknown_header + 6..unknown_header + 8].copy_from_slice(&0u16.to_le_bytes()); // flags
+    snapshot[unknown_header + 8..unknown_header + 16].copy_from_slice(&0u64.to_le_bytes()); // len
+
+    // Follow with a minimal dirty-RAM section so validate_index still finds RAM.
+    let ram_header = unknown_header + 16;
+    snapshot[ram_header..ram_header + 4].copy_from_slice(&SectionId::RAM.0.to_le_bytes()); // id
+    snapshot[ram_header + 4..ram_header + 6].copy_from_slice(&1u16.to_le_bytes()); // version
+    snapshot[ram_header + 6..ram_header + 8].copy_from_slice(&0u16.to_le_bytes()); // flags
+    snapshot[ram_header + 8..ram_header + 16].copy_from_slice(&24u64.to_le_bytes()); // len
+
+    let ram_payload = ram_header + 16;
+    let total_len = 4096u64;
+    snapshot[ram_payload..ram_payload + 8].copy_from_slice(&total_len.to_le_bytes());
+    snapshot[ram_payload + 8..ram_payload + 12].copy_from_slice(&4096u32.to_le_bytes()); // page_size
+    snapshot[ram_payload + 12] = 1; // RamMode::Dirty
+    snapshot[ram_payload + 13] = 0; // Compression::None
+    snapshot[ram_payload + 14..ram_payload + 16].copy_from_slice(&0u16.to_le_bytes()); // reserved
+    snapshot[ram_payload + 16..ram_payload + 24].copy_from_slice(&0u64.to_le_bytes()); // dirty_count
+
+    snapshot.truncate(ram_payload + 24);
+}
+
 #[test]
 fn snapshot_inspect_prints_meta_and_ram_summary() {
     let tmp = tempfile::tempdir().unwrap();
@@ -294,6 +342,30 @@ fn snapshot_validate_supports_multi_cpu_and_rejects_corrupt_internal_len() {
         .args(["snapshot", "validate", corrupt_path.to_str().unwrap()])
         .assert()
         .failure();
+}
+
+#[test]
+fn snapshot_validate_rejects_truncated_devices_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("corrupt_devices.aerosnap");
+    write_snapshot(&snap);
+
+    let mut bytes = fs::read(&snap).unwrap();
+    corrupt_devices_section_len_to_two_and_insert_ram(&mut bytes);
+    fs::write(&snap, &bytes).unwrap();
+
+    // Inspect should succeed: the file is still structurally parseable.
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Validation should fail because the DEVICES section is too short to contain its u32 count.
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("device count: truncated section"));
 }
 
 struct LargeDirtySource;
