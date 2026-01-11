@@ -96,6 +96,12 @@ jobs:
             --swiftshader true \
             --output perf-results/gpu/raw.json
 
+      - name: Run storage perf (nightly)
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types bench/runner.ts storage_io \
+            --out-dir perf-results/storage_io
+
       - name: Job summary
         if: always()
         run: |
@@ -103,6 +109,9 @@ jobs:
             echo "### Perf (nightly)"
             echo ""
             echo "- Iterations: ${{ env.PERF_ITERATIONS }}"
+            if [[ -f perf-results/storage_io/storage_bench.json ]]; then
+              echo "- Storage: perf-results/storage_io/storage_bench.json"
+            fi
             if [[ -f perf-results/nightly/summary.json ]]; then
               echo ""
               echo "Raw summary:"
@@ -157,6 +166,13 @@ jobs:
           node bench/history.js append \
             --history bench/history.json \
             --input perf-results/gpu/raw.json \
+            --timestamp "$ts" \
+            --commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY"
+
+          node bench/history.js append \
+            --history bench/history.json \
+            --input perf-results/storage_io/report.json \
             --timestamp "$ts" \
             --commit "$GITHUB_SHA" \
             --repository "$GITHUB_REPOSITORY"
