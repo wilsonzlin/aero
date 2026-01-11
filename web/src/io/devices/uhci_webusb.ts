@@ -18,7 +18,7 @@ export class UhciWebUsbPciDevice implements PciDevice {
   readonly vendorId = 0x8086;
   readonly deviceId = 0x7020;
   readonly classCode = 0x0c_03_00; // USB controller (UHCI)
-  readonly irqLine = 0x0c;
+  readonly irqLine = 0x0b;
 
   readonly bars: ReadonlyArray<PciBar | null> = [null, null, null, null, { kind: "io", size: 0x20 }, null];
 

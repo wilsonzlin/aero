@@ -132,7 +132,7 @@ let webUsbUhciBridge: WebUsbUhciBridge | null = null;
 let webUsbUhciIrqAsserted = false;
 let lastUsbSelected: UsbSelectedMessage | null = null;
 
-const WEBUSB_UHCI_IRQ_LINE = 0x0c;
+const WEBUSB_UHCI_IRQ_LINE = 0x0b;
 const WEBUSB_UHCI_FRAMES_PER_TICK = 8;
 const WEBUSB_GUEST_ROOT_PORT = 0;
 
@@ -1059,9 +1059,27 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         hidInRing = null;
       }
 
+      // PCI devices may share IRQ lines. The CPU worker consumes IRQ events as a single
+      // level per line, so we need to "wire-OR" multiple devices in the IO worker.
+      //
+      // Use a small refcount per IRQ line: emit `irqRaise` on 0->1 and `irqLower` on 1->0.
+      const irqRefCounts = new Uint16Array(256);
       const irqSink: IrqSink = {
-        raiseIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
-        lowerIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
+        raiseIrq: (irq) => {
+          const idx = irq & 0xff;
+          const prev = irqRefCounts[idx]!;
+          const next = prev + 1;
+          irqRefCounts[idx] = next;
+          if (prev === 0) enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: idx }));
+        },
+        lowerIrq: (irq) => {
+          const idx = irq & 0xff;
+          const prev = irqRefCounts[idx]!;
+          if (prev === 0) return;
+          const next = prev - 1;
+          irqRefCounts[idx] = next;
+          if (next === 0) enqueueIoEvent(encodeEvent({ kind: "irqLower", irq: idx }));
+        },
       };
 
       const systemControl = {
