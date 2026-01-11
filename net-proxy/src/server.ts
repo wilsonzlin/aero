@@ -423,7 +423,10 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
       return;
     }
 
-    if (target.host.trim() === "" || !Number.isInteger(target.port) || target.port < 1 || target.port > 65535) {
+    const host = stripOptionalIpv6Brackets(target.host);
+    const port = target.port;
+
+    if (host.trim() === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
       sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "Invalid host or port");
       return;
     }
@@ -434,15 +437,15 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
       connId,
       proto: "tcp-mux",
       streamId: frame.streamId,
-      host: target.host,
-      port: target.port,
+      host,
+      port,
       clientAddress
     });
 
     const stream: TcpMuxStreamState = {
       id: frame.streamId,
-      host: target.host,
-      port: target.port,
+      host,
+      port,
       socket: null,
       connected: false,
       clientFin: false,
@@ -459,7 +462,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
     void (async () => {
       let decision;
       try {
-        decision = await resolveAndAuthorizeTarget(target.host, target.port, {
+        decision = await resolveAndAuthorizeTarget(host, port, {
           open: config.open,
           allowlist: config.allow,
           dnsTimeoutMs: config.dnsTimeoutMs
@@ -471,8 +474,8 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
           connId,
           proto: "tcp-mux",
           streamId: stream.id,
-          host: target.host,
-          port: target.port,
+          host,
+          port,
           clientAddress,
           err: formatError(err)
         });
@@ -490,8 +493,8 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
           connId,
           proto: "tcp-mux",
           streamId: stream.id,
-          host: target.host,
-          port: target.port,
+          host,
+          port,
           clientAddress,
           reason: decision.reason
         });
@@ -502,8 +505,8 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
         connId,
         proto: "tcp-mux",
         streamId: stream.id,
-        host: target.host,
-        port: target.port,
+        host,
+        port,
         clientAddress,
         resolvedAddress: decision.target.resolvedAddress,
         family: decision.target.family,
@@ -513,7 +516,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
       const tcpSocket = net.createConnection({
         host: decision.target.resolvedAddress,
         family: decision.target.family,
-        port: target.port,
+        port,
         allowHalfOpen: true
       });
       tcpSocket.setNoDelay(true);
@@ -559,8 +562,8 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
           connId,
           proto: "tcp-mux",
           streamId: current.id,
-          host: target.host,
-          port: target.port,
+          host,
+          port,
           clientAddress,
           err: formatError(err)
         });

@@ -243,7 +243,7 @@ test("tcp-mux relay echoes bytes on multiple concurrent streams", async () => {
     const open1 = encodeTcpMuxFrame(
       TcpMuxMsgType.OPEN,
       1,
-      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+      encodeTcpMuxOpenPayload({ host: "[127.0.0.1]", port: echoServer.port })
     );
     const open2 = encodeTcpMuxFrame(
       TcpMuxMsgType.OPEN,
