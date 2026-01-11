@@ -2130,7 +2130,10 @@ impl HdaController {
             .iter_mut()
             .zip(&state.stream_capture_frame_accum)
         {
-            rt.capture_frame_accum = *v;
+            // `capture_frame_accum` is a fractional remainder accumulator and should always be
+            // `< output_rate_hz`. Clamp corrupted/untrusted snapshot values to avoid creating an
+            // enormous `dst_frames` count in `process_capture_stream`.
+            rt.capture_frame_accum = v % self.output_rate_hz as u64;
         }
 
         // Host-side output buffering is recreated on restore.

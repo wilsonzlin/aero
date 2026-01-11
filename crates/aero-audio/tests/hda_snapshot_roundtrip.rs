@@ -650,3 +650,62 @@ fn hda_snapshot_restore_clamps_bdl_index_to_lvi() {
     // Processing should not panic or read out of bounds.
     restored.process(&mut mem, 128);
 }
+
+#[test]
+fn hda_snapshot_restore_clamps_capture_frame_accum_to_avoid_huge_capture_steps() {
+    let hda = HdaController::new();
+    let mut mem = GuestMemory::new(0x20_000);
+
+    let worklet_ring = AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    };
+    let mut snap = hda.snapshot_state(worklet_ring);
+    assert!(snap.stream_capture_frame_accum.len() >= 2);
+
+    snap.gctl = 0x1;
+
+    // Configure codec ADC (NID 4) to use stream 2, channel 0 so capture stream is active.
+    snap.codec_capture.input_stream_id = 2;
+    snap.codec_capture.input_channel = 0;
+
+    // Guest capture format: 48kHz, 16-bit, mono.
+    let fmt_raw: u16 = (1 << 4) | 0x0;
+    snap.codec_capture.input_format = fmt_raw;
+
+    // One BDL entry so capture DMA has a valid target.
+    let bdl_base = 0x1000u64;
+    let buf = 0x2000u64;
+    let buf_len = 512u32;
+    mem.write_u64(bdl_base + 0, buf);
+    mem.write_u32(bdl_base + 8, buf_len);
+    mem.write_u32(bdl_base + 12, 0);
+
+    snap.streams[1].bdpl = bdl_base as u32;
+    snap.streams[1].bdpu = 0;
+    snap.streams[1].cbl = buf_len;
+    snap.streams[1].lvi = 0;
+    snap.streams[1].fmt = fmt_raw;
+    // SRST | RUN | stream number 2.
+    snap.streams[1].ctl = (1 << 0) | (1 << 1) | (2 << 20);
+
+    // Corrupt accumulator to an enormous value; without clamping this would produce an absurd
+    // `dst_frames` count on the next capture tick.
+    snap.stream_capture_frame_accum[1] = u64::MAX;
+
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+
+    let post = restored.snapshot_state(AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    });
+    assert!(post.stream_capture_frame_accum[1] < restored.output_rate_hz() as u64);
+
+    // Smoke test: processing capture should not attempt to allocate/run for an enormous frame count.
+    let mut capture = VecDequeCaptureSource::new();
+    capture.push_samples(&[0.0; 128]);
+    restored.process_with_capture(&mut mem, 1, &mut capture);
+}
