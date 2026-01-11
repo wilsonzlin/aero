@@ -7330,22 +7330,20 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     if (!is_rotated(dev->current_vs_srvs[slot])) {
       continue;
     }
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-    cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
-    cmd->slot = slot;
-    cmd->texture = dev->current_vs_srvs[slot] ? dev->current_vs_srvs[slot]->handle : 0;
-    cmd->reserved0 = 0;
+    SetShaderResourceSlotLocked(dev,
+                                AEROGPU_SHADER_STAGE_VERTEX,
+                                slot,
+                                dev->current_vs_srvs[slot] ? dev->current_vs_srvs[slot]->handle : 0);
   }
 
   for (uint32_t slot = 0; slot < dev->current_ps_srvs.size(); ++slot) {
     if (!is_rotated(dev->current_ps_srvs[slot])) {
       continue;
     }
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-    cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-    cmd->slot = slot;
-    cmd->texture = dev->current_ps_srvs[slot] ? dev->current_ps_srvs[slot]->handle : 0;
-    cmd->reserved0 = 0;
+    SetShaderResourceSlotLocked(dev,
+                                AEROGPU_SHADER_STAGE_PIXEL,
+                                slot,
+                                dev->current_ps_srvs[slot] ? dev->current_ps_srvs[slot]->handle : 0);
   }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
