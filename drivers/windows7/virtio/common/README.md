@@ -10,7 +10,7 @@ At a high level, Aero drivers use two virtio-pci transport styles:
 - **Modern (Virtio 1.0+ / contract v1):** BAR MMIO + `COMMON/NOTIFY/ISR/DEVICE` capabilities
 - **Legacy/transitional (virtio 0.9):** I/O-port register set (PFN-based queue programming)
 
-This directory contains implementations and helpers for both. Windows-facing code has two main consumer models:
+This directory contains implementations and helpers for both. For modern virtio-pci on Windows there are two main consumer models:
 
 - **Miniport-style (NDIS / StorPort):** `virtio_pci_modern_miniport.*`
   - caller provides a BAR0 MMIO mapping and a PCI config snapshot
