@@ -3758,8 +3758,18 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
       std::memcpy(res->storage.data() + dst_offset, src + y * src_pitch, row_bytes);
     }
 
-    const size_t upload_offset = static_cast<size_t>(box->top) * dst_pitch;
-    const size_t upload_size = static_cast<size_t>(box->bottom - box->top) * dst_pitch;
+    // Keep browser executor compatibility: partial UPLOAD_RESOURCE ranges are only
+    // supported for tightly packed textures (row_pitch_bytes == width*4).
+    const size_t tight_row_bytes = static_cast<size_t>(res->width) * static_cast<size_t>(bpp);
+    size_t upload_offset = static_cast<size_t>(box->top) * dst_pitch;
+    size_t upload_size = static_cast<size_t>(box->bottom - box->top) * dst_pitch;
+    if (dst_pitch != tight_row_bytes) {
+      upload_offset = 0;
+      upload_size = res->storage.size();
+    }
+    if (upload_offset > res->storage.size() || upload_size > res->storage.size() - upload_offset) {
+      return E_FAIL;
+    }
     auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
         AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + upload_offset, upload_size);
     if (!upload) {
@@ -8019,8 +8029,19 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       std::memcpy(res->storage.data() + dst_offset, src + y * src_pitch, row_bytes);
     }
 
-    const size_t upload_offset = static_cast<size_t>(pDstBox->top) * dst_pitch;
-    const size_t upload_size = static_cast<size_t>(pDstBox->bottom - pDstBox->top) * dst_pitch;
+    // The browser executor currently only supports partial UPLOAD_RESOURCE updates for
+    // tightly packed textures (row_pitch_bytes == width*4). When the texture has per-row
+    // padding, keep the command stream compatible by uploading the entire texture.
+    const size_t tight_row_bytes = static_cast<size_t>(res->width) * static_cast<size_t>(bpp);
+    size_t upload_offset = static_cast<size_t>(pDstBox->top) * dst_pitch;
+    size_t upload_size = static_cast<size_t>(pDstBox->bottom - pDstBox->top) * dst_pitch;
+    if (dst_pitch != tight_row_bytes) {
+      upload_offset = 0;
+      upload_size = res->storage.size();
+    }
+    if (upload_offset > res->storage.size() || upload_size > res->storage.size() - upload_offset) {
+      return;
+    }
     auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
         AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + upload_offset, upload_size);
     if (!upload) {
