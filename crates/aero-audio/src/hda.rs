@@ -1425,7 +1425,8 @@ impl HdaController {
             let sd = &mut self.streams[stream];
             let rt = &mut self.stream_rt[stream];
 
-            let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64);
+            // BDPL is 128-byte aligned in hardware; low bits must read as 0.
+            let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64 & !0x7f);
 
             while bytes > 0 {
                 let entry = read_bdl_entry(mem, bdl_base, rt.bdl_index as usize);
@@ -1500,7 +1501,7 @@ impl HdaController {
             let sd = &mut self.streams[stream];
             let rt = &mut self.stream_rt[stream];
 
-            let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64);
+            let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64 & !0x7f);
 
             while !bytes.is_empty() {
                 let entry = read_bdl_entry(mem, bdl_base, rt.bdl_index as usize);
