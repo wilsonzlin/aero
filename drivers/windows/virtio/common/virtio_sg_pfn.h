@@ -75,7 +75,8 @@ ULONG VirtioSgMaxElemsForMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength);
  * Build a VIRTQ_SG list from an MDL chain by walking the PFN array(s) and
  * generating per-page segments, coalescing physically-contiguous PFNs.
  *
- * Calls KeFlushIoBuffers() on each MDL in the chain for cache coherency.
+ * Calls KeFlushIoBuffers() on each MDL in the chain for cache coherency
+ * (except for sizing calls where out_cap==0).
  *
  * No allocations; suitable for DISPATCH_LEVEL.
  *

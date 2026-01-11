@@ -296,8 +296,10 @@ NTSTATUS VirtioSgBuildFromMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength, BO
 	 * KeFlushIoBuffers is safe at DISPATCH_LEVEL. On coherent x86/x64 it is
 	 * typically a no-op, but it is required for non-coherent platforms.
 	 */
-	for (cur = Mdl; cur != NULL; cur = cur->Next) {
-		KeFlushIoBuffers(cur, /*ReadOperation*/ device_write, /*DmaOperation*/ TRUE);
+	if (out_cap != 0) {
+		for (cur = Mdl; cur != NULL; cur = cur->Next) {
+			KeFlushIoBuffers(cur, /*ReadOperation*/ device_write, /*DmaOperation*/ TRUE);
+		}
 	}
 
 	b.out = out;
@@ -372,4 +374,3 @@ NTSTATUS VirtioSgBuildFromMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength, BO
 }
 
 #endif /* VIRTIO_OSDEP_KERNEL_MODE */
-
