@@ -673,3 +673,69 @@ fn pc_cpu_bus_invlpg_flushes_long_mode_translation() {
     bus.invlpg(vaddr);
     assert_eq!(bus.read_u8(vaddr).unwrap(), 0xBB);
 }
+
+#[test]
+fn pc_cpu_bus_sync_cr3_flushes_long_mode_translation() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let vaddr = 0x0040_0000u64;
+    let page0_phys = 0x5000u64;
+    let page1_phys = 0x6000u64;
+
+    // Two distinct page-table roots so we can validate that CR3 writes flush cached translations.
+    let pml4_0 = 0x1000u64;
+    let pdpt_0 = 0x2000u64;
+    let pd_0 = 0x3000u64;
+    let pt_0 = 0x4000u64;
+
+    let pml4_1 = 0x7000u64;
+    let pdpt_1 = 0x8000u64;
+    let pd_1 = 0x9000u64;
+    let pt_1 = 0xA000u64;
+
+    let pml4_index = (vaddr >> 39) & 0x1ff;
+    let pdpt_index = (vaddr >> 30) & 0x1ff;
+    let pd_index = (vaddr >> 21) & 0x1ff;
+    let pt_index = (vaddr >> 12) & 0x1ff;
+
+    let pml4e_0 = pml4_0 + pml4_index * 8;
+    let pdpte_0 = pdpt_0 + pdpt_index * 8;
+    let pde_0 = pd_0 + pd_index * 8;
+    let pte_0 = pt_0 + pt_index * 8;
+
+    memory::MemoryBus::write_u64(&mut bus.platform.memory, pml4e_0, pdpt_0 | PTE_P | PTE_RW | PTE_US);
+    memory::MemoryBus::write_u64(&mut bus.platform.memory, pdpte_0, pd_0 | PTE_P | PTE_RW | PTE_US);
+    memory::MemoryBus::write_u64(&mut bus.platform.memory, pde_0, pt_0 | PTE_P | PTE_RW | PTE_US);
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pte_0,
+        page0_phys | PTE_P | PTE_RW | PTE_US,
+    );
+
+    let pml4e_1 = pml4_1 + pml4_index * 8;
+    let pdpte_1 = pdpt_1 + pdpt_index * 8;
+    let pde_1 = pd_1 + pd_index * 8;
+    let pte_1 = pt_1 + pt_index * 8;
+
+    memory::MemoryBus::write_u64(&mut bus.platform.memory, pml4e_1, pdpt_1 | PTE_P | PTE_RW | PTE_US);
+    memory::MemoryBus::write_u64(&mut bus.platform.memory, pdpte_1, pd_1 | PTE_P | PTE_RW | PTE_US);
+    memory::MemoryBus::write_u64(&mut bus.platform.memory, pde_1, pt_1 | PTE_P | PTE_RW | PTE_US);
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pte_1,
+        page1_phys | PTE_P | PTE_RW | PTE_US,
+    );
+
+    bus.platform.memory.write_u8(page0_phys, 0xAA);
+    bus.platform.memory.write_u8(page1_phys, 0xBB);
+
+    let mut state = long_state(pml4_0, 3);
+    bus.sync(&state);
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
+
+    // Switch address space.
+    state.control.cr3 = pml4_1;
+    bus.sync(&state);
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xBB);
+}
