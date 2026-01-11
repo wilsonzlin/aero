@@ -136,6 +136,8 @@ fn optimized_profile_only_exposes_implemented_extra_bits() {
     assert_ne!(leaf1.ecx & bits::LEAF1_ECX_SSE3, 0);
     assert_ne!(leaf1.ecx & bits::LEAF1_ECX_SSE42, 0);
     assert_ne!(leaf1.ecx & bits::LEAF1_ECX_POPCNT, 0);
+    assert_ne!(leaf1.ecx & bits::LEAF1_ECX_PCLMULQDQ, 0);
+    assert_ne!(leaf1.ecx & bits::LEAF1_ECX_AES, 0);
 
     // But if the emulator doesn't implement them, they must stay off even in optimized mode.
     let features = CpuFeatures::from_profile(
@@ -150,4 +152,6 @@ fn optimized_profile_only_exposes_implemented_extra_bits() {
     assert_eq!(leaf1.ecx & bits::LEAF1_ECX_SSE3, 0);
     assert_eq!(leaf1.ecx & bits::LEAF1_ECX_SSE42, 0);
     assert_eq!(leaf1.ecx & bits::LEAF1_ECX_POPCNT, 0);
+    assert_eq!(leaf1.ecx & bits::LEAF1_ECX_PCLMULQDQ, 0);
+    assert_eq!(leaf1.ecx & bits::LEAF1_ECX_AES, 0);
 }

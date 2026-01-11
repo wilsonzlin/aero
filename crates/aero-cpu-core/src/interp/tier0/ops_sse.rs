@@ -2,7 +2,7 @@ use super::ops_data::{calc_ea, op_bits, read_op_sized, reg_bits};
 use super::{ExecOutcome, Tier0Config};
 use crate::cpuid::bits as cpuid_bits;
 use crate::exception::Exception;
-use crate::interp::{sse3, sse41, sse42, ssse3};
+use crate::interp::{crypto, sse3, sse41, sse42, ssse3};
 use crate::mem::CpuBus;
 use crate::state::{
     mask_bits, CpuState, CR0_EM, CR0_TS, CR4_OSFXSR, CR4_OSXMMEXCPT, FLAG_CF, FLAG_OF, FLAG_SF,
@@ -149,13 +149,21 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Pmulld
             | Mnemonic::Pcmpeqq
         // SSE4.2
-        | Mnemonic::Crc32
-            | Mnemonic::Pcmpestri
-            | Mnemonic::Pcmpestrm
-            | Mnemonic::Pcmpistri
-            | Mnemonic::Pcmpistrm
-        // POPCNT (scalar extension)
-        | Mnemonic::Popcnt
+         | Mnemonic::Crc32
+             | Mnemonic::Pcmpestri
+             | Mnemonic::Pcmpestrm
+             | Mnemonic::Pcmpistri
+             | Mnemonic::Pcmpistrm
+        // Crypto extensions
+        | Mnemonic::Pclmulqdq
+            | Mnemonic::Aesenc
+            | Mnemonic::Aesenclast
+            | Mnemonic::Aesdec
+            | Mnemonic::Aesdeclast
+            | Mnemonic::Aesimc
+            | Mnemonic::Aeskeygenassist
+         // POPCNT (scalar extension)
+         | Mnemonic::Popcnt
     )
 }
 
@@ -181,6 +189,25 @@ pub fn exec<B: CpuBus>(
         }
 
         // ---- XMM / MXCSR-gated instructions -------------------------------
+        Mnemonic::Pclmulqdq => {
+            check_xmm_available(state)?;
+            require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE2)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_PCLMULQDQ)?;
+            exec_pclmulqdq(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Aesenc
+        | Mnemonic::Aesenclast
+        | Mnemonic::Aesdec
+        | Mnemonic::Aesdeclast
+        | Mnemonic::Aesimc
+        | Mnemonic::Aeskeygenassist => {
+            check_xmm_available(state)?;
+            require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE2)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_AES)?;
+            exec_aesni(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
         Mnemonic::Movaps => {
             check_xmm_available(state)?;
             require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE)?;
@@ -2162,5 +2189,41 @@ fn exec_crc32<B: CpuBus>(
 
     // CRC32 always produces a 32-bit CRC which is zero-extended into the destination.
     state.write_reg(dst, res as u64);
+    Ok(())
+}
+
+fn exec_pclmulqdq<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let dst_val = read_xmm_reg(state, dst)?;
+    let src_val = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let imm8 = instr.immediate8();
+    let out = crypto::pclmulqdq(dst_val, src_val, imm8);
+    write_xmm_reg(state, dst, out)?;
+    Ok(())
+}
+
+fn exec_aesni<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let out = match instr.mnemonic() {
+        Mnemonic::Aesenc => crypto::aesenc(read_xmm_reg(state, dst)?, src),
+        Mnemonic::Aesenclast => crypto::aesenclast(read_xmm_reg(state, dst)?, src),
+        Mnemonic::Aesdec => crypto::aesdec(read_xmm_reg(state, dst)?, src),
+        Mnemonic::Aesdeclast => crypto::aesdeclast(read_xmm_reg(state, dst)?, src),
+        Mnemonic::Aesimc => crypto::aesimc(src),
+        Mnemonic::Aeskeygenassist => crypto::aeskeygenassist(src, instr.immediate8()),
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    write_xmm_reg(state, dst, out)?;
     Ok(())
 }

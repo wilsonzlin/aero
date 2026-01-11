@@ -261,9 +261,11 @@ impl CpuFeatureSet {
         Self::win7_minimum().union(Self {
             leaf1_ecx: bits::LEAF1_ECX_SSE3
                 | bits::LEAF1_ECX_SSSE3
+                | bits::LEAF1_ECX_PCLMULQDQ
                 | bits::LEAF1_ECX_SSE41
                 | bits::LEAF1_ECX_SSE42
-                | bits::LEAF1_ECX_POPCNT,
+                | bits::LEAF1_ECX_POPCNT
+                | bits::LEAF1_ECX_AES,
             ..Self::default()
         })
     }
@@ -596,6 +598,7 @@ pub mod bits {
     pub const LEAF1_ECX_SSE42: u32 = 1 << 20;
     pub const LEAF1_ECX_X2APIC: u32 = 1 << 21;
     pub const LEAF1_ECX_POPCNT: u32 = 1 << 23;
+    pub const LEAF1_ECX_AES: u32 = 1 << 25;
 
     // CPUID.80000001:EDX
     pub const EXT1_EDX_SYSCALL: u32 = 1 << 11;

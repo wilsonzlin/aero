@@ -1,6 +1,8 @@
 pub mod tier0;
 pub mod x87;
 
+pub mod crypto;
+
 #[cfg(feature = "legacy-interp")]
 pub(crate) mod alu;
 #[cfg(feature = "legacy-interp")]
