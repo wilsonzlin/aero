@@ -124,11 +124,18 @@ All fields are written **in the order below** (little-endian):
   - `u32 MXCSR`
   - `u128 XMM[16]` (XMM0..XMM15)
 - `u8 FXSAVE_AREA[512]` (raw 512-byte image; currently `FXSAVE64`-compatible layout)
+- **Optional v2 extension** (added after the initial v2 release; older v2 snapshots may end at the FXSAVE bytes):
+  - `u32 EXT_LEN` (number of extension bytes that follow; currently `4`)
+  - `u8 a20_enabled`
+  - `u8 irq13_pending`
+  - `u8 pending_bios_int_valid`
+  - `u8 pending_bios_int`
 
-Note: `CpuState` captures architectural state only. Any runtime bookkeeping that is not part of
-the architectural CPU/MMU model (e.g. interrupt shadow state, memory bus/A20 state, pending BIOS
-interrupts for the minimal BIOS VM) should be captured via the `DEVICES` section by the snapshot
-adapter.
+Note: the CPU snapshot is intended to match the canonical `aero_cpu_core::state::CpuState` shape
+(architectural state plus a small amount of core execution bookkeeping like A20 gate state and BIOS
+interrupt hypercall tracking). Higher-level runtime bookkeeping that lives outside `CpuState` (e.g.
+pending external interrupts / interrupt-shadow state / local APIC queues) should be captured via the
+`DEVICES` section by the snapshot adapter (see `CPU_INTERNAL` below).
 
 ---
 
