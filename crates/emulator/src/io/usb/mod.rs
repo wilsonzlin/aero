@@ -2,7 +2,10 @@ pub mod core;
 pub mod descriptor_fixups;
 pub mod hid;
 pub mod hub;
+pub mod passthrough;
 pub mod uhci;
+
+pub use core::{UsbInResult, UsbOutResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SetupPacket {
@@ -87,6 +90,7 @@ pub enum RequestRecipient {
 pub enum ControlResponse {
     Data(Vec<u8>),
     Ack,
+    Nak,
     Stall,
 }
 
@@ -203,10 +207,29 @@ pub trait UsbDeviceModel {
         data_stage: Option<&[u8]>,
     ) -> ControlResponse;
 
-    /// Polls an interrupt IN endpoint and returns the next queued report (if any).
+    /// Handles a non-control IN transfer (interrupt/bulk).
+    ///
+    /// Implementations should return [`UsbInResult::Nak`] when no data is available yet so the
+    /// UHCI scheduler can retry the TD in a later frame.
+    fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
+        let _ = max_len;
+        self.handle_interrupt_in(ep)
+    }
+
+    /// Handles a non-control OUT transfer (interrupt/bulk).
+    ///
+    /// The default implementation delegates to [`UsbDeviceModel::handle_interrupt_out`] for
+    /// backwards compatibility with interrupt-only device models.
+    fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
+        self.handle_interrupt_out(ep, data)
+    }
+
+    /// Legacy helper for interrupt IN endpoints.
     ///
     /// Returning `None` indicates the endpoint would NAK (no data available).
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>>;
+    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
+        None
+    }
 
     /// Handles an interrupt IN transfer for a non-control endpoint.
     ///

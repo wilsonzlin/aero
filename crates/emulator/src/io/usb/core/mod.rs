@@ -22,6 +22,7 @@ pub enum UsbInResult {
 enum ControlStage {
     InData { data: Vec<u8>, offset: usize },
     OutData { expected: usize, received: Vec<u8> },
+    OutDataPending { data: Vec<u8> },
     StatusIn,
     StatusOut,
 }
@@ -107,6 +108,7 @@ impl AttachedUsbDevice {
                         }
                     }
                     ControlResponse::Ack => ControlStage::StatusOut,
+                    ControlResponse::Nak => return UsbOutResult::Nak,
                     ControlResponse::Stall => return UsbOutResult::Stall,
                 }
             }
@@ -122,6 +124,7 @@ impl AttachedUsbDevice {
                 } else if setup.w_length == 0 {
                     match self.model.handle_control_request(setup, None) {
                         ControlResponse::Ack => ControlStage::StatusIn,
+                        ControlResponse::Nak => return UsbOutResult::Nak,
                         ControlResponse::Stall => return UsbOutResult::Stall,
                         ControlResponse::Data(_) => return UsbOutResult::Stall,
                     }
@@ -141,7 +144,7 @@ impl AttachedUsbDevice {
     pub fn handle_out(&mut self, endpoint: u8, data: &[u8]) -> UsbOutResult {
         if endpoint != 0 {
             let ep_addr = endpoint & 0x0f;
-            return self.model.handle_interrupt_out(ep_addr, data);
+            return self.model.handle_out_transfer(ep_addr, data);
         }
         let Some(state) = self.control.as_mut() else {
             return UsbOutResult::Stall;
@@ -149,7 +152,10 @@ impl AttachedUsbDevice {
 
         match &mut state.stage {
             ControlStage::OutData { expected, received } => {
-                received.extend_from_slice(data);
+                // Avoid appending duplicate bytes if the host retries the final TD due to NAK.
+                let remaining = expected.saturating_sub(received.len());
+                let chunk_len = remaining.min(data.len());
+                received.extend_from_slice(&data[..chunk_len]);
                 if received.len() >= *expected {
                     let setup = state.setup;
                     match self
@@ -158,12 +164,31 @@ impl AttachedUsbDevice {
                     {
                         ControlResponse::Ack => {
                             state.stage = ControlStage::StatusIn;
+                            return UsbOutResult::Ack;
+                        }
+                        ControlResponse::Nak => {
+                            state.stage = ControlStage::OutDataPending {
+                                data: received.clone(),
+                            };
+                            return UsbOutResult::Nak;
                         }
                         ControlResponse::Stall => return UsbOutResult::Stall,
                         ControlResponse::Data(_) => return UsbOutResult::Stall,
                     }
                 }
                 UsbOutResult::Ack
+            }
+            ControlStage::OutDataPending { data } => {
+                let setup = state.setup;
+                match self.model.handle_control_request(setup, Some(data.as_slice())) {
+                    ControlResponse::Ack => {
+                        state.stage = ControlStage::StatusIn;
+                        UsbOutResult::Ack
+                    }
+                    ControlResponse::Nak => UsbOutResult::Nak,
+                    ControlResponse::Stall => UsbOutResult::Stall,
+                    ControlResponse::Data(_) => UsbOutResult::Stall,
+                }
             }
             ControlStage::StatusOut => {
                 if !data.is_empty() {
@@ -182,7 +207,7 @@ impl AttachedUsbDevice {
         }
 
         let ep_addr = 0x80 | (endpoint & 0x0f);
-        match self.model.handle_interrupt_in(ep_addr) {
+        match self.model.handle_in_transfer(ep_addr, max_len) {
             UsbInResult::Data(mut data) => {
                 if data.len() > max_len {
                     data.truncate(max_len);
