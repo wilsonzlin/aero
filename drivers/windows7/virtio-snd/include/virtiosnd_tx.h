@@ -25,16 +25,18 @@
  */
 
 /*
- * To keep descriptor usage bounded and ensure that the virtqueue implementation
- * can always select indirect descriptors, cap the number of PCM segments per TX
- * submission so the full chain fits within the indirect table size (default:
- * 32 descriptors).
+ * To keep descriptor usage bounded and ensure TX submissions fit within the
+ * per-queue indirect descriptor table size mandated by the Aero contract v1,
+ * cap the number of PCM segments per TX submission.
  *
  * Chain layout:
  *   [TX_HDR] + [PCM segments...] + [PCM_STATUS]
  * => sg_count = SegmentCount + 2
+ *
+ * Contract v1 uses INDIRECT_MAX_DESC = 16 for the txq, so:
+ *   SegmentCount <= 16 - 2 = 14
  */
-#define VIRTIOSND_TX_MAX_SEGMENTS 30u
+#define VIRTIOSND_TX_MAX_SEGMENTS 14u
 #define VIRTIOSND_TX_SG_CAP (2u + VIRTIOSND_TX_MAX_SEGMENTS)
 
 /*
