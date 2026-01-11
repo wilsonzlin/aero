@@ -5,7 +5,7 @@ import { randomInt } from 'node:crypto';
  * Range Harness
  *
  * A small CLI to probe/benchmark HTTP Range requests against large disk-image
- * URLs (S3/CloudFront/etc). Designed to be dependency-free and run on Node 20+.
+ * URLs (S3/CloudFront/etc). Designed to be dependency-free and run on Node 20.x.
  *
  * Usage:
  *   node tools/range-harness/index.js --url <URL> [--chunk-size 1048576] [--count 32]
@@ -14,7 +14,7 @@ import { randomInt } from 'node:crypto';
 
 if (typeof fetch !== 'function') {
   // eslint-disable-next-line no-console
-  console.error('This tool requires Node.js 20+ (global fetch is missing).');
+  console.error('This tool requires Node.js 20.x (global fetch is missing).');
   process.exit(1);
 }
 

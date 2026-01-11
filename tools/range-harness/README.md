@@ -10,7 +10,7 @@ It is useful for:
 
 ## Requirements
 
-- Node.js **20.11.1+** (repo standard; older versions may work but are not supported)
+- Node.js **20.11.1+** (**Node 20.x**; repo standard/engines)
 
 No external npm dependencies are required.
 
