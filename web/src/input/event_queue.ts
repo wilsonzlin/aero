@@ -48,6 +48,9 @@ export enum InputEventType {
    * Payload:
    *   a = packed bytes 0..3 of an 8-byte gamepad report (little-endian)
    *   b = packed bytes 4..7 of the report (little-endian)
+   *
+   * The canonical report layout is defined by the emulator's USB HID gamepad
+   * device model (`crates/emulator/src/io/usb/hid/gamepad.rs`).
    */
   GamepadReport = 5,
 }

@@ -107,6 +107,7 @@ export function gamepadButtonsToBitfield(buttons: readonly GamepadButtonLike[]):
 
 /**
  * 8-byte report layout (little-endian):
+ *   (Must match `crates/emulator/src/io/usb/hid/gamepad.rs`.)
  *   Byte 0: buttons low 8
  *   Byte 1: buttons high 8
  *   Byte 2: hat (low 4 bits; 8=neutral/null)
