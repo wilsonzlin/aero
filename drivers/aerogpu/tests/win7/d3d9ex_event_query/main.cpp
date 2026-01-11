@@ -241,8 +241,8 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   }
   const LONGLONG qpc_freq = qpc_freq_li.QuadPart;
 
-  const int kWidth = 64;
-  const int kHeight = 64;
+  const int kWidth = 256;
+  const int kHeight = 256;
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExEventQuery",
                                               L"AeroGPU D3D9Ex Event Query",
                                               kWidth,
@@ -365,9 +365,9 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue(END warmup)", hr);
   }
-  hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
+  hr = dev->Flush();
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "PresentEx(warmup)", hr);
+    return aerogpu_test::FailHresult(kTestName, "Flush(warmup)", hr);
   }
   {
     const DWORD start = GetTickCount();
@@ -412,6 +412,10 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     if (FAILED(hr)) {
       return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue(END)", hr);
     }
+    hr = dev->Flush();
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "Flush", hr);
+    }
 
     HRESULT hr_immediate = E_FAIL;
     LONGLONG start_qpc = 0;
@@ -444,11 +448,6 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                 immediate_ms,
                                 (unsigned)it,
                                 aerogpu_test::HresultToString(hr_immediate).c_str());
-    }
-
-    hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
-    if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "PresentEx", hr);
     }
 
     const DWORD poll_start = GetTickCount();
