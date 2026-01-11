@@ -1645,7 +1645,8 @@ uint64_t WddmSubmit::QueryCompletedFence() {
         if (SUCCEEDED(hr)) {
           completed = std::max(completed, last_submitted_fence_);
           need_kmt_fallback = false;
-        } else if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
+        } else if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
+                   hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L) || hr == kHrPending) {
           need_kmt_fallback = false;
         }
       }
