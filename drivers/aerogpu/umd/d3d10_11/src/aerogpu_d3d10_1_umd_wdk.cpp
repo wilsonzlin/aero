@@ -23,6 +23,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <new>
 #include <type_traits>
@@ -189,6 +190,11 @@ struct AeroGpuResource {
   uint32_t dxgi_format = 0;
   uint32_t row_pitch_bytes = 0;
 
+  // Map state (for UP resources backed by `storage`).
+  bool mapped = false;
+  uint64_t mapped_offset = 0;
+  uint64_t mapped_size = 0;
+
   std::vector<uint8_t> storage;
 };
 
@@ -223,9 +229,14 @@ struct AeroGpuDepthStencilState {
   uint32_t dummy = 0;
 };
 
+using SetErrorFn = void(AEROGPU_APIENTRY*)(D3D10DDI_HRTDEVICE, HRESULT);
+
 struct AeroGpuDevice {
   AeroGpuAdapter* adapter = nullptr;
   std::mutex mutex;
+
+  D3D10DDI_HRTDEVICE hrt_device{};
+  SetErrorFn pfn_set_error = nullptr;
 
   aerogpu::CmdWriter cmd;
 
@@ -516,6 +527,49 @@ void flush_locked(AeroGpuDevice* dev) {
   submit_locked(dev);
 }
 
+void set_error(AeroGpuDevice* dev, HRESULT hr) {
+  if (!dev || !dev->pfn_set_error || !dev->hrt_device.pDrvPrivate) {
+    return;
+  }
+  dev->pfn_set_error(dev->hrt_device, hr);
+}
+
+void emit_upload_resource_locked(AeroGpuDevice* dev,
+                                 const AeroGpuResource* res,
+                                 uint64_t offset_bytes,
+                                 uint64_t size_bytes) {
+  if (!dev || !res || res->handle == kInvalidHandle || !size_bytes) {
+    return;
+  }
+
+  if (offset_bytes > res->storage.size()) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+
+  const size_t remaining = res->storage.size() - static_cast<size_t>(offset_bytes);
+  if (size_bytes > remaining) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+  if (size_bytes > std::numeric_limits<size_t>::max()) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+
+  const uint8_t* payload = res->storage.data() + static_cast<size_t>(offset_bytes);
+  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+      AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(size_bytes));
+  if (!cmd) {
+    set_error(dev, E_FAIL);
+    return;
+  }
+  cmd->resource_handle = res->handle;
+  cmd->reserved0 = 0;
+  cmd->offset_bytes = offset_bytes;
+  cmd->size_bytes = size_bytes;
+}
+
 template <typename TFnPtr>
 struct DdiStub;
 
@@ -599,12 +653,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->reserved0 = 0;
 
     if (!res->storage.empty()) {
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = 0;
-      upload->size_bytes = res->storage.size();
+      emit_upload_resource_locked(dev, res, 0, res->storage.size());
     }
     return S_OK;
   }
@@ -684,12 +733,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->reserved0 = 0;
 
     if (!res->storage.empty()) {
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = 0;
-      upload->size_bytes = res->storage.size();
+      emit_upload_resource_locked(dev, res, 0, res->storage.size());
     }
     return S_OK;
   }
@@ -1321,6 +1365,151 @@ void AEROGPU_APIENTRY Flush(D3D10DDI_HDEVICE hDevice) {
   flush_locked(dev);
 }
 
+void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
+                          const D3D10DDIARG_MAP* pMap,
+                          D3D10DDI_MAPPED_SUBRESOURCE* pOut) {
+  if (!hDevice.pDrvPrivate || !pMap || !pOut) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pMap->hResource);
+  if (!res) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+  if (pMap->Subresource != 0) {
+    set_error(dev, E_NOTIMPL);
+    return;
+  }
+  if (res->mapped) {
+    set_error(dev, E_FAIL);
+    return;
+  }
+
+  // Lazily allocate CPU backing so dynamic resources can be updated.
+  if (res->storage.empty()) {
+    try {
+      if (res->kind == ResourceKind::Buffer && res->size_bytes) {
+        res->storage.resize(static_cast<size_t>(res->size_bytes), 0);
+      } else if (res->kind == ResourceKind::Texture2D && res->width && res->height && res->row_pitch_bytes) {
+        res->storage.resize(static_cast<size_t>(res->row_pitch_bytes) * res->height, 0);
+      }
+    } catch (...) {
+      set_error(dev, E_OUTOFMEMORY);
+      return;
+    }
+  }
+
+  res->mapped = true;
+  res->mapped_offset = 0;
+  res->mapped_size = res->storage.size();
+
+  pOut->pData = res->storage.empty() ? nullptr : res->storage.data();
+  pOut->RowPitch = (res->kind == ResourceKind::Texture2D) ? res->row_pitch_bytes : 0;
+  pOut->DepthPitch = 0;
+}
+
+void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!res) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+  if (subresource != 0) {
+    set_error(dev, E_NOTIMPL);
+    return;
+  }
+  if (!res->mapped) {
+    set_error(dev, E_FAIL);
+    return;
+  }
+
+  res->mapped = false;
+  if (!res->storage.empty()) {
+    emit_upload_resource_locked(dev, res, res->mapped_offset, res->mapped_size);
+  }
+  res->mapped_offset = 0;
+  res->mapped_size = 0;
+}
+
+void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
+                                         const D3D10DDIARG_UPDATESUBRESOURCEUP* pArgs,
+                                         const void* pSysMem) {
+  if (!hDevice.pDrvPrivate || !pArgs || !pSysMem) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pArgs->hDstResource);
+  if (!res) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+  if (pArgs->DstSubresource != 0 || pArgs->pDstBox) {
+    set_error(dev, E_NOTIMPL);
+    return;
+  }
+
+  if (res->kind == ResourceKind::Buffer) {
+    if (res->storage.empty()) {
+      try {
+        res->storage.resize(static_cast<size_t>(res->size_bytes), 0);
+      } catch (...) {
+        set_error(dev, E_OUTOFMEMORY);
+        return;
+      }
+    }
+    std::memcpy(res->storage.data(), pSysMem, res->storage.size());
+    emit_upload_resource_locked(dev, res, 0, res->storage.size());
+    return;
+  }
+
+  if (res->kind == ResourceKind::Texture2D) {
+    if (res->storage.empty()) {
+      try {
+        res->storage.resize(static_cast<size_t>(res->row_pitch_bytes) * res->height, 0);
+      } catch (...) {
+        set_error(dev, E_OUTOFMEMORY);
+        return;
+      }
+    }
+
+    const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
+    const size_t src_pitch =
+        pArgs->RowPitch ? static_cast<size_t>(pArgs->RowPitch) : static_cast<size_t>(res->row_pitch_bytes);
+    for (uint32_t y = 0; y < res->height; y++) {
+      std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
+                  src + static_cast<size_t>(y) * src_pitch,
+                  res->row_pitch_bytes);
+    }
+    emit_upload_resource_locked(dev, res, 0, res->storage.size());
+    return;
+  }
+
+  set_error(dev, E_NOTIMPL);
+}
+
 void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
                                                D3D10DDI_HRESOURCE* pResources,
                                                UINT numResources) {
@@ -1377,6 +1566,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   auto* device = new (pCreateDevice->hDrvDevice.pDrvPrivate) AeroGpuDevice();
   device->adapter = adapter;
   device->kmt_adapter = adapter->kmt_adapter;
+  device->hrt_device = pCreateDevice->hRTDevice;
+  device->pfn_set_error = pCreateDevice->pCallbacks ? pCreateDevice->pCallbacks->pfnSetErrorCb : nullptr;
 
   std::memset(pCreateDevice->pDeviceFuncs, 0, sizeof(*pCreateDevice->pDeviceFuncs));
 
@@ -1468,10 +1659,9 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
   pCreateDevice->pDeviceFuncs->pfnRotateResourceIdentities = &RotateResourceIdentities;
 
-  pCreateDevice->pDeviceFuncs->pfnMap = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnMap)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnUnmap = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnUnmap)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnMap = &Map;
+  pCreateDevice->pDeviceFuncs->pfnUnmap = &Unmap;
+  pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP = &UpdateSubresourceUP;
   pCreateDevice->pDeviceFuncs->pfnCopyResource = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
   pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion =
       &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
@@ -1483,6 +1673,171 @@ void AEROGPU_APIENTRY CloseAdapter(D3D10DDI_HADAPTER hAdapter) {
   auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
   DestroyKmtAdapterHandle(adapter);
   delete adapter;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Adapter DDI (10.0)
+// -------------------------------------------------------------------------------------------------
+
+SIZE_T AEROGPU_APIENTRY CalcPrivateDeviceSize10(D3D10DDI_HADAPTER, const D3D10DDIARG_CREATEDEVICE*) {
+  return sizeof(AeroGpuDevice);
+}
+
+HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_CREATEDEVICE* pCreateDevice) {
+  if (!pCreateDevice || !pCreateDevice->hDrvDevice.pDrvPrivate || !pCreateDevice->pDeviceFuncs) {
+    return E_INVALIDARG;
+  }
+
+  auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
+  if (!adapter) {
+    return E_FAIL;
+  }
+
+  auto* device = new (pCreateDevice->hDrvDevice.pDrvPrivate) AeroGpuDevice();
+  device->adapter = adapter;
+  device->kmt_adapter = adapter->kmt_adapter;
+  device->hrt_device = pCreateDevice->hRTDevice;
+  device->pfn_set_error = pCreateDevice->pCallbacks ? pCreateDevice->pCallbacks->pfnSetErrorCb : nullptr;
+
+  std::memset(pCreateDevice->pDeviceFuncs, 0, sizeof(*pCreateDevice->pDeviceFuncs));
+
+  pCreateDevice->pDeviceFuncs->pfnDestroyDevice = &DestroyDevice;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateResourceSize = &CalcPrivateResourceSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateResource = &CreateResource;
+  pCreateDevice->pDeviceFuncs->pfnDestroyResource = &DestroyResource;
+
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateVertexShaderSize = &CalcPrivateVertexShaderSize;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivatePixelShaderSize = &CalcPrivatePixelShaderSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateVertexShader = &CreateVertexShader;
+  pCreateDevice->pDeviceFuncs->pfnCreatePixelShader = &CreatePixelShader;
+  pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = &DestroyVertexShader;
+  pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
+
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateElementLayout = &CreateElementLayout;
+  pCreateDevice->pDeviceFuncs->pfnDestroyElementLayout = &DestroyElementLayout;
+
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateRenderTargetViewSize = &CalcPrivateRTVSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateRenderTargetView = &CreateRenderTargetView;
+  pCreateDevice->pDeviceFuncs->pfnDestroyRenderTargetView = &DestroyRenderTargetView;
+  pCreateDevice->pDeviceFuncs->pfnClearRenderTargetView = &ClearRenderTargetView;
+
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilViewSize = &CalcPrivateDSVSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilView = &CreateDepthStencilView;
+  pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilView = &DestroyDepthStencilView;
+  pCreateDevice->pDeviceFuncs->pfnClearDepthStencilView = &ClearDepthStencilView;
+
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateBlendStateSize = &CalcPrivateBlendStateSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateBlendState = &CreateBlendState;
+  pCreateDevice->pDeviceFuncs->pfnDestroyBlendState = &DestroyBlendState;
+  pCreateDevice->pDeviceFuncs->pfnSetBlendState =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetBlendState)>::Call;
+
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateRasterizerState = &CreateRasterizerState;
+  pCreateDevice->pDeviceFuncs->pfnDestroyRasterizerState = &DestroyRasterizerState;
+  pCreateDevice->pDeviceFuncs->pfnSetRasterizerState =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetRasterizerState)>::Call;
+
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilStateSize = &CalcPrivateDepthStencilStateSize;
+  pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilState = &CreateDepthStencilState;
+  pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilState = &DestroyDepthStencilState;
+  pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState)>::Call;
+
+  pCreateDevice->pDeviceFuncs->pfnIaSetInputLayout = &IaSetInputLayout;
+  pCreateDevice->pDeviceFuncs->pfnIaSetVertexBuffers = &IaSetVertexBuffers;
+  pCreateDevice->pDeviceFuncs->pfnIaSetIndexBuffer = &IaSetIndexBuffer;
+  pCreateDevice->pDeviceFuncs->pfnIaSetTopology = &IaSetTopology;
+
+  pCreateDevice->pDeviceFuncs->pfnVsSetShader = &VsSetShader;
+  pCreateDevice->pDeviceFuncs->pfnPsSetShader = &PsSetShader;
+
+  pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnVsSetSamplers =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetSamplers)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnPsSetSamplers =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetSamplers)>::Call;
+
+  pCreateDevice->pDeviceFuncs->pfnGsSetShader =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShader)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnGsSetConstantBuffers =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetConstantBuffers)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnGsSetShaderResources =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShaderResources)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnGsSetSamplers =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetSamplers)>::Call;
+
+  pCreateDevice->pDeviceFuncs->pfnSetViewports = &SetViewports;
+  pCreateDevice->pDeviceFuncs->pfnSetScissorRects =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetScissorRects)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnSetRenderTargets = &SetRenderTargets;
+
+  pCreateDevice->pDeviceFuncs->pfnDraw = &Draw;
+  pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;
+  pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawInstanced)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnDrawAuto = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawAuto)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
+  pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
+  pCreateDevice->pDeviceFuncs->pfnRotateResourceIdentities = &RotateResourceIdentities;
+
+  pCreateDevice->pDeviceFuncs->pfnMap = &Map;
+  pCreateDevice->pDeviceFuncs->pfnUnmap = &Unmap;
+  pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP = &UpdateSubresourceUP;
+  pCreateDevice->pDeviceFuncs->pfnCopyResource = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion =
+      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
+
+  return S_OK;
+}
+
+HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
+  if (!pCaps || !pCaps->pData) {
+    return E_INVALIDARG;
+  }
+
+  std::memset(pCaps->pData, 0, pCaps->DataSize);
+
+  switch (pCaps->Type) {
+    case D3D10DDICAPS_TYPE_FORMAT_SUPPORT:
+      if (pCaps->DataSize >= sizeof(D3D10DDIARG_FORMAT_SUPPORT)) {
+        auto* fmt = reinterpret_cast<D3D10DDIARG_FORMAT_SUPPORT*>(pCaps->pData);
+        const uint32_t format = static_cast<uint32_t>(fmt->Format);
+
+        UINT support = 0;
+        switch (format) {
+          case kDxgiFormatB8G8R8A8Unorm:
+          case kDxgiFormatR8G8B8A8Unorm:
+            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
+                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY;
+            break;
+          case kDxgiFormatD24UnormS8Uint:
+          case kDxgiFormatD32Float:
+            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_DEPTH_STENCIL;
+            break;
+          default:
+            support = 0;
+            break;
+        }
+
+        fmt->FormatSupport = support;
+      }
+      break;
+
+    default:
+      break;
+  }
+
+  return S_OK;
 }
 
 HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS* pCaps) {
@@ -1544,34 +1899,51 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS*
   return S_OK;
 }
 
-HRESULT OpenAdapter10_2_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
+HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
   if (!pOpenData || !pOpenData->pAdapterFuncs) {
     return E_INVALIDARG;
   }
 
-  // The D3D10.1 runtime uses OpenAdapter10_2 and requests the 10.1 interface.
-  if (pOpenData->Interface != D3D10_1DDI_INTERFACE_VERSION) {
-    return E_INVALIDARG;
+  if (pOpenData->Interface == D3D10DDI_INTERFACE_VERSION) {
+    pOpenData->Version = D3D10DDI_SUPPORTED;
+    auto* adapter = new AeroGpuAdapter();
+    InitKmtAdapterHandle(adapter);
+    pOpenData->hAdapter.pDrvPrivate = adapter;
+
+    auto* funcs = reinterpret_cast<D3D10DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
+    std::memset(funcs, 0, sizeof(*funcs));
+    funcs->pfnGetCaps = &GetCaps10;
+    funcs->pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize10;
+    funcs->pfnCreateDevice = &CreateDevice10;
+    funcs->pfnCloseAdapter = &CloseAdapter;
+    return S_OK;
   }
-  if (pOpenData->Version < D3D10_1DDI_SUPPORTED) {
-    return E_INVALIDARG;
-  }
-  if (pOpenData->Version > D3D10_1DDI_SUPPORTED) {
-    pOpenData->Version = D3D10_1DDI_SUPPORTED;
+  if (pOpenData->Interface == D3D10_1DDI_INTERFACE_VERSION) {
+    // `Version` is treated as an in/out negotiation field by some runtimes. If
+    // the runtime doesn't initialize it, accept 0 and return the supported
+    // 10.1 DDI version.
+    if (pOpenData->Version == 0) {
+      pOpenData->Version = D3D10_1DDI_SUPPORTED;
+    } else if (pOpenData->Version < D3D10_1DDI_SUPPORTED) {
+      return E_INVALIDARG;
+    } else if (pOpenData->Version > D3D10_1DDI_SUPPORTED) {
+      pOpenData->Version = D3D10_1DDI_SUPPORTED;
+    }
+
+    auto* adapter = new AeroGpuAdapter();
+    InitKmtAdapterHandle(adapter);
+    pOpenData->hAdapter.pDrvPrivate = adapter;
+
+    auto* funcs = reinterpret_cast<D3D10_1DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
+    std::memset(funcs, 0, sizeof(*funcs));
+    funcs->pfnGetCaps = &GetCaps;
+    funcs->pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize;
+    funcs->pfnCreateDevice = &CreateDevice;
+    funcs->pfnCloseAdapter = &CloseAdapter;
+    return S_OK;
   }
 
-  auto* adapter = new AeroGpuAdapter();
-  InitKmtAdapterHandle(adapter);
-  pOpenData->hAdapter.pDrvPrivate = adapter;
-
-  auto* funcs = reinterpret_cast<D3D10_1DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
-  std::memset(funcs, 0, sizeof(*funcs));
-  funcs->pfnGetCaps = &GetCaps;
-  funcs->pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize;
-  funcs->pfnCreateDevice = &CreateDevice;
-  funcs->pfnCloseAdapter = &CloseAdapter;
-
-  return S_OK;
+  return E_INVALIDARG;
 }
 
 } // namespace
@@ -1579,12 +1951,11 @@ HRESULT OpenAdapter10_2_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
 extern "C" {
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  // D3D10.0 path is not wired in this translation unit yet; accept only 10.1.
-  return OpenAdapter10_2_WDK(pOpenData);
+  return OpenAdapter_WDK(pOpenData);
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  return OpenAdapter10_2_WDK(pOpenData);
+  return OpenAdapter_WDK(pOpenData);
 }
 
 } // extern "C"
