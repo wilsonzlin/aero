@@ -18,5 +18,6 @@ SOURCES= \
     virtio_pci_modern_wdm.c \
     virtio_snd_proto.c \
     virtiosnd_queue_split.c \
+    virtiosnd_tx.c \
     ..\..\..\windows\virtio\common\virtqueue_split.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c

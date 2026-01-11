@@ -110,4 +110,3 @@ PCSTR VirtioSndStatusToString(_In_ ULONG virtio_status);
 #ifdef __cplusplus
 } // extern "C"
 #endif
-
