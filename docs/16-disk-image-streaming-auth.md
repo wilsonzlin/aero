@@ -484,9 +484,9 @@ Preflight response:
 HTTP/1.1 204 No Content
 Access-Control-Allow-Origin: https://app.example.com
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
-Access-Control-Allow-Headers: Range, If-Range
+Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since, Authorization
 Access-Control-Max-Age: 600
-Vary: Origin, Access-Control-Request-Headers
+Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 ```
 
 ### Example: lease API response schema
