@@ -210,7 +210,7 @@ Required behavior:
 * If DO_NOT_WAIT is set, the UMD **must not block** inside `pfnMap`.
 * The UMD must attempt `pfnLockCb` with `DoNotWait/DonotWait = 1`.
 * If the runtime reports the allocation is still in use (i.e. the lock would block), `pfnMap` must return `DXGI_ERROR_WAS_STILL_DRAWING` (not `S_FALSE`, not `E_FAIL`).
-  * Note: the runtime/KMD may report “would block” using different HRESULTs on Win7/WDDM 1.1 (observed values include `DXGI_ERROR_WAS_STILL_DRAWING`, `E_PENDING`, and various timeout HRESULTs like `HRESULT_FROM_WIN32(WAIT_TIMEOUT)` / `HRESULT_FROM_NT(STATUS_TIMEOUT)`). When DO_NOT_WAIT is requested, normalize these “busy” results to `DXGI_ERROR_WAS_STILL_DRAWING` so the D3D11 API sees the required error code.
+  * Note: the runtime/KMD may report “would block” using different HRESULTs on Win7/WDDM 1.1 (observed values include `DXGI_ERROR_WAS_STILL_DRAWING`, `HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)`, `E_PENDING`, and various timeout HRESULTs like `HRESULT_FROM_WIN32(WAIT_TIMEOUT)` / `HRESULT_FROM_NT(STATUS_TIMEOUT)`). When DO_NOT_WAIT is requested, normalize these “busy” results to `DXGI_ERROR_WAS_STILL_DRAWING` so the D3D11 API sees the required error code.
 
 Practical Win7 note: different WDK/runtime combinations do not always return `DXGI_ERROR_WAS_STILL_DRAWING` directly from `pfnLockCb`/fence waits when `DO_NOT_WAIT` is set. Treat the common "would block" variants as equivalent to still-drawing and return `DXGI_ERROR_WAS_STILL_DRAWING` to the API:
 
@@ -381,6 +381,7 @@ HRESULT APIENTRY Map(hContext, hResource, Subresource, MapType, MapFlags, pOut) 
 
   HRESULT hr = callbacks->pfnLockCb(hRTDevice, &lock);
   if (do_not_wait && (hr == DXGI_ERROR_WAS_STILL_DRAWING ||
+                      hr == HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY) ||
                       hr == E_PENDING ||
                       is_timeout_hr(hr))) {
     // The D3D11 API contract requires DXGI_ERROR_WAS_STILL_DRAWING for DO_NOT_WAIT.
