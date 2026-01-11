@@ -23,6 +23,8 @@ It:
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
 - captures QEMU stderr to `<serial-base>.qemu.stderr.log` (next to the serial log) for debugging early exits
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
+  - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
+    virtio-snd (PASS or SKIP), and virtio-net so older selftest binaries cannot accidentally pass
 """
 
 from __future__ import annotations
