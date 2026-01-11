@@ -467,3 +467,280 @@ fn copy_texture2d_writeback_does_not_clobber_uncopied_pixels() {
         assert_eq!(actual, expected_dst.as_slice());
     });
 }
+
+#[test]
+fn copy_buffer_clears_dst_dirty_after_copy() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping buffer dirty-clear test");
+                return;
+            }
+        };
+
+        const SRC: u32 = 1;
+        const DST: u32 = 2;
+        const OUT: u32 = 3;
+
+        let alloc = AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: 0,
+            gpa: 0x100,
+            size_bytes: 0x1000,
+            reserved0: 0,
+        };
+        let allocs = [alloc];
+
+        let buf_size = 64u64;
+        let src_backing_offset = 0u32;
+        let dst_backing_offset = 0x100u32;
+        let out_backing_offset = 0x200u32;
+
+        let guest_mem = VecGuestMemory::new(0x2000);
+
+        let src_pattern = vec![0xAAu8; buf_size as usize];
+        let dst_pattern = vec![0x11u8; buf_size as usize];
+        guest_mem
+            .write(alloc.gpa + src_backing_offset as u64, &src_pattern)
+            .expect("write src backing");
+        guest_mem
+            .write(alloc.gpa + dst_backing_offset as u64, &dst_pattern)
+            .expect("write dst backing");
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_BUFFER SRC
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&src_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_BUFFER DST (guest-backed; starts dirty)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&dst_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_BUFFER OUT (guest-backed for writeback)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&OUT.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&out_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER: SRC -> DST (no writeback; should clear DST dirty).
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER: DST -> OUT (WRITEBACK_DST). If DST.dirty is not cleared, the executor will
+        // re-upload stale guest memory (dst_pattern) and the writeback will observe the wrong data.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        stream.extend_from_slice(&OUT.to_le_bytes());
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_COPY_FLAG_WRITEBACK_DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let out_base = (alloc.gpa + out_backing_offset as u64) as usize;
+        let mem = guest_mem.as_slice();
+        assert_eq!(
+            &mem[out_base..out_base + buf_size as usize],
+            src_pattern.as_slice()
+        );
+    });
+}
+
+#[test]
+fn copy_texture2d_clears_dst_dirty_after_copy() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping texture dirty-clear test");
+                return;
+            }
+        };
+
+        const SRC: u32 = 1;
+        const DST: u32 = 2;
+        const OUT: u32 = 3;
+
+        let alloc = AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: 0,
+            gpa: 0x100,
+            size_bytes: 0x1000,
+            reserved0: 0,
+        };
+        let allocs = [alloc];
+
+        let width = 2u32;
+        let height = 2u32;
+        let row_pitch = width * 4;
+        let texture_bytes_len = (row_pitch as usize) * (height as usize);
+
+        let src_backing_offset = 0u32;
+        let dst_backing_offset = 0x100u32;
+        let out_backing_offset = 0x200u32;
+
+        let red_px = [0xFFu8, 0x00u8, 0x00u8, 0xFFu8];
+        let green_px = [0x00u8, 0xFFu8, 0x00u8, 0xFFu8];
+        let src_bytes = red_px.repeat((width * height) as usize);
+        let dst_bytes = green_px.repeat((width * height) as usize);
+        assert_eq!(src_bytes.len(), texture_bytes_len);
+        assert_eq!(dst_bytes.len(), texture_bytes_len);
+
+        let guest_mem = VecGuestMemory::new(0x2000);
+        guest_mem
+            .write(alloc.gpa + src_backing_offset as u64, &src_bytes)
+            .expect("write src texture bytes");
+        guest_mem
+            .write(alloc.gpa + dst_backing_offset as u64, &dst_bytes)
+            .expect("write dst texture bytes");
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_TEXTURE2D SRC
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&(AerogpuFormat::R8G8B8A8Unorm as u32).to_le_bytes());
+        stream.extend_from_slice(&width.to_le_bytes());
+        stream.extend_from_slice(&height.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&row_pitch.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&src_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_TEXTURE2D DST (guest-backed; starts dirty)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&(AerogpuFormat::R8G8B8A8Unorm as u32).to_le_bytes());
+        stream.extend_from_slice(&width.to_le_bytes());
+        stream.extend_from_slice(&height.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&row_pitch.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&dst_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_TEXTURE2D OUT (guest-backed for writeback)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&OUT.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&(AerogpuFormat::R8G8B8A8Unorm as u32).to_le_bytes());
+        stream.extend_from_slice(&width.to_le_bytes());
+        stream.extend_from_slice(&height.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&row_pitch.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&out_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_TEXTURE2D: SRC -> DST (no writeback; should clear DST dirty).
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_y
+        stream.extend_from_slice(&width.to_le_bytes());
+        stream.extend_from_slice(&height.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_TEXTURE2D: DST -> OUT (WRITEBACK_DST). If DST.dirty is not cleared, the executor will
+        // re-upload stale guest memory (dst_bytes) and the writeback will observe the wrong data.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
+        stream.extend_from_slice(&OUT.to_le_bytes());
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_y
+        stream.extend_from_slice(&width.to_le_bytes());
+        stream.extend_from_slice(&height.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_COPY_FLAG_WRITEBACK_DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let out_base = (alloc.gpa + out_backing_offset as u64) as usize;
+        let mem = guest_mem.as_slice();
+        assert_eq!(
+            &mem[out_base..out_base + texture_bytes_len],
+            src_bytes.as_slice()
+        );
+    });
+}
