@@ -11,6 +11,7 @@ import {
   StatusIndex,
   allocateSharedMemorySegments,
   checkSharedMemorySupport,
+  computeGuestRamLayout,
   createSharedMemoryViews,
   ringRegionsForWorker,
   setReadyFlag,
@@ -207,8 +208,8 @@ export class WorkerCoordinator {
       return;
     }
 
-    const currentMiB = Math.round(this.shared.segments.guestMemory.buffer.byteLength / (1024 * 1024));
-    if (currentMiB !== config.guestMemoryMiB) {
+    const desiredLayout = computeGuestRamLayout(config.guestMemoryMiB * 1024 * 1024);
+    if (this.shared.guestLayout.guest_size !== desiredLayout.guest_size) {
       this.stop();
       try {
         this.start(config);
