@@ -1780,6 +1780,174 @@ async fn auth_rejection_metrics_increment_for_missing_and_invalid_api_key() {
 }
 
 #[tokio::test]
+async fn auth_rejection_metrics_increment_for_invalid_cookie() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie");
+    let _secret = EnvVarGuard::set("AERO_L2_SESSION_SECRET", "sekrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let baseline = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let start =
+        parse_metric(&baseline, r#"l2_auth_reject_total{reason="invalid_cookie"}"#).unwrap_or(0);
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_static("aero_session=not-a-session-token"),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected invalid session cookie to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let val = parse_metric(&body, r#"l2_auth_reject_total{reason="invalid_cookie"}"#).unwrap_or(0);
+    assert!(
+        val >= start.saturating_add(1),
+        "expected invalid-cookie label counter to increment (before={start}, after={val})"
+    );
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn auth_rejection_metrics_increment_for_invalid_jwt() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "jwt");
+    let _secret = EnvVarGuard::set("AERO_L2_JWT_SECRET", "sekrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let baseline = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let start = parse_metric(&baseline, r#"l2_auth_reject_total{reason="invalid_jwt"}"#).unwrap_or(0);
+
+    let ws_url = format!("ws://{addr}/l2?token=not-a-jwt");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected invalid jwt to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let val = parse_metric(&body, r#"l2_auth_reject_total{reason="invalid_jwt"}"#).unwrap_or(0);
+    assert!(
+        val >= start.saturating_add(1),
+        "expected invalid-jwt label counter to increment (before={start}, after={val})"
+    );
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn auth_rejection_metrics_increment_for_jwt_origin_mismatch() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "jwt");
+    let _secret = EnvVarGuard::set("AERO_L2_JWT_SECRET", "sekrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let baseline = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let start = parse_metric(
+        &baseline,
+        r#"l2_auth_reject_total{reason="jwt_origin_mismatch"}"#,
+    )
+    .unwrap_or(0);
+
+    let exp = now_unix_seconds().saturating_add(60);
+    let token = make_relay_jwt("sekrit", "sid-jwt", exp, Some("https://expected.test"));
+    let ws_url = format!("ws://{addr}/l2?token={token}");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://actual.test"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected jwt origin mismatch to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let val = parse_metric(
+        &body,
+        r#"l2_auth_reject_total{reason="jwt_origin_mismatch"}"#,
+    )
+    .unwrap_or(0);
+    assert!(
+        val >= start.saturating_add(1),
+        "expected jwt-origin-mismatch label counter to increment (before={start}, after={val})"
+    );
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn token_errors_take_precedence_over_origin_errors() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
