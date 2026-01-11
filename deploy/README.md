@@ -45,9 +45,18 @@ Examples / reference-only:
 - `deploy/nginx/` – nginx examples (useful if you don't want Caddy)
 - `deploy/k8s/aero-storage-server/` – optional disk/image service templates (not required for the gateway)
 - Static-host templates (production app living under `web/`):
-  - Netlify / Cloudflare Pages headers: `web/public/_headers` (copied to `web/dist/_headers` on build)
-  - Netlify build config: `netlify.toml` (repo root)
-  - Vercel config: `vercel.json` (repo root)
+  - `_headers` (Cloudflare Pages / Netlify-style):
+    - `web/public/_headers` (copied to `web/dist/_headers` on build)
+    - `deploy/cloudflare-pages/_headers` (copy/paste template variant)
+  - Netlify (`netlify.toml`):
+    - `netlify.toml` (repo root; build config + header rules)
+    - `deploy/netlify.toml` (headers-only template)
+  - Vercel (`vercel.json`):
+    - `vercel.json` (repo root; build config + header rules)
+    - `deploy/vercel.json` (headers-only template)
+
+The header values are centralized in `scripts/headers.json` (exported via `scripts/security_headers.mjs`).
+CI enforces consistency via `scripts/ci/check-security-headers.mjs`.
 
 ## CI validation (Terraform + Helm)
 
