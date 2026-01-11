@@ -11,7 +11,12 @@ set "NO_TIMEOUT="
 set "EXPECT_TIMEOUT_VALUE="
 for %%A in (%*) do (
   if defined EXPECT_TIMEOUT_VALUE (
-    set "TIMEOUT_MS=%%~A"
+    set "TIMEOUT_VALUE=%%~A"
+    if "!TIMEOUT_VALUE:~0,1!"=="-" (
+      echo ERROR: --timeout-ms requires a value
+      exit /b 1
+    )
+    set "TIMEOUT_MS=!TIMEOUT_VALUE!"
     set "EXPECT_TIMEOUT_VALUE="
   ) else (
     if /I "%%~A"=="--help" set "SHOW_HELP=1"
