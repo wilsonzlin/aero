@@ -1977,7 +1977,9 @@ impl AerogpuD3d11Executor {
             //
             // Accept the create to keep the command stream robust, but ignore the shader since it
             // can never be bound (no GS/HS/DS slot in `AEROGPU_CMD_BIND_SHADERS`).
-            crate::ShaderStage::Geometry | crate::ShaderStage::Hull | crate::ShaderStage::Domain => {
+            crate::ShaderStage::Geometry
+            | crate::ShaderStage::Hull
+            | crate::ShaderStage::Domain => {
                 return Ok(());
             }
             other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
