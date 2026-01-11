@@ -142,6 +142,9 @@ cp deploy/.env.example deploy/.env
 - `AERO_GATEWAY_IMAGE` (default: `aero-gateway:dev`)
   - By default, `deploy/docker-compose.yml` builds `backend/aero-gateway` from source.
   - For production, prefer a published image and remove the compose `build:` stanza (or override it).
+- `AERO_L2_PROXY_IMAGE` (default: `aero-l2-proxy:dev`)
+  - By default, `deploy/docker-compose.yml` builds `crates/aero-l2-proxy` from source.
+  - For production, prefer a published image and remove/override the compose `build:` stanza.
 - `AERO_GATEWAY_UPSTREAM` (default: `aero-gateway:8080`)
   - Only change if your gateway listens on a different port inside docker.
 - `AERO_L2_PROXY_UPSTREAM` (default: `aero-l2-proxy:8090`)
