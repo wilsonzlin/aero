@@ -78,6 +78,7 @@ These rules apply **everywhere the alloc table is consumed** (software executor,
 
 - `alloc_table_gpa` and `alloc_table_size_bytes` must be both zero (absent) or both non-zero
   (present).
+- When present, the range must be valid: `alloc_table_gpa + alloc_table_size_bytes` must not overflow `u64`.
 - The host may omit parsing if the table is absent.
 
 ### Header-level rules

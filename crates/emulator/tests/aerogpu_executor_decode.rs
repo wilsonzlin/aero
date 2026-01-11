@@ -708,6 +708,111 @@ fn inconsistent_cmd_stream_descriptor_sets_error_irq_and_advances_head() {
 }
 
 #[test]
+fn cmd_stream_descriptor_address_overflow_sets_error_irq_and_advances_head() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    // cmd_gpa+cmd_size_bytes wraps u64.
+    write_submit_desc(&mut mem, desc_gpa, u64::MAX - 8, 24, 0, 0, 9);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 9);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record.decode_errors.contains(
+            &emulator::gpu_worker::aerogpu_executor::AeroGpuSubmissionDecodeError::CmdStream(
+                emulator::gpu_worker::aerogpu_executor::AeroGpuCmdStreamDecodeError::AddressOverflow,
+            )
+        ),
+        "expected AddressOverflow error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
+fn alloc_table_descriptor_address_overflow_sets_error_irq_and_advances_head() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        24,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    // alloc_table_gpa+alloc_table_size_bytes wraps u64.
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_size_bytes,
+        u64::MAX - 8,
+        24,
+        10,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 10);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record.decode_errors.contains(
+            &emulator::gpu_worker::aerogpu_executor::AeroGpuSubmissionDecodeError::AllocTable(
+                emulator::gpu_worker::aerogpu_executor::AeroGpuAllocTableDecodeError::AddressOverflow,
+            )
+        ),
+        "expected AddressOverflow error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
 fn backend_submit_error_does_not_block_fence_completion() {
     #[derive(Default)]
     struct RejectBackend;

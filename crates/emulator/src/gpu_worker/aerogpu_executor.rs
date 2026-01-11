@@ -121,6 +121,7 @@ pub enum AeroGpuAllocTableDecodeError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AeroGpuCmdStreamDecodeError {
     InconsistentDescriptor,
+    AddressOverflow,
     TooLarge,
     TooSmall,
     BadHeader,
@@ -940,6 +941,16 @@ fn decode_alloc_table(
         ));
         return (None, Vec::new());
     }
+    if desc
+        .alloc_table_gpa
+        .checked_add(u64::from(desc.alloc_table_size_bytes))
+        .is_none()
+    {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::AddressOverflow,
+        ));
+        return (None, Vec::new());
+    }
 
     let header = AeroGpuAllocTableHeader::read_from(mem, desc.alloc_table_gpa);
 
@@ -1065,6 +1076,16 @@ fn decode_cmd_stream(
     if desc.cmd_gpa == 0 || desc.cmd_size_bytes == 0 {
         decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
             AeroGpuCmdStreamDecodeError::InconsistentDescriptor,
+        ));
+        return (None, Vec::new());
+    }
+    if desc
+        .cmd_gpa
+        .checked_add(u64::from(desc.cmd_size_bytes))
+        .is_none()
+    {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::AddressOverflow,
         ));
         return (None, Vec::new());
     }

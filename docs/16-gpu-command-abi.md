@@ -239,8 +239,11 @@ versions can append fields (and must be `<= ring.entry_stride_bytes`):
 Descriptor validation rules (from `aerogpu_ring.h`):
 
 - `cmd_gpa` and `cmd_size_bytes` must be both zero (empty submission) or both non-zero.
+- When `cmd_gpa/cmd_size_bytes` are non-zero, `cmd_gpa + cmd_size_bytes` must not overflow.
 - `alloc_table_gpa` and `alloc_table_size_bytes` must be both zero (absent) or both non-zero
   (present).
+- When `alloc_table_gpa/alloc_table_size_bytes` are non-zero, `alloc_table_gpa + alloc_table_size_bytes`
+  must not overflow.
 
 Submission flags (`enum aerogpu_submit_flags`):
 
