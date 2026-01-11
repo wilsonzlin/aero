@@ -5,11 +5,13 @@ use std::path::PathBuf;
 #[command(name = "aero_packager")]
 #[command(about = "Build the distributable Aero Drivers / Guest Tools ISO + zip", long_about = None)]
 struct Cli {
-    /// Directory containing built driver artifacts. Must contain `x86/` and `amd64/`.
+    /// Directory containing built driver artifacts. Must contain `x86/` and `amd64/` (or `x64/`).
     #[arg(long)]
     drivers_dir: PathBuf,
 
-    /// Directory containing Guest Tools scripts (setup.cmd, uninstall.cmd, README.md, certs/).
+    /// Directory containing Guest Tools scripts (setup.cmd, uninstall.cmd, README.md, etc).
+    ///
+    /// Note: `certs/` may be empty/absent when `--signing-policy none` is used (WHQL/production-signed drivers).
     #[arg(long)]
     guest_tools_dir: PathBuf,
 
