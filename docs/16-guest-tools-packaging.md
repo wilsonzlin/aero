@@ -25,6 +25,10 @@ Convenience wrapper (same behaviour, located alongside other driver scripts):
 pwsh -File drivers/scripts/make-guest-tools-from-ci.ps1
 ```
 
+The convenience wrapper forwards most arguments to `ci/package-guest-tools.ps1`, including:
+`-SpecPath`, `-SigningPolicy`, and `-WindowsDeviceContractPath` (to override the device contract used
+to generate the packaged `config/devices.cmd`).
+
 By default this will:
 
 - stage drivers into the layout expected by `aero_packager`:
