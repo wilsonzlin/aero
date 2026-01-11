@@ -1,7 +1,9 @@
 {
   "$schema": "../../../ci/driver-package.schema.json",
   "additionalFiles": [
+    "SOURCES.md",
     "docs/README.md",
+    "docs/design.md",
     "docs/pci-hwids.md",
     "docs/portcls-wavert-design.md",
     "tests/offline-install/README.md",
