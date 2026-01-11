@@ -478,14 +478,14 @@ struct AeroGpuDevice {
   aerogpu::CmdWriter cmd;
 
   // WDDM allocation handles (D3DKMT_HANDLE values) to include in each submission's
-  // allocation list. This allows the KMD to attach an allocation table so the
-  // host can resolve `backing_alloc_id` values in the AeroGPU command stream.
+  // allocation list. This is rebuilt for each command buffer submission so the
+  // KMD can attach an allocation table that resolves `backing_alloc_id` values in
+  // the AeroGPU command stream.
   std::vector<uint32_t> wddm_submit_allocation_handles;
 
   // Fence tracking for WDDM-backed synchronization (used by Map READ / DO_NOT_WAIT semantics).
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> last_completed_fence{0};
-
   // Monitored fence state for Win7/WDDM 1.1.
   // These fields are expected to be initialized by the real WDDM submission path.
   D3DKMT_HANDLE kmt_device = 0;
@@ -509,6 +509,7 @@ struct AeroGpuDevice {
   AeroGpuResource* current_rtv_res = nullptr;
   AeroGpuResource* current_dsv_res = nullptr;
   AeroGpuResource* current_vb_res = nullptr;
+  AeroGpuResource* current_ib_res = nullptr;
   uint32_t current_vb_stride = 0;
   uint32_t current_vb_offset = 0;
 
@@ -537,24 +538,6 @@ void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
   uint64_t cur = target->load(std::memory_order_relaxed);
   while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
   }
-}
-
-void TrackSubmitAllocationHandleLocked(AeroGpuDevice* dev, uint32_t handle) {
-  if (!dev || handle == 0) {
-    return;
-  }
-  auto& handles = dev->wddm_submit_allocation_handles;
-  if (std::find(handles.begin(), handles.end(), handle) == handles.end()) {
-    handles.push_back(handle);
-  }
-}
-
-void UntrackSubmitAllocationHandleLocked(AeroGpuDevice* dev, uint32_t handle) {
-  if (!dev || handle == 0) {
-    return;
-  }
-  auto& handles = dev->wddm_submit_allocation_handles;
-  handles.erase(std::remove(handles.begin(), handles.end(), handle), handles.end());
 }
 
 template <typename Fn, typename Handle, typename... Args>
@@ -993,7 +976,11 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   if (out_hr) {
     *out_hr = S_OK;
   }
-  if (!dev || dev->cmd.empty()) {
+  if (!dev) {
+    return 0;
+  }
+  if (dev->cmd.empty()) {
+    dev->wddm_submit_allocation_handles.clear();
     return 0;
   }
   if (!dev->adapter) {
@@ -1001,6 +988,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       *out_hr = E_FAIL;
     }
     dev->cmd.reset();
+    dev->wddm_submit_allocation_handles.clear();
     return 0;
   }
 
@@ -1014,6 +1002,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   const HRESULT hr =
       dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, alloc_handles, alloc_count, &fence);
   dev->cmd.reset();
+  dev->wddm_submit_allocation_handles.clear();
   if (FAILED(hr)) {
     if (out_hr) {
       *out_hr = hr;
@@ -1045,6 +1034,48 @@ void flush_locked(AeroGpuDevice* dev) {
   submit_locked(dev, false, &hr);
   if (FAILED(hr)) {
     set_error(dev, hr);
+  }
+}
+
+static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res) {
+  if (!dev || !res) {
+    return;
+  }
+  if (res->backing_alloc_id == 0 || res->wddm_allocation_handle == 0) {
+    return;
+  }
+
+  const uint32_t handle = res->wddm_allocation_handle;
+  if (std::find(dev->wddm_submit_allocation_handles.begin(),
+                dev->wddm_submit_allocation_handles.end(),
+                handle) != dev->wddm_submit_allocation_handles.end()) {
+    return;
+  }
+  dev->wddm_submit_allocation_handles.push_back(handle);
+}
+
+static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
+  if (!dev) {
+    return;
+  }
+  TrackWddmAllocForSubmitLocked(dev, dev->current_rtv_res);
+  TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_res);
+}
+
+static void TrackDrawStateLocked(AeroGpuDevice* dev) {
+  if (!dev) {
+    return;
+  }
+
+  TrackBoundTargetsForSubmitLocked(dev);
+  TrackWddmAllocForSubmitLocked(dev, dev->current_vb_res);
+  TrackWddmAllocForSubmitLocked(dev, dev->current_ib_res);
+
+  for (AeroGpuResource* res : dev->current_vs_srvs) {
+    TrackWddmAllocForSubmitLocked(dev, res);
+  }
+  for (AeroGpuResource* res : dev->current_ps_srvs) {
+    TrackWddmAllocForSubmitLocked(dev, res);
   }
 }
 
@@ -2215,9 +2246,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
-    if (res->backing_alloc_id != 0) {
-      TrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
-    }
+    TrackWddmAllocForSubmitLocked(dev, res);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
@@ -2387,9 +2416,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
-    if (res->backing_alloc_id != 0) {
-      TrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
-    }
+    TrackWddmAllocForSubmitLocked(dev, res);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
@@ -2430,30 +2457,26 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (res->mapped) {
     unmap_resource_locked(dev, res, res->mapped_subresource);
   }
-  if (res->backing_alloc_id != 0) {
-    UntrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
-  }
-
-  if (dev->current_dsv_res == res) {
-    dev->current_dsv_res = nullptr;
-    dev->current_dsv = 0;
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-    cmd->color_count = dev->current_rtv ? 1 : 0;
-    cmd->depth_stencil = 0;
-    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-      cmd->colors[i] = 0;
-    }
-    cmd->colors[0] = dev->current_rtv;
-  }
-
+  bool rt_state_changed = false;
   if (dev->current_rtv_res == res) {
     dev->current_rtv_res = nullptr;
     dev->current_rtv = 0;
+    rt_state_changed = true;
+  }
+  if (dev->current_dsv_res == res) {
+    dev->current_dsv_res = nullptr;
+    dev->current_dsv = 0;
+    rt_state_changed = true;
+  }
+  if (rt_state_changed) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-    cmd->color_count = 0;
+    cmd->color_count = dev->current_rtv ? 1u : 0u;
     cmd->depth_stencil = dev->current_dsv;
     for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
       cmd->colors[i] = 0;
+    }
+    if (dev->current_rtv) {
+      cmd->colors[0] = dev->current_rtv;
     }
   }
   if (dev->current_vb_res == res) {
@@ -2463,6 +2486,14 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
     cmd->start_slot = 0;
     cmd->buffer_count = 0;
+  }
+  if (dev->current_ib_res == res) {
+    dev->current_ib_res = nullptr;
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+    cmd->buffer = 0;
+    cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
+    cmd->offset_bytes = 0;
+    cmd->reserved0 = 0;
   }
 
   for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
@@ -3631,6 +3662,7 @@ void AEROGPU_APIENTRY ClearDepthStencilView(D3D10DDI_HDEVICE hDevice,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackBoundTargetsForSubmitLocked(dev);
 
   uint32_t flags = 0;
   if (clear_flags & D3D10_DDI_CLEAR_DEPTH) {
@@ -3798,6 +3830,7 @@ void AEROGPU_APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackBoundTargetsForSubmitLocked(dev);
 
   auto* view = hRtv.pDrvPrivate ? FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv) : nullptr;
   auto* res = view ? view->resource : nullptr;
@@ -4001,8 +4034,11 @@ void AEROGPU_APIENTRY IaSetIndexBuffer(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  auto* ib_res = hBuffer.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hBuffer) : nullptr;
+  dev->current_ib_res = ib_res;
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  cmd->buffer = hBuffer.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hBuffer)->handle : 0;
+  cmd->buffer = ib_res ? ib_res->handle : 0;
   cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
   cmd->offset_bytes = offset;
   cmd->reserved0 = 0;
@@ -4146,6 +4182,7 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_rtv = 0;
   dev->current_rtv_res = nullptr;
   dev->current_dsv = 0;
+  dev->current_dsv_res = nullptr;
   dev->viewport_width = 0;
   dev->viewport_height = 0;
   auto* rt_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
@@ -4180,6 +4217,7 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   vb_cmd->start_slot = 0;
   vb_cmd->buffer_count = 0;
 
+  dev->current_ib_res = nullptr;
   auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
   ib_cmd->buffer = 0;
   ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
@@ -4295,6 +4333,7 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT sta
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
 
   if (vertex_count == 3 && dev->current_topology == static_cast<uint32_t>(D3D10_DDI_PRIMITIVE_TOPOLOGY_TRIANGLELIST) &&
       dev->current_rtv_res && dev->current_vb_res) {
@@ -4468,6 +4507,7 @@ void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, UINT index_count, UI
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
   cmd->index_count = index_count;
@@ -4491,7 +4531,6 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRE
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-#if defined(AEROGPU_UMD_TRACE_RESOURCES)
   D3D10DDI_HRESOURCE hsrc = {};
   __if_exists(D3D10DDIARG_PRESENT::hSrcResource) {
     hsrc = pPresent->hSrcResource;
@@ -4506,10 +4545,11 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRE
     hsrc = pPresent->hSurface;
   }
 
-  aerogpu_handle_t src_handle = 0;
-  if (hsrc.pDrvPrivate) {
-    src_handle = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hsrc)->handle;
-  }
+  auto* src_res = hsrc.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hsrc) : nullptr;
+  TrackWddmAllocForSubmitLocked(dev, src_res);
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  aerogpu_handle_t src_handle = src_res ? src_res->handle : 0;
   AEROGPU_D3D10_11_LOG("trace_resources: D3D10.1 Present sync=%u src_handle=%u",
                        static_cast<unsigned>(pPresent->SyncInterval),
                        static_cast<unsigned>(src_handle));

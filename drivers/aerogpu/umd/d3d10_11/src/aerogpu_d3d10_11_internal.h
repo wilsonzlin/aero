@@ -524,8 +524,9 @@ struct Device {
 #endif
 
   // WDDM allocation handles (D3DKMT_HANDLE values) to include in each submission's
-  // allocation list. This allows the KMD to attach an allocation table so the
-  // host can resolve `backing_alloc_id` values in the AeroGPU command stream.
+  // allocation list. This is rebuilt for each command buffer submission so the
+  // KMD can attach an allocation table that resolves `backing_alloc_id` values in
+  // the AeroGPU command stream.
   std::vector<uint32_t> wddm_submit_allocation_handles;
 
   std::atomic<uint64_t> last_submitted_fence{0};
@@ -543,6 +544,8 @@ struct Device {
   Resource* current_dsv_resource = nullptr;
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_vs_srvs{};
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_ps_srvs{};
+  std::array<Resource*, kMaxConstantBufferSlots> current_vs_cbs{};
+  std::array<Resource*, kMaxConstantBufferSlots> current_ps_cbs{};
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_gs = 0;
@@ -629,7 +632,11 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
   if (out_hr) {
     *out_hr = S_OK;
   }
-  if (!dev || dev->cmd.empty()) {
+  if (!dev) {
+    return 0;
+  }
+  if (dev->cmd.empty()) {
+    dev->wddm_submit_allocation_handles.clear();
     return 0;
   }
 
@@ -647,6 +654,7 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
     *out_hr = hr;
   }
   dev->cmd.reset();
+  dev->wddm_submit_allocation_handles.clear();
   if (FAILED(hr)) {
     dev->pending_staging_writes.clear();
     return 0;
@@ -679,6 +687,7 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
     }
     dev->pending_staging_writes.clear();
     dev->cmd.reset();
+    dev->wddm_submit_allocation_handles.clear();
     return 0;
   }
 
@@ -699,6 +708,7 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
   }
   dev->pending_staging_writes.clear();
   dev->cmd.reset();
+  dev->wddm_submit_allocation_handles.clear();
   return fence;
 #endif
 }
