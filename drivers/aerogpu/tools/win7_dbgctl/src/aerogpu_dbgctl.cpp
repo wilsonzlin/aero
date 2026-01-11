@@ -28,6 +28,10 @@ typedef LONG NTSTATUS;
 
 typedef UINT D3DKMT_HANDLE;
 
+static const uint32_t kAerogpuIrqFence = (1u << 0);
+static const uint32_t kAerogpuIrqScanoutVblank = (1u << 1);
+static const uint32_t kAerogpuIrqError = (1u << 31);
+
 typedef struct D3DKMT_OPENADAPTERFROMHDC {
   HDC hDc;
   D3DKMT_HANDLE hAdapter;
@@ -307,7 +311,7 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
 }
 
 static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId,
-                        aerogpu_escape_query_vblank_out *out) {
+                        aerogpu_escape_query_vblank_out *out, bool *supportedOut) {
   ZeroMemory(out, sizeof(*out));
   out->hdr.version = AEROGPU_ESCAPE_VERSION;
   out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_VBLANK;
@@ -316,17 +320,62 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   out->vidpn_source_id = vidpnSourceId;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
+  if (st == STATUS_NOT_SUPPORTED) {
+    if (supportedOut) {
+      *supportedOut = false;
+    }
+
+    // Some KMD/device combos return STATUS_NOT_SUPPORTED when
+    // AEROGPU_FEATURE_VBLANK isn't advertised; treat as a successful query of
+    // "unsupported".
+    ZeroMemory(out, sizeof(*out));
+    out->vidpn_source_id = vidpnSourceId;
+    return true;
+  }
   if (!NT_SUCCESS(st)) {
-    PrintNtStatus(L"D3DKMTEscape(dump-vblank) failed", f, st);
+    PrintNtStatus(L"D3DKMTEscape(query-vblank) failed", f, st);
     return false;
+  }
+
+  if (supportedOut) {
+    *supportedOut = true;
   }
   return true;
 }
 
-static void PrintVblankSnapshot(const aerogpu_escape_query_vblank_out *q) {
+static void PrintIrqMask(const wchar_t *label, uint32_t mask) {
+  wprintf(L"  %s: 0x%08lx", label, (unsigned long)mask);
+  if (mask != 0) {
+    wprintf(L" [");
+    bool first = true;
+    const auto Emit = [&](uint32_t bit, const wchar_t *name) {
+      if ((mask & bit) == 0) {
+        return;
+      }
+      if (!first) {
+        wprintf(L"|");
+      }
+      wprintf(L"%s", name);
+      first = false;
+    };
+    Emit(kAerogpuIrqFence, L"FENCE");
+    Emit(kAerogpuIrqScanoutVblank, L"VBLANK");
+    Emit(kAerogpuIrqError, L"ERROR");
+    wprintf(L"]");
+  }
+  wprintf(L"\n");
+}
+
+static void PrintVblankSnapshot(const aerogpu_escape_query_vblank_out *q, bool supported) {
   wprintf(L"Vblank (VidPn source %lu)\n", (unsigned long)q->vidpn_source_id);
-  wprintf(L"  irq_enable: 0x%08lx\n", (unsigned long)q->irq_enable);
-  wprintf(L"  irq_status: 0x%08lx\n", (unsigned long)q->irq_status);
+  PrintIrqMask(L"IRQ_ENABLE", q->irq_enable);
+  PrintIrqMask(L"IRQ_STATUS", q->irq_status);
+  PrintIrqMask(L"IRQ_ACTIVE", q->irq_enable & q->irq_status);
+
+  if (!supported) {
+    wprintf(L"  vblank: not supported (AEROGPU_FEATURE_VBLANK not set)\n");
+    return;
+  }
 
   wprintf(L"  vblank_seq: 0x%I64x (%I64u)\n", (unsigned long long)q->vblank_seq, (unsigned long long)q->vblank_seq);
   wprintf(L"  last_vblank_time_ns: 0x%I64x (%I64u ns)\n",
@@ -352,19 +401,21 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
 
   aerogpu_escape_query_vblank_out q;
   aerogpu_escape_query_vblank_out prev;
+  bool supported = false;
+  bool prevSupported = false;
   bool havePrev = false;
 
   for (uint32_t i = 0; i < samples; ++i) {
-    if (!QueryVblank(f, hAdapter, vidpnSourceId, &q)) {
+    if (!QueryVblank(f, hAdapter, vidpnSourceId, &q, &supported)) {
       return 2;
     }
 
     if (samples > 1) {
       wprintf(L"Sample %lu/%lu:\n", (unsigned long)(i + 1), (unsigned long)samples);
     }
-    PrintVblankSnapshot(&q);
+    PrintVblankSnapshot(&q, supported);
 
-    if (havePrev) {
+    if (havePrev && supported && prevSupported) {
       const uint64_t dseq = q.vblank_seq - prev.vblank_seq;
       const uint64_t dt = q.last_vblank_time_ns - prev.last_vblank_time_ns;
       wprintf(L"  delta: seq=%I64u time=%I64u ns\n", (unsigned long long)dseq, (unsigned long long)dt);
@@ -375,6 +426,7 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     }
 
     prev = q;
+    prevSupported = supported;
     havePrev = true;
 
     if (i + 1 < samples) {
