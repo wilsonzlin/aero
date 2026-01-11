@@ -377,6 +377,10 @@ impl UhciController {
     }
 
     pub fn step_frame(&mut self, mem: &mut dyn GuestMemory, irq: &mut dyn InterruptController) {
+        // One UHCI frame is 1ms. Propagate time through any hub devices so port reset timers and
+        // nested topologies advance even when the schedule is idle.
+        self.bus.tick_1ms();
+
         for (idx, port) in self.ports.iter_mut().enumerate() {
             if port.reset_timer_ms == 0 {
                 continue;

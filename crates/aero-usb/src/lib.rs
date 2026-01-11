@@ -8,6 +8,7 @@ pub mod passthrough;
 pub mod passthrough_device;
 pub mod usb;
 
+pub mod hub;
 pub mod hid;
 pub mod uhci;
 pub mod web;

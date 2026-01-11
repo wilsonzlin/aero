@@ -1,5 +1,7 @@
 use core::{any::Any, fmt};
 
+use crate::hub::UsbHub;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsbSpeed {
     Full,
@@ -82,9 +84,24 @@ pub trait UsbDevice {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 
+    fn as_hub(&self) -> Option<&dyn UsbHub> {
+        None
+    }
+
+    fn as_hub_mut(&mut self) -> Option<&mut dyn UsbHub> {
+        None
+    }
+
     fn speed(&self) -> UsbSpeed {
         UsbSpeed::Full
     }
+
+    /// Advances device state by 1ms.
+    ///
+    /// This is primarily used for hub port reset timers and for propagating time through nested
+    /// hub topologies. Most device models do not require timers and can rely on the default no-op
+    /// implementation.
+    fn tick_1ms(&mut self) {}
 
     fn reset(&mut self);
 
@@ -164,6 +181,140 @@ impl UsbBus {
         }
     }
 
+    pub fn tick_1ms(&mut self) {
+        for port in &mut self.ports {
+            if !port.connected || !port.enabled {
+                continue;
+            }
+            let Some(dev) = port.device.as_mut() else {
+                continue;
+            };
+            dev.tick_1ms();
+        }
+    }
+
+    /// Attaches `device` at a topology path (root port → hub port → ...).
+    ///
+    /// The first element of `path` addresses a root port and is zero-based (like
+    /// [`UsbBus::connect`]). Subsequent elements address hub ports and are **1-based** (matching
+    /// USB hub port numbering used by hub class requests).
+    pub fn attach_at_path(&mut self, path: &[usize], device: Box<dyn UsbDevice>) {
+        let Some((&root, rest)) = path.split_first() else {
+            panic!("USB topology path must not be empty");
+        };
+
+        if rest.is_empty() {
+            self.connect(root, device);
+            return;
+        }
+
+        let port = self
+            .ports
+            .get_mut(root)
+            .unwrap_or_else(|| panic!("invalid port index {root}"));
+        let Some(root_dev) = port.device.as_mut() else {
+            panic!("no device attached at root port {root}");
+        };
+
+        let mut current: &mut dyn UsbDevice = root_dev.as_mut();
+        for (depth, &hub_port) in rest[..rest.len() - 1].iter().enumerate() {
+            let hub = current
+                .as_hub_mut()
+                .unwrap_or_else(|| panic!("device at depth {depth} is not a USB hub"));
+            let hub_idx = hub_port
+                .checked_sub(1)
+                .unwrap_or_else(|| panic!("hub port numbers are 1-based (got 0 at depth {depth})"));
+            let num_ports = hub.num_ports();
+            if hub_idx >= num_ports {
+                panic!("invalid hub port {hub_port} at depth {depth} (hub has {num_ports} ports)");
+            }
+            current = hub
+                .downstream_device_mut(hub_idx)
+                .unwrap_or_else(|| panic!("no device attached at hub port {hub_port} (depth {depth})"));
+        }
+
+        let hub = current
+            .as_hub_mut()
+            .unwrap_or_else(|| panic!("device at depth {} is not a USB hub", rest.len() - 1));
+        let last_port = rest[rest.len() - 1];
+        let hub_idx = last_port.checked_sub(1).unwrap_or_else(|| {
+            panic!(
+                "hub port numbers are 1-based (got 0 at depth {})",
+                rest.len() - 1
+            )
+        });
+        let num_ports = hub.num_ports();
+        if hub_idx >= num_ports {
+            panic!(
+                "invalid hub port {last_port} at depth {} (hub has {num_ports} ports)",
+                rest.len() - 1
+            );
+        }
+        hub.attach_downstream(hub_idx, device);
+    }
+
+    /// Detaches any device attached at the given topology `path`.
+    ///
+    /// See [`UsbBus::attach_at_path`] for path numbering conventions.
+    pub fn detach_at_path(&mut self, path: &[usize]) {
+        let Some((&root, rest)) = path.split_first() else {
+            panic!("USB topology path must not be empty");
+        };
+
+        if rest.is_empty() {
+            self.disconnect(root);
+            return;
+        }
+
+        let port = self
+            .ports
+            .get_mut(root)
+            .unwrap_or_else(|| panic!("invalid port index {root}"));
+        let Some(root_dev) = port.device.as_mut() else {
+            panic!("no device attached at root port {root}");
+        };
+
+        let mut current: &mut dyn UsbDevice = root_dev.as_mut();
+        for (depth, &hub_port) in rest[..rest.len() - 1].iter().enumerate() {
+            let hub = current
+                .as_hub_mut()
+                .unwrap_or_else(|| panic!("device at depth {depth} is not a USB hub"));
+            let hub_idx = hub_port
+                .checked_sub(1)
+                .unwrap_or_else(|| panic!("hub port numbers are 1-based (got 0 at depth {depth})"));
+            let num_ports = hub.num_ports();
+            if hub_idx >= num_ports {
+                panic!("invalid hub port {hub_port} at depth {depth} (hub has {num_ports} ports)");
+            }
+            current = hub
+                .downstream_device_mut(hub_idx)
+                .unwrap_or_else(|| panic!("no device attached at hub port {hub_port} (depth {depth})"));
+        }
+
+        let hub = current
+            .as_hub_mut()
+            .unwrap_or_else(|| panic!("device at depth {} is not a USB hub", rest.len() - 1));
+        let last_port = rest[rest.len() - 1];
+        let hub_idx = last_port.checked_sub(1).unwrap_or_else(|| {
+            panic!(
+                "hub port numbers are 1-based (got 0 at depth {})",
+                rest.len() - 1
+            )
+        });
+        let num_ports = hub.num_ports();
+        if hub_idx >= num_ports {
+            panic!(
+                "invalid hub port {last_port} at depth {} (hub has {num_ports} ports)",
+                rest.len() - 1
+            );
+        }
+        hub.detach_downstream(hub_idx);
+    }
+
+    pub fn device_mut_for_address(&mut self, addr: u8) -> Option<&mut dyn UsbDevice> {
+        self.find_device_mut(addr)
+    }
+
     fn find_device_mut(&mut self, addr: u8) -> Option<&mut dyn UsbDevice> {
         for port in &mut self.ports {
             if !port.connected || !port.enabled {
@@ -174,6 +325,11 @@ impl UsbBus {
             };
             if dev.address() == addr {
                 return Some(dev.as_mut());
+            }
+            if let Some(hub) = dev.as_hub_mut() {
+                if let Some(found) = hub.downstream_device_mut_for_address(addr) {
+                    return Some(found);
+                }
             }
         }
         None
