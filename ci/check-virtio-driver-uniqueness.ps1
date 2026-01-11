@@ -23,6 +23,11 @@ still mention these IDs.
 Additionally, enforce that there is only one MSBuild driver project under `drivers/`
 that produces `aero_virtio_blk.sys` (TargetName = aero_virtio_blk) and only one
 that produces `aero_virtio_net.sys` (TargetName = aero_virtio_net).
+
+Also enforce uniqueness for the remaining contract-v1 virtio drivers:
+
+- `aero_virtio_input.sys` (TargetName = aero_virtio_input)
+- `aero_virtio_snd.sys` (TargetName = aero_virtio_snd)
 #>
 
 [CmdletBinding()]
@@ -123,6 +128,8 @@ Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (DEV_1041/
 $projFiles = @(Get-ChildItem -LiteralPath $driversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
 $virtioBlkProjects = New-Object System.Collections.Generic.List[string]
 $virtioNetProjects = New-Object System.Collections.Generic.List[string]
+$virtioInputProjects = New-Object System.Collections.Generic.List[string]
+$virtioSndProjects = New-Object System.Collections.Generic.List[string]
 foreach ($proj in $projFiles) {
   $content = $null
   try {
@@ -136,6 +143,12 @@ foreach ($proj in $projFiles) {
   }
   if ($content -match '(?i)<TargetName>\s*aero_virtio_net\s*</TargetName>') {
     $virtioNetProjects.Add($proj.FullName) | Out-Null
+  }
+  if ($content -match '(?i)<TargetName>\s*aero_virtio_input\s*</TargetName>') {
+    $virtioInputProjects.Add($proj.FullName) | Out-Null
+  }
+  if ($content -match '(?i)<TargetName>\s*aero_virtio_snd\s*</TargetName>') {
+    $virtioSndProjects.Add($proj.FullName) | Out-Null
   }
 }
 
@@ -164,4 +177,30 @@ if ($uniqueNetProjPaths.Count -gt 1) {
 }
 
 Write-Host "OK: aero_virtio_net MSBuild output is unique."
+
+$uniqueInputProjPaths = @($virtioInputProjects | Sort-Object -Unique)
+if ($uniqueInputProjPaths.Count -gt 1) {
+  Write-Host ""
+  Write-Host "ERROR: Found multiple MSBuild projects that produce aero_virtio_input.sys (TargetName=aero_virtio_input)."
+  foreach ($p in $uniqueInputProjPaths) {
+    Write-Host ("- {0}" -f $p)
+  }
+  Write-Host ""
+  exit 1
+}
+
+Write-Host "OK: aero_virtio_input MSBuild output is unique."
+
+$uniqueSndProjPaths = @($virtioSndProjects | Sort-Object -Unique)
+if ($uniqueSndProjPaths.Count -gt 1) {
+  Write-Host ""
+  Write-Host "ERROR: Found multiple MSBuild projects that produce aero_virtio_snd.sys (TargetName=aero_virtio_snd)."
+  foreach ($p in $uniqueSndProjPaths) {
+    Write-Host ("- {0}" -f $p)
+  }
+  Write-Host ""
+  exit 1
+}
+
+Write-Host "OK: aero_virtio_snd MSBuild output is unique."
 exit 0
