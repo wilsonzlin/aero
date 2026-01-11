@@ -1142,9 +1142,9 @@ bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_resource = false;
@@ -1215,7 +1215,7 @@ bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
   stale.share_token = 0x1122334455667788ull;
   stale.size_bytes = 0x1000u;
 
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = 0;
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 32;
@@ -1398,6 +1398,18 @@ bool TestSharedResourceCreateAndOpenEmitsExportImport() {
     return false;
   }
   if (!Check(priv.size_bytes != 0, "alloc priv size_bytes non-zero")) {
+    return false;
+  }
+  if (!Check(AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(priv.reserved0), "alloc priv desc present")) {
+    return false;
+  }
+  if (!Check(AEROGPU_WDDM_ALLOC_PRIV_DESC_FORMAT(priv.reserved0) == create_shared.format, "alloc priv desc format")) {
+    return false;
+  }
+  if (!Check(AEROGPU_WDDM_ALLOC_PRIV_DESC_WIDTH(priv.reserved0) == create_shared.width, "alloc priv desc width")) {
+    return false;
+  }
+  if (!Check(AEROGPU_WDDM_ALLOC_PRIV_DESC_HEIGHT(priv.reserved0) == create_shared.height, "alloc priv desc height")) {
     return false;
   }
 
@@ -4460,15 +4472,15 @@ bool TestOpenResourceTracksWddmAllocationHandle() {
   priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
   priv.share_token = 0x1122334455667788ull;
   priv.size_bytes = 64ull * 64ull * 4ull;
-  priv.reserved0 = 0;
+  priv.reserved0 = AEROGPU_WDDM_ALLOC_PRIV_DESC_PACK(/*format=*/22u, /*width=*/64u, /*height=*/64u);
 
   D3D9DDIARG_OPENRESOURCE open_res{};
   open_res.pPrivateDriverData = &priv;
   open_res.private_driver_data_size = sizeof(priv);
   open_res.type = 0;
-  open_res.format = 22u; // D3DFMT_X8R8G8B8
-  open_res.width = 64;
-  open_res.height = 64;
+  open_res.format = 0; // reconstructed from alloc priv desc
+  open_res.width = 0;
+  open_res.height = 0;
   open_res.depth = 1;
   open_res.mip_levels = 1;
   open_res.usage = 0;
@@ -4528,9 +4540,9 @@ bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    std::vector<AEROGPU_D3D9DDI_HRESOURCE> resources;
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
     bool has_adapter = false;
     bool has_device = false;
 
@@ -4593,7 +4605,7 @@ bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
   priv.size_bytes = 64;
   priv.reserved0 = 0;
 
-  AEROGPU_D3D9DDIARG_OPENRESOURCE open_res{};
+  D3D9DDIARG_OPENRESOURCE open_res{};
   open_res.pPrivateDriverData = &priv;
   open_res.private_driver_data_size = sizeof(priv);
   open_res.type = 0;
@@ -4628,13 +4640,13 @@ bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
     return false;
   }
 
-  AEROGPU_D3D9DDIARG_LOCK lock{};
+  D3D9DDIARG_LOCK lock{};
   lock.hResource = open_res.hResource;
   lock.offset_bytes = 8;
   lock.size_bytes = 16;
   lock.flags = 0;
 
-  AEROGPU_D3D9DDI_LOCKED_BOX locked{};
+  D3DDDI_LOCKEDBOX locked{};
   hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &locked);
   if (!Check(hr == S_OK, "Lock(guest-backed)")) {
     return false;
@@ -4645,7 +4657,7 @@ bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
 
   std::memset(locked.pData, 0xAB, lock.size_bytes);
 
-  AEROGPU_D3D9DDIARG_UNLOCK unlock{};
+  D3D9DDIARG_UNLOCK unlock{};
   unlock.hResource = open_res.hResource;
   unlock.offset_bytes = lock.offset_bytes;
   unlock.size_bytes = lock.size_bytes;
@@ -4696,9 +4708,9 @@ bool TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    std::vector<AEROGPU_D3D9DDI_HRESOURCE> resources;
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
     bool has_adapter = false;
     bool has_device = false;
 
@@ -4755,7 +4767,7 @@ bool TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull() {
   priv.size_bytes = 32;
   priv.reserved0 = 0;
 
-  AEROGPU_D3D9DDIARG_OPENRESOURCE open_res{};
+  D3D9DDIARG_OPENRESOURCE open_res{};
   open_res.pPrivateDriverData = &priv;
   open_res.private_driver_data_size = sizeof(priv);
   open_res.type = 0;
@@ -4793,20 +4805,20 @@ bool TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull() {
     filler->value = 0xDEAD1234u;
   }
 
-  AEROGPU_D3D9DDIARG_LOCK lock_args{};
+  D3D9DDIARG_LOCK lock_args{};
   lock_args.hResource = open_res.hResource;
   lock_args.offset_bytes = 0;
   lock_args.size_bytes = 4;
   lock_args.flags = 0;
 
-  AEROGPU_D3D9DDI_LOCKED_BOX locked{};
+  D3DDDI_LOCKEDBOX locked{};
   hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock_args, &locked);
   if (!Check(hr == S_OK, "Lock(guest-backed)")) {
     return false;
   }
   std::memset(locked.pData, 0xEF, lock_args.size_bytes);
 
-  AEROGPU_D3D9DDIARG_UNLOCK unlock_args{};
+  D3D9DDIARG_UNLOCK unlock_args{};
   unlock_args.hResource = open_res.hResource;
   unlock_args.offset_bytes = lock_args.offset_bytes;
   unlock_args.size_bytes = lock_args.size_bytes;

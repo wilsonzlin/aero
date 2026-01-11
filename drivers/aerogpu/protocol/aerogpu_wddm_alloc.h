@@ -81,6 +81,40 @@ enum aerogpu_wddm_alloc_private_flags {
 
 #define AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED
 
+/*
+ * Optional resource description encoding (reserved0).
+ *
+ * Win7/WDDM 1.1 does not guarantee that the D3D9 UMD OpenResource DDI provides
+ * enough information to reconstruct a shareable surface's format/width/height
+ * in a different process. However, dxgkrnl preserves the per-allocation private
+ * driver data blob for shared allocations and returns it verbatim when another
+ * process opens the resource.
+ *
+ * AeroGPU uses the `reserved0` field to optionally encode a minimal, portable
+ * surface description so the UMD can reconstruct the resource at OpenResource
+ * time without relying on header-specific DDI fields.
+ *
+ * Layout (little-endian bit numbering):
+ *   bit 63: marker (1 == description present)
+ *   bits 0..31:  D3D9 format (u32, numeric D3DFORMAT value)
+ *   bits 32..47: width  (u16)
+ *   bits 48..62: height (u15, max 32767; sufficient for Win7-era surfaces)
+ */
+#define AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER 0x8000000000000000ull
+#define AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH 0xFFFFu
+#define AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT 0x7FFFu
+
+#define AEROGPU_WDDM_ALLOC_PRIV_DESC_PACK(format_u32, width_u32, height_u32)                                      \
+  (AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER |                                                                          \
+   ((aerogpu_wddm_u64)((aerogpu_wddm_u32)(format_u32)) & 0xFFFFFFFFull) |                                         \
+   (((aerogpu_wddm_u64)((aerogpu_wddm_u32)(width_u32)) & 0xFFFFull) << 32) |                                      \
+   (((aerogpu_wddm_u64)((aerogpu_wddm_u32)(height_u32)) & 0x7FFFull) << 48))
+
+#define AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(desc_u64) (((aerogpu_wddm_u64)(desc_u64) & AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER) != 0)
+#define AEROGPU_WDDM_ALLOC_PRIV_DESC_FORMAT(desc_u64) ((aerogpu_wddm_u32)((aerogpu_wddm_u64)(desc_u64) & 0xFFFFFFFFull))
+#define AEROGPU_WDDM_ALLOC_PRIV_DESC_WIDTH(desc_u64) ((aerogpu_wddm_u32)(((aerogpu_wddm_u64)(desc_u64) >> 32) & 0xFFFFull))
+#define AEROGPU_WDDM_ALLOC_PRIV_DESC_HEIGHT(desc_u64) ((aerogpu_wddm_u32)(((aerogpu_wddm_u64)(desc_u64) >> 48) & 0x7FFFull))
+
 #pragma pack(push, 1)
 typedef struct aerogpu_wddm_alloc_priv {
   aerogpu_wddm_u32 magic;   /* AEROGPU_WDDM_ALLOC_PRIV_MAGIC */
@@ -123,6 +157,12 @@ typedef struct aerogpu_wddm_alloc_priv {
    */
   aerogpu_wddm_u64 size_bytes;
 
+  /*
+   * Reserved for UMD-private extensions.
+   *
+   * See the AEROGPU_WDDM_ALLOC_PRIV_DESC_* macros above for an optional encoding
+   * used by the D3D9 UMD to reconstruct shared surfaces at OpenResource time.
+   */
   aerogpu_wddm_u64 reserved0;
 } aerogpu_wddm_alloc_priv;
 

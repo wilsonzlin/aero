@@ -3133,6 +3133,37 @@ static void consume_wddm_alloc_priv(Resource* res,
   }
 }
 
+static aerogpu_wddm_u64 encode_wddm_alloc_priv_desc(uint32_t format, uint32_t width, uint32_t height) {
+  if (format == 0 || width == 0 || height == 0) {
+    return 0;
+  }
+  width = std::min<uint32_t>(width, static_cast<uint32_t>(AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH));
+  height = std::min<uint32_t>(height, static_cast<uint32_t>(AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT));
+  if (width == 0 || height == 0) {
+    return 0;
+  }
+  return AEROGPU_WDDM_ALLOC_PRIV_DESC_PACK(format, width, height);
+}
+
+static bool decode_wddm_alloc_priv_desc(aerogpu_wddm_u64 desc, uint32_t* format_out, uint32_t* width_out, uint32_t* height_out) {
+  if (!format_out || !width_out || !height_out) {
+    return false;
+  }
+  if (!AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(desc)) {
+    return false;
+  }
+  const uint32_t format = static_cast<uint32_t>(AEROGPU_WDDM_ALLOC_PRIV_DESC_FORMAT(desc));
+  const uint32_t width = static_cast<uint32_t>(AEROGPU_WDDM_ALLOC_PRIV_DESC_WIDTH(desc));
+  const uint32_t height = static_cast<uint32_t>(AEROGPU_WDDM_ALLOC_PRIV_DESC_HEIGHT(desc));
+  if (format == 0 || width == 0 || height == 0) {
+    return false;
+  }
+  *format_out = format;
+  *width_out = width;
+  *height_out = height;
+  return true;
+}
+
 HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, uint32_t width, uint32_t height) {
   if (!dev || !dev->adapter || !res) {
     return E_INVALIDARG;
@@ -3189,7 +3220,7 @@ HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, ui
     priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE;
     priv.share_token = 0;
     priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
-    priv.reserved0 = 0;
+    priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
 
     const HRESULT hr = wddm_create_allocation(dev->wddm_callbacks,
                                               dev->wddm_device,
@@ -3376,7 +3407,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE;
       priv.share_token = 0;
       priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
-      priv.reserved0 = 0;
+      priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
       std::memcpy(pCreateResource->pKmdAllocPrivateData, &priv, sizeof(priv));
 
       res->backing_alloc_id = alloc_id;
@@ -3430,7 +3461,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
     priv.share_token = share_token;
     priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
-    priv.reserved0 = 0;
+    priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
     std::memcpy(pCreateResource->pKmdAllocPrivateData, &priv, sizeof(priv));
 
     res->backing_alloc_id = alloc_id;
@@ -3457,7 +3488,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     priv.flags = wants_shared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED : AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE;
     priv.share_token = wants_shared ? static_cast<aerogpu_wddm_u64>(res->share_token) : 0;
     priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
-    priv.reserved0 = 0;
+    priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
 
     const HRESULT hr = wddm_create_allocation(dev->wddm_callbacks,
                                               dev->wddm_device,
@@ -3469,7 +3500,6 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       return FAILED(hr) ? hr : E_FAIL;
     }
 
-    pCreateResource->wddm_hAllocation = static_cast<uint32_t>(res->wddm_hAllocation);
     has_wddm_allocation = true;
   }
 #endif
@@ -3583,13 +3613,23 @@ static HRESULT device_open_resource_impl(
     return E_FAIL;
   }
 
-  if (!pOpenResource->pPrivateDriverData ||
-      pOpenResource->private_driver_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
+  const void* priv_data = nullptr;
+  uint32_t priv_data_size = 0;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  const auto* wdk_open = reinterpret_cast<const D3D9DDIARG_OPENRESOURCE*>(pOpenResource);
+  priv_data = wdk_open->pPrivateDriverData;
+  priv_data_size = static_cast<uint32_t>(wdk_open->PrivateDriverDataSize);
+#else
+  priv_data = pOpenResource->pPrivateDriverData;
+  priv_data_size = pOpenResource->private_driver_data_size;
+#endif
+
+  if (!priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
     return E_INVALIDARG;
   }
 
   aerogpu_wddm_alloc_priv priv{};
-  std::memcpy(&priv, pOpenResource->pPrivateDriverData, sizeof(priv));
+  std::memcpy(&priv, priv_data, sizeof(priv));
   if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC || priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
     return E_INVALIDARG;
   }
@@ -3618,6 +3658,19 @@ static HRESULT device_open_resource_impl(
     return E_FAIL;
   }
 
+  // OpenResource DDI structs vary across WDK header vintages. Some header sets do
+  // not include a full resource description, so treat all description fields as
+  // optional and fall back to the encoded `priv.reserved0` description when
+  // available.
+  res->type = 0;
+  res->format = 0;
+  res->width = 0;
+  res->height = 0;
+  res->depth = 1;
+  res->mip_levels = 1;
+  res->usage = 0;
+  uint32_t open_size_bytes = 0;
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
   res->type = pOpenResource->type;
   res->format = pOpenResource->format;
   res->width = pOpenResource->width;
@@ -3625,12 +3678,29 @@ static HRESULT device_open_resource_impl(
   res->depth = std::max(1u, pOpenResource->depth);
   res->mip_levels = std::max(1u, pOpenResource->mip_levels);
   res->usage = pOpenResource->usage;
+  open_size_bytes = pOpenResource->size;
+#endif
+
+  uint32_t desc_format = 0;
+  uint32_t desc_width = 0;
+  uint32_t desc_height = 0;
+  if (decode_wddm_alloc_priv_desc(priv.reserved0, &desc_format, &desc_width, &desc_height)) {
+    if (res->format == 0) {
+      res->format = desc_format;
+    }
+    if (res->width == 0) {
+      res->width = desc_width;
+    }
+    if (res->height == 0) {
+      res->height = desc_height;
+    }
+  }
 
   // Prefer a reconstructed size when the runtime provides a description; fall
   // back to the size_bytes persisted in allocation private data.
-  if (pOpenResource->size) {
+  if (open_size_bytes) {
     res->kind = ResourceKind::Buffer;
-    res->size_bytes = pOpenResource->size;
+    res->size_bytes = open_size_bytes;
     res->row_pitch = 0;
     res->slice_pitch = 0;
   } else if (res->width && res->height) {
@@ -3685,34 +3755,48 @@ static HRESULT device_open_resource_impl(
 
   logf("aerogpu-d3d9: import shared_surface out_res=%u token=%llu alloc_id=%u hAllocation=0x%08x\n",
        res->handle,
-       static_cast<unsigned long long>(res->share_token),
-       static_cast<unsigned>(res->backing_alloc_id),
-       static_cast<unsigned>(res->wddm_hAllocation));
+        static_cast<unsigned long long>(res->share_token),
+        static_cast<unsigned>(res->backing_alloc_id),
+        static_cast<unsigned>(res->wddm_hAllocation));
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  auto* wdk_out = reinterpret_cast<D3D9DDIARG_OPENRESOURCE*>(pOpenResource);
+  wdk_out->hResource.pDrvPrivate = res.release();
+#else
   pOpenResource->hResource.pDrvPrivate = res.release();
+#endif
   return S_OK;
 }
 
 HRESULT AEROGPU_D3D9_CALL device_open_resource(
     D3DDDI_HDEVICE hDevice,
     D3D9DDIARG_OPENRESOURCE* pOpenResource) {
-  const uint64_t type_format = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->type, pOpenResource->format) : 0;
-  const uint64_t wh = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->width, pOpenResource->height) : 0;
-  const uint64_t usage_priv =
-      pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->usage, pOpenResource->private_driver_data_size) : 0;
-  D3d9TraceCall trace(D3d9TraceFunc::DeviceOpenResource, d3d9_trace_arg_ptr(hDevice.pDrvPrivate), type_format, wh, usage_priv);
+  uint64_t arg0 = d3d9_trace_arg_ptr(hDevice.pDrvPrivate);
+  uint64_t arg1 = d3d9_trace_arg_ptr(pOpenResource);
+  uint64_t arg2 = 0;
+  uint64_t arg3 = 0;
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+  arg1 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->type, pOpenResource->format) : 0;
+  arg2 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->width, pOpenResource->height) : 0;
+  arg3 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->usage, pOpenResource->private_driver_data_size) : 0;
+#endif
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceOpenResource, arg0, arg1, arg2, arg3);
   return trace.ret(device_open_resource_impl(hDevice, pOpenResource));
 }
 
 HRESULT AEROGPU_D3D9_CALL device_open_resource2(
     D3DDDI_HDEVICE hDevice,
     D3D9DDIARG_OPENRESOURCE* pOpenResource) {
-  const uint64_t type_format = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->type, pOpenResource->format) : 0;
-  const uint64_t wh = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->width, pOpenResource->height) : 0;
-  const uint64_t usage_priv =
-      pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->usage, pOpenResource->private_driver_data_size) : 0;
-  D3d9TraceCall trace(
-      D3d9TraceFunc::DeviceOpenResource2, d3d9_trace_arg_ptr(hDevice.pDrvPrivate), type_format, wh, usage_priv);
+  uint64_t arg0 = d3d9_trace_arg_ptr(hDevice.pDrvPrivate);
+  uint64_t arg1 = d3d9_trace_arg_ptr(pOpenResource);
+  uint64_t arg2 = 0;
+  uint64_t arg3 = 0;
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+  arg1 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->type, pOpenResource->format) : 0;
+  arg2 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->width, pOpenResource->height) : 0;
+  arg3 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->usage, pOpenResource->private_driver_data_size) : 0;
+#endif
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceOpenResource2, arg0, arg1, arg2, arg3);
   return trace.ret(device_open_resource_impl(hDevice, pOpenResource));
 }
 
