@@ -19,7 +19,7 @@ impl Default for SseState {
     fn default() -> Self {
         Self {
             xmm: [0u128; 16],
-            mxcsr: 0x1F80,
+            mxcsr: crate::state::MXCSR_EXCEPTION_MASK,
         }
     }
 }

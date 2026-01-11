@@ -6,14 +6,9 @@ use crate::interp::{crypto, sse3, sse41, sse42, ssse3};
 use crate::mem::CpuBus;
 use crate::state::{
     mask_bits, CpuState, CR0_EM, CR0_TS, CR4_OSFXSR, CR4_OSXMMEXCPT, FLAG_CF, FLAG_OF, FLAG_SF,
-    FLAG_ZF,
+    FLAG_ZF, MXCSR_EXCEPTION_MASK, MXCSR_IE, MXCSR_PE, MXCSR_RC_MASK, MXCSR_ZE,
 };
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
-
-const MXCSR_EXCEPTION_MASK: u32 = 0x1F80;
-const MXCSR_IE: u32 = 1 << 0;
-const MXCSR_PE: u32 = 1 << 5;
-const MXCSR_RC_MASK: u32 = 0b11 << 13;
 
 #[derive(Clone, Copy, Debug)]
 enum RoundingMode {
@@ -1421,7 +1416,8 @@ fn exec_scalar_f32<B: CpuBus>(
     next_ip: u64,
 ) -> Result<(), Exception> {
     let dst = instr.op0_register();
-    let a_bits = read_xmm_reg(state, dst)? as u32;
+    let dst_old = read_xmm_reg(state, dst)?;
+    let a_bits = dst_old as u32;
     let b_bits = read_xmm_operand_u32(state, bus, instr, 1, next_ip)?;
     let a = f32::from_bits(a_bits);
     let b = f32::from_bits(b_bits);
@@ -1432,7 +1428,16 @@ fn exec_scalar_f32<B: CpuBus>(
         Mnemonic::Divss => a / b,
         _ => return Err(Exception::InvalidOpcode),
     };
-    let dst_old = read_xmm_reg(state, dst)?;
+
+    let mut mxcsr_flags = 0u32;
+    if instr.mnemonic() == Mnemonic::Divss && b == 0.0 && a.is_finite() {
+        // IEEE 754: x/0 signals divide-by-zero for finite, non-zero x. We also
+        // treat 0/0 as invalid.
+        mxcsr_flags |= if a == 0.0 { MXCSR_IE } else { MXCSR_ZE };
+    }
+
+    record_mxcsr_exception(state, mxcsr_flags)?;
+
     write_xmm_reg(
         state,
         dst,
@@ -1449,12 +1454,20 @@ fn exec_scalar_f64<B: CpuBus>(
     op: impl FnOnce(f64, f64) -> f64,
 ) -> Result<(), Exception> {
     let dst = instr.op0_register();
-    let a_bits = read_xmm_reg(state, dst)? as u64;
+    let dst_old = read_xmm_reg(state, dst)?;
+    let a_bits = dst_old as u64;
     let b_bits = read_xmm_operand_u64(state, bus, instr, 1, next_ip)?;
     let a = f64::from_bits(a_bits);
     let b = f64::from_bits(b_bits);
     let res = op(a, b);
-    let dst_old = read_xmm_reg(state, dst)?;
+
+    let mut mxcsr_flags = 0u32;
+    if instr.mnemonic() == Mnemonic::Divsd && b == 0.0 && a.is_finite() {
+        mxcsr_flags |= if a == 0.0 { MXCSR_IE } else { MXCSR_ZE };
+    }
+
+    record_mxcsr_exception(state, mxcsr_flags)?;
+
     write_xmm_reg(
         state,
         dst,
@@ -1515,8 +1528,25 @@ fn apply_rounding_mode_f64(val: f64, mode: RoundingMode) -> f64 {
     }
 }
 
-fn or_mxcsr_flags(state: &mut CpuState, flags: u32) {
+fn record_mxcsr_exception(state: &mut CpuState, flags: u32) -> Result<(), Exception> {
+    if flags == 0 {
+        return Ok(());
+    }
+
+    // Exception status flags are sticky even when the exception is unmasked and
+    // the instruction faults (#XM/#XF).
     state.sse.mxcsr |= flags;
+
+    // MXCSR mask bits are stored starting at bit 7; shift them down so the bits
+    // line up with the exception status flags (IE..PE).
+    let masked = (state.sse.mxcsr & MXCSR_EXCEPTION_MASK) >> 7;
+    let unmasked = flags & !masked;
+
+    if unmasked != 0 {
+        return Err(Exception::SimdFloatingPointException);
+    }
+
+    Ok(())
 }
 
 fn sign_extend_i64(raw: u64, bits: u32) -> Result<i64, Exception> {
@@ -1529,9 +1559,9 @@ fn sign_extend_i64(raw: u64, bits: u32) -> Result<i64, Exception> {
     }
 }
 
-fn cvt_i64_to_f32(state: &mut CpuState, src: i64) -> f32 {
+fn cvt_i64_to_f32(mxcsr: u32, src: i64) -> (f32, u32) {
     if src == 0 {
-        return 0.0;
+        return (0.0, 0);
     }
 
     let sign = src < 0;
@@ -1552,14 +1582,15 @@ fn cvt_i64_to_f32(state: &mut CpuState, src: i64) -> f32 {
         ((mag >> shift) as u64, mag & ((1u64 << shift) - 1))
     };
 
+    let mut mxcsr_flags = 0;
     if rem != 0 {
-        or_mxcsr_flags(state, MXCSR_PE);
+        mxcsr_flags |= MXCSR_PE;
     }
 
     let inc = if rem == 0 {
         false
     } else {
-        match rounding_mode(state.sse.mxcsr) {
+        match rounding_mode(mxcsr) {
             RoundingMode::Nearest => {
                 let shift = shift as u32;
                 let half = 1u64 << (shift - 1);
@@ -1581,12 +1612,12 @@ fn cvt_i64_to_f32(state: &mut CpuState, src: i64) -> f32 {
 
     let mantissa = (mantissa_full & ((1u64 << 23) - 1)) as u32;
     let bits = ((sign as u32) << 31) | ((exp as u32) << 23) | mantissa;
-    f32::from_bits(bits)
+    (f32::from_bits(bits), mxcsr_flags)
 }
 
-fn cvt_i64_to_f64(state: &mut CpuState, src: i64) -> f64 {
+fn cvt_i64_to_f64(mxcsr: u32, src: i64) -> (f64, u32) {
     if src == 0 {
-        return 0.0;
+        return (0.0, 0);
     }
 
     let sign = src < 0;
@@ -1607,14 +1638,15 @@ fn cvt_i64_to_f64(state: &mut CpuState, src: i64) -> f64 {
         ((mag >> shift) as u64, mag & ((1u64 << shift) - 1))
     };
 
+    let mut mxcsr_flags = 0;
     if rem != 0 {
-        or_mxcsr_flags(state, MXCSR_PE);
+        mxcsr_flags |= MXCSR_PE;
     }
 
     let inc = if rem == 0 {
         false
     } else {
-        match rounding_mode(state.sse.mxcsr) {
+        match rounding_mode(mxcsr) {
             RoundingMode::Nearest => {
                 let shift = shift as u32;
                 let half = 1u64 << (shift - 1);
@@ -1636,55 +1668,57 @@ fn cvt_i64_to_f64(state: &mut CpuState, src: i64) -> f64 {
 
     let mantissa = mantissa_full & ((1u64 << 52) - 1);
     let bits = ((sign as u64) << 63) | ((exp as u64) << 52) | mantissa;
-    f64::from_bits(bits)
+    (f64::from_bits(bits), mxcsr_flags)
 }
 
-fn cvt_float_to_i32(state: &mut CpuState, val: f64, truncate: bool) -> i32 {
-    if !val.is_finite() || val.is_nan() {
-        or_mxcsr_flags(state, MXCSR_IE);
-        return i32::MIN;
+fn cvt_float_to_i32(mxcsr: u32, val: f64, truncate: bool) -> (i32, u32) {
+    let mut mxcsr_flags = 0;
+    if !val.is_finite() {
+        mxcsr_flags |= MXCSR_IE;
+        return (i32::MIN, mxcsr_flags);
     }
 
     let rounded = if truncate {
         val.trunc()
     } else {
-        apply_rounding_mode_f64(val, rounding_mode(state.sse.mxcsr))
+        apply_rounding_mode_f64(val, rounding_mode(mxcsr))
     };
 
     if rounded < (i32::MIN as f64) || rounded > (i32::MAX as f64) {
-        or_mxcsr_flags(state, MXCSR_IE);
-        return i32::MIN;
+        mxcsr_flags |= MXCSR_IE;
+        return (i32::MIN, mxcsr_flags);
     }
 
     if val != rounded {
-        or_mxcsr_flags(state, MXCSR_PE);
+        mxcsr_flags |= MXCSR_PE;
     }
 
-    rounded as i32
+    (rounded as i32, mxcsr_flags)
 }
 
-fn cvt_float_to_i64(state: &mut CpuState, val: f64, truncate: bool) -> i64 {
-    if !val.is_finite() || val.is_nan() {
-        or_mxcsr_flags(state, MXCSR_IE);
-        return i64::MIN;
+fn cvt_float_to_i64(mxcsr: u32, val: f64, truncate: bool) -> (i64, u32) {
+    let mut mxcsr_flags = 0;
+    if !val.is_finite() {
+        mxcsr_flags |= MXCSR_IE;
+        return (i64::MIN, mxcsr_flags);
     }
 
     let rounded = if truncate {
         val.trunc()
     } else {
-        apply_rounding_mode_f64(val, rounding_mode(state.sse.mxcsr))
+        apply_rounding_mode_f64(val, rounding_mode(mxcsr))
     };
 
     if rounded < (i64::MIN as f64) || rounded > (i64::MAX as f64) {
-        or_mxcsr_flags(state, MXCSR_IE);
-        return i64::MIN;
+        mxcsr_flags |= MXCSR_IE;
+        return (i64::MIN, mxcsr_flags);
     }
 
     if val != rounded {
-        or_mxcsr_flags(state, MXCSR_PE);
+        mxcsr_flags |= MXCSR_PE;
     }
 
-    rounded as i64
+    (rounded as i64, mxcsr_flags)
 }
 
 fn exec_cvtsi2ss<B: CpuBus>(
@@ -1700,9 +1734,11 @@ fn exec_cvtsi2ss<B: CpuBus>(
     let src_bits = op_bits(state, instr, 1)?;
     let raw = read_op_sized(state, bus, instr, 1, src_bits, next_ip)?;
     let src = sign_extend_i64(raw, src_bits)?;
-    let f = cvt_i64_to_f32(state, src);
     let dst_old = read_xmm_reg(state, dst)?;
-    write_xmm_reg(state, dst, u128_set_low_u32_preserve(dst_old, f.to_bits()))?;
+    let (f, mxcsr_flags) = cvt_i64_to_f32(state.sse.mxcsr, src);
+    let dst_new = u128_set_low_u32_preserve(dst_old, f.to_bits());
+    record_mxcsr_exception(state, mxcsr_flags)?;
+    write_xmm_reg(state, dst, dst_new)?;
     Ok(())
 }
 
@@ -1719,9 +1755,11 @@ fn exec_cvtsi2sd<B: CpuBus>(
     let src_bits = op_bits(state, instr, 1)?;
     let raw = read_op_sized(state, bus, instr, 1, src_bits, next_ip)?;
     let src = sign_extend_i64(raw, src_bits)?;
-    let f = cvt_i64_to_f64(state, src);
     let dst_old = read_xmm_reg(state, dst)?;
-    write_xmm_reg(state, dst, u128_set_low_u64_preserve(dst_old, f.to_bits()))?;
+    let (f, mxcsr_flags) = cvt_i64_to_f64(state.sse.mxcsr, src);
+    let dst_new = u128_set_low_u64_preserve(dst_old, f.to_bits());
+    record_mxcsr_exception(state, mxcsr_flags)?;
+    write_xmm_reg(state, dst, dst_new)?;
     Ok(())
 }
 
@@ -1739,11 +1777,13 @@ fn exec_cvtss2si<B: CpuBus>(
 
     match dst_bits {
         32 => {
-            let res = cvt_float_to_i32(state, val, truncate);
+            let (res, mxcsr_flags) = cvt_float_to_i32(state.sse.mxcsr, val, truncate);
+            record_mxcsr_exception(state, mxcsr_flags)?;
             state.write_reg(dst_reg, res as u32 as u64);
         }
         64 => {
-            let res = cvt_float_to_i64(state, val, truncate);
+            let (res, mxcsr_flags) = cvt_float_to_i64(state.sse.mxcsr, val, truncate);
+            record_mxcsr_exception(state, mxcsr_flags)?;
             state.write_reg(dst_reg, res as u64);
         }
         _ => return Err(Exception::InvalidOpcode),
@@ -1764,11 +1804,13 @@ fn exec_cvtsd2si<B: CpuBus>(
     let val = f64::from_bits(bits);
     match dst_bits {
         32 => {
-            let res = cvt_float_to_i32(state, val, truncate);
+            let (res, mxcsr_flags) = cvt_float_to_i32(state.sse.mxcsr, val, truncate);
+            record_mxcsr_exception(state, mxcsr_flags)?;
             state.write_reg(dst_reg, res as u32 as u64);
         }
         64 => {
-            let res = cvt_float_to_i64(state, val, truncate);
+            let (res, mxcsr_flags) = cvt_float_to_i64(state.sse.mxcsr, val, truncate);
+            record_mxcsr_exception(state, mxcsr_flags)?;
             state.write_reg(dst_reg, res as u64);
         }
         _ => return Err(Exception::InvalidOpcode),

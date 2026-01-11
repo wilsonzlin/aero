@@ -112,17 +112,10 @@ pub enum RoundingMode {
     TowardZero,
 }
 
-// MXCSR flags (sticky exception bits).
-pub const MXCSR_IE: u32 = 1 << 0;
-pub const MXCSR_DE: u32 = 1 << 1;
-pub const MXCSR_ZE: u32 = 1 << 2;
-pub const MXCSR_OE: u32 = 1 << 3;
-pub const MXCSR_UE: u32 = 1 << 4;
-pub const MXCSR_PE: u32 = 1 << 5;
-pub const MXCSR_EXCEPTION_FLAGS_MASK: u32 =
-    MXCSR_IE | MXCSR_DE | MXCSR_ZE | MXCSR_OE | MXCSR_UE | MXCSR_PE;
-
-pub const MXCSR_RC_MASK: u32 = 0b11 << 13;
+pub use crate::state::{
+    MXCSR_DE, MXCSR_DM, MXCSR_EXCEPTION_FLAGS_MASK, MXCSR_EXCEPTION_MASK, MXCSR_IE, MXCSR_IM,
+    MXCSR_OE, MXCSR_OM, MXCSR_PE, MXCSR_PM, MXCSR_RC_MASK, MXCSR_UE, MXCSR_UM, MXCSR_ZE, MXCSR_ZM,
+};
 
 #[inline]
 pub fn rounding_mode(mxcsr: u32) -> RoundingMode {

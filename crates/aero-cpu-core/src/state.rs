@@ -104,6 +104,39 @@ pub const CR4_PAE: u64 = 1 << 5;
 pub const CR4_OSFXSR: u64 = 1 << 9;
 pub const CR4_OSXMMEXCPT: u64 = 1 << 10;
 
+// ---- MXCSR bits (SSE control/status register) ------------------------------
+//
+// Intel SDM Vol. 1, "MXCSR Control and Status Register".
+//
+// Note: `sse_state::MXCSR_MASK` models which bits are supported/validated by the
+// emulator. The constants below describe architectural bit positions.
+
+// Sticky exception status flags.
+pub const MXCSR_IE: u32 = 1 << 0; // Invalid operation
+pub const MXCSR_DE: u32 = 1 << 1; // Denormal
+pub const MXCSR_ZE: u32 = 1 << 2; // Divide-by-zero
+pub const MXCSR_OE: u32 = 1 << 3; // Overflow
+pub const MXCSR_UE: u32 = 1 << 4; // Underflow
+pub const MXCSR_PE: u32 = 1 << 5; // Precision
+
+pub const MXCSR_EXCEPTION_FLAGS_MASK: u32 =
+    MXCSR_IE | MXCSR_DE | MXCSR_ZE | MXCSR_OE | MXCSR_UE | MXCSR_PE;
+
+// Exception mask bits (1 = masked, 0 = unmasked).
+pub const MXCSR_IM: u32 = 1 << 7;
+pub const MXCSR_DM: u32 = 1 << 8;
+pub const MXCSR_ZM: u32 = 1 << 9;
+pub const MXCSR_OM: u32 = 1 << 10;
+pub const MXCSR_UM: u32 = 1 << 11;
+pub const MXCSR_PM: u32 = 1 << 12;
+
+/// Mask of all MXCSR exception mask bits (`IM`..`PM`).
+pub const MXCSR_EXCEPTION_MASK: u32 =
+    MXCSR_IM | MXCSR_DM | MXCSR_ZM | MXCSR_OM | MXCSR_UM | MXCSR_PM;
+
+/// Rounding control field mask (`RC`, bits 13..=14).
+pub const MXCSR_RC_MASK: u32 = 0b11 << 13;
+
 pub const EFER_LME: u64 = 1 << 8;
 pub const EFER_LMA: u64 = 1 << 10;
 
@@ -1107,8 +1140,6 @@ impl CpuState {
 
     // ---- x87/SSE state management (FXSAVE/FXRSTOR, MXCSR) -----------------
 
-    const MXCSR_EXCEPTION_MASK: u32 = 0x1F80;
-
     /// Implements `FNINIT` / `FINIT`.
     pub fn fninit(&mut self) {
         self.fpu.reset();
@@ -1147,7 +1178,7 @@ impl CpuState {
             // Match the legacy system instruction surface: if the guest OS hasn't
             // enabled SIMD FP exception delivery, keep all exception masks set so
             // we never have to inject #XM/#XF.
-            value |= Self::MXCSR_EXCEPTION_MASK;
+            value |= MXCSR_EXCEPTION_MASK;
         }
         self.sse.set_mxcsr(value)?;
         Ok(())
@@ -1218,7 +1249,7 @@ impl CpuState {
 
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
             let mxcsr =
-                u32::from_le_bytes(image[24..28].try_into().unwrap()) | Self::MXCSR_EXCEPTION_MASK;
+                u32::from_le_bytes(image[24..28].try_into().unwrap()) | MXCSR_EXCEPTION_MASK;
             image[24..28].copy_from_slice(&mxcsr.to_le_bytes());
         }
 
@@ -1242,7 +1273,7 @@ impl CpuState {
 
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
             let mxcsr =
-                u32::from_le_bytes(image[24..28].try_into().unwrap()) | Self::MXCSR_EXCEPTION_MASK;
+                u32::from_le_bytes(image[24..28].try_into().unwrap()) | MXCSR_EXCEPTION_MASK;
             image[24..28].copy_from_slice(&mxcsr.to_le_bytes());
         }
 

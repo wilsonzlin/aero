@@ -41,9 +41,6 @@ pub const CR4_OSFXSR: u64 = 1 << 9;
 #[cfg(feature = "legacy-interp")]
 pub const CR4_OSXMMEXCPT: u64 = 1 << 10;
 
-#[cfg(feature = "legacy-interp")]
-const MXCSR_EXCEPTION_MASK: u32 = 0x1F80;
-
 /// A device/bus surface for port I/O instructions.
 #[cfg(feature = "legacy-interp")]
 pub trait PortIo {
@@ -580,7 +577,7 @@ impl Cpu {
         if (self.cr4 & CR4_OSXMMEXCPT) == 0 {
             // If the OS hasn't opted into SIMD FP exception delivery, ensure all
             // exception masks remain set so we never need to inject #XM/#XF.
-            value |= MXCSR_EXCEPTION_MASK;
+            value |= crate::state::MXCSR_EXCEPTION_MASK;
         }
         let bytes = value.to_le_bytes();
         state.ldmxcsr(&bytes).map_err(map_fx_state_error)
@@ -609,7 +606,7 @@ impl Cpu {
             let mut patched = *src;
             let mut mxcsr_bytes = [0u8; 4];
             mxcsr_bytes.copy_from_slice(&patched[24..28]);
-            let mxcsr = u32::from_le_bytes(mxcsr_bytes) | MXCSR_EXCEPTION_MASK;
+            let mxcsr = u32::from_le_bytes(mxcsr_bytes) | crate::state::MXCSR_EXCEPTION_MASK;
             patched[24..28].copy_from_slice(&mxcsr.to_le_bytes());
             state.fxrstor(&patched).map_err(map_fx_state_error)
         } else {
