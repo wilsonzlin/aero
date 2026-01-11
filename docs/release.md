@@ -210,6 +210,13 @@ See `deploy/k8s/README.md` for ingress/TLS examples and COOP/COEP header strateg
   - `gitSha`
   - `builtAt`
 
+### L2 tunnel proxy
+
+- `GET /version` returns:
+  - `version`
+  - `gitSha`
+  - `builtAt`
+
 ### WebRTC UDP relay
 
 - `GET /version` returns:
