@@ -22,9 +22,15 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 | Flag | Env var | Default |
 | --- | --- | --- |
 | `--listen-addr` | `AERO_STORAGE_LISTEN_ADDR` | `0.0.0.0:8080` |
-| `--cors-origin` | `AERO_STORAGE_CORS_ORIGIN` | _(unset)_ |
+| `--cors-origin` | `AERO_STORAGE_CORS_ORIGIN` | _(unset → `Access-Control-Allow-Origin: *`)_ |
 | `--images-root` | `AERO_STORAGE_IMAGE_ROOT` | `./images` |
 | `--log-level` | `AERO_STORAGE_LOG_LEVEL` | `info` |
+
+Notes:
+
+- If `--cors-origin` is set to a specific origin (not `*`), the server will also send
+  `Access-Control-Allow-Credentials: true` so cookie-authenticated cross-origin requests can
+  succeed.
 
 ## Run
 

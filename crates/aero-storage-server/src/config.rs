@@ -10,7 +10,11 @@ struct Args {
     #[arg(long, env = "AERO_STORAGE_LISTEN_ADDR")]
     listen_addr: Option<SocketAddr>,
 
-    /// Origin to allow for CORS (not enforced yet; reserved for future middleware).
+    /// Origin to allow for CORS.
+    ///
+    /// When set to a specific origin (not `*`), `aero-storage-server` will also send
+    /// `Access-Control-Allow-Credentials: true` so cookie-authenticated cross-origin fetches can
+    /// succeed.
     ///
     /// Environment variable: `AERO_STORAGE_CORS_ORIGIN`.
     #[arg(long, env = "AERO_STORAGE_CORS_ORIGIN")]
