@@ -225,6 +225,39 @@ bool TestOutOfSpaceReturnsNullptrAndSetsError() {
   return Check(stream->size_bytes == sizeof(aerogpu_cmd_stream_header), "finalize keeps size_bytes at header");
 }
 
+bool TestCmdStreamWriterOverflowReturnsSinkAndSetsError() {
+  std::vector<uint8_t> buf(sizeof(aerogpu_cmd_stream_header) + 4, 0);
+
+  CmdStreamWriter w;
+  w.set_span(buf.data(), buf.size());
+
+  if (!Check(w.empty(), "CmdStreamWriter empty after set_span")) {
+    return false;
+  }
+
+  auto* present = w.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  if (!Check(present != nullptr, "CmdStreamWriter append_fixed returns non-null on overflow")) {
+    return false;
+  }
+  if (!Check(w.error() == CmdStreamError::kInsufficientSpace, "CmdStreamWriter overflow sets kInsufficientSpace")) {
+    return false;
+  }
+  if (!Check(w.bytes_used() == sizeof(aerogpu_cmd_stream_header), "CmdStreamWriter bytes_used unchanged after overflow")) {
+    return false;
+  }
+
+  const uint8_t* ptr = reinterpret_cast<const uint8_t*>(present);
+  const uint8_t* start = buf.data();
+  const uint8_t* end = buf.data() + buf.size();
+  if (!Check(ptr < start || ptr >= end, "CmdStreamWriter overflow packet pointer is not in DMA buffer")) {
+    return false;
+  }
+
+  w.finalize();
+  const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf.data());
+  return Check(stream->size_bytes == sizeof(aerogpu_cmd_stream_header), "CmdStreamWriter finalize keeps size_bytes at header");
+}
+
 bool TestFixedPacketPadding() {
   uint8_t buf[256];
   std::memset(buf, 0xEF, sizeof(buf));
@@ -490,6 +523,7 @@ int main() {
   failures += !aerogpu::TestAlignmentAndPadding();
   failures += !aerogpu::TestUnknownOpcodeSkipBySize();
   failures += !aerogpu::TestOutOfSpaceReturnsNullptrAndSetsError();
+  failures += !aerogpu::TestCmdStreamWriterOverflowReturnsSinkAndSetsError();
   failures += !aerogpu::TestFixedPacketPadding();
   failures += !aerogpu::TestOwnedAndBorrowedStreamsMatch();
   failures += !aerogpu::TestEventQueryGetDataSemantics();

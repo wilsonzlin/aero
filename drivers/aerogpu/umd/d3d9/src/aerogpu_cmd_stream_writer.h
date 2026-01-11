@@ -405,12 +405,22 @@ class CmdStreamWriter {
     }
   }
 
+  CmdStreamError Reset() {
+    reset();
+    return error();
+  }
+
   void finalize() {
     if (mode_ == Mode::Span) {
       span_.finalize();
     } else {
       vec_.finalize();
     }
+  }
+
+  CmdStreamError Finalize() {
+    finalize();
+    return error();
   }
 
   uint8_t* data() {
@@ -446,32 +456,43 @@ class CmdStreamWriter {
 
   template <typename T>
   T* TryAppendFixed(uint32_t opcode) {
-    return append_fixed<T>(opcode);
+    return (mode_ == Mode::Span) ? span_.TryAppendFixed<T>(opcode) : vec_.TryAppendFixed<T>(opcode);
   }
 
   template <typename HeaderT>
   HeaderT* TryAppendWithPayload(uint32_t opcode, const void* payload, size_t payload_size) {
-    return append_with_payload<HeaderT>(opcode, payload, payload_size);
+    return (mode_ == Mode::Span)
+        ? span_.TryAppendWithPayload<HeaderT>(opcode, payload, payload_size)
+        : vec_.TryAppendWithPayload<HeaderT>(opcode, payload, payload_size);
   }
 
   template <typename T>
   T* append_fixed(uint32_t opcode) {
-    return (mode_ == Mode::Span) ? span_.append_fixed<T>(opcode) : vec_.append_fixed<T>(opcode);
+    T* packet = TryAppendFixed<T>(opcode);
+    return packet ? packet : SinkAs<T>();
   }
 
   template <typename HeaderT>
   HeaderT* append_with_payload(uint32_t opcode, const void* payload, size_t payload_size) {
-    return (mode_ == Mode::Span)
-        ? span_.append_with_payload<HeaderT>(opcode, payload, payload_size)
-        : vec_.append_with_payload<HeaderT>(opcode, payload, payload_size);
+    HeaderT* packet = TryAppendWithPayload<HeaderT>(opcode, payload, payload_size);
+    return packet ? packet : SinkAs<HeaderT>();
   }
 
  private:
   enum class Mode : uint8_t { Vector, Span };
 
+  template <typename T>
+  T* SinkAs() {
+    static_assert(sizeof(T) <= sizeof(sink_), "increase sink_ size to cover packet type");
+    std::memset(sink_, 0, sizeof(sink_));
+    return reinterpret_cast<T*>(sink_);
+  }
+
   Mode mode_ = Mode::Vector;
   VectorCmdStreamWriter vec_;
   SpanCmdStreamWriter span_;
+
+  alignas(8) uint8_t sink_[256] = {};
 };
 
 } // namespace aerogpu
