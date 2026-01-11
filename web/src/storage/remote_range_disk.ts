@@ -543,7 +543,14 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     );
     disk.cacheId = cacheId;
     disk.imageKey = imageKey;
-    await disk.init();
+    try {
+      await disk.init();
+    } catch (err) {
+      // `init()` can fail after opening a persistent cache handle. Ensure we close it so we
+      // don't leak SyncAccessHandles / file descriptors.
+      await disk.close().catch(() => {});
+      throw err;
+    }
     return disk;
   }
 
@@ -717,10 +724,21 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.flushTimer = null;
     }
     this.flushPending = false;
-    await this.cache.flush();
-    await this.cache.close?.();
+    const cache = this.cache;
     this.cache = null;
     this.inflightChunks.clear();
+    let flushErr: unknown;
+    try {
+      await cache.flush();
+    } catch (err) {
+      flushErr = err;
+    }
+    try {
+      await cache.close?.();
+    } catch (err) {
+      if (!flushErr) flushErr = err;
+    }
+    if (flushErr) throw flushErr;
   }
 
   private scheduleReadAhead(offset: number, length: number, endChunk: number): void {

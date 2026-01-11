@@ -583,4 +583,104 @@ describe("RemoteRangeDisk", () => {
     expect(second).toEqual(data.subarray(0, second.byteLength));
     expect(server.stats.rangeGets).toBe(2);
   });
+
+  it("closes cache handles if open() fails after cache creation", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    class TrackingSparseDisk extends MemorySparseDisk {
+      closed = false;
+      override async close(): Promise<void> {
+        this.closed = true;
+      }
+    }
+
+    class TrackingFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: TrackingSparseDisk | null = null;
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new TrackingSparseDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    class FailingWriteMetadataStore extends MemoryMetadataStore {
+      override async write(_cacheId: string, _meta: any): Promise<void> {
+        void _cacheId;
+        void _meta;
+        throw new Error("metadata write failed");
+      }
+    }
+
+    const factory = new TrackingFactory();
+
+    await expect(
+      RemoteRangeDisk.open(server.url, {
+        imageKey: "open-failure-cleanup",
+        chunkSize,
+        metadataStore: new FailingWriteMetadataStore(),
+        sparseCacheFactory: factory,
+      }),
+    ).rejects.toThrow(/metadata write failed/i);
+    expect(factory.lastCreated?.closed).toBe(true);
+  });
+
+  it("closes cache handles even if flush fails during close()", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    class FlushFailSparseDisk extends MemorySparseDisk {
+      closed = false;
+      override async flush(): Promise<void> {
+        throw new Error("flush failed");
+      }
+      override async close(): Promise<void> {
+        this.closed = true;
+      }
+    }
+
+    class FlushFailFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: FlushFailSparseDisk | null = null;
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new FlushFailSparseDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    const factory = new FlushFailFactory();
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      imageKey: "flush-fail-close",
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: factory,
+      readAheadChunks: 0,
+    });
+
+    await expect(disk.close()).rejects.toThrow(/flush failed/i);
+    expect(factory.lastCreated?.closed).toBe(true);
+  });
 });

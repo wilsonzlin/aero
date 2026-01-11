@@ -401,8 +401,15 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
   }
 
   async close(): Promise<void> {
-    await this.flush();
-    this.sync.close();
+    try {
+      await this.flush();
+    } finally {
+      try {
+        this.sync.close();
+      } catch {
+        // Best-effort close: prefer releasing the underlying SyncAccessHandle even if flush failed.
+      }
+    }
   }
 
   /**
