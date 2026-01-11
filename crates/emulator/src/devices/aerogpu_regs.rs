@@ -94,6 +94,7 @@ pub struct AeroGpuStats {
     pub doorbells: u64,
     pub submissions: u64,
     pub malformed_submissions: u64,
+    pub gpu_exec_errors: u64,
 }
 
 #[derive(Clone, Debug)]

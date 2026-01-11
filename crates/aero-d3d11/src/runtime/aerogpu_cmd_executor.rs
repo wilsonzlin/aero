@@ -80,6 +80,7 @@ pub struct PresentEvent {
     pub scanout_id: u32,
     pub flags: u32,
     pub d3d9_present_flags: Option<u32>,
+    pub presented_render_target: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -339,8 +340,23 @@ impl AerogpuD3d11Executor {
         &self.device
     }
 
+    pub fn reset(&mut self) {
+        self.resources = AerogpuD3d11Resources::default();
+        self.state = AerogpuD3d11State::default();
+        self.pipeline_cache.clear();
+    }
+
     pub fn poll_wait(&self) {
         self.device.poll(wgpu::Maintain::Wait);
+    }
+
+    pub fn texture_size(&self, texture_id: u32) -> Result<(u32, u32)> {
+        let texture = self
+            .resources
+            .textures
+            .get(&texture_id)
+            .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
+        Ok((texture.desc.width, texture.desc.height))
     }
 
     pub async fn read_texture_rgba8(&self, texture_id: u32) -> Result<Vec<u8>> {
@@ -350,9 +366,11 @@ impl AerogpuD3d11Executor {
             .get(&texture_id)
             .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
 
-        if texture.desc.format != wgpu::TextureFormat::Rgba8Unorm {
-            bail!("read_texture_rgba8 only supports Rgba8Unorm for now");
-        }
+        let needs_bgra_swizzle = match texture.desc.format {
+            wgpu::TextureFormat::Rgba8Unorm => false,
+            wgpu::TextureFormat::Bgra8Unorm => true,
+            other => bail!("read_texture_rgba8 only supports Rgba8Unorm/Bgra8Unorm (got {other:?})"),
+        };
 
         let width = texture.desc.width;
         let height = texture.desc.height;
@@ -420,6 +438,13 @@ impl AerogpuD3d11Executor {
         }
         drop(mapped);
         staging.unmap();
+
+        if needs_bgra_swizzle {
+            for px in out.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+        }
+
         Ok(out)
     }
 
@@ -1721,10 +1746,12 @@ impl AerogpuD3d11Executor {
         }
         let scanout_id = read_u32_le(cmd_bytes, 8)?;
         let flags = read_u32_le(cmd_bytes, 12)?;
+        let presented_render_target = self.state.render_targets.first().copied();
         report.presents.push(PresentEvent {
             scanout_id,
             flags,
             d3d9_present_flags: None,
+            presented_render_target,
         });
         let new_encoder = self
             .device
@@ -1749,10 +1776,12 @@ impl AerogpuD3d11Executor {
         let scanout_id = read_u32_le(cmd_bytes, 8)?;
         let flags = read_u32_le(cmd_bytes, 12)?;
         let d3d9_present_flags = read_u32_le(cmd_bytes, 16)?;
+        let presented_render_target = self.state.render_targets.first().copied();
         report.presents.push(PresentEvent {
             scanout_id,
             flags,
             d3d9_present_flags: Some(d3d9_present_flags),
+            presented_render_target,
         });
         let new_encoder = self
             .device

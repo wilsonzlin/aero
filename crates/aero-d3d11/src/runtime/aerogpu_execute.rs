@@ -599,12 +599,11 @@ impl AerogpuCmdRuntime {
             .textures
             .get(&handle)
             .ok_or_else(|| anyhow!("unknown texture {handle}"))?;
-        if tex.desc.format != wgpu::TextureFormat::Rgba8Unorm {
-            bail!(
-                "read_texture_rgba8 only supports Rgba8Unorm (got {:?})",
-                tex.desc.format
-            );
-        }
+        let needs_bgra_swizzle = match tex.desc.format {
+            wgpu::TextureFormat::Rgba8Unorm => false,
+            wgpu::TextureFormat::Bgra8Unorm => true,
+            other => bail!("read_texture_rgba8 only supports Rgba8Unorm/Bgra8Unorm (got {other:?})"),
+        };
 
         let width = tex.desc.width;
         let height = tex.desc.height;
@@ -672,6 +671,13 @@ impl AerogpuCmdRuntime {
         }
         drop(mapped);
         staging.unmap();
+
+        if needs_bgra_swizzle {
+            for px in out.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+        }
+
         Ok(out)
     }
 }

@@ -12,6 +12,7 @@ use crate::devices::aerogpu_ring::{
     AeroGpuAllocEntry, AeroGpuAllocTableHeader, AeroGpuRingHeader, AeroGpuSubmitDesc,
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
 };
+use crate::devices::aerogpu_scanout::AeroGpuFormat;
 use crate::gpu_worker::aerogpu_backend::{
     AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
     AeroGpuCommandBackend, NullAeroGpuBackend,
@@ -272,11 +273,33 @@ impl AeroGpuExecutor {
 
         for AeroGpuBackendCompletion { fence, error } in completions {
             if error.is_some() {
-                regs.stats.malformed_submissions =
-                    regs.stats.malformed_submissions.saturating_add(1);
+                regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
                 regs.irq_status |= irq_bits::ERROR;
             }
-            self.complete_fence(regs, mem, fence);
+
+            // Present writeback (deferred mode only): copy the last-presented scanout into the guest
+            // framebuffer for scanout0 so host callers that render from guest memory see updates.
+            if self.cfg.fence_completion == AeroGpuFenceCompletionMode::Deferred
+                && fence > regs.completed_fence
+                && matches!(
+                    self.in_flight.get(&fence).map(|e| e.desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT),
+                    Some(flags) if flags != 0
+                )
+            {
+                if let Some(scanout) = self.backend.read_scanout_rgba8(0) {
+                    if let Err(err) = write_scanout0_rgba8(regs, mem, &scanout) {
+                        if self.cfg.verbose {
+                            eprintln!("aerogpu: scanout writeback failed: {err}");
+                        }
+                        regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
+                        regs.irq_status |= irq_bits::ERROR;
+                    }
+                }
+            }
+
+            if self.cfg.fence_completion == AeroGpuFenceCompletionMode::Deferred {
+                self.complete_fence(regs, mem, fence);
+            }
         }
     }
 
@@ -461,6 +484,75 @@ impl AeroGpuExecutor {
                         }
                     }
 
+                    let alloc_table = if desc.alloc_table_gpa != 0
+                        && desc.alloc_table_size_bytes != 0
+                        && alloc_table_header.is_some()
+                        && !decode_errors
+                            .iter()
+                            .any(|e| matches!(e, AeroGpuSubmissionDecodeError::AllocTable(_)))
+                    {
+                        let size_bytes = alloc_table_header
+                            .as_ref()
+                            .map(|h| h.size_bytes)
+                            .unwrap_or(0);
+                        let size = size_bytes as usize;
+                        if size == 0 {
+                            None
+                        } else {
+                            let mut bytes = vec![0u8; size];
+                            mem.read_physical(desc.alloc_table_gpa, &mut bytes);
+                            Some(bytes)
+                        }
+                    } else {
+                        None
+                    };
+
+                    if cmd_stream_ok {
+                        let submit_cmd_stream = if cmd_stream.is_empty() {
+                            // `decode_cmd_stream` may have only captured the header to avoid a
+                            // potentially large copy. Backends require the full stream bytes, so
+                            // read them now for execution.
+                            let size = cmd_stream_header
+                                .as_ref()
+                                .map(|h| h.size_bytes)
+                                .unwrap_or(desc.cmd_size_bytes)
+                                .min(desc.cmd_size_bytes) as usize;
+                            let mut bytes = vec![0u8; size];
+                            mem.read_physical(desc.cmd_gpa, &mut bytes);
+                            bytes
+                        } else {
+                            cmd_stream.clone()
+                        };
+
+                        let submit = AeroGpuBackendSubmission {
+                            flags: desc.flags,
+                            context_id: desc.context_id,
+                            engine_id: desc.engine_id,
+                            signal_fence: desc.signal_fence,
+                            cmd_stream: submit_cmd_stream,
+                            alloc_table,
+                        };
+
+                        if self.backend.submit(mem, submit).is_err() {
+                            regs.stats.gpu_exec_errors =
+                                regs.stats.gpu_exec_errors.saturating_add(1);
+                            regs.irq_status |= irq_bits::ERROR;
+                        }
+
+                        if wants_present {
+                            if let Some(scanout) = self.backend.read_scanout_rgba8(0) {
+                                if let Err(err) = write_scanout0_rgba8(regs, mem, &scanout) {
+                                    if self.cfg.verbose {
+                                        eprintln!("aerogpu: scanout writeback failed: {err}");
+                                    }
+                                    regs.stats.gpu_exec_errors =
+                                        regs.stats.gpu_exec_errors.saturating_add(1);
+                                    regs.irq_status |= irq_bits::ERROR;
+                                }
+                            }
+                        }
+                    }
+
                     let can_pace_vsync = vsync_present
                         && (regs.features & FEATURE_VBLANK) != 0
                         && regs.scanout0.enable;
@@ -559,8 +651,8 @@ impl AeroGpuExecutor {
                     };
 
                     if self.backend.submit(mem, submit).is_err() {
-                        regs.stats.malformed_submissions =
-                            regs.stats.malformed_submissions.saturating_add(1);
+                        regs.stats.gpu_exec_errors =
+                            regs.stats.gpu_exec_errors.saturating_add(1);
                         regs.irq_status |= irq_bits::ERROR;
                         // If the backend rejects the submission, still unblock the fence.
                         if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {
@@ -613,6 +705,9 @@ impl AeroGpuExecutor {
         if self.cfg.fence_completion == AeroGpuFenceCompletionMode::Immediate {
             // Complete any immediate fences that are not blocked behind a vsync fence.
             self.complete_immediate_fences(regs, mem);
+            // Drain backend completions for error reporting and to avoid unbounded queueing in
+            // synchronous backends. Fence advancement is handled separately in Immediate mode.
+            self.poll_backend_completions(regs, mem);
         } else {
             self.poll_backend_completions(regs, mem);
         }
@@ -679,6 +774,134 @@ impl AeroGpuExecutor {
             regs.irq_status |= irq_bits::FENCE;
         }
     }
+}
+fn write_scanout0_rgba8(
+    regs: &AeroGpuRegs,
+    mem: &mut dyn MemoryBus,
+    scanout: &AeroGpuBackendScanout,
+) -> Result<(), String> {
+    if !regs.scanout0.enable {
+        return Ok(());
+    }
+
+    let dst_width = regs.scanout0.width as usize;
+    let dst_height = regs.scanout0.height as usize;
+    if dst_width == 0 || dst_height == 0 {
+        return Ok(());
+    }
+    if regs.scanout0.fb_gpa == 0 {
+        return Err("scanout0.fb_gpa is not set".into());
+    }
+
+    let src_width = scanout.width as usize;
+    let src_height = scanout.height as usize;
+    if src_width == 0 || src_height == 0 {
+        return Ok(());
+    }
+    let expected_src_len = src_width
+        .checked_mul(src_height)
+        .and_then(|v| v.checked_mul(4))
+        .ok_or_else(|| "scanout dimensions overflow".to_string())?;
+    if scanout.rgba8.len() < expected_src_len {
+        return Err(format!(
+            "scanout rgba8 buffer too small: need {expected_src_len} bytes for {src_width}x{src_height}, have {}",
+            scanout.rgba8.len()
+        ));
+    }
+
+    let copy_width = dst_width.min(src_width);
+    let copy_height = dst_height.min(src_height);
+
+    let dst_bpp = regs
+        .scanout0
+        .format
+        .bytes_per_pixel()
+        .ok_or_else(|| format!("unsupported scanout format {:?}", regs.scanout0.format))?;
+    let pitch = regs.scanout0.pitch_bytes as usize;
+    let row_bytes = copy_width
+        .checked_mul(dst_bpp)
+        .ok_or_else(|| "scanout row bytes overflow".to_string())?;
+    if pitch < row_bytes {
+        return Err(format!(
+            "scanout pitch_bytes {pitch} is smaller than row_bytes {row_bytes}"
+        ));
+    }
+
+    let mut row_buf = vec![0u8; row_bytes];
+    for y in 0..copy_height {
+        let src_row_start = y * src_width * 4;
+        let src_row = &scanout.rgba8[src_row_start..src_row_start + src_width * 4];
+
+        match regs.scanout0.format {
+            AeroGpuFormat::B8G8R8A8Unorm => {
+                for x in 0..copy_width {
+                    let src = &src_row[x * 4..x * 4 + 4];
+                    let dst = &mut row_buf[x * 4..x * 4 + 4];
+                    dst[0] = src[2];
+                    dst[1] = src[1];
+                    dst[2] = src[0];
+                    dst[3] = src[3];
+                }
+            }
+            AeroGpuFormat::B8G8R8X8Unorm => {
+                for x in 0..copy_width {
+                    let src = &src_row[x * 4..x * 4 + 4];
+                    let dst = &mut row_buf[x * 4..x * 4 + 4];
+                    dst[0] = src[2];
+                    dst[1] = src[1];
+                    dst[2] = src[0];
+                    dst[3] = 0xff;
+                }
+            }
+            AeroGpuFormat::R8G8B8A8Unorm => {
+                row_buf[..copy_width * 4].copy_from_slice(&src_row[..copy_width * 4]);
+            }
+            AeroGpuFormat::R8G8B8X8Unorm => {
+                for x in 0..copy_width {
+                    let src = &src_row[x * 4..x * 4 + 4];
+                    let dst = &mut row_buf[x * 4..x * 4 + 4];
+                    dst[0] = src[0];
+                    dst[1] = src[1];
+                    dst[2] = src[2];
+                    dst[3] = 0xff;
+                }
+            }
+            AeroGpuFormat::B5G6R5Unorm => {
+                for x in 0..copy_width {
+                    let src = &src_row[x * 4..x * 4 + 4];
+                    let r = (src[0] >> 3) as u16;
+                    let g = (src[1] >> 2) as u16;
+                    let b = (src[2] >> 3) as u16;
+                    let pix = (r << 11) | (g << 5) | b;
+                    let dst = &mut row_buf[x * 2..x * 2 + 2];
+                    dst.copy_from_slice(&pix.to_le_bytes());
+                }
+            }
+            AeroGpuFormat::B5G5R5A1Unorm => {
+                for x in 0..copy_width {
+                    let src = &src_row[x * 4..x * 4 + 4];
+                    let r = (src[0] >> 3) as u16;
+                    let g = (src[1] >> 3) as u16;
+                    let b = (src[2] >> 3) as u16;
+                    let a = if src[3] >= 0x80 { 1u16 } else { 0u16 };
+                    let pix = (a << 15) | (r << 10) | (g << 5) | b;
+                    let dst = &mut row_buf[x * 2..x * 2 + 2];
+                    dst.copy_from_slice(&pix.to_le_bytes());
+                }
+            }
+            AeroGpuFormat::Invalid | AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float => {
+                return Err(format!(
+                    "unsupported scanout format {:?}",
+                    regs.scanout0.format
+                ));
+            }
+        }
+
+        let row_gpa = regs.scanout0.fb_gpa + (y as u64) * (regs.scanout0.pitch_bytes as u64);
+        mem.write_physical(row_gpa, &row_buf);
+    }
+
+    Ok(())
 }
 const MAX_ALLOC_TABLE_SIZE_BYTES: u32 = 16 * 1024 * 1024;
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;

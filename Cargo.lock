@@ -1658,6 +1658,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 name = "emulator"
 version = "0.1.0"
 dependencies = [
+ "aero-d3d11",
  "aero-devices",
  "aero-gpu",
  "aero-gpu-trace",

@@ -179,9 +179,11 @@ impl D3D11Runtime {
             .get(&texture_id)
             .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
 
-        if texture.desc.format != wgpu::TextureFormat::Rgba8Unorm {
-            bail!("read_texture_rgba8 only supports Rgba8Unorm for now");
-        }
+        let needs_bgra_swizzle = match texture.desc.format {
+            wgpu::TextureFormat::Rgba8Unorm => false,
+            wgpu::TextureFormat::Bgra8Unorm => true,
+            other => bail!("read_texture_rgba8 only supports Rgba8Unorm/Bgra8Unorm (got {other:?})"),
+        };
 
         let width = texture.desc.width;
         let height = texture.desc.height;
@@ -249,6 +251,13 @@ impl D3D11Runtime {
         }
         drop(mapped);
         staging.unmap();
+
+        if needs_bgra_swizzle {
+            for px in out.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+        }
+
         Ok(out)
     }
 
