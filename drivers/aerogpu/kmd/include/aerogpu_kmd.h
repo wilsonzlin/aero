@@ -64,6 +64,16 @@ typedef struct _AEROGPU_SUBMISSION_META {
     aerogpu_legacy_submission_desc_allocation Allocations[1]; /* variable length */
 } AEROGPU_SUBMISSION_META;
 
+/*
+ * KMD-internal mapping from a WOW64-safe opaque ID (stored in AEROGPU_DMA_PRIV)
+ * to a kernel pointer (AEROGPU_SUBMISSION_META*).
+ */
+typedef struct _AEROGPU_META_HANDLE_ENTRY {
+    LIST_ENTRY ListEntry;
+    ULONGLONG Handle;
+    AEROGPU_SUBMISSION_META* Meta;
+} AEROGPU_META_HANDLE_ENTRY;
+
 typedef struct _AEROGPU_SUBMISSION {
     LIST_ENTRY ListEntry;
     ULONGLONG Fence;
@@ -130,6 +140,10 @@ typedef struct _AEROGPU_ADAPTER {
     KSPIN_LOCK PendingLock;
     ULONGLONG LastSubmittedFence;
     ULONGLONG LastCompletedFence;
+
+    LIST_ENTRY PendingMetaHandles;
+    KSPIN_LOCK MetaHandleLock;
+    ULONGLONG NextMetaHandle;
 
     LIST_ENTRY Allocations;
     KSPIN_LOCK AllocationsLock;

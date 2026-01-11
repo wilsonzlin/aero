@@ -4,6 +4,7 @@
 #include "aerogpu_dbgctl_escape.h"
 #include "aerogpu_umd_private.h"
 #include "aerogpu_wddm_alloc.h"
+#include "aerogpu_win7_abi.h"
 
 #define AEROGPU_VBLANK_PERIOD_NS_DEFAULT 16666667u
 
@@ -47,11 +48,90 @@ static const UCHAR g_AeroGpuEdid[128] = {
 
 /* ---- DMA buffer private data plumbing ---------------------------------- */
 
-typedef struct _AEROGPU_DMA_PRIV {
-    ULONG Type;              /* AEROGPU_SUBMIT_* */
-    ULONG Reserved0;
-    AEROGPU_SUBMISSION_META* Meta; /* optional */
-} AEROGPU_DMA_PRIV;
+static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta);
+
+static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AEROGPU_SUBMISSION_META* Meta, _Out_ ULONGLONG* HandleOut)
+{
+    *HandleOut = 0;
+
+    AEROGPU_META_HANDLE_ENTRY* entry =
+        (AEROGPU_META_HANDLE_ENTRY*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*entry), AEROGPU_POOL_TAG);
+    if (!entry) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    RtlZeroMemory(entry, sizeof(*entry));
+    entry->Meta = Meta;
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&Adapter->MetaHandleLock, &oldIrql);
+
+    /* 0 is reserved to mean "no meta". */
+    ULONGLONG handle = ++Adapter->NextMetaHandle;
+    if (handle == 0) {
+        handle = ++Adapter->NextMetaHandle;
+    }
+
+    entry->Handle = handle;
+    InsertTailList(&Adapter->PendingMetaHandles, &entry->ListEntry);
+
+    KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
+
+    *HandleOut = handle;
+    return STATUS_SUCCESS;
+}
+
+static AEROGPU_SUBMISSION_META* AeroGpuMetaHandleTake(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG Handle)
+{
+    if (Handle == 0) {
+        return NULL;
+    }
+
+    AEROGPU_META_HANDLE_ENTRY* found = NULL;
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&Adapter->MetaHandleLock, &oldIrql);
+
+    for (PLIST_ENTRY it = Adapter->PendingMetaHandles.Flink; it != &Adapter->PendingMetaHandles; it = it->Flink) {
+        AEROGPU_META_HANDLE_ENTRY* entry = CONTAINING_RECORD(it, AEROGPU_META_HANDLE_ENTRY, ListEntry);
+        if (entry->Handle == Handle) {
+            found = entry;
+            RemoveEntryList(&entry->ListEntry);
+            break;
+        }
+    }
+
+    KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
+
+    if (!found) {
+        return NULL;
+    }
+
+    AEROGPU_SUBMISSION_META* meta = found->Meta;
+    ExFreePoolWithTag(found, AEROGPU_POOL_TAG);
+    return meta;
+}
+
+static VOID AeroGpuMetaHandleFreeAll(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    for (;;) {
+        AEROGPU_META_HANDLE_ENTRY* entry = NULL;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->MetaHandleLock, &oldIrql);
+        if (!IsListEmpty(&Adapter->PendingMetaHandles)) {
+            PLIST_ENTRY le = RemoveHeadList(&Adapter->PendingMetaHandles);
+            entry = CONTAINING_RECORD(le, AEROGPU_META_HANDLE_ENTRY, ListEntry);
+        }
+        KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
+
+        if (!entry) {
+            break;
+        }
+
+        AeroGpuFreeSubmissionMeta(entry->Meta);
+        ExFreePoolWithTag(entry, AEROGPU_POOL_TAG);
+    }
+}
 
 /* ---- Helpers ------------------------------------------------------------ */
 
@@ -612,6 +692,9 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->IrqEnableLock);
     KeInitializeSpinLock(&adapter->PendingLock);
     InitializeListHead(&adapter->PendingSubmissions);
+    KeInitializeSpinLock(&adapter->MetaHandleLock);
+    InitializeListHead(&adapter->PendingMetaHandles);
+    adapter->NextMetaHandle = 0;
     KeInitializeSpinLock(&adapter->AllocationsLock);
     InitializeListHead(&adapter->Allocations);
 
@@ -813,6 +896,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
         adapter->DxgkInterface.DxgkCbUnregisterInterrupt(adapter->StartInfo.hDxgkHandle);
     }
 
+    AeroGpuMetaHandleFreeAll(adapter);
     AeroGpuFreeAllPendingSubmissions(adapter);
     AeroGpuRingCleanup(adapter);
 
@@ -833,6 +917,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     }
 
     AEROGPU_LOG0("RemoveDevice");
+    AeroGpuMetaHandleFreeAll(adapter);
     AeroGpuFreeAllAllocations(adapter);
     ExFreePoolWithTag(adapter, AEROGPU_POOL_TAG);
     return STATUS_SUCCESS;
@@ -862,7 +947,7 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         caps->HighestAcceptableAddress.QuadPart = ~0ULL;
         caps->MaxAllocationListSlotId = 0xFFFF;
         caps->MaxPatchLocationListSlotId = 0xFFFF;
-        caps->DmaBufferPrivateDataSize = sizeof(AEROGPU_DMA_PRIV);
+        caps->DmaBufferPrivateDataSize = (ULONG)AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES;
         caps->SchedulingCaps.Value = 0;
         caps->SchedulingCaps.MultipleEngineAware = 0;
         caps->PreemptionCaps.GraphicsPreemptionGranularity = D3DKMDT_GRAPHICS_PREEMPTION_DMA_BUFFER_BOUNDARY;
@@ -887,7 +972,7 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         out->pSegmentDescriptor[0].Flags.CacheCoherent = 1;
         out->pSegmentDescriptor[0].MemorySegmentGroup = DXGK_MEMORY_SEGMENT_GROUP_NON_LOCAL;
 
-        out->PagingBufferPrivateDataSize = sizeof(AEROGPU_DMA_PRIV);
+        out->PagingBufferPrivateDataSize = (ULONG)AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES;
         out->PagingBufferSegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
         out->PagingBufferSize = 0;
         return STATUS_SUCCESS;
@@ -1747,21 +1832,27 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ UINT AllocationCount,
 
 static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DXGKARG_RENDER* pRender)
 {
-    UNREFERENCED_PARAMETER(hContext);
-    if (!pRender || !pRender->pDmaBufferPrivateData) {
+    AEROGPU_CONTEXT* ctx = (AEROGPU_CONTEXT*)hContext;
+    AEROGPU_ADAPTER* adapter = (ctx && ctx->Device) ? ctx->Device->Adapter : NULL;
+    if (!adapter || !pRender || !pRender->pDmaBufferPrivateData) {
         return STATUS_INVALID_PARAMETER;
     }
 
     AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pRender->pDmaBufferPrivateData;
     priv->Type = AEROGPU_SUBMIT_RENDER;
     priv->Reserved0 = 0;
-    priv->Meta = NULL;
+    priv->MetaHandle = 0;
 
     if (pRender->AllocationListSize && pRender->pAllocationList) {
-        NTSTATUS st = AeroGpuBuildAndAttachMeta(pRender->AllocationListSize,
-                                               pRender->pAllocationList,
-                                               &priv->Meta);
+        AEROGPU_SUBMISSION_META* meta = NULL;
+        NTSTATUS st = AeroGpuBuildAndAttachMeta(pRender->AllocationListSize, pRender->pAllocationList, &meta);
         if (!NT_SUCCESS(st)) {
+            return st;
+        }
+
+        st = AeroGpuMetaHandleStore(adapter, meta, &priv->MetaHandle);
+        if (!NT_SUCCESS(st)) {
+            AeroGpuFreeSubmissionMeta(meta);
             return st;
         }
     }
@@ -1771,21 +1862,27 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
 
 static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ DXGKARG_PRESENT* pPresent)
 {
-    UNREFERENCED_PARAMETER(hContext);
-    if (!pPresent || !pPresent->pDmaBufferPrivateData) {
+    AEROGPU_CONTEXT* ctx = (AEROGPU_CONTEXT*)hContext;
+    AEROGPU_ADAPTER* adapter = (ctx && ctx->Device) ? ctx->Device->Adapter : NULL;
+    if (!adapter || !pPresent || !pPresent->pDmaBufferPrivateData) {
         return STATUS_INVALID_PARAMETER;
     }
 
     AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pPresent->pDmaBufferPrivateData;
     priv->Type = AEROGPU_SUBMIT_PRESENT;
     priv->Reserved0 = 0;
-    priv->Meta = NULL;
+    priv->MetaHandle = 0;
 
     if (pPresent->AllocationListSize && pPresent->pAllocationList) {
-        NTSTATUS st = AeroGpuBuildAndAttachMeta(pPresent->AllocationListSize,
-                                               pPresent->pAllocationList,
-                                               &priv->Meta);
+        AEROGPU_SUBMISSION_META* meta = NULL;
+        NTSTATUS st = AeroGpuBuildAndAttachMeta(pPresent->AllocationListSize, pPresent->pAllocationList, &meta);
         if (!NT_SUCCESS(st)) {
+            return st;
+        }
+
+        st = AeroGpuMetaHandleStore(adapter, meta, &priv->MetaHandle);
+        if (!NT_SUCCESS(st)) {
+            AeroGpuFreeSubmissionMeta(meta);
             return st;
         }
     }
@@ -1806,7 +1903,7 @@ static NTSTATUS APIENTRY AeroGpuDdiBuildPagingBuffer(_In_ const HANDLE hAdapter,
     AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pBuildPagingBuffer->pDmaBufferPrivateData;
     priv->Type = AEROGPU_SUBMIT_PAGING;
     priv->Reserved0 = 0;
-    priv->Meta = NULL;
+    priv->MetaHandle = 0;
     return STATUS_SUCCESS;
 }
 
@@ -1823,10 +1920,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     ULONG type = AEROGPU_SUBMIT_PAGING;
     AEROGPU_SUBMISSION_META* meta = NULL;
     if (pSubmitCommand->pDmaBufferPrivateData) {
-        AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pSubmitCommand->pDmaBufferPrivateData;
+        const AEROGPU_DMA_PRIV* priv = (const AEROGPU_DMA_PRIV*)pSubmitCommand->pDmaBufferPrivateData;
         type = priv->Type;
-        meta = priv->Meta;
-        priv->Meta = NULL;
+        meta = AeroGpuMetaHandleTake(adapter, priv->MetaHandle);
+        if (priv->MetaHandle != 0 && !meta) {
+            return STATUS_INVALID_PARAMETER;
+        }
     }
 
     PHYSICAL_ADDRESS dmaPa;
@@ -2206,6 +2305,7 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         adapter->DxgkInterface.DxgkCbQueueDpcForIsr(adapter->StartInfo.hDxgkHandle);
     }
 
+    AeroGpuMetaHandleFreeAll(adapter);
     AeroGpuFreeAllPendingSubmissions(adapter);
     return STATUS_SUCCESS;
 }
