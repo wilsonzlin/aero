@@ -17,6 +17,18 @@ The driver pack contains (Win7 x86 + amd64). **Storage + network are required**;
 
 This repo **does not commit** `.sys` binaries. Instead, we provide scripts that create a reproducible driver pack from a pinned virtio-win ISO.
 
+## CI (in-tree Win7 drivers)
+
+The canonical GitHub Actions workflow for building the **in-tree** Windows 7 driver packages (virtio + AeroGPU), generating catalogs, test-signing, and producing installable bundles is:
+
+- `.github/workflows/drivers-win7.yml`
+
+Primary artifacts:
+
+- `win7-drivers` (from `out/artifacts/`; ZIP/ISO driver bundles)
+- `win7-drivers-signed-packages` (from `out/packages/**` + `out/certs/aero-test.cer`; raw signed packages)
+- `aero-guest-tools` (Guest Tools ISO/zip/manifest built from the signed packages)
+
 ## Quickstart: build an Aero driver pack ZIP
 
 1. Download a **virtio-win ISO** (stable) on a build machine.
