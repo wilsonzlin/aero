@@ -39,6 +39,38 @@ fn end_cmd(stream: &mut Vec<u8>, start: usize) {
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
 }
 
+fn rgba_within(got: &[u8], expected: [u8; 4], tol: u8) -> bool {
+    got.len() == 4 && got.iter().zip(expected).all(|(&g, e)| g.abs_diff(e) <= tol)
+}
+
+fn patch_first_viewport(bytes: &mut [u8], width: f32, height: f32) {
+    let mut cursor = ProtocolCmdStreamHeader::SIZE_BYTES;
+    let mut patched = false;
+    while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
+        let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+        let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+        if size == 0 || cursor + size > bytes.len() {
+            break;
+        }
+
+        if opcode == AerogpuCmdOpcode::SetViewport as u32 {
+            // `struct aerogpu_cmd_set_viewport` stores float bits as u32s:
+            // hdr(8) + x/y/width/height/min/max (6 * 4).
+            assert_eq!(size, 32, "unexpected SetViewport size");
+            let width_off = cursor + 16;
+            let height_off = cursor + 20;
+            bytes[width_off..width_off + 4].copy_from_slice(&width.to_bits().to_le_bytes());
+            bytes[height_off..height_off + 4].copy_from_slice(&height.to_bits().to_le_bytes());
+            patched = true;
+            break;
+        }
+
+        cursor += size;
+    }
+
+    assert!(patched, "failed to find SetViewport command to patch");
+}
+
 #[test]
 fn aerogpu_cmd_renders_solid_red_triangle_fixture() {
     pollster::block_on(async {
@@ -74,6 +106,55 @@ fn aerogpu_cmd_renders_solid_red_triangle_fixture() {
         for px in pixels.chunks_exact(4) {
             assert_eq!(px, &[255, 0, 0, 255]);
         }
+    });
+}
+
+#[test]
+fn aerogpu_cmd_renders_triangle_fixture_with_small_viewport() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = CMD_TRIANGLE_SM4.to_vec();
+        // Patch the viewport from 64x64 to 32x32 so the draw covers only part of the RT, leaving
+        // the rest at the clear color.
+        patch_first_viewport(&mut stream, 32.0, 32.0);
+
+        let guest_mem = VecGuestMemory::new(0);
+        let report = exec
+            .execute_cmd_stream(&stream, None, &guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let render_target = report
+            .presents
+            .last()
+            .and_then(|p| p.presented_render_target)
+            .expect("fixture should present a render target");
+        let (width, height) = exec.texture_size(render_target).unwrap();
+        assert_eq!((width, height), (64, 64));
+
+        let pixels = exec.read_texture_rgba8(render_target).await.unwrap();
+        let w = width as usize;
+        let px = |x: usize, y: usize| -> &[u8] {
+            let idx = (y * w + x) * 4;
+            &pixels[idx..idx + 4]
+        };
+
+        // Inside viewport -> red triangle.
+        assert_eq!(px(16, 16), &[255, 0, 0, 255]);
+
+        // Outside viewport -> clear color (0.1, 0.2, 0.3, 1.0) in UNORM8 (tolerate rounding).
+        assert!(
+            rgba_within(px(48, 48), [26, 51, 77, 255], 1),
+            "unexpected clear pixel {:?}",
+            px(48, 48)
+        );
     });
 }
 
