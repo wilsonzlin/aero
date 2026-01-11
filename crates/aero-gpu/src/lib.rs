@@ -19,6 +19,7 @@ mod context;
 mod dirty_rect;
 mod error;
 mod error_event;
+mod guest_memory;
 mod present;
 #[cfg(feature = "diff-engine")]
 mod tile_diff;
@@ -46,6 +47,7 @@ pub mod pipeline_key;
 pub mod profiler;
 pub mod aerogpu_d3d9;
 pub mod command_processor_d3d9;
+pub mod aerogpu_executor;
 pub mod protocol_d3d11;
 pub mod protocol_d3d9;
 pub mod stats;
@@ -59,6 +61,7 @@ pub use context::WgpuContext;
 pub use dirty_rect::{merge_and_cap_rects, Rect, RectMergeOutcome};
 pub use error::GpuError;
 pub use error_event::{GpuErrorCategory, GpuErrorEvent, GpuErrorSeverity, GpuErrorSeverityKind};
+pub use guest_memory::{GuestMemory, GuestMemoryError, VecGuestMemory};
 pub use present::{PresentError, PresentTelemetry, Presenter, TextureWriter};
 pub use profiler::{
     FrameTimingsReport, GpuBackendKind, GpuProfiler, GpuProfilerConfig, GpuTimestampPhase,

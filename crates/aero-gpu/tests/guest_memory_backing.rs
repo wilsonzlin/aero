@@ -1,0 +1,290 @@
+use aero_gpu::aerogpu_executor::{AeroGpuExecutor, AllocEntry, AllocTable};
+use aero_gpu::{readback_rgba8, TextureRegion, VecGuestMemory};
+
+fn push_u32(out: &mut Vec<u8>, v: u32) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+
+fn push_u64(out: &mut Vec<u8>, v: u64) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+
+fn push_f32_bits(out: &mut Vec<u8>, v: f32) {
+    push_u32(out, v.to_bits());
+}
+
+fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+    let mut out = Vec::new();
+
+    // aerogpu_cmd_stream_header (24 bytes)
+    push_u32(&mut out, 0x444D_4341); // "ACMD"
+    push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+    push_u32(&mut out, 0); // size_bytes (patch later)
+    push_u32(&mut out, 0); // flags
+    push_u32(&mut out, 0); // reserved0
+    push_u32(&mut out, 0); // reserved1
+
+    packets(&mut out);
+
+    let size_bytes = out.len() as u32;
+    out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    out
+}
+
+fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>)) {
+    let start = out.len();
+    push_u32(out, opcode);
+    push_u32(out, 0); // size_bytes placeholder
+    payload(out);
+
+    // Pad to 4-byte alignment.
+    while (out.len() - start) % 4 != 0 {
+        out.push(0);
+    }
+
+    let size_bytes = (out.len() - start) as u32;
+    assert!(size_bytes >= 8);
+    assert_eq!(size_bytes % 4, 0);
+    out[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
+}
+
+async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+
+        if needs_runtime_dir {
+            let dir = std::env::temp_dir().join(format!(
+                "aero-gpu-guest-backing-xdg-runtime-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
+    }
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        dx12_shader_compiler: Default::default(),
+        flags: wgpu::InstanceFlags::default(),
+        gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
+    });
+
+    let adapter = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })
+        .await
+    {
+        Some(adapter) => Some(adapter),
+        None => {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+        }
+    }?;
+
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("aero-gpu guest backing test device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .ok()?;
+
+    Some((device, queue))
+}
+
+#[test]
+fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                eprintln!("skipping guest backing test: no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        // Guest memory + allocation table.
+        let mut guest = VecGuestMemory::new(0x10_000);
+        const ALLOC_VB: u32 = 1;
+        const ALLOC_TEX: u32 = 2;
+        let vb_gpa = 0x1000u64;
+        let tex_gpa = 0x2000u64;
+        let alloc_table = AllocTable::new([
+            (
+                ALLOC_VB,
+                AllocEntry {
+                    gpa: vb_gpa,
+                    size_bytes: 0x100,
+                },
+            ),
+            (
+                ALLOC_TEX,
+                AllocEntry {
+                    gpa: tex_gpa,
+                    size_bytes: 0x100,
+                },
+            ),
+        ]);
+
+        // Full-screen triangle (pos: vec2<f32>).
+        let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+        let mut vb_bytes = Vec::new();
+        for v in verts {
+            vb_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        guest.write(vb_gpa, &vb_bytes).expect("write vertex data");
+
+        // 1x1 RGBA8 texture, solid red.
+        guest.write(tex_gpa, &[255, 0, 0, 255])
+            .expect("write texture data");
+
+        // Build a minimal command stream that draws using the guest-backed resources.
+        let stream = build_stream(|out| {
+            // CREATE_BUFFER (handle=1) backed by ALLOC_VB.
+            emit_packet(out, 0x100, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                push_u32(out, ALLOC_VB); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D (handle=2) backed by ALLOC_TEX.
+            emit_packet(out, 0x101, |out| {
+                push_u32(out, 2); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 4); // row_pitch_bytes
+                push_u32(out, ALLOC_TEX); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D (handle=3) host-owned render target.
+            emit_packet(out, 0x101, |out| {
+                push_u32(out, 3); // texture_handle
+                push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
+                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (unused when backing_alloc_id == 0)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // RESOURCE_DIRTY_RANGE for buffer and texture.
+            emit_packet(out, 0x103, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+            });
+            emit_packet(out, 0x103, |out| {
+                push_u32(out, 2); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, 4); // size_bytes
+            });
+
+            // SET_RENDER_TARGETS: color0 = texture 3.
+            emit_packet(out, 0x400, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, 3); // colors[0]
+                for _ in 1..8 {
+                    push_u32(out, 0);
+                }
+            });
+
+            // CLEAR to black.
+            emit_packet(out, 0x600, |out| {
+                push_u32(out, 1); // flags: CLEAR_COLOR
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 1.0);
+                push_f32_bits(out, 1.0); // depth (unused)
+                push_u32(out, 0); // stencil
+            });
+
+            // SET_TEXTURE (ps slot 0) = texture 2.
+            emit_packet(out, 0x510, |out| {
+                push_u32(out, 1); // shader_stage: PIXEL
+                push_u32(out, 0); // slot
+                push_u32(out, 2); // texture handle
+                push_u32(out, 0); // reserved0
+            });
+
+            // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
+            emit_packet(out, 0x500, |out| {
+                push_u32(out, 0); // start_slot
+                push_u32(out, 1); // buffer_count
+                push_u32(out, 1); // binding[0].buffer
+                push_u32(out, 8); // binding[0].stride_bytes
+                push_u32(out, 0); // binding[0].offset_bytes
+                push_u32(out, 0); // binding[0].reserved0
+            });
+
+            // DRAW: 3 vertices.
+            emit_packet(out, 0x601, |out| {
+                push_u32(out, 3); // vertex_count
+                push_u32(out, 1); // instance_count
+                push_u32(out, 0); // first_vertex
+                push_u32(out, 0); // first_instance
+            });
+        });
+
+        exec.execute_cmd_stream(&stream, &guest, Some(&alloc_table))
+            .expect("execute command stream");
+
+        let rt_tex = exec.texture(3).expect("render target texture");
+        let rgba = readback_rgba8(
+            exec.device(),
+            exec.queue(),
+            rt_tex,
+            TextureRegion {
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width: 4,
+                    height: 4,
+                    depth_or_array_layers: 1,
+                },
+            },
+        )
+        .await;
+
+        // Sample the center pixel and ensure it matches the uploaded texture (solid red).
+        let idx = ((2 * 4 + 2) * 4) as usize;
+        assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
+    });
+}
