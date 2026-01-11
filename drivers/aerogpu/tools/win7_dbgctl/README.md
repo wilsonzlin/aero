@@ -57,6 +57,9 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-scanline`  
   Calls `D3DKMTGetScanLine` and prints the current scanline and vblank state.
 
+- `aerogpu_dbgctl --map-shared-handle <HANDLE>`  
+  Calls the KMD escape `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to map a Win32 shared-handle to a stable 32-bit `share_token`.
+
 - `aerogpu_dbgctl --selftest`  
   Triggers a simple KMD-side self-test.
 
@@ -80,6 +83,7 @@ aerogpu_dbgctl --dump-vblank
 aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
 aerogpu_dbgctl --query-scanline --vblank-samples 20 --vblank-interval-ms 10
+aerogpu_dbgctl --map-shared-handle 0x1234
 aerogpu_dbgctl --selftest --timeout-ms 2000
 ```
 
@@ -130,6 +134,7 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
+- `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`
 - `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
 
 Additional WDDM queries (do not use the escape channel):
