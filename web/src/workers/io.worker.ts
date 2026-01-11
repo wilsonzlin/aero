@@ -1141,7 +1141,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if (isUsbPassthroughDemoRunMessage(data)) {
       const msg = data;
-      if (!usbDemo || !usbDemoApi) {
+      if (!usbDemo) {
         ctx.postMessage({
           type: "usb.demoResult",
           result: { status: "error", message: "UsbPassthroughDemo is unavailable in this WASM build." },
@@ -1150,25 +1150,16 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       }
 
       if (!lastUsbSelected?.ok) {
+        const detail = lastUsbSelected?.error;
+        const message = detail ? `No WebUSB device is selected: ${detail}` : "No WebUSB device is selected.";
         ctx.postMessage({
           type: "usb.demoResult",
-          result: { status: "error", message: "No WebUSB device is selected." },
+          result: { status: "error", message },
         } satisfies UsbPassthroughDemoResultMessage);
         return;
       }
 
-      usbDemo.reset();
-
-      if (msg.request === "deviceDescriptor") {
-        usbDemoApi.queue_get_device_descriptor((msg.length ?? 18) & 0xffff);
-      } else if (msg.request === "configDescriptor") {
-        usbDemoApi.queue_get_config_descriptor((msg.length ?? 255) & 0xffff);
-      }
-
-      // Drain immediately so the action reaches the main-thread broker without waiting for the
-      // next IO tick.
-      usbDemo.tick();
-      usbDemo.pollResults();
+      usbDemo.run(msg.request, msg.length);
       return;
     }
 
@@ -1198,6 +1189,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         }
       }
       usbDemo?.onUsbSelected(msg);
+      // Drain immediately so the demo request reaches the main-thread broker without waiting for the next IO tick.
+      usbDemo?.tick();
+      usbDemo?.pollResults();
       emitWebUsbGuestStatus();
 
       // Dev-only smoke test: once a device is selected on the main thread, request the

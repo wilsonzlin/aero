@@ -146,6 +146,25 @@ export class UsbPassthroughDemoRuntime {
     this.#inflightByProxyId.clear();
   }
 
+  run(request: UsbPassthroughDemoRunMessage["request"], length?: number): void {
+    this.reset();
+    const len =
+      typeof length === "number" && Number.isInteger(length) && length >= 0 && length <= 0xffff
+        ? length
+        : request === "deviceDescriptor"
+          ? 18
+          : 255;
+
+    if (request === "deviceDescriptor") {
+      this.#demo.queue_get_device_descriptor(len);
+    } else if (request === "configDescriptor") {
+      this.#demo.queue_get_config_descriptor(len);
+    }
+
+    this.tick();
+    this.pollResults();
+  }
+
   onUsbSelected(msg: UsbSelectedMessage): void {
     if (!msg.ok) {
       this.reset();

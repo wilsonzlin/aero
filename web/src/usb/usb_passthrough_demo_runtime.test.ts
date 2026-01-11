@@ -11,6 +11,7 @@ class FakeDemo {
   actions: unknown[] = [];
   pushed: unknown[] = [];
   nextResult: unknown = null;
+  nextId = 1;
 
   reset(): void {
     this.actions = [];
@@ -21,7 +22,7 @@ class FakeDemo {
   queue_get_device_descriptor(len: number): void {
     this.actions.push({
       kind: "controlIn",
-      id: 1,
+      id: this.nextId++,
       setup: {
         bmRequestType: 0x80,
         bRequest: 0x06,
@@ -32,8 +33,18 @@ class FakeDemo {
     });
   }
 
-  queue_get_config_descriptor(_len: number): void {
-    throw new Error("not used");
+  queue_get_config_descriptor(len: number): void {
+    this.actions.push({
+      kind: "controlIn",
+      id: this.nextId++,
+      setup: {
+        bmRequestType: 0x80,
+        bRequest: 0x06,
+        wValue: 0x0200,
+        wIndex: 0,
+        wLength: len,
+      },
+    });
   }
 
   drain_actions(): unknown {
@@ -100,6 +111,29 @@ describe("UsbPassthroughDemoRuntime", () => {
           kind: "controlIn",
           id: 1_000_000_000,
           setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0100, wIndex: 0, wLength: 18 },
+        },
+      },
+    ]);
+  });
+
+  it("queues a control-in action when run() is invoked", () => {
+    const demo = new FakeDemo();
+    const posted: unknown[] = [];
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: (msg) => posted.push(msg),
+    });
+
+    runtime.run("configDescriptor", 9);
+
+    expect(posted).toEqual([
+      {
+        type: "usb.action",
+        action: {
+          kind: "controlIn",
+          id: 1_000_000_000,
+          setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0200, wIndex: 0, wLength: 9 },
         },
       },
     ]);
