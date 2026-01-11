@@ -11,7 +11,7 @@ via BAR0 MMIO magic:
 
 - **Versioned ABI device**: `PCI\VEN_A3A0&DEV_0001` ("AGPU")  
   Ring = `aerogpu_ring_header` + `aerogpu_submit_desc` slots.
-- **Legacy bring-up ABI device**: `PCI\VEN_1AED&DEV_0001` ("ARGP", deprecated)  
+- **Legacy bring-up ABI device**: legacy bring-up PCI identity ("ARGP", deprecated; see `docs/abi/aerogpu-pci-identity.md`)  
   Ring = legacy `aerogpu_legacy_ring_entry` entries (see `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h` and `docs/abi/aerogpu-pci-identity.md`).
   Note: the emulator legacy device model is optional (feature `emulator/aerogpu-legacy`).
 

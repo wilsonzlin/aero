@@ -259,5 +259,5 @@ These are intended for a small user-mode tool to validate KMD↔emulator communi
 
 Note: `AEROGPU_ESCAPE_OP_QUERY_VBLANK` is feature-gated; it returns `STATUS_NOT_SUPPORTED`
 unless `AEROGPU_FEATURE_VBLANK` is present in `FEATURES_LO/HI` (works for both legacy
-`PCI\VEN_1AED&DEV_0001` and versioned `PCI\VEN_A3A0&DEV_0001` devices that expose those
-registers).
+bring-up devices (see `docs/abi/aerogpu-pci-identity.md`) and versioned `PCI\VEN_A3A0&DEV_0001`
+devices that expose those registers).
