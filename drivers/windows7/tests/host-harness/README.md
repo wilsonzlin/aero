@@ -191,8 +191,13 @@ Required workflow inputs:
 - `snapshot`: run QEMU with `snapshot=on` so the base image is not modified (recommended)
 - `serial_log_path`: where to write COM1 output (default is under `out/win7-virtio-harness/` in the workspace)
 - `with_virtio_snd`: attach a virtio-snd device (default `false`)
+- `virtio_snd_audio_backend`: virtio-snd backend (`none` or `wav`; default `none`; requires `with_virtio_snd=true`)
+- `virtio_snd_wav_path`: when `virtio_snd_audio_backend=wav`, output path for the captured wav file
+  (default `out/win7-virtio-harness/virtio-snd.wav`)
+- `verify_virtio_snd_wav`: host-side wav verification (default `false`; requires `virtio_snd_audio_backend=wav`)
 
-On completion, the workflow uploads the serial log and harness output as the `win7-virtio-harness` artifact.
+On completion, the workflow uploads the serial log and harness output (and the captured wav file, when enabled) as the
+`win7-virtio-harness` artifact.
 
 ## How the harness works
 

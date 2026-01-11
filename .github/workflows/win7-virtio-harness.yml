@@ -27,6 +27,24 @@ on:
         required: false
         default: false
         type: boolean
+      virtio_snd_audio_backend:
+        description: "Audio backend for virtio-snd (requires with_virtio_snd=true)"
+        required: false
+        default: none
+        type: choice
+        options:
+          - none
+          - wav
+      virtio_snd_wav_path:
+        description: "When virtio_snd_audio_backend=wav, write audio capture to this path"
+        required: false
+        default: "out/win7-virtio-harness/virtio-snd.wav"
+        type: string
+      verify_virtio_snd_wav:
+        description: "Verify that the virtio-snd wav capture contains non-silent PCM audio (requires virtio_snd_audio_backend=wav)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -235,14 +253,32 @@ jobs:
           SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
           SNAPSHOT: ${{ inputs.snapshot }}
           WITH_VIRTIO_SND: ${{ inputs.with_virtio_snd }}
+          VIRTIO_SND_AUDIO_BACKEND: ${{ inputs.virtio_snd_audio_backend }}
+          VIRTIO_SND_WAV_PATH: ${{ inputs.virtio_snd_wav_path }}
+          VERIFY_VIRTIO_SND_WAV: ${{ inputs.verify_virtio_snd_wav }}
         run: |
           set -euo pipefail
           extra=()
           if [[ "$SNAPSHOT" == "true" ]]; then
             extra+=(--snapshot)
           fi
+
+          if [[ "$VERIFY_VIRTIO_SND_WAV" == "true" && "$VIRTIO_SND_AUDIO_BACKEND" != "wav" ]]; then
+            echo "ERROR: verify_virtio_snd_wav requires virtio_snd_audio_backend=wav" >&2
+            exit 1
+          fi
+
           if [[ "$WITH_VIRTIO_SND" == "true" ]]; then
-            extra+=(--with-virtio-snd)
+            extra+=(--with-virtio-snd --virtio-snd-audio-backend "$VIRTIO_SND_AUDIO_BACKEND")
+            if [[ "$VIRTIO_SND_AUDIO_BACKEND" == "wav" ]]; then
+              extra+=(--virtio-snd-wav-path "$VIRTIO_SND_WAV_PATH")
+              if [[ "$VERIFY_VIRTIO_SND_WAV" == "true" ]]; then
+                extra+=(--virtio-snd-verify-wav)
+              fi
+            fi
+          elif [[ "$VIRTIO_SND_AUDIO_BACKEND" != "none" || "$VERIFY_VIRTIO_SND_WAV" == "true" ]]; then
+            echo "ERROR: virtio_snd_* inputs require with_virtio_snd=true" >&2
+            exit 1
           fi
           python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
             --qemu-system qemu-system-x86_64 \
@@ -262,6 +298,9 @@ jobs:
           SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
           SNAPSHOT: ${{ inputs.snapshot }}
           WITH_VIRTIO_SND: ${{ inputs.with_virtio_snd }}
+          VIRTIO_SND_AUDIO_BACKEND: ${{ inputs.virtio_snd_audio_backend }}
+          VIRTIO_SND_WAV_PATH: ${{ inputs.virtio_snd_wav_path }}
+          VERIFY_VIRTIO_SND_WAV: ${{ inputs.verify_virtio_snd_wav }}
         run: |
           $ErrorActionPreference = 'Stop'
           $outDir = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness'
@@ -278,8 +317,29 @@ jobs:
           if ($env:SNAPSHOT -eq 'true') {
             $args += '-Snapshot'
           }
+
+          $virtioSndBackend = $env:VIRTIO_SND_AUDIO_BACKEND
+          $verifyWav = $env:VERIFY_VIRTIO_SND_WAV -eq 'true'
+          $virtioSndWavPath = $env:VIRTIO_SND_WAV_PATH
+          if ($virtioSndWavPath) {
+            $virtioSndWavPath = $virtioSndWavPath.Replace('/', '\')
+          }
+
+          if ($verifyWav -and $virtioSndBackend -ne 'wav') {
+            throw "verify_virtio_snd_wav requires virtio_snd_audio_backend=wav"
+          }
+
           if ($env:WITH_VIRTIO_SND -eq 'true') {
             $args += '-WithVirtioSnd'
+            $args += '-VirtioSndAudioBackend', $virtioSndBackend
+            if ($virtioSndBackend -eq 'wav') {
+              $args += '-VirtioSndWavPath', $virtioSndWavPath
+              if ($verifyWav) {
+                $args += '-VerifyVirtioSndWav'
+              }
+            }
+          } elseif ($verifyWav -or $virtioSndBackend -ne 'none') {
+            throw "virtio_snd_* inputs require with_virtio_snd=true"
           }
           & powershell -NoProfile -ExecutionPolicy Bypass -File 'drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1' @args 2>&1 | Tee-Object -FilePath $harnessLog
           $code = $LASTEXITCODE
@@ -290,6 +350,8 @@ jobs:
         shell: bash
         env:
           SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
+          VIRTIO_SND_AUDIO_BACKEND: ${{ inputs.virtio_snd_audio_backend }}
+          VIRTIO_SND_WAV_PATH: ${{ inputs.virtio_snd_wav_path }}
         run: |
           set -euo pipefail
           mkdir -p out/win7-virtio-harness
@@ -301,12 +363,22 @@ jobs:
               cp "$SERIAL_LOG_PATH" "$dest"
             fi
           fi
+          if [[ "$VIRTIO_SND_AUDIO_BACKEND" == "wav" && -f "$VIRTIO_SND_WAV_PATH" ]]; then
+            dest="out/win7-virtio-harness/$(basename "$VIRTIO_SND_WAV_PATH")"
+            src_abs="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$VIRTIO_SND_WAV_PATH")"
+            dest_abs="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$dest")"
+            if [[ "$src_abs" != "$dest_abs" ]]; then
+              cp "$VIRTIO_SND_WAV_PATH" "$dest"
+            fi
+          fi
 
       - name: Collect logs for artifacts (Windows)
         if: always() && runner.os == 'Windows'
         shell: powershell
         env:
           SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
+          VIRTIO_SND_AUDIO_BACKEND: ${{ inputs.virtio_snd_audio_backend }}
+          VIRTIO_SND_WAV_PATH: ${{ inputs.virtio_snd_wav_path }}
         run: |
           $ErrorActionPreference = 'Continue'
           $outDir = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness'
@@ -316,6 +388,17 @@ jobs:
             $dest = Join-Path $outDir (Split-Path -Leaf $src)
             if ($src -ne $dest) {
               Copy-Item -LiteralPath $src -Destination $dest -Force
+            }
+          }
+          if ($env:VIRTIO_SND_AUDIO_BACKEND -eq 'wav') {
+            $wav = $env:VIRTIO_SND_WAV_PATH
+            if ($wav) { $wav = $wav.Replace('/', '\') }
+            if ($wav -and (Test-Path -LiteralPath $wav)) {
+              $src = (Resolve-Path -LiteralPath $wav).Path
+              $dest = Join-Path $outDir (Split-Path -Leaf $src)
+              if ($src -ne $dest) {
+                Copy-Item -LiteralPath $src -Destination $dest -Force
+              }
             }
           }
 
