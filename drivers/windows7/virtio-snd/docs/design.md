@@ -6,12 +6,25 @@ This document is a **clean-room** design note for the Aero Windows 7 virtio-snd
 driver. It summarizes the intended architecture and how the pieces fit together.
 See `../SOURCES.md` for the authoritative list of references.
 
-The driver in this directory is a clean-room Windows 7 audio adapter driver
-targeting the Aero virtio device contract. It includes a virtio-pci modern
-transport core, split-ring virtqueue plumbing, and integrates PortCls
-**WaveRT** + **Topology** miniports so Windows 7 can enumerate a render endpoint.
+The driver in this directory is a clean-room Windows 7 WDM audio adapter driver
+targeting the Aero Windows 7 virtio device contract (`AERO-W7-VIRTIO` v1). It
+includes a virtio-pci modern transport core, split-ring virtqueue plumbing, and
+integrates PortCls **WaveRT** + **Topology** miniports so Windows 7 can
+enumerate a **render-only** endpoint.
 
-Capture (rxq stream id `1`) is defined by the contract but is not implemented yet.
+Implemented components (code pointers):
+
+- PortCls/WaveRT adapter + miniports: `src/adapter.c`, `src/wavert.c`,
+  `src/topology.c`
+- Virtio transport + split virtqueues + INTx ISR/DPC routing:
+  `src/virtio_pci_modern_wdm.c`, `src/virtiosnd_queue_split.c`,
+  `src/virtiosnd_intx.c`, `src/virtiosnd_hw.c`
+- virtio-snd control/TX protocol engines used by the WaveRT virtio backend:
+  `src/virtiosnd_control.c`, `src/virtiosnd_tx.c` (via
+  `VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx` in `src/virtiosnd_hw.c`)
+
+Capture (`rxq`, stream id `1`) is defined by the contract, but the driver does
+not submit capture buffers yet.
 
 ## High-level architecture
 
@@ -59,7 +72,8 @@ Responsibilities:
 - Handle `eventq` for asynchronous device events (if used by the device model).
 - Implement the PCM data path:
   - playback: submit PCM buffers on `txq`
-  - capture: receive buffers on `rxq` (stream id `1`; defined by the contract, but not implemented by this driver yet)
+  - capture: `rxq` (stream id `1`) is initialized for contract conformance /
+    bring-up, but the driver does not submit capture buffers yet (render-only)
 
 The protocol engine should be written to:
 
@@ -67,32 +81,36 @@ The protocol engine should be written to:
 - return `NOT_SUPP` for unsupported requests,
 - keep stream state transitions explicit (Idle → ParamsSet → Prepared → Running).
 
-### 4) PortCls / WaveRT miniport integration
+### 4) PortCls / WaveRT adapter + miniports
 
-Target model:
+Implementation summary:
 
-- Expose a render (playback) endpoint through PortCls using a WaveRT-style miniport.
-- The audio miniport is responsible for:
-  - presenting the supported formats/rates/channels to the OS,
-  - managing stream creation and teardown,
-  - translating WaveRT buffer progress into virtio-snd buffer submissions.
+- Adapter / PortCls registration: `src/adapter.c`
+- WaveRT miniport (render): `src/wavert.c`
+- Topology miniport: `src/topology.c`
 
-Integration approach (high level):
+The driver registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology`
+(PortTopology + IMiniportTopology) subdevices, and physically connects them via
+`PcRegisterPhysicalConnection`.
 
-- During device start, initialize PortCls and register the miniport pair(s).
-- When the OS starts a stream, allocate a virtio-snd stream instance and begin
-  feeding PCM buffers on `txq`.
-- Keep the PortCls-facing part decoupled from the virtio transport so protocol and
-  virtqueue logic remains testable outside of PortCls.
+Current behavior:
+
+- Exposes a single render endpoint with a fixed format (48kHz, stereo, 16-bit
+  PCM LE).
+- Uses a periodic timer/DPC “software DMA” model to:
+  - advance play position and signal the WaveRT notification event, and
+  - submit one period of PCM into a backend callback.
+- Selects a virtio backend when the virtio transport is started successfully
+  (controlq + txq); otherwise falls back to a null backend for bring-up/debug.
 
 ### 5) Interrupt + timer pacing model
 
 Baseline requirements:
 
 - Work correctly with **PCI INTx** + the virtio ISR status register (contract v1).
-- Optionally support MSI-X when available and enabled by the INF.
+- The current driver package uses **INTx only** (it does not opt into MSI/MSI-X).
 
-Planned behavior:
+Behavior:
 
 - ISR does minimal work:
   - acknowledge/deassert INTx by reading the ISR status register,
@@ -130,7 +148,12 @@ Contract v1 requirements include:
 
 - Feature bits: MUST offer `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_INDIRECT_DESC`, and MUST NOT
   offer `VIRTIO_F_RING_EVENT_IDX` / packed rings.
-- Queue max sizes: `controlq/eventq/rxq = 64`, `txq = 256`.
+- Queue indices/max sizes (see `docs/windows7-virtio-driver-contract.md` and
+  `include/virtiosnd_queue.h`):
+  - `controlq = 64`
+  - `eventq = 64` (initialized; currently unused unless the device model emits events)
+  - `txq = 256`
+  - `rxq = 64` (initialized for bring-up; capture buffers are not submitted yet)
 
 Driver stance:
 
@@ -144,5 +167,7 @@ Driver stance:
 ## References
 
 - Aero device contract: `docs/windows7-virtio-driver-contract.md`
+- Windows device contract (non-normative for virtio; `AERO-W7-VIRTIO` is definitive): `docs/windows-device-contract.md`
 - Virtqueue guide (in-repo): `docs/virtio/virtqueue-split-ring-win7.md`
+- WDM virtio-pci modern bring-up notes: `docs/windows/virtio-pci-modern-wdm.md`
 - Interrupt guide (in-repo): `docs/windows/virtio-pci-modern-interrupts.md`
