@@ -27,6 +27,18 @@ When the guest writes to the THR register (offset `+0`, DLAB=0), the UART invoke
 
 The core IPC queue format and the stable binary message tags are documented in [`docs/ipc-protocol.md`](./ipc-protocol.md).
 
+### Runtime log events
+
+Each worker can emit structured `log` events on its runtime event ring. The coordinator prints
+these with a `[role]` prefix in the browser console and records `WARN`/`ERROR` logs in the nonfatal
+event stream.
+
+Example (L2 tunnel forwarder telemetry from the I/O worker):
+
+```
+[io] l2: open tx=... rx=... drop+{...} pending=...
+```
+
 ---
 
 ## Breakpoints / Stepping
