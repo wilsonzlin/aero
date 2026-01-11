@@ -4001,6 +4001,8 @@ uint64_t submit(Device* dev, bool is_present) {
       }
 
       HRESULT submit_hr = E_NOTIMPL;
+      enum class SubmitCbKind { kNone, kSubmitCommandCb, kRenderCb, kPresentCb };
+      SubmitCbKind submit_kind = SubmitCbKind::kNone;
       const uint32_t cmd_len = static_cast<uint32_t>(cmd_bytes);
       // Win7 D3D9 runtimes expose several possible submission callbacks. Prefer
       // the Render/Present entrypoints so the KMD sees an unambiguous submission
@@ -4012,6 +4014,9 @@ uint64_t submit(Device* dev, bool is_present) {
             submission_fence = 0;
             submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnPresentCb, cmd_len, /*is_present=*/true,
                                                &submission_fence);
+            if (SUCCEEDED(submit_hr)) {
+              submit_kind = SubmitCbKind::kPresentCb;
+            }
           }
         }
 
@@ -4026,6 +4031,9 @@ uint64_t submit(Device* dev, bool is_present) {
                 submission_fence = 0;
                 submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
                                                    &submission_fence);
+                if (SUCCEEDED(submit_hr)) {
+                  submit_kind = SubmitCbKind::kRenderCb;
+                }
               }
             }
           }
@@ -4041,6 +4049,9 @@ uint64_t submit(Device* dev, bool is_present) {
               submission_fence = 0;
               submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/true,
                                                  &submission_fence);
+              if (SUCCEEDED(submit_hr)) {
+                submit_kind = SubmitCbKind::kSubmitCommandCb;
+              }
             }
           }
         }
@@ -4054,6 +4065,9 @@ uint64_t submit(Device* dev, bool is_present) {
               submission_fence = 0;
               submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
                                                  &submission_fence);
+              if (SUCCEEDED(submit_hr)) {
+                submit_kind = SubmitCbKind::kRenderCb;
+              }
             }
           }
         }
@@ -4063,6 +4077,9 @@ uint64_t submit(Device* dev, bool is_present) {
             submission_fence = 0;
             submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/false,
                                                &submission_fence);
+            if (SUCCEEDED(submit_hr)) {
+              submit_kind = SubmitCbKind::kRenderCb;
+            }
           }
         }
 
@@ -4072,13 +4089,16 @@ uint64_t submit(Device* dev, bool is_present) {
               submission_fence = 0;
               submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/false,
                                                  &submission_fence);
+              if (SUCCEEDED(submit_hr)) {
+                submit_kind = SubmitCbKind::kSubmitCommandCb;
+              }
             }
           }
         }
       }
 
       if (SUCCEEDED(submit_hr)) {
-        if (needs_allocation_table && submit_priv_ptr &&
+        if (needs_allocation_table && submit_kind != SubmitCbKind::kSubmitCommandCb && submit_priv_ptr &&
             submit_priv_size >= AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
           AEROGPU_DMA_PRIV priv{};
           std::memcpy(&priv, submit_priv_ptr, sizeof(priv));
