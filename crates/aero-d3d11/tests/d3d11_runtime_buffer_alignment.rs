@@ -1,3 +1,5 @@
+mod common;
+
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_gpu::protocol_d3d11::{BufferUsage, CmdWriter};
 
@@ -7,7 +9,13 @@ fn d3d11_runtime_rejects_unaligned_copy_buffer_to_buffer() {
         let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(err) => {
-                eprintln!("skipping d3d11 runtime buffer alignment test: {err:#}");
+                common::skip_or_panic(
+                    concat!(
+                        module_path!(),
+                        "::d3d11_runtime_rejects_unaligned_copy_buffer_to_buffer"
+                    ),
+                    &format!("wgpu unavailable ({err:#})"),
+                );
                 return;
             }
         };
