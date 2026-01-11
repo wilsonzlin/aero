@@ -14,12 +14,10 @@ The protocol has two parts:
 
 ## WebRTC DataChannels
 
-### Channel: `udp` (UDP relay)
-
 The relay supports multiple DataChannels. Each DataChannel message is treated as
 one independent datagram/message (no streaming).
 
-### UDP relay DataChannel
+### UDP relay DataChannel (`udp`)
 
 - **Label:** `udp`
 - **Reliability:** best-effort UDP semantics.
@@ -33,13 +31,14 @@ message).
 The binary framing described in this document applies **only** to the `udp`
 DataChannel.
 
-### L2 tunnel DataChannel
+### L2 tunnel DataChannel (`l2`)
 
 - **Label:** `l2`
-- **Required client options:**
-  - `ordered = true`
+- **Reliability:** **MUST be reliable.**
   - `maxRetransmits` MUST be unset
   - `maxPacketLifeTime` MUST be unset
+- **Recommended client options:**
+  - `ordered = false` (reduces head-of-line blocking)
 
 Unlike `udp`, the relay does **not** parse or frame messages on `l2`. Instead,
 it acts as a transport bridge:
@@ -59,11 +58,10 @@ browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
   4096 bytes). Messages larger than this limit may cause the relay to tear down
   the `l2` bridge.
 
-Rationale: ordered reliable delivery is required because the current proxy-side
-TCP termination in `crates/aero-net-stack` intentionally does not implement full
-TCP reassembly; if guest TCP segments are delivered out-of-order frequently, it
-will cause spurious retransmits and throughput collapse. For more detail, see
-`docs/l2-tunnel-protocol.md`.
+Rationale: the L2 tunnel carries guest Ethernet frames to a proxy that may run a
+user-space NAT/TCP stack (slirp-style). That stack can acknowledge upstream TCP
+data before the guest has received it, so allowing tunnel message loss (partial
+reliability) can break TCP correctness.
 
 ---
 

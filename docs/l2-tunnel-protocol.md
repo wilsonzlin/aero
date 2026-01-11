@@ -47,13 +47,13 @@ For Aero production deployments (ADR 0005):
 - WebRTC DataChannels that carry the L2 tunnel MUST be **reliable** (no partial reliability).
   - `maxRetransmits` MUST be unset
   - `maxPacketLifeTime` MUST be unset
-- WebRTC DataChannels that carry the L2 tunnel MUST be **ordered**.
-  - `ordered = true`
+- WebRTC DataChannels that carry the L2 tunnel SHOULD use **unordered** delivery.
+  - `ordered = false`
 
-Rationale: the current proxy-side network stack (`crates/aero-net-stack`) terminates guest TCP and
-intentionally does not implement full TCP segment reassembly. If guest TCP segments are delivered
-out-of-order frequently (e.g. due to a reliable unordered tunnel under loss), it causes spurious
-retransmits and throughput collapse.
+Rationale: when the proxy terminates TCP on behalf of the guest (slirp-style), it can acknowledge
+upstream TCP data before the guest has received it. If the L2 tunnel can drop messages (partial
+reliability), TCP correctness breaks. Ordering is optional for correctness; using `ordered = false`
+reduces head-of-line blocking.
 
 ---
 

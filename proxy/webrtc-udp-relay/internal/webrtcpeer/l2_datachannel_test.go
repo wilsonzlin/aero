@@ -47,7 +47,7 @@ func connectPeerConnections(t *testing.T, offerer, answerer *webrtc.PeerConnecti
 	}
 }
 
-func TestL2DataChannelSemantics_OrderedReliable(t *testing.T) {
+func TestL2DataChannelSemantics_Reliable(t *testing.T) {
 	api := webrtc.NewAPI()
 
 	serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
@@ -82,7 +82,7 @@ func TestL2DataChannelSemantics_OrderedReliable(t *testing.T) {
 		}
 	})
 
-	ordered := true
+	ordered := false
 	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
 		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
 	}
@@ -94,8 +94,8 @@ func TestL2DataChannelSemantics_OrderedReliable(t *testing.T) {
 		if got.validate != nil {
 			t.Fatalf("validateL2DataChannel: %v", got.validate)
 		}
-		if !got.ordered {
-			t.Fatalf("l2 datachannel should be ordered")
+		if got.ordered != ordered {
+			t.Fatalf("l2 datachannel ordered=%v, want %v", got.ordered, ordered)
 		}
 		if got.maxRet != nil {
 			t.Fatalf("l2 datachannel should not set maxRetransmits")
@@ -108,7 +108,7 @@ func TestL2DataChannelSemantics_OrderedReliable(t *testing.T) {
 	}
 }
 
-func TestL2DataChannelSemantics_RejectsUnordered(t *testing.T) {
+func TestL2DataChannelSemantics_RejectsPartialReliability(t *testing.T) {
 	api := webrtc.NewAPI()
 
 	serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
@@ -132,7 +132,11 @@ func TestL2DataChannelSemantics_RejectsUnordered(t *testing.T) {
 	})
 
 	ordered := false
-	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
+	maxRetransmits := uint16(0)
+	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{
+		Ordered:        &ordered,
+		MaxRetransmits: &maxRetransmits,
+	}); err != nil {
 		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
 	}
 
@@ -141,7 +145,7 @@ func TestL2DataChannelSemantics_RejectsUnordered(t *testing.T) {
 	select {
 	case err := <-gotCh:
 		if err == nil {
-			t.Fatalf("expected validateL2DataChannel to reject unordered l2 datachannel")
+			t.Fatalf("expected validateL2DataChannel to reject partial-reliability l2 datachannel")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for server-side l2 datachannel")
