@@ -217,6 +217,13 @@ struct StressWorkerParams {
   HANDLE start_event;
   volatile LONG* any_failed;
   volatile LONG* saw_was_still_drawing;
+  bool allow_microsoft;
+  bool allow_non_aerogpu;
+  bool require_umd;
+  bool has_require_vid;
+  bool has_require_did;
+  uint32_t require_vid;
+  uint32_t require_did;
 };
 
 static DWORD WINAPI StressWorkerThreadProc(void* userdata) {
@@ -239,6 +246,41 @@ static DWORD WINAPI StressWorkerThreadProc(void* userdata) {
   if (FAILED(hr)) {
     InterlockedExchange(p->any_failed, 1);
     return 1;
+  }
+
+  // Basic adapter sanity check to avoid false PASS when AeroGPU isn't active.
+  {
+    D3DADAPTER_IDENTIFIER9 ident;
+    ZeroMemory(&ident, sizeof(ident));
+    hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
+    if (SUCCEEDED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: d3d9ex_event_query: stress[%d]: adapter: %s (VID=0x%04X DID=0x%04X)",
+                                 p->index,
+                                 ident.Description,
+                                 (unsigned)ident.VendorId,
+                                 (unsigned)ident.DeviceId);
+      if (!p->allow_microsoft && ident.VendorId == 0x1414) {
+        InterlockedExchange(p->any_failed, 1);
+        return 1;
+      }
+      if (p->has_require_vid && ident.VendorId != p->require_vid) {
+        InterlockedExchange(p->any_failed, 1);
+        return 1;
+      }
+      if (p->has_require_did && ident.DeviceId != p->require_did) {
+        InterlockedExchange(p->any_failed, 1);
+        return 1;
+      }
+      if (!p->allow_non_aerogpu && !p->has_require_vid && !p->has_require_did &&
+          !(ident.VendorId == 0x1414 && p->allow_microsoft) &&
+          !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
+        InterlockedExchange(p->any_failed, 1);
+        return 1;
+      }
+    } else if (p->has_require_vid || p->has_require_did) {
+      InterlockedExchange(p->any_failed, 1);
+      return 1;
+    }
   }
 
   D3DPRESENT_PARAMETERS pp;
@@ -265,6 +307,13 @@ static DWORD WINAPI StressWorkerThreadProc(void* userdata) {
   if (FAILED(hr)) {
     InterlockedExchange(p->any_failed, 1);
     return 1;
+  }
+
+  if (p->require_umd || (!p->allow_microsoft && !p->allow_non_aerogpu)) {
+    if (aerogpu_test::RequireAeroGpuD3D9UmdLoaded("d3d9ex_event_query") != 0) {
+      InterlockedExchange(p->any_failed, 1);
+      return 1;
+    }
   }
 
   hr = dev->SetMaximumFrameLatency(1);
@@ -467,6 +516,13 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     params.start_event = start_event;
     params.any_failed = &any_failed;
     params.saw_was_still_drawing = &saw_was_still_drawing;
+    params.allow_microsoft = allow_microsoft;
+    params.allow_non_aerogpu = allow_non_aerogpu;
+    params.require_umd = require_umd;
+    params.has_require_vid = has_require_vid;
+    params.has_require_did = has_require_did;
+    params.require_vid = require_vid;
+    params.require_did = require_did;
 
     const DWORD worker_rc = StressWorkerThreadProc(&params);
     CloseHandle(start_event);
@@ -962,12 +1018,19 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     ZeroMemory(params, sizeof(params));
     for (int i = 0; i < 2; ++i) {
       params[i].index = i;
-      params[i].iterations = (int)stress_iterations;
-      params[i].show_window = show_window && !hidden;
-      params[i].start_event = start_event;
-      params[i].any_failed = &any_failed;
-      params[i].saw_was_still_drawing = &saw_was_still_drawing;
-    }
+    params[i].iterations = (int)stress_iterations;
+    params[i].show_window = show_window && !hidden;
+    params[i].start_event = start_event;
+    params[i].any_failed = &any_failed;
+    params[i].saw_was_still_drawing = &saw_was_still_drawing;
+    params[i].allow_microsoft = allow_microsoft;
+    params[i].allow_non_aerogpu = allow_non_aerogpu;
+    params[i].require_umd = require_umd;
+    params[i].has_require_vid = has_require_vid;
+    params[i].has_require_did = has_require_did;
+    params[i].require_vid = require_vid;
+    params[i].require_did = require_did;
+  }
 
     HANDLE threads[2];
     threads[0] = CreateThread(NULL, 0, StressWorkerThreadProc, &params[0], 0, NULL);
