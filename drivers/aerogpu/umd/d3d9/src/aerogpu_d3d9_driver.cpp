@@ -190,6 +190,10 @@ constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
 
 std::once_flag g_submit_log_once;
 bool g_submit_log_enabled = false;
+#if defined(_WIN32)
+std::once_flag g_dma_priv_invalid_once;
+std::once_flag g_dma_priv_size_mismatch_once;
+#endif
 
 bool submit_log_enabled() {
   std::call_once(g_submit_log_once, [] {
@@ -3022,6 +3026,54 @@ HRESULT invoke_submit_callback(Device* dev,
   if constexpr (has_member_NewFenceValue<Arg>::value) {
     args.NewFenceValue = 0;
   }
+
+  // Security: `pDmaBufferPrivateData` is copied by dxgkrnl from user mode to
+  // kernel mode for every submission. Ensure the blob is explicitly zeroed so we
+  // never leak uninitialized user-mode stack/heap bytes into the kernel copy.
+  //
+  // The AeroGPU Win7 KMD overwrites AEROGPU_DMA_PRIV, but relying on that is
+  // brittle (and would still leak via the dxgkrnl copy path).
+  const uint32_t expected_dma_priv_bytes = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+  void* dma_priv_ptr = dev ? dev->wddm_context.pDmaBufferPrivateData : nullptr;
+  uint32_t dma_priv_bytes = dev ? dev->wddm_context.DmaBufferPrivateDataSize : 0;
+  if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+    dma_priv_ptr = args.pDmaBufferPrivateData;
+  }
+  if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
+    dma_priv_bytes = args.DmaBufferPrivateDataSize;
+  }
+
+  if (!dma_priv_ptr || dma_priv_bytes < expected_dma_priv_bytes) {
+    std::call_once(g_dma_priv_invalid_once, [dma_priv_ptr, dma_priv_bytes, expected_dma_priv_bytes] {
+      aerogpu::logf("aerogpu-d3d9: submit missing/invalid dma private data ptr=%p bytes=%u (need >=%u)\n",
+                    dma_priv_ptr,
+                    static_cast<unsigned>(dma_priv_bytes),
+                    static_cast<unsigned>(expected_dma_priv_bytes));
+    });
+    return E_INVALIDARG;
+  }
+
+  const size_t zero_bytes = std::min<size_t>(static_cast<size_t>(dma_priv_bytes), static_cast<size_t>(expected_dma_priv_bytes));
+  if (zero_bytes) {
+    std::memset(dma_priv_ptr, 0, zero_bytes);
+  }
+
+  // Safety: if the runtime reports a larger private-data size than the KMD/UMD
+  // contract, clamp to the expected size so dxgkrnl does not copy extra bytes of
+  // user-mode memory into kernel-mode buffers.
+  if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
+    if (args.DmaBufferPrivateDataSize != expected_dma_priv_bytes) {
+      std::call_once(g_dma_priv_size_mismatch_once, [dma_priv_bytes, expected_dma_priv_bytes] {
+        aerogpu::logf("aerogpu-d3d9: submit dma private data size mismatch bytes=%u expected=%u\n",
+                      static_cast<unsigned>(dma_priv_bytes),
+                      static_cast<unsigned>(expected_dma_priv_bytes));
+      });
+    }
+    if (args.DmaBufferPrivateDataSize > expected_dma_priv_bytes) {
+      args.DmaBufferPrivateDataSize = expected_dma_priv_bytes;
+    }
+  }
+
   uint64_t submission_fence = 0;
 
   HRESULT hr = E_FAIL;
