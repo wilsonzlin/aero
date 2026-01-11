@@ -1143,7 +1143,7 @@ try {
             $cfgStatus = "WARN"
             $cfgDetails += "AERO_VIRTIO_SND_HWIDS is not set."
         } else {
-            $expected = "PCI\\VEN_1AF4&DEV_1059&REV_01"
+            $expected = "PCI\VEN_1AF4&DEV_1059&REV_01"
             $found = $false
             foreach ($h in $cfgVirtioSndHwids) {
                 if (-not $h) { continue }
