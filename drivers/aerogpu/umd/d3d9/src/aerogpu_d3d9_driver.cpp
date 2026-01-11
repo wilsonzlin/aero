@@ -1459,7 +1459,7 @@ HRESULT ensure_up_index_buffer_locked(Device* dev, uint32_t required_size) {
   }
 
   auto ib = std::make_unique<Resource>();
-  ib->handle = dev->adapter->next_handle.fetch_add(1);
+  ib->handle = allocate_global_handle(dev->adapter);
   ib->kind = ResourceKind::Buffer;
   ib->size_bytes = new_size;
   try {
