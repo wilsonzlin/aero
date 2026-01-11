@@ -62,6 +62,20 @@ Notify semantics:
 - Drivers compute the doorbell address as:
   `notify_base + queue_notify_off(queue) * notify_off_multiplier`
 
+Queue programming (modern):
+
+- Drivers select a queue with `common_cfg.queue_select`, then:
+  - read `queue_size` (max ring size, in descriptors)
+  - read `queue_notify_off` (doorbell selector)
+  - write `queue_desc`, `queue_avail`, `queue_used` (64-bit guest physical addrs)
+  - write `queue_enable = 1` to activate
+- Unlike legacy/transitional devices, there is no PFN register and the ring does
+  **not** need to be a single 4 KiB-aligned physically-contiguous region.
+  Contract v1 follows the standard virtio alignment rules:
+  - `queue_desc`: 16-byte aligned
+  - `queue_avail`: 2-byte aligned
+  - `queue_used`: 4-byte aligned
+
 The legacy/transitional I/O-port transport is **not** required by contract v1 and
 is retained only for compatibility/testing with transitional/QEMU devices.
 
