@@ -557,6 +557,85 @@ fn aero_cpu_core_int15_e820_returns_first_entry() {
 }
 
 #[test]
+fn aero_cpu_core_int15_a20_support_returns_int15_bitmask() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 15h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x15, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x2403; // Get A20 support
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x15)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+    assert_eq!(vm.cpu.gpr[gpr::RBX] as u16, 0x0007);
+}
+
+#[test]
+fn aero_cpu_core_int15_ah88_returns_extended_memory_kb_above_1m() {
+    let mem_bytes = 32 * 1024 * 1024;
+    let cfg = BiosConfig {
+        enable_acpi: false,
+        memory_size_bytes: mem_bytes as u64,
+        ..test_bios_config()
+    };
+    let bios = Bios::new(cfg);
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(mem_bytes, bios, disk);
+    vm.reset();
+
+    // Program: INT 15h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x15, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x8800;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x15)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0x7C00);
+}
+
+#[test]
+fn aero_cpu_core_int15_e801_returns_kb_and_64k_blocks_from_e820_map() {
+    let mem_bytes = 32 * 1024 * 1024;
+    let cfg = BiosConfig {
+        enable_acpi: false,
+        memory_size_bytes: mem_bytes as u64,
+        ..test_bios_config()
+    };
+    let bios = Bios::new(cfg);
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(mem_bytes, bios, disk);
+    vm.reset();
+
+    // Program: INT 15h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x15, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0xE801;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x15)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0x3C00);
+    assert_eq!(vm.cpu.gpr[gpr::RBX] as u16, 0x0100);
+    assert_eq!(vm.cpu.gpr[gpr::RCX] as u16, 0x3C00);
+    assert_eq!(vm.cpu.gpr[gpr::RDX] as u16, 0x0100);
+}
+
+#[test]
 fn aero_cpu_core_int16_read_key_returns_scancode_and_ascii() {
     let mut bios = Bios::new(test_bios_config());
     bios.push_key(0x2C5A); // scan=0x2C, ascii='Z'
