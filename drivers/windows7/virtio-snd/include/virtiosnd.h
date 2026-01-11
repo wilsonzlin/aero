@@ -16,7 +16,8 @@
  * The Aero contract defines four virtqueues (control/event/tx/rx).
  *
  * This driver currently implements controlq + txq for playback. eventq and rxq
- * are brought up but do not have protocol engines yet.
+ * are brought up for transport bring-up but do not have protocol engines yet
+ * (rxq capture buffers are not submitted yet).
  */
 #define VIRTIOSND_QUEUE_CONTROL VIRTIO_SND_QUEUE_CONTROL
 #define VIRTIOSND_QUEUE_EVENT VIRTIO_SND_QUEUE_EVENT

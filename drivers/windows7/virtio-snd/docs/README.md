@@ -15,6 +15,7 @@ The driver currently:
   - negotiates required features (`VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC`)
 
 - Sets up split-ring virtqueues (control/event/tx/rx) using the reusable backend in `virtiosnd_queue_split.c`
+  - Note: rxq (capture) is initialized for transport bring-up but capture buffers are not submitted yet.
 - Connects **INTx** and routes used-ring completions to the control/TX protocol engines in a DPC
 - Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`), but they are not yet exposed via a PortCls miniport (WaveRT), so Windows will not enumerate an audio endpoint.
 

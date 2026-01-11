@@ -9,6 +9,7 @@ It currently contains two transport implementations:
 
 - **Legacy/transitional:** `virtio_pci_legacy.*` (I/O port register set)
 - **Modern-only (WDM):** `virtio_pci_modern_wdm.*` (virtio 1.0+ PCI vendor caps + MMIO)
+- **INTx helper (WDM):** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 
 > Note: This library is **not** for Aero’s virtio contract v1 devices
 > (`docs/windows7-virtio-driver-contract.md`), which require the virtio-pci **modern**
@@ -32,6 +33,11 @@ It currently contains two transport implementations:
   - optional **indirect descriptors** (`VIRTIO_RING_F_INDIRECT_DESC`)
   - optional **event index** notification suppression (`VIRTIO_RING_F_EVENT_IDX`)
   - explicit memory barriers via the OS shim (SMP/DMA ordering)
+
+- **Interrupts:** `virtio_pci_intx_wdm.*`
+  - Connect/disconnect PCI INTx line-based interrupts via `IoConnectInterrupt`.
+  - ISR reads the virtio ISR status register (read-to-ack) to deassert the line.
+  - DPC dispatches queue/config callbacks based on the ISR status bits.
 
 - **OS abstraction:** `include/virtio_os.h`
   - core code has **no StorPort/NDIS/KMDF header dependencies**

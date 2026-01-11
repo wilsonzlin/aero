@@ -15,19 +15,19 @@
  *  - 0: controlq (64)
  *  - 1: eventq   (64)
  *  - 2: txq     (256)
- *  - 3: rxq      (64) exists for PCM capture. The current driver does not use
- *    it yet, so it may be left uninitialized for now.
+ *  - 3: rxq      (64) exists for PCM capture. The current driver wires it up
+ *    for transport bring-up but does not submit capture buffers yet.
  */
 
 #define VIRTIOSND_QUEUE_INDEX_CONTROLQ ((USHORT)0u)
 #define VIRTIOSND_QUEUE_INDEX_EVENTQ ((USHORT)1u)
 #define VIRTIOSND_QUEUE_INDEX_TXQ ((USHORT)2u)
-#define VIRTIOSND_QUEUE_INDEX_RXQ ((USHORT)3u) /* Not implemented by the driver yet. */
+#define VIRTIOSND_QUEUE_INDEX_RXQ ((USHORT)3u) /* Capture queue (buffers not submitted yet). */
 
 #define VIRTIOSND_QUEUE_SIZE_CONTROLQ ((USHORT)64u)
 #define VIRTIOSND_QUEUE_SIZE_EVENTQ ((USHORT)64u)
 #define VIRTIOSND_QUEUE_SIZE_TXQ ((USHORT)256u)
-#define VIRTIOSND_QUEUE_SIZE_RXQ ((USHORT)64u) /* Not implemented by the driver yet. */
+#define VIRTIOSND_QUEUE_SIZE_RXQ ((USHORT)64u) /* Capture queue (buffers not submitted yet). */
 
 typedef struct _VIRTIOSND_SG {
     UINT64 addr;
