@@ -64,20 +64,11 @@ pub const BDA_BASE: u64 = 0x0000_0400;
 pub const EBDA_BASE: u64 = 0x0009_F000;
 pub const EBDA_SIZE: usize = 0x1000;
 
-/// Base physical address of the PCIe ECAM ("MMCONFIG") window.
-///
-/// This must match:
-/// - the ECAM mapping in the PC platform (`aero-pc-platform`)
-/// - the ACPI `MCFG` table emitted by `bios::acpi`
-/// - the reserved range in the BIOS E820 map (`bios::interrupts`)
-pub const PCIE_ECAM_BASE: u64 = 0xB000_0000;
-/// Size of the ECAM window in bytes.
-///
-/// We expose a single segment covering buses 0..=255, which requires 256MiB (1MiB per bus).
-pub const PCIE_ECAM_SIZE: u64 = 0x1000_0000;
-pub const PCIE_ECAM_SEGMENT: u16 = 0;
-pub const PCIE_ECAM_START_BUS: u8 = 0;
-pub const PCIE_ECAM_END_BUS: u8 = 0xFF;
+// Re-export the shared PC platform constants so firmware callers don't need to depend on
+// `aero-pc-constants` directly.
+pub use aero_pc_constants::{
+    PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_SIZE, PCIE_ECAM_START_BUS,
+};
 
 pub const INT10_STUB_OFFSET: u16 = 0xE300;
 pub const INT13_STUB_OFFSET: u16 = 0xE400;

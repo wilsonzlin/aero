@@ -10,4 +10,5 @@ aero_cpu_core = { path = "../aero_cpu_core" }
 aero-devices = { path = "../devices" }
 aero-interrupts = { path = "../aero-interrupts" }
 aero-platform = { path = "../platform" }
+aero-pc-constants = { path = "../aero-pc-constants" }
 memory = { path = "../memory" }

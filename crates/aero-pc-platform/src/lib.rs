@@ -30,12 +30,12 @@ pub use cpu_core::{PcCpuBus, PcInterruptController};
 /// Base physical address of the PCIe ECAM ("MMCONFIG") window.
 ///
 /// This follows the QEMU Q35 convention (256MiB window at 0xB000_0000 covering buses 0..=255).
-pub const PCIE_ECAM_BASE: u64 = 0xB000_0000;
+pub const PCIE_ECAM_BASE: u64 = aero_pc_constants::PCIE_ECAM_BASE;
 
 pub const PCIE_ECAM_CONFIG: PciEcamConfig = PciEcamConfig {
-    segment: 0,
-    start_bus: 0,
-    end_bus: 0xFF,
+    segment: aero_pc_constants::PCIE_ECAM_SEGMENT,
+    start_bus: aero_pc_constants::PCIE_ECAM_START_BUS,
+    end_bus: aero_pc_constants::PCIE_ECAM_END_BUS,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

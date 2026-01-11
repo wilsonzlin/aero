@@ -637,7 +637,8 @@ fn build_e820_map(
     const ONE_MIB: u64 = 0x0010_0000;
     // PCIe ECAM / MMCONFIG window reserved for PCI configuration space accesses.
     //
-    // These constants live in `bios::mod` so the ECAM base stays in sync across:
+    // These constants are re-exported from `bios` (source-of-truth: `aero-pc-constants`) so the
+    // ECAM window stays consistent across:
     // - ACPI `MCFG` generation
     // - platform MMIO mapping
     // - E820 reservations

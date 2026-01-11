@@ -398,12 +398,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-pc-constants"
+version = "0.1.0"
+
+[[package]]
 name = "aero-pc-platform"
 version = "0.1.0"
 dependencies = [
  "aero-devices",
  "aero-interrupts",
  "aero-mmu",
+ "aero-pc-constants",
  "aero-platform",
  "aero_cpu_core",
  "memory",
@@ -1751,6 +1756,7 @@ version = "0.1.0"
 dependencies = [
  "aero-acpi",
  "aero-devices",
+ "aero-pc-constants",
  "aero-platform",
  "emulator",
  "machine",

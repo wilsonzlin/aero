@@ -55,6 +55,7 @@ members = [
     "crates/machine",
     "crates/memory",
     "crates/platform",
+    "crates/aero-pc-constants",
     "crates/aero-pc-platform",
     "crates/perf",
     "crates/aero-devices-input",

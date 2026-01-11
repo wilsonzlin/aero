@@ -1,5 +1,6 @@
-use firmware::bios::{Bios, BiosConfig};
-use firmware::bios::PCIE_ECAM_BASE;
+use firmware::bios::{
+    Bios, BiosConfig, PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS,
+};
 use machine::InMemoryDisk;
 use vm::Vm;
 
@@ -65,7 +66,7 @@ fn bios_publishes_mcfg_for_pcie_ecam() {
     let end_bus = mcfg[55];
 
     assert_eq!(base, PCIE_ECAM_BASE);
-    assert_eq!(segment, 0);
-    assert_eq!(start_bus, 0);
-    assert_eq!(end_bus, 0xFF);
+    assert_eq!(segment, PCIE_ECAM_SEGMENT);
+    assert_eq!(start_bus, PCIE_ECAM_START_BUS);
+    assert_eq!(end_bus, PCIE_ECAM_END_BUS);
 }
