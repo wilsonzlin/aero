@@ -378,6 +378,7 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 3. **Snapshot state immediately after**
    ```bat
    aerogpu_dbgctl --query-version
+   aerogpu_dbgctl --query-umd-private
    aerogpu_dbgctl --query-fence
    aerogpu_dbgctl --dump-ring --ring-id 0
    aerogpu_dbgctl --dump-vblank
@@ -407,6 +408,7 @@ aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 | Command | What it should report/do | When to use |
 |---|---|---|
 | `status` | device present, mode, engine state, last reset reason | first command in any bug report |
+| `--query-umd-private` | KMD-provided `UMDRIVERPRIVATE` blob (ABI + feature discovery used by UMDs) | diagnosing ABI/feature mismatches |
 | `--dump-ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
 | `--query-fence` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
 | `--dump-vblank` | IRQ enable/status + vblank seq/time/period (optionally sampled with deltas/observed Hz) | DWM stutter / Basic fallback |

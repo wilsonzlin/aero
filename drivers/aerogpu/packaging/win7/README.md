@@ -205,12 +205,13 @@ Examples:
 cd drivers\aerogpu\tools\win7_dbgctl
 build_vs2010.cmd
 
-:: Run it
-bin\aerogpu_dbgctl.exe --query-version
-bin\aerogpu_dbgctl.exe --query-fence
-bin\aerogpu_dbgctl.exe --dump-ring --ring-id 0
-bin\aerogpu_dbgctl.exe --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
-bin\aerogpu_dbgctl.exe --wait-vblank --vblank-samples 120 --timeout-ms 2000
+ :: Run it
+ bin\aerogpu_dbgctl.exe --query-version
+ bin\aerogpu_dbgctl.exe --query-umd-private
+ bin\aerogpu_dbgctl.exe --query-fence
+ bin\aerogpu_dbgctl.exe --dump-ring --ring-id 0
+ bin\aerogpu_dbgctl.exe --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
+ bin\aerogpu_dbgctl.exe --wait-vblank --vblank-samples 120 --timeout-ms 2000
 bin\aerogpu_dbgctl.exe --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 bin\aerogpu_dbgctl.exe --selftest
 ```
