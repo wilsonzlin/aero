@@ -411,19 +411,6 @@ function Try-GetDriverBuildTargetFromDirectory {
     [Parameter(Mandatory = $true)][string]$DriversRootResolved
   )
 
-  function Test-IsMakefileVcxproj {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    # CI intentionally ignores classic WDK build.exe wrapper projects (MakeFileProj), because
-    # the Win7 driver workflow provisions a modern Windows Kits toolchain and doesn't guarantee
-    # a legacy WDK 7.1 build environment.
-    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
-    if (-not $content) { return $false }
-    if ($content -match '<Keyword>\s*MakeFileProj\s*</Keyword>') { return $true }
-    if ($content -match '<ConfigurationType>\s*Makefile\s*</ConfigurationType>') { return $true }
-    return $false
-  }
-
   $name = $Directory.Name
   $sln = Join-Path $Directory.FullName ("{0}.sln" -f $name)
   $buildPath = $null
@@ -442,7 +429,7 @@ function Try-GetDriverBuildTargetFromDirectory {
     foreach ($rel in $projectRelPaths) {
       $projPath = Join-Path $Directory.FullName $rel
       if (-not (Test-Path -LiteralPath $projPath -PathType Leaf)) { continue }
-      if (-not (Test-IsMakefileVcxproj -Path $projPath)) {
+      if (-not (Test-IsMakefileVcxproj -VcxprojPath $projPath)) {
         $hasBuildableProject = $true
         break
       }
@@ -457,7 +444,7 @@ function Try-GetDriverBuildTargetFromDirectory {
   } else {
     $vcxprojs = @(Get-ChildItem -LiteralPath $Directory.FullName -File -Filter '*.vcxproj')
     if ($vcxprojs.Count -eq 1) {
-      if (Test-IsMakefileVcxproj -Path $vcxprojs[0].FullName) {
+      if (Test-IsMakefileVcxproj -VcxprojPath $vcxprojs[0].FullName) {
         return $null
       }
       $buildPath = $vcxprojs[0].FullName
