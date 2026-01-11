@@ -78,6 +78,12 @@ For the browser runtime’s `ioIpcSab` segment (created by
 The `NET_TX`/`NET_RX` rings are separate from the command/event rings so bulk frame traffic does not
 starve low-latency device operations.
 
+For Rust/WASM, the same kind numbers are also exposed as:
+
+```rust
+use aero_ipc::layout::io_ipc_queue_kind::{CMD, EVT, NET_TX, NET_RX};
+```
+
 #### NET_TX / NET_RX semantics
 
 These queues carry **one Ethernet frame per record** (no additional framing; the record payload is

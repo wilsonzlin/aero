@@ -12,7 +12,9 @@ export type MicBridgeHandle = {
 export type SharedRingBufferHandle = {
     capacity_bytes(): number;
     try_push(payload: Uint8Array): boolean;
-    try_pop(): Uint8Array | null;
+    // wasm-bindgen represents `Option<Uint8Array>` as `undefined` in most builds,
+    // but older bindings or manual shims may use `null`. Accept both.
+    try_pop(): Uint8Array | null | undefined;
     wait_for_data(): void;
     push_blocking(payload: Uint8Array): void;
     pop_blocking(): Uint8Array;
