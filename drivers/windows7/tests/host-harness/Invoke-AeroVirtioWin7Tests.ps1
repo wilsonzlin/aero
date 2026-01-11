@@ -73,11 +73,11 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$VerifyVirtioSndWav,
 
-  # Peak absolute sample threshold for VerifyVirtioSndWav (16-bit PCM).
+  # Peak absolute sample threshold for VerifyVirtioSndWav (16-bit PCM units; used as a reference scale).
   [Parameter(Mandatory = $false)]
   [int]$VirtioSndWavPeakThreshold = 200,
 
-  # RMS threshold for VerifyVirtioSndWav (16-bit PCM).
+  # RMS threshold for VerifyVirtioSndWav (16-bit PCM units; used as a reference scale).
   [Parameter(Mandatory = $false)]
   [int]$VirtioSndWavRmsThreshold = 50,
 
@@ -423,6 +423,7 @@ function Invoke-AeroVirtioSndWavVerification {
       $sampleRate = 0
       $blockAlign = 0
       $bitsPerSample = 0
+      $subformatHex = ""
       $dataOffset = 0L
       $dataSize = 0L
 
@@ -444,8 +445,21 @@ function Invoke-AeroVirtioSndWavVerification {
           $blockAlign = [int]$br.ReadUInt16()
           $bitsPerSample = [int]$br.ReadUInt16()
           $fmtFound = $true
-          $skip = $chunkSize - 16
-          if ($skip -gt 0) { $fs.Seek($skip, [System.IO.SeekOrigin]::Current) | Out-Null }
+          # WAVE_FORMAT_EXTENSIBLE appends an extension that contains the SubFormat GUID.
+          if ($formatTag -eq 0xFFFE -and $chunkSize -ge 40) {
+            $null = $br.ReadUInt16() # cbSize
+            $null = $br.ReadUInt16() # valid bits per sample
+            $null = $br.ReadUInt32() # channel mask
+            $sub = $br.ReadBytes(16)
+            if ($sub.Length -eq 16) {
+              $subformatHex = ([System.BitConverter]::ToString($sub).Replace("-", "").ToLowerInvariant())
+            }
+            $skip = $chunkSize - 40
+            if ($skip -gt 0) { $fs.Seek($skip, [System.IO.SeekOrigin]::Current) | Out-Null }
+          } else {
+            $skip = $chunkSize - 16
+            if ($skip -gt 0) { $fs.Seek($skip, [System.IO.SeekOrigin]::Current) | Out-Null }
+          }
         } elseif ($chunkId -eq "data") {
           # If QEMU is killed hard, it may never rewrite the data chunk size (placeholder 0).
           # Recover by treating the rest of the file as audio data when it doesn't look like another chunk header.
@@ -490,11 +504,37 @@ function Invoke-AeroVirtioSndWavVerification {
       if (-not $fmtFound) { throw "missing fmt chunk" }
       if (-not $dataFound) { throw "missing data chunk" }
 
-      if ($formatTag -ne 1) {
+      $pcmGuidHex = "0100000000001000800000aa00389b71"
+      $floatGuidHex = "0300000000001000800000aa00389b71"
+
+      $kind = ""
+      if ($formatTag -eq 1) {
+        $kind = "pcm"
+      } elseif ($formatTag -eq 3) {
+        $kind = "float"
+      } elseif ($formatTag -eq 0xFFFE) {
+        if ([string]::IsNullOrEmpty($subformatHex)) {
+          Write-Host "$markerPrefix|FAIL|reason=unsupported_extensible_missing_subformat"
+          return $false
+        }
+        if ($subformatHex -eq $pcmGuidHex) {
+          $kind = "pcm"
+        } elseif ($subformatHex -eq $floatGuidHex) {
+          $kind = "float"
+        } else {
+          Write-Host "$markerPrefix|FAIL|reason=unsupported_extensible_subformat_$(Sanitize-AeroMarkerValue $subformatHex)"
+          return $false
+        }
+      } else {
         Write-Host "$markerPrefix|FAIL|reason=unsupported_format_tag_$formatTag"
         return $false
       }
-      if ($bitsPerSample -ne 16) {
+
+      if ($kind -eq "pcm" -and ($bitsPerSample -ne 8 -and $bitsPerSample -ne 16 -and $bitsPerSample -ne 24 -and $bitsPerSample -ne 32)) {
+        Write-Host "$markerPrefix|FAIL|reason=unsupported_bits_per_sample_$bitsPerSample"
+        return $false
+      }
+      if ($kind -eq "float" -and $bitsPerSample -ne 32) {
         Write-Host "$markerPrefix|FAIL|reason=unsupported_bits_per_sample_$bitsPerSample"
         return $false
       }
@@ -504,12 +544,13 @@ function Invoke-AeroVirtioSndWavVerification {
       }
 
       $fs.Seek($dataOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
-      $peak = 0
+      $peakF = 0.0
       $sumSq = 0.0
       $sampleValues = 0L
       $remainingData = $dataSize
       $buf = New-Object byte[] 65536
       $carry = $null
+      $sampleBytes = [int]($bitsPerSample / 8)
 
       while ($remainingData -gt 0) {
         $toRead = [int][Math]::Min($buf.Length, $remainingData)
@@ -517,34 +558,60 @@ function Invoke-AeroVirtioSndWavVerification {
         if ($n -le 0) { break }
         $remainingData -= $n
 
-        $start = 0
+        # Build a contiguous byte[] for the current chunk (plus any carry from the previous read).
         if ($null -ne $carry) {
-          if ($n -ge 1) {
-            $val = ([int]$carry) -bor (([int]$buf[0]) -shl 8)
-            if ($val -ge 0x8000) { $val -= 0x10000 }
-            $absVal = if ($val -lt 0) { -$val } else { $val }
-            if ($absVal -gt $peak) { $peak = $absVal }
-            $sumSq += [double]($val * $val)
-            $sampleValues++
-            $start = 1
-            $carry = $null
-          } else {
-            break
+          $data = New-Object byte[] ($carry.Length + $n)
+          [System.Buffer]::BlockCopy($carry, 0, $data, 0, $carry.Length)
+          [System.Buffer]::BlockCopy($buf, 0, $data, $carry.Length, $n)
+          $carry = $null
+        } else {
+          $data = New-Object byte[] $n
+          [System.Buffer]::BlockCopy($buf, 0, $data, 0, $n)
+        }
+
+        $dataLen = $data.Length
+        if ($dataLen -le 0) { continue }
+
+        $limit = ($dataLen / $sampleBytes) * $sampleBytes
+        if ($limit -le 0) {
+          $carry = $data
+          continue
+        }
+
+        $rem = $dataLen - $limit
+        if ($rem -gt 0) {
+          $carry = New-Object byte[] $rem
+          [System.Buffer]::BlockCopy($data, $limit, $carry, 0, $rem)
+        }
+
+        for ($i = 0; $i -lt $limit; $i += $sampleBytes) {
+          $v = 0.0
+          if ($kind -eq "pcm") {
+            if ($bitsPerSample -eq 8) {
+              $raw = ([int]$data[$i]) - 128
+              $v = ([double]$raw / 128.0) * 32767.0
+            } elseif ($bitsPerSample -eq 16) {
+              $val = ([int]$data[$i]) -bor (([int]$data[$i + 1]) -shl 8)
+              if ($val -ge 0x8000) { $val -= 0x10000 }
+              $v = [double]$val
+            } elseif ($bitsPerSample -eq 24) {
+              $val = ([int]$data[$i]) -bor (([int]$data[$i + 1]) -shl 8) -bor (([int]$data[$i + 2]) -shl 16)
+              if (($val -band 0x800000) -ne 0) { $val -= 0x1000000 }
+              $v = ([double]$val / 8388608.0) * 32767.0
+            } elseif ($bitsPerSample -eq 32) {
+              $val = [System.BitConverter]::ToInt32($data, $i)
+              $v = ([double]$val / 2147483648.0) * 32767.0
+            }
+          } elseif ($kind -eq "float") {
+            $f = [System.BitConverter]::ToSingle($data, $i)
+            if ([double]::IsNaN($f) -or [double]::IsInfinity($f)) { continue }
+            $v = ([double]$f) * 32767.0
           }
-        }
 
-        $limit = $start + (($n - $start) / 2) * 2
-        for ($i = $start; $i -lt $limit; $i += 2) {
-          $val = ([int]$buf[$i]) -bor (([int]$buf[$i + 1]) -shl 8)
-          if ($val -ge 0x8000) { $val -= 0x10000 }
-          $absVal = if ($val -lt 0) { -$val } else { $val }
-          if ($absVal -gt $peak) { $peak = $absVal }
-          $sumSq += [double]($val * $val)
+          $absVal = if ($v -lt 0.0) { -$v } else { $v }
+          if ($absVal -gt $peakF) { $peakF = $absVal }
+          $sumSq += ($v * $v)
           $sampleValues++
-        }
-
-        if ($limit -lt $n) {
-          $carry = $buf[$limit]
         }
       }
 
@@ -552,6 +619,7 @@ function Invoke-AeroVirtioSndWavVerification {
       $rmsI = [int][Math]::Round($rms)
       $frames = if ($channels -gt 0) { [long]($sampleValues / $channels) } else { [long]$sampleValues }
 
+      $peak = [int][Math]::Round($peakF)
       if ($peak -gt $PeakThreshold -or $rms -gt $RmsThreshold) {
         Write-Host "$markerPrefix|PASS|peak=$peak|rms=$rmsI|samples=$frames|sr=$sampleRate|ch=$channels"
         return $true

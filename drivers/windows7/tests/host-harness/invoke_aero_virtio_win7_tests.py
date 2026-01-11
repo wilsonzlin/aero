@@ -101,6 +101,9 @@ class _WaveFmtChunk:
     sample_rate: int
     block_align: int
     bits_per_sample: int
+    # When format_tag is WAVE_FORMAT_EXTENSIBLE (0xFFFE), the fmt chunk also carries a
+    # 16-byte SubFormat GUID that indicates the underlying sample type (PCM vs IEEE float).
+    subformat: Optional[bytes] = None
 
 
 @dataclass(frozen=True)
@@ -309,7 +312,8 @@ def main() -> int:
         "--virtio-snd-verify-wav",
         action="store_true",
         help=(
-            "After QEMU exits, verify the captured wav file contains non-silent 16-bit PCM "
+            "After QEMU exits, verify the captured wav file contains non-silent audio "
+            "(thresholds are expressed in 16-bit PCM units) "
             "(requires --enable-virtio-snd and --virtio-snd-audio-backend=wav)"
         ),
     )
@@ -317,13 +321,13 @@ def main() -> int:
         "--virtio-snd-wav-peak-threshold",
         type=int,
         default=200,
-        help="Peak absolute sample threshold for --virtio-snd-verify-wav (default: 200)",
+        help="Peak absolute sample threshold for --virtio-snd-verify-wav in 16-bit PCM units (default: 200)",
     )
     parser.add_argument(
         "--virtio-snd-wav-rms-threshold",
         type=int,
         default=50,
-        help="RMS threshold for --virtio-snd-verify-wav (default: 50)",
+        help="RMS threshold for --virtio-snd-verify-wav in 16-bit PCM units (default: 50)",
     )
     parser.add_argument(
         "--follow-serial",
@@ -994,15 +998,26 @@ def _parse_wave_file(path: Path) -> _WaveFileInfo:
                     n_block_align,
                     w_bits_per_sample,
                 ) = struct.unpack("<HHIIHH", fmt_head)
+                subformat: Optional[bytes] = None
+                # WAVE_FORMAT_EXTENSIBLE (0xFFFE) appends the SubFormat GUID after the base
+                # WAVEFORMATEX fields (common for tools that always emit extensible WAV).
+                if w_format_tag == 0xFFFE and chunk_size >= 40:
+                    ext = f.read(24)
+                    if len(ext) < 24:
+                        raise ValueError("truncated fmt extensible chunk")
+                    subformat = ext[8:24]
+                    if chunk_size > 40:
+                        f.seek(chunk_size - 40, os.SEEK_CUR)
+                elif chunk_size > 16:
+                    f.seek(chunk_size - 16, os.SEEK_CUR)
                 fmt = _WaveFmtChunk(
                     format_tag=w_format_tag,
                     channels=n_channels,
                     sample_rate=n_samples_per_sec,
                     block_align=n_block_align,
                     bits_per_sample=w_bits_per_sample,
+                    subformat=subformat,
                 )
-                if chunk_size > 16:
-                    f.seek(chunk_size - 16, os.SEEK_CUR)
             elif chunk_id == b"data":
                 # QEMU normally finalizes the data chunk size on graceful exit. If QEMU is killed hard, it
                 # may leave a placeholder (0). Recover by treating the rest of the file as audio data when it
@@ -1079,6 +1094,106 @@ def _compute_pcm16_metrics(path: Path, data_offset: int, data_size: int) -> tupl
     return peak, rms, count
 
 
+def _compute_wave_metrics_16bit_equiv(
+    path: Path, data_offset: int, data_size: int, *, kind: str, bits_per_sample: int
+) -> tuple[int, float, int]:
+    """
+    Compute peak/RMS in 16-bit PCM-equivalent units.
+
+    The harness thresholds are specified in 16-bit sample units (0..32767). QEMU's wav backend is
+    usually 16-bit PCM, but some builds emit WAVE_FORMAT_EXTENSIBLE (and potentially IEEE float).
+    This helper keeps verification deterministic across those variants by converting to a 16-bit
+    equivalent scale.
+    """
+    if kind == "pcm" and bits_per_sample == 16:
+        return _compute_pcm16_metrics(path, data_offset, data_size)
+
+    if bits_per_sample <= 0 or bits_per_sample % 8 != 0:
+        raise ValueError(f"unsupported bits_per_sample {bits_per_sample}")
+
+    sample_bytes = bits_per_sample // 8
+    peak_f = 0.0
+    sum_sq = 0.0
+    count = 0
+
+    with path.open("rb") as f:
+        f.seek(data_offset)
+        remaining = data_size
+        carry = b""
+
+        while remaining > 0:
+            chunk = f.read(min(remaining, 1024 * 1024))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+
+            if carry:
+                chunk = carry + chunk
+                carry = b""
+
+            rem = len(chunk) % sample_bytes
+            if rem:
+                carry = chunk[-rem:]
+                chunk = chunk[:-rem]
+            if not chunk:
+                continue
+
+            mv = memoryview(chunk)
+
+            if kind == "pcm":
+                if bits_per_sample == 8:
+                    # 8-bit PCM is unsigned; silence is 0x80.
+                    for b in mv:
+                        s = float(int(b) - 128) / 128.0  # approx [-1.0, 1.0)
+                        v = s * 32767.0
+                        av = -v if v < 0.0 else v
+                        if av > peak_f:
+                            peak_f = av
+                        sum_sq += v * v
+                    count += len(mv)
+                elif bits_per_sample == 24:
+                    denom = float(1 << 23)
+                    for i in range(0, len(mv), 3):
+                        raw = int.from_bytes(mv[i : i + 3], "little", signed=True)
+                        v = (float(raw) / denom) * 32767.0
+                        av = -v if v < 0.0 else v
+                        if av > peak_f:
+                            peak_f = av
+                        sum_sq += v * v
+                        count += 1
+                elif bits_per_sample == 32:
+                    denom = float(1 << 31)
+                    for i in range(0, len(mv), 4):
+                        raw = int.from_bytes(mv[i : i + 4], "little", signed=True)
+                        v = (float(raw) / denom) * 32767.0
+                        av = -v if v < 0.0 else v
+                        if av > peak_f:
+                            peak_f = av
+                        sum_sq += v * v
+                        count += 1
+                else:
+                    raise ValueError(f"unsupported PCM bits_per_sample {bits_per_sample}")
+            elif kind == "float":
+                if bits_per_sample != 32:
+                    raise ValueError(f"unsupported float bits_per_sample {bits_per_sample}")
+                for i in range(0, len(mv), 4):
+                    (raw_f,) = struct.unpack_from("<f", mv, i)
+                    if not math.isfinite(raw_f):
+                        continue
+                    v = float(raw_f) * 32767.0
+                    av = -v if v < 0.0 else v
+                    if av > peak_f:
+                        peak_f = av
+                    sum_sq += v * v
+                    count += 1
+            else:
+                raise ValueError(f"unknown wav sample kind {kind}")
+
+    peak = int(round(peak_f))
+    rms = math.sqrt(sum_sq / count) if count else 0.0
+    return peak, rms, count
+
+
 def _sanitize_marker_value(value: str) -> str:
     return value.replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
 
@@ -1097,17 +1212,45 @@ def _verify_virtio_snd_wav_non_silent(path: Path, *, peak_threshold: int, rms_th
         info = _parse_wave_file(path)
         fmt = info.fmt
 
-        if fmt.format_tag != 1:
+        # WAVE_FORMAT_EXTENSIBLE SubFormat GUIDs (little-endian GUID struct layout).
+        k_subformat_pcm = b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"
+        k_subformat_float = b"\x03\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"
+
+        kind: Optional[str] = None
+        if fmt.format_tag == 1:  # WAVE_FORMAT_PCM
+            kind = "pcm"
+        elif fmt.format_tag == 3:  # WAVE_FORMAT_IEEE_FLOAT
+            kind = "float"
+        elif fmt.format_tag == 0xFFFE:  # WAVE_FORMAT_EXTENSIBLE
+            if fmt.subformat == k_subformat_pcm:
+                kind = "pcm"
+            elif fmt.subformat == k_subformat_float:
+                kind = "float"
+            elif fmt.subformat is None:
+                print(f"{marker_prefix}|FAIL|reason=unsupported_extensible_missing_subformat")
+                return False
+            else:
+                sub = _sanitize_marker_value(fmt.subformat.hex())
+                print(f"{marker_prefix}|FAIL|reason=unsupported_extensible_subformat_{sub}")
+                return False
+        else:
             print(f"{marker_prefix}|FAIL|reason=unsupported_format_tag_{fmt.format_tag}")
             return False
-        if fmt.bits_per_sample != 16:
+
+        if kind == "pcm" and fmt.bits_per_sample not in (8, 16, 24, 32):
+            print(f"{marker_prefix}|FAIL|reason=unsupported_bits_per_sample_{fmt.bits_per_sample}")
+            return False
+        if kind == "float" and fmt.bits_per_sample != 32:
             print(f"{marker_prefix}|FAIL|reason=unsupported_bits_per_sample_{fmt.bits_per_sample}")
             return False
         if info.data_size <= 0:
             print(f"{marker_prefix}|FAIL|reason=missing_or_empty_data_chunk")
             return False
 
-        peak, rms, sample_values = _compute_pcm16_metrics(path, info.data_offset, info.data_size)
+        assert kind is not None
+        peak, rms, sample_values = _compute_wave_metrics_16bit_equiv(
+            path, info.data_offset, info.data_size, kind=kind, bits_per_sample=fmt.bits_per_sample
+        )
         rms_i = int(round(rms))
         frames = sample_values // fmt.channels if fmt.channels else sample_values
 

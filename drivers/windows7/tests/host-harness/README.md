@@ -11,7 +11,9 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
   - Windows PowerShell 5.1 or PowerShell 7+ should work
 - A **prepared Windows 7 image** that:
   - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input, modern-only)
-  - optionally has virtio-snd installed if you enable the guest virtio-snd playback test (`--test-snd` / `--require-snd`)
+  - has virtio-snd installed if you intend to test audio
+    - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present
+    - use `--disable-snd` to skip virtio-snd testing, or `--test-snd` / `--require-snd` to fail if the device is missing
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
   - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
@@ -172,8 +174,8 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 
 Notes:
 
-- Verification requires the **guest virtio-snd selftest** to actually run (use an image provisioned with the virtio-snd
-  driver and do not disable virtio-snd via `--disable-snd`).
+- Verification requires the **guest virtio-snd driver** to be installed, and the guest selftest must not skip virtio-snd
+  via `--disable-snd`. (When a virtio-snd PCI device is present, the selftest runs playback automatically.)
 - The harness prints a single-line marker suitable for log scraping:
   `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV|PASS|...` or `...|FAIL|reason=<...>`.
 

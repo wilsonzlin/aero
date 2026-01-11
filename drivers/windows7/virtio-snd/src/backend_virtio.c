@@ -311,10 +311,14 @@ VirtIoSndBackendVirtio_WritePeriod(
         status = VirtIoSndHwSubmitTxSg(dx, segments, segmentCount);
         if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
             /*
-             * No buffers available right now. Treat as a dropped period so the WaveRT engine
-             * can keep moving; the host side is expected to output silence on underrun.
+             * No buffers available right now.
+             *
+             * Do not claim success here: the WaveRT miniport uses the return status to decide
+             * whether to advance its submission pointer. Returning STATUS_SUCCESS would make
+             * the driver skip PCM periods silently, which in turn can lead to host-side wav
+             * captures that are entirely silent while guest-side audio APIs appear to succeed.
              */
-            return STATUS_SUCCESS;
+            return STATUS_DEVICE_BUSY;
         }
     }
 

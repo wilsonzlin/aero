@@ -3604,7 +3604,16 @@ int wmain(int argc, wchar_t** argv) {
            input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
            input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
-  const bool want_snd_playback = opt.require_snd;
+  // virtio-snd:
+  //
+  // The host harness can optionally attach a virtio-snd PCI function. When the device is present,
+  // exercise the playback path automatically so audio regressions are caught even if the image
+  // runs the selftest without `--test-snd`. Use `--disable-snd` to skip all virtio-snd testing, or
+  // `--test-snd/--require-snd` to fail if the device is missing.
+  const auto snd_pci =
+      opt.disable_snd ? std::vector<VirtioSndPciDevice>{}
+                      : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
+  const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
   const bool want_snd_capture =
       opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence || want_snd_playback;
 
@@ -3622,7 +3631,6 @@ int wmain(int argc, wchar_t** argv) {
       log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
     }
 
-    const auto snd_pci = DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
     if (snd_pci.empty()) {
       if (opt.allow_virtio_snd_transitional) {
         log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 (or legacy DEV_1018) device not detected");
