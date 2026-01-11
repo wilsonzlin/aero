@@ -1,7 +1,13 @@
 export class ConnectionCounter {
   private active = 0;
+  private readonly maxConnections: number;
 
-  constructor(private readonly maxConnections: number) {}
+  // NOTE: This file is executed directly by Node's `--experimental-strip-types`
+  // loader in unit tests. Node's "strip-only" TypeScript support does not handle
+  // TS parameter properties, so we declare fields explicitly.
+  constructor(maxConnections: number) {
+    this.maxConnections = maxConnections;
+  }
 
   getActive(): number {
     return this.active;

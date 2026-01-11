@@ -31,13 +31,16 @@ function wsCloseSafe(ws: WebSocket, code: number, reason: string): void {
 
 function respondHttp(socket: Duplex, status: number, message: string): void {
   const body = `${message}\n`;
+  // NOTE: Be careful to emit exactly one empty line between headers and body.
+  // Adding extra `\r\n` bytes would make `Content-Length` incorrect and can
+  // cause WebSocket clients to report parse errors for `unexpected-response`.
   socket.end(
     [
       `HTTP/1.1 ${status} ${httpStatusText(status)}`,
       "Content-Type: text/plain; charset=utf-8",
       `Content-Length: ${Buffer.byteLength(body)}`,
       "Connection: close",
-      "\r\n",
+      "",
       body,
     ].join("\r\n"),
   );
