@@ -10,6 +10,10 @@
 #define PCI_BUS_INTERFACE_STANDARD_VERSION 1
 #endif
 
+#ifndef PCI_WHICHSPACE_CONFIG
+#define PCI_WHICHSPACE_CONFIG 0
+#endif
+
 static NTSTATUS
 VirtIoSndPciInterfaceSyncCompletionRoutine(
     _In_ PDEVICE_OBJECT DeviceObject,
@@ -125,7 +129,7 @@ VirtIoSndPciReadConfig(PPCI_BUS_INTERFACE_STANDARD Iface, PVOID Buffer, ULONG Of
         return 0;
     }
 
-    return Iface->ReadConfig(Iface->Context, Offset, Buffer, Length);
+    return Iface->ReadConfig(Iface->Context, PCI_WHICHSPACE_CONFIG, Buffer, Offset, Length);
 }
 
 _Use_decl_annotations_
@@ -136,5 +140,5 @@ VirtIoSndPciWriteConfig(PPCI_BUS_INTERFACE_STANDARD Iface, PVOID Buffer, ULONG O
         return 0;
     }
 
-    return Iface->WriteConfig(Iface->Context, Offset, Buffer, Length);
+    return Iface->WriteConfig(Iface->Context, PCI_WHICHSPACE_CONFIG, Buffer, Offset, Length);
 }
