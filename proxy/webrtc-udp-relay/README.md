@@ -193,7 +193,12 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 ## L2 tunnel bridging (optional)
 
 The relay can also bridge a WebRTC DataChannel labeled `l2` to a backend WebSocket
-endpoint (typically `aero-l2-proxy`):
+endpoint (typically `aero-l2-proxy`).
+
+The `l2` DataChannel must be **fully reliable and ordered**:
+
+- `ordered = true`
+- do **not** set `maxRetransmits` / `maxPacketLifeTime` (partial reliability)
 
 ```
 browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
@@ -295,7 +300,7 @@ The service supports configuration via environment variables and equivalent flag
 
 ### L2 tunnel bridging (env + flags)
 
-When clients create a **reliable** WebRTC DataChannel labeled `l2`, the relay can bridge it to a
+When clients create a **reliable and ordered** WebRTC DataChannel labeled `l2`, the relay can bridge it to a
 backend WebSocket (typically `aero-l2-proxy`) that speaks subprotocol `aero-l2-tunnel-v1`.
 
 Env vars / flags:
