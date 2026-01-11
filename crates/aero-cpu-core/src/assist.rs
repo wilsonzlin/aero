@@ -173,7 +173,9 @@ fn exec_decoded<B: CpuBus>(
         | Mnemonic::Into
         | Mnemonic::Iret
         | Mnemonic::Iretd
-        | Mnemonic::Iretq => Err(Exception::Unimplemented("interrupt assist requires CpuCore")),
+        | Mnemonic::Iretq => Err(Exception::Unimplemented(
+            "interrupt assist requires CpuCore",
+        )),
         Mnemonic::Mov => {
             instr_mov_privileged(ctx, state, bus, instr, next_ip_raw)?;
             Ok(())
@@ -829,7 +831,6 @@ fn set_real_mode_seg(seg: &mut crate::state::Segment, selector: u16) {
     seg.limit = 0xFFFF;
     seg.access = 0;
 }
-
 
 // -------------------------------------------------------------------------------------------------
 // Privileged MOV / POP / segment loads

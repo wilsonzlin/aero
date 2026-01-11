@@ -1,10 +1,10 @@
 use super::{exec_decoded, ExecOutcome, Tier0Config};
 use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext};
 use crate::exception::{AssistReason, Exception};
+use crate::interrupts;
 use crate::interrupts::CpuCore;
 use crate::linear_mem::fetch_wrapped;
 use crate::mem::CpuBus;
-use crate::interrupts;
 use crate::state::CpuState;
 use aero_x86::Register;
 
@@ -470,7 +470,8 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
             Ok(v) => v,
             Err(e) => {
                 if matches!(e, Exception::InvalidOpcode) && is_x87_opcode(&bytes, bitness) {
-                    if let Err(fp_e) = super::check_fp_available(&cpu.state, crate::fpu::FpKind::X87)
+                    if let Err(fp_e) =
+                        super::check_fp_available(&cpu.state, crate::fpu::FpKind::X87)
                     {
                         cpu.state.apply_exception_side_effects(&fp_e);
                         return BatchResult {
@@ -570,12 +571,11 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
                     }
                 }
 
-                let inhibits_interrupt = matches!(
-                    decoded.instr.mnemonic(),
-                    Mnemonic::Mov | Mnemonic::Pop
-                ) && decoded.instr.op_count() > 0
-                    && decoded.instr.op_kind(0) == OpKind::Register
-                    && decoded.instr.op0_register() == Register::SS;
+                let inhibits_interrupt =
+                    matches!(decoded.instr.mnemonic(), Mnemonic::Mov | Mnemonic::Pop)
+                        && decoded.instr.op_count() > 0
+                        && decoded.instr.op_kind(0) == OpKind::Register
+                        && decoded.instr.op0_register() == Register::SS;
 
                 if let Err(e) = handle_assist_decoded(
                     ctx,

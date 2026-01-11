@@ -632,8 +632,13 @@ impl Machine {
                 io: &mut self.io,
             };
 
-            let batch =
-                run_batch_cpu_core_with_assists(&cfg, &mut self.assist, &mut self.cpu, &mut bus, remaining);
+            let batch = run_batch_cpu_core_with_assists(
+                &cfg,
+                &mut self.assist,
+                &mut self.cpu,
+                &mut bus,
+                remaining,
+            );
             executed = executed.saturating_add(batch.executed);
 
             match batch.exit {

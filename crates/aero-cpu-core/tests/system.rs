@@ -3,9 +3,7 @@ use aero_cpu_core::cpuid::{cpuid, CpuFeatures};
 use aero_cpu_core::interp::tier0::exec::{step, StepExit};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::msr;
-use aero_cpu_core::state::{
-    CpuMode, CpuState, CR0_PE, RFLAGS_IF, RFLAGS_RESERVED1,
-};
+use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE, RFLAGS_IF, RFLAGS_RESERVED1};
 use aero_cpu_core::time::TimeSource;
 use aero_cpu_core::{AssistReason, Exception};
 use aero_x86::Register;
@@ -630,7 +628,8 @@ fn cli_sti_are_privileged_by_iopl() {
     {
         let mut cpu = aero_cpu_core::interrupts::CpuCore::new(CpuMode::Bit32);
         cpu.state.segments.cs.selector = 0x23; // CPL3
-        cpu.state.set_rflags((RFLAGS_RESERVED1 | RFLAGS_IF) | (3u64 << 12));
+        cpu.state
+            .set_rflags((RFLAGS_RESERVED1 | RFLAGS_IF) | (3u64 << 12));
         let outcome = exec_interrupt(&mut cpu, &[0xFA]); // CLI
         assert!(matches!(
             outcome,
