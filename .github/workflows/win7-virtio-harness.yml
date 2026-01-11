@@ -171,4 +171,5 @@ jobs:
             echo "- Harness step: ${{ steps.harness.outcome }}"
             echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
             echo "- Logs artifact: win7-virtio-harness-logs"
+            echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } >>"$GITHUB_STEP_SUMMARY"
