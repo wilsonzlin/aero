@@ -53,6 +53,10 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Best-effort: unmute the selected render endpoint, set its master volume to a non-trivial level, and
     set the per-session volume to 100% (so host-side wav capture is not accidentally silent due to a
     muted/zero-volume image or a muted per-application volume mixer entry).
+  - Debug note: the in-tree virtio-snd driver supports a per-device `ForceNullBackend` registry flag
+    (under the device’s `Device Parameters` key) that disables the virtio transport and routes the
+    endpoint through the null backend. This makes host-side wav capture silent; the selftest will emit
+    `...|FAIL|force_null_backend` if the flag is enabled.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
   - By default, if a supported virtio-snd PCI function is detected, the selftest exercises playback automatically.
     - If no supported device is detected, virtio-snd is reported as **SKIP**.
