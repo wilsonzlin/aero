@@ -113,6 +113,43 @@ export type RemoteDiskProbeResult = {
   contentRange: string;
 };
 
+class RemoteValidatorMismatchError extends Error {
+  constructor(readonly status: number) {
+    super(`remote validator mismatch (status=${status})`);
+  }
+}
+
+async function cancelBody(resp: Response): Promise<void> {
+  try {
+    await resp.body?.cancel();
+  } catch {
+    // ignore best-effort cancellation failures
+  }
+}
+
+function isWeakEtag(etag: string): boolean {
+  const trimmed = etag.trimStart();
+  return trimmed.startsWith("W/") || trimmed.startsWith("w/");
+}
+
+function validatorsMatch(expected: string, actual: string): boolean {
+  const e = expected.trim();
+  const a = actual.trim();
+
+  const eWeak = e.startsWith("W/") || e.startsWith("w/");
+  const aWeak = a.startsWith("W/") || a.startsWith("w/");
+
+  if (eWeak && aWeak) {
+    return e.slice(2).trimStart() === a.slice(2).trimStart();
+  }
+
+  return e === a;
+}
+
+function extractValidatorFromHeaders(headers: Headers): string | null {
+  return headers.get("etag") ?? headers.get("last-modified");
+}
+
 export async function probeRemoteDisk(
   url: string,
   opts: { credentials?: RequestCredentials } = {},
@@ -375,6 +412,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private cacheGeneration = 0;
   private idbCache: IdbRemoteChunkCache | null = null;
   private readonly leaseRefresher: DiskAccessLeaseRefresher;
+  private remoteEtag: string | null = null;
+  private remoteLastModified: string | null = null;
+  private validatorReprobePromise: Promise<void> | null = null;
 
   private telemetry: RemoteDiskTelemetry = {
     blockRequests: 0,
@@ -473,6 +513,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     // Note: `cacheLimitBytes: null` means "unlimited cache", so `0` is the explicit disable signal.
     if (resolved.cacheLimitBytes === 0) {
       const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
+      disk.remoteEtag = probe.etag;
+      disk.remoteLastModified = probe.lastModified;
       disk.leaseRefresher.start();
       return disk;
     }
@@ -482,6 +524,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
     if (resolved.cacheBackend === "idb") {
       const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
+      disk.remoteEtag = probe.etag;
+      disk.remoteLastModified = probe.lastModified;
       disk.idbCache = await IdbRemoteChunkCache.open({
         cacheKey,
         signature: {
@@ -512,6 +556,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     });
 
     const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved, opfsCache);
+    disk.remoteEtag = probe.etag;
+    disk.remoteLastModified = probe.lastModified;
     const indices = await opfsCache.getChunkIndices();
     for (const idx of indices) {
       const r = disk.blockRange(idx);
@@ -599,29 +645,52 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       throw new Error("Read beyond end of image.");
     }
 
-    const startBlock = Math.floor(offset / this.blockSize);
-    const endBlock = Math.floor((offset + length - 1) / this.blockSize);
+    let invalidations = 0;
+    while (true) {
+      const generation = this.cacheGeneration;
+      const startBlock = Math.floor(offset / this.blockSize);
+      const endBlock = Math.floor((offset + length - 1) / this.blockSize);
 
-    // Batch-load cached blocks when using IndexedDB. This reduces IDB roundtrips when a read spans
-    // multiple blocks (e.g. large sequential reads).
-    if (this.cacheBackend === "idb" && this.idbCache && endBlock > startBlock) {
-      const indices: number[] = [];
-      for (let block = startBlock; block <= endBlock; block += 1) indices.push(block);
-      await this.idbCache.getMany(indices);
+      try {
+        // Batch-load cached blocks when using IndexedDB. This reduces IDB roundtrips when a read spans
+        // multiple blocks (e.g. large sequential reads).
+        if (this.cacheBackend === "idb" && this.idbCache && endBlock > startBlock) {
+          const indices: number[] = [];
+          for (let block = startBlock; block <= endBlock; block += 1) indices.push(block);
+          await this.idbCache.getMany(indices);
+        }
+
+        let written = 0;
+        for (let block = startBlock; block <= endBlock; block++) {
+          const bytes = await this.getBlock(block, onLog);
+          if (generation !== this.cacheGeneration) {
+            // The cache was invalidated while we were reading (clearCache or validator mismatch). Restart
+            // the read against the new cache generation.
+            break;
+          }
+          const blockStart = block * this.blockSize;
+          const inBlockStart = offset > blockStart ? offset - blockStart : 0;
+          const toCopy = Math.min(length - written, bytes.length - inBlockStart);
+          dest.set(bytes.subarray(inBlockStart, inBlockStart + toCopy), written);
+          written += toCopy;
+        }
+
+        if (generation !== this.cacheGeneration) {
+          continue;
+        }
+
+        // Prefetch is best-effort and should not delay the caller's read completion.
+        void this.maybePrefetch(offset, length, onLog).catch(() => {});
+        return;
+      } catch (err) {
+        if (err instanceof RemoteValidatorMismatchError && invalidations < 1) {
+          invalidations += 1;
+          await this.reprobeValidatorAndClearCache();
+          continue;
+        }
+        throw err;
+      }
     }
-
-    let written = 0;
-    for (let block = startBlock; block <= endBlock; block++) {
-      const bytes = await this.getBlock(block, onLog);
-      const blockStart = block * this.blockSize;
-      const inBlockStart = offset > blockStart ? offset - blockStart : 0;
-      const toCopy = Math.min(length - written, bytes.length - inBlockStart);
-      dest.set(bytes.subarray(inBlockStart, inBlockStart + toCopy), written);
-      written += toCopy;
-    }
-
-    // Prefetch is best-effort and should not delay the caller's read completion.
-    void this.maybePrefetch(offset, length, onLog).catch(() => {});
   }
 
   async read(offset: number, length: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
@@ -701,7 +770,11 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       if (block * this.blockSize >= this.totalSize) break;
       try {
         await this.getBlock(block, onLog);
-      } catch {
+      } catch (err) {
+        if (err instanceof RemoteValidatorMismatchError) {
+          await this.reprobeValidatorAndClearCache();
+          return;
+        }
         // best-effort prefetch
       }
     }
@@ -714,6 +787,10 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   private async getBlock(blockIndex: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
+    if (this.validatorReprobePromise) {
+      await this.validatorReprobePromise;
+    }
+
     this.telemetry.blockRequests++;
     if (this.cacheLimitBytes === 0) {
       return await this.getBlockNoCache(blockIndex, onLog);
@@ -760,19 +837,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         this.telemetry.lastFetchRange = { ...r };
       }
       onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
-      await this.maybeRefreshLease();
-      const resp = await fetchWithDiskAccessLease(
-        this.lease,
-        { headers: { Range: `bytes=${r.start}-${r.end - 1}` } },
-        { retryAuthOnce: true },
-      );
-      if (resp.status !== 206) {
-        throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
-      }
-      const buf = new Uint8Array(await resp.arrayBuffer());
-      if (buf.length !== r.end - r.start) {
-        throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
-      }
+      const buf = await this.fetchRange(r);
       // If the caller cleared the cache while this fetch was in-flight, allow the read to
       // complete but avoid repopulating the cache/telemetry for the new generation.
       if (fetchGeneration !== this.cacheGeneration) {
@@ -820,19 +885,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       this.telemetry.requests++;
       this.telemetry.lastFetchRange = { ...r };
       onLog?.(`fetching bytes=${r.start}-${r.end - 1}`);
-      await this.maybeRefreshLease();
-      const resp = await fetchWithDiskAccessLease(
-        this.lease,
-        { headers: { Range: `bytes=${r.start}-${r.end - 1}` } },
-        { retryAuthOnce: true },
-      );
-      if (resp.status !== 206) {
-        throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
-      }
-      const buf = new Uint8Array(await resp.arrayBuffer());
-      if (buf.length !== r.end - r.start) {
-        throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
-      }
+      const buf = await this.fetchRange(r);
 
       if (generation !== this.cacheGeneration) {
         return buf;
@@ -892,19 +945,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         this.telemetry.lastFetchRange = { ...r };
       }
       onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
-      await this.maybeRefreshLease();
-      const resp = await fetchWithDiskAccessLease(
-        this.lease,
-        { headers: { Range: `bytes=${r.start}-${r.end - 1}` } },
-        { retryAuthOnce: true },
-      );
-      if (resp.status !== 206) {
-        throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
-      }
-      const buf = new Uint8Array(await resp.arrayBuffer());
-      if (buf.length !== r.end - r.start) {
-        throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
-      }
+      const buf = await this.fetchRange(r);
 
       if (generation !== this.cacheGeneration) {
         return buf;
@@ -935,6 +976,111 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     const refreshAtMs = expiresAt.getTime() - this.leaseRefreshMarginMs;
     if (!Number.isFinite(refreshAtMs) || Date.now() < refreshAtMs) return;
     await this.lease.refresh();
+  }
+
+  private expectedValidator(): string | null {
+    return this.remoteEtag ?? this.remoteLastModified;
+  }
+
+  private ifRangeHeaderValue(): string | null {
+    if (this.remoteEtag && !isWeakEtag(this.remoteEtag)) {
+      return this.remoteEtag;
+    }
+    return this.remoteLastModified;
+  }
+
+  private async fetchRange(r: ByteRange): Promise<Uint8Array> {
+    const expectedLen = r.end - r.start;
+    const headers: Record<string, string> = {
+      Range: `bytes=${r.start}-${r.end - 1}`,
+    };
+
+    const ifRange = this.ifRangeHeaderValue();
+    if (ifRange) headers["If-Range"] = ifRange;
+
+    const expectedValidator = this.expectedValidator();
+
+    await this.maybeRefreshLease();
+    const resp = await fetchWithDiskAccessLease(this.lease, { headers }, { retryAuthOnce: true });
+
+    if (resp.status === 200 || resp.status === 412) {
+      await cancelBody(resp);
+      // A server will return 200 (full representation) when an If-Range validator does not match.
+      // Some implementations use 412 instead. Avoid mislabeling: only treat 200 as a mismatch when
+      // the response provides a validator that differs from what we expected.
+      if (ifRange && expectedValidator) {
+        if (resp.status === 412) {
+          throw new RemoteValidatorMismatchError(resp.status);
+        }
+        const actual = extractValidatorFromHeaders(resp.headers);
+        if (actual && !validatorsMatch(expectedValidator, actual)) {
+          throw new RemoteValidatorMismatchError(resp.status);
+        }
+      }
+      throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
+    }
+
+    if (resp.status !== 206) {
+      await cancelBody(resp);
+      throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
+    }
+
+    // Servers that don't implement If-Range may still return 206 after the representation has
+    // changed. When the response includes a validator (ETag / Last-Modified), detect mismatches to
+    // avoid mixing bytes from different versions under one cache identity.
+    if (expectedValidator) {
+      const actual = extractValidatorFromHeaders(resp.headers);
+      if (actual && !validatorsMatch(expectedValidator, actual)) {
+        await cancelBody(resp);
+        throw new RemoteValidatorMismatchError(206);
+      }
+    }
+
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    if (buf.length !== expectedLen) {
+      throw new Error(`Unexpected range length: expected ${expectedLen}, got ${buf.length}`);
+    }
+    return buf;
+  }
+
+  private async reprobeValidatorAndClearCache(): Promise<void> {
+    if (this.validatorReprobePromise) {
+      return await this.validatorReprobePromise;
+    }
+
+    this.validatorReprobePromise = (async () => {
+      // Invalidate local caches to avoid mixing old and new bytes under one identity.
+      this.cacheGeneration += 1;
+      this.rangeSet = new RangeSet();
+      this.cachedBytes = 0;
+      this.lastReadEnd = null;
+      this.inflight.clear();
+
+      if (this.cacheLimitBytes !== 0) {
+        if (this.cacheBackend === "idb") {
+          await this.idbCache?.clear();
+        } else {
+          await this.opfsCache?.clear();
+        }
+      }
+
+      await this.maybeRefreshLease();
+      const probe = await probeRemoteDisk(this.lease.url, { credentials: this.lease.credentialsMode });
+      if (!probe.partialOk) {
+        throw new Error(`Remote server ignored Range probe (expected 206, got ${probe.rangeProbeStatus})`);
+      }
+      if (probe.size !== this.totalSize) {
+        throw new Error(`Remote disk size mismatch: expected=${this.totalSize} actual=${probe.size}`);
+      }
+      this.remoteEtag = probe.etag;
+      this.remoteLastModified = probe.lastModified;
+    })();
+
+    try {
+      await this.validatorReprobePromise;
+    } finally {
+      this.validatorReprobePromise = null;
+    }
   }
 
   // OPFS cache eviction is handled by `OpfsLruChunkCache` during `putChunk()`.
