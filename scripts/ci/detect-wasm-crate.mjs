@@ -6,8 +6,8 @@
  * selection across CI and local tooling.
  *
  * Output (stdout): key=value lines
- * - dir=<crate dir>            (relative to repo root when possible)
- * - manifest_path=<Cargo.toml> (relative to repo root when possible)
+ * - dir=<crate dir>            (relative to repo root when possible; when `--root` is used, relative to cwd)
+ * - manifest_path=<Cargo.toml> (relative to repo root when possible; when `--root` is used, relative to cwd)
  * - crate_name=<cargo package name>
  *
  * Logs are written to stderr.
@@ -25,6 +25,7 @@ function usageAndExit() {
             "Usage: detect-wasm-crate.mjs [options]",
             "",
             "Options:",
+            "  --root <dir>             Checkout root directory to search (default: the repo containing this script).",
             "  --wasm-crate-dir <path>  Override crate directory (same as AERO_WASM_CRATE_DIR; legacy: AERO_WASM_DIR).",
             "  --allow-missing          Exit 0 with empty outputs when no crate is found.",
             "  --github-output <path>   Append outputs to the given GitHub output file.",
@@ -43,8 +44,8 @@ function toPosixPath(p) {
     return p.replaceAll("\\", "/");
 }
 
-function toRepoRelativePath(repoRoot, absPath) {
-    const rel = path.relative(repoRoot, absPath);
+function toOutputRelativePath(outputRoot, absPath) {
+    const rel = path.relative(outputRoot, absPath);
     if (rel === "") {
         return ".";
     }
@@ -142,9 +143,11 @@ function crateLooksLikeCdylibPackage(manifestPath) {
     return /["']cdylib["']/u.test(crateTypeExpr);
 }
 
-function resolveCrateFromDir(repoRoot, dirArg, reason, options = {}) {
+function resolveCrateFromDir(searchRootAbs, outputRootAbs, dirArg, reason, options = {}) {
     const requireCdylib = options.requireCdylib ?? false;
-    const dirAbs = path.isAbsolute(dirArg) ? path.normalize(dirArg) : path.normalize(path.join(repoRoot, dirArg));
+    const dirAbs = path.isAbsolute(dirArg)
+        ? path.normalize(dirArg)
+        : path.normalize(path.join(searchRootAbs, dirArg));
     const manifestAbs = path.join(dirAbs, "Cargo.toml");
     if (!existsSync(manifestAbs)) {
         die(
@@ -158,14 +161,14 @@ function resolveCrateFromDir(repoRoot, dirArg, reason, options = {}) {
         crateName = parsePackageNameFromCargoToml(manifestAbs);
     } catch (err) {
         die(
-            `${reason} Cargo.toml at '${toRepoRelativePath(repoRoot, manifestAbs)}' does not look like a Rust crate manifest ` +
+            `${reason} Cargo.toml at '${toOutputRelativePath(outputRootAbs, manifestAbs)}' does not look like a Rust crate manifest ` +
                 "(missing [package].name).",
         );
     }
 
     if (requireCdylib && !crateLooksLikeCdylibPackage(manifestAbs)) {
         die(
-            `${reason} crate '${toRepoRelativePath(repoRoot, dirAbs)}' does not declare a cdylib target. ` +
+            `${reason} crate '${toOutputRelativePath(outputRootAbs, dirAbs)}' does not declare a cdylib target. ` +
                 "Ensure its Cargo.toml has `[lib] crate-type = [\"cdylib\", ...]` or point AERO_WASM_CRATE_DIR to the correct wasm-pack crate.",
         );
     }
@@ -191,6 +194,7 @@ function runCargoMetadata(repoRoot) {
 }
 
 const argv = process.argv.slice(2);
+let rootArg = null;
 let overrideDir = null;
 let allowMissing = false;
 let githubOutputPath = null;
@@ -202,6 +206,22 @@ for (let i = 0; i < argv.length; i++) {
     }
     if (arg === "--allow-missing" || arg === "--optional") {
         allowMissing = true;
+        continue;
+    }
+    if (arg === "--root") {
+        const next = argv[i + 1];
+        if (!next) {
+            die("--root requires a value");
+        }
+        rootArg = next;
+        i++;
+        continue;
+    }
+    if (arg.startsWith("--root=")) {
+        rootArg = arg.split("=", 2)[1] ?? "";
+        if (!rootArg) {
+            die("--root requires a value");
+        }
         continue;
     }
     if (arg === "--wasm-crate-dir" || arg === "--crate-dir" || arg === "--dir") {
@@ -255,6 +275,9 @@ if (!githubOutputPath) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
+const outputRoot = path.resolve(process.cwd());
+const searchRootAbs = rootArg ? path.resolve(outputRoot, rootArg) : repoRoot;
+const outputBaseAbs = rootArg ? outputRoot : repoRoot;
 
 const canonicalCandidates = ["crates/aero-wasm"];
 
@@ -262,14 +285,14 @@ let resolved = null;
 let resolutionReason = "";
 
 if (overrideDir) {
-    resolved = resolveCrateFromDir(repoRoot, overrideDir, "override", { requireCdylib: true });
+    resolved = resolveCrateFromDir(searchRootAbs, outputBaseAbs, overrideDir, "override", { requireCdylib: true });
     resolutionReason = "override";
 } else {
     for (const candidate of canonicalCandidates) {
-        const abs = path.join(repoRoot, candidate);
+        const abs = path.join(searchRootAbs, candidate);
         const manifestAbs = path.join(abs, "Cargo.toml");
         if (existsSync(manifestAbs)) {
-            resolved = resolveCrateFromDir(repoRoot, candidate, "canonical", { requireCdylib: true });
+            resolved = resolveCrateFromDir(searchRootAbs, outputBaseAbs, candidate, "canonical", { requireCdylib: true });
             resolutionReason = `canonical (${candidate})`;
             break;
         }
@@ -277,7 +300,7 @@ if (overrideDir) {
 }
 
 if (!resolved) {
-    const rootManifest = path.join(repoRoot, "Cargo.toml");
+    const rootManifest = path.join(searchRootAbs, "Cargo.toml");
     if (!existsSync(rootManifest)) {
         if (allowMissing) {
             // A repo can legitimately be missing Rust sources during early bootstrapping.
@@ -293,7 +316,7 @@ if (!resolved) {
         die("Cargo.toml not found at repo root and no override provided (AERO_WASM_CRATE_DIR).");
     }
 
-    const metadata = runCargoMetadata(repoRoot);
+    const metadata = runCargoMetadata(searchRootAbs);
     const packages = metadata.packages ?? [];
     const cdylibPkgs = [];
     for (const pkg of packages) {
@@ -331,7 +354,7 @@ if (!resolved) {
     if (cdylibPkgs.length > 1) {
         const lines = cdylibPkgs
             .map((pkg) => {
-                const dirRel = toRepoRelativePath(repoRoot, pkg.dir);
+                const dirRel = toOutputRelativePath(outputBaseAbs, pkg.dir);
                 const name = pkg.name || "<unknown>";
                 return `- ${name}: ${dirRel}`;
             })
@@ -347,13 +370,13 @@ if (!resolved) {
     }
 
     const pkg = cdylibPkgs[0];
-    resolved = resolveCrateFromDir(repoRoot, pkg.dir, "auto-detected");
+    resolved = resolveCrateFromDir(searchRootAbs, outputBaseAbs, pkg.dir, "auto-detected");
     resolutionReason = "cargo metadata (single cdylib)";
 }
 
 const out = {
-    dir: toRepoRelativePath(repoRoot, resolved.dirAbs),
-    manifest_path: toRepoRelativePath(repoRoot, resolved.manifestAbs),
+    dir: toOutputRelativePath(outputBaseAbs, resolved.dirAbs),
+    manifest_path: toOutputRelativePath(outputBaseAbs, resolved.manifestAbs),
     crate_name: resolved.crateName,
 };
 
