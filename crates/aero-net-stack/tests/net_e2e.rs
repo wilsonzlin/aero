@@ -635,7 +635,7 @@ async fn handle_tcp_ws(socket: WebSocket, query: TcpProxyQuery) {
             };
 
             if ws_sender
-                .send(AxumMessage::Binary(buf[..n].to_vec()))
+                .send(AxumMessage::Binary(buf[..n].to_vec().into()))
                 .await
                 .is_err()
             {
