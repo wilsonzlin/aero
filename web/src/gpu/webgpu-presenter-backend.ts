@@ -59,9 +59,29 @@ export class WebGpuPresenterBackend implements Presenter {
   private frameView: any = null;
   private bindGroup: any = null;
 
+  private cursorTexture: any = null;
+  private cursorView: any = null;
+  private cursorUniformBuffer: any = null;
+  private cursorTextureWidth = 0;
+  private cursorTextureHeight = 0;
+
   // Staging buffer for non-256-aligned rows.
   private staging: Uint8Array | null = null;
   private stagingBytesPerRow = 0;
+
+  // Cursor upload staging (same alignment constraints as the main frame upload).
+  private cursorStaging: Uint8Array | null = null;
+  private cursorStagingBytesPerRow = 0;
+
+  private cursorImage: Uint8Array | null = null;
+  private cursorWidth = 0;
+  private cursorHeight = 0;
+  private cursorEnabled = false;
+  private cursorRenderEnabled = true;
+  private cursorX = 0;
+  private cursorY = 0;
+  private cursorHotX = 0;
+  private cursorHotY = 0;
 
   public async init(
     canvas: OffscreenCanvas,
@@ -167,6 +187,80 @@ export class WebGpuPresenterBackend implements Presenter {
     this.renderToCanvas();
   }
 
+  public setCursorImageRgba8(rgba: Uint8Array, width: number, height: number): void {
+    if (!this.device || !this.queue) {
+      throw new PresenterError('not_initialized', 'WebGpuPresenterBackend.setCursorImageRgba8() called before init()');
+    }
+
+    const w = Math.max(0, width | 0);
+    const h = Math.max(0, height | 0);
+    if (w === 0 || h === 0) {
+      throw new PresenterError('invalid_cursor_image', 'cursor width/height must be non-zero');
+    }
+    const required = w * h * 4;
+    if (rgba.byteLength < required) {
+      throw new PresenterError(
+        'invalid_cursor_image',
+        `cursor RGBA buffer too small: expected at least ${required} bytes, got ${rgba.byteLength}`,
+      );
+    }
+
+    this.cursorImage = rgba;
+    this.cursorWidth = w;
+    this.cursorHeight = h;
+
+    const usage =
+      ((globalThis as any).GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) |
+      ((globalThis as any).GPUTextureUsage?.COPY_DST ?? 0x02);
+
+    // Reallocate when dimensions change (bind groups cannot be updated in place).
+    const needsRealloc =
+      !this.cursorTexture || !this.cursorView || this.cursorTextureWidth !== w || this.cursorTextureHeight !== h;
+    if (needsRealloc) {
+      this.cursorTexture?.destroy?.();
+      this.cursorTexture = this.device.createTexture({
+        size: { width: w, height: h, depthOrArrayLayers: 1 },
+        format: 'rgba8unorm',
+        usage,
+      });
+      this.cursorView = this.cursorTexture.createView();
+      this.cursorTextureWidth = w;
+      this.cursorTextureHeight = h;
+      this.rebuildBindGroup();
+    }
+
+    // Upload cursor pixels (pad rows to 256 bytes as required by WebGPU).
+    const tightRowBytes = w * 4;
+    const bytesPerRow = alignUp(tightRowBytes, 256);
+    const upload =
+      bytesPerRow === tightRowBytes
+        ? rgba.subarray(0, required)
+        : this.copyCursorToStaging(rgba.subarray(0, required), tightRowBytes, bytesPerRow, w, h);
+
+    this.queue.writeTexture(
+      { texture: this.cursorTexture },
+      upload,
+      { bytesPerRow, rowsPerImage: h },
+      { width: w, height: h, depthOrArrayLayers: 1 },
+    );
+  }
+
+  public setCursorState(enabled: boolean, x: number, y: number, hotX: number, hotY: number): void {
+    this.cursorEnabled = !!enabled;
+    this.cursorX = x | 0;
+    this.cursorY = y | 0;
+    this.cursorHotX = Math.max(0, hotX | 0);
+    this.cursorHotY = Math.max(0, hotY | 0);
+  }
+
+  public setCursorRenderEnabled(enabled: boolean): void {
+    this.cursorRenderEnabled = !!enabled;
+  }
+
+  public redraw(): void {
+    this.renderToCanvas();
+  }
+
   public async screenshot(): Promise<PresenterScreenshot> {
     if (!this.device || !this.queue || !this.frameTexture) {
       throw new PresenterError('not_initialized', 'WebGpuPresenterBackend.screenshot() called before init()');
@@ -207,9 +301,15 @@ export class WebGpuPresenterBackend implements Presenter {
 
   public destroy(): void {
     this.frameTexture?.destroy?.();
+    this.cursorTexture?.destroy?.();
     this.frameTexture = null;
     this.frameView = null;
     this.bindGroup = null;
+    this.cursorTexture = null;
+    this.cursorView = null;
+    this.cursorUniformBuffer = null;
+    this.cursorTextureWidth = 0;
+    this.cursorTextureHeight = 0;
     this.pipeline = null;
     this.sampler = null;
     this.device = null;
@@ -255,7 +355,12 @@ export class WebGpuPresenterBackend implements Presenter {
 
     const filter = this.opts.filter ?? 'nearest';
     const mode = filter === 'linear' ? 'linear' : 'nearest';
-    this.sampler = this.device.createSampler({ magFilter: mode, minFilter: mode });
+    this.sampler = this.device.createSampler({
+      magFilter: mode,
+      minFilter: mode,
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+    });
   }
 
   private createFrameResources(width: number, height: number): void {
@@ -280,17 +385,40 @@ export class WebGpuPresenterBackend implements Presenter {
       usage,
     });
     this.frameView = this.frameTexture.createView();
-    this.bindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.sampler },
-        { binding: 1, resource: this.frameView },
-      ],
-    });
+    this.ensureCursorResources();
+    this.rebuildBindGroup();
   }
 
   private renderToCanvas(): void {
-    if (!this.canvas || !this.device || !this.queue || !this.ctx || !this.pipeline || !this.bindGroup) return;
+    if (
+      !this.canvas ||
+      !this.device ||
+      !this.queue ||
+      !this.ctx ||
+      !this.pipeline ||
+      !this.bindGroup ||
+      !this.cursorUniformBuffer
+    ) {
+      return;
+    }
+
+    const cursorEnable =
+      this.cursorRenderEnabled && this.cursorEnabled && this.cursorWidth > 0 && this.cursorHeight > 0 ? 1 : 0;
+    const cursorParams = new Int32Array([
+      this.srcWidth | 0,
+      this.srcHeight | 0,
+      cursorEnable,
+      0,
+      this.cursorX | 0,
+      this.cursorY | 0,
+      this.cursorHotX | 0,
+      this.cursorHotY | 0,
+      this.cursorWidth | 0,
+      this.cursorHeight | 0,
+      0,
+      0,
+    ]);
+    this.queue.writeBuffer(this.cursorUniformBuffer, 0, cursorParams);
 
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -318,6 +446,45 @@ export class WebGpuPresenterBackend implements Presenter {
     pass.end();
 
     this.queue.submit([encoder.finish()]);
+  }
+
+  private ensureCursorResources(): void {
+    if (!this.device || !this.queue) return;
+
+    if (!this.cursorUniformBuffer) {
+      const usage =
+        ((globalThis as any).GPUBufferUsage?.UNIFORM ?? 0x10) | ((globalThis as any).GPUBufferUsage?.COPY_DST ?? 0x08);
+      // CursorUniforms is 3x vec4<i32> = 48 bytes.
+      this.cursorUniformBuffer = this.device.createBuffer({ size: 48, usage });
+    }
+
+    if (!this.cursorTexture || !this.cursorView) {
+      const usage =
+        ((globalThis as any).GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) |
+        ((globalThis as any).GPUTextureUsage?.COPY_DST ?? 0x02);
+      this.cursorTexture = this.device.createTexture({
+        size: { width: 1, height: 1, depthOrArrayLayers: 1 },
+        format: 'rgba8unorm',
+        usage,
+      });
+      this.cursorView = this.cursorTexture.createView();
+      this.cursorTextureWidth = 1;
+      this.cursorTextureHeight = 1;
+    }
+  }
+
+  private rebuildBindGroup(): void {
+    if (!this.device || !this.pipeline || !this.sampler || !this.frameView) return;
+    if (!this.cursorView || !this.cursorUniformBuffer) return;
+    this.bindGroup = this.device.createBindGroup({
+      layout: this.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.sampler },
+        { binding: 1, resource: this.frameView },
+        { binding: 2, resource: this.cursorView },
+        { binding: 3, resource: { buffer: this.cursorUniformBuffer } },
+      ],
+    });
   }
 
   private resolveFrameData(frame: number | ArrayBuffer | ArrayBufferView, byteLength: number): Uint8Array {
@@ -376,5 +543,33 @@ export class WebGpuPresenterBackend implements Presenter {
     }
 
     return this.staging;
+  }
+
+  private copyCursorToStaging(
+    data: Uint8Array,
+    srcStride: number,
+    dstStride: number,
+    width: number,
+    height: number,
+  ): Uint8Array {
+    const tightRowBytes = width * 4;
+    const total = dstStride * height;
+    if (
+      !this.cursorStaging ||
+      this.cursorStaging.byteLength !== total ||
+      this.cursorStagingBytesPerRow !== dstStride
+    ) {
+      this.cursorStaging = new Uint8Array(total);
+      this.cursorStagingBytesPerRow = dstStride;
+    }
+
+    for (let y = 0; y < height; y++) {
+      const srcOff = y * srcStride;
+      const dstOff = y * dstStride;
+      this.cursorStaging.set(data.subarray(srcOff, srcOff + tightRowBytes), dstOff);
+      this.cursorStaging.fill(0, dstOff + tightRowBytes, dstOff + dstStride);
+    }
+
+    return this.cursorStaging;
   }
 }

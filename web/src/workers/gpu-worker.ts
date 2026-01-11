@@ -1811,27 +1811,53 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           if (presenter && !isDeviceLost) {
             const prevCursorRenderEnabled = cursorRenderEnabled;
-            if (!includeCursor) {
+            const needsCursorDisabledForScreenshot = !includeCursor && presenter.backend !== "webgpu";
+            if (needsCursorDisabledForScreenshot) {
               cursorRenderEnabled = false;
               syncCursorToPresenter();
             }
 
             try {
               const shot = await presenter.screenshot();
+              let pixels = shot.pixels;
+
+              // WebGPU screenshots read back the source texture only, so cursor composition
+              // must be applied explicitly when requested.
+              if (includeCursor && presenter.backend === "webgpu") {
+                try {
+                  const out = new Uint8Array(pixels);
+                  compositeCursorOverRgba8(
+                    out,
+                    shot.width,
+                    shot.height,
+                    cursorEnabled,
+                    cursorImage,
+                    cursorWidth,
+                    cursorHeight,
+                    cursorX,
+                    cursorY,
+                    cursorHotX,
+                    cursorHotY,
+                  );
+                  pixels = out.buffer;
+                } catch {
+                  // Ignore; screenshot cursor compositing is best-effort.
+                }
+              }
               postToMain(
                 {
                   type: "screenshot",
                   requestId: req.requestId,
                   width: shot.width,
                   height: shot.height,
-                  rgba8: shot.pixels,
+                  rgba8: pixels,
                   origin: "top-left",
                   ...(typeof seq === "number" ? { frameSeq: seq } : {}),
                 },
-                [shot.pixels],
+                [pixels],
               );
             } finally {
-              if (!includeCursor) {
+              if (needsCursorDisabledForScreenshot) {
                 cursorRenderEnabled = prevCursorRenderEnabled;
                 syncCursorToPresenter();
                 getCursorPresenter()?.redraw?.();
