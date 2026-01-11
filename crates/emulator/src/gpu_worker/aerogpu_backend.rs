@@ -8,7 +8,7 @@ use memory::MemoryBus;
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 
 #[cfg(feature = "aerogpu-native")]
-use aero_protocol::aerogpu::aerogpu_ring;
+use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AerogpuAllocTableHeader};
 
 #[derive(Debug, Clone)]
 pub struct AeroGpuBackendSubmission {
@@ -158,6 +158,73 @@ impl<'a> MemoryBusGuestMemory<'a> {
 }
 
 #[cfg(feature = "aerogpu-native")]
+fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
+    let header = AerogpuAllocTableHeader::decode_from_le_bytes(bytes)
+        .map_err(|err| format!("failed to decode alloc table header: {err:?}"))?;
+    header
+        .validate_prefix()
+        .map_err(|err| format!("invalid alloc table header: {err:?}"))?;
+
+    let table_size = header.size_bytes as usize;
+    if table_size > bytes.len() {
+        return Err(format!(
+            "alloc table header size_bytes={} exceeds buffer len={}",
+            header.size_bytes,
+            bytes.len()
+        ));
+    }
+
+    let stride = header.entry_stride_bytes as usize;
+    if stride < AerogpuAllocEntry::SIZE_BYTES {
+        return Err(format!(
+            "alloc table entry_stride_bytes={} too small (min {})",
+            header.entry_stride_bytes,
+            AerogpuAllocEntry::SIZE_BYTES
+        ));
+    }
+
+    let mut out = std::collections::HashMap::<u32, AllocEntry>::new();
+    for idx in 0..header.entry_count {
+        let idx_u64 = idx as u64;
+        let entry_offset = idx_u64
+            .checked_mul(stride as u64)
+            .ok_or_else(|| "alloc table entry offset overflow".to_string())?;
+        let start = AerogpuAllocTableHeader::SIZE_BYTES as u64
+            + entry_offset;
+        let start = usize::try_from(start)
+            .map_err(|_| "alloc table entry offset overflow".to_string())?;
+        let end = start + AerogpuAllocEntry::SIZE_BYTES;
+        if end > table_size {
+            return Err(format!(
+                "alloc table entry {idx} out of bounds (end={end}, size_bytes={})",
+                header.size_bytes
+            ));
+        }
+
+        let entry = AerogpuAllocEntry::decode_from_le_bytes(&bytes[start..end])
+            .map_err(|err| format!("failed to decode alloc table entry {idx}: {err:?}"))?;
+        if entry.alloc_id == 0 {
+            return Err(format!("alloc table entry {idx} has alloc_id=0"));
+        }
+        if out.contains_key(&entry.alloc_id) {
+            return Err(format!(
+                "alloc table contains duplicate alloc_id={}",
+                entry.alloc_id
+            ));
+        }
+        out.insert(
+            entry.alloc_id,
+            AllocEntry {
+                gpa: entry.gpa,
+                size_bytes: entry.size_bytes,
+            },
+        );
+    }
+
+    Ok(AllocTable::new(out))
+}
+
+#[cfg(feature = "aerogpu-native")]
 impl aero_gpu::GuestMemory for MemoryBusGuestMemory<'_> {
     fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), aero_gpu::GuestMemoryError> {
         let len = dst.len();
@@ -198,19 +265,7 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
         let alloc_table = submission
             .alloc_table
             .as_deref()
-            .map(|bytes| {
-                let view = aerogpu_ring::decode_alloc_table_le(bytes)
-                    .map_err(|err| format!("failed to decode alloc table: {err:?}"))?;
-                Ok::<_, String>(AllocTable::new(view.entries.iter().map(|entry| {
-                    (
-                        entry.alloc_id,
-                        AllocEntry {
-                            gpa: entry.gpa,
-                            size_bytes: entry.size_bytes,
-                        },
-                    )
-                })))
-            })
+            .map(decode_alloc_table)
             .transpose()?;
 
         let result = self.exec.execute_cmd_stream_with_guest_memory(
