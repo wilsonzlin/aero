@@ -75,7 +75,8 @@ ULONG VirtioSgMaxElemsForMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength);
  * No allocations; suitable for DISPATCH_LEVEL.
  *
  * Return values follow VirtioSgBuildFromPfns() (STATUS_SUCCESS /
- * STATUS_BUFFER_TOO_SMALL with required count).
+ * STATUS_BUFFER_TOO_SMALL with required count). This also supports a sizing
+ * call via out==NULL and out_cap==0.
  */
 NTSTATUS VirtioSgBuildFromMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength, BOOLEAN device_write, VIRTQ_SG *out,
 			     UINT16 out_cap, UINT16 *out_count);
