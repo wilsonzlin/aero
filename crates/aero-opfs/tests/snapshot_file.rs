@@ -130,3 +130,23 @@ fn seek_after_close_errors() {
     let err = file.seek(SeekFrom::Start(0)).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
 }
+
+#[test]
+fn read_after_close_errors() {
+    let mut file = OpfsSyncFile::from_handle(MockHandle::default());
+    file.write_all(b"abc").unwrap();
+    file.close().unwrap();
+
+    let mut buf = [0u8; 1];
+    let err = file.read(&mut buf).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+}
+
+#[test]
+fn write_after_close_errors() {
+    let mut file = OpfsSyncFile::from_handle(MockHandle::default());
+    file.close().unwrap();
+
+    let err = file.write(b"x").unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+}
