@@ -14,8 +14,10 @@ deterministically in isolation.
 ### Goals
 - Record the GPU command stream **in submission order** (the exact packet bytes
   emitted by the guest-facing GPU command processor).
-- Record referenced **resource uploads/snapshots** (buffers/textures) as blobs.
-- Record **shader blobs** (DXBC) and optionally translated text (WGSL, GLSL ES 3.00).
+- Record referenced **resource uploads/snapshots** (buffers/textures) as bytes
+  (either inline in the packet stream or as `Blob` records, depending on the command ABI).
+- Record **shader blobs** (DXBC) and optionally translated text (WGSL, GLSL ES 3.00),
+  either inline in packets or as `Blob` records.
 - Record **frame boundaries** (begin-frame + present markers).
 - Provide a **frame TOC** for random access / quick seeking.
 - Be stable enough to share in CI artifacts and between machines/browsers.
@@ -52,7 +54,7 @@ All multi-byte integers are **little-endian**.
 | `magic`             | [u8;8]| `"AEROGPUT"` |
 | `header_size`       | u32   | Must be 32 for v1 |
 | `container_version` | u32   | Trace container version (v1 = 1, v2 = 2) |
-| `command_abi_version` | u32 | Version of the **GPU command packet ABI** recorded in `RecordType::Packet` |
+| `command_abi_version` | u32 | Version of the **GPU command packet ABI** recorded in the trace (for canonical WDDM AeroGPU A3A0 traces: `AEROGPU_ABI_VERSION_U32` from `drivers/aerogpu/protocol/aerogpu_pci.h`) |
 | `flags`             | u32   | Reserved (0 for v1) |
 | `meta_len`          | u32   | Length in bytes of UTF-8 JSON metadata blob |
 | `reserved`          | u32   | Must be 0 for v1 |
@@ -65,7 +67,7 @@ Example:
 ```json
 {
   "emulator_version": "0.0.0-dev",
-  "command_abi_version": 1,
+  "command_abi_version": 65536,
   "notes": "optional"
 }
 ```
@@ -111,7 +113,7 @@ Blob payload begins with `BlobHeader` (16 bytes):
 
 | Field     | Type | Meaning |
 |-----------|------|---------|
-| `blob_id` | u64  | Unique ID, referenced by command packets |
+| `blob_id` | u64  | Unique ID (referenced by other records and by command packets in ABIs that support blob references; see appendices) |
 | `kind`    | u32  | See `BlobKind` |
 | `reserved`| u32  | Must be 0 for v1 |
 
@@ -188,8 +190,8 @@ The TOC enables fast seeking to a specific frame without scanning the entire rec
 To make traces replayable on other machines/browsers:
 - Command packets must be recorded **after** translation from guest APIs (e.g. D3D9)
   into the stable AeroGPU command ABI.
-- All resource uploads referenced by packets must be captured as blobs, and packets
-  must reference blobs by ID (never rely on guest memory being present).
+- All resource/shader data needed for replay must be serialized into the trace
+  (either inline in command streams/packets or as `Blob` records) — replayers must never rely on guest RAM.
 - Shader sources should be recorded:
   - DXBC (for postmortem analysis) and
   - a backend-consumable representation (WGSL for WebGPU, GLSL ES 3.00 for WebGL2 fallback).
@@ -238,45 +240,51 @@ All IDs are `u32`. Blob IDs are `u64` split into `(lo: u32, hi: u32)`.
 
 ---
 
-## Appendix B: Recording packets from the experimental `aero-gpu-device` ABI (AGRN/AGPC)
+## Appendix B: Canonical AeroGPU command ABI (A3A0 / WDDM)
 
-The canonical Windows 7 WDDM AeroGPU PCI/MMIO/ring/command ABI is defined in:
+The canonical Windows 7 WDDM AeroGPU ABI in this repository is the **versioned A3A0 protocol**
+defined in `drivers/aerogpu/protocol/`:
 
-- [`drivers/aerogpu/protocol/README.md`](../../drivers/aerogpu/protocol/README.md)
-  (`aerogpu_pci.h`, `aerogpu_ring.h`, `aerogpu_cmd.h`)
-- [`emulator/protocol`](../../emulator/protocol) (Rust/TypeScript mirror)
+- `drivers/aerogpu/protocol/aerogpu_cmd.h` (command buffer + packet formats; bytes recorded)
+- `drivers/aerogpu/protocol/aerogpu_ring.h` (ring submission ordering + fence semantics)
+- `drivers/aerogpu/protocol/aerogpu_pci.h` (ABI versioning: `AEROGPU_ABI_VERSION_U32`)
+
+For container v2 traces, the recommended representation for the canonical WDDM AeroGPU path is:
+
+- `RecordType::AerogpuSubmission` referencing
+  - `BlobKind::AerogpuCmdStream` (raw `aerogpu_cmd_stream_header` + command packets), and optionally
+  - `BlobKind::AerogpuAllocTable` / `BlobKind::AerogpuAllocMemory` (allocation table + snapshots).
+
+### Inline uploads / shader blobs (A3A0)
+
+Some A3A0 command packets embed variable-length data directly in the command stream. Examples
+include `AEROGPU_CMD_UPLOAD_RESOURCE` (resource bytes) and `AEROGPU_CMD_CREATE_SHADER_DXBC` (DXBC).
+
+**Rule:** traces store these bytes **inline** as part of the recorded command stream bytes
+(either inside `RecordType::Packet` payloads or inside `BlobKind::AerogpuCmdStream`). The trace does
+not extract them into separate `Blob` records with packet fields patched to blob IDs.
+
+### `command_abi_version` (A3A0)
+
+For canonical WDDM AeroGPU A3A0 traces, the trace header’s `command_abi_version` MUST equal
+`AEROGPU_ABI_VERSION_U32` as defined in `drivers/aerogpu/protocol/aerogpu_pci.h`:
+
+```
+(AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR
+```
+
+---
+
+## Appendix C: Experimental `aero-gpu-device` test ABI (AGRN/AGPC)
 
 `crates/aero-gpu-device` implements a **separate**, standalone ring/opcode ABI (FourCC
-`"AGRN"`/`"AGPC"`) that is used for deterministic host-side tests and for validating gpu-trace
-plumbing. It is not the WDDM AeroGPU ABI used by the Windows drivers.
+`"AGRN"`/`"AGPC"`) used for deterministic host-side tests and for validating gpu-trace plumbing.
+It is not the WDDM AeroGPU ABI used by the Windows drivers.
 
-See [`docs/graphics/aerogpu-protocols.md`](../../docs/graphics/aerogpu-protocols.md) for an
-overview of similarly named in-tree protocols.
+See [`docs/graphics/aerogpu-protocols.md`](../../docs/graphics/aerogpu-protocols.md) for an overview
+of similarly named in-tree protocols.
 
-When `aero-gpu-device` records traces, it writes `RecordType::Packet` payloads that are
-the exact `GpuCmdHeader + payload` bytes consumed by the command processor.
-
-### Upload normalization: `src_paddr` → `blob_id`
-
-Many `aero-gpu-device` commands refer to guest physical memory addresses (e.g. buffer uploads).
-To keep traces replayable without the original guest RAM contents, `aero-gpu-device`
-records uploads as blobs and **patches the recorded command packet**:
-
-- `WRITE_BUFFER.src_paddr` is replaced with the associated `blob_id` (little-endian `u64`)
-  and a `BlobKind::BufferData` blob is emitted containing the exact bytes read from guest RAM.
-- `WRITE_TEXTURE2D.src_paddr` is replaced with the associated `blob_id` (little-endian `u64`)
-  and a `BlobKind::TextureData` blob is emitted containing the exact bytes read from guest RAM.
-
-Replayers must interpret these patched `src_paddr` fields as blob references when
-processing traces recorded by `aero-gpu-device`.
-
-### `command_abi_version`
-
-For traces recorded by `aero-gpu-device`, the trace header’s `command_abi_version` is:
-
-```
-(ABI_MAJOR << 16) | ABI_MINOR
-```
-
-For traces captured from the canonical WDDM AeroGPU path, `command_abi_version` should be
-`AEROGPU_ABI_VERSION_U32` as defined in `drivers/aerogpu/protocol/aerogpu_pci.h`.
+When recording traces from this test ABI, implementations may need to serialize any resource data
+that lives in guest memory into `BlobKind::{BufferData,TextureData}` records and rewrite the
+recorded packet bytes to refer to `blob_id` values instead of guest addresses/pointers. The exact
+patching rules are specific to that ABI and are not part of the canonical A3A0 protocol.
