@@ -81,7 +81,7 @@ For shared allocations, `alloc_id` must avoid collisions across guest processes 
 - generate `share_token` independently as a collision-resistant 64-bit value (crypto RNG preferred; see `ShareTokenAllocator` in `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_shared_resource.h`), and
 - store both in `aerogpu_wddm_alloc_priv` so dxgkrnl can return them verbatim on `OpenResource`/`OpenAllocation`.
 
-`share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
+`share_token` must be stable across guest processes and collision-resistant across the entire guest (multi-process). Prefer generating a random non-zero 64-bit token via a cryptographically strong RNG (e.g. `RtlGenRandom`/`BCryptGenRandom`). `share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
 
 ## Build
 

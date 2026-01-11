@@ -42,14 +42,14 @@ Cross-process shared resources are expressed explicitly in the command stream:
 - `AEROGPU_CMD_EXPORT_SHARED_SURFACE` associates an existing `resource_handle` with a stable 64-bit `share_token`.
 - `AEROGPU_CMD_IMPORT_SHARED_SURFACE` creates a new `resource_handle` aliasing the exported resource by `share_token`.
 
-`share_token` must be stable across guest processes. On Win7/WDDM 1.1 this is achieved by the UMD storing `share_token` in WDDM allocation private driver data (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`), and dxgkrnl preserving and returning it verbatim on `OpenResource`.
+`share_token` must be stable across guest processes and collision-resistant across the entire guest (multi-process). On Win7/WDDM 1.1 this is achieved by the UMD storing `share_token` in WDDM allocation private driver data (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`), and dxgkrnl preserving and returning it verbatim on `OpenResource`.
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). In the current AeroGPU D3D9 UMD:
 
 - `alloc_id` is derived from a cross-process monotonic counter (`allocate_shared_alloc_id_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
 - `share_token` is generated independently via `ShareTokenAllocator::allocate_share_token()` (`src/aerogpu_d3d9_shared_resource.h`, crypto RNG preferred with a fallback entropy + SplitMix64 path).
 
-`share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
+Recommended scheme for `share_token`: generate a random non-zero 64-bit token via a cryptographically strong RNG (e.g. `RtlGenRandom`/`BCryptGenRandom`). Avoid deterministic schemes based solely on per-process counters; they can collide across processes. `share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
 
 ## Build
 
