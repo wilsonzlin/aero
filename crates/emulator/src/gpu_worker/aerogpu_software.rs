@@ -1868,6 +1868,16 @@ impl AeroGpuSoftwareExecutor {
                 if handle == 0 || size_bytes == 0 {
                     return true;
                 }
+                if self.buffers.contains_key(&handle)
+                    || self.textures.contains_key(&handle)
+                    || self.shaders.contains_key(&handle)
+                    || self.input_layouts.contains_key(&handle)
+                    || self.resource_aliases.contains_key(&handle)
+                    || self.texture_refcounts.contains_key(&handle)
+                {
+                    Self::record_error(regs);
+                    return true;
+                }
 
                 let mut backing = None;
                 if backing_alloc_id != 0 {
@@ -1932,6 +1942,16 @@ impl AeroGpuSoftwareExecutor {
                 let backing_offset_bytes = u32::from_le(packet_cmd.backing_offset_bytes) as u64;
 
                 if handle == 0 || width == 0 || height == 0 {
+                    return true;
+                }
+                if self.buffers.contains_key(&handle)
+                    || self.textures.contains_key(&handle)
+                    || self.shaders.contains_key(&handle)
+                    || self.input_layouts.contains_key(&handle)
+                    || self.resource_aliases.contains_key(&handle)
+                    || self.texture_refcounts.contains_key(&handle)
+                {
+                    Self::record_error(regs);
                     return true;
                 }
 
@@ -2507,6 +2527,16 @@ impl AeroGpuSoftwareExecutor {
                 let stage = packet_cmd.stage;
                 let dxbc = dxbc_bytes.to_vec();
                 if handle != 0 {
+                    if self.buffers.contains_key(&handle)
+                        || self.textures.contains_key(&handle)
+                        || self.shaders.contains_key(&handle)
+                        || self.input_layouts.contains_key(&handle)
+                        || self.resource_aliases.contains_key(&handle)
+                        || self.texture_refcounts.contains_key(&handle)
+                    {
+                        Self::record_error(regs);
+                        return true;
+                    }
                     self.shaders.insert(handle, ShaderResource { stage, dxbc });
                 }
             }
@@ -2556,6 +2586,16 @@ impl AeroGpuSoftwareExecutor {
                 let blob = blob_bytes.to_vec();
                 let parsed = Self::parse_input_layout_blob(&blob);
                 if handle != 0 {
+                    if self.buffers.contains_key(&handle)
+                        || self.textures.contains_key(&handle)
+                        || self.shaders.contains_key(&handle)
+                        || self.input_layouts.contains_key(&handle)
+                        || self.resource_aliases.contains_key(&handle)
+                        || self.texture_refcounts.contains_key(&handle)
+                    {
+                        Self::record_error(regs);
+                        return true;
+                    }
                     self.input_layouts
                         .insert(handle, InputLayoutResource { blob, parsed });
                 }
