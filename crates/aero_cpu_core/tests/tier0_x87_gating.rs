@@ -132,3 +132,48 @@ fn fstsw_wait_form_raises_mf_before_writing_ax() {
     assert_eq!(exec_single(&code, &mut state), Err(Exception::X87Fpu));
     assert_eq!(state.read_reg(Register::AX), 0xBEEF);
 }
+
+#[test]
+fn fninit_no_wait_clears_pending_exception_without_mf() {
+    // fninit (no-wait form)
+    let code = [0xDB, 0xE3];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+
+    assert_eq!(exec_single(&code, &mut state), Ok(StepExit::Continue));
+    assert_eq!(state.fpu.fsw & 0x3F, 0); // exception flags cleared
+    assert_eq!(state.fpu.fcw, 0x037F); // reset to default control word
+}
+
+#[test]
+fn fnclex_no_wait_clears_pending_exception_without_mf() {
+    // fnclex (no-wait form)
+    let code = [0xDB, 0xE2];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+
+    assert_eq!(exec_single(&code, &mut state), Ok(StepExit::Continue));
+    assert_eq!(state.fpu.fsw & 0x3F, 0); // exception flags cleared
+    assert_eq!(state.fpu.fcw, 0x037E); // control word unchanged
+}
+
+#[test]
+fn fnstsw_no_wait_does_not_raise_mf_and_writes_ax() {
+    // fnstsw ax (no-wait form)
+    let code = [0xDF, 0xE0];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+    state.write_reg(Register::AX, 0xBEEF);
+
+    assert_eq!(exec_single(&code, &mut state), Ok(StepExit::Continue));
+    // Status word should have been written and contain the pending exception.
+    let ax = state.read_reg(Register::AX) as u16;
+    assert_ne!(ax, 0xBEEF);
+    assert_ne!(ax & 0x3F, 0);
+}
