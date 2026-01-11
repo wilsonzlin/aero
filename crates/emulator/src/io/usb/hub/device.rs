@@ -326,15 +326,20 @@ impl UsbDeviceModel for UsbHubDevice {
         self.interrupt_ep_halted = false;
 
         for port in &mut self.ports {
+            let was_enabled = port.enabled;
+
+            // Preserve physical attachment, but clear any host-visible state that is invalidated
+            // by an upstream bus reset.
+            port.connected = port.device.is_some();
+            port.connect_change = port.connected;
+
             port.enabled = false;
-            port.enable_change = false;
-            port.powered = false;
+            // An upstream bus reset disables downstream ports; flag a change if the port was
+            // previously enabled so the host can notice once the hub is reconfigured.
+            port.enable_change = was_enabled;
             port.reset = false;
             port.reset_countdown_ms = 0;
             port.reset_change = false;
-
-            port.connected = port.device.is_some();
-            port.connect_change = port.connected;
 
             if let Some(dev) = port.device.as_mut() {
                 dev.reset();

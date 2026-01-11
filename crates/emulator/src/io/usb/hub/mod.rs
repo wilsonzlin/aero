@@ -58,3 +58,6 @@ pub enum UsbTopologyError {
         port: usize,
     },
 }
+
+#[cfg(test)]
+mod reset_tests;
