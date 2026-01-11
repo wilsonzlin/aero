@@ -56,18 +56,18 @@ If you want Guest Tools to include the upstream virtio drivers (`viostor`, `netk
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
+  -Profile full `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
 ```
 
-This uses the in-repo "minimal" spec by default:
+Profiles:
 
-- `tools/packaging/specs/win7-virtio-win.json`
+- `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json`
+- `-Profile minimal`: uses `tools/packaging/specs/win7-virtio-win.json`
 
-To also include optional virtio drivers (if present in the input), use:
-
-- `tools/packaging/specs/win7-virtio-full.json`
+For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
 
 When built from a virtio-win ISO/root, the wrapper script also attempts to
 propagate upstream license/notice files into the packaged outputs under:
