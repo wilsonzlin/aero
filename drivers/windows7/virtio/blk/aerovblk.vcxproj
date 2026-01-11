@@ -47,7 +47,7 @@
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\..\windows\virtio\pci-modern;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\common\include;$(ProjectDir)..\common\os_shim;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -61,7 +61,7 @@
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\..\windows\virtio\pci-modern;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\common\include;$(ProjectDir)..\common\os_shim;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -72,8 +72,9 @@
 
   <ItemGroup>
     <ClCompile Include="src\aerovblk.c" />
-    <ClCompile Include="..\..\..\windows\virtio\common\virtqueue_split.c" />
-    <ClCompile Include="..\..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c" />
+    <ClCompile Include="..\common\src\virtio_pci_modern_miniport.c" />
+    <ClCompile Include="..\common\src\virtqueue_split.c" />
+    <ClCompile Include="..\common\os_shim\virtio_os_storport.c" />
     <ClCompile Include="..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
     <ClInclude Include="include\aerovblk.h" />
     <None Include="aerovblk.inf" />

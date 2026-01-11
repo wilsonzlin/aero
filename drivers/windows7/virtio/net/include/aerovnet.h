@@ -2,8 +2,9 @@
 
 #include <ndis.h>
 
-#include "virtqueue_split.h"
-#include "virtio_pci_modern_transport.h"
+#include "../../common/include/virtio_pci_modern_miniport.h"
+#include "../../common/include/virtqueue_split.h"
+#include "../../common/os_shim/virtio_os_ndis.h"
 
 // Driver identity
 #define AEROVNET_VENDOR_ID 0x1AF4 // virtio vendor
@@ -13,10 +14,10 @@
 
 #define AEROVNET_PCI_REVISION_ID 0x01u
 
-#define AEROVNET_BAR0_MIN_LEN VIRTIO_PCI_MODERN_TRANSPORT_BAR0_REQUIRED_LEN
+#define AEROVNET_BAR0_MIN_LEN 0x4000u
 
 // Virtio feature bits (as masks).
-#define AEROVNET_FEATURE_RING_INDIRECT_DESC ((UINT64)1u << VIRTIO_F_RING_INDIRECT_DESC)
+#define AEROVNET_FEATURE_RING_INDIRECT_DESC ((UINT64)VIRTIO_RING_F_INDIRECT_DESC)
 
 // Virtio-net feature bits (lower 32 bits).
 #define VIRTIO_NET_F_CSUM      (1u << 0)
@@ -100,7 +101,6 @@ typedef struct _AEROVNET_TX_REQUEST {
   PNET_BUFFER Nb;
 
   PSCATTER_GATHER_LIST SgList;
-  USHORT DescHeadId;
 } AEROVNET_TX_REQUEST;
 
 typedef enum _AEROVNET_ADAPTER_STATE {
@@ -113,15 +113,8 @@ typedef struct _AEROVNET_VQ {
   USHORT QueueIndex;
   USHORT QueueSize;
 
-  VIRTQ_SPLIT* Vq;
-
-  PVOID RingVa;
-  UINT64 RingPa;
-  ULONG RingBytes;
-
-  PVOID IndirectVa;
-  UINT64 IndirectPa;
-  ULONG IndirectBytes;
+  virtio_dma_buffer_t RingDma;
+  virtqueue_split_t Vq;
 } AEROVNET_VQ;
 
 typedef struct _AEROVNET_ADAPTER {
@@ -140,16 +133,22 @@ typedef struct _AEROVNET_ADAPTER {
 
   // PCI BAR0 MMIO resources
   PHYSICAL_ADDRESS Bar0Pa;
+  PUCHAR Bar0Va;
   ULONG Bar0Length;
 
-  // Virtio-pci modern transport (AERO-W7-VIRTIO contract v1, BAR0 MMIO).
-  VIRTIO_PCI_MODERN_OS_INTERFACE VirtioOs;
-  VIRTIO_PCI_MODERN_TRANSPORT Transport;
+  // Virtio-pci modern transport (vendor caps + BAR0 MMIO).
+  VIRTIO_PCI_DEVICE Vdev;
+  volatile UINT16* QueueNotifyAddrCache[2];
 
   // Virtqueues
   AEROVNET_VQ RxVq;
   AEROVNET_VQ TxVq;
 
+  // virtqueue_split OS shim
+  virtio_os_ops_t VirtioOps;
+  virtio_os_ndis_ctx_t VirtioOpsCtx;
+
+  UINT64 HostFeatures;
   UINT64 GuestFeatures;
 
   BOOLEAN LinkUp;
