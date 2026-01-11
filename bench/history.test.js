@@ -218,7 +218,12 @@ test("normaliseBenchResult supports aero-gateway bench results.json format", () 
         stdev: 1,
         cv: 0.4,
       },
-      throughput: { bytes: 5 * 1024 * 1024, seconds: 1, mibPerSecond: 5 },
+      throughput: {
+        bytes: 5 * 1024 * 1024,
+        seconds: 1,
+        mibPerSecond: 5,
+        stats: { n: 3, min: 4, max: 6, mean: 5, stdev: 1, cv: 0.2 },
+      },
     },
     doh: {
       qps: 1000,
@@ -244,6 +249,11 @@ test("normaliseBenchResult supports aero-gateway bench results.json format", () 
   assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.value, 5);
   assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.unit, "MiB/s");
   assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.better, "higher");
+  assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.samples.n, 3);
+  assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.samples.min, 4);
+  assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.samples.max, 6);
+  assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.samples.stdev, 1);
+  assert.equal(scenarios.gateway.metrics.tcp_throughput_mib_s.samples.cv, 0.2);
 
   assert.equal(scenarios.gateway.metrics.doh_qps.value, 1000);
   assert.equal(scenarios.gateway.metrics.doh_qps.unit, "qps");

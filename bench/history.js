@@ -335,7 +335,11 @@ function normaliseAeroGatewayBenchResult(result) {
   addMetric("tcp_rtt_p50_ms", rtt.p50, { unit: "ms", better: "lower", samples: rtt });
   addMetric("tcp_rtt_p90_ms", rtt.p90, { unit: "ms", better: "lower", samples: rtt });
   addMetric("tcp_rtt_p99_ms", rtt.p99, { unit: "ms", better: "lower", samples: rtt });
-  addMetric("tcp_throughput_mib_s", throughput.mibPerSecond, { unit: "MiB/s", better: "higher" });
+  addMetric("tcp_throughput_mib_s", throughput.mibPerSecond, {
+    unit: "MiB/s",
+    better: "higher",
+    samples: throughput.stats ?? throughput,
+  });
 
   // Prefer explicit DoH variance summaries from the bench report, but fall back to
   // autocannon's raw stats if present (older reports only provided raw.*).

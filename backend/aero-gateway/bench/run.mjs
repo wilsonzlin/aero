@@ -70,6 +70,33 @@ function statsFromSamplesMs(samplesMs) {
   };
 }
 
+function statsFromSamples(samples) {
+  const finite = samples.filter((v) => typeof v === 'number' && Number.isFinite(v));
+  const sorted = [...finite].sort((a, b) => a - b);
+  const sum = finite.reduce((a, b) => a + b, 0);
+  const mean = finite.length === 0 ? null : sum / finite.length;
+
+  let stdev = 0;
+  if (finite.length > 1 && mean !== null) {
+    let varianceSum = 0;
+    for (const sample of finite) {
+      const diff = sample - mean;
+      varianceSum += diff * diff;
+    }
+    stdev = Math.sqrt(varianceSum / (finite.length - 1));
+  }
+  const cv = mean === null || mean === 0 ? 0 : stdev / Math.abs(mean);
+
+  return {
+    n: finite.length,
+    min: sorted[0] ?? null,
+    max: sorted.at(-1) ?? null,
+    mean,
+    stdev,
+    cv,
+  };
+}
+
 function base64UrlEncode(buf) {
   return buf
     .toString('base64')
@@ -378,6 +405,33 @@ async function benchTcpThroughputMiBps({
   };
 }
 
+async function benchTcpThroughputMiBpsMulti({ runs, warmupRuns, ...opts }) {
+  const warmups = warmupRuns ?? 0;
+  const iterations = runs ?? 1;
+  if (!Number.isFinite(iterations) || iterations < 1) throw new Error('benchTcpThroughputMiBpsMulti requires runs >= 1');
+  if (!Number.isFinite(warmups) || warmups < 0) throw new Error('benchTcpThroughputMiBpsMulti requires warmupRuns >= 0');
+
+  for (let i = 0; i < warmups; i += 1) {
+    await benchTcpThroughputMiBps(opts);
+  }
+
+  const results = [];
+  for (let i = 0; i < iterations; i += 1) {
+    results.push(await benchTcpThroughputMiBps(opts));
+  }
+
+  const throughputStats = statsFromSamples(results.map((r) => r.mibPerSecond));
+  const secondsStats = statsFromSamples(results.map((r) => r.seconds));
+
+  return {
+    bytes: opts.totalBytes,
+    seconds: secondsStats.mean,
+    mibPerSecond: throughputStats.mean,
+    runs: results,
+    stats: throughputStats,
+  };
+}
+
 async function benchDoh({ gatewayPort, durationSeconds, connections }) {
   const query = dnsPacket.encode({
     type: 'query',
@@ -510,7 +564,14 @@ function printResultsTable(results) {
 
   const thr = results.tcpProxy.throughput;
   lines.push('');
-  lines.push(`TCP proxy throughput (upload ${Math.round(thr.bytes / (1024 * 1024))} MiB)`);
+  const thrCv = thr.stats?.cv;
+  const thrN = thr.stats?.n;
+  const thrExtras = [];
+  if (typeof thrN === 'number' && Number.isFinite(thrN) && thrN > 1) thrExtras.push(`n=${thrN}`);
+  if (typeof thrCv === 'number' && Number.isFinite(thrCv) && thrCv > 0) thrExtras.push(`CV ${(thrCv * 100).toFixed(1)}%`);
+  lines.push(
+    `TCP proxy throughput (upload ${Math.round(thr.bytes / (1024 * 1024))} MiB${thrExtras.length ? `, ${thrExtras.join(', ')}` : ''})`,
+  );
   lines.push(`  ${thr.mibPerSecond.toFixed(1)} MiB/s (${thr.seconds.toFixed(3)}s)`);
 
   const doh = results.doh;
@@ -574,15 +635,15 @@ async function main() {
   const config =
     mode === 'smoke'
       ? {
-          tcpRtt: { payloadBytes: 32, warmup: 10, iterations: 100 },
-          tcpThroughput: { totalBytes: 5 * 1024 * 1024, chunkBytes: 64 * 1024 },
-          doh: { durationSeconds: 3, connections: 25 },
-        }
+           tcpRtt: { payloadBytes: 32, warmup: 10, iterations: 100 },
+           tcpThroughput: { totalBytes: 5 * 1024 * 1024, chunkBytes: 64 * 1024, warmupRuns: 1, runs: 3 },
+           doh: { durationSeconds: 3, connections: 25 },
+         }
       : {
-          tcpRtt: { payloadBytes: 32, warmup: 20, iterations: 200 },
-          tcpThroughput: { totalBytes: 10 * 1024 * 1024, chunkBytes: 64 * 1024 },
-          doh: { durationSeconds: 10, connections: 50 },
-        };
+           tcpRtt: { payloadBytes: 32, warmup: 20, iterations: 200 },
+           tcpThroughput: { totalBytes: 10 * 1024 * 1024, chunkBytes: 64 * 1024, warmupRuns: 1, runs: 5 },
+           doh: { durationSeconds: 10, connections: 50 },
+         };
 
   const echoServer = await startEchoServer();
   const sinkServer = await startSinkServer();
@@ -614,7 +675,7 @@ async function main() {
       ...config.tcpRtt,
     });
 
-    results.tcpProxy.throughput = await benchTcpThroughputMiBps({
+    results.tcpProxy.throughput = await benchTcpThroughputMiBpsMulti({
       gatewayPort: gateway.port,
       targetHost: sinkServer.host,
       targetPort: sinkServer.port,
