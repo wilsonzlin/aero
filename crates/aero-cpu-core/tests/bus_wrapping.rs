@@ -1,5 +1,3 @@
-#![cfg(feature = "legacy-interp")]
-
 use aero_cpu_core::bus::Bus;
 
 #[derive(Default)]

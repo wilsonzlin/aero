@@ -19,6 +19,16 @@ qemu_diff = { package = "qemu-diff", path = "../../tools/qemu_diff", optional = 
 criterion = "0.5"
 memoffset = "0.9"
 
+[[test]]
+name = "bus_wrapping"
+path = "tests/bus_wrapping.rs"
+required-features = ["legacy-interp"]
+
+[[test]]
+name = "qemu_diff"
+path = "tests/qemu_diff.rs"
+required-features = ["qemu-diff"]
+
 [[bench]]
 name = "emulator_critical"
 harness = false

@@ -2,7 +2,7 @@
 
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit, StepExit};
-use aero_cpu_core::interrupts::CpuCore;
+use aero_cpu_core::CpuCore;
 use aero_cpu_core::mem::CpuBus as CoreCpuBus;
 use aero_cpu_core::state::{
     gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF,

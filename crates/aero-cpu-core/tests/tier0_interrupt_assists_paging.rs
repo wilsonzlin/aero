@@ -1,6 +1,6 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
-use aero_cpu_core::interrupts::CpuCore;
+use aero_cpu_core::CpuCore;
 use aero_cpu_core::mem::CpuBus as _;
 use aero_cpu_core::state::{CpuMode, CR0_PE, CR0_PG, RFLAGS_IF, RFLAGS_RESERVED1};
 use aero_cpu_core::{Exception, PagingBus};

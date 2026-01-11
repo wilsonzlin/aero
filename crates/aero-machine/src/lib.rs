@@ -21,10 +21,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
-use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, Segment as CoreSegment};
-use aero_cpu_core::{AssistReason, Exception};
+use aero_cpu_core::{AssistReason, CpuCore, Exception};
 use aero_devices::a20_gate::A20Gate as A20GateDevice;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};

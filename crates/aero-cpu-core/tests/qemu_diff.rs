@@ -1,5 +1,3 @@
-#![cfg(feature = "qemu-diff")]
-
 mod common;
 
 use common::*;
