@@ -260,8 +260,16 @@ fn parse_signature_chunk_with_entry_size(
             }
         };
 
-        let semantic_name =
-            read_cstring_entry(bytes, semantic_name_offset_usize, entry_index)?.to_owned();
+        let semantic_name_str = read_cstring_entry(bytes, semantic_name_offset_usize, entry_index)?;
+        let mut semantic_name = String::new();
+        semantic_name
+            .try_reserve_exact(semantic_name_str.len())
+            .map_err(|_| {
+                DxbcError::invalid_chunk(format!(
+                    "entry {entry_index} semantic_name is too large to allocate"
+                ))
+            })?;
+        semantic_name.push_str(semantic_name_str);
 
         entries.push(SignatureEntry {
             semantic_name,
