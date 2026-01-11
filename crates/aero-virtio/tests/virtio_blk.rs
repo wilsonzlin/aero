@@ -3,7 +3,7 @@ use aero_virtio::devices::blk::{
     VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
 };
 use aero_virtio::memory::{
-    read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
+    read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
 };
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
@@ -487,4 +487,52 @@ fn virtio_blk_rejects_requests_beyond_capacity() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     assert!(backing.borrow().iter().all(|b| *b == 0));
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
+}
+
+#[test]
+fn virtio_blk_rejects_requests_with_more_than_seg_max_data_descriptors() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    // Build an indirect chain with 127 data segments (seg_max is 126 per contract).
+    let indirect = 0x9000;
+    let indirect_count: u16 = 129; // header + 127 data + status
+    let indirect_len = u32::from(indirect_count) * 16;
+
+    let header = 0xA000;
+    let data = 0xB000;
+    let status = 0xC000;
+
+    // OUT sector 0.
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(data, &vec![0x5au8; 386]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    // Outer descriptor 0 is INDIRECT.
+    write_desc(&mut mem, DESC_TABLE, 0, indirect, indirect_len, 0x0004, 0);
+
+    // Indirect descriptor 0: header (16 bytes).
+    write_desc(&mut mem, indirect, 0, header, 16, 0x0001, 1);
+    // 126x 1-byte segments + one 386-byte segment => total 512 bytes (valid sector multiple).
+    for i in 0..126u16 {
+        let idx = 1 + i;
+        write_desc(&mut mem, indirect, idx, data, 1, 0x0001, idx + 1);
+    }
+    write_desc(&mut mem, indirect, 127, data, 386, 0x0001, 128);
+    // Status descriptor.
+    write_desc(&mut mem, indirect, 128, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
+    assert_eq!(read_u16_le(&mem, USED_RING + 2).unwrap(), 1);
+    assert!(backing.borrow().iter().all(|b| *b == 0));
 }

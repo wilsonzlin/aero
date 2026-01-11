@@ -543,6 +543,7 @@ Status byte values:
 
 I/O semantics:
 
+- For `VIRTIO_BLK_T_IN` and `VIRTIO_BLK_T_OUT`, the request MUST contain between 1 and `seg_max` data buffer descriptors (exclusive of header + status); otherwise `IOERR`.
 - Total data length MUST be a multiple of 512 bytes; otherwise `IOERR`.
 - Requests beyond disk capacity MUST return `IOERR`.
 - The device MUST write the status byte *before* publishing the used-ring entry.

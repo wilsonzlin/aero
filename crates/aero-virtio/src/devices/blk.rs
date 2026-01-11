@@ -261,6 +261,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                     let end_off = sector_off.and_then(|off| off.checked_add(total_len));
 
                     if data_segs.is_empty()
+                        || data_segs.len() > self.config.seg_max as usize
                         || total_len % VIRTIO_BLK_SECTOR_SIZE != 0
                         || sector_off.is_none()
                         || end_off.is_none()
@@ -296,6 +297,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                     let end_off = sector_off.and_then(|off| off.checked_add(total_len));
 
                     if data_segs.is_empty()
+                        || data_segs.len() > self.config.seg_max as usize
                         || total_len % VIRTIO_BLK_SECTOR_SIZE != 0
                         || sector_off.is_none()
                         || end_off.is_none()
