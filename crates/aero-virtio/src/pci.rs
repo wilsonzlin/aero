@@ -74,10 +74,10 @@ pub trait InterruptSink {
 pub struct VirtioPciDevice {
     config_space: [u8; 256],
     command: u16,
-    bar0: u32,
+    bar0: u64,
     bar0_probe: bool,
-    bar1: u32,
-    bar1_probe: bool,
+    bar2: u32,
+    bar2_probe: bool,
 
     // BAR0 layout (all capabilities point into BAR0 for now).
     bar0_common_offset: u64,
@@ -85,7 +85,7 @@ pub struct VirtioPciDevice {
     bar0_isr_offset: u64,
     bar0_device_offset: u64,
     bar0_size: u64,
-    bar1_size: u64,
+    bar2_size: u64,
 
     modern_enabled: bool,
     legacy_io_enabled: bool,
@@ -180,14 +180,14 @@ impl VirtioPciDevice {
             command: 0,
             bar0: 0,
             bar0_probe: false,
-            bar1: if options.legacy_io_enabled { 0x1 } else { 0 },
-            bar1_probe: false,
+            bar2: if options.legacy_io_enabled { 0x1 } else { 0 },
+            bar2_probe: false,
             bar0_common_offset: 0x0000,
             bar0_notify_offset: 0x1000,
             bar0_isr_offset: 0x2000,
             bar0_device_offset: 0x3000,
             bar0_size: 0x4000,
-            bar1_size: if options.legacy_io_enabled { 0x100 } else { 0 },
+            bar2_size: if options.legacy_io_enabled { 0x100 } else { 0 },
             modern_enabled: options.modern_enabled,
             legacy_io_enabled: options.legacy_io_enabled,
             use_transitional_device_id: options.use_transitional_device_id,
@@ -217,16 +217,16 @@ impl VirtioPciDevice {
         self.bar0_size
     }
 
-    pub fn bar0_base(&self) -> u32 {
+    pub fn bar0_base(&self) -> u64 {
         self.bar0
     }
 
     pub fn legacy_io_size(&self) -> u64 {
-        self.bar1_size
+        self.bar2_size
     }
 
     pub fn legacy_io_base(&self) -> u32 {
-        self.bar1
+        self.bar2
     }
 
     pub fn device_as_any_mut(&mut self) -> &mut dyn Any {
@@ -256,30 +256,52 @@ impl VirtioPciDevice {
                 self.command = u16::from_le_bytes([data[0], data[1]]);
                 self.config_space[0x04..0x06].copy_from_slice(&self.command.to_le_bytes());
             }
-            // BAR0 (32-bit MMIO)
+            // BAR0 (64-bit MMIO), low dword.
             (0x10, 4) => {
                 let value = u32::from_le_bytes(data.try_into().unwrap());
                 if value == 0xffff_ffff {
                     self.bar0_probe = true;
                     self.bar0 = 0;
-                    self.config_space[0x10..0x14].fill(0);
+                    self.config_space[0x10..0x18].fill(0);
                 } else {
                     self.bar0_probe = false;
-                    self.bar0 = value & 0xffff_fff0;
-                    self.config_space[0x10..0x14].copy_from_slice(&self.bar0.to_le_bytes());
+                    let low = u64::from(value & 0xffff_fff0);
+                    self.bar0 = (self.bar0 & 0xffff_ffff_0000_0000) | low;
+                    let low_reg = (self.bar0 as u32 & 0xffff_fff0) | 0x4;
+                    let high_reg = (self.bar0 >> 32) as u32;
+                    self.config_space[0x10..0x14].copy_from_slice(&low_reg.to_le_bytes());
+                    self.config_space[0x14..0x18].copy_from_slice(&high_reg.to_le_bytes());
                 }
             }
-            // BAR1 (32-bit I/O) for legacy transport (when enabled).
-            (0x14, 4) if self.legacy_io_enabled => {
+            // BAR1 is the high dword of BAR0.
+            (0x14, 4) => {
                 let value = u32::from_le_bytes(data.try_into().unwrap());
                 if value == 0xffff_ffff {
-                    self.bar1_probe = true;
-                    self.bar1 = 0;
-                    self.config_space[0x14..0x18].fill(0);
+                    self.bar0_probe = true;
+                    self.bar0 = 0;
+                    self.config_space[0x10..0x18].fill(0);
                 } else {
-                    self.bar1_probe = false;
-                    self.bar1 = (value & 0xffff_fffc) | 0x1;
-                    self.config_space[0x14..0x18].copy_from_slice(&self.bar1.to_le_bytes());
+                    self.bar0_probe = false;
+                    let high = u64::from(value) << 32;
+                    let low = self.bar0 & 0xffff_ffff;
+                    self.bar0 = low | high;
+                    let low_reg = (self.bar0 as u32 & 0xffff_fff0) | 0x4;
+                    let high_reg = (self.bar0 >> 32) as u32;
+                    self.config_space[0x10..0x14].copy_from_slice(&low_reg.to_le_bytes());
+                    self.config_space[0x14..0x18].copy_from_slice(&high_reg.to_le_bytes());
+                }
+            }
+            // BAR2 (32-bit I/O) for legacy transport (when enabled).
+            (0x18, 4) if self.legacy_io_enabled => {
+                let value = u32::from_le_bytes(data.try_into().unwrap());
+                if value == 0xffff_ffff {
+                    self.bar2_probe = true;
+                    self.bar2 = 0;
+                    self.config_space[0x18..0x1c].fill(0);
+                } else {
+                    self.bar2_probe = false;
+                    self.bar2 = (value & 0xffff_fffc) | 0x1;
+                    self.config_space[0x18..0x1c].copy_from_slice(&self.bar2.to_le_bytes());
                 }
             }
             // interrupt line (writable)
@@ -291,24 +313,36 @@ impl VirtioPciDevice {
     fn read_config_u8(&self, offset: usize) -> u8 {
         match offset {
             // BAR0 is emulated to support size probing.
-            0x10..=0x13 => {
-                let value = if self.bar0_probe {
-                    let size = u32::try_from(self.bar0_size).unwrap_or(u32::MAX);
-                    if size.is_power_of_two() {
-                        (!(size - 1)) & 0xffff_fff0
+            // BAR0 is a 64-bit MMIO BAR, so BAR1 contains the high dword of BAR0.
+            0x10..=0x17 => {
+                let (low, high) = if self.bar0_probe {
+                    let size = self.bar0_size;
+                    let mask = if size.is_power_of_two() {
+                        !(size - 1)
                     } else {
                         0
-                    }
+                    };
+                    let low = (mask as u32 & 0xffff_fff0) | 0x4;
+                    let high = (mask >> 32) as u32;
+                    (low, high)
                 } else {
-                    self.bar0
+                    let low = (self.bar0 as u32 & 0xffff_fff0) | 0x4;
+                    let high = (self.bar0 >> 32) as u32;
+                    (low, high)
                 };
-                let shift = (offset - 0x10) * 8;
+
+                let (value, base) = if offset < 0x14 {
+                    (low, 0x10)
+                } else {
+                    (high, 0x14)
+                };
+                let shift = (offset - base) * 8;
                 ((value >> shift) & 0xff) as u8
             }
-            // BAR1 is emulated to support size probing.
-            0x14..=0x17 if self.legacy_io_enabled => {
-                let value = if self.bar1_probe {
-                    let size = u32::try_from(self.bar1_size).unwrap_or(u32::MAX);
+            // BAR2 is emulated to support size probing.
+            0x18..=0x1b if self.legacy_io_enabled => {
+                let value = if self.bar2_probe {
+                    let size = u32::try_from(self.bar2_size).unwrap_or(u32::MAX);
                     let mask = if size.is_power_of_two() {
                         (!(size - 1)) & 0xffff_fffc
                     } else {
@@ -316,9 +350,9 @@ impl VirtioPciDevice {
                     };
                     mask | 0x1
                 } else {
-                    self.bar1
+                    self.bar2
                 };
-                let shift = (offset - 0x14) * 8;
+                let shift = (offset - 0x18) * 8;
                 ((value >> shift) & 0xff) as u8
             }
             _ => *self.config_space.get(offset).unwrap_or(&0),
@@ -561,12 +595,15 @@ impl VirtioPciDevice {
             self.config_space[6..8].copy_from_slice(&status.to_le_bytes());
         }
 
-        // BAR0 (32-bit MMIO)
-        self.config_space[0x10..0x14].copy_from_slice(&self.bar0.to_le_bytes());
+        // BAR0 (64-bit MMIO). BAR1 is the high dword of BAR0.
+        let bar0_low = (self.bar0 as u32 & 0xffff_fff0) | 0x4;
+        let bar0_high = (self.bar0 >> 32) as u32;
+        self.config_space[0x10..0x14].copy_from_slice(&bar0_low.to_le_bytes());
+        self.config_space[0x14..0x18].copy_from_slice(&bar0_high.to_le_bytes());
 
-        // BAR1 (32-bit I/O) for legacy transport.
+        // BAR2 (32-bit I/O) for legacy transport.
         if self.legacy_io_enabled {
-            self.config_space[0x14..0x18].copy_from_slice(&self.bar1.to_le_bytes());
+            self.config_space[0x18..0x1c].copy_from_slice(&self.bar2.to_le_bytes());
         }
 
         // Modern virtio-pci capabilities (vendor-specific) live in the PCI capability list.

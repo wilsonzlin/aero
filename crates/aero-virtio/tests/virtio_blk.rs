@@ -163,13 +163,19 @@ fn setup() -> (
 
     // BAR0 size probing (basic PCI correctness).
     dev.config_write(0x10, &0xffff_ffffu32.to_le_bytes());
+    dev.config_write(0x14, &0xffff_ffffu32.to_le_bytes());
     let mut bar = [0u8; 4];
     dev.config_read(0x10, &mut bar);
-    let expected_mask = (!(dev.bar0_size() as u32 - 1)) & 0xffff_fff0;
+    let expected_mask = ((!(dev.bar0_size() as u32 - 1)) & 0xffff_fff0) | 0x4;
     assert_eq!(u32::from_le_bytes(bar), expected_mask);
+    dev.config_read(0x14, &mut bar);
+    assert_eq!(u32::from_le_bytes(bar), 0xffff_ffff);
     dev.config_write(0x10, &0x8000_0000u32.to_le_bytes());
+    dev.config_write(0x14, &0u32.to_le_bytes());
     dev.config_read(0x10, &mut bar);
-    assert_eq!(u32::from_le_bytes(bar), 0x8000_0000);
+    assert_eq!(u32::from_le_bytes(bar), 0x8000_0004);
+    dev.config_read(0x14, &mut bar);
+    assert_eq!(u32::from_le_bytes(bar), 0);
 
     let caps = parse_caps(&dev);
     // `common` may legitimately be at BAR offset 0; the rest should be mapped.

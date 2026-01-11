@@ -194,7 +194,7 @@ pub const RTL8139_BARS: [PciBarProfile; 2] = [
     PciBarProfile::mem32(1, 0x100, false),
 ];
 
-pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 0x4000, false)];
+pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
 
 pub const VIRTIO_CAP_COMMON: [u8; 14] = [
     16, 1, 0, 0, 0, 0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,

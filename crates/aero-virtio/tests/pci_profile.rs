@@ -174,7 +174,7 @@ fn virtio_pci_transitional_exposes_legacy_io_bar_and_device_id() {
     expected.device_id = PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL;
     assert_virtio_identity_matches_profile(&dev, expected);
 
-    // BAR1 should be present as an I/O BAR for the legacy register block.
-    dev.config_write(0x14, &0xffff_ffffu32.to_le_bytes());
-    assert_eq!(read_u32(&dev, 0x14), 0xffff_ff01);
+    // BAR2 should be present as an I/O BAR for the legacy register block.
+    dev.config_write(0x18, &0xffff_ffffu32.to_le_bytes());
+    assert_eq!(read_u32(&dev, 0x18), 0xffff_ff01);
 }

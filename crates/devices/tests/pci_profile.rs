@@ -117,6 +117,15 @@ fn virtio_config_space_exposes_vendor_specific_capabilities() {
 }
 
 #[test]
+fn virtio_bar0_is_64bit_mmio() {
+    let mut cfg = VIRTIO_NET.build_config_space();
+    let bar0 = cfg.read(0x10, 4);
+    assert_eq!(bar0 & 0x1, 0, "BAR0 must be MMIO (bit0=0)");
+    assert_eq!(bar0 & 0x6, 0x4, "BAR0 must be a 64-bit MMIO BAR (bits2:1=0b10)");
+    assert_eq!(cfg.read(0x14, 4), 0, "BAR1 (high dword of BAR0) should start at 0");
+}
+
+#[test]
 fn pci_dump_includes_canonical_devices() {
     let dump = pci_dump(CANONICAL_IO_DEVICES);
     assert!(dump.contains("00:01.1 8086:7010"));
