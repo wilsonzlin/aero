@@ -5,7 +5,7 @@ used by the Windows driver packaging pipeline (`ci/make-catalogs.ps1`).
 
 ## Manifest
 
-`drivers/<driver-name>/ci-package.json` is the per-driver packaging manifest used by CI.
+`drivers/<driver>/ci-package.json` is the per-driver packaging manifest used by CI.
 
 CI only builds/packages drivers that include this file at the driver root (explicit opt-in),
 to avoid accidentally shipping dev/test drivers or conflicting INFs.
