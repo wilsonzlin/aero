@@ -55,9 +55,9 @@ Aero can build Guest Tools media (`aero-guest-tools.iso` / `.zip`) from a few di
 2) **Upstream virtio-win** (`viostor`, `netkvm`, etc.) *(optional / compatibility)*
    - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
    - Spec (via `-Profile`):
-        - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
-        - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
-    - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
+       - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
+       - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
+   - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
 
 3) **In-tree Aero virtio** (`aerovblk`, `aerovnet`) *(local/dev)*
    - Script: `drivers/scripts/make-guest-tools-from-aero-virtio.ps1`
