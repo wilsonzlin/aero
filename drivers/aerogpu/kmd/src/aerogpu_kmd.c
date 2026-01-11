@@ -690,6 +690,14 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         adapter->AbiKind = AEROGPU_ABI_KIND_V1;
         adapter->UsingNewAbi = TRUE;
         const ULONG abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
+        const ULONG abiMajor = abiVersion >> 16;
+        if (abiMajor != AEROGPU_ABI_MAJOR) {
+            AEROGPU_LOG("StartDevice: unsupported ABI major=%lu (abi=0x%08lx)", abiMajor, abiVersion);
+            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
+            adapter->Bar0 = NULL;
+            adapter->Bar0Length = 0;
+            return STATUS_NOT_SUPPORTED;
+        }
         const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
                                    ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
         v1Features = features;
@@ -702,7 +710,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
             AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x); assuming legacy ABI",
                         magic,
-                        AEROGPU_MMIO_MAGIC);
+                        AEROGPU_LEGACY_MMIO_MAGIC);
         }
         AEROGPU_LOG("StartDevice: ABI=legacy magic=0x%08lx version=0x%08lx", magic, version);
     }
@@ -1799,7 +1807,7 @@ static NTSTATUS APIENTRY AeroGpuDdiBuildPagingBuffer(_In_ const HANDLE hAdapter,
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
-                                                _In_ const DXGKARG_SUBMITCOMMAND* pSubmitCommand)
+                                                 _In_ const DXGKARG_SUBMITCOMMAND* pSubmitCommand)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
     if (!adapter || !pSubmitCommand) {
@@ -1846,22 +1854,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     PHYSICAL_ADDRESS descPa;
     descPa.QuadPart = 0;
 
-    NTSTATUS ringSt = STATUS_SUCCESS;
-    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-        uint32_t submitFlags = 0;
-        if (type == AEROGPU_SUBMIT_PRESENT) {
-            submitFlags |= AEROGPU_SUBMIT_FLAG_PRESENT;
-        }
-
-        const uint64_t allocTableGpa = allocTableSizeBytes ? (uint64_t)allocTablePa.QuadPart : 0;
-        ringSt = AeroGpuV1RingPushSubmit(adapter,
-                                         submitFlags,
-                                         dmaPa,
-                                         pSubmitCommand->DmaBufferSize,
-                                         allocTableGpa,
-                                         (uint32_t)allocTableSizeBytes,
-                                         fence);
-    } else {
+    if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
         descSize = sizeof(aerogpu_legacy_submission_desc_header) +
                    (SIZE_T)allocCount * sizeof(aerogpu_legacy_submission_desc_allocation);
 
@@ -1886,26 +1879,14 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
             aerogpu_legacy_submission_desc_allocation* out = (aerogpu_legacy_submission_desc_allocation*)(desc + 1);
             RtlCopyMemory(out, meta->Allocations, (SIZE_T)allocCount * sizeof(*out));
         }
-
-        ringSt = AeroGpuLegacyRingPushSubmit(adapter, (ULONG)fence, (ULONG)descSize, descPa);
-    }
-    if (!NT_SUCCESS(ringSt)) {
-        AeroGpuFreeContiguous(descVa);
-        AeroGpuFreeContiguous(dmaVa);
-        AeroGpuFreeSubmissionMeta(meta);
-        return ringSt;
     }
 
     AEROGPU_SUBMISSION* sub =
         (AEROGPU_SUBMISSION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*sub), AEROGPU_POOL_TAG);
     if (!sub) {
-        /*
-         * Submission already sent; keep resources around until reset/stop to
-         * avoid use-after-free if the device consumes them later.
-         */
-        if (meta) {
-            ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
-        }
+        AeroGpuFreeContiguous(descVa);
+        AeroGpuFreeContiguous(dmaVa);
+        AeroGpuFreeSubmissionMeta(meta);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlZeroMemory(sub, sizeof(*sub));
@@ -1916,19 +1897,59 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     sub->DescVa = descVa;
     sub->DescSize = descSize;
     sub->DescPa = descPa;
-    sub->AllocTableVa = allocTableVa;
-    sub->AllocTablePa = allocTablePa;
-    sub->AllocTableSizeBytes = allocTableSizeBytes;
+    sub->AllocTableVa = NULL;
+    sub->AllocTablePa.QuadPart = 0;
+    sub->AllocTableSizeBytes = 0;
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&adapter->PendingLock, &oldIrql);
+
+    /*
+     * Submit first, then record tracking information, but keep the pending lock
+     * held across both so the fence completion DPC can't run before the
+     * submission is visible in PendingSubmissions.
+     */
+    NTSTATUS ringSt = STATUS_SUCCESS;
+    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        uint32_t submitFlags = 0;
+        if (type == AEROGPU_SUBMIT_PRESENT) {
+            submitFlags |= AEROGPU_SUBMIT_FLAG_PRESENT;
+        }
+
+        const uint64_t allocTableGpa = allocTableSizeBytes ? (uint64_t)allocTablePa.QuadPart : 0;
+        ringSt = AeroGpuV1RingPushSubmit(adapter,
+                                         submitFlags,
+                                         dmaPa,
+                                         pSubmitCommand->DmaBufferSize,
+                                         allocTableGpa,
+                                         (uint32_t)allocTableSizeBytes,
+                                         fence);
+    } else {
+        ringSt = AeroGpuLegacyRingPushSubmit(adapter, (ULONG)fence, (ULONG)descSize, descPa);
+    }
+
+    if (NT_SUCCESS(ringSt)) {
+        sub->AllocTableVa = allocTableVa;
+        sub->AllocTablePa = allocTablePa;
+        sub->AllocTableSizeBytes = allocTableSizeBytes;
+
+        InsertTailList(&adapter->PendingSubmissions, &sub->ListEntry);
+        adapter->LastSubmittedFence = fence;
+    }
+
+    KeReleaseSpinLock(&adapter->PendingLock, oldIrql);
+
+    if (!NT_SUCCESS(ringSt)) {
+        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+        AeroGpuFreeContiguous(descVa);
+        AeroGpuFreeContiguous(dmaVa);
+        AeroGpuFreeSubmissionMeta(meta);
+        return ringSt;
+    }
 
     if (meta) {
         ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
     }
-
-    KIRQL oldIrql;
-    KeAcquireSpinLock(&adapter->PendingLock, &oldIrql);
-    InsertTailList(&adapter->PendingSubmissions, &sub->ListEntry);
-    adapter->LastSubmittedFence = fence;
-    KeReleaseSpinLock(&adapter->PendingLock, oldIrql);
 
     AeroGpuLogSubmission(adapter, (ULONG)fence, type, pSubmitCommand->DmaBufferSize);
 
