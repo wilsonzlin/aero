@@ -1,5 +1,7 @@
 #![cfg(feature = "aerogpu-exec")]
 
+mod common;
+
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
@@ -51,7 +53,14 @@ fn doorbell_executes_present_and_updates_scanout() {
     let backend = match AerogpuWgpuBackend::new() {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("skipping aerogpu_exec_present: {e:#}");
+            let reason = format!("wgpu unavailable ({e:#})");
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::doorbell_executes_present_and_updates_scanout"
+                ),
+                &reason,
+            );
             return;
         }
     };

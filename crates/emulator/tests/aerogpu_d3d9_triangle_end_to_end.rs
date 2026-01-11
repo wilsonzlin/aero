@@ -1,5 +1,7 @@
 #![cfg(feature = "aerogpu-native")]
 
+mod common;
+
 use std::time::{Duration, Instant};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -132,17 +134,16 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
-    // `AERO_REQUIRE_WEBGPU=1` means WebGPU is a hard requirement; anything else (including `0`/unset)
-    // means tests should skip when no adapter/device is available. This matches the repo-wide CI
-    // policy (PR CI should never require WebGPU).
-    let require_webgpu = matches!(std::env::var("AERO_REQUIRE_WEBGPU").as_deref(), Ok("1"));
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
-            if require_webgpu {
-                panic!("AERO_REQUIRE_WEBGPU=1 but wgpu request_adapter returned None");
-            }
-            eprintln!("skipping AeroGPU d3d9 end-to-end test: wgpu adapter not found");
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout"
+                ),
+                "wgpu request_adapter returned None",
+            );
             return;
         }
         Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
