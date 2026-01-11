@@ -206,6 +206,67 @@ def parse_w7_virtio_contract(md: str) -> tuple[int, int, int, dict[str, VirtioDe
     return vendor_id, subsystem_vendor_id, revision_id, device_ids, subsystem_ids
 
 
+def parse_w7_pci_identities_from_per_device_sections(md: str) -> dict[str, VirtioPciIdentity]:
+    """
+    AERO-W7-VIRTIO repeats PCI identity in per-device sections (§3.x). Those
+    values MUST match the authoritative tables in §1.1; otherwise the contract
+    document is internally inconsistent (and downstream docs/tools have no clear
+    source of truth).
+    """
+
+    def parse_bullets(section: str, *, context: str) -> VirtioPciIdentity:
+        def field(label: str) -> int:
+            m = re.search(rf"^- {re.escape(label)}:\s*`(0x[0-9A-Fa-f]+)`\s*$", section, flags=re.M)
+            if not m:
+                fail(
+                    f"could not parse '{label}' from {W7_VIRTIO_CONTRACT_MD.as_posix()} ({context}); "
+                    "expected a bullet like '- Device ID: `0x1059`'"
+                )
+            return int(m.group(1), 16)
+
+        return VirtioPciIdentity(
+            pci_vendor_id=field("Vendor ID"),
+            pci_device_id=field("Device ID"),
+            subsystem_vendor_id=field("Subsystem Vendor ID"),
+            subsystem_device_id=field("Subsystem Device ID"),
+            revision_id=field("Revision ID"),
+        )
+
+    def pci_ids_section(heading: str) -> str:
+        return extract_section(
+            md,
+            path=W7_VIRTIO_CONTRACT_MD,
+            heading_re=rf"^{re.escape(heading)}\b",
+            until_re=r"^(?:#### |### |## )",
+        )
+
+    out: dict[str, VirtioPciIdentity] = {}
+
+    out["virtio-blk"] = parse_bullets(pci_ids_section("#### 3.1.1 PCI IDs"), context="virtio-blk PCI IDs")
+    out["virtio-net"] = parse_bullets(pci_ids_section("#### 3.2.1 PCI IDs"), context="virtio-net PCI IDs")
+    out["virtio-snd"] = parse_bullets(pci_ids_section("#### 3.4.1 PCI IDs"), context="virtio-snd PCI IDs")
+
+    input_pci_ids = pci_ids_section("#### 3.3.1 PCI IDs")
+
+    def parse_input_variant(name: str, instance_label: str) -> None:
+        m = re.search(
+            rf"^{re.escape(name)}:\s*\n(?:\s*\n)*(?P<bullets>(?:^- .*(?:\n|$))+)",
+            input_pci_ids,
+            flags=re.M,
+        )
+        if not m:
+            fail(
+                f"could not parse {name.lower()} PCI ID bullets from {W7_VIRTIO_CONTRACT_MD.as_posix()} "
+                "(expected a 'Keyboard:'/'Mouse:' label followed by bullet list)"
+            )
+        out[instance_label] = parse_bullets(m.group("bullets"), context=f"virtio-input {name.lower()} PCI IDs")
+
+    parse_input_variant("Keyboard", "virtio-input (keyboard)")
+    parse_input_variant("Mouse", "virtio-input (mouse)")
+
+    return out
+
+
 def parse_windows_device_contract_md(md: str) -> dict[str, VirtioPciIdentity]:
     device_table = extract_section(
         md,
@@ -303,9 +364,9 @@ def docs_mark_transitional_ids_out_of_scope(md: str) -> bool:
 
 
 def main() -> None:
-    w7_vendor, w7_subsys_vendor, w7_revision, w7_device_ids, w7_subsystem_ids = parse_w7_virtio_contract(
-        read_text(W7_VIRTIO_CONTRACT_MD)
-    )
+    w7_md_text = read_text(W7_VIRTIO_CONTRACT_MD)
+    w7_vendor, w7_subsys_vendor, w7_revision, w7_device_ids, w7_subsystem_ids = parse_w7_virtio_contract(w7_md_text)
+    w7_per_device_identities = parse_w7_pci_identities_from_per_device_sections(w7_md_text)
 
     windows_md_text = read_text(WINDOWS_DEVICE_CONTRACT_MD)
     windows_doc_rows = parse_windows_device_contract_md(windows_md_text)
@@ -318,6 +379,39 @@ def main() -> None:
         fail(f"top-level JSON must be an object in {WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}")
 
     manifest_entries = parse_windows_device_contract_manifest(manifest_raw)
+
+    # Ensure AERO-W7-VIRTIO's per-device sections match its own authoritative tables.
+    for instance_label, subsys_id in w7_subsystem_ids.items():
+        base_device = instance_label.split(" (", 1)[0].strip()
+        type_info = w7_device_ids[base_device]
+        expected = VirtioPciIdentity(
+            pci_vendor_id=w7_vendor,
+            pci_device_id=type_info.pci_device_id,
+            subsystem_vendor_id=w7_subsys_vendor,
+            subsystem_device_id=subsys_id,
+            revision_id=w7_revision,
+        )
+
+        actual = w7_per_device_identities.get(instance_label)
+        if actual is None:
+            fail(
+                "AERO-W7-VIRTIO is missing a per-device PCI ID section for a contract instance:\n"
+                f"  missing: {instance_label!r}\n"
+                "  hint: ensure the device has a 'PCI IDs' subsection in §3"
+            )
+        if actual != expected:
+            fail(
+                "AERO-W7-VIRTIO PCI identity is internally inconsistent:\n"
+                f"  device instance: {instance_label}\n"
+                f"  expected (from §1.1 tables): "
+                f"{expected.pci_vendor_id:04X}:{expected.pci_device_id:04X} "
+                f"SUBSYS {expected.subsystem_vendor_id:04X}:{expected.subsystem_device_id:04X} "
+                f"REV 0x{expected.revision_id:02X}\n"
+                f"  got (from §3 per-device section): "
+                f"{actual.pci_vendor_id:04X}:{actual.pci_device_id:04X} "
+                f"SUBSYS {actual.subsystem_vendor_id:04X}:{actual.subsystem_device_id:04X} "
+                f"REV 0x{actual.revision_id:02X}"
+            )
 
     # Ensure windows-device-contract.md doesn't invent new virtio instances that aren't in AERO-W7-VIRTIO.
     for label in windows_doc_rows.keys():
