@@ -34,6 +34,7 @@ const USBSTS_HC_HALT: u16 = 1 << 5;
 
 const USBINTR_TIMEOUT_CRC: u16 = 1 << 0;
 const USBINTR_IOC: u16 = 1 << 2;
+const USBINTR_SHORT_PACKET: u16 = 1 << 3;
 
 const PORTSC_CCS: u16 = 1 << 0;
 const PORTSC_CSC: u16 = 1 << 1;
@@ -51,6 +52,13 @@ const TD_CTRL_DBUFERR: u32 = 1 << 21;
 const TD_CTRL_STALLED: u32 = 1 << 22;
 const TD_CTRL_ACTIVE: u32 = 1 << 23;
 const TD_CTRL_IOC: u32 = 1 << 24;
+const TD_CTRL_SPD: u32 = 1 << 29;
+
+// Internal helper bits used to accurately gate IRQ generation for USBINT events.
+// UHCI shares a single USBSTS_USBINT status bit for both IOC and short-packet interrupts; real
+// hardware still gates IRQ generation using the per-cause USBINTR bits.
+const USBINT_CAUSE_IOC: u16 = 1 << 0;
+const USBINT_CAUSE_SHORT_PACKET: u16 = 1 << 1;
 
 const TD_TOKEN_PID_MASK: u32 = 0xFF;
 const TD_TOKEN_DEVADDR_SHIFT: u32 = 8;
@@ -177,6 +185,7 @@ pub struct UhciController {
     usbcmd: u16,
     usbsts: u16,
     usbintr: u16,
+    usbint_causes: u16,
     frnum: u16,
     frbaseadd: u32,
     sofmod: u8,
@@ -193,6 +202,7 @@ impl UhciController {
             usbcmd: 0,
             usbsts: USBSTS_HC_HALT,
             usbintr: 0,
+            usbint_causes: 0,
             frnum: 0,
             frbaseadd: 0,
             sofmod: 0x40,
@@ -244,6 +254,7 @@ impl UhciController {
         self.usbcmd = USBCMD_MAXP;
         self.usbsts = USBSTS_HC_HALT;
         self.usbintr = 0;
+        self.usbint_causes = 0;
         self.frnum = 0;
         self.frbaseadd = 0;
         self.sofmod = 0x40;
@@ -254,7 +265,12 @@ impl UhciController {
     }
 
     fn update_irq(&mut self, irq: &mut dyn InterruptController) {
-        let asserted = (self.usbsts & USBSTS_USBINT != 0 && self.usbintr & USBINTR_IOC != 0)
+        let usbint_enabled = (self.usbintr & USBINTR_IOC != 0
+            && self.usbint_causes & USBINT_CAUSE_IOC != 0)
+            || (self.usbintr & USBINTR_SHORT_PACKET != 0
+                && self.usbint_causes & USBINT_CAUSE_SHORT_PACKET != 0);
+
+        let asserted = (self.usbsts & USBSTS_USBINT != 0 && usbint_enabled)
             || (self.usbsts & USBSTS_USBERRINT != 0 && self.usbintr & USBINTR_TIMEOUT_CRC != 0);
 
         if asserted {
@@ -323,6 +339,9 @@ impl UhciController {
             (REG_USBSTS, 2) => {
                 // Write-1-to-clear.
                 self.usbsts &= !value16;
+                if value16 & USBSTS_USBINT != 0 {
+                    self.usbint_causes = 0;
+                }
                 self.update_irq(irq);
             }
             (REG_USBINTR, 2) => {
@@ -456,6 +475,10 @@ impl UhciController {
                     element = next;
                     mem.write_u32(qh_addr + 0x04, next);
                 }
+                TdAdvance::ContinueAndStop(next) => {
+                    mem.write_u32(qh_addr + 0x04, next);
+                    break;
+                }
                 TdAdvance::Stop => break,
             }
         }
@@ -520,9 +543,18 @@ impl UhciController {
                 self.complete_td(mem, td_addr, td.ctrl_sts, bytes);
 
                 if td.ctrl_sts & TD_CTRL_IOC != 0 {
+                    self.usbint_causes |= USBINT_CAUSE_IOC;
                     self.set_usbint();
                 }
-                TdAdvance::Continue(td.link_ptr)
+                let short_packet = pid == UsbPid::In && bytes < maxlen;
+                let stop = short_packet && (td.ctrl_sts & TD_CTRL_SPD != 0);
+                if stop {
+                    self.usbint_causes |= USBINT_CAUSE_SHORT_PACKET;
+                    self.set_usbint();
+                    TdAdvance::ContinueAndStop(td.link_ptr)
+                } else {
+                    TdAdvance::Continue(td.link_ptr)
+                }
             }
             UsbHandshake::Nak => {
                 let mut ctrl = td.ctrl_sts | TD_CTRL_NAK;
@@ -598,6 +630,7 @@ impl UhciController {
 #[derive(Debug, Clone, Copy)]
 enum TdAdvance {
     Continue(u32),
+    ContinueAndStop(u32),
     Stop,
 }
 
@@ -984,5 +1017,117 @@ mod tests {
         dev.config_write(0x20, 4, 0x4000);
         assert_eq!(dev.config_read(0x20, 4), 0x4001);
         assert_eq!(dev.controller.io_base(), 0x4000);
+    }
+
+    struct ShortPacketThenNakDevice {
+        served: bool,
+    }
+
+    impl ShortPacketThenNakDevice {
+        fn new() -> Self {
+            Self { served: false }
+        }
+    }
+
+    impl UsbDevice for ShortPacketThenNakDevice {
+        fn as_any(&self) -> &dyn core::any::Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+            self
+        }
+
+        fn reset(&mut self) {
+            self.served = false;
+        }
+
+        fn address(&self) -> u8 {
+            0
+        }
+
+        fn handle_setup(&mut self, _setup: SetupPacket) {}
+
+        fn handle_out(&mut self, _ep: u8, _data: &[u8]) -> UsbHandshake {
+            UsbHandshake::Ack { bytes: 0 }
+        }
+
+        fn handle_in(&mut self, _ep: u8, buf: &mut [u8]) -> UsbHandshake {
+            if self.served {
+                return UsbHandshake::Nak;
+            }
+            let payload = [0x11u8, 0x22, 0x33];
+            let len = buf.len().min(payload.len());
+            buf[..len].copy_from_slice(&payload[..len]);
+            self.served = true;
+            UsbHandshake::Ack { bytes: len }
+        }
+    }
+
+    #[test]
+    fn uhci_short_packet_detect_stops_processing_additional_tds_in_frame() {
+        let io_base = 0x3100;
+        let mut ctrl = UhciController::new(io_base, 11);
+        ctrl.connect_device(0, Box::new(ShortPacketThenNakDevice::new()));
+
+        let mut mem = TestMemory::new(0x9000);
+        let mut irq = TestIrq::default();
+
+        ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PED as u32, &mut irq);
+        ctrl.port_write(
+            io_base + REG_USBINTR,
+            2,
+            USBINTR_SHORT_PACKET as u32,
+            &mut irq,
+        );
+        ctrl.port_write(io_base + REG_FRBASEADD, 4, 0x1000, &mut irq);
+        for i in 0..1024u32 {
+            mem.write_u32(0x1000 + i * 4, 0x2000 | LINK_PTR_Q);
+        }
+
+        mem.write_u32(0x2000, LINK_PTR_T);
+        mem.write_u32(0x2004, 0x3000);
+
+        // TD #1: IN to addr0/ep0, maxlen 8, with SPD set.
+        let maxlen_field = (8u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
+        let token = 0x69u32 | maxlen_field;
+        mem.write_u32(0x3000, 0x3020);
+        mem.write_u32(0x3004, TD_CTRL_ACTIVE | TD_CTRL_SPD | 0x7FF);
+        mem.write_u32(0x3008, token);
+        mem.write_u32(0x300C, 0x4000);
+
+        // TD #2: would NAK if processed in the same frame.
+        mem.write_u32(0x3020, LINK_PTR_T);
+        mem.write_u32(0x3024, TD_CTRL_ACTIVE | 0x7FF);
+        mem.write_u32(0x3028, token);
+        mem.write_u32(0x302C, 0x4010);
+
+        ctrl.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut irq);
+
+        ctrl.step_frame(&mut mem, &mut irq);
+
+        // TD #1 should complete with a short packet (3 bytes).
+        let td1_ctrl = mem.read_u32(0x3004);
+        assert_eq!(td1_ctrl & TD_CTRL_ACTIVE, 0);
+        assert_eq!(td1_ctrl & TD_CTRL_ACTLEN_MASK, 2);
+        assert_eq!(&mem.data[0x4000..0x4003], [0x11, 0x22, 0x33]);
+
+        // SPD should stop further TD processing for this QH within the current frame, so TD #2
+        // remains active and should not be marked as NAKed yet.
+        assert_eq!(mem.read_u32(0x2004), 0x3020);
+        let td2_ctrl = mem.read_u32(0x3024);
+        assert_ne!(td2_ctrl & TD_CTRL_ACTIVE, 0);
+        assert_eq!(td2_ctrl & TD_CTRL_NAK, 0);
+
+        assert_ne!(ctrl.usbsts & USBSTS_USBINT, 0);
+        assert_ne!(ctrl.usbint_causes & USBINT_CAUSE_SHORT_PACKET, 0);
+        assert!(irq.raised);
+        assert_eq!(irq.last_irq, Some(11));
+
+        // Clearing USBSTS_USBINT must clear the internal cause bits and deassert IRQ.
+        ctrl.port_write(io_base + REG_USBSTS, 2, USBSTS_USBINT as u32, &mut irq);
+        assert_eq!(ctrl.usbsts & USBSTS_USBINT, 0);
+        assert_eq!(ctrl.usbint_causes, 0);
+        assert!(!irq.raised);
     }
 }
