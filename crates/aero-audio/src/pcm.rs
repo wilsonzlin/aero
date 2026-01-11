@@ -387,7 +387,23 @@ impl LinearResampler {
         queued_frames: u32,
     ) {
         self.reset_rates(src_rate_hz, dst_rate_hz);
-        self.src_pos = f64::from_bits(src_pos_bits);
+        let src_pos = f64::from_bits(src_pos_bits);
+        // `src_pos` is expected to be a small fractional position (<1.0) because we always drop
+        // consumed frames as output is produced. Clamp corrupted/untrusted snapshot values so we
+        // don't propagate NaNs/Infs into the resampling loop.
+        self.src_pos = if src_pos.is_finite() && (0.0..1.0).contains(&src_pos) {
+            src_pos
+        } else {
+            0.0
+        };
+
+        // Restoring `queued_frames` preserves guest-visible DMA determinism because it keeps the
+        // resampler's "how far ahead of DMA are we?" bookkeeping stable. The actual queued audio
+        // frames are not serialized, so we rehydrate them as silence.
+        //
+        // Snapshot files may come from untrusted sources; clamp the allocation to avoid OOM.
+        const MAX_RESTORED_QUEUED_FRAMES: u32 = 65_536;
+        let queued_frames = queued_frames.min(MAX_RESTORED_QUEUED_FRAMES);
         self.src
             .extend(std::iter::repeat([0.0, 0.0]).take(queued_frames as usize));
     }

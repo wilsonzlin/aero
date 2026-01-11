@@ -533,3 +533,35 @@ fn hda_snapshot_restore_restores_capture_sample_rate_hz_for_capture_resampler_de
     // source after restore.
     assert_eq!(restored_capture.len(), expected_capture.len());
 }
+
+#[test]
+fn hda_snapshot_restore_clamps_corrupt_resampler_state_to_avoid_oom() {
+    let hda = HdaController::new();
+    let worklet_ring = AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    };
+    let mut snap = hda.snapshot_state(worklet_ring);
+    assert!(!snap.stream_runtime.is_empty());
+
+    // Simulate a corrupted snapshot that would otherwise attempt to allocate an
+    // enormous resampler queue.
+    snap.stream_runtime[0].resampler_queued_frames = u32::MAX;
+    snap.stream_runtime[0].resampler_src_pos_bits = f64::NAN.to_bits();
+
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+
+    let post = restored.snapshot_state(AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    });
+
+    assert!(post.stream_runtime[0].resampler_queued_frames <= 65_536);
+    assert_eq!(
+        post.stream_runtime[0].resampler_src_pos_bits,
+        0.0f64.to_bits()
+    );
+}
