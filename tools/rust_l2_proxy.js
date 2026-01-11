@@ -1,12 +1,14 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { access } from "node:fs/promises";
+import { access, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const COMMAND_OUTPUT_LIMIT = 200_000;
+const BUILD_LOCK_TIMEOUT_MS = 35 * 60_000;
+const BUILD_LOCK_RETRY_MS = 200;
 
 function appendLimitedOutput(prev, chunk) {
   let out = prev + chunk.toString("utf8");
@@ -30,6 +32,31 @@ function signalProcessTree(child, signal) {
     child.kill(signal);
   } catch {
     // ignore
+  }
+}
+
+async function withBuildLock(fn) {
+  const targetDir = await getCargoTargetDir();
+  const lockDir = path.join(targetDir, ".aero-l2-proxy-build.lock");
+  const start = Date.now();
+
+  while (true) {
+    try {
+      await mkdir(lockDir);
+      break;
+    } catch (err) {
+      if (!err || typeof err !== "object" || err.code !== "EEXIST") throw err;
+      if (Date.now() - start > BUILD_LOCK_TIMEOUT_MS) {
+        throw new Error(`timeout waiting for aero-l2-proxy build lock (${lockDir})`);
+      }
+      await sleep(BUILD_LOCK_RETRY_MS);
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await rm(lockDir, { recursive: true, force: true });
   }
 }
 
@@ -57,7 +84,7 @@ async function getProxyBinPath() {
 let buildPromise;
 async function ensureProxyBuilt() {
   if (buildPromise) return buildPromise;
-  buildPromise = (async () => {
+  buildPromise = withBuildLock(async () => {
     await runCommand("cargo", ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"], {
       cwd: REPO_ROOT,
       // A cold `cargo build` of the full dependency graph can be slow on CI runners.
@@ -66,7 +93,7 @@ async function ensureProxyBuilt() {
     });
     const binPath = await getProxyBinPath();
     await access(binPath);
-  })();
+  });
   return buildPromise;
 }
 
