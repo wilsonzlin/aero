@@ -3613,6 +3613,9 @@ void AEROGPU_APIENTRY Map11Void(D3D11DDI_HDEVICECONTEXT hCtx,
                        static_cast<unsigned>(map_type),
                        static_cast<unsigned>(map_flags));
   const HRESULT hr = MapCore11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
+  // When the runtime negotiates a void-returning Map entrypoint, errors are
+  // reported exclusively through SetErrorCb. Preserve DO_NOT_WAIT semantics by
+  // mapping DXGI_ERROR_WAS_STILL_DRAWING into the error callback.
   if (hr == kDxgiErrorWasStillDrawing) {
     SetError(DeviceFromContext(hCtx), hr);
   }
