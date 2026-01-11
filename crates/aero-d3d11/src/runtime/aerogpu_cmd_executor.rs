@@ -459,7 +459,8 @@ impl AerogpuD3d11Executor {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &[0u8; 4],
+            // D3D treats unbound SRVs as (0, 0, 0, 1).
+            &[0u8, 0u8, 0u8, 255u8],
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
@@ -905,9 +906,9 @@ impl AerogpuD3d11Executor {
 
         // Upload any dirty resources referenced by shader bindings (cbuffers + SRVs).
         for binding in &prepared_bindings.bindings {
-            match binding.kind {
+            match &binding.kind {
                 BindingKind::Texture2D { .. } => {
-                    if let Some(handle) = resolve_texture_binding(&self.state, binding) {
+                    if let Some(handle) = resolve_texture_binding(&self.state, binding)? {
                         self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
                     }
                 }
@@ -3483,34 +3484,55 @@ fn bind_group_layout_entry_for_binding(binding: &Binding) -> Result<wgpu::BindGr
     })
 }
 
-fn resolve_texture_binding(state: &AerogpuD3d11State, binding: &Binding) -> Option<u32> {
-    let slot: usize = binding.binding.try_into().ok()?;
+fn resolve_texture_binding(state: &AerogpuD3d11State, binding: &Binding) -> Result<Option<u32>> {
+    let BindingKind::Texture2D { slot } = &binding.kind else {
+        return Ok(None);
+    };
+    let slot: usize = (*slot)
+        .try_into()
+        .map_err(|_| anyhow!("texture slot out of range"))?;
+
     let vs = state.textures_vs.get(slot).and_then(|v| *v);
     let ps = state.textures_ps.get(slot).and_then(|v| *v);
     let cs = state.textures_cs.get(slot).and_then(|v| *v);
 
-    if binding.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
-        if ps.is_some() {
-            return ps;
+    // The current translator maps all shader stages to the same @group/@binding
+    // assignments. If the guest binds different resources per stage, we cannot
+    // represent that with a single WebGPU bind group.
+    let wants_vs = binding.visibility.contains(wgpu::ShaderStages::VERTEX);
+    let wants_ps = binding.visibility.contains(wgpu::ShaderStages::FRAGMENT);
+    let wants_cs = binding.visibility.contains(wgpu::ShaderStages::COMPUTE);
+
+    let mut resolved: Option<u32> = None;
+    let mut resolved_stage: Option<&'static str> = None;
+    for (stage_name, wants, value) in [("VS", wants_vs, vs), ("PS", wants_ps, ps), ("CS", wants_cs, cs)]
+    {
+        if !wants {
+            continue;
         }
-        if binding.visibility.contains(wgpu::ShaderStages::VERTEX) && vs.is_some() {
-            return vs;
+        match resolved_stage {
+            None => {
+                resolved = value;
+                resolved_stage = Some(stage_name);
+            }
+            Some(prev) => {
+                if value != resolved {
+                    bail!(
+                        "resource binding conflict for t{slot}: used by {prev}+{stage_name} but bound textures differ ({prev}={resolved:?}, {stage_name}={value:?})"
+                    );
+                }
+            }
         }
     }
-    if binding.visibility.contains(wgpu::ShaderStages::VERTEX) && vs.is_some() {
-        return vs;
-    }
-    if binding.visibility.contains(wgpu::ShaderStages::COMPUTE) && cs.is_some() {
-        return cs;
-    }
-    None
+
+    Ok(resolved)
 }
 
 fn resolve_sampler_binding(state: &AerogpuD3d11State, binding: &Binding) -> Option<u32> {
-    let BindingKind::Sampler { slot } = binding.kind else {
+    let BindingKind::Sampler { slot } = &binding.kind else {
         return None;
     };
-    let slot: usize = slot.try_into().ok()?;
+    let slot: usize = (*slot).try_into().ok()?;
     let vs = state.samplers_vs.get(slot).and_then(|v| *v);
     let ps = state.samplers_ps.get(slot).and_then(|v| *v);
     let cs = state.samplers_cs.get(slot).and_then(|v| *v);
@@ -3536,10 +3558,10 @@ fn resolve_constant_buffer_binding(
     state: &AerogpuD3d11State,
     binding: &Binding,
 ) -> Option<ConstantBufferBinding> {
-    let BindingKind::ConstantBuffer { slot, .. } = binding.kind else {
+    let BindingKind::ConstantBuffer { slot, .. } = &binding.kind else {
         return None;
     };
-    let slot: usize = slot.try_into().ok()?;
+    let slot: usize = (*slot).try_into().ok()?;
     let vs = state.constant_buffers_vs.get(slot).and_then(|v| *v);
     let ps = state.constant_buffers_ps.get(slot).and_then(|v| *v);
     let cs = state.constant_buffers_cs.get(slot).and_then(|v| *v);
@@ -3694,7 +3716,7 @@ fn build_bind_groups(
                     }
                 }
                 BindingKind::Texture2D { .. } => {
-                    let handle = resolve_texture_binding(state, b);
+                    let handle = resolve_texture_binding(state, b)?;
                     let view = handle
                         .and_then(|h| resources.textures.get(&h).map(|t| &t.view))
                         .unwrap_or(fallback_texture_view);
