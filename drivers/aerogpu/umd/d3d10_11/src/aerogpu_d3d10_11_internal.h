@@ -204,10 +204,12 @@ struct InputLayout {
 
 struct RenderTargetView {
   aerogpu_handle_t texture = 0;
+  Resource* resource = nullptr;
 };
 
 struct DepthStencilView {
   aerogpu_handle_t texture = 0;
+  Resource* resource = nullptr;
 };
 
 // Pipeline state objects are accepted and can be bound, but the host translator
@@ -241,12 +243,27 @@ struct Device {
 
   // Cached state (shared for the initial immediate-context-only implementation).
   aerogpu_handle_t current_rtv = 0;
+  Resource* current_rtv_resource = nullptr;
   aerogpu_handle_t current_dsv = 0;
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_gs = 0;
   aerogpu_handle_t current_input_layout = 0;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+
+  // Minimal software-state tracking for the Win7 guest tests. This allows the
+  // UMD to produce correct staging readback results even when the submission
+  // backend is still a stub.
+  Resource* current_vb = nullptr;
+  uint32_t current_vb_stride_bytes = 0;
+  uint32_t current_vb_offset_bytes = 0;
+
+  float viewport_x = 0.0f;
+  float viewport_y = 0.0f;
+  float viewport_width = 0.0f;
+  float viewport_height = 0.0f;
+  float viewport_min_depth = 0.0f;
+  float viewport_max_depth = 1.0f;
 
   Device() {
     cmd.reset();

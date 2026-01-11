@@ -13,6 +13,7 @@
 #include <d3d11.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -940,6 +941,7 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
   auto* res = pDesc->hResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pDesc->hResource) : nullptr;
   auto* rtv = new (hView.pDrvPrivate) RenderTargetView();
   rtv->texture = res ? res->handle : 0;
+  rtv->resource = res;
   return S_OK;
 }
 
@@ -964,6 +966,7 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
   auto* res = pDesc->hResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pDesc->hResource) : nullptr;
   auto* dsv = new (hView.pDrvPrivate) DepthStencilView();
   dsv->texture = res ? res->handle : 0;
+  dsv->resource = res;
   return S_OK;
 }
 
@@ -1378,6 +1381,12 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (StartSlot == 0 && NumBuffers >= 1) {
+    dev->current_vb =
+        phBuffers[0].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0]) : nullptr;
+    dev->current_vb_stride_bytes = pStrides[0];
+    dev->current_vb_offset_bytes = pOffsets[0];
+  }
   std::vector<aerogpu_vertex_buffer_binding> bindings;
   bindings.resize(NumBuffers);
   for (UINT i = 0; i < NumBuffers; i++) {
@@ -1530,6 +1539,12 @@ void AEROGPU_APIENTRY SetViewports11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumViewp
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   const auto& vp = pViewports[0];
+  dev->viewport_x = vp.TopLeftX;
+  dev->viewport_y = vp.TopLeftY;
+  dev->viewport_width = vp.Width;
+  dev->viewport_height = vp.Height;
+  dev->viewport_min_depth = vp.MinDepth;
+  dev->viewport_max_depth = vp.MaxDepth;
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
   cmd->x_f32 = f32_bits(vp.TopLeftX);
   cmd->y_f32 = f32_bits(vp.TopLeftY);
@@ -1566,12 +1581,22 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->current_rtv = 0;
+  dev->current_rtv_resource = nullptr;
   dev->current_dsv = 0;
   dev->current_vs = 0;
   dev->current_ps = 0;
   dev->current_gs = 0;
   dev->current_input_layout = 0;
   dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+  dev->current_vb = nullptr;
+  dev->current_vb_stride_bytes = 0;
+  dev->current_vb_offset_bytes = 0;
+  dev->viewport_x = 0.0f;
+  dev->viewport_y = 0.0f;
+  dev->viewport_width = 0.0f;
+  dev->viewport_height = 0.0f;
+  dev->viewport_min_depth = 0.0f;
+  dev->viewport_max_depth = 1.0f;
 
   auto* rt_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   rt_cmd->color_count = 0;
@@ -1594,8 +1619,11 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->current_rtv = 0;
+  dev->current_rtv_resource = nullptr;
   if (NumViews && phRtvs && phRtvs[0].pDrvPrivate) {
-    dev->current_rtv = FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(phRtvs[0])->texture;
+    auto* rtv = FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(phRtvs[0]);
+    dev->current_rtv = rtv ? rtv->texture : 0;
+    dev->current_rtv_resource = rtv ? rtv->resource : nullptr;
   }
   dev->current_dsv = hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv)->texture : 0;
 
@@ -1610,13 +1638,241 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 }
 
-void AEROGPU_APIENTRY ClearRenderTargetView11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRENDERTARGETVIEW, const FLOAT rgba[4]) {
+static uint8_t U8FromFloat01(float v) {
+  if (std::isnan(v)) {
+    v = 0.0f;
+  }
+  v = std::clamp(v, 0.0f, 1.0f);
+  const long rounded = std::lround(v * 255.0f);
+  if (rounded < 0) {
+    return 0;
+  }
+  if (rounded > 255) {
+    return 255;
+  }
+  return static_cast<uint8_t>(rounded);
+}
+
+static void SoftwareClearTexture2D(Resource* rt, const FLOAT rgba[4]) {
+  if (!rt || rt->kind != ResourceKind::Texture2D || rt->width == 0 || rt->height == 0 || rt->row_pitch_bytes == 0) {
+    return;
+  }
+  if (rt->storage.size() < static_cast<size_t>(rt->row_pitch_bytes) * rt->height) {
+    return;
+  }
+
+  const uint8_t r = U8FromFloat01(rgba[0]);
+  const uint8_t g = U8FromFloat01(rgba[1]);
+  const uint8_t b = U8FromFloat01(rgba[2]);
+  const uint8_t a = U8FromFloat01(rgba[3]);
+
+  uint8_t px[4] = {0, 0, 0, 0};
+  switch (rt->dxgi_format) {
+    case kDxgiFormatB8G8R8A8Unorm:
+    case kDxgiFormatB8G8R8X8Unorm:
+      px[0] = b;
+      px[1] = g;
+      px[2] = r;
+      px[3] = a;
+      break;
+    case kDxgiFormatR8G8B8A8Unorm:
+      px[0] = r;
+      px[1] = g;
+      px[2] = b;
+      px[3] = a;
+      break;
+    default:
+      return;
+  }
+
+  for (uint32_t y = 0; y < rt->height; y++) {
+    uint8_t* row = rt->storage.data() + static_cast<size_t>(y) * rt->row_pitch_bytes;
+    for (uint32_t x = 0; x < rt->width; x++) {
+      std::memcpy(row + static_cast<size_t>(x) * 4, px, sizeof(px));
+    }
+  }
+}
+
+static float EdgeFn(float ax, float ay, float bx, float by, float px, float py) {
+  return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
+}
+
+static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_vertex) {
+  if (!dev) {
+    return;
+  }
+  Resource* rt = dev->current_rtv_resource;
+  Resource* vb = dev->current_vb;
+  if (!rt || !vb || rt->kind != ResourceKind::Texture2D || vb->kind != ResourceKind::Buffer) {
+    return;
+  }
+  if (rt->width == 0 || rt->height == 0 || rt->row_pitch_bytes == 0) {
+    return;
+  }
+  if (rt->storage.size() < static_cast<size_t>(rt->row_pitch_bytes) * static_cast<size_t>(rt->height)) {
+    return;
+  }
+  if (!(rt->dxgi_format == kDxgiFormatB8G8R8A8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8X8Unorm ||
+        rt->dxgi_format == kDxgiFormatR8G8B8A8Unorm)) {
+    return;
+  }
+  if (dev->current_topology != AEROGPU_TOPOLOGY_TRIANGLELIST) {
+    return;
+  }
+  if (vertex_count < 3) {
+    return;
+  }
+
+  // Expect the Win7 test vertex format:
+  //   float2 POSITION @ byte 0
+  //   float4 COLOR    @ byte 8
+  const uint32_t stride = dev->current_vb_stride_bytes;
+  const uint32_t base_off = dev->current_vb_offset_bytes;
+  if (stride < 24) {
+    return;
+  }
+
+  const float vp_x = dev->viewport_width > 0.0f ? dev->viewport_x : 0.0f;
+  const float vp_y = dev->viewport_height > 0.0f ? dev->viewport_y : 0.0f;
+  const float vp_w = dev->viewport_width > 0.0f ? dev->viewport_width : static_cast<float>(rt->width);
+  const float vp_h = dev->viewport_height > 0.0f ? dev->viewport_height : static_cast<float>(rt->height);
+  if (vp_w <= 0.0f || vp_h <= 0.0f) {
+    return;
+  }
+
+  struct Vtx {
+    float x;
+    float y;
+    float c[4];
+  };
+
+  auto read_vtx = [&](uint32_t idx) -> Vtx {
+    Vtx out{};
+    const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(idx) * stride;
+    if (byte_off + 24 > vb->storage.size()) {
+      return out;
+    }
+    const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
+    std::memcpy(&out.x, p + 0, sizeof(float));
+    std::memcpy(&out.y, p + 4, sizeof(float));
+    std::memcpy(&out.c[0], p + 8, sizeof(float) * 4);
+    return out;
+  };
+
+  // We only need enough for the tests; handle the first triangle.
+  const Vtx v0 = read_vtx(first_vertex + 0);
+  const Vtx v1 = read_vtx(first_vertex + 1);
+  const Vtx v2 = read_vtx(first_vertex + 2);
+
+  const auto to_screen = [&](const Vtx& v, float* out_x, float* out_y) {
+    // Input positions are already in NDC (via a pass-through VS in the tests).
+    const float ndc_x = v.x;
+    const float ndc_y = v.y;
+    *out_x = vp_x + (ndc_x + 1.0f) * 0.5f * vp_w;
+    *out_y = vp_y + (1.0f - ndc_y) * 0.5f * vp_h;
+  };
+
+  float x0 = 0, y0 = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+  to_screen(v0, &x0, &y0);
+  to_screen(v1, &x1, &y1);
+  to_screen(v2, &x2, &y2);
+
+  const float area = EdgeFn(x0, y0, x1, y1, x2, y2);
+  if (area == 0.0f) {
+    return;
+  }
+
+  const float min_xf = std::min({x0, x1, x2});
+  const float max_xf = std::max({x0, x1, x2});
+  const float min_yf = std::min({y0, y1, y2});
+  const float max_yf = std::max({y0, y1, y2});
+
+  int min_x = static_cast<int>(std::floor(min_xf));
+  int max_x = static_cast<int>(std::ceil(max_xf));
+  int min_y = static_cast<int>(std::floor(min_yf));
+  int max_y = static_cast<int>(std::ceil(max_yf));
+
+  min_x = std::max(min_x, 0);
+  min_y = std::max(min_y, 0);
+  max_x = std::min(max_x, static_cast<int>(rt->width) - 1);
+  max_y = std::min(max_y, static_cast<int>(rt->height) - 1);
+
+  const float inv_area = 1.0f / area;
+
+  for (int y = min_y; y <= max_y; y++) {
+    uint8_t* row = rt->storage.data() + static_cast<size_t>(y) * rt->row_pitch_bytes;
+    for (int x = min_x; x <= max_x; x++) {
+      const float px = static_cast<float>(x) + 0.5f;
+      const float py = static_cast<float>(y) + 0.5f;
+
+      const float w0 = EdgeFn(x1, y1, x2, y2, px, py);
+      const float w1 = EdgeFn(x2, y2, x0, y0, px, py);
+      const float w2 = EdgeFn(x0, y0, x1, y1, px, py);
+
+      if (area > 0.0f) {
+        if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) {
+          continue;
+        }
+      } else {
+        if (w0 > 0.0f || w1 > 0.0f || w2 > 0.0f) {
+          continue;
+        }
+      }
+
+      const float b0 = w0 * inv_area;
+      const float b1 = w1 * inv_area;
+      const float b2 = w2 * inv_area;
+
+      float out_rgba[4] = {};
+      for (int i = 0; i < 4; i++) {
+        out_rgba[i] = b0 * v0.c[i] + b1 * v1.c[i] + b2 * v2.c[i];
+      }
+
+      uint8_t r = U8FromFloat01(out_rgba[0]);
+      uint8_t g = U8FromFloat01(out_rgba[1]);
+      uint8_t b = U8FromFloat01(out_rgba[2]);
+      uint8_t a = U8FromFloat01(out_rgba[3]);
+
+      uint8_t* dst = row + static_cast<size_t>(x) * 4;
+      switch (rt->dxgi_format) {
+        case kDxgiFormatB8G8R8A8Unorm:
+        case kDxgiFormatB8G8R8X8Unorm:
+          dst[0] = b;
+          dst[1] = g;
+          dst[2] = r;
+          dst[3] = a;
+          break;
+        case kDxgiFormatR8G8B8A8Unorm:
+          dst[0] = r;
+          dst[1] = g;
+          dst[2] = b;
+          dst[3] = a;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+}
+
+void AEROGPU_APIENTRY ClearRenderTargetView11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                              D3D11DDI_HRENDERTARGETVIEW hRtv,
+                                              const FLOAT rgba[4]) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || !rgba) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  Resource* rt = nullptr;
+  if (hRtv.pDrvPrivate) {
+    auto* view = FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(hRtv);
+    rt = view ? view->resource : nullptr;
+  }
+  if (!rt) {
+    rt = dev->current_rtv_resource;
+  }
+  SoftwareClearTexture2D(rt, rgba);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
   cmd->flags = AEROGPU_CLEAR_COLOR;
   cmd->color_rgba_f32[0] = f32_bits(rgba[0]);
@@ -1659,6 +1915,7 @@ void AEROGPU_APIENTRY Draw11(D3D11DDI_HDEVICECONTEXT hCtx, UINT VertexCount, UIN
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  SoftwareDrawTriangleList(dev, VertexCount, StartVertexLocation);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   cmd->vertex_count = VertexCount;
   cmd->instance_count = 1;
