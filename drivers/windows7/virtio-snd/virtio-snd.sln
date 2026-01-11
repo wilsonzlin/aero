@@ -6,14 +6,24 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "virtio-snd-modern-check", "
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Legacy|Win32 = Legacy|Win32
+		Legacy|x64 = Legacy|x64
 		Release|Win32 = Release|Win32
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}.Legacy|Win32.ActiveCfg = Legacy|Win32
+		{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}.Legacy|Win32.Build.0 = Legacy|Win32
+		{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}.Legacy|x64.ActiveCfg = Legacy|x64
+		{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}.Legacy|x64.Build.0 = Legacy|x64
 		{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}.Release|Win32.ActiveCfg = Release|Win32
 		{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}.Release|Win32.Build.0 = Release|Win32
 		{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}.Release|x64.ActiveCfg = Release|x64
 		{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}.Release|x64.Build.0 = Release|x64
+		{C2A96A71-0289-414B-A163-B61216F80E0A}.Legacy|Win32.ActiveCfg = Release|Win32
+		{C2A96A71-0289-414B-A163-B61216F80E0A}.Legacy|Win32.Build.0 = Release|Win32
+		{C2A96A71-0289-414B-A163-B61216F80E0A}.Legacy|x64.ActiveCfg = Release|x64
+		{C2A96A71-0289-414B-A163-B61216F80E0A}.Legacy|x64.Build.0 = Release|x64
 		{C2A96A71-0289-414B-A163-B61216F80E0A}.Release|Win32.ActiveCfg = Release|Win32
 		{C2A96A71-0289-414B-A163-B61216F80E0A}.Release|Win32.Build.0 = Release|Win32
 		{C2A96A71-0289-414B-A163-B61216F80E0A}.Release|x64.ActiveCfg = Release|x64
