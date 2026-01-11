@@ -116,7 +116,7 @@ static void PrintUsage() {
            L"\n"
            L"Commands:\n"
            L"  --list-displays\n"
-           L"  --query-version\n"
+           L"  --query-version  (alias: --query-device)\n"
            L"  --query-umd-private\n"
            L"  --query-fence\n"
            L"  --dump-ring\n"
@@ -264,6 +264,76 @@ static const wchar_t *SelftestErrorToString(uint32_t code) {
 
 static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   static const uint32_t kLegacyMmioMagic = 0x41524750u; // "ARGP" little-endian
+  const auto DumpFenceSnapshot = [&]() {
+    aerogpu_escape_query_fence_out qf;
+    ZeroMemory(&qf, sizeof(qf));
+    qf.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qf.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+    qf.hdr.size = sizeof(qf);
+    qf.hdr.reserved0 = 0;
+
+    NTSTATUS stFence = SendAerogpuEscape(f, hAdapter, &qf, sizeof(qf));
+    if (!NT_SUCCESS(stFence)) {
+      if (stFence == STATUS_NOT_SUPPORTED) {
+        wprintf(L"Fences: (not supported)\n");
+      } else {
+        PrintNtStatus(L"D3DKMTEscape(query-fence) failed", f, stFence);
+      }
+      return;
+    }
+
+    wprintf(L"Last submitted fence: 0x%I64x (%I64u)\n",
+            (unsigned long long)qf.last_submitted_fence,
+            (unsigned long long)qf.last_submitted_fence);
+    wprintf(L"Last completed fence: 0x%I64x (%I64u)\n",
+            (unsigned long long)qf.last_completed_fence,
+            (unsigned long long)qf.last_completed_fence);
+  };
+
+  const auto DumpVblankSnapshot = [&]() {
+    aerogpu_escape_query_vblank_out qv;
+    ZeroMemory(&qv, sizeof(qv));
+    qv.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qv.hdr.op = AEROGPU_ESCAPE_OP_QUERY_VBLANK;
+    qv.hdr.size = sizeof(qv);
+    qv.hdr.reserved0 = 0;
+    qv.vidpn_source_id = 0;
+
+    NTSTATUS stVblank = SendAerogpuEscape(f, hAdapter, &qv, sizeof(qv));
+    if (!NT_SUCCESS(stVblank)) {
+      if (stVblank == STATUS_NOT_SUPPORTED) {
+        wprintf(L"Scanout0 vblank: (not supported)\n");
+      } else {
+        PrintNtStatus(L"D3DKMTEscape(query-vblank) failed", f, stVblank);
+      }
+      return;
+    }
+
+    bool supported = true;
+    if ((qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0) {
+      supported = (qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED) != 0;
+    }
+
+    wprintf(L"Scanout0 vblank:\n");
+    wprintf(L"  irq_enable: 0x%08lx\n", (unsigned long)qv.irq_enable);
+    wprintf(L"  irq_status: 0x%08lx\n", (unsigned long)qv.irq_status);
+    wprintf(L"  irq_active: 0x%08lx\n", (unsigned long)(qv.irq_enable & qv.irq_status));
+    if (!supported) {
+      wprintf(L"  (not supported)\n");
+      return;
+    }
+
+    if (qv.vblank_period_ns != 0) {
+      const double hz = 1000000000.0 / (double)qv.vblank_period_ns;
+      wprintf(L"  vblank_period_ns: %lu (~%.3f Hz)\n", (unsigned long)qv.vblank_period_ns, hz);
+    } else {
+      wprintf(L"  vblank_period_ns: 0\n");
+    }
+    wprintf(L"  vblank_seq: 0x%I64x (%I64u)\n", (unsigned long long)qv.vblank_seq, (unsigned long long)qv.vblank_seq);
+    wprintf(L"  last_vblank_time_ns: 0x%I64x (%I64u ns)\n",
+            (unsigned long long)qv.last_vblank_time_ns,
+            (unsigned long long)qv.last_vblank_time_ns);
+  };
 
   aerogpu_escape_query_device_v2_out q;
   ZeroMemory(&q, sizeof(q));
@@ -295,6 +365,9 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)q1.mmio_version,
             (unsigned long)major,
             (unsigned long)minor);
+
+    DumpFenceSnapshot();
+    DumpVblankSnapshot();
     return 0;
   }
 
@@ -342,6 +415,9 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     }
     wprintf(L"\n");
   }
+
+  DumpFenceSnapshot();
+  DumpVblankSnapshot();
 
   return 0;
 }
@@ -1104,7 +1180,7 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
 
-    if (wcscmp(a, L"--query-version") == 0) {
+    if (wcscmp(a, L"--query-version") == 0 || wcscmp(a, L"--query-device") == 0) {
       if (!SetCommand(CMD_QUERY_VERSION)) {
         return 1;
       }

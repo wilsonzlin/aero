@@ -1,6 +1,6 @@
 # AeroGPU Windows 7 WDDM 1.1 Kernel-Mode Display Miniport (KMD)
 
-This directory contains a **minimal** WDDM 1.1 display miniport driver for Windows 7 SP1 (x86/x64). The design goal is bring-up: bind to the AeroGPU PCI device, perform a single-head VidPN modeset, expose a simple system-memory-only segment, and forward render/present submissions to the emulator via a shared ring/MMIO ABI.
+This directory contains a **minimal** WDDM 1.1 display miniport driver for Windows 7 SP1 (x86/x64). The design goal is bring-up: bind to the AeroGPU PCI device, perform a single-head VidPN modeset, expose a simple system-memory-only segment, and forward render/present submissions to the emulator via the canonical AeroGPU MMIO + ring ABI.
 
 ## Layout
 
@@ -20,9 +20,7 @@ The KMD supports two AeroGPU device ABIs:
   * `drivers/aerogpu/protocol/aerogpu_cmd.h` (command stream packets)
   * Emulator device model: `crates/emulator/src/devices/pci/aerogpu.rs`
 * **Legacy bring-up ABI (compatibility)**:
-  * Historical reference: `drivers/aerogpu/protocol/aerogpu_protocol.h`
-  * The KMD does **not** include `aerogpu_protocol.h` directly; it uses a minimal internal shim:
-    `include/aerogpu_legacy_abi.h`
+  * The KMD uses a minimal internal shim: `include/aerogpu_legacy_abi.h`
   * Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`
 
 The KMD detects which ABI is active by reading BAR0[0] (MMIO magic):
@@ -30,7 +28,7 @@ The KMD detects which ABI is active by reading BAR0[0] (MMIO magic):
 * Legacy ABI: `"ARGP"` (`AEROGPU_LEGACY_MMIO_MAGIC`)
 
 Note that the legacy and versioned ABIs use **different PCI IDs**:
-* Legacy (`aerogpu_protocol.h`): `VID=0x1AED`, `DID=0x0001`
+* Legacy (ARGP): `VID=0x1AED`, `DID=0x0001`
 * Versioned (`aerogpu_pci.h`): `VID=0xA3A0`, `DID=0x0001`
 
 Make sure your Win7 INF and your emulator device model agree on which VID/DID to expose.
@@ -38,6 +36,29 @@ Make sure your Win7 INF and your emulator device model agree on which VID/DID to
 See:
 * `drivers/aerogpu/protocol/README.md` for ABI details.
 * `docs/abi/aerogpu-pci-identity.md` for the canonical PCI IDs and the matching emulator device models.
+
+## Canonical MMIO discovery (bring-up checklist)
+
+On startup, treat BAR0 as the canonical MMIO block (`drivers/aerogpu/protocol/aerogpu_pci.h`) and validate:
+
+1. **Magic + ABI version**
+   - Read `AEROGPU_MMIO_REG_MAGIC` → must equal `AEROGPU_MMIO_MAGIC`.
+   - Read `AEROGPU_MMIO_REG_ABI_VERSION` → `AEROGPU_ABI_VERSION_U32` (`major<<16 | minor`).
+2. **Feature bits**
+   - Read `AEROGPU_MMIO_REG_FEATURES_LO`/`HI` and combine to a 64-bit mask.
+   - Decode/feature-gate optional behavior via `AEROGPU_FEATURE_*` bits:
+     - `AEROGPU_FEATURE_FENCE_PAGE` (optional shared fence page)
+     - `AEROGPU_FEATURE_VBLANK` (vblank IRQ + timing registers)
+3. **Fence completion**
+   - Read the 64-bit completed fence value from
+     `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO`/`HI`.
+4. **Vblank timing + IRQs (when `AEROGPU_FEATURE_VBLANK` is set)**
+   - Enable vblank IRQs via `AEROGPU_MMIO_REG_IRQ_ENABLE` (bit `AEROGPU_IRQ_SCANOUT_VBLANK`).
+   - Poll status via `AEROGPU_MMIO_REG_IRQ_STATUS` and ack IRQs via `AEROGPU_MMIO_REG_IRQ_ACK`.
+   - Consume timing information from:
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO`/`HI`
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO`/`HI`
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
 
 ## Stable `alloc_id` / `share_token` (WDDM allocation private data)
 

@@ -13,7 +13,7 @@ The AeroGPU Win7 driver can bind to **either** of the following PCI IDs:
 - **Legacy device**: `PCI\\VEN_1AED&DEV_0001`  
   Legacy bring-up ABI (ring = `aerogpu_ring_entry`).
 
-`--query-version`, `--query-fence`, `--dump-ring`, and `--selftest` are expected to work on both devices as long as the installed KMD implements the ABI-aware escape paths.
+`--query-version` (alias: `--query-device`), `--query-fence`, `--dump-ring`, and `--selftest` are expected to work on both devices as long as the installed KMD implements the ABI-aware escape paths.
 
 ## Features
 
@@ -22,8 +22,9 @@ Minimum supported commands:
 - `aerogpu_dbgctl --list-displays`  
   Prints the available `\\.\DISPLAY*` names to use with `--display`.
 
-- `aerogpu_dbgctl --query-version`  
+- `aerogpu_dbgctl --query-version` (alias: `--query-device`)  
   Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (for AGPU) device feature bits.
+  Also prints a fence snapshot and (when available) a scanout0 vblank timing snapshot.
 
 - `aerogpu_dbgctl --query-umd-private`  
   Calls `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` and prints the `aerogpu_umd_private_v1` blob used by UMDs to discover the active ABI + feature bits.
@@ -64,7 +65,7 @@ Examples:
 
 ```
 aerogpu_dbgctl --list-displays
-aerogpu_dbgctl --query-version
+aerogpu_dbgctl --query-device
 aerogpu_dbgctl --query-umd-private
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --dump-ring --ring-id 0
@@ -118,7 +119,7 @@ The AeroGPU KMD is expected to implement `DxgkDdiEscape` handling for these pack
 
 Escape ops used:
 
-- `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version`
+- `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version` / `--query-device`
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
