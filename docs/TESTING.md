@@ -374,7 +374,9 @@ CI should be reproducible locally with the same top-level commands:
 
 - Full stack (recommended): `cargo xtask test-all` (or `./scripts/test-all.sh` wrapper)
 - Rust: `cargo test --workspace`
-- WASM (Node): `wasm-pack test --node`
+- WASM tests (Node): `wasm-pack test --node`
+- WASM builds (single + threaded): `cd web && npm run wasm:build`
+  - Threaded builds require nightly + `rust-src` (see ADR 0004).
 - TypeScript unit tests: `npm run test:unit` (often with coverage enabled)
 - Browser E2E: `npm run test:e2e`
 

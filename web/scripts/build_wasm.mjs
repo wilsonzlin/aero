@@ -92,7 +92,41 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const repoRoot = path.resolve(__dirname, "../..");
-const cratePath = path.join(repoRoot, "crates/aero-wasm");
+
+function parseKeyValueLines(output) {
+    const values = {};
+    for (const line of output.split(/\r?\n/u)) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            continue;
+        }
+        const idx = trimmed.indexOf("=");
+        if (idx === -1) {
+            continue;
+        }
+        const key = trimmed.slice(0, idx);
+        const value = trimmed.slice(idx + 1);
+        values[key] = value;
+    }
+    return values;
+}
+
+const detect = spawnSync("node", [path.join(repoRoot, "scripts/ci/detect-wasm-crate.mjs")], {
+    stdio: ["ignore", "pipe", "inherit"],
+    encoding: "utf8",
+});
+if ((detect.status ?? 1) !== 0) {
+    die(
+        "Failed to resolve the Rust WASM crate.\n\nTip: set AERO_WASM_CRATE_DIR to the crate directory containing Cargo.toml.",
+    );
+}
+const detectOutput = (detect.stdout ?? "").trim();
+const detected = parseKeyValueLines(detectOutput);
+if (!detected.dir) {
+    die("Failed to resolve the Rust WASM crate (resolver returned empty output).");
+}
+
+const cratePath = path.isAbsolute(detected.dir) ? detected.dir : path.join(repoRoot, detected.dir);
 const outDir = path.join(
     repoRoot,
     "web/src/wasm",
@@ -192,8 +226,11 @@ const args = [
     "aero_wasm",
     "--no-opt",
     cratePath,
-    "--locked",
 ];
+
+if (existsSync(path.join(repoRoot, "Cargo.lock"))) {
+    args.push("--locked");
+}
 
 if (isThreaded) {
     args.push("-Z", "build-std=std,panic_abort", "--features", "wasm-threaded");

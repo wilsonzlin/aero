@@ -284,17 +284,31 @@ jobs:
         run: cargo test ${{ steps.cargo-locked.outputs.locked }} -p emulator --test boot_sector --test freedos_boot
 
   wasm:
-    name: WASM (wasm-pack build + test)
+    name: WASM (${{ matrix.variant }})
     needs: policy
     if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - single
+          - threaded
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install Rust toolchain (stable)
+        if: matrix.variant == 'single'
         uses: dtolnay/rust-toolchain@stable
         with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Rust toolchain (nightly + rust-src)
+        if: matrix.variant == 'threaded'
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
           targets: wasm32-unknown-unknown
 
       - name: Rust cache
@@ -321,19 +335,21 @@ jobs:
             echo "locked=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: wasm-pack build
-        working-directory: ${{ steps.wasm-crate.outputs.dir }}
-        run: wasm-pack build --release --target web -- ${{ steps.cargo-locked.outputs.locked }}
+      - name: wasm-pack build (${{ matrix.variant }})
+        run: node web/scripts/build_wasm.mjs "${{ matrix.variant }}" release
 
       - name: wasm-pack test (node)
+        if: matrix.variant == 'single'
         run: cargo xtask test-all --skip-rust --skip-ts --skip-e2e --wasm-crate-dir "${{ steps.wasm-crate.outputs.dir }}"
 
       - name: Upload wasm-pack output (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: wasm-pack-pkg
-          path: ${{ steps.wasm-crate.outputs.dir }}/pkg/
+          name: wasm-pack-pkg-${{ matrix.variant }}
+          path: |
+            web/src/wasm/pkg-${{ matrix.variant }}/
+            ${{ steps.wasm-crate.outputs.dir }}/pkg/
           if-no-files-found: ignore
           retention-days: 7
 
