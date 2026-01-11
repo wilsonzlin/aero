@@ -260,9 +260,10 @@ Recommended guardrails:
 - **No low-speed modeling**
   - Low-speed (1.5 Mbps) USB devices are not modeled correctly yet.
   - Expect some HID peripherals to fail enumeration or behave incorrectly.
-- **WebUSB passthrough is separate (non-HID)**
-  - WebUSB passthrough uses a host action/completion bridge and is tracked
-    separately from the WebHID HID-device MVP. See:
+- **WebUSB passthrough is separate (non-HID) and not yet wired end-to-end**
+  - The host action/completion bridge and WebUSB executor exist, but full
+    guest-visible WebUSB passthrough is tracked separately from the WebHID
+    HID-device MVP and is still in progress. See:
     - [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
     - [`docs/webusb.md`](./webusb.md)
   - WebUSB cannot access many common USB classes in Chromium (protected interface
