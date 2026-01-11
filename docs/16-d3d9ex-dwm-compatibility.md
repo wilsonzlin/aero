@@ -189,7 +189,7 @@ Define a guest/host sharing model that does **not** attempt to expose host OS ha
   - **AeroGPU does _not_ use the numeric `HANDLE` value as the protocol `share_token`.**
 - In the AeroGPU protocol, `share_token` is a stable 64-bit value persisted in the preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
   - The guest UMD generates a collision-resistant `share_token` and stores it in the blob for shared allocations.
-  - dxgkrnl preserves the blob and returns the exact same bytes on cross-process `OpenResource`, so both processes observe the same `share_token`.
+  - dxgkrnl preserves the blob and returns the exact same bytes on cross-process `OpenResource` / `DxgkDdiOpenAllocation`, so both processes observe the same `share_token`.
   - **Do not** treat the raw Win32 `HANDLE` value itself as a stable cross-process token. The handle is still required for correctness (it is how another process asks Windows to open the shared resource), but it is not a good host-mapping key.
 
 Expected sequence:

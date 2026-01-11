@@ -820,10 +820,12 @@ typedef struct _D3D9DDIARG_CREATERESOURCE {
   // during create, and dxgkrnl preserves/returns the bytes verbatim when another
   // process opens the resource.
   //
-  // NOTE: The protocol `share_token` used by `EXPORT_SHARED_SURFACE` /
-  // `IMPORT_SHARED_SURFACE` is persisted in `aerogpu_wddm_alloc_priv.share_token`
-  // (see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). Do not derive it from
-  // the numeric D3D shared `HANDLE` value (process-local).
+  // NOTE: For shared surfaces, the protocol `share_token` used by
+  // `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE` is persisted in
+  // `aerogpu_wddm_alloc_priv.share_token` (see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+  // The UMD chooses a collision-resistant token and stores it here so dxgkrnl can
+  // preserve/return it on cross-process opens. Do not derive it from the numeric
+  // D3D shared `HANDLE` value (process-local).
   //
   // See also: drivers/aerogpu/protocol/aerogpu_wddm_alloc.h
   //

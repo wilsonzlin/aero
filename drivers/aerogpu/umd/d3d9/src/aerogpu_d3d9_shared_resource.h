@@ -22,6 +22,9 @@ namespace aerogpu {
 // private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in
 // `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the same bytes on
 // cross-process opens so other processes can IMPORT using the same token.
+//
+// Do NOT derive `share_token` from the numeric value of the user-mode shared `HANDLE`:
+// handle values are process-local and not stable cross-process.
 class ShareTokenAllocator {
  public:
   ShareTokenAllocator() = default;
