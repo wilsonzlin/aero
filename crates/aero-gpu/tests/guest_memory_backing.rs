@@ -321,6 +321,256 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
 }
 
 #[test]
+fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                eprintln!("skipping guest backing indexed test: no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        // Guest memory + allocation table.
+        let mut guest = VecGuestMemory::new(0x30_000);
+        const ALLOC_VB: u32 = 1;
+        const ALLOC_TEX: u32 = 2;
+        const ALLOC_IB: u32 = 3;
+        let vb_gpa = 0x1000u64;
+        let tex_gpa = 0x2000u64;
+        let ib_gpa = 0x3000u64;
+        let alloc_table_gpa = 0x8000u64;
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, 0x434F_4C41); // "ALOC"
+            push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 3); // entry_count
+            push_u32(&mut out, 32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, ALLOC_VB);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, vb_gpa);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            push_u32(&mut out, ALLOC_TEX);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, tex_gpa);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            push_u32(&mut out, ALLOC_IB);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, ib_gpa);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        // Full-screen triangle (pos: vec2<f32>).
+        let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+        let mut vb_bytes = Vec::new();
+        for v in verts {
+            vb_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        guest.write(vb_gpa, &vb_bytes).expect("write vertex data");
+
+        // Index buffer (u16 indices), padded to 8 bytes to satisfy WebGPU write_buffer alignment.
+        let ib_bytes: [u16; 4] = [0, 1, 2, 0];
+        let mut ib_raw = Vec::new();
+        for i in ib_bytes {
+            ib_raw.extend_from_slice(&i.to_le_bytes());
+        }
+        assert_eq!(ib_raw.len(), 8);
+        guest.write(ib_gpa, &ib_raw).expect("write index data");
+
+        // 1x1 RGBA8 texture, solid red.
+        guest.write(tex_gpa, &[255, 0, 0, 255])
+            .expect("write texture data");
+
+        let stream = build_stream(|out| {
+            // CREATE_BUFFER (handle=1) guest-backed vertex buffer.
+            emit_packet(out, 0x100, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                push_u32(out, ALLOC_VB); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_BUFFER (handle=4) guest-backed index buffer.
+            emit_packet(out, 0x100, |out| {
+                push_u32(out, 4); // buffer_handle
+                push_u32(out, 1u32 << 1); // usage_flags: INDEX_BUFFER
+                push_u64(out, ib_raw.len() as u64); // size_bytes
+                push_u32(out, ALLOC_IB); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D (handle=2) guest-backed sampled texture.
+            emit_packet(out, 0x101, |out| {
+                push_u32(out, 2); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 4); // row_pitch_bytes
+                push_u32(out, ALLOC_TEX); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_TEXTURE2D (handle=3) host-owned render target.
+            emit_packet(out, 0x101, |out| {
+                push_u32(out, 3); // texture_handle
+                push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
+                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (unused)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // RESOURCE_DIRTY_RANGE for vb, ib, texture.
+            emit_packet(out, 0x103, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+            });
+            emit_packet(out, 0x103, |out| {
+                push_u32(out, 4); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, ib_raw.len() as u64); // size_bytes
+            });
+            emit_packet(out, 0x103, |out| {
+                push_u32(out, 2); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, 4); // size_bytes
+            });
+
+            // SET_RENDER_TARGETS: color0 = texture 3.
+            emit_packet(out, 0x400, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, 3); // colors[0]
+                for _ in 1..8 {
+                    push_u32(out, 0);
+                }
+            });
+
+            // CLEAR to black.
+            emit_packet(out, 0x600, |out| {
+                push_u32(out, 1); // flags: CLEAR_COLOR
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 0.0);
+                push_f32_bits(out, 1.0);
+                push_f32_bits(out, 1.0); // depth (unused)
+                push_u32(out, 0); // stencil
+            });
+
+            // SET_TEXTURE (ps slot 0) = texture 2.
+            emit_packet(out, 0x510, |out| {
+                push_u32(out, 1); // shader_stage: PIXEL
+                push_u32(out, 0); // slot
+                push_u32(out, 2); // texture handle
+                push_u32(out, 0); // reserved0
+            });
+
+            // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
+            emit_packet(out, 0x500, |out| {
+                push_u32(out, 0); // start_slot
+                push_u32(out, 1); // buffer_count
+                push_u32(out, 1); // binding[0].buffer
+                push_u32(out, 8); // binding[0].stride_bytes
+                push_u32(out, 0); // binding[0].offset_bytes
+                push_u32(out, 0); // binding[0].reserved0
+            });
+
+            // SET_INDEX_BUFFER: buffer 4, uint16, offset 0.
+            emit_packet(out, 0x501, |out| {
+                push_u32(out, 4); // buffer
+                push_u32(out, 0); // format: UINT16
+                push_u32(out, 0); // offset_bytes
+                push_u32(out, 0); // reserved0
+            });
+
+            // DRAW_INDEXED: 3 indices.
+            emit_packet(out, 0x602, |out| {
+                push_u32(out, 3); // index_count
+                push_u32(out, 1); // instance_count
+                push_u32(out, 0); // first_index
+                push_u32(out, 0); // base_vertex (i32 bits)
+                push_u32(out, 0); // first_instance
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest
+            .write(cmd_gpa, &stream)
+            .expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(
+            report.is_ok(),
+            "executor report had errors: {:#?}",
+            report.events
+        );
+
+        let rt_tex = exec.texture(3).expect("render target texture");
+        let rgba = readback_rgba8(
+            exec.device(),
+            exec.queue(),
+            rt_tex,
+            TextureRegion {
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width: 4,
+                    height: 4,
+                    depth_or_array_layers: 1,
+                },
+            },
+        )
+        .await;
+
+        // Sample the center pixel and ensure it matches the uploaded texture (solid red).
+        let idx = ((2 * 4 + 2) * 4) as usize;
+        assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
+    });
+}
+
+#[test]
 fn upload_resource_updates_host_owned_resources() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {

@@ -22,10 +22,12 @@ const OP_UPLOAD_RESOURCE: u32 = 0x104;
 
 const OP_SET_RENDER_TARGETS: u32 = 0x400;
 const OP_SET_VERTEX_BUFFERS: u32 = 0x500;
+const OP_SET_INDEX_BUFFER: u32 = 0x501;
 const OP_SET_TEXTURE: u32 = 0x510;
 
 const OP_CLEAR: u32 = 0x600;
 const OP_DRAW: u32 = 0x601;
+const OP_DRAW_INDEXED: u32 = 0x602;
 
 // `enum aerogpu_format` from `aerogpu_pci.h`.
 const FMT_B8G8R8A8_UNORM: u32 = 1;
@@ -61,6 +63,13 @@ fn read_u64_le(bytes: &[u8], offset: usize) -> Result<u64, ExecutorError> {
         .get(offset..offset + 8)
         .ok_or(ExecutorError::TruncatedPacket)?;
     Ok(u64::from_le_bytes(slice.try_into().unwrap()))
+}
+
+fn read_i32_le(bytes: &[u8], offset: usize) -> Result<i32, ExecutorError> {
+    let slice = bytes
+        .get(offset..offset + 4)
+        .ok_or(ExecutorError::TruncatedPacket)?;
+    Ok(i32::from_le_bytes(slice.try_into().unwrap()))
 }
 
 fn align_to(value: u32, alignment: u32) -> u32 {
@@ -254,10 +263,18 @@ struct BoundVertexBuffer {
     offset_bytes: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BoundIndexBuffer {
+    buffer: u32,
+    format: wgpu::IndexFormat,
+    offset_bytes: u32,
+}
+
 #[derive(Debug, Default)]
 struct ExecutorState {
     render_target: Option<u32>,
     vertex_buffer: Option<BoundVertexBuffer>,
+    index_buffer: Option<BoundIndexBuffer>,
     pixel_texture0: Option<u32>,
 }
 
@@ -580,10 +597,12 @@ fn fs_main() -> @location(0) vec4<f32> {
 
             OP_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes),
             OP_SET_VERTEX_BUFFERS => self.exec_set_vertex_buffers(cmd_bytes),
+            OP_SET_INDEX_BUFFER => self.exec_set_index_buffer(cmd_bytes),
             OP_SET_TEXTURE => self.exec_set_texture(cmd_bytes),
 
             OP_CLEAR => self.exec_clear(cmd_bytes),
             OP_DRAW => self.exec_draw(cmd_bytes, guest_memory),
+            OP_DRAW_INDEXED => self.exec_draw_indexed(cmd_bytes, guest_memory),
 
             _ => Ok(()), // unknown/unsupported opcode
         }
@@ -830,6 +849,9 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
         if self.state.vertex_buffer.map(|v| v.buffer) == Some(handle) {
             self.state.vertex_buffer = None;
+        }
+        if self.state.index_buffer.map(|v| v.buffer) == Some(handle) {
+            self.state.index_buffer = None;
         }
         if self.state.pixel_texture0 == Some(handle) {
             self.state.pixel_texture0 = None;
@@ -1109,6 +1131,60 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
+    fn exec_set_index_buffer(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
+        if cmd.len() < 24 {
+            return Err(ExecutorError::TruncatedPacket);
+        }
+        let buffer = read_u32_le(cmd, 8)?;
+        let format_raw = read_u32_le(cmd, 12)?;
+        let offset_bytes = read_u32_le(cmd, 16)?;
+
+        if buffer == 0 {
+            self.state.index_buffer = None;
+            return Ok(());
+        }
+
+        if !self.buffers.contains_key(&buffer) {
+            return Err(ExecutorError::Validation(format!(
+                "SET_INDEX_BUFFER unknown buffer {buffer}"
+            )));
+        }
+
+        let format = match format_raw {
+            0 => wgpu::IndexFormat::Uint16,
+            1 => wgpu::IndexFormat::Uint32,
+            _ => {
+                return Err(ExecutorError::Validation(format!(
+                    "SET_INDEX_BUFFER unknown index format {format_raw}"
+                )))
+            }
+        };
+
+        let align = match format {
+            wgpu::IndexFormat::Uint16 => 2,
+            wgpu::IndexFormat::Uint32 => 4,
+        };
+        if (offset_bytes as u64) % align != 0 {
+            return Err(ExecutorError::Validation(format!(
+                "SET_INDEX_BUFFER offset_bytes must be aligned to {align} (got {offset_bytes})"
+            )));
+        }
+
+        let buf_size = self.buffers.get(&buffer).unwrap().size_bytes;
+        if offset_bytes as u64 > buf_size {
+            return Err(ExecutorError::Validation(format!(
+                "SET_INDEX_BUFFER offset_bytes {offset_bytes} out of bounds for buffer {buffer} (size={buf_size})"
+            )));
+        }
+
+        self.state.index_buffer = Some(BoundIndexBuffer {
+            buffer,
+            format,
+            offset_bytes,
+        });
+        Ok(())
+    }
+
     fn exec_set_texture(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
         if cmd.len() < 24 {
             return Err(ExecutorError::TruncatedPacket);
@@ -1288,6 +1364,148 @@ fn fs_main() -> @location(0) vec4<f32> {
             }
             pass.draw(
                 first_vertex..first_vertex.saturating_add(vertex_count),
+                first_instance..first_instance.saturating_add(instance_count),
+            );
+        }
+
+        self.queue.submit([encoder.finish()]);
+        Ok(())
+    }
+
+    fn exec_draw_indexed(
+        &mut self,
+        cmd: &[u8],
+        guest_memory: &dyn GuestMemory,
+    ) -> Result<(), ExecutorError> {
+        if cmd.len() < 28 {
+            return Err(ExecutorError::TruncatedPacket);
+        }
+
+        let Some(rt) = self.state.render_target else {
+            return Err(ExecutorError::Validation(
+                "DRAW_INDEXED requires a bound render target".into(),
+            ));
+        };
+        let Some(vb) = self.state.vertex_buffer else {
+            return Err(ExecutorError::Validation(
+                "DRAW_INDEXED requires a bound vertex buffer".into(),
+            ));
+        };
+        let Some(ib) = self.state.index_buffer else {
+            return Err(ExecutorError::Validation(
+                "DRAW_INDEXED requires a bound index buffer".into(),
+            ));
+        };
+        let Some(tex0) = self.state.pixel_texture0 else {
+            return Err(ExecutorError::Validation(
+                "DRAW_INDEXED requires a bound pixel texture slot 0".into(),
+            ));
+        };
+
+        self.flush_texture_if_dirty(rt, guest_memory)?;
+        self.flush_buffer_if_dirty(vb.buffer, guest_memory)?;
+        self.flush_buffer_if_dirty(ib.buffer, guest_memory)?;
+        self.flush_texture_if_dirty(tex0, guest_memory)?;
+
+        let rt_tex = self.textures.get(&rt).ok_or_else(|| {
+            ExecutorError::Validation(format!("DRAW_INDEXED render target {rt} missing"))
+        })?;
+        let vb_res = self.buffers.get(&vb.buffer).ok_or_else(|| {
+            ExecutorError::Validation(format!(
+                "DRAW_INDEXED vertex buffer {} missing",
+                vb.buffer
+            ))
+        })?;
+        let ib_res = self.buffers.get(&ib.buffer).ok_or_else(|| {
+            ExecutorError::Validation(format!(
+                "DRAW_INDEXED index buffer {} missing",
+                ib.buffer
+            ))
+        })?;
+
+        let tex0_res = self.textures.get(&tex0).ok_or_else(|| {
+            ExecutorError::Validation(format!("DRAW_INDEXED texture {tex0} missing"))
+        })?;
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu.executor.bind_group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&tex0_res.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+
+        let index_count = read_u32_le(cmd, 8)?;
+        let instance_count = read_u32_le(cmd, 12)?;
+        let first_index = read_u32_le(cmd, 16)?;
+        let base_vertex = read_i32_le(cmd, 20)?;
+        let first_instance = read_u32_le(cmd, 24)?;
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aerogpu.executor.draw_indexed.encoder"),
+            });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("aerogpu.executor.draw_indexed.pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &rt_tex.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            let pipeline = self.pipelines.get(&rt_tex.format).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "no pipeline configured for render target format {:?}",
+                    rt_tex.format
+                ))
+            })?;
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_vertex_buffer(
+                0,
+                vb_res
+                    .buffer
+                    .slice(vb.offset_bytes as u64..vb_res.size_bytes),
+            );
+            if vb.stride_bytes != 8 {
+                return Err(ExecutorError::Validation(format!(
+                    "vertex buffer stride_bytes must be 8 for the built-in pipeline (got {})",
+                    vb.stride_bytes
+                )));
+            }
+
+            if ib.offset_bytes as u64 > ib_res.size_bytes {
+                return Err(ExecutorError::Validation(format!(
+                    "index buffer offset out of bounds (offset={}, size={})",
+                    ib.offset_bytes, ib_res.size_bytes
+                )));
+            }
+            pass.set_index_buffer(
+                ib_res
+                    .buffer
+                    .slice(ib.offset_bytes as u64..ib_res.size_bytes),
+                ib.format,
+            );
+
+            pass.draw_indexed(
+                first_index..first_index.saturating_add(index_count),
+                base_vertex,
                 first_instance..first_instance.saturating_add(instance_count),
             );
         }
