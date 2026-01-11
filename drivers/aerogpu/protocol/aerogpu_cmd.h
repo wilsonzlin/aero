@@ -139,6 +139,7 @@ enum aerogpu_cmd_opcode {
   /* D3D9Ex/DWM shared surface interop. */
   AEROGPU_CMD_EXPORT_SHARED_SURFACE = 0x710,
   AEROGPU_CMD_IMPORT_SHARED_SURFACE = 0x711,
+  AEROGPU_CMD_RELEASE_SHARED_SURFACE = 0x712,
 
   /* Explicit flush point (may be a no-op on some hosts). */
   AEROGPU_CMD_FLUSH = 0x720,
@@ -969,6 +970,25 @@ struct aerogpu_cmd_import_shared_surface {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_import_shared_surface) == 24);
+
+/*
+ * RELEASE_SHARED_SURFACE:
+ * - Informs the host that `share_token` is no longer valid and should be removed
+ *   from any shared-surface lookup tables.
+ *
+ * This is emitted by the Win7 KMD when the final per-process allocation wrapper
+ * for a shared surface is released (to handle Win7's varying
+ * CloseAllocation/DestroyAllocation call patterns).
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_release_shared_surface {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_RELEASE_SHARED_SURFACE */
+  uint64_t share_token;
+  uint64_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_release_shared_surface) == 24);
 
 /*
  * FLUSH:

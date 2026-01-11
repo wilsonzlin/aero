@@ -93,6 +93,7 @@ pub enum AerogpuCmdOpcode {
 
     ExportSharedSurface = 0x710,
     ImportSharedSurface = 0x711,
+    ReleaseSharedSurface = 0x712,
 
     Flush = 0x720,
 }
@@ -139,6 +140,7 @@ impl AerogpuCmdOpcode {
             0x701 => Some(Self::PresentEx),
             0x710 => Some(Self::ExportSharedSurface),
             0x711 => Some(Self::ImportSharedSurface),
+            0x712 => Some(Self::ReleaseSharedSurface),
             0x720 => Some(Self::Flush),
             _ => None,
         }
@@ -883,6 +885,18 @@ pub struct AerogpuCmdImportSharedSurface {
 }
 
 impl AerogpuCmdImportSharedSurface {
+    pub const SIZE_BYTES: usize = 24;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdReleaseSharedSurface {
+    pub hdr: AerogpuCmdHdr,
+    pub share_token: u64,
+    pub reserved0: u64,
+}
+
+impl AerogpuCmdReleaseSharedSurface {
     pub const SIZE_BYTES: usize = 24;
 }
 

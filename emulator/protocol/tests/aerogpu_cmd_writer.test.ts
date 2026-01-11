@@ -9,6 +9,7 @@ import {
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE,
+  AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
   AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE,
@@ -108,6 +109,7 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   w.presentEx(0, 0, 0x12345678);
   w.exportSharedSurface(55, 0x0102030405060708n);
   w.importSharedSurface(56, 0x0102030405060708n);
+  w.releaseSharedSurface(0x0102030405060708n);
   w.flush();
 
   const bytes = w.finish();
@@ -126,6 +128,7 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
     [AerogpuCmdOpcode.PresentEx, AEROGPU_CMD_PRESENT_EX_SIZE],
     [AerogpuCmdOpcode.ExportSharedSurface, AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE],
     [AerogpuCmdOpcode.ImportSharedSurface, AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE],
+    [AerogpuCmdOpcode.ReleaseSharedSurface, AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE],
     [AerogpuCmdOpcode.Flush, 16],
   ];
 

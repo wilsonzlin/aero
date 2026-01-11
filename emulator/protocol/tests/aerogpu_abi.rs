@@ -11,6 +11,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdDestroyResource, AerogpuCmdDestroySampler, AerogpuCmdDestroyShader, AerogpuCmdDraw,
     AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdHdr,
     AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
+    AerogpuCmdReleaseSharedSurface,
     AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetConstantBuffers,
     AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
     AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
@@ -657,6 +658,10 @@ fn rust_layout_matches_c_headers() {
     assert_cmd_size!(
         AerogpuCmdImportSharedSurface,
         "aerogpu_cmd_import_shared_surface"
+    );
+    assert_cmd_size!(
+        AerogpuCmdReleaseSharedSurface,
+        "aerogpu_cmd_release_shared_surface"
     );
     assert_cmd_size!(AerogpuCmdFlush, "aerogpu_cmd_flush");
 
@@ -2178,6 +2183,23 @@ fn rust_layout_matches_c_headers() {
         share_token,
         "aerogpu_cmd_import_shared_surface",
         "share_token"
+    );
+
+    assert_cmd_hdr_off!(
+        AerogpuCmdReleaseSharedSurface,
+        "aerogpu_cmd_release_shared_surface"
+    );
+    assert_off!(
+        AerogpuCmdReleaseSharedSurface,
+        share_token,
+        "aerogpu_cmd_release_shared_surface",
+        "share_token"
+    );
+    assert_off!(
+        AerogpuCmdReleaseSharedSurface,
+        reserved0,
+        "aerogpu_cmd_release_shared_surface",
+        "reserved0"
     );
 
     assert_cmd_hdr_off!(AerogpuCmdFlush, "aerogpu_cmd_flush");

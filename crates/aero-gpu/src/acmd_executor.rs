@@ -238,6 +238,9 @@ impl AeroGpuAcmdExecutor {
                         .import(out_resource_handle, share_token)
                         .map_err(|e| AeroGpuAcmdExecutorError::Backend(e.to_string()))?;
                 }
+                AeroGpuCmd::ReleaseSharedSurface { share_token } => {
+                    self.shared_surfaces.release_token(share_token);
+                }
                 AeroGpuCmd::DestroyResource { resource_handle } => {
                     if let Some((underlying, last_ref)) =
                         self.shared_surfaces.destroy_handle(resource_handle)

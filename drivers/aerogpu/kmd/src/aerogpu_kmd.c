@@ -14,8 +14,6 @@
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 #define AEROGPU_KMD_ALLOC_FLAG_PRIMARY 0x40000000u
 
-#define AEROGPU_CMD_OPCODE_RELEASE_SHARED_SURFACE 0x712u
-
 /*
  * Optional CreateAllocation tracing.
  *
@@ -1041,15 +1039,8 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         return;
     }
 
-    #pragma pack(push, 1)
-    typedef struct _AEROGPU_CMD_RELEASE_SHARED_SURFACE_PACKET {
-        struct aerogpu_cmd_hdr hdr;
-        uint64_t share_token;
-        uint64_t reserved0;
-    } AEROGPU_CMD_RELEASE_SHARED_SURFACE_PACKET;
-    #pragma pack(pop)
-
-    const ULONG cmdSizeBytes = (ULONG)(sizeof(struct aerogpu_cmd_stream_header) + sizeof(AEROGPU_CMD_RELEASE_SHARED_SURFACE_PACKET));
+    const ULONG cmdSizeBytes =
+        (ULONG)(sizeof(struct aerogpu_cmd_stream_header) + sizeof(struct aerogpu_cmd_release_shared_surface));
     PHYSICAL_ADDRESS cmdPa;
     cmdPa.QuadPart = 0;
     PVOID cmdVa = AeroGpuAllocContiguous(cmdSizeBytes, &cmdPa);
@@ -1066,9 +1057,9 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
     stream.reserved0 = 0;
     stream.reserved1 = 0;
 
-    AEROGPU_CMD_RELEASE_SHARED_SURFACE_PACKET pkt;
+    struct aerogpu_cmd_release_shared_surface pkt;
     RtlZeroMemory(&pkt, sizeof(pkt));
-    pkt.hdr.opcode = AEROGPU_CMD_OPCODE_RELEASE_SHARED_SURFACE;
+    pkt.hdr.opcode = AEROGPU_CMD_RELEASE_SHARED_SURFACE;
     pkt.hdr.size_bytes = (uint32_t)sizeof(pkt);
     pkt.share_token = (uint64_t)ShareToken;
     pkt.reserved0 = 0;

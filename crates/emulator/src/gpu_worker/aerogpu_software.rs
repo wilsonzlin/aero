@@ -2434,6 +2434,20 @@ impl AeroGpuSoftwareExecutor {
                 };
                 self.resource_aliases.insert(out_handle, src_handle);
             }
+            cmd::AerogpuCmdOpcode::ReleaseSharedSurface => {
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdReleaseSharedSurface>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let token = u64::from_le(packet_cmd.share_token);
+                if token != 0 {
+                    self.shared_surfaces.remove(&token);
+                }
+            }
             cmd::AerogpuCmdOpcode::Present
             | cmd::AerogpuCmdOpcode::PresentEx
             | cmd::AerogpuCmdOpcode::Flush => {

@@ -4,9 +4,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuBlendFactor, AerogpuBlendOp,
     AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc, AerogpuCmdExportSharedSurface,
     AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresentEx,
-    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture, AerogpuCmdStreamHeader,
-    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuFillMode,
-    AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
+    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode,
+    AerogpuFillMode, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -218,6 +218,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
     w.present_ex(0, 0, 0x1234_5678);
     w.export_shared_surface(55, 0x0102_0304_0506_0708);
     w.import_shared_surface(56, 0x0102_0304_0506_0708);
+    w.release_shared_surface(0x0102_0304_0506_0708);
     w.flush();
 
     let buf = w.finish();
@@ -262,6 +263,10 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         (
             AerogpuCmdOpcode::ImportSharedSurface as u32,
             size_of::<AerogpuCmdImportSharedSurface>(),
+        ),
+        (
+            AerogpuCmdOpcode::ReleaseSharedSurface as u32,
+            size_of::<AerogpuCmdReleaseSharedSurface>(),
         ),
         (
             AerogpuCmdOpcode::Flush as u32,

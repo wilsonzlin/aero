@@ -2182,6 +2182,12 @@ impl AerogpuD3d9Executor {
 
                 Ok(())
             }
+            AeroGpuCmd::ReleaseSharedSurface { share_token } => {
+                if share_token != 0 {
+                    self.shared_surface_by_token.remove(&share_token);
+                }
+                Ok(())
+            }
             AeroGpuCmd::ResourceDirtyRange {
                 resource_handle,
                 offset_bytes,

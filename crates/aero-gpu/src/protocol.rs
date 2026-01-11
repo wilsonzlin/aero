@@ -190,6 +190,9 @@ pub enum AeroGpuCmd<'a> {
         out_resource_handle: u32,
         share_token: u64,
     },
+    ReleaseSharedSurface {
+        share_token: u64,
+    },
 
     Flush,
 
@@ -870,6 +873,12 @@ pub fn parse_cmd_stream(
                 let cmd: protocol::AerogpuCmdImportSharedSurface = read_packed_prefix(packet)?;
                 AeroGpuCmd::ImportSharedSurface {
                     out_resource_handle: u32::from_le(cmd.out_resource_handle),
+                    share_token: u64::from_le(cmd.share_token),
+                }
+            }
+            Some(AeroGpuOpcode::ReleaseSharedSurface) => {
+                let cmd: protocol::AerogpuCmdReleaseSharedSurface = read_packed_prefix(packet)?;
+                AeroGpuCmd::ReleaseSharedSurface {
                     share_token: u64::from_le(cmd.share_token),
                 }
             }

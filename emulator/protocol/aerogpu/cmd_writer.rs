@@ -12,6 +12,7 @@ use super::aerogpu_cmd::{
     AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout,
     AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed,
     AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdImportSharedSurface,
+    AerogpuCmdReleaseSharedSurface,
     AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange,
     AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
     AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
@@ -887,6 +888,17 @@ impl AerogpuCmdWriter {
         );
         self.write_u64_at(
             base + offset_of!(AerogpuCmdImportSharedSurface, share_token),
+            share_token,
+        );
+    }
+
+    pub fn release_shared_surface(&mut self, share_token: u64) {
+        let base = self.append_raw(
+            AerogpuCmdOpcode::ReleaseSharedSurface,
+            size_of::<AerogpuCmdReleaseSharedSurface>(),
+        );
+        self.write_u64_at(
+            base + offset_of!(AerogpuCmdReleaseSharedSurface, share_token),
             share_token,
         );
     }

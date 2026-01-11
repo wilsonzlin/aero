@@ -31,6 +31,7 @@ pub(crate) enum SharedSurfaceError {
 /// This models D3D9Ex / DWM sharing semantics at the host executor layer:
 /// - `EXPORT` associates a stable 64-bit `share_token` with a live resource.
 /// - `IMPORT` creates a new handle aliasing the exported resource.
+/// - `RELEASE_SHARED_SURFACE` removes the `share_token` mapping (so future imports fail).
 /// - `DESTROY_RESOURCE` decrements the reference count for the underlying resource and
 ///   destroys it only once the last reference is released.
 #[derive(Debug, Default)]
@@ -124,6 +125,13 @@ impl SharedSurfaceTable {
         self.handles.insert(out_resource_handle, underlying);
         *self.refcounts.entry(underlying).or_insert(0) += 1;
         Ok(())
+    }
+
+    pub(crate) fn release_token(&mut self, share_token: u64) -> bool {
+        if share_token == 0 {
+            return false;
+        }
+        self.by_token.remove(&share_token).is_some()
     }
 
     /// Releases a handle (original or alias). Returns `(underlying_handle, last_ref)` if the

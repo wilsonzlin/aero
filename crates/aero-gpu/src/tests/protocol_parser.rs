@@ -372,6 +372,11 @@ fn protocol_parses_all_opcodes() {
             push_u64(out, 0x1122_3344_5566_7788);
         });
 
+        emit_packet(out, AeroGpuOpcode::ReleaseSharedSurface as u32, |out| {
+            push_u64(out, 0x1122_3344_5566_7788); // share_token
+            push_u64(out, 0); // reserved0
+        });
+
         emit_packet(out, AeroGpuOpcode::Flush as u32, |out| {
             push_u32(out, 0); // reserved0
             push_u32(out, 0); // reserved1
@@ -379,7 +384,7 @@ fn protocol_parses_all_opcodes() {
     });
 
     let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
-    assert_eq!(parsed.cmds.len(), 36);
+    assert_eq!(parsed.cmds.len(), 37);
 
     let mut cmds = parsed.cmds.into_iter();
 
@@ -832,6 +837,13 @@ fn protocol_parses_all_opcodes() {
             share_token,
         } => {
             assert_eq!(out_resource_handle, 0xD1);
+            assert_eq!(share_token, 0x1122_3344_5566_7788);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match cmds.next().unwrap() {
+        AeroGpuCmd::ReleaseSharedSurface { share_token } => {
             assert_eq!(share_token, 0x1122_3344_5566_7788);
         }
         other => panic!("unexpected cmd: {other:?}"),

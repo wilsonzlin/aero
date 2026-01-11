@@ -621,6 +621,11 @@ impl AeroGpuCommandProcessor {
                         *self.shared_surface_refcounts.entry(underlying).or_insert(0) += 1;
                     }
                 }
+                AeroGpuCmd::ReleaseSharedSurface { share_token } => {
+                    if share_token != 0 {
+                        self.shared_surface_by_token.remove(&share_token);
+                    }
+                }
                 _ => {
                     // For now the processor treats most commands as "handled elsewhere".
                 }

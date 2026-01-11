@@ -238,6 +238,7 @@ export const AerogpuCmdOpcode = {
 
   ExportSharedSurface: 0x710,
   ImportSharedSurface: 0x711,
+  ReleaseSharedSurface: 0x712,
 
   Flush: 0x720,
 } as const;
@@ -405,6 +406,7 @@ export const AEROGPU_CMD_PRESENT_SIZE = 16;
 export const AEROGPU_CMD_PRESENT_EX_SIZE = 24;
 export const AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE = 24;
 export const AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE = 24;
+export const AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE = 24;
 export const AEROGPU_CMD_FLUSH_SIZE = 16;
 export interface AerogpuVertexBufferBinding {
   buffer: AerogpuHandle;
@@ -1158,6 +1160,14 @@ export class AerogpuCmdWriter {
     const base = this.appendRaw(AerogpuCmdOpcode.ImportSharedSurface, AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE);
     this.view.setUint32(base + 8, outResourceHandle, true);
     this.view.setBigUint64(base + 16, shareToken, true);
+  }
+
+  releaseSharedSurface(shareToken: bigint): void {
+    const base = this.appendRaw(
+      AerogpuCmdOpcode.ReleaseSharedSurface,
+      AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE,
+    );
+    this.view.setBigUint64(base + 8, shareToken, true);
   }
 
   flush(): void {

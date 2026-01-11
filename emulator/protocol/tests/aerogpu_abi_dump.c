@@ -61,6 +61,7 @@ int main(void) {
   PRINT_SIZE("aerogpu_cmd_present_ex", struct aerogpu_cmd_present_ex);
   PRINT_SIZE("aerogpu_cmd_export_shared_surface", struct aerogpu_cmd_export_shared_surface);
   PRINT_SIZE("aerogpu_cmd_import_shared_surface", struct aerogpu_cmd_import_shared_surface);
+  PRINT_SIZE("aerogpu_cmd_release_shared_surface", struct aerogpu_cmd_release_shared_surface);
   PRINT_SIZE("aerogpu_cmd_flush", struct aerogpu_cmd_flush);
 
   PRINT_SIZE("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header);
@@ -383,6 +384,10 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_import_shared_surface", struct aerogpu_cmd_import_shared_surface, reserved0);
   PRINT_OFF("aerogpu_cmd_import_shared_surface", struct aerogpu_cmd_import_shared_surface, share_token);
 
+  PRINT_OFF("aerogpu_cmd_release_shared_surface", struct aerogpu_cmd_release_shared_surface, hdr);
+  PRINT_OFF("aerogpu_cmd_release_shared_surface", struct aerogpu_cmd_release_shared_surface, share_token);
+  PRINT_OFF("aerogpu_cmd_release_shared_surface", struct aerogpu_cmd_release_shared_surface, reserved0);
+
   PRINT_OFF("aerogpu_cmd_flush", struct aerogpu_cmd_flush, hdr);
   PRINT_OFF("aerogpu_cmd_flush", struct aerogpu_cmd_flush, reserved0);
   PRINT_OFF("aerogpu_cmd_flush", struct aerogpu_cmd_flush, reserved1);
@@ -604,6 +609,7 @@ int main(void) {
   PRINT_CONST(AEROGPU_CMD_PRESENT_EX);
   PRINT_CONST(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
   PRINT_CONST(AEROGPU_CMD_IMPORT_SHARED_SURFACE);
+  PRINT_CONST(AEROGPU_CMD_RELEASE_SHARED_SURFACE);
   PRINT_CONST(AEROGPU_CMD_FLUSH);
 
   PRINT_CONST(AEROGPU_SHADER_STAGE_VERTEX);

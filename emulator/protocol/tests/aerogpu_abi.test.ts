@@ -29,6 +29,7 @@ import {
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_HDR_SIZE,
   AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE,
+  AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_PRESENT_SIZE,
   AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
@@ -510,6 +511,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_cmd_present_ex"), AEROGPU_CMD_PRESENT_EX_SIZE);
   assert.equal(size("aerogpu_cmd_export_shared_surface"), AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE);
   assert.equal(size("aerogpu_cmd_import_shared_surface"), AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE);
+  assert.equal(size("aerogpu_cmd_release_shared_surface"), AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE);
   assert.equal(size("aerogpu_cmd_flush"), AEROGPU_CMD_FLUSH_SIZE);
 
   assert.equal(size("aerogpu_alloc_table_header"), AEROGPU_ALLOC_TABLE_HEADER_SIZE);
