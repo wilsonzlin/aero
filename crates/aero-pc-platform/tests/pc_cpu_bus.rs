@@ -231,3 +231,140 @@ fn pc_cpu_bus_atomic_rmw_faults_on_user_read_only_pages() {
         })
     );
 }
+
+#[test]
+fn pc_cpu_bus_bulk_copy_memmove_overlap_semantics() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let mut state = CpuState::new(CpuMode::Protected);
+    state.control.cr0 = CR0_PE;
+    state.update_mode();
+    bus.sync(&state);
+
+    let data: Vec<u8> = (0u8..16).collect();
+    bus.write_bytes(0, &data).unwrap();
+
+    assert!(bus.supports_bulk_copy());
+    assert!(bus.bulk_copy(2, 0, 8).unwrap());
+
+    let mut out = [0u8; 10];
+    bus.read_bytes(0, &mut out).unwrap();
+
+    let expected = [0u8, 1, 0, 1, 2, 3, 4, 5, 6, 7];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn pc_cpu_bus_bulk_set_repeats_pattern() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let mut state = CpuState::new(CpuMode::Protected);
+    state.control.cr0 = CR0_PE;
+    state.update_mode();
+    bus.sync(&state);
+
+    assert!(bus.supports_bulk_set());
+    assert!(bus.bulk_set(0x40, &[0xDE, 0xAD, 0xBE, 0xEF], 4).unwrap());
+
+    let mut out = [0u8; 16];
+    bus.read_bytes(0x40, &mut out).unwrap();
+
+    let expected = [0xDE, 0xAD, 0xBE, 0xEF]
+        .iter()
+        .copied()
+        .cycle()
+        .take(16)
+        .collect::<Vec<_>>();
+    assert_eq!(out.as_slice(), expected.as_slice());
+}
+
+#[test]
+fn pc_cpu_bus_bulk_copy_is_atomic_wrt_page_faults() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page0 = 0x5000u64;
+
+    // Only the first page is present; the next page is not present.
+    setup_long4_4k(
+        &mut bus.platform.memory,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page0 | PTE_P | PTE_RW | PTE_US,
+        0,
+    );
+
+    // Source data fully within the first mapped page.
+    bus.platform
+        .memory
+        .write_physical(data_page0 + 0x800, &[1, 2, 3, 4]);
+
+    // Sentinel values at the end of the first page.
+    bus.platform.memory.write_u8(data_page0 + 0xffe, 0xaa);
+    bus.platform.memory.write_u8(data_page0 + 0xfff, 0xbb);
+
+    let state = long_state(pml4_base, 0);
+    bus.sync(&state);
+
+    // Destination crosses into the unmapped page at 0x1000.
+    assert_eq!(
+        bus.bulk_copy(0xffe, 0x800, 4),
+        Err(Exception::PageFault {
+            addr: 0x1000,
+            error_code: 1 << 1, // W=1, P=0, U=0
+        })
+    );
+
+    assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xffe), 0xaa);
+    assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xfff), 0xbb);
+}
+
+#[test]
+fn pc_cpu_bus_bulk_set_is_atomic_wrt_page_faults() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page0 = 0x5000u64;
+
+    // Only the first page is present; the next page is not present.
+    setup_long4_4k(
+        &mut bus.platform.memory,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page0 | PTE_P | PTE_RW | PTE_US,
+        0,
+    );
+
+    // Sentinel values at the end of the first page.
+    bus.platform.memory.write_u8(data_page0 + 0xffe, 0xaa);
+    bus.platform.memory.write_u8(data_page0 + 0xfff, 0xbb);
+
+    let state = long_state(pml4_base, 0);
+    bus.sync(&state);
+
+    // Fill crosses into the unmapped page at 0x1000.
+    assert_eq!(
+        bus.bulk_set(0xffe, &[0x11], 3),
+        Err(Exception::PageFault {
+            addr: 0x1000,
+            error_code: 1 << 1,
+        })
+    );
+
+    assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xffe), 0xaa);
+    assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xfff), 0xbb);
+}

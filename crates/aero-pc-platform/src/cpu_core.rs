@@ -191,6 +191,27 @@ impl PcCpuBus {
 
         Ok(())
     }
+
+    fn preflight_range(&mut self, vaddr: u64, len: usize, access: AccessType) -> Result<(), Exception> {
+        if len == 0 {
+            return Ok(());
+        }
+
+        let mut offset = 0usize;
+        while offset < len {
+            let addr = vaddr
+                .checked_add(offset as u64)
+                .ok_or(Exception::MemoryFault)?;
+            let _paddr = self.translate(addr, access)?;
+
+            let page_off = (addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(len - offset);
+            offset += chunk_len;
+        }
+
+        Ok(())
+    }
 }
 
 struct WriteIntent<'a> {
@@ -365,6 +386,96 @@ impl CpuBus for PcCpuBus {
 
     fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
         self.write_bytes_access(vaddr, src, AccessType::Write)
+    }
+
+    fn supports_bulk_copy(&self) -> bool {
+        true
+    }
+
+    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
+        if len == 0 || dst == src {
+            return Ok(true);
+        }
+
+        let len_u64 = len as u64;
+        let src_end = src.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+        let dst_end = dst.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+
+        let overlap = src < dst_end && dst < src_end;
+        let copy_backward = overlap && dst > src;
+
+        // Preflight translation so this operation is atomic w.r.t page faults (Tier-0 assumes
+        // bulk ops don't partially commit on failure).
+        self.preflight_range(src, len, AccessType::Read)?;
+        self.preflight_range(dst, len, AccessType::Write)?;
+
+        const BUF_SIZE: usize = 4096;
+        let mut buf = [0u8; BUF_SIZE];
+
+        if copy_backward {
+            let mut remaining = len;
+            while remaining != 0 {
+                let chunk_len = remaining.min(BUF_SIZE);
+                let start = remaining - chunk_len;
+                let src_addr = src + start as u64;
+                let dst_addr = dst + start as u64;
+
+                self.read_bytes_access(src_addr, &mut buf[..chunk_len], AccessType::Read)?;
+                self.write_bytes_access(dst_addr, &buf[..chunk_len], AccessType::Write)?;
+
+                remaining = start;
+            }
+        } else {
+            let mut offset = 0usize;
+            while offset < len {
+                let chunk_len = (len - offset).min(BUF_SIZE);
+                let src_addr = src + offset as u64;
+                let dst_addr = dst + offset as u64;
+
+                self.read_bytes_access(src_addr, &mut buf[..chunk_len], AccessType::Read)?;
+                self.write_bytes_access(dst_addr, &buf[..chunk_len], AccessType::Write)?;
+
+                offset += chunk_len;
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn supports_bulk_set(&self) -> bool {
+        true
+    }
+
+    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
+        if repeat == 0 || pattern.is_empty() {
+            return Ok(true);
+        }
+
+        let total = pattern
+            .len()
+            .checked_mul(repeat)
+            .ok_or(Exception::MemoryFault)?;
+
+        // Preflight translation so this operation is atomic w.r.t page faults.
+        self.preflight_range(dst, total, AccessType::Write)?;
+
+        const BUF_SIZE: usize = 4096;
+        let mut buf = [0u8; BUF_SIZE];
+
+        // Fill buffer with repeated pattern.
+        for (i, slot) in buf.iter_mut().enumerate() {
+            *slot = pattern[i % pattern.len()];
+        }
+
+        let mut offset = 0usize;
+        while offset < total {
+            let chunk_len = (total - offset).min(BUF_SIZE);
+            let dst_addr = dst + offset as u64;
+            self.write_bytes_access(dst_addr, &buf[..chunk_len], AccessType::Write)?;
+            offset += chunk_len;
+        }
+
+        Ok(true)
     }
 
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
