@@ -57,6 +57,8 @@ Minimum supported commands:
   When available, it also prints `vblank_interrupt_type` (the `DXGK_INTERRUPT_TYPE`
   value dxgkrnl enabled via `DxgkDdiControlInterrupt`).
   Use `--vblank-samples` to observe changes over time and estimate the effective Hz/jitter.
+  If `vblank_seq` stays at 0, ensure scanout is enabled/visible (some device models only tick vblank
+  counters while scanout is enabled).
 
   Alias: `aerogpu_dbgctl --query-vblank`
 
