@@ -225,6 +225,7 @@ pub struct AeroGpuSoftwareExecutor {
     input_layouts: HashMap<u32, InputLayoutResource>,
     shared_surfaces: HashMap<u64, u32>,
     resource_aliases: HashMap<u32, u32>,
+    texture_refcounts: HashMap<u32, u32>,
     state: PipelineState,
 }
 
@@ -240,6 +241,7 @@ impl AeroGpuSoftwareExecutor {
         self.input_layouts.clear();
         self.shared_surfaces.clear();
         self.resource_aliases.clear();
+        self.texture_refcounts.clear();
         self.state = PipelineState::default();
     }
 
@@ -1964,6 +1966,9 @@ impl AeroGpuSoftwareExecutor {
                         dirty: false,
                     },
                 );
+                // Track live references so shared-surface aliases can keep the
+                // underlying texture alive after the original handle is destroyed.
+                self.texture_refcounts.insert(handle, 1);
             }
             cmd::AerogpuCmdOpcode::DestroyResource => {
                 let packet_cmd =
@@ -1977,8 +1982,21 @@ impl AeroGpuSoftwareExecutor {
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let resolved = self.resolve_handle(handle);
                 self.buffers.remove(&resolved);
-                self.textures.remove(&resolved);
                 self.resource_aliases.remove(&handle);
+
+                if let Some(count) = self.texture_refcounts.get_mut(&resolved) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        self.texture_refcounts.remove(&resolved);
+                        self.textures.remove(&resolved);
+                        self.shared_surfaces.retain(|_, v| *v != resolved);
+                        self.resource_aliases.retain(|_, v| *v != resolved);
+                    }
+                } else {
+                    self.textures.remove(&resolved);
+                    self.shared_surfaces.retain(|_, v| *v != resolved);
+                    self.resource_aliases.retain(|_, v| *v != resolved);
+                }
                 self.state.render_targets.iter_mut().for_each(|rt| {
                     if *rt == handle || *rt == resolved {
                         *rt = 0;
@@ -2851,6 +2869,17 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return true;
                 };
+                if self.resource_aliases.contains_key(&out_handle) {
+                    Self::record_error(regs);
+                    return true;
+                }
+
+                let Some(count) = self.texture_refcounts.get_mut(&src_handle) else {
+                    Self::record_error(regs);
+                    return true;
+                };
+                *count = count.saturating_add(1);
+
                 self.resource_aliases.insert(out_handle, src_handle);
             }
             cmd::AerogpuCmdOpcode::ReleaseSharedSurface => {

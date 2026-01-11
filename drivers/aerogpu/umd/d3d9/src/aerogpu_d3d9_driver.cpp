@@ -4768,9 +4768,9 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   if (rt_changed) {
     (void)emit_set_render_targets_locked(dev);
   }
-  // For shared resources, the host maintains its own refcount across alias
-  // handles, so it is safe (and important) to emit DESTROY_RESOURCE on
-  // per-process close.
+  // Shared surfaces are refcounted host-side: DESTROY_RESOURCE releases a single
+  // handle (original or alias) and the underlying surface is freed once the last
+  // reference is gone.
   (void)emit_destroy_resource_locked(dev, res->handle);
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
