@@ -2368,6 +2368,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     res->mapped_wddm_slice_pitch = lock_cb.SlicePitch;
   }
 
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
   if (!res->storage.empty()) {
     if (map_type_u == kD3DMapWriteDiscard) {
       // Discard contents are undefined; clear for deterministic tests.
@@ -2380,7 +2381,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
       } else {
         std::memset(lock_cb.pData, 0, res->storage.size());
       }
-    } else if (res->kind == ResourceKind::Texture2D) {
+    } else if (!is_guest_backed && res->kind == ResourceKind::Texture2D) {
       const uint32_t src_pitch = res->row_pitch_bytes;
       const uint32_t dst_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : src_pitch;
 
@@ -2403,8 +2404,33 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
       } else {
         std::memcpy(lock_cb.pData, res->storage.data(), res->storage.size());
       }
-    } else {
+    } else if (!is_guest_backed) {
       std::memcpy(lock_cb.pData, res->storage.data(), res->storage.size());
+    } else if (want_read && res->kind == ResourceKind::Texture2D) {
+      const uint32_t dst_pitch = res->row_pitch_bytes;
+      const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : dst_pitch;
+
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+      const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+      if (bpp != 0 && row_bytes_u64 != 0 && row_bytes_u64 <= UINT32_MAX && src_pitch != 0 && dst_pitch != 0 &&
+          src_pitch >= row_bytes_u64 && dst_pitch >= row_bytes_u64) {
+        const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+        const uint8_t* src_bytes = static_cast<const uint8_t*>(lock_cb.pData);
+        auto* dst_bytes = res->storage.data();
+        for (uint32_t y = 0; y < res->height; y++) {
+          std::memcpy(dst_bytes + static_cast<size_t>(y) * dst_pitch,
+                      src_bytes + static_cast<size_t>(y) * src_pitch,
+                      row_bytes);
+          if (dst_pitch > row_bytes) {
+            std::memset(dst_bytes + static_cast<size_t>(y) * dst_pitch + row_bytes, 0, dst_pitch - row_bytes);
+          }
+        }
+      } else {
+        std::memcpy(res->storage.data(), lock_cb.pData, res->storage.size());
+      }
+    } else if (want_read) {
+      std::memcpy(res->storage.data(), lock_cb.pData, res->storage.size());
     }
   }
 
