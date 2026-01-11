@@ -4,29 +4,27 @@ on:
   pull_request:
     paths:
       - "drivers/**"
-      - "ci/**"
-      - "tools/packaging/**"
       - "guest-tools/**"
+      - "tools/packaging/**"
+      - "ci/**"
       - ".github/actions/setup-rust/**"
       - ".github/workflows/drivers-win7.yml"
     paths-ignore:
       - "docs/**"
-      - "drivers/**/*.md"
-      - "ci/**/*.md"
+      - "**/*.md"
   push:
     branches:
       - main
     paths:
       - "drivers/**"
-      - "ci/**"
-      - "tools/packaging/**"
       - "guest-tools/**"
+      - "tools/packaging/**"
+      - "ci/**"
       - ".github/actions/setup-rust/**"
       - ".github/workflows/drivers-win7.yml"
     paths-ignore:
       - "docs/**"
-      - "drivers/**/*.md"
-      - "ci/**/*.md"
+      - "**/*.md"
   workflow_dispatch:
 
 jobs:
