@@ -114,8 +114,8 @@ The shipped Aero Windows 7 virtio-snd driver package targets `AERO-W7-VIRTIO` v1
 which is **virtio-pci modern only** (modern ID space + `REV_01`). For stock QEMU defaults
 (transitional `DEV_1018`, typically `REV_00`), use the opt-in legacy package.
 
-- **Modern / non-transitional (Aero contract v1):** `PCI\\VEN_1AF4&DEV_1059` (requires `REV_01`)
-- **Transitional (QEMU default):** `PCI\\VEN_1AF4&DEV_1018`
+- **Modern / non-transitional (Aero contract v1):** `PCI\VEN_1AF4&DEV_1059` (requires `REV_01`)
+- **Transitional (QEMU default):** `PCI\VEN_1AF4&DEV_1018`
 
 ### Which INF to install
 
@@ -155,13 +155,13 @@ Before installing the driver (or when troubleshooting binding), confirm the devi
 
 Expected values include:
 
-- `PCI\\VEN_1AF4&DEV_1018` (transitional; expected for stock QEMU defaults)
-- `PCI\\VEN_1AF4&DEV_1059&REV_01` (Aero contract v1; expected if QEMU is configured as modern-only + `REV_01`)
+- `PCI\VEN_1AF4&DEV_1018` (transitional; expected for stock QEMU defaults)
+- `PCI\VEN_1AF4&DEV_1059&REV_01` (Aero contract v1; expected if QEMU is configured as modern-only + `REV_01`)
 
 More specific forms may also appear (with `SUBSYS_...` / `REV_...`). Ensure the HWID matches the
 INF you intend to install (`aero-virtio-snd.inf` vs `aero-virtio-snd-legacy.inf`).
 
-If you see `PCI\\VEN_1AF4&DEV_1018` (transitional; stock QEMU default), install the legacy package
+If you see `PCI\VEN_1AF4&DEV_1018` (transitional; stock QEMU default), install the legacy package
 (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`). If you want to validate the strict Aero contract v1
 package, configure QEMU to expose `DEV_1059&REV_01` (for example `disable-legacy=on,x-pci-revision=0x01`
 when supported).
@@ -222,8 +222,8 @@ Reboot if prompted.
 2. Right click → **Properties**:
    - **General** should show “This device is working properly.”
    - **Details** tab → **Hardware Ids** should include either:
-     - `PCI\\VEN_1AF4&DEV_1018` (transitional; stock QEMU), or
-     - `PCI\\VEN_1AF4&DEV_1059&REV_01` (Aero contract v1),
+     - `PCI\VEN_1AF4&DEV_1018` (transitional; stock QEMU), or
+     - `PCI\VEN_1AF4&DEV_1059&REV_01` (Aero contract v1),
      and may also include more-specific `SUBSYS_...` / `REV_..` forms.
    - **Driver** tab → **Driver Details** should include at least:
      - `virtiosnd.sys` (contract v1) **or** `virtiosnd_legacy.sys` (QEMU legacy)

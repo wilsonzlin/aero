@@ -101,8 +101,8 @@ weakening the default Aero contract-v1 INF:
 
 | Variant | MSBuild config | SYS | INF | Binds to |
 | --- | --- | --- | --- | --- |
-| **Aero contract v1 (default)** | `Release` | `virtiosnd.sys` | `inf/aero-virtio-snd.inf` | `PCI\\VEN_1AF4&DEV_1059&REV_01` |
-| **QEMU transitional (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | `PCI\\VEN_1AF4&DEV_1018` |
+| **Aero contract v1 (default)** | `Release` | `virtiosnd.sys` | `inf/aero-virtio-snd.inf` | `PCI\VEN_1AF4&DEV_1059&REV_01` |
+| **QEMU transitional (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | `PCI\VEN_1AF4&DEV_1018` |
 
 The two INFs intentionally have **no overlapping hardware IDs**, so they do not compete for the
 same device.

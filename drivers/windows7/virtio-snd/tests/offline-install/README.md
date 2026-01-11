@@ -257,7 +257,7 @@ Once the system boots with virtio-snd hardware present:
   - the device hardware ID (for Aero contract v1 virtio-snd: `PCI\VEN_1AF4&DEV_1059&REV_01`; more-specific `SUBSYS_...` qualifiers may also appear)
 
   Note: `aero-virtio-snd.inf` is intentionally strict and requires the Aero contract v1 HWID
-  (`PCI\\VEN_1AF4&DEV_1059&REV_01`). If the device enumerates as transitional (`DEV_1018`) and/or
+  (`PCI\VEN_1AF4&DEV_1059&REV_01`). If the device enumerates as transitional (`DEV_1018`) and/or
   `REV_00` (stock QEMU defaults), either:
   
   - configure QEMU to expose the contract identity (for example `disable-legacy=on,x-pci-revision=0x01`), or
