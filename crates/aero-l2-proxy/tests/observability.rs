@@ -5,6 +5,7 @@ use aero_l2_proxy::{
 };
 use aero_net_stack::{packet::*, StackConfig};
 use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
     http::{HeaderValue, StatusCode},
@@ -422,6 +423,88 @@ async fn upgrade_rejection_metrics_increment_on_origin_not_allowed() {
     assert!(
         total >= 1,
         "expected upgrade rejected total >= 1, got {total}"
+    );
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn upgrade_rejection_metrics_increment_on_missing_host() {
+    let stack_defaults = StackConfig::default();
+    let cfg = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+        l2_max_frame_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+        l2_max_control_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
+        shutdown_grace: Duration::from_millis(3000),
+        ping_interval: None,
+        idle_timeout: None,
+        tcp_connect_timeout: Duration::from_millis(200),
+        tcp_send_buffer: 8,
+        ws_send_buffer: 8,
+        max_udp_flows_per_tunnel: 256,
+        udp_flow_idle_timeout: Some(Duration::from_secs(60)),
+        stack_max_tcp_connections: stack_defaults.max_tcp_connections,
+        stack_max_pending_dns: stack_defaults.max_pending_dns,
+        stack_max_dns_cache_entries: stack_defaults.max_dns_cache_entries,
+        stack_max_buffered_tcp_bytes_per_conn: stack_defaults.max_buffered_tcp_bytes_per_conn,
+        dns_default_ttl_secs: 60,
+        dns_max_ttl_secs: 300,
+        capture_dir: None,
+        security: SecurityConfig {
+            open: true,
+            allowed_hosts: vec!["allowed.test".to_string()],
+            ..Default::default()
+        },
+        policy: EgressPolicy::default(),
+        test_overrides: Default::default(),
+    };
+
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    // tokio-tungstenite refuses to send a WebSocket upgrade request without a Host header, so send
+    // a raw HTTP upgrade request instead.
+    let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (reader, mut writer) = stream.into_split();
+    writer
+        .write_all(
+            format!(
+                "GET /l2 HTTP/1.1\r\n\
+Connection: Upgrade\r\n\
+Upgrade: websocket\r\n\
+Sec-WebSocket-Version: 13\r\n\
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+Sec-WebSocket-Protocol: {TUNNEL_SUBPROTOCOL}\r\n\
+\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    writer.flush().await.unwrap();
+
+    let mut reader = tokio::io::BufReader::new(reader);
+    let mut status_line = String::new();
+    tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut status_line))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        status_line.contains(" 403 "),
+        "expected 403 response, got: {status_line:?}"
+    );
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let rejected = parse_metric(&body, "l2_upgrade_reject_host_missing_total").unwrap();
+    assert!(
+        rejected >= 1,
+        "expected host-missing reject counter >= 1, got {rejected}"
     );
 
     proxy.shutdown().await;
