@@ -1,6 +1,6 @@
 use memory::MemoryBus;
 
-use crate::devices::aerogpu_regs::{AEROGPU_ABI_MAJOR};
+use aero_protocol::aerogpu::aerogpu_pci::parse_and_validate_abi_version_u32;
 
 // Constants mirrored from `drivers/aerogpu/protocol/aerogpu_ring.h`.
 
@@ -14,10 +14,6 @@ pub const AEROGPU_FENCE_PAGE_SIZE_BYTES: u64 = 56;
 
 pub const RING_HEAD_OFFSET: u64 = 24;
 pub const RING_TAIL_OFFSET: u64 = 28;
-
-const fn abi_major(version_u32: u32) -> u32 {
-    version_u32 >> 16
-}
 
 #[derive(Clone, Debug)]
 pub struct AeroGpuRingHeader {
@@ -67,7 +63,7 @@ impl AeroGpuRingHeader {
         if self.magic != AEROGPU_RING_MAGIC {
             return false;
         }
-        if abi_major(self.abi_version) != AEROGPU_ABI_MAJOR {
+        if parse_and_validate_abi_version_u32(self.abi_version).is_err() {
             return false;
         }
         if self.entry_count == 0 || !self.entry_count.is_power_of_two() {
