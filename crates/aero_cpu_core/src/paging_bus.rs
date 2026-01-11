@@ -12,7 +12,10 @@ pub struct PagingBus<B> {
     mmu: Mmu,
     phys: B,
     cpl: u8,
+    write_chunks: Vec<(u64, usize, usize)>,
 }
+
+const PAGE_SIZE: u64 = 4096;
 
 impl<B> PagingBus<B> {
     pub fn new(phys: B) -> Self {
@@ -20,6 +23,7 @@ impl<B> PagingBus<B> {
             mmu: Mmu::new(),
             phys,
             cpl: 0,
+            write_chunks: Vec::new(),
         }
     }
 
@@ -79,6 +83,65 @@ impl<B> PagingBus<B> {
     {
         let paddr = self.translate(vaddr, access)?;
         self.phys.write_u8(paddr, value);
+        Ok(())
+    }
+
+    fn read_bytes_access(&mut self, vaddr: u64, dst: &mut [u8], access: AccessType) -> Result<(), Exception>
+    where
+        B: MemoryBus,
+    {
+        if dst.is_empty() {
+            return Ok(());
+        }
+
+        let mut offset = 0usize;
+        while offset < dst.len() {
+            let addr = vaddr.wrapping_add(offset as u64);
+            let paddr = self.translate(addr, access)?;
+
+            let page_off = (addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(dst.len() - offset);
+
+            for i in 0..chunk_len {
+                dst[offset + i] = self.phys.read_u8(paddr.wrapping_add(i as u64));
+            }
+
+            offset += chunk_len;
+        }
+
+        Ok(())
+    }
+
+    fn write_bytes_access(&mut self, vaddr: u64, src: &[u8], access: AccessType) -> Result<(), Exception>
+    where
+        B: MemoryBus,
+    {
+        if src.is_empty() {
+            return Ok(());
+        }
+
+        self.write_chunks.clear();
+        let mut offset = 0usize;
+        while offset < src.len() {
+            let addr = vaddr.wrapping_add(offset as u64);
+            let paddr = self.translate(addr, access)?;
+
+            let page_off = (addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(src.len() - offset);
+
+            self.write_chunks.push((paddr, chunk_len, offset));
+            offset += chunk_len;
+        }
+
+        let phys = &mut self.phys;
+        for (paddr, len, src_off) in self.write_chunks.iter().copied() {
+            for i in 0..len {
+                phys.write_u8(paddr.wrapping_add(i as u64), src[src_off + i]);
+            }
+        }
+
         Ok(())
     }
 }
@@ -199,33 +262,27 @@ where
     }
 
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        let b0 = self.read_u8(vaddr)? as u16;
-        let b1 = self.read_u8(vaddr + 1)? as u16;
-        Ok(b0 | (b1 << 8))
+        let mut buf = [0u8; 2];
+        self.read_bytes_access(vaddr, &mut buf, AccessType::Read)?;
+        Ok(u16::from_le_bytes(buf))
     }
 
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        let mut v = 0u32;
-        for i in 0..4 {
-            v |= (self.read_u8(vaddr + i)? as u32) << (i * 8);
-        }
-        Ok(v)
+        let mut buf = [0u8; 4];
+        self.read_bytes_access(vaddr, &mut buf, AccessType::Read)?;
+        Ok(u32::from_le_bytes(buf))
     }
 
     fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        let mut v = 0u64;
-        for i in 0..8 {
-            v |= (self.read_u8(vaddr + i)? as u64) << (i * 8);
-        }
-        Ok(v)
+        let mut buf = [0u8; 8];
+        self.read_bytes_access(vaddr, &mut buf, AccessType::Read)?;
+        Ok(u64::from_le_bytes(buf))
     }
 
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
-        let mut v = 0u128;
-        for i in 0..16 {
-            v |= (self.read_u8(vaddr + i)? as u128) << (i * 8);
-        }
-        Ok(v)
+        let mut buf = [0u8; 16];
+        self.read_bytes_access(vaddr, &mut buf, AccessType::Read)?;
+        Ok(u128::from_le_bytes(buf))
     }
 
     fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
@@ -233,30 +290,27 @@ where
     }
 
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        self.write_u8(vaddr, (val & 0xff) as u8)?;
-        self.write_u8(vaddr + 1, (val >> 8) as u8)?;
-        Ok(())
+        self.write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
     }
 
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        for i in 0..4 {
-            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
-        }
-        Ok(())
+        self.write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
     }
 
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        for i in 0..8 {
-            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
-        }
-        Ok(())
+        self.write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
     }
 
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
-        for i in 0..16 {
-            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
-        }
-        Ok(())
+        self.write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
+    }
+
+    fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
+        self.read_bytes_access(vaddr, dst, AccessType::Read)
+    }
+
+    fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
+        self.write_bytes_access(vaddr, src, AccessType::Write)
     }
 
     fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
@@ -281,9 +335,7 @@ where
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for i in 0..len {
-            buf[i] = self.read_u8_access(vaddr + i as u64, AccessType::Execute)?;
-        }
+        self.read_bytes_access(vaddr, &mut buf[..len], AccessType::Execute)?;
         Ok(buf)
     }
 

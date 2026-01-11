@@ -309,6 +309,86 @@ fn fetch_crossing_page_boundary_faults_on_first_missing_byte_and_sets_cr2() {
 }
 
 #[test]
+fn pagingbus_multi_byte_writes_are_atomic_wrt_page_faults() {
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page0 = 0x5000u64;
+
+    // Only the first page is present; the next page is not present.
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page0 | PTE_P | PTE_RW | PTE_US,
+        0,
+    );
+
+    // Sentinel values at the end of the first page.
+    phys.write_u8_raw(data_page0 + 0xffe, 0xaa);
+    phys.write_u8_raw(data_page0 + 0xfff, 0xbb);
+
+    let mut bus = PagingBus::new(phys);
+    let state = long_state(pml4_base, 0, 0);
+    bus.sync(&state);
+
+    // Writing a 16-bit value at 0xFFF crosses into the unmapped page at 0x1000.
+    // The write must not partially commit to the mapped page.
+    assert_eq!(
+        bus.write_u16(0xfff, 0x1234),
+        Err(Exception::PageFault {
+            addr: 0x1000,
+            error_code: 1 << 1, // W=1, P=0, U=0
+        })
+    );
+
+    assert_eq!(bus.inner_mut().read_u8(data_page0 + 0xffe), 0xaa);
+    assert_eq!(bus.inner_mut().read_u8(data_page0 + 0xfff), 0xbb);
+
+    // Same property for `write_bytes`.
+    assert_eq!(
+        bus.write_bytes(0xffe, &[1, 2, 3]),
+        Err(Exception::PageFault {
+            addr: 0x1000,
+            error_code: 1 << 1,
+        })
+    );
+    assert_eq!(bus.inner_mut().read_u8(data_page0 + 0xffe), 0xaa);
+    assert_eq!(bus.inner_mut().read_u8(data_page0 + 0xfff), 0xbb);
+}
+
+#[test]
+fn pagingbus_does_not_panic_on_wrapping_linear_addresses() {
+    // Use a zeroed PML4 so translations reliably fault.
+    let phys = TestMemory::new(0x2000);
+    let mut bus = PagingBus::new(phys);
+
+    let state = long_state(0, 0, 0);
+    bus.sync(&state);
+
+    // These accesses previously used `vaddr + i` and could panic on overflow in debug builds.
+    assert_eq!(
+        bus.fetch(u64::MAX, 2),
+        Err(Exception::PageFault {
+            addr: u64::MAX,
+            error_code: 1 << 4, // I/D=1, P=0, W=0, U=0
+        })
+    );
+    assert_eq!(
+        bus.read_u16(u64::MAX),
+        Err(Exception::PageFault {
+            addr: u64::MAX,
+            error_code: 0,
+        })
+    );
+}
+
+#[test]
 fn supervisor_write_respects_wp() {
     let mut phys = TestMemory::new(0x20000);
 
