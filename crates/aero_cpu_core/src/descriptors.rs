@@ -367,6 +367,12 @@ impl CpuState {
             return Err(Exception::ts(0));
         }
         let base = self.tables.tr.base;
+        let limit = self.tables.tr.limit as u64;
+        if 4u64.checked_add(3).map_or(true, |end| end > limit)
+            || 8u64.checked_add(1).map_or(true, |end| end > limit)
+        {
+            return Err(Exception::ts(0));
+        }
         // 32-bit TSS: ESP0 at +4, SS0 at +8.
         let esp0 = bus.read_u32(base + 4)?;
         let ss0 = bus.read_u16(base + 8)?;
@@ -384,6 +390,10 @@ impl CpuState {
             return Err(Exception::ts(0));
         }
         let base = self.tables.tr.base;
+        let limit = self.tables.tr.limit as u64;
+        if 4u64.checked_add(7).map_or(true, |end| end > limit) {
+            return Err(Exception::ts(0));
+        }
         // 64-bit TSS: RSP0 at +4.
         bus.read_u64(base + 4)
     }
@@ -403,6 +413,10 @@ impl CpuState {
         }
         let base = self.tables.tr.base;
         let off = 0x24u64 + (index as u64 - 1) * 8;
+        let limit = self.tables.tr.limit as u64;
+        if off.checked_add(7).map_or(true, |end| end > limit) {
+            return Err(Exception::ts(0));
+        }
         bus.read_u64(base + off)
     }
 
@@ -414,6 +428,10 @@ impl CpuState {
             || self.tables.tr.s()
             || !matches!(self.tables.tr.typ(), 0x9 | 0xB)
         {
+            return Err(Exception::ts(0));
+        }
+        let limit = self.tables.tr.limit as u64;
+        if 0x66u64.checked_add(1).map_or(true, |end| end > limit) {
             return Err(Exception::ts(0));
         }
         bus.read_u16(self.tables.tr.base + 0x66)

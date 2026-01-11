@@ -984,6 +984,12 @@ fn tss32_ring0_stack<B: CpuBus>(state: &CpuState, bus: &mut B) -> Result<(u16, u
         return Err(Exception::ts(0));
     }
     let base = state.tables.tr.base;
+    let limit = state.tables.tr.limit as u64;
+    if 4u64.checked_add(3).map_or(true, |end| end > limit)
+        || 8u64.checked_add(1).map_or(true, |end| end > limit)
+    {
+        return Err(Exception::ts(0));
+    }
     let esp0 = bus.read_u32(base + 4)?;
     let ss0 = bus.read_u16(base + 8)?;
     Ok((ss0, esp0))

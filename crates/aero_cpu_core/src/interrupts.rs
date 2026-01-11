@@ -586,6 +586,19 @@ fn deliver_protected_mode<B: CpuBus>(
                 let base = state.tables.tr.base;
                 let esp_off = 4u64 + (new_cpl as u64) * 8;
                 let ss_off = 8u64 + (new_cpl as u64) * 8;
+                let limit = state.tables.tr.limit as u64;
+                if esp_off.checked_add(3).map_or(true, |end| end > limit)
+                    || ss_off.checked_add(1).map_or(true, |end| end > limit)
+                {
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
+                }
 
                 let esp_addr = match base.checked_add(esp_off) {
                     Some(addr) => addr,
@@ -805,6 +818,17 @@ fn deliver_long_mode<B: CpuBus>(
                 }
                 let base = state.tables.tr.base;
                 let off = 0x24u64 + (gate.ist as u64 - 1) * 8;
+                let limit = state.tables.tr.limit as u64;
+                if off.checked_add(7).map_or(true, |end| end > limit) {
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
+                }
                 let addr = match base.checked_add(off) {
                     Some(addr) => addr,
                     None => {
@@ -888,6 +912,17 @@ fn deliver_long_mode<B: CpuBus>(
                 }
                 let base = state.tables.tr.base;
                 let off = 4u64 + (new_cpl as u64) * 8;
+                let limit = state.tables.tr.limit as u64;
+                if off.checked_add(7).map_or(true, |end| end > limit) {
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
+                }
                 let addr = match base.checked_add(off) {
                     Some(addr) => addr,
                     None => {
