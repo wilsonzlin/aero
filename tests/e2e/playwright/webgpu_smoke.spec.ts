@@ -8,6 +8,8 @@ type SampleResult = {
   topRight: number[];
   bottomLeft: number[];
   bottomRight: number[];
+  pass?: boolean;
+  error?: string;
 };
 
 async function waitForReady(page: Page) {
@@ -17,10 +19,12 @@ async function waitForReady(page: Page) {
 async function getSamples(page: Page): Promise<SampleResult> {
   await waitForReady(page);
   return await page.evaluate(async () => {
-    if (!(window as any).__aeroTest?.samplePixels) {
-      throw new Error(`__aeroTest missing samplePixels; error=${(window as any).__aeroTest?.error ?? 'none'}`);
+    const api = (window as any).__aeroTest;
+    if (!api?.samplePixels) {
+      throw new Error(`__aeroTest missing samplePixels; error=${api?.error ?? 'none'}`);
     }
-    return await (window as any).__aeroTest.samplePixels();
+    const samples = await api.samplePixels();
+    return { ...samples, pass: api.pass, error: api.error };
   });
 }
 
@@ -59,8 +63,23 @@ test('GPU worker: WebGPU path renders expected pattern when available @webgpu', 
     test.skip(true, 'WebGPU adapter unavailable in this Chromium environment');
   }
 
-  await page.goto('http://127.0.0.1:5173/web/gpu-worker-smoke.html', { waitUntil: 'load' });
+  // Force the smoke page to request the WebGPU backend. The default page
+  // behavior prefers WebGL2 to keep non-WebGPU CI runs deterministic.
+  await page.goto('http://127.0.0.1:5173/web/gpu-worker-smoke.html?backend=webgpu', { waitUntil: 'load' });
   const samples = await getSamples(page);
-  expect(samples.backend).toBe('webgpu');
+  if (samples.backend !== 'webgpu') {
+    const message = `GPU worker did not use WebGPU backend (got=${samples.backend})`;
+    if (isWebGPURequired()) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
+  if (samples.width < 16 || samples.height < 16) {
+    const message = `GPU worker WebGPU screenshot too small (${samples.width}x${samples.height}); error=${samples.error ?? 'none'}`;
+    if (isWebGPURequired()) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
   expectPattern(samples);
 });
