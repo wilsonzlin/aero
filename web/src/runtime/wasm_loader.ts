@@ -59,6 +59,33 @@ export interface WasmApi {
         readonly runtime_reserved: number;
     };
 
+    /**
+     * Reusable UHCI controller bridge (port I/O + 1ms frame stepping + USB topology management).
+     */
+    UhciControllerBridge: new (guestBase: number, guestSize: number) => {
+        readonly guest_base: number;
+        readonly guest_size: number;
+
+        io_read(offset: number, size: number): number;
+        io_write(offset: number, size: number, value: number): void;
+
+        step_frames(frames: number): void;
+        step_frame(): void;
+
+        irq_asserted(): boolean;
+
+        attach_hub(rootPort: number, portCount: number): void;
+        detach_at_path(path: number[]): void;
+
+        attach_webhid_device(path: number[], device: InstanceType<WasmApi["WebHidPassthroughBridge"]>): void;
+        attach_usb_hid_passthrough_device(
+            path: number[],
+            device: InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>,
+        ): void;
+
+        free(): void;
+    };
+
     UsbHidBridge: new () => {
         keyboard_event(usage: number, pressed: boolean): void;
         mouse_move(dx: number, dy: number): void;
@@ -443,6 +470,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
         mem_load_u32: mod.mem_load_u32,
+        UhciControllerBridge: mod.UhciControllerBridge,
         SharedRingBuffer: mod.SharedRingBuffer,
         open_ring_by_kind: mod.open_ring_by_kind,
         demo_render_rgba8888: mod.demo_render_rgba8888,

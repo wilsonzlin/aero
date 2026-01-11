@@ -459,7 +459,7 @@ impl UsbHidBridge {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct UsbHidPassthroughBridge {
-    device: UsbHidPassthrough,
+    device: std::rc::Rc<std::cell::RefCell<UsbHidPassthrough>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -490,13 +490,15 @@ impl UsbHidPassthroughBridge {
             interface_subclass,
             interface_protocol,
         );
-        Self { device }
+        Self {
+            device: std::rc::Rc::new(std::cell::RefCell::new(device)),
+        }
     }
 
     pub fn push_input_report(&mut self, report_id: u32, data: &[u8]) -> Result<(), JsValue> {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
-        self.device.push_input_report(report_id, data);
+        self.device.borrow_mut().push_input_report(report_id, data);
         Ok(())
     }
 
@@ -504,7 +506,7 @@ impl UsbHidPassthroughBridge {
     ///
     /// Returns `null` when no report is pending.
     pub fn drain_next_output_report(&mut self) -> JsValue {
-        let Some(report) = self.device.pop_output_report() else {
+        let Some(report) = self.device.borrow_mut().pop_output_report() else {
             return JsValue::NULL;
         };
 
@@ -533,14 +535,59 @@ impl UsbHidPassthroughBridge {
 
     /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
     pub fn configured(&self) -> bool {
-        self.device.configured()
+        self.device.borrow().configured()
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct WebHidPassthroughBridge {
-    device: UsbHidPassthrough,
+    device: std::rc::Rc<std::cell::RefCell<UsbHidPassthrough>>,
+}
+
+// Internal adapter: allow attaching a `UsbHidPassthroughBridge` / `WebHidPassthroughBridge` to the
+// UHCI bus while still letting JS keep a handle to push input reports + drain output reports.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+pub(crate) struct SharedUsbHidPassthroughDevice(std::rc::Rc<std::cell::RefCell<UsbHidPassthrough>>);
+
+#[cfg(target_arch = "wasm32")]
+impl UsbDevice for SharedUsbHidPassthroughDevice {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+        self
+    }
+
+    fn speed(&self) -> aero_usb::usb::UsbSpeed {
+        self.0.borrow().speed()
+    }
+
+    fn tick_1ms(&mut self) {
+        self.0.borrow_mut().tick_1ms();
+    }
+
+    fn reset(&mut self) {
+        self.0.borrow_mut().reset();
+    }
+
+    fn address(&self) -> u8 {
+        self.0.borrow().address()
+    }
+
+    fn handle_setup(&mut self, setup: aero_usb::usb::SetupPacket) {
+        self.0.borrow_mut().handle_setup(setup);
+    }
+
+    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
+        self.0.borrow_mut().handle_out(ep, data)
+    }
+
+    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
+        self.0.borrow_mut().handle_in(ep, buf)
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -577,13 +624,15 @@ impl WebHidPassthroughBridge {
             None,
         );
 
-        Ok(Self { device })
+        Ok(Self {
+            device: std::rc::Rc::new(std::cell::RefCell::new(device)),
+        })
     }
 
     pub fn push_input_report(&mut self, report_id: u32, data: &[u8]) -> Result<(), JsValue> {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
-        self.device.push_input_report(report_id, data);
+        self.device.borrow_mut().push_input_report(report_id, data);
         Ok(())
     }
 
@@ -591,7 +640,7 @@ impl WebHidPassthroughBridge {
     ///
     /// Returns `null` when no report is pending.
     pub fn drain_next_output_report(&mut self) -> JsValue {
-        let Some(report) = self.device.pop_output_report() else {
+        let Some(report) = self.device.borrow_mut().pop_output_report() else {
             return JsValue::NULL;
         };
 
@@ -620,7 +669,21 @@ impl WebHidPassthroughBridge {
 
     /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
     pub fn configured(&self) -> bool {
-        self.device.configured()
+        self.device.borrow().configured()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl WebHidPassthroughBridge {
+    pub(crate) fn as_usb_device(&self) -> SharedUsbHidPassthroughDevice {
+        SharedUsbHidPassthroughDevice(self.device.clone())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl UsbHidPassthroughBridge {
+    pub(crate) fn as_usb_device(&self) -> SharedUsbHidPassthroughDevice {
+        SharedUsbHidPassthroughDevice(self.device.clone())
     }
 }
 
