@@ -3374,16 +3374,19 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ UINT AllocationCount,
 }
 
 /*
- * Determine whether a command stream references guest-backed memory via `backing_alloc_id`.
+ * Determine whether a command stream requires `alloc_id` resolution via the per-submit allocation
+ * table.
  *
  * This is used to decide whether a v1 submission must include an allocation table.
  *
  * NOTE: This is intentionally a minimal parser:
  * - It only looks for CREATE_BUFFER / CREATE_TEXTURE2D packets and inspects their backing_alloc_id.
+ * - It treats RESOURCE_DIRTY_RANGE and COPY_* WRITEBACK_DST as requiring an alloc table (these packets
+ *   imply host access to guest-backed memory and are invalid without a guest allocation backing).
  * - Any malformed stream is treated as "no reference" here; the host will validate the stream.
  */
-static BOOLEAN AeroGpuCmdStreamReferencesBackingAllocId(_In_reads_bytes_opt_(SizeBytes) const VOID* CmdStream,
-                                                        _In_ ULONG SizeBytes)
+static BOOLEAN AeroGpuCmdStreamRequiresAllocTable(_In_reads_bytes_opt_(SizeBytes) const VOID* CmdStream,
+                                                  _In_ ULONG SizeBytes)
 {
     if (!CmdStream || SizeBytes < sizeof(struct aerogpu_cmd_stream_header)) {
         return FALSE;
@@ -3416,7 +3419,7 @@ static BOOLEAN AeroGpuCmdStreamReferencesBackingAllocId(_In_reads_bytes_opt_(Siz
         if (end > streamSize) {
             return FALSE;
         }
- 
+
         if (hdr.opcode == AEROGPU_CMD_CREATE_BUFFER) {
             /* backing_alloc_id is at offset 24 from the packet start. */
             if (hdr.size_bytes >= 28) {
@@ -3435,11 +3438,31 @@ static BOOLEAN AeroGpuCmdStreamReferencesBackingAllocId(_In_reads_bytes_opt_(Siz
                     return TRUE;
                 }
             }
+        } else if (hdr.opcode == AEROGPU_CMD_RESOURCE_DIRTY_RANGE) {
+            return TRUE;
+        } else if (hdr.opcode == AEROGPU_CMD_COPY_BUFFER) {
+            /* flags is at offset 40 from the packet start. */
+            if (hdr.size_bytes >= 44) {
+                uint32_t flags = 0;
+                RtlCopyMemory(&flags, bytes + offset + 40, sizeof(flags));
+                if ((flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0) {
+                    return TRUE;
+                }
+            }
+        } else if (hdr.opcode == AEROGPU_CMD_COPY_TEXTURE2D) {
+            /* flags is at offset 56 from the packet start. */
+            if (hdr.size_bytes >= 60) {
+                uint32_t flags = 0;
+                RtlCopyMemory(&flags, bytes + offset + 56, sizeof(flags));
+                if ((flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0) {
+                    return TRUE;
+                }
+            }
         }
- 
+
         offset = end;
     }
- 
+
     return FALSE;
 }
 
@@ -3650,20 +3673,20 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
  
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
         /*
-         * v1 ABI: allocation table is required for any submission whose command stream references
-         * backing_alloc_id != 0, or whose allocation list includes any allocations with non-zero
-         * AllocationId (the KMD will encode those into the table).
+         * v1 ABI: allocation table is required for any submission whose command stream requires
+         * alloc_id resolution (guest-backed CREATE_*, RESOURCE_DIRTY_RANGE, COPY_* WRITEBACK_DST),
+         * or whose allocation list includes any allocations with non-zero AllocationId (the KMD
+         * will encode those into the table).
          *
-         * If the command stream references backing_alloc_id but we were not able to build an
-         * alloc table, fail the submission instead of sending an incomplete descriptor to the
-         * host/emulator.
+         * If the command stream requires an alloc table but we were not able to build one, fail
+         * the submission instead of sending an incomplete descriptor to the host/emulator.
          */
-        const BOOLEAN cmdNeedsAllocTable = AeroGpuCmdStreamReferencesBackingAllocId(dmaVa, pSubmitCommand->DmaBufferSize);
+        const BOOLEAN cmdNeedsAllocTable = AeroGpuCmdStreamRequiresAllocTable(dmaVa, pSubmitCommand->DmaBufferSize);
         const BOOLEAN listHasAllocIds = (allocTableSizeBytes != 0);
         const BOOLEAN needsAllocTable = cmdNeedsAllocTable || listHasAllocIds;
- 
+  
         if (cmdNeedsAllocTable && !listHasAllocIds) {
-            AEROGPU_LOG("SubmitCommand: command stream references backing_alloc_id but alloc table is missing (fence=%I64u)",
+            AEROGPU_LOG("SubmitCommand: command stream requires alloc table but alloc table is missing (fence=%I64u)",
                         fence);
             AeroGpuFreeContiguous(dmaVa);
             AeroGpuFreeSubmissionMeta(meta);
