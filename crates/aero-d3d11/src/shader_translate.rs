@@ -242,48 +242,69 @@ fn build_io_maps(
     isgn: &DxbcSignature,
     osgn: &DxbcSignature,
 ) -> Result<IoMaps, ShaderTranslateError> {
+    let mut input_sivs = BTreeMap::<u32, u32>::new();
+    let mut output_sivs = BTreeMap::<u32, u32>::new();
+    for decl in &module.decls {
+        match decl {
+            Sm4Decl::InputSiv { reg, sys_value, .. } => {
+                input_sivs.insert(*reg, *sys_value);
+            }
+            Sm4Decl::OutputSiv { reg, sys_value, .. } => {
+                output_sivs.insert(*reg, *sys_value);
+            }
+            _ => {}
+        }
+    }
+
     let mut inputs = BTreeMap::new();
     for p in &isgn.parameters {
-        inputs.insert(p.register, ParamInfo::from_sig_param("input", p)?);
+        let sys_value = resolve_sys_value_type(p, &input_sivs);
+        inputs.insert(p.register, ParamInfo::from_sig_param("input", p, sys_value)?);
     }
 
     let mut outputs = BTreeMap::new();
     for p in &osgn.parameters {
-        outputs.insert(p.register, ParamInfo::from_sig_param("output", p)?);
+        let sys_value = resolve_sys_value_type(p, &output_sivs);
+        outputs.insert(p.register, ParamInfo::from_sig_param("output", p, sys_value)?);
     }
 
-    let mut vs_position_reg = None;
-    for p in &osgn.parameters {
-        if is_sv_position_param(p) {
-            vs_position_reg = Some(p.register);
-            break;
-        }
-    }
-    // Some compilers still emit legacy `POSITION` semantics for the vertex shader's position
-    // output even when the signature's `system_value_type` is unset.
+    let mut vs_position_reg = outputs
+        .values()
+        .find(|p| p.sys_value == Some(D3D_NAME_POSITION))
+        .map(|p| p.param.register);
     if vs_position_reg.is_none() && module.stage == ShaderStage::Vertex {
-        for p in &osgn.parameters {
-            if p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("POSITION") {
-                vs_position_reg = Some(p.register);
-                break;
+        // Some compilers still emit legacy `POSITION` semantics for the vertex shader's position
+        // output even when the signature's `system_value_type` is unset.
+        vs_position_reg = osgn
+            .parameters
+            .iter()
+            .find(|p| p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("POSITION"))
+            .map(|p| p.register);
+        if let Some(reg) = vs_position_reg {
+            if let Some(p) = outputs.get_mut(&reg) {
+                p.sys_value = Some(D3D_NAME_POSITION);
+                p.builtin = Some(Builtin::Position);
             }
         }
     }
 
     let mut ps_position_reg = None;
     if module.stage == ShaderStage::Pixel {
-        for p in &isgn.parameters {
-            if is_sv_position_param(p) {
-                ps_position_reg = Some(p.register);
-                break;
-            }
-        }
-        // Legacy `POSITION` can also be used for pixel shader `SV_Position` inputs.
+        ps_position_reg = inputs
+            .values()
+            .find(|p| p.sys_value == Some(D3D_NAME_POSITION))
+            .map(|p| p.param.register);
         if ps_position_reg.is_none() {
-            for p in &isgn.parameters {
-                if p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("POSITION") {
-                    ps_position_reg = Some(p.register);
-                    break;
+            // Legacy `POSITION` can also be used for pixel shader `SV_Position` inputs.
+            ps_position_reg = isgn
+                .parameters
+                .iter()
+                .find(|p| p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("POSITION"))
+                .map(|p| p.register);
+            if let Some(reg) = ps_position_reg {
+                if let Some(p) = inputs.get_mut(&reg) {
+                    p.sys_value = Some(D3D_NAME_POSITION);
+                    p.builtin = Some(Builtin::Position);
                 }
             }
         }
@@ -291,63 +312,49 @@ fn build_io_maps(
 
     let mut ps_sv_target0_reg = None;
     if module.stage == ShaderStage::Pixel {
-        for p in &osgn.parameters {
-            if is_sv_target_param(p) && p.semantic_index == 0 {
-                ps_sv_target0_reg = Some(p.register);
-                break;
-            }
-        }
-        // Legacy `COLOR` can stand in for `SV_Target` in some SM4-era shaders.
+        ps_sv_target0_reg = outputs
+            .values()
+            .find(|p| p.sys_value == Some(D3D_NAME_TARGET) && p.param.semantic_index == 0)
+            .map(|p| p.param.register);
         if ps_sv_target0_reg.is_none() {
-            for p in &osgn.parameters {
-                if p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("COLOR") {
-                    ps_sv_target0_reg = Some(p.register);
-                    break;
+            // Legacy `COLOR` can stand in for `SV_Target` in some SM4-era shaders.
+            ps_sv_target0_reg = osgn
+                .parameters
+                .iter()
+                .find(|p| p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("COLOR"))
+                .map(|p| p.register);
+            if let Some(reg) = ps_sv_target0_reg {
+                if let Some(p) = outputs.get_mut(&reg) {
+                    p.sys_value = Some(D3D_NAME_TARGET);
                 }
             }
         }
     }
 
-    let mut vs_vertex_id_reg = None;
-    let mut vs_instance_id_reg = None;
-    let mut ps_front_facing_reg = None;
-
-    for p in &isgn.parameters {
-        if is_sv_vertex_id_param(p) {
-            vs_vertex_id_reg = Some(p.register);
-        }
-        if is_sv_instance_id_param(p) {
-            vs_instance_id_reg = Some(p.register);
-        }
-        if is_sv_is_front_face_param(p) {
-            ps_front_facing_reg = Some(p.register);
-        }
-    }
-
-    // Merge declaration-driven system value bindings. These cover the case where
-    // the signature's `system_value_type` is unset (0) and the semantic name
-    // isn't the canonical `SV_*` string, while the token stream uses
-    // `dcl_input_siv` / `dcl_output_siv`.
-    for decl in &module.decls {
-        match decl {
-            Sm4Decl::InputSiv { reg, sys_value, .. } => match *sys_value {
-                D3D_NAME_VERTEX_ID => vs_vertex_id_reg = Some(*reg),
-                D3D_NAME_INSTANCE_ID => vs_instance_id_reg = Some(*reg),
-                D3D_NAME_IS_FRONT_FACE => ps_front_facing_reg = Some(*reg),
-                D3D_NAME_POSITION => ps_position_reg = Some(*reg),
-                _ => {}
-            },
-            Sm4Decl::OutputSiv { reg, sys_value, .. } => match *sys_value {
-                D3D_NAME_POSITION => vs_position_reg = Some(*reg),
-                D3D_NAME_TARGET => {
-                    // Assume the first declared target corresponds to SV_Target0.
-                    ps_sv_target0_reg.get_or_insert(*reg);
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    }
+    let vs_vertex_id_reg = (module.stage == ShaderStage::Vertex)
+        .then(|| {
+            inputs
+                .values()
+                .find(|p| p.sys_value == Some(D3D_NAME_VERTEX_ID))
+                .map(|p| p.param.register)
+        })
+        .flatten();
+    let vs_instance_id_reg = (module.stage == ShaderStage::Vertex)
+        .then(|| {
+            inputs
+                .values()
+                .find(|p| p.sys_value == Some(D3D_NAME_INSTANCE_ID))
+                .map(|p| p.param.register)
+        })
+        .flatten();
+    let ps_front_facing_reg = (module.stage == ShaderStage::Pixel)
+        .then(|| {
+            inputs
+                .values()
+                .find(|p| p.sys_value == Some(D3D_NAME_IS_FRONT_FACE))
+                .map(|p| p.param.register)
+        })
+        .flatten();
 
     Ok(IoMaps {
         inputs,
@@ -364,6 +371,8 @@ fn build_io_maps(
 #[derive(Debug, Clone)]
 struct ParamInfo {
     param: DxbcSignatureParameter,
+    sys_value: Option<u32>,
+    builtin: Option<Builtin>,
     wgsl_ty: &'static str,
     component_count: usize,
     components: [u8; 4],
@@ -373,7 +382,10 @@ impl ParamInfo {
     fn from_sig_param(
         io: &'static str,
         param: &DxbcSignatureParameter,
+        sys_value: Option<u32>,
     ) -> Result<Self, ShaderTranslateError> {
+        let builtin = sys_value.and_then(builtin_from_d3d_name);
+
         let mask = param.mask & 0xF;
         let mut comps = [0u8; 4];
         let mut count = 0usize;
@@ -400,11 +412,22 @@ impl ParamInfo {
             _ => unreachable!(),
         };
 
+        // WGSL builtin inputs have fixed types that do not match the signature component count.
+        // We still keep the vec4<f32> internal register model and expand scalar builtins into x
+        // with D3D default fill (0,0,0,1).
+        let (wgsl_ty, component_count, components) = match builtin {
+            Some(Builtin::VertexIndex) | Some(Builtin::InstanceIndex) => ("u32", 1, [0, 0, 0, 0]),
+            Some(Builtin::FrontFacing) => ("bool", 1, [0, 0, 0, 0]),
+            _ => (wgsl_ty, count, comps),
+        };
+
         Ok(Self {
             param: param.clone(),
             wgsl_ty,
-            component_count: count,
-            components: comps,
+            component_count,
+            components,
+            sys_value,
+            builtin,
         })
     }
 
@@ -430,13 +453,12 @@ impl IoMaps {
         self.inputs
             .values()
             .map(|p| {
-                let builtin = self.input_builtin(p.param.register, &p.param.semantic_name);
                 IoParam {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
                     register: p.param.register,
-                    location: builtin.is_none().then_some(p.param.register),
-                    builtin,
+                    location: p.builtin.is_none().then_some(p.param.register),
+                    builtin: p.builtin,
                     mask: p.param.mask,
                 }
             })
@@ -444,20 +466,15 @@ impl IoMaps {
     }
 
     fn outputs_reflection_vertex(&self) -> Vec<IoParam> {
-        let pos_reg = self.vs_position_register;
         self.outputs
             .values()
             .map(|p| {
-                let builtin = pos_reg
-                    .filter(|&r| r == p.param.register)
-                    .or_else(|| is_sv_position(&p.param.semantic_name).then_some(p.param.register))
-                    .map(|_| Builtin::Position);
                 IoParam {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
                     register: p.param.register,
-                    location: builtin.is_none().then_some(p.param.register),
-                    builtin,
+                    location: p.builtin.is_none().then_some(p.param.register),
+                    builtin: p.builtin,
                     mask: p.param.mask,
                 }
             })
@@ -468,9 +485,7 @@ impl IoMaps {
         self.outputs
             .values()
             .map(|p| {
-                let is_target = is_sv_target(&p.param.semantic_name)
-                    || p.param.system_value_type == D3D_NAME_TARGET
-                    || p.param.semantic_name.eq_ignore_ascii_case("COLOR");
+                let is_target = p.sys_value == Some(D3D_NAME_TARGET);
                 IoParam {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
@@ -641,30 +656,55 @@ impl IoMaps {
             _ => Err(ShaderTranslateError::UnsupportedStage(stage)),
         }
     }
+}
 
-    fn input_builtin(&self, reg: u32, semantic_name: &str) -> Option<Builtin> {
-        if Some(reg) == self.vs_vertex_id_register || is_sv_vertex_id(semantic_name) {
-            return Some(Builtin::VertexIndex);
-        }
-        if Some(reg) == self.vs_instance_id_register || is_sv_instance_id(semantic_name) {
-            return Some(Builtin::InstanceIndex);
-        }
-        if Some(reg) == self.ps_front_facing_register || is_sv_is_front_face(semantic_name) {
-            return Some(Builtin::FrontFacing);
-        }
-        if Some(reg) == self.ps_position_register || is_sv_position(semantic_name) {
-            return Some(Builtin::Position);
-        }
-        None
+const D3D_NAME_POSITION: u32 = 1;
+const D3D_NAME_VERTEX_ID: u32 = 6;
+const D3D_NAME_INSTANCE_ID: u32 = 8;
+const D3D_NAME_IS_FRONT_FACE: u32 = 9;
+const D3D_NAME_TARGET: u32 = 64;
+
+fn builtin_from_d3d_name(name: u32) -> Option<Builtin> {
+    match name {
+        D3D_NAME_POSITION => Some(Builtin::Position),
+        D3D_NAME_VERTEX_ID => Some(Builtin::VertexIndex),
+        D3D_NAME_INSTANCE_ID => Some(Builtin::InstanceIndex),
+        D3D_NAME_IS_FRONT_FACE => Some(Builtin::FrontFacing),
+        _ => None,
     }
+}
+
+fn resolve_sys_value_type(param: &DxbcSignatureParameter, decl_sivs: &BTreeMap<u32, u32>) -> Option<u32> {
+    if let Some(&sys_value) = decl_sivs.get(&param.register) {
+        return Some(sys_value);
+    }
+    if param.system_value_type != 0 {
+        return Some(param.system_value_type);
+    }
+    semantic_to_d3d_name(&param.semantic_name)
+}
+
+fn semantic_to_d3d_name(name: &str) -> Option<u32> {
+    if is_sv_position(name) {
+        return Some(D3D_NAME_POSITION);
+    }
+    if is_sv_vertex_id(name) {
+        return Some(D3D_NAME_VERTEX_ID);
+    }
+    if is_sv_instance_id(name) {
+        return Some(D3D_NAME_INSTANCE_ID);
+    }
+    if is_sv_is_front_face(name) {
+        return Some(D3D_NAME_IS_FRONT_FACE);
+    }
+    if is_sv_target(name) {
+        return Some(D3D_NAME_TARGET);
+    }
+    None
 }
 
 fn is_sv_position(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_Position") || name.eq_ignore_ascii_case("SV_POSITION")
-}
-
-fn is_sv_target(name: &str) -> bool {
-    name.eq_ignore_ascii_case("SV_Target") || name.eq_ignore_ascii_case("SV_TARGET")
 }
 
 fn is_sv_vertex_id(name: &str) -> bool {
@@ -679,32 +719,9 @@ fn is_sv_is_front_face(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_IsFrontFace") || name.eq_ignore_ascii_case("SV_ISFRONTFACE")
 }
 
-fn is_sv_position_param(p: &DxbcSignatureParameter) -> bool {
-    is_sv_position(&p.semantic_name) || p.system_value_type == D3D_NAME_POSITION
+fn is_sv_target(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_Target") || name.eq_ignore_ascii_case("SV_TARGET")
 }
-
-fn is_sv_target_param(p: &DxbcSignatureParameter) -> bool {
-    is_sv_target(&p.semantic_name) || p.system_value_type == D3D_NAME_TARGET
-}
-
-fn is_sv_vertex_id_param(p: &DxbcSignatureParameter) -> bool {
-    is_sv_vertex_id(&p.semantic_name) || p.system_value_type == D3D_NAME_VERTEX_ID
-}
-
-fn is_sv_instance_id_param(p: &DxbcSignatureParameter) -> bool {
-    is_sv_instance_id(&p.semantic_name) || p.system_value_type == D3D_NAME_INSTANCE_ID
-}
-
-fn is_sv_is_front_face_param(p: &DxbcSignatureParameter) -> bool {
-    is_sv_is_front_face(&p.semantic_name) || p.system_value_type == D3D_NAME_IS_FRONT_FACE
-}
-
-// `D3D_NAME` system value identifiers we need for builtin mapping.
-const D3D_NAME_POSITION: u32 = 1;
-const D3D_NAME_VERTEX_ID: u32 = 6;
-const D3D_NAME_INSTANCE_ID: u32 = 8;
-const D3D_NAME_IS_FRONT_FACE: u32 = 9;
-const D3D_NAME_TARGET: u32 = 64;
 
 fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
     // D3D input assembler fills missing components with (0,0,0,1). We apply the
