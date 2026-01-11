@@ -359,4 +359,114 @@ describe("chunked delivery", () => {
       new RegExp(`/v1/images/${imageId}/chunked/manifest$`)
     );
   });
+
+  it("redirects chunked endpoints to CloudFront URLs when configured (cookie mode)", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+
+    const config = makeConfig({
+      cloudfrontDomain: "d111111abcdef8.cloudfront.net",
+      cloudfrontKeyPairId: "KTESTKEYPAIR",
+      cloudfrontPrivateKeyPem: privateKey,
+      cloudfrontAuthMode: "cookie",
+    });
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      chunkedPrefix: "images/user-1/image-1/v1/",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = { async send() {} } as unknown as S3Client;
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const manifestRes = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/chunked/manifest`,
+      headers: { "x-user-id": ownerId },
+    });
+    expect(manifestRes.statusCode).toBe(307);
+    expect(manifestRes.headers.location).toBe(
+      "https://d111111abcdef8.cloudfront.net/images/user-1/image-1/v1/manifest.json"
+    );
+
+    const chunkRes = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/chunked/chunks/0`,
+      headers: { "x-user-id": ownerId },
+    });
+    expect(chunkRes.statusCode).toBe(307);
+    expect(chunkRes.headers.location).toBe(
+      "https://d111111abcdef8.cloudfront.net/images/user-1/image-1/v1/chunks/00000000.bin"
+    );
+  });
+
+  it("redirects chunked endpoints to signed CloudFront URLs when configured (url mode)", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+
+    const config = makeConfig({
+      cloudfrontDomain: "d111111abcdef8.cloudfront.net",
+      cloudfrontKeyPairId: "KTESTKEYPAIR",
+      cloudfrontPrivateKeyPem: privateKey,
+      cloudfrontAuthMode: "url",
+    });
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      chunkedPrefix: "images/user-1/image-1/v1/",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = { async send() {} } as unknown as S3Client;
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const manifestRes = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/chunked/manifest`,
+      headers: { "x-user-id": ownerId },
+    });
+    expect(manifestRes.statusCode).toBe(307);
+    expect(manifestRes.headers.location).toContain(
+      "https://d111111abcdef8.cloudfront.net/images/user-1/image-1/v1/manifest.json"
+    );
+    expect(manifestRes.headers.location).toContain("Key-Pair-Id=KTESTKEYPAIR");
+    expect(manifestRes.headers.location).toContain("Signature=");
+
+    const chunkRes = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/chunked/chunks/0`,
+      headers: { "x-user-id": ownerId },
+    });
+    expect(chunkRes.statusCode).toBe(307);
+    expect(chunkRes.headers.location).toContain(
+      "https://d111111abcdef8.cloudfront.net/images/user-1/image-1/v1/chunks/00000000.bin"
+    );
+    expect(chunkRes.headers.location).toContain("Key-Pair-Id=KTESTKEYPAIR");
+    expect(chunkRes.headers.location).toContain("Signature=");
+  });
 });

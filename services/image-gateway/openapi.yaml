@@ -462,6 +462,8 @@ paths:
           schema:
             type: string
       responses:
+        "307":
+          description: Redirect to CloudFront (when configured)
         "200":
           description: OK
           content:
@@ -486,6 +488,8 @@ paths:
           schema:
             type: string
       responses:
+        "307":
+          description: Redirect to CloudFront (when configured)
         "200":
           description: OK
         default:
@@ -512,6 +516,8 @@ paths:
             type: string
             pattern: "^[0-9]+(\\.bin)?$"
       responses:
+        "307":
+          description: Redirect to CloudFront (when configured)
         "200":
           description: OK
           content:
@@ -542,6 +548,8 @@ paths:
             type: string
             pattern: "^[0-9]+(\\.bin)?$"
       responses:
+        "307":
+          description: Redirect to CloudFront (when configured)
         "200":
           description: OK
         default:
