@@ -40,6 +40,7 @@ drivers/aerogpu/tests/win7/
   d3d9_raster_status_pacing/
   dwm_flush_pacing/
   d3d9ex_triangle/
+  d3d9ex_stretchrect/
   d3d9ex_query_latency/
   d3d9ex_shared_surface/
   d3d9ex_shared_surface_ipc/
@@ -150,6 +151,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9_raster_status_sanity` samples `IDirect3DDevice9::GetRasterStatus` and fails if vblank state never toggles or `ScanLine` is stuck (validates `D3DKMTGetScanLine` → `DxgkDdiGetScanLine` basic correctness)
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
+* `d3d9ex_stretchrect` exercises compositor-critical D3D9Ex DDIs: `ColorFill`, `UpdateSurface`, `StretchRect`, and `UpdateTexture` (validated via readback)
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)
   * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token` via allocation private driver data: the miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).

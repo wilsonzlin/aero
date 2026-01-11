@@ -53,6 +53,7 @@ call :run_test d3d9_raster_status_sanity !TEST_ARGS!
 call :run_test d3d9_raster_status_pacing !TEST_ARGS!
 call :run_test dwm_flush_pacing !TEST_ARGS!
 call :run_test d3d9ex_triangle !TEST_ARGS!
+call :run_test d3d9ex_stretchrect !TEST_ARGS!
 call :run_test d3d9ex_query_latency !TEST_ARGS!
 call :run_test d3d9ex_shared_surface !TEST_ARGS!
 call :run_test d3d9ex_shared_surface_ipc !TEST_ARGS!
