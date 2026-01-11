@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_storage_server::{
     http::{
         images::{router_with_state, ImagesState},

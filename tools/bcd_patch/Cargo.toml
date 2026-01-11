@@ -16,6 +16,8 @@ regf = "0.1.0"
 uuid = { version = "1", features = ["std"] }
 
 [dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
-tempfile = "3"

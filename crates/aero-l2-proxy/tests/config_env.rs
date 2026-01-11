@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::sync::Mutex;
 
 use aero_l2_proxy::{AuthMode, ProxyConfig, SecurityConfig};

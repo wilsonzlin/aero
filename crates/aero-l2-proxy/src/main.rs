@@ -1,15 +1,19 @@
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::{io::Write, net::SocketAddr, str::FromStr};
 
+#[cfg(not(target_arch = "wasm32"))]
 use aero_l2_proxy::{start_server, ProxyConfig};
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct CliArgs {
     bind: Option<SocketAddr>,
     ready_stdout: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_args() -> Result<CliArgs, String> {
     let mut out = CliArgs::default();
     let mut args = std::env::args().skip(1);
@@ -55,6 +59,7 @@ fn parse_args() -> Result<CliArgs, String> {
     Ok(out)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = match parse_args() {
@@ -126,3 +131,6 @@ async fn main() -> std::io::Result<()> {
     handle.shutdown().await;
     Ok(())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}

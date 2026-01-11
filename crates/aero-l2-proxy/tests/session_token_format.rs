@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_l2_proxy::auth::{
     verify_relay_jwt_hs256, verify_session_token, JwtVerifyError, SessionVerifyError,
 };

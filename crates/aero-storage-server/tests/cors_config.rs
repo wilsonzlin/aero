@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_storage_server::{store::LocalFsImageStore, AppState};
 use axum::{
     body::Body,

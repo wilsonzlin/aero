@@ -1,17 +1,28 @@
+#[cfg(not(target_arch = "wasm32"))]
 pub mod api;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod metrics;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod server;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod store;
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
 use axum::http::HeaderValue;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::middleware;
 
+#[cfg(not(target_arch = "wasm32"))]
 use metrics::Metrics;
+#[cfg(not(target_arch = "wasm32"))]
 use store::ImageStore;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<dyn ImageStore>,
@@ -20,6 +31,7 @@ pub struct AppState {
     pub cross_origin_resource_policy: HeaderValue,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl AppState {
     pub fn new(store: Arc<dyn ImageStore>) -> Self {
         Self {
@@ -49,6 +61,7 @@ impl AppState {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn app(state: AppState) -> axum::Router {
     let cors_allow_origin = state.cors_allow_origin.clone();
     let cors_allow_credentials = state.cors_allow_credentials;
@@ -69,4 +82,6 @@ pub fn app(state: AppState) -> axum::Router {
             http::observability::middleware,
         ))
 }
+
+#[cfg(not(target_arch = "wasm32"))]
 pub use server::{start, RunningStorageServer, StorageServerConfig};

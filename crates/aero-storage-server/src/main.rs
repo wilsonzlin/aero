@@ -1,12 +1,20 @@
+#[cfg(not(target_arch = "wasm32"))]
 mod config;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::config::Config;
+#[cfg(not(target_arch = "wasm32"))]
 use aero_storage_server::{store::LocalFsImageStore, AppState};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::http::HeaderValue;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::net::TcpListener;
+#[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::EnvFilter;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::load();
@@ -48,6 +56,10 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn init_tracing(log_level: &str) -> Result<(), tracing_subscriber::filter::ParseError> {
     let filter = EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new(log_level))?;
 
@@ -60,6 +72,7 @@ fn init_tracing(log_level: &str) -> Result<(), tracing_subscriber::filter::Parse
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()

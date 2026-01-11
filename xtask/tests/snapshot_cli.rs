@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::fs;
 use std::io::Cursor;
 use std::io::{Seek, Write};

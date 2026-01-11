@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::{net::Ipv4Addr, net::SocketAddr, path::PathBuf, time::Duration};
 
 use aero_l2_proxy::{
