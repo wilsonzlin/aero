@@ -289,8 +289,16 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
       // Cargo config, which can make these tests flaky when the wrapper daemon is unavailable.
       // Disable the wrapper by default unless explicitly opted into via env vars.
       if (!("RUSTC_WRAPPER" in childEnv) && !("CARGO_BUILD_RUSTC_WRAPPER" in childEnv)) {
-        // (Setting an empty string disables the wrapper.)
-        childEnv.RUSTC_WRAPPER = "";
+        if (process.platform === "win32") {
+          // Windows wrapper execution semantics differ (batch files vs executables).
+          // Keep the existing "empty string disables" behavior.
+          childEnv.RUSTC_WRAPPER = "";
+        } else {
+          // Override user Cargo config (e.g. a global sccache wrapper) with a simple passthrough
+          // wrapper that invokes the real rustc directly. This keeps Node unit tests from
+          // failing if the wrapper daemon is unavailable.
+          childEnv.RUSTC_WRAPPER = path.join(REPO_ROOT, "tools", "rustc-wrapper.sh");
+        }
       }
     }
 
