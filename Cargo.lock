@@ -395,10 +395,8 @@ dependencies = [
 name = "aero-net-stack"
 version = "0.1.0"
 dependencies = [
- "axum",
  "futures-util",
  "nt-packetlib",
- "serde",
  "tokio",
  "tokio-tungstenite 0.26.2",
 ]

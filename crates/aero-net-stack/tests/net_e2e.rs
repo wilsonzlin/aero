@@ -8,17 +8,7 @@ use aero_net_stack::packet::*;
 use aero_net_stack::{
     Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
 };
-use axum::{
-    extract::{
-        ws::{Message as AxumMessage, WebSocket, WebSocketUpgrade},
-        Query,
-    },
-    response::IntoResponse,
-    routing::get,
-    Router,
-};
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
@@ -32,7 +22,7 @@ use tokio_tungstenite::tungstenite::Message;
 /// - guest DHCP + ARP
 /// - guest DNS query resolved via DoH (embedded test server)
 /// - guest TCP stream proxied via the current `/tcp` WebSocket contract (Aero Gateway;
-///   `GET /tcp?v=1&host=<host>&port=<port>`)
+///   `GET /tcp?v=1&host=<host>&port=<port>`; legacy `target=<host>:<port>` is also accepted)
 /// - guest UDP datagram proxied via host-side UDP relay (test harness)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn net_e2e() {
@@ -43,7 +33,7 @@ async fn net_e2e() {
         Ipv4Addr::new(127, 0, 0, 1),
     )]))
     .await;
-    let gateway = GatewayServer::spawn().await;
+    let tcp_relay = TcpWsRelayServer::spawn().await;
 
     let mut stack = NetworkStack::new(StackConfig::default());
     let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
@@ -119,7 +109,7 @@ async fn net_e2e() {
     let dns_resp_frame = extract_single_frame(&dns_actions);
     assert_dns_response_has_a_record(&dns_resp_frame, dns_txid, resolved_ip.octets());
 
-    // --- TCP connect + echo (stack <-> gateway /tcp <-> local echo server) ---
+    // --- TCP connect + echo (stack <-> /tcp WS relay <-> local echo server) ---
     let remote_ip = resolved_ip;
     let remote_port = tcp_echo.addr.port();
     let guest_port = 40001;
@@ -144,11 +134,11 @@ async fn net_e2e() {
 
     let mut tcp_proxy = timeout(
         Duration::from_secs(2),
-        TcpProxyClient::connect(gateway.addr, remote_ip, remote_port),
+        TcpProxyClient::connect(tcp_relay.addr, remote_ip, remote_port),
     )
     .await
-    .expect("gateway connect timeout")
-    .expect("gateway connect");
+    .expect("tcp relay connect timeout")
+    .expect("tcp relay connect");
     assert!(stack
         .handle_tcp_proxy_event(
             TcpProxyEvent::Connected {
@@ -279,7 +269,7 @@ async fn net_e2e() {
     assert_eq!(udp.payload(), udp_payload);
 
     tcp_proxy.shutdown().await;
-    gateway.shutdown().await;
+    tcp_relay.shutdown().await;
     doh.shutdown().await;
     udp_echo.shutdown().await;
     tcp_echo.shutdown().await;
@@ -529,28 +519,27 @@ async fn udp_send_recv(dst: SocketAddr, payload: &[u8]) -> std::io::Result<Vec<u
     Ok(buf)
 }
 
-struct GatewayServer {
+/// Minimal TCP relay implementing the `/tcp` WebSocket contract.
+///
+/// Supports:
+/// - Canonical gateway format: `GET /tcp?v=1&host=<host>&port=<port>`
+/// - Legacy format: `GET /tcp?target=<host>:<port>` (also supports bracketed IPv6)
+struct TcpWsRelayServer {
     addr: SocketAddr,
     shutdown_tx: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
 }
 
-impl GatewayServer {
+impl TcpWsRelayServer {
     async fn spawn() -> Self {
-        let app = Router::new().route("/tcp", get(tcp_ws_handler));
-
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
-            .expect("bind gateway");
-        let addr = listener.local_addr().expect("gateway local addr");
+            .expect("bind tcp relay");
+        let addr = listener.local_addr().expect("tcp relay local addr");
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let task = tokio::spawn(async move {
-            let _ = axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .await;
+            serve_tcp_relay(listener, shutdown_rx).await;
         });
 
         Self {
@@ -568,74 +557,113 @@ impl GatewayServer {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct TcpProxyQuery {
-    /// Canonical Aero Gateway query format.
-    #[serde(default)]
-    v: Option<u32>,
-    #[serde(default)]
-    host: Option<String>,
-    #[serde(default)]
-    port: Option<u16>,
-    /// Legacy compatibility format (`target=<host>:<port>`).
-    #[serde(default)]
-    target: Option<String>,
-}
-
-async fn tcp_ws_handler(
-    ws: WebSocketUpgrade,
-    Query(query): Query<TcpProxyQuery>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| async move {
-        handle_tcp_ws(socket, query).await;
-    })
-}
-
-async fn handle_tcp_ws(socket: WebSocket, query: TcpProxyQuery) {
-    let TcpProxyQuery {
-        v,
-        host,
-        port,
-        target,
-    } = query;
-    if let Some(v) = v {
-        // The test harness only implements the v=1 gateway `/tcp` query contract.
-        if v != 1 {
-            return;
+async fn serve_tcp_relay(
+    listener: tokio::net::TcpListener,
+    mut shutdown_rx: oneshot::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            _ = &mut shutdown_rx => break,
+            accept = listener.accept() => {
+                let (stream, _peer) = match accept {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                tokio::spawn(async move {
+                    let _ = handle_tcp_relay_client(stream).await;
+                });
+            }
         }
     }
+}
 
-    let (host, port) = match (host, port, target) {
-        (Some(host), Some(port), _) => (host, port),
-        (_, _, Some(target)) => match parse_target(&target) {
-            Ok(v) => v,
-            Err(_) => return,
+async fn handle_tcp_relay_client(stream: TcpStream) -> std::io::Result<()> {
+    use tokio_tungstenite::tungstenite::http::Response;
+
+    let mut target: Option<(String, u16)> = None;
+    let ws_stream = tokio_tungstenite::accept_hdr_async(
+        stream,
+        |req: &tokio_tungstenite::tungstenite::http::Request<()>, resp| {
+            let uri = req.uri();
+            if uri.path() != "/tcp" {
+                return Err(Response::builder()
+                    .status(404)
+                    .body(Some("invalid path".to_string()))
+                    .expect("build response"));
+            }
+
+            let mut version: Option<u32> = None;
+            let mut host: Option<String> = None;
+            let mut port: Option<u16> = None;
+            let mut legacy_target: Option<String> = None;
+
+            if let Some(query) = uri.query() {
+                for pair in query.split('&') {
+                    let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                    match k {
+                        "v" => version = v.parse::<u32>().ok(),
+                        "host" => host = Some(v.to_string()),
+                        "port" => port = v.parse::<u16>().ok(),
+                        "target" => legacy_target = Some(v.to_string()),
+                        _ => {}
+                    }
+                }
+            }
+
+            if let Some(v) = version {
+                // The test harness only implements the v=1 gateway `/tcp` query contract.
+                if v != 1 {
+                    return Err(Response::builder()
+                        .status(400)
+                        .body(Some("unsupported tcp version".to_string()))
+                        .expect("build response"));
+                }
+            }
+
+            if let (Some(host), Some(port)) = (host, port) {
+                target = Some((host, port));
+            } else if let Some(legacy) = legacy_target {
+                if let Ok(parsed) = parse_target(&legacy) {
+                    target = Some(parsed);
+                } else {
+                    return Err(Response::builder()
+                        .status(400)
+                        .body(Some("invalid target".to_string()))
+                        .expect("build response"));
+                }
+            }
+
+            if target.is_none() {
+                return Err(Response::builder()
+                    .status(400)
+                    .body(Some("missing target".to_string()))
+                    .expect("build response"));
+            }
+
+            Ok(resp)
         },
-        _ => return,
-    };
+    )
+    .await
+    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
 
-    // Best-effort minimal TCP proxy used only by this test harness.
-    let tcp = match TcpStream::connect((host.as_str(), port)).await {
-        Ok(tcp) => tcp,
-        Err(_) => return,
-    };
+    let (host, port) = target.expect("validated during handshake");
+    let tcp = TcpStream::connect((host.as_str(), port)).await?;
 
-    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
     let (mut tcp_reader, mut tcp_writer) = tcp.into_split();
 
     let c2t = async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
             match msg {
-                AxumMessage::Binary(data) => {
+                Message::Binary(data) => {
                     if tcp_writer.write_all(&data).await.is_err() {
                         break;
                     }
                 }
-                AxumMessage::Close(_) => break,
+                Message::Close(_) => break,
                 _ => {}
             }
         }
-
         let _ = tcp_writer.shutdown().await;
     };
 
@@ -648,7 +676,7 @@ async fn handle_tcp_ws(socket: WebSocket, query: TcpProxyQuery) {
             };
 
             if ws_sender
-                .send(AxumMessage::Binary(buf[..n].to_vec()))
+                .send(Message::Binary(buf[..n].to_vec().into()))
                 .await
                 .is_err()
             {
@@ -658,6 +686,7 @@ async fn handle_tcp_ws(socket: WebSocket, query: TcpProxyQuery) {
     };
 
     tokio::join!(c2t, t2c);
+    Ok(())
 }
 
 fn parse_target(target: &str) -> Result<(String, u16), &'static str> {
