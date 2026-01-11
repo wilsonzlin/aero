@@ -2,7 +2,7 @@
 
 This directory contains a minimal **Helm chart** to deploy the Aero backend gateway (`aero-gateway`) to Kubernetes.
 
-Note: the gateway covers **TCP (WebSocket)** and **DNS-over-HTTPS**, but guest **UDP** requires deploying the separate relay service under `proxy/webrtc-udp-relay` and configuring the gateway with `UDP_RELAY_BASE_URL` (see `docs/backend/01-aero-gateway-api.md` for the `udpRelay` session metadata contract).
+Note: the gateway covers **TCP (WebSocket)** and **DNS-over-HTTPS**, but guest **UDP** requires deploying the separate relay service [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/) and configuring the gateway with `UDP_RELAY_BASE_URL` so `POST /session` can return `udpRelay` connection metadata (see [`docs/backend/01-aero-gateway-api.md`](../../docs/backend/01-aero-gateway-api.md)).
 
 The chart includes:
 
