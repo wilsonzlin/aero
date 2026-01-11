@@ -7885,30 +7885,48 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
       // Win7 D3D11 uses a "count + inline list" layout:
       //   { UINT NumFeatureLevels; D3D_FEATURE_LEVEL FeatureLevels[NumFeatureLevels]; }
       //
-      // Avoid using a pointer-based layout here; on x86 the pointer+count struct is
-      // also 8 bytes and can be misinterpreted by the runtime.
+      // But some header/runtime combinations treat this as a {count, pointer}
+      // struct. Populate both layouts when we have enough space so we avoid
+      // mismatched interpretation (in particular on 64-bit where the pointer
+      // lives at a different offset than the inline list element). On 32-bit the
+      // pointer field overlaps the first inline element, so prefer the pointer
+      // layout to avoid returning a bogus pointer (0xA000).
       static const uint32_t kLevels[] = {kD3DFeatureLevel10_0};
       struct FeatureLevelsCapsPtr {
         uint32_t NumFeatureLevels;
         const uint32_t* pFeatureLevels;
       };
 
+      std::memset(data, 0, data_size);
+      constexpr size_t kInlineLevelsOffset = sizeof(uint32_t);
+      constexpr size_t kPtrOffset = offsetof(FeatureLevelsCapsPtr, pFeatureLevels);
+
+      if (data_size >= sizeof(FeatureLevelsCapsPtr) && kPtrOffset == kInlineLevelsOffset) {
+        auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
+        out_ptr->NumFeatureLevels = 1;
+        out_ptr->pFeatureLevels = kLevels;
+        return S_OK;
+      }
+
       if (data_size >= sizeof(uint32_t) * 2) {
-        std::memset(data, 0, data_size);
         auto* out = reinterpret_cast<uint32_t*>(data);
         out[0] = 1;
         out[1] = kD3DFeatureLevel10_0;
-        constexpr size_t kInlineLevelsOffset = sizeof(uint32_t);
-        constexpr size_t kPtrOffset = offsetof(FeatureLevelsCapsPtr, pFeatureLevels);
         if (data_size >= sizeof(FeatureLevelsCapsPtr) && kPtrOffset >= kInlineLevelsOffset + sizeof(uint32_t)) {
           reinterpret_cast<FeatureLevelsCapsPtr*>(data)->pFeatureLevels = kLevels;
         }
         return S_OK;
       }
 
+      if (data_size >= sizeof(FeatureLevelsCapsPtr)) {
+        auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
+        out_ptr->NumFeatureLevels = 1;
+        out_ptr->pFeatureLevels = kLevels;
+        return S_OK;
+      }
+
       // Fallback: treat the buffer as a single feature-level value.
       if (data_size >= sizeof(uint32_t)) {
-        std::memset(data, 0, data_size);
         reinterpret_cast<uint32_t*>(data)[0] = kD3DFeatureLevel10_0;
         return S_OK;
       }
