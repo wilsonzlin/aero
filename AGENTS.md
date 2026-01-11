@@ -258,18 +258,28 @@ The architecture is modular with well-defined interfaces, enabling parallel deve
 Each component produces and consumes well-defined interfaces:
 
 ```rust
-// Example: CPU → Memory interface
-pub trait MemoryBus {
-    fn read_u8(&self, addr: u64) -> u8;
-    fn read_u16(&self, addr: u64) -> u16;
-    fn read_u32(&self, addr: u64) -> u32;
-    fn read_u64(&self, addr: u64) -> u64;
-    fn write_u8(&mut self, addr: u64, val: u8);
-    fn write_u16(&mut self, addr: u64, val: u16);
-    fn write_u32(&mut self, addr: u64, val: u32);
-    fn write_u64(&mut self, addr: u64, val: u64);
-    fn read_physical(&self, paddr: u64, buf: &mut [u8]);
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]);
+// Example: CPU → memory/IO interface (canonical in `aero_cpu_core`)
+//
+// See: `crates/aero-cpu-core/src/mem.rs` (`aero_cpu_core::mem::CpuBus`)
+//
+// Notes:
+// - Addresses are *linear* (paging translation is handled by the bus, e.g. `aero_cpu_core::PagingBus`).
+// - Operations return `Result` so the CPU can raise architectural faults (e.g. `#PF`, `#GP(0)`).
+pub trait CpuBus {
+    fn sync(&mut self, state: &aero_cpu_core::state::CpuState) {}
+    fn invlpg(&mut self, vaddr: u64) {}
+
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, aero_cpu_core::Exception>;
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), aero_cpu_core::Exception>;
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], aero_cpu_core::Exception>;
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, aero_cpu_core::Exception>;
+    fn io_write(
+        &mut self,
+        port: u16,
+        size: u32,
+        val: u64,
+    ) -> Result<(), aero_cpu_core::Exception>;
 }
 
 // Example: CPU → Graphics interface  

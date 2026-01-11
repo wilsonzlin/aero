@@ -65,39 +65,39 @@ This document breaks down Aero development into parallelizable work items. Tasks
 Components should adhere to these interfaces for integration:
 
 ### CPU ↔ Memory Interface
-
+ 
 ```rust
-pub trait MemoryAccess {
-    fn read_u8(&self, addr: u64) -> u8;
-    fn read_u16(&self, addr: u64) -> u16;
-    fn read_u32(&self, addr: u64) -> u32;
-    fn read_u64(&self, addr: u64) -> u64;
-    fn read_u128(&self, addr: u64) -> u128;  // For SSE
-    
-    fn write_u8(&mut self, addr: u64, val: u8);
-    fn write_u16(&mut self, addr: u64, val: u16);
-    fn write_u32(&mut self, addr: u64, val: u32);
-    fn write_u64(&mut self, addr: u64, val: u64);
-    fn write_u128(&mut self, addr: u64, val: u128);
-    
-    fn fetch_code(&self, addr: u64, len: usize) -> &[u8];
+// Canonical CPU bus trait used by `aero_cpu_core` Tier-0 + JIT.
+//
+// See: `aero_cpu_core::mem::CpuBus` (`crates/aero-cpu-core/src/mem.rs`)
+pub trait CpuBus {
+    /// Sync paging/MMU view with architectural state (CR0/CR3/CR4/EFER/CPL).
+    fn sync(&mut self, state: &aero_cpu_core::state::CpuState) {}
+    /// Invalidate a single translation (INVLPG).
+    fn invlpg(&mut self, vaddr: u64) {}
+
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, aero_cpu_core::Exception>;
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), aero_cpu_core::Exception>;
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], aero_cpu_core::Exception>;
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, aero_cpu_core::Exception>;
+    fn io_write(
+        &mut self,
+        port: u16,
+        size: u32,
+        val: u64,
+    ) -> Result<(), aero_cpu_core::Exception>;
 }
 ```
-
+ 
 ### CPU ↔ Device Interface
-
+ 
 ```rust
-pub trait PortIO {
-    fn port_read(&self, port: u16, size: usize) -> u32;
-    fn port_write(&mut self, port: u16, size: usize, val: u32);
-}
-
-pub trait InterruptController {
-    fn raise_irq(&mut self, irq: u8);
-    fn lower_irq(&mut self, irq: u8);
-    fn get_pending(&self) -> Option<u8>;
-    fn acknowledge(&mut self, irq: u8);
-}
+// Port IO is modeled directly on the CPU bus via `CpuBus::io_read/io_write`.
+//
+// Architectural interrupt/exception delivery is handled by `aero_cpu_core::interrupts`
+// (`CpuCore` + `PendingEventState`). External interrupts are injected by queuing a
+// vector in `PendingEventState` and delivered at instruction boundaries.
 ```
 
 ### Graphics Interface

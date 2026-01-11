@@ -507,16 +507,18 @@ small set of emulator-critical hot paths with stable statistics.
 
 Current benchmarks:
 
-- `decoder_throughput`: string-op decoder throughput (`aero_cpu_core::interp::decode`)
+- `decoder_throughput`: legacy string-op decoder throughput (`aero_cpu_core::interp::decode`, `legacy-interp`)
 - `x86_decode_throughput`: instruction decode throughput via the `aero_x86` wrapper (iced-x86)
-- `interpreter_hot_loop`: tight interpreter dispatch loop (`aero_cpu_core::interp::exec`)
-- `memory/bulk_copy_1mib`: `RamBus` bulk copy throughput (1 MiB)
+- `interpreter_hot_loop`: legacy interpreter dispatch loop (`aero_cpu_core::interp::exec`, `legacy-interp`)
+- `memory/bulk_copy_1mib`: legacy `RamBus` bulk copy throughput (1 MiB, `legacy-interp`)
+
+Note: the canonical interpreter is `aero_cpu_core::interp::tier0`; the current Criterion bench target is kept behind `--features legacy-interp`.
 
 ### Run the emulator-critical microbenchmarks
 
 ```bash
 # Full (slower, more stable)
-cargo bench --locked -p aero-cpu-core --bench emulator_critical -- --noplot
+cargo bench --locked -p aero-cpu-core --bench emulator_critical --features legacy-interp -- --noplot
 ```
 
 Criterion writes results to `target/criterion/`.
