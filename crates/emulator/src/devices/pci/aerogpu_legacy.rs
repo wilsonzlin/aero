@@ -239,7 +239,8 @@ impl AeroGpuLegacyPciDevice {
     }
 
     fn update_irq_level(&mut self) {
-        self.irq_level = self.regs.int_status != 0;
+        self.irq_level =
+            self.regs.int_status != 0 || (self.regs.irq_status & self.regs.irq_enable) != 0;
     }
 
     pub fn tick(&mut self, now: Instant) {
@@ -275,6 +276,7 @@ impl AeroGpuLegacyPciDevice {
         }
 
         self.next_vblank = Some(next);
+        self.update_irq_level();
     }
 
     fn map_scanout_format(value: u32) -> AeroGpuFormat {
@@ -437,6 +439,7 @@ impl AeroGpuLegacyPciDevice {
                 if self.regs.scanout.enable && !new_enable {
                     self.next_vblank = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
+                    self.update_irq_level();
                 }
                 self.regs.scanout.enable = new_enable;
             }
@@ -446,9 +449,11 @@ impl AeroGpuLegacyPciDevice {
                 if (value & irq_bits::SCANOUT_VBLANK) == 0 {
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
                 }
+                self.update_irq_level();
             }
             mmio::IRQ_ACK => {
                 self.regs.irq_status &= !value;
+                self.update_irq_level();
             }
 
             // Ignore writes to read-only / unknown registers.

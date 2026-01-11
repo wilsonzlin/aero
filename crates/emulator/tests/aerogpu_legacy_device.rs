@@ -65,6 +65,7 @@ mod mmio {
 
     pub const IRQ_STATUS: u64 = 0x0300;
     pub const IRQ_ENABLE: u64 = 0x0304;
+    pub const IRQ_ACK: u64 = 0x0308;
 
     pub const SCANOUT0_VBLANK_SEQ_LO: u64 = 0x0420;
     pub const SCANOUT0_VBLANK_SEQ_HI: u64 = 0x0424;
@@ -176,6 +177,28 @@ fn vblank_tick_updates_counters_and_latches_irq_status() {
         dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK,
         0
     );
+    assert!(dev.irq_level());
+
+    dev.mmio_write(&mut mem, mmio::IRQ_ACK, 4, IRQ_SCANOUT_VBLANK);
+    assert_eq!(
+        dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK,
+        0
+    );
+    assert!(!dev.irq_level());
+
+    dev.tick(t0 + Duration::from_millis(200));
+    assert_ne!(
+        dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK,
+        0
+    );
+    assert!(dev.irq_level());
+
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, 0);
+    assert_eq!(
+        dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK,
+        0
+    );
+    assert!(!dev.irq_level());
 
     let seq = (dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_SEQ_LO, 4) as u64)
         | ((dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_SEQ_HI, 4) as u64) << 32);
