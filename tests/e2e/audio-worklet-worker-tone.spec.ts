@@ -27,6 +27,7 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
       state: out?.context?.state,
       backend,
       underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
+      overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
     };
   });
 
@@ -35,4 +36,5 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
   expect(result.backend).toBe("cpu-worker-wasm");
   // Underruns are counted as missing frames (a single render quantum is 128 frames).
   expect(result.underruns).toBeLessThanOrEqual(128);
+  expect(result.overruns).toBe(0);
 });
