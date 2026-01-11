@@ -531,7 +531,11 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
  * });
  *
  * tunnel.connect();
- * nicTx = (frame) => tunnel.sendFrame(frame);
+ * nicTx = (frame) => {
+ *   // `sendFrame()` returns a boolean indicating whether the frame was accepted
+ *   // into the client's outbound queue; most callers can ignore it.
+ *   tunnel.sendFrame(frame);
+ * };
  * ```
  */
 export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
