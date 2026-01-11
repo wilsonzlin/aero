@@ -20,11 +20,24 @@ pub enum UsbInResult {
 
 #[derive(Debug, Clone)]
 enum ControlStage {
-    InData { data: Vec<u8>, offset: usize },
+    InData {
+        data: Vec<u8>,
+        offset: usize,
+    },
+    /// Emit a terminating zero-length packet (ZLP) for a control-IN data stage.
+    ///
+    /// This is required when the device provides fewer bytes than `wLength` but the final
+    /// packet is not "short" (i.e. its length equals the host's `max_len` for the DATA TD).
+    InDataZlp,
     InDataPending,
-    OutData { expected: usize, received: Vec<u8> },
+    OutData {
+        expected: usize,
+        received: Vec<u8>,
+    },
     StatusIn,
-    StatusInPending { data: Option<Vec<u8>> },
+    StatusInPending {
+        data: Option<Vec<u8>>,
+    },
     StatusOut,
     StatusOutPending,
 }
@@ -288,14 +301,28 @@ impl AttachedUsbDevice {
 
         match &mut state.stage {
             ControlStage::InData { data, offset } => {
+                if max_len == 0 {
+                    return UsbInResult::Stall;
+                }
+                let requested = state.setup.w_length as usize;
                 let remaining = data.len().saturating_sub(*offset);
                 let chunk_len = remaining.min(max_len);
                 let chunk = data[*offset..*offset + chunk_len].to_vec();
                 *offset += chunk_len;
                 if *offset >= data.len() {
-                    state.stage = ControlStage::StatusOut;
+                    if data.len() < requested && chunk_len == max_len {
+                        state.stage = ControlStage::InDataZlp;
+                    } else {
+                        state.stage = ControlStage::StatusOut;
+                    }
                 }
                 UsbInResult::Data(chunk)
+            }
+            ControlStage::InDataZlp => {
+                // Always treat the ZLP as the final DATA packet, then transition to the STATUS OUT
+                // stage.
+                state.stage = ControlStage::StatusOut;
+                UsbInResult::Data(Vec::new())
             }
             ControlStage::InDataPending => {
                 let setup = state.setup;
@@ -307,6 +334,9 @@ impl AttachedUsbDevice {
                         UsbInResult::Data(Vec::new())
                     }
                     ControlResponse::Data(mut data) => {
+                        if max_len == 0 {
+                            return UsbInResult::Stall;
+                        }
                         let requested = setup.w_length as usize;
                         if data.len() > requested {
                             data.truncate(requested);
@@ -319,7 +349,11 @@ impl AttachedUsbDevice {
                         let chunk_len = data.len().min(max_len);
                         let chunk = data[..chunk_len].to_vec();
                         if chunk_len >= data.len() {
-                            state.stage = ControlStage::StatusOut;
+                            if data.len() < requested && chunk_len == max_len {
+                                state.stage = ControlStage::InDataZlp;
+                            } else {
+                                state.stage = ControlStage::StatusOut;
+                            }
                         } else {
                             state.stage = ControlStage::InData {
                                 data,
@@ -568,6 +602,43 @@ mod tests {
         };
 
         assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+        assert_eq!(dev.handle_in(0, 8), UsbInResult::Data(Vec::new()));
+        assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
+    }
+
+    #[test]
+    fn control_in_data_stage_emits_terminating_zlp_when_length_is_multiple_of_packet_size() {
+        struct FixedInModel;
+
+        impl UsbDeviceModel for FixedInModel {
+            fn handle_control_request(
+                &mut self,
+                setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                if setup.bm_request_type == 0xc0 && setup.b_request == 0x10 {
+                    ControlResponse::Data((0u8..16).collect())
+                } else {
+                    ControlResponse::Stall
+                }
+            }
+        }
+
+        // Host requests 64 bytes; device only returns 16 bytes. Since 16 is an exact multiple of
+        // the 8-byte packet size used by the host, the device must send a terminating ZLP to
+        // indicate the end of the data stage.
+        let mut dev = AttachedUsbDevice::new(Box::new(FixedInModel));
+        let setup = SetupPacket {
+            bm_request_type: 0xc0,
+            b_request: 0x10,
+            w_value: 0,
+            w_index: 0,
+            w_length: 64,
+        };
+
+        assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+        assert_eq!(dev.handle_in(0, 8), UsbInResult::Data((0u8..8).collect()));
+        assert_eq!(dev.handle_in(0, 8), UsbInResult::Data((8u8..16).collect()));
         assert_eq!(dev.handle_in(0, 8), UsbInResult::Data(Vec::new()));
         assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
     }
