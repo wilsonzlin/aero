@@ -83,7 +83,40 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
 
       try {
-        const { api, variant } = await perf.spanAsync("wasm:init", () => initWasmForContext());
+        const { api, variant } = await perf.spanAsync("wasm:init", () =>
+          initWasmForContext({ memory: segments.guestMemory }),
+        );
+
+        // Sanity-check that the provided `guestMemory` is actually wired up as
+        // the WASM module's linear memory (imported+exported memory build).
+        //
+        // This enables shared-memory integration where JS + WASM + other workers
+        // all observe the same guest RAM.
+        const memProbeOffset = 0x100;
+        const memView = new DataView(segments.guestMemory.buffer);
+        const prev = memView.getUint32(memProbeOffset, true);
+
+        const a = 0x11223344;
+        memView.setUint32(memProbeOffset, a, true);
+        const gotA = api.mem_load_u32(memProbeOffset);
+        if (gotA !== a) {
+          throw new Error(
+            `WASM guestMemory wiring failed: JS wrote 0x${a.toString(16)}, WASM read 0x${gotA.toString(16)}.`,
+          );
+        }
+
+        const b = 0x55667788;
+        api.mem_store_u32(memProbeOffset, b);
+        const gotB = memView.getUint32(memProbeOffset, true);
+        if (gotB !== b) {
+          throw new Error(
+            `WASM guestMemory wiring failed: WASM wrote 0x${b.toString(16)}, JS read 0x${gotB.toString(16)}.`,
+          );
+        }
+
+        // Restore the previous value so we don't permanently dirty guest RAM.
+        memView.setUint32(memProbeOffset, prev, true);
+
         const value = api.add(20, 22);
         ctx.postMessage({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
       } catch (err) {

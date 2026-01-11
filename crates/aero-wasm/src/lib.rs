@@ -57,6 +57,39 @@ pub fn sum(a: i32, b: i32) -> i32 {
     a + b
 }
 
+/// Store a `u32` directly into the module's linear memory at `offset`.
+///
+/// This is a tiny, allocation-free ABI surface used by the web runtime to
+/// sanity-check that a provided `WebAssembly.Memory` is actually wired as the
+/// WASM instance's linear memory (imported+exported memory builds).
+#[wasm_bindgen]
+pub fn mem_store_u32(offset: u32, value: u32) {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        core::ptr::write_unaligned(offset as *mut u32, value);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (offset, value);
+    }
+}
+
+/// Load a `u32` directly from the module's linear memory at `offset`.
+///
+/// See [`mem_store_u32`].
+#[wasm_bindgen]
+pub fn mem_load_u32(offset: u32) -> u32 {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        core::ptr::read_unaligned(offset as *const u32)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = offset;
+        0
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn create_worklet_bridge(capacity_frames: u32, channel_count: u32) -> Result<WorkletBridge, JsValue> {

@@ -36,6 +36,38 @@ if (mode !== "dev" && mode !== "release") {
 const isThreaded = variant === "threaded";
 const isRelease = mode === "release";
 
+const WASM_PAGE_BYTES = 64 * 1024;
+const MAX_WASM32_PAGES = 65536;
+const MAX_WASM32_BYTES = WASM_PAGE_BYTES * MAX_WASM32_PAGES;
+
+function parseMaxMemoryBytes() {
+    const raw = (process.env.AERO_WASM_MAX_MEMORY_BYTES ?? "").trim();
+    // 4 GiB: wasm32 can address at most 2^32 bytes.
+    const fallback = 4 * 1024 * 1024 * 1024;
+    if (!raw) return fallback;
+
+    const value = Number.parseInt(raw, 10);
+    if (!Number.isFinite(value) || value <= 0) {
+        die(
+            `Invalid AERO_WASM_MAX_MEMORY_BYTES value: '${raw}'. Expected a positive integer number of bytes (e.g. 4294967296).`,
+        );
+    }
+    return value;
+}
+
+const maxMemoryBytesInput = parseMaxMemoryBytes();
+const maxMemoryBytes = Math.ceil(maxMemoryBytesInput / WASM_PAGE_BYTES) * WASM_PAGE_BYTES;
+if (maxMemoryBytes !== maxMemoryBytesInput) {
+    console.warn(
+        `[wasm] Warning: AERO_WASM_MAX_MEMORY_BYTES=${maxMemoryBytesInput} is not a multiple of ${WASM_PAGE_BYTES}; rounding up to ${maxMemoryBytes}.`,
+    );
+}
+if (maxMemoryBytes > MAX_WASM32_BYTES) {
+    die(
+        `AERO_WASM_MAX_MEMORY_BYTES=${maxMemoryBytes} exceeds wasm32's limit (${MAX_WASM32_BYTES} bytes / ${MAX_WASM32_PAGES} pages).`,
+    );
+}
+
 if (isThreaded) {
     // The shared-memory build requires nightly + rust-src (for build-std).
     checkCommand(
@@ -106,17 +138,24 @@ if (isRelease) {
     requiredRustflags.push("-C opt-level=3", "-C lto=thin", "-C codegen-units=1", "-C embed-bitcode=yes");
 }
 
+// Both variants are built with imported+exported memory so the web runtime can
+// optionally provide a `WebAssembly.Memory` (e.g. the shared guest RAM allocation
+// owned by the worker coordinator).
+//
+// The module's `--max-memory` must be >= the maximum the runtime will ever
+// allocate for `guestMemory.maximum`; otherwise instantiation fails with a
+// memory type mismatch when the runtime injects its own memory.
+requiredRustflags.push(
+    "-C link-arg=--import-memory",
+    "-C link-arg=--export-memory",
+    `-C link-arg=--max-memory=${maxMemoryBytes}`,
+);
+
 if (isThreaded) {
     // Produce a shared-memory + imported-memory module so it can be used in
     // crossOriginIsolated contexts (SharedArrayBuffer + Atomics).
     requiredRustflags.push(
         "-C link-arg=--shared-memory",
-        "-C link-arg=--import-memory",
-        "-C link-arg=--export-memory",
-        // Ensure the shared memory has headroom for wasm-bindgen's stack/TLS
-        // allocation in `__wbindgen_start`, even before we actually spawn
-        // additional threads.
-        "-C link-arg=--max-memory=268435456",
         // wasm-bindgen's threads transform expects these TLS exports.
         "-C link-arg=--export=__wasm_init_tls",
         "-C link-arg=--export=__tls_base",

@@ -55,7 +55,8 @@ describe("runtime/shared_layout", () => {
   it("creates shared views for control + guest memory", () => {
     const control = new SharedArrayBuffer(CONTROL_BYTES);
     const guestMemory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
-    const views = createSharedMemoryViews({ control, guestMemory });
+    const vgaFramebuffer = new SharedArrayBuffer(4);
+    const views = createSharedMemoryViews({ control, guestMemory, vgaFramebuffer });
 
     expect(views.status.byteOffset).toBe(0);
     expect(views.status.byteLength).toBe(STATUS_BYTES);
@@ -63,4 +64,3 @@ describe("runtime/shared_layout", () => {
     expect(views.guestU8.buffer).toBe(guestMemory.buffer);
   });
 });
-

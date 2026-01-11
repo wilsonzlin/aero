@@ -5,6 +5,8 @@ export interface WasmApi {
     add(a: number, b: number): number;
     version: () => number;
     sum: (a: number, b: number) => number;
+    mem_store_u32: (offset: number, value: number) => void;
+    mem_load_u32: (offset: number) => number;
     AeroApi: new () => { version(): string; free(): void };
     DemoVm: new (ramSizeBytes: number) => {
         run_steps(steps: number): void;
@@ -45,10 +47,16 @@ export interface WasmApi {
     };
 }
 
+export interface WasmInitMemoryInfo {
+    byteLength: number;
+    shared: boolean;
+}
+
 export interface WasmInitResult {
     api: WasmApi;
     variant: WasmVariant;
     reason: string;
+    memory?: WasmInitMemoryInfo;
 }
 
 export interface WasmInitOptions {
@@ -58,6 +66,15 @@ export interface WasmInitOptions {
      * - `single`: force the non-shared-memory build.
      */
     variant?: WasmVariant | "auto";
+
+    /**
+     * Optional `WebAssembly.Memory` to use as the module's imported linear memory.
+     *
+     * This is required for worker/shared-memory mode: the coordinator allocates a
+     * shared `WebAssembly.Memory` and workers inject it so both JS and WASM code
+     * observe the same guest RAM.
+     */
+    memory?: WebAssembly.Memory;
 }
 
 interface ThreadSupport {
@@ -105,12 +122,22 @@ function detectThreadSupport(): ThreadSupport {
 
 type RawWasmModule = any;
 
+function describeMemory(memory: WebAssembly.Memory | undefined): WasmInitMemoryInfo | undefined {
+    if (!memory) return undefined;
+    return {
+        byteLength: memory.buffer.byteLength,
+        shared: typeof SharedArrayBuffer !== "undefined" && memory.buffer instanceof SharedArrayBuffer,
+    };
+}
+
 function toApi(mod: RawWasmModule): WasmApi {
     return {
         greet: mod.greet,
         add: mod.add,
         version: mod.version,
         sum: mod.sum,
+        mem_store_u32: mod.mem_store_u32,
+        mem_load_u32: mod.mem_load_u32,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,
         WorkletBridge: mod.WorkletBridge,
@@ -129,7 +156,126 @@ function toApi(mod: RawWasmModule): WasmApi {
 //  - When the output *is* present, it is bundled as usual.
 const wasmImporters = import.meta.glob("../wasm/pkg-*/aero_wasm.js");
 
-async function loadSingle(): Promise<WasmApi> {
+type WasmLoadResult = { api: WasmApi; memory?: WebAssembly.Memory };
+
+function patchWasmImportsWithMemory(imports: unknown, memory: WebAssembly.Memory): void {
+    if (!imports || typeof imports !== "object") return;
+    const obj = imports as Record<string, any>;
+
+    // `wasm-ld --import-memory` uses the canonical "env"."memory" import.
+    obj.env ??= {};
+    obj.env.memory = memory;
+
+    // wasm-bindgen's JS glue also creates an `imports.wbg` (or
+    // `imports.__wbindgen_placeholder__`) module for JS↔WASM shims; patch these
+    // defensively in case the memory import gets routed differently by future
+    // toolchains.
+    if (obj.wbg && typeof obj.wbg === "object") obj.wbg.memory = memory;
+    if (obj.__wbindgen_placeholder__ && typeof obj.__wbindgen_placeholder__ === "object") {
+        obj.__wbindgen_placeholder__.memory = memory;
+    }
+}
+
+async function withPatchedMemoryImport<T>(
+    memory: WebAssembly.Memory,
+    fn: () => Promise<T>,
+): Promise<T> {
+    const originalInstantiate = WebAssembly.instantiate;
+    const hasInstantiateStreaming = typeof WebAssembly.instantiateStreaming === "function";
+    const originalInstantiateStreaming = hasInstantiateStreaming ? WebAssembly.instantiateStreaming : undefined;
+
+    const instantiatePatched: typeof WebAssembly.instantiate = (module, imports) =>
+        originalInstantiate(module as any, (() => {
+            patchWasmImportsWithMemory(imports, memory);
+            return imports;
+        })() as any);
+
+    (WebAssembly as any).instantiate = instantiatePatched;
+    if (hasInstantiateStreaming) {
+        const instantiateStreamingPatched: typeof WebAssembly.instantiateStreaming = (source, imports) =>
+            originalInstantiateStreaming!(source as any, (() => {
+                patchWasmImportsWithMemory(imports, memory);
+                return imports;
+            })() as any);
+        (WebAssembly as any).instantiateStreaming = instantiateStreamingPatched;
+    }
+    try {
+        return await fn();
+    } finally {
+        (WebAssembly as any).instantiate = originalInstantiate;
+        if (hasInstantiateStreaming) {
+            (WebAssembly as any).instantiateStreaming = originalInstantiateStreaming;
+        }
+    }
+}
+
+async function resolveWasmInputForInit(wasmUrl: URL): Promise<unknown> {
+    // wasm-bindgen's `--target web` glue uses `fetch(new URL(..., import.meta.url))`.
+    // In Node (Vitest) `fetch(file://...)` is not supported, so we pre-read the
+    // `.wasm` bytes from disk and pass them to the init function directly.
+    if (wasmUrl.protocol === "file:") {
+        // Keep the dynamic imports opaque to Vite/Rollup so browser builds don't
+        // try to resolve Node builtins.
+        const fsPromises = "node:fs/promises";
+        const nodeUrl = "node:url";
+        const { readFile } = await import(/* @vite-ignore */ fsPromises);
+        const { fileURLToPath } = await import(/* @vite-ignore */ nodeUrl);
+        return await readFile(fileURLToPath(wasmUrl));
+    }
+    return undefined;
+}
+
+async function initWasmBindgenModule(mod: RawWasmModule, wasmUrl: URL, memory?: WebAssembly.Memory): Promise<void> {
+    const initFn = mod.default;
+    if (typeof initFn !== "function") {
+        throw new Error("WASM package does not export a default wasm-bindgen init function.");
+    }
+
+    const input = await resolveWasmInputForInit(wasmUrl);
+
+    if (!memory) {
+        await initFn(input);
+        return;
+    }
+
+    // wasm-bindgen's `--import-memory` builds typically expose an init signature
+    // like `default(input?, memory?)`. Unfortunately, the exact generated
+    // signature has varied across wasm-bindgen versions.
+    //
+    // Robust strategy:
+    // - Prefer calling `default(undefined, memory)` (or `default(input, memory)`
+    //   in Node where we must pass bytes to avoid `fetch(file://...)`).
+    // - Regardless of the signature, ensure the final instantiation sees the
+    //   desired memory by patching `WebAssembly.instantiate*` to force
+    //   `imports.env.memory = memory` before instantiation.
+    await withPatchedMemoryImport(memory, async () => {
+        try {
+            // Preferred call shape (wasm-bindgen import-memory builds often use
+            // `default(input?, memory?)`).
+            await initFn(input, memory);
+        } catch (err) {
+            // Some wasm-bindgen outputs ignore/validate the extra argument.
+            // Retrying with `default(input)` still uses the patched import object
+            // (so the provided memory is wired up) but avoids "wrong number of
+            // arguments" style failures.
+            try {
+                await initFn(input);
+            } catch {
+                throw err;
+            }
+        }
+    });
+}
+
+function tryExtractWasmMemory(mod: RawWasmModule): WebAssembly.Memory | undefined {
+    const candidates = [mod.memory, mod.__wbg_memory, mod.__wbindgen_memory, mod.wasm?.memory];
+    for (const c of candidates) {
+        if (c instanceof WebAssembly.Memory) return c;
+    }
+    return undefined;
+}
+
+async function loadSingle(options: WasmInitOptions): Promise<WasmLoadResult> {
     const importer = wasmImporters["../wasm/pkg-single/aero_wasm.js"];
     if (!importer) {
         throw new Error(
@@ -146,11 +292,12 @@ async function loadSingle(): Promise<WasmApi> {
         );
     }
     const mod = (await importer()) as RawWasmModule;
-    await mod.default();
-    return toApi(mod);
+    const wasmUrl = new URL("../wasm/pkg-single/aero_wasm_bg.wasm", import.meta.url);
+    await initWasmBindgenModule(mod, wasmUrl, options.memory);
+    return { api: toApi(mod), memory: options.memory ?? tryExtractWasmMemory(mod) };
 }
 
-async function loadThreaded(): Promise<WasmApi> {
+async function loadThreaded(options: WasmInitOptions): Promise<WasmLoadResult> {
     const importer = wasmImporters["../wasm/pkg-threaded/aero_wasm.js"];
     if (!importer) {
         throw new Error(
@@ -167,8 +314,9 @@ async function loadThreaded(): Promise<WasmApi> {
         );
     }
     const mod = (await importer()) as RawWasmModule;
-    await mod.default();
-    return toApi(mod);
+    const wasmUrl = new URL("../wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url);
+    await initWasmBindgenModule(mod, wasmUrl, options.memory);
+    return { api: toApi(mod), memory: options.memory ?? tryExtractWasmMemory(mod) };
 }
 
 export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitResult> {
@@ -190,29 +338,46 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
             );
         }
 
+        const loaded = await loadThreaded(options);
         return {
-            api: await loadThreaded(),
+            api: loaded.api,
             variant: "threaded",
             reason: threadSupport.reason,
+            memory: describeMemory(loaded.memory),
         };
     }
 
     if (requested === "single") {
-        return { api: await loadSingle(), variant: "single", reason: "Forced via initWasm({ variant: 'single' })" };
+        const loaded = await loadSingle(options);
+        return {
+            api: loaded.api,
+            variant: "single",
+            reason: "Forced via initWasm({ variant: 'single' })",
+            memory: describeMemory(loaded.memory),
+        };
     }
 
     if (threadSupport.supported) {
         try {
-            return { api: await loadThreaded(), variant: "threaded", reason: threadSupport.reason };
+            const loaded = await loadThreaded(options);
+            return {
+                api: loaded.api,
+                variant: "threaded",
+                reason: threadSupport.reason,
+                memory: describeMemory(loaded.memory),
+            };
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            const loaded = await loadSingle(options);
             return {
-                api: await loadSingle(),
+                api: loaded.api,
                 variant: "single",
                 reason: `Threaded WASM init failed; falling back to single. Error: ${message}`,
+                memory: describeMemory(loaded.memory),
             };
         }
     }
 
-    return { api: await loadSingle(), variant: "single", reason: threadSupport.reason };
+    const loaded = await loadSingle(options);
+    return { api: loaded.api, variant: "single", reason: threadSupport.reason, memory: describeMemory(loaded.memory) };
 }

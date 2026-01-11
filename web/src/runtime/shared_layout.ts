@@ -147,7 +147,7 @@ export function allocateSharedMemorySegments(options?: {
 
   let guestMemory: WebAssembly.Memory;
   try {
-    guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
+    guestMemory = new WebAssembly.Memory({ initial: pages, maximum: MAX_WASM32_PAGES, shared: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
@@ -207,7 +207,7 @@ export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {
   }
 
   try {
-    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: MAX_WASM32_PAGES, shared: true });
     if (!(mem.buffer instanceof SharedArrayBuffer)) {
       return { ok: false, reason: "Shared WebAssembly.Memory is unsupported in this browser configuration." };
     }
