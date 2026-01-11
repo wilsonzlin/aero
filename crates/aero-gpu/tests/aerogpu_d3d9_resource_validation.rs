@@ -87,6 +87,40 @@ fn d3d9_export_shared_surface_rejects_zero_handle() {
 }
 
 #[test]
+fn d3d9_export_shared_surface_rejects_zero_share_token() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::R8G8B8A8Unorm as u32, // format
+        1,                                  // width
+        1,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
+    );
+    writer.export_shared_surface(1, 0);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected EXPORT_SHARED_SURFACE with share_token=0 to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("share_token")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn d3d9_import_shared_surface_rejects_zero_handle() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
@@ -119,6 +153,28 @@ fn d3d9_import_shared_surface_rejects_zero_handle() {
     match exec.execute_cmd_stream(&stream) {
         Ok(_) => panic!("expected IMPORT_SHARED_SURFACE with handle=0 to be rejected"),
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("reserved")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_import_shared_surface_rejects_zero_share_token() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.import_shared_surface(2, 0);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected IMPORT_SHARED_SURFACE with share_token=0 to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("share_token")),
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }

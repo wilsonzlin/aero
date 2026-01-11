@@ -213,6 +213,37 @@ fn importing_shared_surface_into_zero_handle_is_an_error() {
 }
 
 #[test]
+fn exporting_shared_surface_with_zero_token_is_an_error() {
+    let stream = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // share_token
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    let err = processor.process_submission(&stream, 1).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::InvalidShareToken(0)));
+}
+
+#[test]
+fn importing_shared_surface_with_zero_token_is_an_error() {
+    let stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20); // out_resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // share_token
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    let err = processor.process_submission(&stream, 1).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::InvalidShareToken(0)));
+}
+
+#[test]
 fn exporting_the_same_token_twice_is_idempotent() {
     const TOKEN: u64 = 0x1111_2222_3333_4444;
 

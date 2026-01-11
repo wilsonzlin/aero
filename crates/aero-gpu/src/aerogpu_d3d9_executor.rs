@@ -1881,6 +1881,11 @@ impl AerogpuD3d9Executor {
                         "EXPORT_SHARED_SURFACE: resource handle 0 is reserved".into(),
                     ));
                 }
+                if share_token == 0 {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "EXPORT_SHARED_SURFACE: share_token 0 is reserved".into(),
+                    ));
+                }
                 let underlying = self.resolve_resource_handle(resource_handle)?;
                 if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
                     if existing != underlying {
@@ -1902,6 +1907,11 @@ impl AerogpuD3d9Executor {
                 if out_resource_handle == 0 {
                     return Err(AerogpuD3d9Error::Validation(
                         "IMPORT_SHARED_SURFACE: resource handle 0 is reserved".into(),
+                    ));
+                }
+                if share_token == 0 {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "IMPORT_SHARED_SURFACE: share_token 0 is reserved".into(),
                     ));
                 }
                 let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {

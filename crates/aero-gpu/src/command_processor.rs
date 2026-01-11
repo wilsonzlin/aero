@@ -97,6 +97,7 @@ pub enum CommandProcessorError {
     Parse(AeroGpuCmdStreamParseError),
 
     // Shared surfaces
+    InvalidShareToken(u64),
     UnknownShareToken(u64),
     UnknownSharedSurfaceHandle(u32),
     SharedSurfaceHandleInUse(u32),
@@ -139,6 +140,10 @@ impl std::fmt::Display for CommandProcessorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CommandProcessorError::Parse(err) => write!(f, "failed to parse command stream: {err}"),
+            CommandProcessorError::InvalidShareToken(token) => write!(
+                f,
+                "invalid shared surface token 0x{token:016X} (0 is reserved)"
+            ),
             CommandProcessorError::UnknownShareToken(token) => {
                 write!(f, "unknown shared surface token 0x{token:016X}")
             }
@@ -553,6 +558,9 @@ impl AeroGpuCommandProcessor {
                             resource_handle,
                         ));
                     }
+                    if share_token == 0 {
+                        return Err(CommandProcessorError::InvalidShareToken(share_token));
+                    }
                     // If the handle is itself an alias, normalize to the underlying surface.
                     let Some(underlying) = self.resolve_shared_surface_handle(resource_handle)
                     else {
@@ -584,6 +592,9 @@ impl AeroGpuCommandProcessor {
                         return Err(CommandProcessorError::InvalidResourceHandle(
                             out_resource_handle,
                         ));
+                    }
+                    if share_token == 0 {
+                        return Err(CommandProcessorError::InvalidShareToken(share_token));
                     }
                     let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
                         return Err(CommandProcessorError::UnknownShareToken(share_token));
