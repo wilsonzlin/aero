@@ -48,6 +48,7 @@ import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
 import { isUsbUhciHarnessStatusMessage, type WebUsbUhciHarnessRuntimeSnapshot } from "./usb/webusb_harness_runtime";
 import { UsbBroker } from "./usb/usb_broker";
 import { renderWebUsbBrokerPanel as renderWebUsbBrokerPanelUi } from "./usb/usb_broker_panel";
+import { isUsbPassthroughDemoResultMessage, type UsbPassthroughDemoResult } from "./usb/usb_passthrough_demo_runtime";
 import type { UsbHostAction, UsbHostCompletion } from "./usb/usb_proxy_protocol";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
@@ -361,6 +362,7 @@ function render(): void {
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
     renderWebUsbBrokerPanel(),
+    renderWebUsbPassthroughDemoWorkerPanel(),
     renderWebUsbUhciHarnessWorkerPanel(),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
@@ -2816,6 +2818,116 @@ function renderInputPanel(): HTMLElement {
 
 function renderWebUsbBrokerPanel(): HTMLElement {
   return renderWebUsbBrokerPanelUi(usbBroker);
+}
+
+function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
+  const status = el("pre", { class: "mono", text: "" });
+  const resultLine = el("pre", { class: "mono", text: "Result: (none yet)" });
+  const bytesLine = el("pre", { class: "mono", text: "(no bytes)" });
+  const errorLine = el("div", { class: "bad", text: "" });
+
+  let attachedIoWorker: Worker | null = null;
+  let lastResult: UsbPassthroughDemoResult | null = null;
+
+  function formatHexBytes(bytes: Uint8Array): string {
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(" ");
+  }
+
+  const refreshUi = (): void => {
+    const workerReady = !!attachedIoWorker;
+
+    status.textContent = `ioWorker=${workerReady ? "ready" : "stopped"}\n` + `lastResult=${lastResult?.status ?? "(none)"}`;
+
+    if (!lastResult) {
+      resultLine.textContent = "Result: (none yet)";
+      bytesLine.textContent = "(no bytes)";
+      errorLine.textContent = "";
+      clearButton.disabled = true;
+      return;
+    }
+
+    clearButton.disabled = false;
+
+    switch (lastResult.status) {
+      case "success": {
+        const bytes = lastResult.data;
+        const idVendor = bytes.length >= 10 ? bytes[8]! | (bytes[9]! << 8) : null;
+        const idProduct = bytes.length >= 12 ? bytes[10]! | (bytes[11]! << 8) : null;
+        resultLine.textContent =
+          idVendor !== null && idProduct !== null
+            ? `Result: success (vid=0x${idVendor.toString(16).padStart(4, "0")} pid=0x${idProduct.toString(16).padStart(4, "0")})`
+            : "Result: success";
+        bytesLine.textContent = formatHexBytes(bytes);
+        errorLine.textContent = "";
+        return;
+      }
+      case "stall":
+        resultLine.textContent = "Result: stall";
+        bytesLine.textContent = "(no bytes)";
+        errorLine.textContent = "";
+        return;
+      case "error":
+        resultLine.textContent = "Result: error";
+        bytesLine.textContent = "(no bytes)";
+        errorLine.textContent = lastResult.message;
+        return;
+      default: {
+        const neverResult: never = lastResult;
+        throw new Error(`Unknown demo result status: ${String((neverResult as { status?: unknown }).status)}`);
+      }
+    }
+  };
+
+  const onMessage = (ev: MessageEvent<unknown>): void => {
+    if (!isUsbPassthroughDemoResultMessage(ev.data)) return;
+    lastResult = ev.data.result;
+    refreshUi();
+  };
+
+  const ensureAttached = (): void => {
+    const ioWorker = workerCoordinator.getIoWorker();
+    if (ioWorker === attachedIoWorker) return;
+
+    if (attachedIoWorker) {
+      attachedIoWorker.removeEventListener("message", onMessage);
+    }
+    attachedIoWorker = ioWorker;
+    lastResult = null;
+    if (attachedIoWorker) {
+      attachedIoWorker.addEventListener("message", onMessage);
+    }
+    refreshUi();
+  };
+
+  const clearButton = el("button", {
+    text: "Clear",
+    onclick: () => {
+      lastResult = null;
+      refreshUi();
+    },
+  }) as HTMLButtonElement;
+
+  ensureAttached();
+  globalThis.setInterval(ensureAttached, 250);
+  refreshUi();
+
+  const hint = el("div", {
+    class: "hint",
+    text:
+      "Demo: select a WebUSB device via the broker panel. The I/O worker runs a WASM-side UsbPassthroughDemo which queues a GET_DESCRIPTOR(Device) action and reports the result back as usb.demoResult.",
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "WebUSB passthrough demo (IO worker + UsbBroker)" }),
+    hint,
+    status,
+    el("div", { class: "row" }, clearButton),
+    resultLine,
+    bytesLine,
+    errorLine,
+  );
 }
 
 function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
