@@ -36,13 +36,15 @@ import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart1
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
-import type {
-  UsbActionMessage,
-  UsbCompletionMessage,
-  UsbGuestWebUsbSnapshot,
-  UsbGuestWebUsbStatusMessage,
-  UsbHostAction,
-  UsbSelectedMessage,
+import {
+  isUsbRingAttachMessage,
+  type UsbActionMessage,
+  type UsbCompletionMessage,
+  type UsbGuestWebUsbSnapshot,
+  type UsbGuestWebUsbStatusMessage,
+  type UsbHostAction,
+  type UsbRingAttachMessage,
+  type UsbSelectedMessage,
 } from "../usb/usb_proxy_protocol";
 import { applyUsbSelectedToWebUsbUhciBridge } from "../usb/uhci_webusb_bridge";
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
@@ -135,6 +137,7 @@ type WebUsbUhciBridge = InstanceType<NonNullable<WasmApi["WebUsbUhciBridge"]>>;
 let webUsbUhciBridge: WebUsbUhciBridge | null = null;
 let webUsbUhciDevice: UhciWebUsbPciDevice | null = null;
 let lastUsbSelected: UsbSelectedMessage | null = null;
+let usbRingAttach: UsbRingAttachMessage | null = null;
 
 const WEBUSB_GUEST_ROOT_PORT = 0;
 
@@ -233,6 +236,7 @@ function maybeInitUhciDevice(): void {
             port: ctx,
             pollIntervalMs: 0,
             initiallyBlocked: !usbAvailable,
+            initialRingAttach: usbRingAttach ?? undefined,
           });
           usbPassthroughRuntime.start();
           if (import.meta.env.DEV) {
@@ -995,6 +999,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
               port: ctx,
               pollIntervalMs: 0,
               initiallyBlocked: !usbAvailable,
+              initialRingAttach: usbRingAttach ?? undefined,
             });
             usbPassthroughRuntime.start();
             if (import.meta.env.DEV) {
@@ -1053,6 +1058,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
               createHarness: () => new ctor(),
               port: ctx,
               initiallyBlocked: true,
+              initialRingAttach: usbRingAttach ?? undefined,
               onUpdate: (snapshot) => {
                 ctx.postMessage({ type: "usb.harness.status", snapshot } satisfies UsbUhciHarnessStatusMessage);
               },
@@ -1300,6 +1306,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if (isHidRingAttachMessage(data)) {
       attachHidRings(data);
+      return;
+    }
+
+    if (isUsbRingAttachMessage(data)) {
+      usbRingAttach = data;
       return;
     }
 

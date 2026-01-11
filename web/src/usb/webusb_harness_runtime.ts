@@ -323,6 +323,15 @@ export class WebUsbUhciHarnessRuntime {
      * were selected before the harness runner initialized.
      */
     initiallyBlocked?: boolean;
+    /**
+     * Optional pre-received `usb.ringAttach` payload.
+     *
+     * Some worker entrypoints attach their top-level message handler before the
+     * harness runtime is constructed. In that setup, `usb.ringAttach` can arrive
+     * before this runtime registers its `message` event listener. Passing the
+     * payload here ensures the SAB fast path is still enabled.
+     */
+    initialRingAttach?: UsbRingAttachMessage;
   }) {
     this.#createHarness = options.createHarness;
     this.#port = options.port;
@@ -368,6 +377,10 @@ export class WebUsbUhciHarnessRuntime {
       } catch {
         // ignore
       }
+    }
+
+    if (options.initialRingAttach) {
+      this.attachRings(options.initialRingAttach);
     }
 
     this.emitUpdate();
