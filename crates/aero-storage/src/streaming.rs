@@ -1186,7 +1186,8 @@ async fn probe_remote_size_and_validator(
 fn build_header_map(headers: &[(String, String)]) -> Result<HeaderMap, StreamingDiskError> {
     let mut out = HeaderMap::new();
     for (name, value) in headers {
-        let name = HeaderName::from_bytes(name.as_bytes())
+        let name_lower = name.to_ascii_lowercase();
+        let name = HeaderName::from_bytes(name_lower.as_bytes())
             .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?;
         let value =
             HeaderValue::from_str(value).map_err(|e| StreamingDiskError::Protocol(e.to_string()))?;

@@ -490,7 +490,7 @@ async fn request_headers_are_sent_on_all_http_requests() {
     config.cache_backend = StreamingCacheBackend::Directory;
     config.options.chunk_size = 1024;
     config.options.read_ahead_chunks = 0;
-    config.request_headers = vec![("x-test-auth".to_string(), "secret".to_string())];
+    config.request_headers = vec![("X-Test-Auth".to_string(), "secret".to_string())];
 
     let disk = StreamingDisk::open(config).await.unwrap();
     let mut buf = vec![0u8; 16];
