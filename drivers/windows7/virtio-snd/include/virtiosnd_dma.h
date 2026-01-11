@@ -32,6 +32,10 @@ typedef struct _VIRTIOSND_DMA_CONTEXT {
     BOOLEAN RingCacheEnabled;
 } VIRTIOSND_DMA_CONTEXT, *PVIRTIOSND_DMA_CONTEXT;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 _Must_inspect_result_
 NTSTATUS VirtIoSndDmaInit(_In_ PDEVICE_OBJECT PhysicalDeviceObject, _Out_ PVIRTIOSND_DMA_CONTEXT Ctx);
 
@@ -45,3 +49,7 @@ NTSTATUS VirtIoSndAllocCommonBuffer(
     _Out_ PVIRTIOSND_DMA_BUFFER Out);
 
 VOID VirtIoSndFreeCommonBuffer(_In_ PVIRTIOSND_DMA_CONTEXT Ctx, _Inout_ PVIRTIOSND_DMA_BUFFER Buf);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif

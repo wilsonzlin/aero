@@ -22,6 +22,10 @@
 #define VIRTIOSND_SG_PAGE_SIZE (1u << VIRTIOSND_SG_PAGE_SHIFT)
 #define VIRTIOSND_SG_PAGE_MASK (VIRTIOSND_SG_PAGE_SIZE - 1u)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * Returns a conservative upper bound on the number of SG elements required to
  * describe the requested region. This assumes the worst case where every page
@@ -51,13 +55,17 @@ uint32_t virtiosnd_sg_max_elems_for_region(uint32_t mdl_byte_offset,
  *  - VIRTIO_ERR_RANGE: PFN array too small for the requested mapping.
  */
 int virtiosnd_sg_build_from_pfn_array_region(const uintptr_t *pfn_array,
-                                             uint32_t pfn_count,
-                                             uint32_t mdl_byte_offset,
-                                             uint32_t mdl_byte_count,
-                                             uint32_t buffer_bytes,
-                                             uint32_t offset_bytes,
-                                             uint32_t length_bytes,
-                                             virtio_bool_t wrap,
-                                             virtio_sg_entry_t *out,
-                                             uint16_t max_elems,
-                                             uint16_t *out_count);
+                                              uint32_t pfn_count,
+                                              uint32_t mdl_byte_offset,
+                                              uint32_t mdl_byte_count,
+                                              uint32_t buffer_bytes,
+                                              uint32_t offset_bytes,
+                                              uint32_t length_bytes,
+                                              virtio_bool_t wrap,
+                                              virtio_sg_entry_t *out,
+                                              uint16_t max_elems,
+                                              uint16_t *out_count);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif

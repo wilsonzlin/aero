@@ -42,6 +42,10 @@ typedef struct _VIRTIOSND_QUEUE_SPLIT {
     USHORT IndirectMaxDesc;
 } VIRTIOSND_QUEUE_SPLIT, *PVIRTIOSND_QUEUE_SPLIT;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 _Must_inspect_result_ NTSTATUS
 VirtioSndQueueSplitCreate(
     _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
@@ -77,3 +81,6 @@ VirtioSndQueueSplitDrainUsed(_Inout_ VIRTIOSND_QUEUE_SPLIT* qs,
                              _In_ EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
                              _In_opt_ void* Context);
 
+#ifdef __cplusplus
+} /* extern "C" */
+#endif

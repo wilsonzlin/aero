@@ -6,6 +6,10 @@
 
 #include <ntddk.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
 VirtIoSndAcquirePciBusInterface(
@@ -38,3 +42,7 @@ VirtIoSndPciWriteConfig(
     _In_ ULONG Offset,
     _In_ ULONG Length
     );
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif

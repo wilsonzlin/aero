@@ -26,6 +26,10 @@
  *  - flushes CPU caches for device-readable (OUT) DMA buffers.
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * Returns a conservative upper bound on SG entries required for the described
  * region. Returns 0 on invalid parameters.
@@ -43,10 +47,14 @@ ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
  * On failure, *OutCount is set to 0.
  */
 NTSTATUS VirtIoSndSgBuildFromMdlRegion(_In_ PMDL Mdl,
-                                      _In_ ULONG BufferBytes,
-                                      _In_ ULONG OffsetBytes,
-                                      _In_ ULONG LengthBytes,
-                                      _In_ BOOLEAN Wrap,
-                                      _Out_writes_(MaxElems) virtio_sg_entry_t *Out,
-                                      _In_ USHORT MaxElems,
-                                      _Out_ USHORT *OutCount);
+                                       _In_ ULONG BufferBytes,
+                                       _In_ ULONG OffsetBytes,
+                                       _In_ ULONG LengthBytes,
+                                       _In_ BOOLEAN Wrap,
+                                       _Out_writes_(MaxElems) virtio_sg_entry_t *Out,
+                                       _In_ USHORT MaxElems,
+                                       _Out_ USHORT *OutCount);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
