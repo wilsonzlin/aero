@@ -50,7 +50,7 @@ For the recommended CI-style flow (packages staged under `out/packages/` and sig
 
 ### Win7 DDI header mode (D3D10/11 UMD)
 
-The D3D10/11 UMD must be built against the official D3D10/11 user-mode DDI headers
+The real Win7 D3D10/11 UMD must be built against the official D3D10/11 user-mode DDI headers
 (`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`, `d3dumddi.h`) provided by the
 **Windows Driver Kit (WDK)** (Windows Kits).
 
@@ -73,3 +73,8 @@ On a typical modern WDK install, these headers live under:
 
 If you hit a build error about missing `d3d11umddi.h`, install the Windows WDK
 (for CI we use the `Microsoft.WindowsWDK` winget package) and rebuild.
+
+For a self-contained repo-only build (no WDK UMDDI headers installed), you can
+build the D3D10/11 UMD with `/p:AeroGpuUseWdkHeaders=0`, which compiles against
+the repo’s minimal compat ABI subset instead. That mode is intended for local
+development and is not expected to be ABI-compatible with the real Win7 runtimes.

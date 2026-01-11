@@ -203,6 +203,11 @@ The Visual Studio project enables WDK headers by defining
 the UMD project, and what `drivers\aerogpu\build\build_all.cmd` passes when
 staging Win7 binaries).
 
+For a repo-only/self-contained build (no UMDDI headers installed), pass
+`/p:AeroGpuUseWdkHeaders=0` to compile against the repo’s minimal compat ABI.
+This mode is **not** expected to be ABI-compatible with the real Win7 D3D11
+runtime; use it only for local development/bring-up.
+
 Optional: if you have a WinDDK-style root (Win7-era `inc\\{api,ddk}` layout), set
 `/p:AeroGpuWdkRoot="C:\WinDDK\7600.16385.1"` (or `%WINDDK%`/`%WDK_ROOT%`/`%WDKROOT%`)
 to add `$(AeroGpuWdkRoot)\inc\{api,ddk}` to the include path and validate the
