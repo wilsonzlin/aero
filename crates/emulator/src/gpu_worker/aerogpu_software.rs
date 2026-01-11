@@ -328,30 +328,23 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         }
-
-        let size: usize = match usize::try_from(size_bytes) {
-            Ok(v) => v,
-            Err(_) => {
-                Self::record_error(regs);
-                return None;
-            }
-        };
-        if size < ring::AerogpuAllocTableHeader::SIZE_BYTES {
-            Self::record_error(regs);
-            return None;
-        }
-        if size > MAX_ALLOC_TABLE_SIZE_BYTES {
-            Self::record_error(regs);
-            return None;
-        }
         if gpa.checked_add(u64::from(size_bytes)).is_none() {
             Self::record_error(regs);
             return None;
         }
+        if size_bytes < ring::AerogpuAllocTableHeader::SIZE_BYTES as u32 {
+            Self::record_error(regs);
+            return None;
+        }
 
-        let mut buf = vec![0u8; size];
-        mem.read_physical(gpa, &mut buf);
-        let hdr = match ring::AerogpuAllocTableHeader::decode_from_le_bytes(&buf) {
+        // Forward-compat: the submit descriptor's `alloc_table_size_bytes` is the backing buffer
+        // capacity, while the allocation table header's `size_bytes` field is bytes-used.
+        //
+        // Only read the prefix that the header declares (bounded by the descriptor capacity) to
+        // avoid copying potentially large trailing bytes.
+        let mut header_bytes = [0u8; ring::AerogpuAllocTableHeader::SIZE_BYTES];
+        mem.read_physical(gpa, &mut header_bytes);
+        let hdr = match ring::AerogpuAllocTableHeader::decode_from_le_bytes(&header_bytes) {
             Ok(v) => v,
             Err(_) => {
                 Self::record_error(regs);
@@ -367,11 +360,22 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         }
+
         let total_size = hdr.size_bytes as usize;
-        if total_size > size || total_size < ring::AerogpuAllocTableHeader::SIZE_BYTES {
+        if total_size > size_bytes as usize
+            || total_size < ring::AerogpuAllocTableHeader::SIZE_BYTES
+        {
             Self::record_error(regs);
             return None;
         }
+        if total_size > MAX_ALLOC_TABLE_SIZE_BYTES {
+            Self::record_error(regs);
+            return None;
+        }
+
+        let mut buf = vec![0u8; total_size];
+        mem.read_physical(gpa, &mut buf);
+
         // Forward-compat: newer guests may extend `aerogpu_alloc_entry` by increasing the declared
         // stride and appending fields. We only require the entry prefix we understand.
         if hdr.entry_stride_bytes < ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
@@ -399,7 +403,7 @@ impl AeroGpuSoftwareExecutor {
             return None;
         }
 
-        let buf = &buf[..total_size];
+        let buf = &buf[..];
 
         let mut out = HashMap::new();
         let mut off = ring::AerogpuAllocTableHeader::SIZE_BYTES;
@@ -2048,19 +2052,37 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return;
         }
-        let cmd_size: usize = match usize::try_from(desc.cmd_size_bytes) {
+        if desc.cmd_size_bytes < cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32 {
+            Self::record_error(regs);
+            return;
+        }
+
+        // Forward-compat: the submit descriptor's `cmd_size_bytes` is the backing buffer capacity,
+        // while the command stream header's `size_bytes` field indicates the bytes used.
+        //
+        // Only copy the used prefix to avoid allocating/copying potentially large trailing bytes.
+        let mut header_bytes = [0u8; cmd::AerogpuCmdStreamHeader::SIZE_BYTES];
+        mem.read_physical(desc.cmd_gpa, &mut header_bytes);
+        let header = match cmd::decode_cmd_stream_header_le(&header_bytes) {
             Ok(v) => v,
             Err(_) => {
                 Self::record_error(regs);
                 return;
             }
         };
-        if cmd_size > MAX_CMD_STREAM_SIZE_BYTES {
+
+        if header.size_bytes > desc.cmd_size_bytes {
             Self::record_error(regs);
             return;
         }
 
-        let mut buf = vec![0u8; cmd_size];
+        let stream_size = header.size_bytes as usize;
+        if stream_size > MAX_CMD_STREAM_SIZE_BYTES {
+            Self::record_error(regs);
+            return;
+        }
+
+        let mut buf = vec![0u8; stream_size];
         mem.read_physical(desc.cmd_gpa, &mut buf);
 
         let iter = match cmd::AerogpuCmdStreamIter::new(&buf) {
@@ -2070,7 +2092,6 @@ impl AeroGpuSoftwareExecutor {
                 return;
             }
         };
-        let stream_size = iter.header().size_bytes as usize;
 
         let Some(allocs) = self.parse_alloc_table(regs, mem, desc) else {
             return;
@@ -3540,6 +3561,58 @@ mod tests {
     use memory::Bus;
 
     #[test]
+    fn parse_alloc_table_accepts_capacity_larger_than_header_size_bytes() {
+        let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES;
+        let entry_count = 1u32;
+        let used_size =
+            ring::AerogpuAllocTableHeader::SIZE_BYTES + (entry_count as usize * entry_stride);
+        let capacity = used_size + 128;
+
+        let alloc_table_gpa = 0x1000u64;
+        let mut table = vec![0u8; capacity];
+        table.fill(0xCD);
+        table[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+        table[4..8].copy_from_slice(&AeroGpuRegs::default().abi_version.to_le_bytes());
+        table[8..12].copy_from_slice(&(used_size as u32).to_le_bytes());
+        table[12..16].copy_from_slice(&entry_count.to_le_bytes());
+        table[16..20].copy_from_slice(&(entry_stride as u32).to_le_bytes());
+        table[20..24].copy_from_slice(&0u32.to_le_bytes());
+
+        let base = ring::AerogpuAllocTableHeader::SIZE_BYTES;
+        table[base..base + 4].copy_from_slice(&1u32.to_le_bytes());
+        table[base + 4..base + 8].copy_from_slice(&0u32.to_le_bytes()); // flags
+        table[base + 8..base + 16].copy_from_slice(&0x2000u64.to_le_bytes()); // gpa
+        table[base + 16..base + 24].copy_from_slice(&0x100u64.to_le_bytes()); // size_bytes
+        table[base + 24..base + 32].copy_from_slice(&0u64.to_le_bytes()); // reserved0
+
+        table[used_size..].fill(0xAB);
+
+        let mut mem = Bus::new(0x4000);
+        mem.write_physical(alloc_table_gpa, &table);
+
+        let desc = AeroGpuSubmitDesc {
+            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa: 0,
+            cmd_size_bytes: 0,
+            alloc_table_gpa,
+            alloc_table_size_bytes: capacity as u32,
+            signal_fence: 0,
+        };
+
+        let exec = AeroGpuSoftwareExecutor::new();
+        let mut regs = AeroGpuRegs::default();
+        let allocs = exec
+            .parse_alloc_table(&mut regs, &mut mem, &desc)
+            .expect("alloc table should parse");
+        assert_eq!(allocs.len(), 1);
+        assert_eq!(allocs.get(&1).unwrap().size_bytes, 0x100);
+        assert_eq!(regs.irq_status, 0);
+    }
+
+    #[test]
     fn parse_alloc_table_accepts_extended_entry_stride() {
         let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES + 16;
         let entry_count = 2u32;
@@ -3641,5 +3714,45 @@ mod tests {
 
         assert_eq!(regs.stats.malformed_submissions, 1);
         assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+    }
+
+    #[test]
+    fn execute_submission_accepts_cmd_buffer_larger_than_stream_size_bytes() {
+        let cmd_gpa = 0x1000u64;
+        let capacity = 64u32;
+        let used_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32;
+
+        let mut stream = vec![0u8; capacity as usize];
+        stream.fill(0xCD);
+        stream[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&AeroGpuRegs::default().abi_version.to_le_bytes());
+        stream[8..12].copy_from_slice(&used_size.to_le_bytes());
+        stream[12..16].copy_from_slice(&0u32.to_le_bytes()); // flags
+        stream[16..20].copy_from_slice(&0u32.to_le_bytes());
+        stream[20..24].copy_from_slice(&0u32.to_le_bytes());
+
+        stream[used_size as usize..].fill(0xAB);
+
+        let mut mem = Bus::new(0x4000);
+        mem.write_physical(cmd_gpa, &stream);
+
+        let desc = AeroGpuSubmitDesc {
+            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa,
+            cmd_size_bytes: capacity,
+            alloc_table_gpa: 0,
+            alloc_table_size_bytes: 0,
+            signal_fence: 0,
+        };
+
+        let mut exec = AeroGpuSoftwareExecutor::new();
+        let mut regs = AeroGpuRegs::default();
+        exec.execute_submission(&mut regs, &mut mem, &desc);
+
+        assert_eq!(regs.stats.malformed_submissions, 0);
+        assert_eq!(regs.irq_status, 0);
     }
 }
