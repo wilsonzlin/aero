@@ -224,8 +224,17 @@ impl<'a> DxbcFile<'a> {
 
     /// Returns and parses the first signature chunk matching `kind`, if any.
     ///
-    /// Signature chunks include `ISGN`, `OSGN`, and `PSGN` (and may also appear
-    /// as `ISG1`, `OSG1`, `PSG1` depending on the compiler/toolchain).
+    /// Signature chunks include `ISGN`, `OSGN`, and `PSGN`. Some compilers emit
+    /// variant IDs with a trailing `1` (`ISG1`/`OSG1`/`PSG1`), which this method
+    /// also accepts.
+    ///
+    /// Behavior:
+    /// - Tries all chunks with the exact requested `kind` in file order, and
+    ///   returns the first one that parses successfully.
+    /// - If none parse successfully, tries the `*SGN`/`*SG1` variant (if any)
+    ///   in file order.
+    /// - Returns `None` only if neither `kind` nor its variant are present in
+    ///   the container.
     pub fn get_signature(&self, kind: FourCC) -> Option<Result<SignatureChunk, DxbcError>> {
         // Some toolchains emit signature chunk variant IDs with a trailing `1`
         // (e.g. `ISG1` instead of `ISGN`). Accept either spelling.
