@@ -12,7 +12,9 @@ This repository’s CI is designed so that **no WDK redistributable binaries are
 
 Drivers intended to be built/packaged by CI must include a manifest:
 
-`drivers/<name>/ci-package.json`
+`drivers/<driver>/ci-package.json`
+
+Where `<driver>` is a path relative to `drivers/` (it may be nested, e.g. `drivers/windows7/virtio-snd/`).
 
 Schema: `ci/driver-package.schema.json`
 
@@ -22,12 +24,13 @@ dev/test drivers (or conflicting INFs that match the same HWIDs).
 
 Supported fields:
 
-- `$schema` (optional): JSON Schema reference for editor tooling (example: `"../../ci/driver-package.schema.json"`). CI ignores this field.
+- `$schema` (optional): JSON Schema reference for editor tooling (example: `"../../ci/driver-package.schema.json"`). CI ignores this field. Update the relative path as needed for nested driver directories.
 - `infFiles` (optional): explicit list of `.inf` files to stage (paths relative to the driver directory). If omitted, CI discovers all `.inf` files under the driver directory.
   - Use this for drivers that ship multiple INFs (feature variants, optional components) where staging all of them together is undesirable (e.g. multiple INFs with the same HWIDs).
   - If present, the list must be non-empty.
 - `wow64Files` (optional): list of **file names** to copy from the driver’s **x86** build output into the **x64** staged package directory *before* INF stamping + Inf2Cat.
   - Intended for x64 driver packages that also need 32-bit user-mode components (WOW64 UMD DLLs).
+  - Entries must be `.dll` file names.
   - Entries must be file names only (no path separators).
   - Requires x86 build outputs to be present (even if you are only generating/staging x64 packages).
 - `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<name>/`) and must not escape it (no absolute paths / `..` traversal).
@@ -58,6 +61,11 @@ Example (requires WDF coinstaller):
   "additionalFiles": ["README.md", "packaging/win7/install.cmd"]
 }
 ```
+
+Template examples are available under `drivers/_template/`:
+
+- `ci-package.inf-wow64-example.json`
+- `ci-package.wdf-example.json`
 
 ---
 
