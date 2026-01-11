@@ -389,12 +389,6 @@ impl UsbPassthroughDevice {
             "handle_in_transfer should not be used for control endpoint 0, got {endpoint:#04x}"
         );
         if let Some(inflight) = self.ep_inflight.get(&endpoint) {
-            debug_assert_eq!(
-                inflight.len,
-                max_len,
-                "handle_in_transfer called with max_len={max_len} for endpoint {endpoint:#04x}, but existing in-flight request expects len={}",
-                inflight.len
-            );
             let inflight_id = inflight.id;
             let inflight_len = inflight.len;
             if let Some(result) = self.take_result(inflight_id) {
@@ -403,6 +397,9 @@ impl UsbPassthroughDevice {
                     UsbHostResult::OkIn { mut data } => {
                         if data.len() > inflight_len {
                             data.truncate(inflight_len);
+                        }
+                        if data.len() > max_len {
+                            data.truncate(max_len);
                         }
                         UsbInResult::Data(data)
                     }
@@ -438,13 +435,6 @@ impl UsbPassthroughDevice {
             "handle_out_transfer should not be used for control endpoint 0, got {endpoint:#04x}"
         );
         if let Some(inflight) = self.ep_inflight.get(&endpoint) {
-            debug_assert_eq!(
-                inflight.len,
-                data.len(),
-                "handle_out_transfer called with len={} for endpoint {endpoint:#04x}, but existing in-flight request expects len={}",
-                data.len(),
-                inflight.len
-            );
             if let Some(result) = self.take_result(inflight.id) {
                 self.ep_inflight.remove(&endpoint);
                 return match result {
