@@ -54,18 +54,10 @@ jobs:
           cache: false
           locked: always
 
-      - name: Read pinned nightly toolchain
-        id: toolchains
-        shell: bash
-        run: |
-          set -euo pipefail
-          nightly="$(node -p "require('./scripts/toolchains.json').rust.nightlyWasm")"
-          echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
-
       - name: Setup Rust (pinned nightly for threaded WASM)
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ steps.toolchains.outputs.nightly }}
+          toolchain: nightly
           targets: wasm32-unknown-unknown
           components: rust-src
           cache: false
