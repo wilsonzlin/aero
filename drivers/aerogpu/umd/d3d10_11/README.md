@@ -101,9 +101,20 @@ From a Visual Studio Developer Command Prompt, inspect the DLL exports:
 
 ```cmd
 dumpbin /exports aerogpu_d3d10.dll
+dumpbin /exports aerogpu_d3d10_x64.dll
 ```
 
-Verify the output contains `OpenAdapter11` (undecorated).
+Verify the output contains the **undecorated** entrypoints:
+
+- `OpenAdapter10`
+- `OpenAdapter10_2`
+- `OpenAdapter11`
+
+On **Win32** builds, also confirm the raw stdcall-decorated names are present:
+
+- `_OpenAdapter10@4`
+- `_OpenAdapter10_2@4`
+- `_OpenAdapter11@4`
 
 Recommended build entrypoint (MSBuild/WDK10):
 
