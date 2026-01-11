@@ -7,7 +7,7 @@ use aero_cpu_core::state::{
 use firmware::bda::BiosDataArea;
 use firmware::bios::{
     build_bios_rom, Bios, BiosBus, BiosConfig, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR,
-    BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, BIOS_SIZE, RESET_VECTOR_OFFSET, TICKS_PER_DAY,
+    BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, RESET_VECTOR_OFFSET, TICKS_PER_DAY,
 };
 use firmware::rtc::{CmosRtc, DateTime};
 use machine::{
@@ -129,15 +129,6 @@ impl BiosTestMemory {
             inner: PhysicalMemory::new(size),
         }
     }
-
-    fn translate_bios_alias(addr: u64) -> u64 {
-        let alias_end = BIOS_ALIAS_BASE + (BIOS_SIZE as u64).saturating_sub(1);
-        if (BIOS_ALIAS_BASE..=alias_end).contains(&addr) {
-            BIOS_BASE + (addr - BIOS_ALIAS_BASE)
-        } else {
-            addr
-        }
-    }
 }
 
 impl A20Gate for BiosTestMemory {
@@ -158,15 +149,15 @@ impl FirmwareMemory for BiosTestMemory {
 
 impl MemoryAccess for BiosTestMemory {
     fn read_u8(&self, addr: u64) -> u8 {
-        self.inner.read_u8(Self::translate_bios_alias(addr))
+        self.inner.read_u8(addr)
     }
 
     fn write_u8(&mut self, addr: u64, val: u8) {
-        self.inner.write_u8(Self::translate_bios_alias(addr), val)
+        self.inner.write_u8(addr, val)
     }
 
     fn fetch_code(&self, addr: u64, len: usize) -> &[u8] {
-        self.inner.fetch_code(Self::translate_bios_alias(addr), len)
+        self.inner.fetch_code(addr, len)
     }
 }
 
@@ -260,7 +251,11 @@ impl<D: BlockDevice> CoreVm<D> {
 
     fn reset(&mut self) {
         let rom = build_bios_rom();
+        // Map ROM at both the conventional real-mode window and the top-of-4GiB reset alias.
         self.mem.map_rom(BIOS_BASE, &rom);
+        self.mem.map_rom(BIOS_ALIAS_BASE, &rom);
+        // Keep A20 enabled while executing from the 0xFFFF_0000 alias mapping.
+        self.mem.set_a20_enabled(true);
 
         // Start from the architectural reset vector (alias at 0xFFFF_FFF0) and run
         // until the ROM fallback stub halts. The real BIOS POST is performed in host
