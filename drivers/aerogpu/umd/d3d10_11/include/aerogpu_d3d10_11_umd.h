@@ -192,6 +192,16 @@ typedef struct AEROGPU_DDIARG_CREATERESOURCE {
 
   const AEROGPU_DDI_SUBRESOURCE_DATA *pInitialData;
   uint32_t InitialDataCount;
+
+  // Additional fields present in the real D3D10/11 UMD DDIs that affect
+  // allocation decisions. These are currently only used for tracing (the
+  // repository build does not implement the full WDDM allocation contract).
+  //
+  // NOTE: These are intentionally appended to avoid changing offsets of the
+  // fields already consumed by the bring-up implementation.
+  uint32_t SampleDescCount;
+  uint32_t SampleDescQuality;
+  uint32_t ResourceFlags;
 } AEROGPU_DDIARG_CREATERESOURCE;
 
 typedef struct AEROGPU_DDIARG_CREATESHADER {

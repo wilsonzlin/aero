@@ -20,6 +20,7 @@ This directory contains “graphics stack” implementation notes and bring-up c
 - `win7-d3d10-11-umd-callbacks-and-fences.md` — Win7 WDK header reference for the **exact** D3D10/11 UMD callback structs used for DMA buffer allocation, submission (render/present), error reporting from `void` DDIs, fence waits for `Map(READ)`, and WOW64 gotchas.
 - `win7-d3d11ddi-function-tables.md` — D3D11 `d3d11umddi.h` function-table checklist for Win7 (which table entries must be non-null vs safely stubbed for FL10_0 bring-up).
 - `win7-d3d10-caps-tracing.md` — enabling `OutputDebugString` tracing for D3D10DDI `GetCaps` + unexpected runtime entrypoints during Win7 bring-up.
+- `win7-dxgi-swapchain-backbuffer.md` — trace guide + invariants for Win7 DXGI swapchain backbuffer `CreateResource` parameters and allocation flags.
 
 ## Strategy / prototypes
 

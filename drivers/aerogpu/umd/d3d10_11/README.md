@@ -90,6 +90,20 @@ For shared allocations, `alloc_id` must avoid collisions across guest processes 
 
 This code is intended to be built as a **DLL UMD** for Windows 7 SP1.
 
+### Optional tracing (resource creation / swapchain bring-up)
+
+For Win7 bring-up it is often useful to log the runtime's `CreateResource` inputs
+for DXGI swapchain backbuffers. The UMD supports a lightweight trace flag:
+
+* `AEROGPU_UMD_TRACE_RESOURCES`
+
+When enabled, the UMD prints `CreateResource`, `RotateResourceIdentities`, and
+`Present` details via the standard UMD logging helper (`AEROGPU_D3D10_11_LOG`),
+tagged with `trace_resources:`.
+
+See `docs/graphics/win7-dxgi-swapchain-backbuffer.md` for the recommended probe
+app and log interpretation workflow.
+
 Build files provided:
 
 - `aerogpu_d3d10_11.sln`
