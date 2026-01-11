@@ -68,12 +68,7 @@ pub fn exec<B: CpuBus>(
                 Mnemonic::Fxsave64 => state.fxsave64(&mut image),
                 _ => unreachable!(),
             }
-
-            for i in 0..(crate::FXSAVE_AREA_SIZE / 16) {
-                let start = i * 16;
-                let chunk: [u8; 16] = image[start..start + 16].try_into().unwrap();
-                bus.write_u128(addr + start as u64, u128::from_le_bytes(chunk))?;
-            }
+            bus.write_bytes(addr, &image)?;
 
             Ok(ExecOutcome::Continue)
         }
@@ -83,11 +78,7 @@ pub fn exec<B: CpuBus>(
             }
 
             let mut image = [0u8; crate::FXSAVE_AREA_SIZE];
-            for i in 0..(crate::FXSAVE_AREA_SIZE / 16) {
-                let start = i * 16;
-                let v = bus.read_u128(addr + start as u64)?;
-                image[start..start + 16].copy_from_slice(&v.to_le_bytes());
-            }
+            bus.read_bytes(addr, &mut image)?;
 
             if (state.control.cr4 & CR4_OSXMMEXCPT) == 0 {
                 let mxcsr = u32::from_le_bytes(image[24..28].try_into().unwrap());
@@ -121,4 +112,3 @@ fn check_fx_available(state: &CpuState) -> Result<(), Exception> {
     }
     Ok(())
 }
-
