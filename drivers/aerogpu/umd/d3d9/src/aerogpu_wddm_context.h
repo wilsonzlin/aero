@@ -28,6 +28,11 @@ struct WddmContext {
   WddmHandle hContext = 0;
   WddmHandle hSyncObject = 0;
 
+  // Some WDDM callback structs expose a distinct DMA buffer pointer (pDmaBuffer)
+  // in addition to the command buffer pointer (pCommandBuffer). Treat pCommandBuffer
+  // as the base pointer for recording AeroGPU commands, but preserve pDmaBuffer so
+  // we can pass the correct value back to dxgkrnl when required.
+  uint8_t* pDmaBuffer = nullptr;
   uint8_t* pCommandBuffer = nullptr;
   uint32_t CommandBufferSize = 0;
 

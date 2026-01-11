@@ -3656,7 +3656,7 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, b
     args.pCommandBuffer = dev->wddm_context.pCommandBuffer;
   }
   if constexpr (has_member_pDmaBuffer<ArgsT>::value) {
-    args.pDmaBuffer = dev->wddm_context.pCommandBuffer;
+    args.pDmaBuffer = dev->wddm_context.pDmaBuffer ? dev->wddm_context.pDmaBuffer : dev->wddm_context.pCommandBuffer;
   }
   if constexpr (has_member_CommandLength<ArgsT>::value) {
     args.CommandLength = command_length_bytes;
@@ -3739,6 +3739,7 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, b
 
 template <typename ArgsT>
 void update_context_from_submit_args(Device* dev, const ArgsT& args) {
+  const uint8_t* prev_cmd_buffer = dev->wddm_context.pCommandBuffer;
   bool updated_cmd_buffer = false;
   if constexpr (has_member_pNewCommandBuffer<ArgsT>::value && has_member_NewCommandBufferSize<ArgsT>::value) {
     if (args.pNewCommandBuffer && args.NewCommandBufferSize) {
@@ -3758,6 +3759,24 @@ void update_context_from_submit_args(Device* dev, const ArgsT& args) {
       if (args.CommandBufferSize) {
         dev->wddm_context.CommandBufferSize = args.CommandBufferSize;
       }
+    }
+  }
+
+  // Track pDmaBuffer separately when exposed by the callback struct. Some WDK
+  // vintages include both pDmaBuffer and pCommandBuffer; preserve the DMA buffer
+  // pointer so we can pass it back to dxgkrnl.
+  bool updated_dma_buffer = false;
+  if constexpr (has_member_pDmaBuffer<ArgsT>::value) {
+    if (args.pDmaBuffer) {
+      dev->wddm_context.pDmaBuffer = static_cast<uint8_t*>(args.pDmaBuffer);
+      updated_dma_buffer = true;
+    }
+  }
+  if (!updated_dma_buffer && dev->wddm_context.pCommandBuffer) {
+    // If pDmaBuffer is unset (or was previously tracking the old command buffer
+    // pointer), keep it in sync with the current command buffer.
+    if (!dev->wddm_context.pDmaBuffer || dev->wddm_context.pDmaBuffer == prev_cmd_buffer) {
+      dev->wddm_context.pDmaBuffer = dev->wddm_context.pCommandBuffer;
     }
   }
 
@@ -4093,6 +4112,7 @@ void wddm_deallocate_active_buffers(Device* dev) {
   // we return the AllocateCb buffers, the rotated pointers are not guaranteed to
   // remain valid. Force the next `ensure_cmd_space()` to reacquire buffers via
   // GetCommandBufferCb/AllocateCb.
+  dev->wddm_context.pDmaBuffer = nullptr;
   dev->wddm_context.pCommandBuffer = nullptr;
   dev->wddm_context.CommandBufferSize = 0;
   dev->wddm_context.pAllocationList = nullptr;
@@ -4251,6 +4271,7 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   dev->wddm_context.allocated_pDmaBufferPrivateData = dma_priv;
   dev->wddm_context.allocated_DmaBufferPrivateDataSize = dma_priv_bytes;
 
+  dev->wddm_context.pDmaBuffer = static_cast<uint8_t*>(dma_ptr ? dma_ptr : cmd_ptr);
   dev->wddm_context.pCommandBuffer = static_cast<uint8_t*>(cmd_ptr);
   dev->wddm_context.CommandBufferSize = cap;
   dev->wddm_context.pAllocationList = alloc_list;
@@ -4391,6 +4412,7 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   dev->wddm_context.allocated_pDmaBufferPrivateData = nullptr;
   dev->wddm_context.allocated_DmaBufferPrivateDataSize = 0;
 
+  dev->wddm_context.pDmaBuffer = static_cast<uint8_t*>(dma_ptr ? dma_ptr : cmd_ptr);
   dev->wddm_context.pCommandBuffer = static_cast<uint8_t*>(cmd_ptr);
   dev->wddm_context.CommandBufferSize = cap;
   dev->wddm_context.pAllocationList = alloc_list;
@@ -4442,6 +4464,9 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
   if (have_persistent_buffers) {
     // Ensure the writer + allocation list tracker are bound to the active runtime
     // buffers (the runtime is allowed to rotate pointers after a submit).
+    if (!dev->wddm_context.pDmaBuffer) {
+      dev->wddm_context.pDmaBuffer = dev->wddm_context.pCommandBuffer;
+    }
     if (dev->cmd.data() != dev->wddm_context.pCommandBuffer) {
       dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
     }
@@ -11183,9 +11208,6 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     }
     if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
       have_submit_cb = have_submit_cb || (dev->wddm_callbacks.pfnPresentCb != nullptr);
-    }
-    if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
-      have_submit_cb = have_submit_cb || (dev->wddm_callbacks.pfnSubmitCommandCb != nullptr);
     }
 
     bool have_acquire_cb = false;

@@ -68,6 +68,12 @@ template <typename T>
 struct has_member_pDmaBufferPrivateData<T, std::void_t<decltype(std::declval<T>().pDmaBufferPrivateData)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_pDmaBuffer : std::false_type {};
+
+template <typename T>
+struct has_member_pDmaBuffer<T, std::void_t<decltype(std::declval<T>().pDmaBuffer)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_DmaBufferPrivateDataSize : std::false_type {};
 
 template <typename T>
@@ -177,12 +183,19 @@ HRESULT create_context_common(const CallbacksT& callbacks, FnT fn, WddmHandle hD
 
   ctxOut->hContext = data.hContext;
   ctxOut->hSyncObject = data.hSyncObject;
+  ctxOut->pDmaBuffer = nullptr;
   ctxOut->pCommandBuffer = static_cast<uint8_t*>(data.pCommandBuffer);
   ctxOut->CommandBufferSize = data.CommandBufferSize;
   ctxOut->pAllocationList = data.pAllocationList;
   ctxOut->AllocationListSize = data.AllocationListSize;
   ctxOut->pPatchLocationList = data.pPatchLocationList;
   ctxOut->PatchLocationListSize = data.PatchLocationListSize;
+  if constexpr (has_member_pDmaBuffer<Arg>::value) {
+    ctxOut->pDmaBuffer = static_cast<uint8_t*>(data.pDmaBuffer);
+  }
+  if (!ctxOut->pDmaBuffer) {
+    ctxOut->pDmaBuffer = ctxOut->pCommandBuffer;
+  }
   if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
     ctxOut->pDmaBufferPrivateData = data.pDmaBufferPrivateData;
   }
@@ -243,6 +256,7 @@ void WddmContext::destroy(const WddmDeviceCallbacks& callbacks) {
 
   hContext = 0;
   hSyncObject = 0;
+  pDmaBuffer = nullptr;
   pCommandBuffer = nullptr;
   CommandBufferSize = 0;
   pAllocationList = nullptr;
