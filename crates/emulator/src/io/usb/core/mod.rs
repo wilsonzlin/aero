@@ -64,6 +64,17 @@ impl AttachedUsbDevice {
         self.model.reset();
     }
 
+    pub fn tick_1ms(&mut self) {
+        self.model.tick_1ms();
+    }
+
+    pub fn device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {
+        if self.address == address {
+            return Some(self);
+        }
+        self.model.child_device_mut_for_address(address)
+    }
+
     pub fn handle_setup(&mut self, setup: SetupPacket) -> UsbOutResult {
         // Starting a new SETUP always abandons any in-flight transfer.
         self.control = None;

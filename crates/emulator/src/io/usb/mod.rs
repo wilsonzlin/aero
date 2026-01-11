@@ -113,4 +113,22 @@ pub trait UsbDeviceModel {
     ///
     /// Returning `None` indicates the endpoint would NAK (no data available).
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>>;
+
+    /// Advance device-internal timers by 1ms.
+    ///
+    /// This is used for devices like USB hubs where operations such as port reset
+    /// completion are time-based.
+    fn tick_1ms(&mut self) {}
+
+    /// If this device is a USB hub, route an address lookup to its downstream devices.
+    ///
+    /// The UHCI controller uses this for topology-aware device routing: it first matches the
+    /// address of the device itself (via [`core::AttachedUsbDevice`]), and then asks hub models
+    /// to search their downstream ports.
+    fn child_device_mut_for_address(
+        &mut self,
+        _address: u8,
+    ) -> Option<&mut crate::io::usb::core::AttachedUsbDevice> {
+        None
+    }
 }
