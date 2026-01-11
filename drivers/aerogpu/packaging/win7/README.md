@@ -95,9 +95,9 @@ By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the canonical Aero
 PCI\VEN_A3A0&DEV_0001  (canonical / current, versioned ABI / "AGPU")
 ```
 
-The Win7 KMD still has a compatibility path for the deprecated legacy bring-up device ("ARGP"), but the shipped INFs
-intentionally do **not** match it (to discourage accidental installs against the legacy device model). If you need the
-legacy device model for bring-up/compatibility, install using the legacy INFs under
+The Win7 KMD still has a compatibility path for the deprecated legacy bring-up device (`PCI\VEN_1AED&DEV_0001`, "ARGP"),
+but the shipped INFs intentionally do **not** match it (to discourage accidental installs against the legacy device model).
+If you need the legacy device model for bring-up/compatibility, install using the legacy INFs under
 `drivers/aerogpu/packaging/win7/legacy/` and build the emulator with the legacy device model enabled (feature
 `emulator/aerogpu-legacy`).
 

@@ -47,7 +47,9 @@ This directory currently contains two PCI/MMIO ABIs:
 Both IDs are project-specific (not PCI-SIG assigned). Both identify as a VGA-compatible display controller (base class `0x03`, subclass `0x00`, prog-if `0x00`).
 
 The in-tree Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the versioned `VEN_A3A0&DEV_0001` device by default.
-If you are intentionally using the deprecated legacy device model/ABI, use the INFs under `drivers/aerogpu/packaging/win7/legacy/` instead (and enable the emulator legacy device model via feature `emulator/aerogpu-legacy`).
+If you are intentionally using the deprecated legacy device model/ABI (`VEN_1AED&DEV_0001`), use the INFs under
+`drivers/aerogpu/packaging/win7/legacy/` instead (and enable the emulator legacy device model via feature
+`emulator/aerogpu-legacy`).
 
 For a quick overview of the canonical AeroGPU PCI IDs (new vs legacy) and which emulator device
 models implement each ABI, see: `docs/abi/aerogpu-pci-identity.md`.
