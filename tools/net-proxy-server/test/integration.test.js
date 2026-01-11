@@ -156,6 +156,34 @@ test("integration: requires aero-tcp-mux-v1 subprotocol", async () => {
   }
 });
 
+test("integration: PING -> PONG (same payload)", async () => {
+  let proxy;
+  let ws;
+
+  try {
+    proxy = await createProxyServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "test-token",
+      allowPrivateIps: true,
+      metricsIntervalMs: 0,
+    });
+
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+    await waitForWsOpen(ws);
+
+    const payload = Buffer.from([1, 2, 3, 4]);
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, payload));
+
+    const pong = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+    assert.deepEqual(pong.payload, payload);
+  } finally {
+    if (ws) ws.terminate();
+    if (proxy) await proxy.close();
+  }
+});
+
 test("integration: policy denies private IPs by default", async () => {
   let proxy;
   let ws;
