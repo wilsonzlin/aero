@@ -993,7 +993,20 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
     const active = Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
     const pixels = active === 0 ? sharedFramebufferViews.slot0 : sharedFramebufferViews.slot1;
     const dirtyWords = active === 0 ? sharedFramebufferViews.dirty0 : sharedFramebufferViews.dirty1;
-    const dirtyRects = dirtyWords ? dirtyTilesToRects(sharedFramebufferViews.layout, dirtyWords) : null;
+    let dirtyRects: DirtyRect[] | null = null;
+    if (dirtyWords) {
+      // Mirror the Rust `FrameSource` behavior: if dirty tracking is enabled but
+      // the producer does not set any bits, treat the frame as full-frame dirty.
+      // (This avoids interpreting `[]` as "nothing changed".)
+      let anyDirty = false;
+      for (let i = 0; i < dirtyWords.length; i += 1) {
+        if (dirtyWords[i] !== 0) {
+          anyDirty = true;
+          break;
+        }
+      }
+      dirtyRects = anyDirty ? dirtyTilesToRects(sharedFramebufferViews.layout, dirtyWords) : null;
+    }
     const frameSeq = Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.FRAME_SEQ);
     return {
       width: sharedFramebufferViews.layout.width,
