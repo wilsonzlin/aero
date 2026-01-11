@@ -304,6 +304,65 @@ func TestAuth_APIKey_Offer(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
+func TestAuth_JWT_Offer(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:  config.AuthModeJWT,
+		JWTSecret: "supersecret",
+	}
+	ts, m := startSignalingServer(t, cfg)
+
+	body, err := json.Marshal(signaling.OfferRequest{
+		Version: signaling.Version1,
+		Offer: signaling.SessionDescription{
+			Type: "offer",
+			SDP:  "v=0",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal offer: %v", err)
+	}
+
+	do := func(token string) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/offer", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		return resp
+	}
+
+	resp := do("")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing token status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+	_ = resp.Body.Close()
+
+	resp = do("not-a-jwt")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad token status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+	_ = resp.Body.Close()
+
+	if got := m.Get(metrics.AuthFailure); got < 2 {
+		t.Fatalf("auth failure metric=%d, want >= 2", got)
+	}
+
+	resp = do(makeJWT(cfg.JWTSecret))
+	// We used a dummy SDP, so we expect the relay to reject it with 400. This
+	// confirms auth was accepted and we reached SDP parsing.
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("good token status=%d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	_ = resp.Body.Close()
+}
+
 func TestAuth_APIKey_WebSocketSignal_FirstMessageAuth(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                      config.AuthModeAPIKey,
