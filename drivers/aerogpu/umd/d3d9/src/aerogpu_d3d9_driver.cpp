@@ -8,6 +8,7 @@
 #include <cwchar>
 #include <initializer_list>
 #include <memory>
+#include <new>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
@@ -2673,7 +2674,10 @@ Adapter* acquire_adapter(const LUID& luid,
     return adapter;
   }
 
-  auto* adapter = new Adapter();
+  auto* adapter = new (std::nothrow) Adapter();
+  if (!adapter) {
+    return nullptr;
+  }
   adapter->luid = luid;
   adapter->share_token_allocator.set_adapter_luid(luid);
   adapter->open_count.store(1);

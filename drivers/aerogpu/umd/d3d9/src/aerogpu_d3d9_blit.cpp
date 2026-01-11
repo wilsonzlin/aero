@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <new>
 
 #include "aerogpu_d3d9_builtin_shaders.h"
 #include "aerogpu_d3d9_objects.h"
@@ -572,11 +573,19 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
   }
 
   if (!dev->builtin_copy_vs) {
-    auto* sh = new Shader();
+    auto* sh = new (std::nothrow) Shader();
+    if (!sh) {
+      return E_OUTOFMEMORY;
+    }
     sh->handle = allocate_global_handle(dev->adapter);
     sh->stage = AEROGPU_D3D9DDI_SHADER_STAGE_VS;
-    sh->bytecode.assign(builtin_d3d9_shaders::kCopyVsDxbc,
-                        builtin_d3d9_shaders::kCopyVsDxbc + builtin_d3d9_shaders::kCopyVsDxbcSize);
+    try {
+      sh->bytecode.assign(builtin_d3d9_shaders::kCopyVsDxbc,
+                          builtin_d3d9_shaders::kCopyVsDxbc + builtin_d3d9_shaders::kCopyVsDxbcSize);
+    } catch (...) {
+      delete sh;
+      return E_OUTOFMEMORY;
+    }
 
     auto* cmd = append_with_payload_locked<aerogpu_cmd_create_shader_dxbc>(
         dev, AEROGPU_CMD_CREATE_SHADER_DXBC, sh->bytecode.data(), sh->bytecode.size());
@@ -593,11 +602,19 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
   }
 
   if (!dev->builtin_copy_ps) {
-    auto* sh = new Shader();
+    auto* sh = new (std::nothrow) Shader();
+    if (!sh) {
+      return E_OUTOFMEMORY;
+    }
     sh->handle = allocate_global_handle(dev->adapter);
     sh->stage = AEROGPU_D3D9DDI_SHADER_STAGE_PS;
-    sh->bytecode.assign(builtin_d3d9_shaders::kCopyPsDxbc,
-                        builtin_d3d9_shaders::kCopyPsDxbc + builtin_d3d9_shaders::kCopyPsDxbcSize);
+    try {
+      sh->bytecode.assign(builtin_d3d9_shaders::kCopyPsDxbc,
+                          builtin_d3d9_shaders::kCopyPsDxbc + builtin_d3d9_shaders::kCopyPsDxbcSize);
+    } catch (...) {
+      delete sh;
+      return E_OUTOFMEMORY;
+    }
 
     auto* cmd = append_with_payload_locked<aerogpu_cmd_create_shader_dxbc>(
         dev, AEROGPU_CMD_CREATE_SHADER_DXBC, sh->bytecode.data(), sh->bytecode.size());
@@ -614,18 +631,26 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
   }
 
   if (!dev->builtin_copy_decl) {
-    auto* decl = new VertexDecl();
+    auto* decl = new (std::nothrow) VertexDecl();
+    if (!decl) {
+      return E_OUTOFMEMORY;
+    }
     decl->handle = allocate_global_handle(dev->adapter);
 
     // D3D9 vertex declaration (D3DVERTEXELEMENT9[]), little-endian:
     //   POSITION0: float4 at stream 0 offset 0
     //   TEXCOORD0: float2 at stream 0 offset 16
     //   end marker
-    decl->blob = {
-        0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x10, 0x00, 0x01, 0x00, 0x05, 0x00,
-        0xff, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00,
-    };
+    try {
+      decl->blob = {
+          0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+          0x00, 0x00, 0x10, 0x00, 0x01, 0x00, 0x05, 0x00,
+          0xff, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00,
+      };
+    } catch (...) {
+      delete decl;
+      return E_OUTOFMEMORY;
+    }
 
     auto* cmd = append_with_payload_locked<aerogpu_cmd_create_input_layout>(
         dev, AEROGPU_CMD_CREATE_INPUT_LAYOUT, decl->blob.data(), decl->blob.size());
@@ -641,11 +666,19 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
   }
 
   if (!dev->builtin_copy_vb) {
-    auto* vb = new Resource();
+    auto* vb = new (std::nothrow) Resource();
+    if (!vb) {
+      return E_OUTOFMEMORY;
+    }
     vb->handle = allocate_global_handle(dev->adapter);
     vb->kind = ResourceKind::Buffer;
     vb->size_bytes = sizeof(BlitVertex) * 4;
-    vb->storage.resize(vb->size_bytes);
+    try {
+      vb->storage.resize(vb->size_bytes);
+    } catch (...) {
+      delete vb;
+      return E_OUTOFMEMORY;
+    }
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_create_buffer>(dev, AEROGPU_CMD_CREATE_BUFFER);
     if (!cmd) {
