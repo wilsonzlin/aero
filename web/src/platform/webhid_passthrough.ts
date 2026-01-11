@@ -85,6 +85,7 @@ export class WebHidPassthroughManager {
 
   readonly #devicePaths = new Map<string, GuestUsbPath>();
   readonly #usedExternalHubPorts = new Set<number>();
+  #externalHubAttached = false;
   #directAttachUsed = false;
   readonly #inputReportListeners = new Map<string, (event: HIDInputReportEvent) => void>();
 
@@ -236,6 +237,10 @@ export class WebHidPassthroughManager {
       throw new Error(getNoFreeGuestUsbPortsMessage({ externalHubPortCount: this.#externalHubPortCount }));
     }
 
+    if (guestPath[0] === EXTERNAL_HUB_ROOT_PORT && guestPath.length >= 2) {
+      this.#ensureExternalHubAttached();
+    }
+
     await device.open();
 
     if (this.#target !== NOOP_TARGET) {
@@ -349,6 +354,12 @@ export class WebHidPassthroughManager {
   #emit(): void {
     const state = this.getState();
     for (const listener of this.#listeners) listener(state);
+  }
+
+  #ensureExternalHubAttached(): void {
+    if (this.#externalHubAttached) return;
+    this.#target.postMessage({ type: "hid:attachHub", guestPath: [EXTERNAL_HUB_ROOT_PORT], portCount: this.#externalHubPortCount });
+    this.#externalHubAttached = true;
   }
 
   #allocatePath(): GuestUsbPath | null {

@@ -371,10 +371,11 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     await manager.attachKnownDevice(devB);
     await manager.attachKnownDevice(devC);
 
-    expect(target.messages).toHaveLength(3);
-    expect(target.messages[0]).toMatchObject({ type: "hid:attach", guestPath: [0, 1] });
-    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
-    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, 3] });
+    expect(target.messages).toHaveLength(4);
+    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: 3 });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 1] });
+    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
+    expect(target.messages[3]).toMatchObject({ type: "hid:attach", guestPath: [0, 3] });
 
     expect(manager.getState().attachedDevices.map((d) => d.guestPath)).toEqual([
       [0, 1],
@@ -398,9 +399,9 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     await manager.detachDevice(devB);
     await manager.attachKnownDevice(devD);
 
-    expect(target.messages).toHaveLength(5);
-    expect(target.messages[3]).toMatchObject({ type: "hid:detach", guestPath: [0, 2] });
-    expect(target.messages[4]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
+    expect(target.messages).toHaveLength(6);
+    expect(target.messages[4]).toMatchObject({ type: "hid:detach", guestPath: [0, 2] });
+    expect(target.messages[5]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
   });
 
   it("falls back to root port 1 when the hub is full and only errors once all paths are exhausted", async () => {
@@ -417,10 +418,11 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     await manager.attachKnownDevice(devC);
     await expect(manager.attachKnownDevice(devD)).rejects.toThrow(getNoFreeGuestUsbPortsMessage({ externalHubPortCount: 2 }));
 
-    expect(target.messages).toHaveLength(3);
-    expect(target.messages[0]).toMatchObject({ type: "hid:attach", guestPath: [0, 1] });
-    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
-    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [1] });
+    expect(target.messages).toHaveLength(4);
+    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: 2 });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 1] });
+    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
+    expect(target.messages[3]).toMatchObject({ type: "hid:attach", guestPath: [1] });
 
     expect(manager.getState().attachedDevices).toHaveLength(3);
   });

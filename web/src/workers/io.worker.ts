@@ -61,6 +61,7 @@ import {
   type HidSendReportMessage,
 } from "../hid/hid_proxy_protocol";
 import {
+  isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
   isHidAttachMessage as isHidPassthroughAttachMessage,
   isHidDetachMessage as isHidPassthroughDetachMessage,
   isHidInputReportMessage as isHidPassthroughInputReportMessage,
@@ -398,6 +399,8 @@ let hidGuest: HidGuestBridge = hidGuestInMemory;
 // -----------------------------------------------------------------------------
 
 const hidPassthroughPathsByDeviceId = new Map<string, GuestUsbPath>();
+type HidPassthroughHubInfo = { guestPath: GuestUsbPath; portCount?: number };
+let hidPassthroughHub: HidPassthroughHubInfo | null = null;
 
 type HidPassthroughInputReportDebugEntry = {
   reportId: number;
@@ -449,6 +452,14 @@ function findFirstSendableReport(
     if (nested) return nested;
   }
   return null;
+}
+
+function handleHidPassthroughAttachHub(msg: Extract<HidPassthroughMessage, { type: "hid:attachHub" }>): void {
+  hidPassthroughHub = { guestPath: msg.guestPath, ...(msg.portCount !== undefined ? { portCount: msg.portCount } : {}) };
+  if (import.meta.env.DEV) {
+    const hint = msg.portCount !== undefined ? ` ports=${msg.portCount}` : "";
+    console.info(`[hid] attachHub path=${msg.guestPath.join(".")}${hint}`);
+  }
 }
 
 function handleHidPassthroughAttach(msg: HidPassthroughAttachMessage): void {
@@ -1113,6 +1124,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if (isHidInputReportMessage(data)) {
       if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
       hidGuest.inputReport(data);
+      return;
+    }
+
+    if (isHidPassthroughAttachHubMessage(data)) {
+      handleHidPassthroughAttachHub(data);
       return;
     }
 

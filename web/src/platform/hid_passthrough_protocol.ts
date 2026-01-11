@@ -15,6 +15,22 @@ export type GuestUsbPort = GuestUsbRootPort;
  */
 export type GuestUsbPath = number[];
 
+/**
+ * Optional message used to attach a virtual hub device before attaching
+ * passthrough devices behind it.
+ */
+export type HidAttachHubMessage = {
+  type: "hid:attachHub";
+  /**
+   * Path to attach the hub at. For UHCI root ports this is `[0]` or `[1]`.
+   */
+  guestPath: GuestUsbPath;
+  /**
+   * Optional downstream port count hint. Guest implementations may ignore this.
+   */
+  portCount?: number;
+};
+
 export function isGuestUsbPath(value: unknown): value is GuestUsbPath {
   if (!Array.isArray(value)) return false;
   if (value.length === 0) return false;
@@ -75,6 +91,7 @@ export type HidDetachMessage = {
    */
   guestPath?: GuestUsbPath;
 };
+
 export type HidInputReportMessage = {
   type: "hid:inputReport";
   deviceId: string;
@@ -92,7 +109,12 @@ export type HidSendReportMessage = {
   data: ArrayBuffer;
 };
 
-export type HidPassthroughMessage = HidAttachMessage | HidDetachMessage | HidInputReportMessage | HidSendReportMessage;
+export type HidPassthroughMessage =
+  | HidAttachHubMessage
+  | HidAttachMessage
+  | HidDetachMessage
+  | HidInputReportMessage
+  | HidSendReportMessage;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -176,6 +198,13 @@ function isNormalizedHidCollectionInfo(value: unknown): value is NormalizedHidCo
   );
 }
 
+export function isHidAttachHubMessage(value: unknown): value is HidAttachHubMessage {
+  if (!isRecord(value) || value.type !== "hid:attachHub") return false;
+  if (!isGuestUsbPath(value.guestPath)) return false;
+  if (value.portCount === undefined) return true;
+  return isFiniteNumber(value.portCount) && Number.isInteger(value.portCount) && value.portCount > 0;
+}
+
 export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
   if (!isRecord(value) || value.type !== "hid:attach") return false;
   if (typeof value.deviceId !== "string") return false;
@@ -218,5 +247,11 @@ export function isHidSendReportMessage(value: unknown): value is HidSendReportMe
 }
 
 export function isHidPassthroughMessage(value: unknown): value is HidPassthroughMessage {
-  return isHidAttachMessage(value) || isHidDetachMessage(value) || isHidInputReportMessage(value) || isHidSendReportMessage(value);
+  return (
+    isHidAttachHubMessage(value) ||
+    isHidAttachMessage(value) ||
+    isHidDetachMessage(value) ||
+    isHidInputReportMessage(value) ||
+    isHidSendReportMessage(value)
+  );
 }

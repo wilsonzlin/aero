@@ -76,8 +76,9 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
 
     await manager.attachKnownDevice(device as unknown as HIDDevice);
 
-    expect(target.posted).toHaveLength(1);
-    const attach = target.posted[0]!.message;
+    expect(target.posted).toHaveLength(2);
+    expect(target.posted[0]!.message.type).toBe("hid:attachHub");
+    const attach = target.posted[1]!.message;
     expect(attach.type).toBe("hid:attach");
     expect(attach).toMatchObject({
       guestPort: 0,
@@ -95,15 +96,15 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     const slice = backing.subarray(1, 3); // [0xad, 0xbe]
     device.dispatchInputReport(7, new DataView(slice.buffer, slice.byteOffset, slice.byteLength));
 
-    expect(target.posted).toHaveLength(2);
-    const input = target.posted[1]!.message;
+    expect(target.posted).toHaveLength(3);
+    const input = target.posted[2]!.message;
     expect(input.type).toBe("hid:inputReport");
     expect(input).toMatchObject({ deviceId, reportId: 7 });
 
     const data = (input as any).data as ArrayBuffer;
     expect(Array.from(new Uint8Array(data))).toEqual([0xad, 0xbe]);
 
-    const transfer = target.posted[1]!.transfer;
+    const transfer = target.posted[2]!.transfer;
     expect(transfer).toHaveLength(1);
     expect(transfer?.[0]).toBe(data);
   });
@@ -114,7 +115,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     const manager = new WebHidPassthroughManager({ hid: null, target });
 
     await manager.attachKnownDevice(device as unknown as HIDDevice);
-    const attach = target.posted[0]!.message as any;
+    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
     const deviceId = attach.deviceId as string;
 
     device.dispatchInputReport(1, new DataView(new Uint8Array([9]).buffer));
