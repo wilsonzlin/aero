@@ -196,8 +196,8 @@ export class UsbBroker {
     if (isNew) this.ports.add(port);
 
     if (isNew) {
-      port.addEventListener("message", (ev: MessageEvent<unknown>) => {
-        const data = ev.data;
+      const onMessage: EventListener = (ev) => {
+        const data = (ev as MessageEvent<unknown>).data;
         if (isUsbActionMessage(data)) {
           void this.execute(data.action).then((completion) => {
             const msg: UsbCompletionMessage = { type: "usb.completion", completion };
@@ -209,7 +209,8 @@ export class UsbBroker {
         if (isUsbSelectDeviceMessage(data)) {
           void this.handleSelectDevice(port, data);
         }
-      });
+      };
+      port.addEventListener("message", onMessage);
 
       // When using addEventListener() MessagePorts need start() to begin dispatch.
       (port as unknown as { start?: () => void }).start?.();
