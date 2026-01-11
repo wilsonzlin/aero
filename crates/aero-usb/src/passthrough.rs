@@ -53,8 +53,12 @@ pub enum UsbHostAction {
         data: Vec<u8>,
     },
     /// Bulk/interrupt transfer, IN direction.
+    ///
+    /// `endpoint` is the USB endpoint **address** (e.g. `0x81`).
     BulkIn { id: u32, endpoint: u8, length: u32 },
     /// Bulk/interrupt transfer, OUT direction.
+    ///
+    /// `endpoint` is the USB endpoint **address** (e.g. `0x02`).
     BulkOut {
         id: u32,
         endpoint: u8,
