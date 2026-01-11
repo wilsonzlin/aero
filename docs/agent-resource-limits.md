@@ -199,6 +199,23 @@ Mitigations:
 
   Note: this intentionally overrides any existing `CARGO_HOME` so the isolation
   actually takes effect.
+
+### Cargo fails with `sccache` / rustc-wrapper errors
+
+If `cargo` fails immediately with an error mentioning `sccache` (or another rustc wrapper), your
+environment is forcing a rustc wrapper via global Cargo config or environment variables.
+
+Mitigations:
+
+- Source `scripts/agent-env.sh` (it clears common wrapper env vars).
+- Or manually clear the wrapper env vars for the current shell:
+
+  ```bash
+  export RUSTC_WRAPPER=
+  export RUSTC_WORKSPACE_WRAPPER=
+  export CARGO_BUILD_RUSTC_WRAPPER=
+  export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=
+  ```
 ### Cargo says "Blocking waiting for file lock on build directory"
 
 If `cargo` prints:
