@@ -481,7 +481,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: win7-drivers-signed-packages
-          path: .
+          # The signed-packages artifact is uploaded with `out/` as its root,
+          # so it contains `packages/` + `certs/`. Download into `out/` to
+          # recreate the expected `out/packages` + `out/certs` layout.
+          path: out
 
       - name: Package Guest Tools (ci/package-guest-tools.ps1)
         shell: pwsh
