@@ -418,9 +418,9 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/l2" -s aero-l2-tunn
 Using `websocat`:
 
 ```bash
-# `websocat` does not always send an Origin header by default. If you get a 403,
-# add an Origin header (see `websocat --help` for the flag in your version).
-websocat --insecure --protocol aero-l2-tunnel-v1 wss://localhost/l2
+# Some `websocat` versions do not send an Origin header by default. If you get a 403,
+# add it explicitly (see `websocat --help` for the exact flag in your version).
+websocat --insecure --protocol aero-l2-tunnel-v1 -H "Origin: https://localhost" wss://localhost/l2
 ```
 
 ### Production note: egress policy
