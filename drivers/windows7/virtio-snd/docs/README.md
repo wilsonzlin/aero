@@ -27,7 +27,7 @@ Virtio transport:
 - Sets up split-ring virtqueues (control/event/tx/rx) using the reusable backend in `virtiosnd_queue_split.c`
   - Note: rxq (capture) is initialized for transport bring-up but capture buffers are not submitted yet.
 - Connects **INTx** and routes used-ring completions to the control/TX protocol engines in a DPC
-- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`), but they are not yet wired into the WaveRT backend path.
+- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`) and exposes thin wrappers (`VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx`) intended for wiring the WaveRT backend to virtio-snd.
 
 ## Compatibility / Aero contract v1
 

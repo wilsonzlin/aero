@@ -113,6 +113,31 @@ VirtIoSndStartHardware(
 VOID
 VirtIoSndStopHardware(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 
+/*
+ * Hardware-facing protocol helpers intended for use by future PortCls/WaveRT
+ * miniports.
+ */
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndHwSendControl(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_reads_bytes_(ReqLen) const void* Req,
+    _In_ ULONG ReqLen,
+    _Out_writes_bytes_(RespCap) void* Resp,
+    _In_ ULONG RespCap,
+    _In_ ULONG TimeoutMs,
+    _Out_opt_ ULONG* OutVirtioStatus,
+    _Out_opt_ ULONG* OutRespLen);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndHwSubmitTx(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_opt_ const VOID* Pcm1,
+    _In_ ULONG Pcm1Bytes,
+    _In_opt_ const VOID* Pcm2,
+    _In_ ULONG Pcm2Bytes,
+    _In_ BOOLEAN AllowSilenceFill);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -5,6 +5,8 @@
 #include "pci_interface.h"
 
 #define AERO_VIRTIO_PCI_CONTRACT_REVISION_ID 0x01u
+#define AERO_VIRTIO_PCI_VENDOR_ID 0x1AF4u
+#define AERO_VIRTIO_PCI_DEVICE_ID_VIRTIO_SND 0x1059u
 
 /* Aero contract v1 fixed BAR0 MMIO layout (docs/windows7-virtio-driver-contract.md). */
 #define AERO_VIRTIO_PCI_BAR0_LEN     0x4000u
@@ -376,6 +378,8 @@ VirtIoSndTransportInit(_Out_ PVIRTIOSND_TRANSPORT Transport,
     NTSTATUS status;
     UCHAR cfg[256];
     ULONG bytesRead;
+    USHORT vendorId;
+    USHORT deviceId;
     uint64_t bar_addrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
     BOOLEAN bar_is_memory[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
     virtio_pci_cap_parse_result_t parseRes;
@@ -404,6 +408,16 @@ VirtIoSndTransportInit(_Out_ PVIRTIOSND_TRANSPORT Transport,
     bytesRead = VirtIoSndPciReadConfig(&Transport->PciInterface, cfg, 0, sizeof(cfg));
     if (bytesRead != sizeof(cfg)) {
         status = STATUS_DEVICE_DATA_ERROR;
+        goto Fail;
+    }
+
+    vendorId = 0;
+    deviceId = 0;
+    RtlCopyMemory(&vendorId, cfg + 0x00u, sizeof(vendorId));
+    RtlCopyMemory(&deviceId, cfg + 0x02u, sizeof(deviceId));
+
+    if (vendorId != AERO_VIRTIO_PCI_VENDOR_ID || deviceId != AERO_VIRTIO_PCI_DEVICE_ID_VIRTIO_SND) {
+        status = STATUS_NOT_SUPPORTED;
         goto Fail;
     }
 

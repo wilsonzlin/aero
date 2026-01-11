@@ -296,3 +296,54 @@ fail:
     VirtIoSndStopHardware(Dx);
     return status;
 }
+
+_Use_decl_annotations_
+NTSTATUS VirtIoSndHwSendControl(
+    PVIRTIOSND_DEVICE_EXTENSION Dx,
+    const void* Req,
+    ULONG ReqLen,
+    void* Resp,
+    ULONG RespCap,
+    ULONG TimeoutMs,
+    ULONG* OutVirtioStatus,
+    ULONG* OutRespLen)
+{
+    if (Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!Dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    return VirtioSndCtrlSendSync(&Dx->Control, Req, ReqLen, Resp, RespCap, TimeoutMs, OutVirtioStatus, OutRespLen);
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtIoSndHwSubmitTx(
+    PVIRTIOSND_DEVICE_EXTENSION Dx,
+    const VOID* Pcm1,
+    ULONG Pcm1Bytes,
+    const VOID* Pcm2,
+    ULONG Pcm2Bytes,
+    BOOLEAN AllowSilenceFill)
+{
+    if (Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!Dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    /*
+     * TX engine initialization (buffer sizing, pool depth) is stream-specific and
+     * currently performed by higher layers (WaveRT stream). Fail clearly if a
+     * caller attempts to submit before TxInit has run.
+     */
+    if (Dx->Tx.Queue == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    return VirtioSndTxSubmitPeriod(&Dx->Tx, Pcm1, Pcm1Bytes, Pcm2, Pcm2Bytes, AllowSilenceFill);
+}
