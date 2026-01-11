@@ -1,4 +1,6 @@
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
+import { RingBuffer } from "../ipc/ring_buffer";
+import { StatusIndex } from "../runtime/shared_layout";
 import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
 import {
   isHidErrorMessage,
@@ -13,6 +15,7 @@ import {
 } from "./hid_proxy_protocol";
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import { createHidReportRingBuffer, HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
+import { encodeHidInputReportRingRecord } from "./hid_input_report_ring";
 
 export type WebHidBrokerState = {
   workerAttached: boolean;
@@ -53,6 +56,9 @@ export class WebHidBroker {
 
   #workerPort: MessagePort | Worker | null = null;
   #workerPortListener: EventListener | null = null;
+
+  #inputReportRing: RingBuffer | null = null;
+  #status: Int32Array | null = null;
 
   #nextDeviceId = 1;
   readonly #deviceIdByDevice = new Map<HIDDevice, number>();
@@ -118,6 +124,14 @@ export class WebHidBroker {
 
   isWorkerAttached(): boolean {
     return !!this.#workerPort;
+  }
+
+  setInputReportRing(ring: RingBuffer | null, status: Int32Array | null = null): void {
+    if (ring && ring !== this.#inputReportRing) {
+      ring.reset();
+    }
+    this.#inputReportRing = ring;
+    this.#status = status;
   }
 
   getLastInputReportInfo(device: HIDDevice): WebHidLastInputReportInfo | null {
@@ -327,9 +341,27 @@ export class WebHidBroker {
       this.#lastInputReportInfo.set(deviceId, { tsMs: tsMs ?? performance.now(), byteLength: src.byteLength });
       this.#scheduleEmitForInputReports();
 
-      const ring = this.#inputRing;
-      if (ring) {
-        ring.push(deviceId >>> 0, HidRingReportType.Input, event.reportId >>> 0, src);
+      const ring = this.#inputReportRing;
+      if (ring && this.#canUseSharedMemory()) {
+        const payload = encodeHidInputReportRingRecord({ deviceId, reportId: event.reportId, tsMs, data: src });
+        if (ring.tryPush(payload)) {
+          return;
+        }
+        // Drop rather than blocking/spinning; this is a best-effort fast path.
+        const status = this.#status;
+        if (status) {
+          try {
+            Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, 1);
+          } catch {
+            // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
+          }
+        }
+        return;
+      }
+
+      const inputRing = this.#inputRing;
+      if (inputRing) {
+        inputRing.push(deviceId >>> 0, HidRingReportType.Input, event.reportId >>> 0, src);
         return;
       }
 

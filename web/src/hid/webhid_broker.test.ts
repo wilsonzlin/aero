@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
 import { HidReportRing, HidReportType } from "../usb/hid_report_ring";
+import { decodeHidInputReportRingRecord } from "./hid_input_report_ring";
 import { WebHidBroker } from "./webhid_broker";
 import type { HidAttachMessage, HidInputReportMessage } from "./hid_proxy_protocol";
 
@@ -197,6 +199,47 @@ describe("hid/WebHidBroker", () => {
       .reverse()
       .find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage;
     expect(featureAttach.hasInterruptOut).toBe(false);
+  });
+
+  it("writes inputreport events into the configured ring buffer instead of posting hid.inputReport messages", async () => {
+    const prev = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const kind = 1;
+      const sab = createIpcBuffer([{ kind, capacityBytes: 4096 }]).buffer;
+      const ring = openRingByKind(sab, kind);
+      const status = new Int32Array(new SharedArrayBuffer(64 * 4));
+      broker.setInputReportRing(ring, status);
+
+      const device = new FakeHidDevice();
+      await broker.attachDevice(device as unknown as HIDDevice);
+      const attach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage | undefined;
+      expect(attach).toBeTruthy();
+
+      device.dispatchInputReport(5, Uint8Array.of(1, 2, 3));
+
+      expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.inputReport")).toBe(false);
+
+      const payload = ring.tryPop();
+      expect(payload).toBeTruthy();
+      const decoded = decodeHidInputReportRingRecord(payload!);
+      expect(decoded).toBeTruthy();
+      expect(decoded!.deviceId).toBe(attach!.deviceId);
+      expect(decoded!.reportId).toBe(5);
+      expect(Array.from(decoded!.data)).toEqual([1, 2, 3]);
+    } finally {
+      if (prev) {
+        Object.defineProperty(globalThis, "crossOriginIsolated", prev);
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (globalThis as any).crossOriginIsolated;
+      }
+    }
   });
 
   it("bridges manager-initiated detaches (e.g. physical disconnect) to the worker", async () => {

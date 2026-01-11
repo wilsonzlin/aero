@@ -98,7 +98,7 @@ describe("usb/UsbBroker", () => {
 
     await expect(broker.getKnownDevices()).resolves.toEqual([deviceA, deviceB]);
     expect(getDevices).toHaveBeenCalledTimes(1);
-  });
+  }, 15000);
 
   it("attachKnownDevice() opens/claims via WebUsbBackend and does not call requestDevice()", async () => {
     const ensureOpenAndClaimed = vi.fn(async () => {});

@@ -609,6 +609,14 @@ export class WorkerCoordinator {
     return this.workers.io?.worker ?? null;
   }
 
+  getIoIpcSab(): SharedArrayBuffer | null {
+    return this.shared?.segments.ioIpc ?? null;
+  }
+
+  getStatusView(): Int32Array | null {
+    return this.shared?.status ?? null;
+  }
+
   getVgaFramebuffer(): SharedArrayBuffer | null {
     return this.shared?.vgaFramebuffer ?? null;
   }

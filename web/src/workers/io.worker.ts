@@ -13,6 +13,7 @@ import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
+  IO_IPC_HID_IN_QUEUE_KIND,
   StatusIndex,
   createSharedMemoryViews,
   ringRegionsForWorker,
@@ -66,6 +67,7 @@ import {
 } from "../platform/hid_passthrough_protocol";
 import { HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
 import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy_adapter";
+import { drainIoHidInputRing } from "./io_hid_input_ring";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -84,6 +86,7 @@ let eventRing: RingBuffer | null = null;
 
 let ioCmdRing: RingBuffer | null = null;
 let ioEvtRing: RingBuffer | null = null;
+let hidInRing: RingBuffer | null = null;
 const pendingIoEvents: Uint8Array[] = [];
 
 const DISK_ERROR_NO_ACTIVE_DISK = 1;
@@ -839,6 +842,11 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+      try {
+        hidInRing = openRingByKind(segments.ioIpc, IO_IPC_HID_IN_QUEUE_KIND);
+      } catch {
+        hidInRing = null;
+      }
 
       const irqSink: IrqSink = {
         raiseIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
@@ -1196,6 +1204,16 @@ function startIoIpcServer(): void {
       drainRuntimeCommands();
       drainHidInputRing();
       mgr.tick(nowMs);
+      const hidRing = hidInRing;
+      if (hidRing) {
+        const res = drainIoHidInputRing(hidRing, (msg) => hidGuest.inputReport(msg));
+        if (res.forwarded > 0) {
+          Atomics.add(status, StatusIndex.IoHidInputReportCounter, res.forwarded);
+        }
+        if (res.invalid > 0) {
+          Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, res.invalid);
+        }
+      }
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
       usbUhciHarnessRuntime?.pollOnce();

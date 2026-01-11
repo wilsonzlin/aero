@@ -83,6 +83,18 @@ export class RingBuffer {
     return this.cap;
   }
 
+  reset(): void {
+    // Resets the ring to the empty state.
+    //
+    // WARNING: This must only be called when there are no concurrent producers or
+    // consumers operating on the ring (e.g. during worker/session startup).
+    Atomics.store(this.ctrl, ringCtrl.HEAD, 0);
+    Atomics.store(this.ctrl, ringCtrl.TAIL_RESERVE, 0);
+    Atomics.store(this.ctrl, ringCtrl.TAIL_COMMIT, 0);
+    Atomics.notify(this.ctrl, ringCtrl.HEAD);
+    Atomics.notify(this.ctrl, ringCtrl.TAIL_COMMIT);
+  }
+
   tryPush(payload: Uint8Array): boolean {
     const payloadLen = payload.byteLength;
     const recordSize = alignUp(4 + payloadLen, RECORD_ALIGN);

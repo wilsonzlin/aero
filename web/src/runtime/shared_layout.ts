@@ -48,6 +48,7 @@ export enum StatusIndex {
   IoHidAttachCounter = 12,
   IoHidDetachCounter = 13,
   IoHidInputReportCounter = 14,
+  IoHidInputReportDropCounter = 15,
 
   // Device-bus state observed by the CPU worker.
   // These are primarily for debugging/observability until the real CPU core is wired up.
@@ -88,12 +89,17 @@ export const IO_IPC_NET_TX_QUEUE_KIND = 2;
 export const IO_IPC_NET_RX_QUEUE_KIND = 3;
 export const IO_IPC_NET_RING_CAPACITY_BYTES = 512 * 1024;
 
+// WebHID input report forwarding (main thread -> I/O worker).
+export const IO_IPC_HID_IN_QUEUE_KIND = 4;
+export const IO_IPC_HID_IN_RING_CAPACITY_BYTES = 1024 * 1024;
+
 export function createIoIpcSab(): SharedArrayBuffer {
   return createIpcBuffer([
     { kind: IO_IPC_CMD_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
     { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
     { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: IO_IPC_NET_RING_CAPACITY_BYTES },
     { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: IO_IPC_NET_RING_CAPACITY_BYTES },
+    { kind: IO_IPC_HID_IN_QUEUE_KIND, capacityBytes: IO_IPC_HID_IN_RING_CAPACITY_BYTES },
   ]).buffer;
 }
 

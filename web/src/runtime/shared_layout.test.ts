@@ -11,6 +11,8 @@ import {
   EVENT_RING_CAPACITY_BYTES,
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
+  IO_IPC_HID_IN_QUEUE_KIND,
+  IO_IPC_HID_IN_RING_CAPACITY_BYTES,
   IO_IPC_NET_RING_CAPACITY_BYTES,
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
@@ -158,6 +160,7 @@ describe("runtime/shared_layout", () => {
       IO_IPC_EVT_QUEUE_KIND,
       IO_IPC_NET_TX_QUEUE_KIND,
       IO_IPC_NET_RX_QUEUE_KIND,
+      IO_IPC_HID_IN_QUEUE_KIND,
     ]);
 
     const caps = new Map(queues.map((q) => [q.kind, q.capacityBytes]));
@@ -165,6 +168,7 @@ describe("runtime/shared_layout", () => {
     expect(caps.get(IO_IPC_EVT_QUEUE_KIND)).toBe(IO_IPC_RING_CAPACITY_BYTES);
     expect(caps.get(IO_IPC_NET_TX_QUEUE_KIND)).toBe(IO_IPC_NET_RING_CAPACITY_BYTES);
     expect(caps.get(IO_IPC_NET_RX_QUEUE_KIND)).toBe(IO_IPC_NET_RING_CAPACITY_BYTES);
+    expect(caps.get(IO_IPC_HID_IN_QUEUE_KIND)).toBe(IO_IPC_HID_IN_RING_CAPACITY_BYTES);
   });
 
   it("sets worker ready flags without overlapping status indices", () => {

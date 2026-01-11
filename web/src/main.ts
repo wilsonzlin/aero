@@ -3034,6 +3034,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   }) as HTMLButtonElement;
 
   let booting = false;
+
   const startButton = el("button", {
     text: "Start workers",
     onclick: async () => {
