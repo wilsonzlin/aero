@@ -39,17 +39,16 @@ param(
   [string] $CertPath = "out/certs/aero-test.cer",
 
   [string] $SpecPath = "tools/packaging/specs/win7-aero-guest-tools.json",
+  # Machine-readable device contract used to generate the packaged `config/devices.cmd`.
+  #
+  # Defaults to the canonical Aero device contract, but callers that package upstream
+  # virtio-win drivers may need to override service names (e.g. viostor/netkvm).
+  [string] $WindowsDeviceContractPath = "docs/windows-device-contract.json",
   [string] $DriverNameMapJson,
   [string] $OutDir = "out/artifacts",
   [string] $Version,
   [string] $BuildId,
-  [Nullable[long]] $SourceDateEpoch,
-
-  # Machine-readable device contract used to generate the packaged config/devices.cmd.
-  #
-  # Defaults to the canonical Aero device contract, but callers that package upstream
-  # virtio-win drivers may need to override service names (e.g. viostor/netkvm).
-  [string] $WindowsDeviceContractPath = "docs/windows-device-contract.json"
+  [Nullable[long]] $SourceDateEpoch
 )
 
 Set-StrictMode -Version Latest
