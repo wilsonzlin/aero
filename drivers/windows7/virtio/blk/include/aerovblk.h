@@ -8,7 +8,6 @@
 #include "aero_virtio_pci_modern.h"
 /* Explicit include to avoid picking up the legacy virtqueue header via include path order. */
 #include "../../../../windows/virtio/common/virtqueue_split.h"
-#include "../../common/include/virtio_pci_contract.h"
 
 #if DBG
 #define AEROVBLK_LOG(fmt, ...) DbgPrint("aerovblk: " fmt "\n", __VA_ARGS__)
