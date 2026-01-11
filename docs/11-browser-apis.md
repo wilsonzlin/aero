@@ -299,49 +299,36 @@ const wasmFeatures = {
 ### Memory Management
 
 ```javascript
+import { allocateSharedMemorySegments, createSharedMemoryViews } from './runtime/shared_layout.js';
+
 // Guest RAM is configurable and must fit within wasm32 + browser limits.
 // wasm32 WebAssembly.Memory is â‰¤ 4GiB addressable, and shared memories often top out below that.
 // Aero splits guest RAM from control/IPC buffers to avoid relying on >4GiB offsets (ADR 0003).
 const GUEST_RAM_MIB = 1024; // 512 / 1024 / 2048 / 3072 (best-effort)
-const GUEST_RAM_BYTES = GUEST_RAM_MIB * 1024 * 1024;
-const WASM_PAGE_BYTES = 64 * 1024;
 
-// IMPORTANT: The wasm linear memory is shared between guest RAM and the Rust/WASM runtime
-// (stack/heap/statics). Guest physical address 0 does NOT map to linear address 0.
-//
-// See ADR 0003 addendum + `web/src/runtime/shared_layout.ts` for the canonical implementation.
-const RUNTIME_RESERVED_BYTES = 64 * 1024 * 1024;
-const guestBase = Math.ceil(RUNTIME_RESERVED_BYTES / WASM_PAGE_BYTES) * WASM_PAGE_BYTES;
-
-async function initializeMemory() {
+function initializeMemory() {
     // If this fails, fall back to the single-threaded build (ADR 0004).
-    if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
-        throw new Error('SharedArrayBuffer requires COOP/COEP (cross-origin isolated page)');
-    }
+    const segments = allocateSharedMemorySegments({ guestRamMiB: GUEST_RAM_MIB });
+    const shared = createSharedMemoryViews(segments);
 
-    // Shared wasm linear memory (wasm32). This contains:
-    // - `[0, guestBase)`            reserved for the Rust/WASM runtime
-    // - `[guestBase, guestBase+N)`  guest RAM (paddr 0..)
+    // IMPORTANT: The wasm linear memory is shared between guest RAM and the Rust/WASM runtime
+    // (stack/heap/statics). Guest physical address 0 does NOT map to linear address 0.
     //
-    // Note: `guestSize` may be clamped so `guestBase + guestSize <= 4GiB`.
-    const totalBytes = guestBase + GUEST_RAM_BYTES;
-    const guestPages = Math.ceil(totalBytes / WASM_PAGE_BYTES);
-    const guestMemory = new WebAssembly.Memory({
-        initial: guestPages,
-        maximum: guestPages,
-        shared: true,
-    });
+    // `guest_base` is the byte offset inside `guestMemory` where guest physical address 0 begins.
+    // This is written by the coordinator into the control/status SAB and then treated as immutable.
+    const { guest_base, guest_size } = shared.guestLayout;
 
-    const guestU8 = new Uint8Array(guestMemory.buffer, guestBase, guestMemory.buffer.byteLength - guestBase);
     function guestToLinear(paddr) {
-        if (paddr < 0 || paddr >= guestU8.byteLength) throw new RangeError('guest paddr out of range');
-        return guestBase + paddr;
+        if (paddr < 0 || paddr >= guest_size) throw new RangeError('guest paddr out of range');
+        return guest_base + paddr;
     }
 
-    // Separate small SABs for state + command/event rings (no >4GiB offsets).
-    const stateSab = new SharedArrayBuffer(64 * 1024);
-
-    return { guestMemory, guestBase, guestU8, guestToLinear, stateSab };
+    // `segments` contains:
+    // - `control`: SharedArrayBuffer for status + per-worker command/event rings
+    // - `guestMemory`: shared WebAssembly.Memory for guest RAM
+    // - `ioIpc`: SharedArrayBuffer for high-frequency CPU<->IO IPC
+    // - `vgaFramebuffer` + `sharedFramebuffer`: demo display buffers
+    return { segments, shared, guestToLinear };
 }
 ```
 
@@ -837,10 +824,11 @@ Users can also clear the cache via browser site data controls (e.g., DevTools â†
 ```javascript
 // Main thread coordinator
 import { waitUntilNotEqual } from './runtime/atomics_wait.js';
+import { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } from './runtime/shared_layout.js';
 
- class WorkerCoordinator {
-     constructor() {
-         this.cpuWorker = new Worker('cpu-worker.js', { type: 'module' });
+class WorkerCoordinator {
+    constructor() {
+        this.cpuWorker = new Worker('cpu-worker.js', { type: 'module' });
         this.gpuWorker = new Worker('gpu-worker.js', { type: 'module' });
         this.ioWorker = new Worker('io-worker.js', { type: 'module' });
         this.jitWorker = new Worker('jit-worker.js', { type: 'module' });
@@ -854,41 +842,55 @@ import { waitUntilNotEqual } from './runtime/atomics_wait.js';
 
     async initSharedMemory() {
         // Shared buffers (split; no >4GiB offsets).
-        const { guestMemory, stateSab, cmdSab, eventSab } = await initializeMemory();
-        this.guestMemory = guestMemory;
-        this.stateSab = stateSab;
-        this.cmdSab = cmdSab;
-        this.eventSab = eventSab;
-        this.statusFlags = new Int32Array(this.stateSab, 0, 256);
+        //
+        // The canonical web runtime allocation is:
+        // - `controlSab`: a small SharedArrayBuffer holding status + command/event rings per worker
+        // - `guestMemory`: shared WebAssembly.Memory holding guest RAM
+        // - `ioIpcSab`: separate AIPC rings for high-frequency CPU<->IO ops
+        const segments = allocateSharedMemorySegments();
+        this.shared = createSharedMemoryViews(segments);
+        this.statusFlags = this.shared.status;
 
-        // Initialize workers with shared memory
-         [this.cpuWorker, this.gpuWorker, this.ioWorker, this.jitWorker].forEach(worker => {
-             worker.postMessage({
-                 type: 'init',
-                 guestMemory: this.guestMemory,
-                 stateSab: this.stateSab,
-                 cmdSab: this.cmdSab,
-                 eventSab: this.eventSab,
-             });
-         });
-     }
-     }
-     
-     // Wait for CPU worker without blocking the UI thread.
-     //
-     // Note: Atomics.wait() is only allowed in workers. The main thread must use
-     // Atomics.waitAsync() (where available) or poll/await messages.
-     async waitForCpu({ timeoutMs } = {}) {
-         return waitUntilNotEqual(this.statusFlags, STATUS_CPU_RUNNING, 1, { timeoutMs });
-     }
-     
-     // Signal CPU to resume
-     signalCpu() {
-         Atomics.store(this.statusFlags, STATUS_CPU_RUNNING, 1);
-        Atomics.notify(this.statusFlags, STATUS_CPU_RUNNING, 1);
+        // Initialize workers with shared memory.
+        const workers = [
+            ['cpu', this.cpuWorker],
+            ['gpu', this.gpuWorker],
+            ['io', this.ioWorker],
+            ['jit', this.jitWorker],
+        ];
+        workers.forEach(([role, worker]) => {
+            // In production code the init payload also includes optional `wasmModule`
+            // (structured-cloneable WebAssembly.Module), perf channels, and other
+            // attachments (see `web/src/runtime/protocol.ts`).
+            worker.postMessage({
+                kind: 'init',
+                role,
+                controlSab: segments.control,
+                guestMemory: segments.guestMemory,
+                vgaFramebuffer: segments.vgaFramebuffer,
+                ioIpcSab: segments.ioIpc,
+                sharedFramebuffer: segments.sharedFramebuffer,
+                sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+            });
+        });
     }
- }
- ```
+      
+    // Wait for CPU worker readiness without blocking the UI thread.
+    //
+    // Note: Atomics.wait() is only allowed in workers. The main thread must use
+    // Atomics.waitAsync() (where available) or poll/await messages.
+    async waitForCpuReady({ timeoutMs } = {}) {
+        // The worker sets `StatusIndex.CpuReady = 1` during init.
+        return waitUntilNotEqual(this.statusFlags, StatusIndex.CpuReady, 0, { timeoutMs });
+    }
+      
+    // Signal the VM to stop (one-way flag; the coordinator resets status on restart).
+    requestStop() {
+        Atomics.store(this.statusFlags, StatusIndex.StopRequested, 1);
+        Atomics.notify(this.statusFlags, StatusIndex.StopRequested, 1);
+    }
+}
+```
 
 ### Power / Reset Orchestration (ACPI)
 
