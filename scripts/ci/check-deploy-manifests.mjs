@@ -63,6 +63,21 @@ function forbidLabel({ relPath, forbidden = [] }) {
   };
 }
 
+function ensureSingleLabel(relPath) {
+  const filePath = resolve(repoRoot, relPath);
+  if (!existsSync(filePath)) return;
+
+  const labels = extractLabels(readHeaderLines(filePath));
+  const known = ['CANONICAL', 'EXAMPLE', 'LEGACY'];
+  const present = known.filter((label) => labels.has(label));
+  if (present.length <= 1) return;
+
+  return {
+    relPath,
+    message: `Expected ${relPath} to have exactly one label (CANONICAL/EXAMPLE/LEGACY); found: ${present.map((l) => `'${l}'`).join(', ')}`,
+  };
+}
+
 function gitTrackedFiles() {
   const res = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' });
   if (res.status !== 0) {
@@ -116,6 +131,7 @@ errors.push(
     forbidden: ['EXAMPLE', 'LEGACY'],
   }),
 );
+errors.push(ensureSingleLabel('deploy/docker-compose.yml'));
 
 // Any other Compose manifests are treated as reference-only examples, since the
 // canonical production entry point is `deploy/docker-compose.yml`.
@@ -147,6 +163,7 @@ for (const relPath of composeManifests) {
       forbidden: ['CANONICAL'],
     }),
   );
+  errors.push(ensureSingleLabel(relPath));
 }
 
 // Parse-level validation for all compose manifests. This catches accidental YAML
