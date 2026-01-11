@@ -304,6 +304,29 @@ ctx.onmessage = (ev) => {
         post({ type: "started", mode });
 
         if (mode === "nonYieldingLoop") {
+          // Simulate a hung CPU worker that never yields back to the event loop.
+          //
+          // Prefer an `Atomics.wait`-based block when SharedArrayBuffer is available so we don't
+          // peg a CPU core (which can make local debugging and automated tests noisy). Fall back
+          // to a busy loop when SharedArrayBuffer is unavailable (e.g. crossOriginIsolated=false).
+          const Sab = globalThis.SharedArrayBuffer;
+          if (
+            typeof Sab !== "undefined" &&
+            typeof Atomics !== "undefined" &&
+            typeof Atomics.wait === "function"
+          ) {
+            try {
+              const buf = new Sab(4);
+              const int32 = new Int32Array(buf);
+              // Loop to tolerate spurious wakeups while remaining unresponsive.
+              // eslint-disable-next-line no-constant-condition
+              while (true) Atomics.wait(int32, 0, 0, 60_000);
+            } catch {
+              // Fall back to a busy loop below.
+            }
+          }
+
+          // eslint-disable-next-line no-constant-condition
           while (true) {}
         }
 

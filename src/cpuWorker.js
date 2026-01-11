@@ -215,7 +215,9 @@ parentPort.on('message', (msg) => {
           // `worker.terminate()`.
           const buf = new SharedArrayBuffer(4);
           const int32 = new Int32Array(buf);
-          Atomics.wait(int32, 0, 0);
+          // Loop to tolerate spurious wakeups while remaining unresponsive.
+          // eslint-disable-next-line no-constant-condition
+          while (true) Atomics.wait(int32, 0, 0, 60_000);
         }
 
         if (mode === 'crash') {

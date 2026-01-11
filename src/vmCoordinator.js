@@ -196,17 +196,22 @@ export class VmCoordinator extends EventTarget {
     this._stopWatchdog();
     const intervalMs = Math.max(25, Math.floor(this.config.cpu.watchdogTimeoutMs / 4));
     this._watchdogTimer = setInterval(() => {
-      if (this.state !== 'running') return;
-      const elapsed = Date.now() - this.lastHeartbeatAt;
-      if (elapsed <= this.config.cpu.watchdogTimeoutMs) return;
-
-      this._emitError({
-        code: ErrorCode.WatchdogTimeout,
-        message: `CPU worker became unresponsive (no heartbeat for ${elapsed}ms).`,
-        details: { elapsedMs: elapsed, watchdogTimeoutMs: this.config.cpu.watchdogTimeoutMs },
-        suggestion: 'The worker was terminated to keep the UI responsive. Reset the VM to continue.',
-      });
+      this._checkWatchdog();
     }, intervalMs);
+  }
+
+  _checkWatchdog() {
+    if (this.state !== 'running') return false;
+    const elapsed = Date.now() - this.lastHeartbeatAt;
+    if (elapsed <= this.config.cpu.watchdogTimeoutMs) return false;
+
+    this._emitError({
+      code: ErrorCode.WatchdogTimeout,
+      message: `CPU worker became unresponsive (no heartbeat for ${elapsed}ms).`,
+      details: { elapsedMs: elapsed, watchdogTimeoutMs: this.config.cpu.watchdogTimeoutMs },
+      suggestion: 'The worker was terminated to keep the UI responsive. Reset the VM to continue.',
+    });
+    return true;
   }
 
   _stopWatchdog() {
