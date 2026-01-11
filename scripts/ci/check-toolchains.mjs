@@ -51,6 +51,8 @@ function assertNoFloatingNightlyInWorkflows(workflowsDir) {
         // Workflows should install Rust via our pinned wrapper action (`./.github/actions/setup-rust`) so
         // `toolchain: stable`/`toolchain: nightly` always resolve to the repo-pinned versions.
         { pattern: /\bdtolnay\/rust-toolchain@/u, message: "uses dtolnay/rust-toolchain directly" },
+        { pattern: /\btoolchain:\s*\d+\.\d+\.\d+\b/u, message: "hardcodes a stable toolchain version" },
+        { pattern: /\bnightly-\d{4}-\d{2}-\d{2}\b/u, message: "hardcodes a nightly toolchain date" },
         { pattern: /\bcargo\s+\+nightly(?!-)/u, message: "uses floating cargo +nightly" },
         { pattern: /\brustc\s+\+nightly(?!-)/u, message: "uses floating rustc +nightly" },
         { pattern: /\brustup\s+toolchain\s+install\s+nightly(?!-)/u, message: "installs floating rustup nightly" },
