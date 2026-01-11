@@ -19,6 +19,7 @@ import {
   IO_IPC_RING_CAPACITY_BYTES,
   RUNTIME_RESERVED_BYTES,
   STATUS_BYTES,
+  STATUS_INTS,
   StatusIndex,
   WORKER_ROLES,
   allocateSharedMemorySegments,
@@ -200,5 +201,15 @@ describe("runtime/shared_layout", () => {
     expect(Atomics.load(status, StatusIndex.IoReady)).toBe(0);
     expect(Atomics.load(status, StatusIndex.JitReady)).toBe(0);
     expect(Atomics.load(status, StatusIndex.NetReady)).toBe(0);
+  });
+
+  it("defines unique status indices within bounds", () => {
+    const values = Object.values(StatusIndex).filter((v): v is number => typeof v === "number");
+    const unique = new Set(values);
+    expect(unique.size).toBe(values.length);
+    for (const idx of unique) {
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(STATUS_INTS);
+    }
   });
 });
