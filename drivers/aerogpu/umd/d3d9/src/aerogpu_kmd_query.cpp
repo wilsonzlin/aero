@@ -400,16 +400,22 @@ bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1* out) {
 }
 
 bool AerogpuKmdQuery::WaitForVBlank(uint32_t vid_pn_source_id, uint32_t timeout_ms) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (!adapter_ || !get_scanline_) {
+  D3DKMT_HANDLE adapter = 0;
+  PFND3DKMTGetScanLine get_scanline = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    adapter = adapter_;
+    get_scanline = get_scanline_;
+  }
+  if (!adapter || !get_scanline) {
     return false;
   }
 
   D3DKMT_GETSCANLINE scan{};
-  scan.hAdapter = adapter_;
+  scan.hAdapter = adapter;
   scan.VidPnSourceId = vid_pn_source_id;
 
-  const NTSTATUS st0 = get_scanline_(&scan);
+  const NTSTATUS st0 = get_scanline(&scan);
   if (!NtSuccess(st0)) {
     return false;
   }
@@ -441,9 +447,9 @@ bool AerogpuKmdQuery::WaitForVBlank(uint32_t vid_pn_source_id, uint32_t timeout_
     iteration++;
 
     std::memset(&scan, 0, sizeof(scan));
-    scan.hAdapter = adapter_;
+    scan.hAdapter = adapter;
     scan.VidPnSourceId = vid_pn_source_id;
-    const NTSTATUS st = get_scanline_(&scan);
+    const NTSTATUS st = get_scanline(&scan);
     if (!NtSuccess(st)) {
       return false;
     }
