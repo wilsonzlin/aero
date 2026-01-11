@@ -753,61 +753,28 @@ fn validate_packet_len(buf: &[u8], hdr: AerogpuCmdHdr) -> Result<usize, AerogpuC
 pub fn decode_cmd_create_shader_dxbc_payload_le(
     buf: &[u8],
 ) -> Result<(AerogpuCmdCreateShaderDxbc, &[u8]), AerogpuCmdDecodeError> {
-    if buf.len() < 24 {
-        return Err(AerogpuCmdDecodeError::BufferTooSmall);
-    }
-
     let hdr = decode_cmd_hdr_le(buf)?;
     let packet_len = validate_packet_len(buf, hdr)?;
-
-    let dxbc_size_bytes = u32::from_le_bytes(buf[16..20].try_into().unwrap());
-    let payload_start = 24usize;
-    let payload_end = payload_start
-        .checked_add(dxbc_size_bytes as usize)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
-    if payload_end > packet_len {
-        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
-    }
-
-    let cmd = AerogpuCmdCreateShaderDxbc {
+    let packet = AerogpuCmdPacket {
         hdr,
-        shader_handle: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
-        stage: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
-        dxbc_size_bytes,
-        reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
     };
-
-    Ok((cmd, &buf[payload_start..payload_end]))
+    packet.decode_create_shader_dxbc_payload_le()
 }
 
 /// Decode CREATE_INPUT_LAYOUT and return the blob payload (without padding).
 pub fn decode_cmd_create_input_layout_blob_le(
     buf: &[u8],
 ) -> Result<(AerogpuCmdCreateInputLayout, &[u8]), AerogpuCmdDecodeError> {
-    if buf.len() < AerogpuCmdCreateInputLayout::SIZE_BYTES {
-        return Err(AerogpuCmdDecodeError::BufferTooSmall);
-    }
-
     let hdr = decode_cmd_hdr_le(buf)?;
     let packet_len = validate_packet_len(buf, hdr)?;
-
-    let blob_size_bytes = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-    let payload_start = AerogpuCmdCreateInputLayout::SIZE_BYTES;
-    let payload_end = payload_start
-        .checked_add(blob_size_bytes as usize)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
-    if payload_end > packet_len {
-        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
-    }
-
-    let cmd = AerogpuCmdCreateInputLayout {
+    let packet = AerogpuCmdPacket {
         hdr,
-        input_layout_handle: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
-        blob_size_bytes,
-        reserved0: u32::from_le_bytes(buf[16..20].try_into().unwrap()),
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
     };
-
-    Ok((cmd, &buf[payload_start..payload_end]))
+    packet.decode_create_input_layout_payload_le()
 }
 
 /// Decode SET_SHADER_CONSTANTS_F and return the float payload.
@@ -858,78 +825,28 @@ pub fn decode_cmd_set_shader_constants_f_payload_le(
 pub fn decode_cmd_upload_resource_payload_le(
     buf: &[u8],
 ) -> Result<(AerogpuCmdUploadResource, &[u8]), AerogpuCmdDecodeError> {
-    if buf.len() < AerogpuCmdUploadResource::SIZE_BYTES {
-        return Err(AerogpuCmdDecodeError::BufferTooSmall);
-    }
-
     let hdr = decode_cmd_hdr_le(buf)?;
     let packet_len = validate_packet_len(buf, hdr)?;
-
-    let size_bytes_u64 = u64::from_le_bytes(buf[24..32].try_into().unwrap());
-    let data_len = usize::try_from(size_bytes_u64).map_err(|_| AerogpuCmdDecodeError::BadSizeBytes {
-        found: hdr.size_bytes,
-    })?;
-    let payload_start = AerogpuCmdUploadResource::SIZE_BYTES;
-    let payload_end = payload_start
-        .checked_add(data_len)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
-    if payload_end > packet_len {
-        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
-    }
-
-    let cmd = AerogpuCmdUploadResource {
+    let packet = AerogpuCmdPacket {
         hdr,
-        resource_handle: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
-        reserved0: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
-        offset_bytes: u64::from_le_bytes(buf[16..24].try_into().unwrap()),
-        size_bytes: size_bytes_u64,
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
     };
-
-    Ok((cmd, &buf[payload_start..payload_end]))
+    packet.decode_upload_resource_payload_le()
 }
 
 /// Decode SET_VERTEX_BUFFERS and parse the trailing `aerogpu_vertex_buffer_binding[]`.
 pub fn decode_cmd_set_vertex_buffers_bindings_le(
     buf: &[u8],
-) -> Result<(AerogpuCmdSetVertexBuffers, Vec<AerogpuVertexBufferBinding>), AerogpuCmdDecodeError> {
-    if buf.len() < 16 {
-        return Err(AerogpuCmdDecodeError::BufferTooSmall);
-    }
-
+) -> Result<(AerogpuCmdSetVertexBuffers, &[AerogpuVertexBufferBinding]), AerogpuCmdDecodeError> {
     let hdr = decode_cmd_hdr_le(buf)?;
     let packet_len = validate_packet_len(buf, hdr)?;
-
-    let buffer_count = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-    let bindings_size_bytes = buffer_count
-        .checked_mul(AerogpuVertexBufferBinding::SIZE_BYTES as u32)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)? as usize;
-    let payload_start = 16usize;
-    let payload_end = payload_start
-        .checked_add(bindings_size_bytes)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
-    if payload_end > packet_len {
-        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
-    }
-
-    let cmd = AerogpuCmdSetVertexBuffers {
+    let packet = AerogpuCmdPacket {
         hdr,
-        start_slot: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
-        buffer_count,
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
     };
-
-    let mut bindings = Vec::with_capacity(buffer_count as usize);
-    for i in 0..(buffer_count as usize) {
-        let off = payload_start + i * AerogpuVertexBufferBinding::SIZE_BYTES;
-        let binding = AerogpuVertexBufferBinding {
-            buffer: u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()),
-            stride_bytes: u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap()),
-            offset_bytes: u32::from_le_bytes(buf[off + 8..off + 12].try_into().unwrap()),
-            reserved0: u32::from_le_bytes(buf[off + 12..off + 16].try_into().unwrap()),
-        };
-        bindings.push(binding);
-    }
-
-    Ok((cmd, bindings))
+    packet.decode_set_vertex_buffers_payload_le()
 }
 
 #[derive(Clone, Copy)]

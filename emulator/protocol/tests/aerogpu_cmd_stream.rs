@@ -1,5 +1,7 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamIter, AEROGPU_CMD_STREAM_MAGIC,
+    decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
+    decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le, AerogpuCmdDecodeError,
+    AerogpuCmdOpcode, AerogpuCmdStreamIter, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
@@ -256,4 +258,86 @@ fn set_vertex_buffers_count_mismatch_is_rejected() {
         packets[0].decode_set_vertex_buffers_payload_le(),
         Err(AerogpuCmdDecodeError::PayloadSizeMismatch { .. })
     ));
+}
+
+#[test]
+fn free_function_payload_decoders_match_packet_helpers() {
+    let dxbc_bytes = b"DXBC!";
+    let upload_bytes = b"hello world";
+    let input_layout_blob = b"ILAYblob";
+
+    let mut create_shader_payload = Vec::new();
+    push_u32(&mut create_shader_payload, 0xAABB_CCDD); // shader_handle
+    push_u32(&mut create_shader_payload, 1); // stage
+    push_u32(&mut create_shader_payload, dxbc_bytes.len() as u32);
+    push_u32(&mut create_shader_payload, 0); // reserved0
+    create_shader_payload.extend_from_slice(dxbc_bytes);
+    let create_shader_packet = build_packet(AerogpuCmdOpcode::CreateShaderDxbc as u32, create_shader_payload);
+
+    let (create_shader, parsed_dxbc) = decode_cmd_create_shader_dxbc_payload_le(&create_shader_packet).unwrap();
+    let shader_handle = create_shader.shader_handle;
+    let stage = create_shader.stage;
+    let dxbc_size_bytes = create_shader.dxbc_size_bytes;
+    assert_eq!(shader_handle, 0xAABB_CCDD);
+    assert_eq!(stage, 1);
+    assert_eq!(dxbc_size_bytes as usize, dxbc_bytes.len());
+    assert_eq!(parsed_dxbc, dxbc_bytes);
+
+    let mut upload_resource_payload = Vec::new();
+    push_u32(&mut upload_resource_payload, 0x1122_3344); // resource_handle
+    push_u32(&mut upload_resource_payload, 0); // reserved0
+    push_u64(&mut upload_resource_payload, 0x10); // offset_bytes
+    push_u64(&mut upload_resource_payload, upload_bytes.len() as u64);
+    upload_resource_payload.extend_from_slice(upload_bytes);
+    let upload_packet = build_packet(AerogpuCmdOpcode::UploadResource as u32, upload_resource_payload);
+
+    let (upload, parsed_upload) = decode_cmd_upload_resource_payload_le(&upload_packet).unwrap();
+    let resource_handle = upload.resource_handle;
+    let offset_bytes = upload.offset_bytes;
+    let size_bytes = upload.size_bytes;
+    assert_eq!(resource_handle, 0x1122_3344);
+    assert_eq!(offset_bytes, 0x10);
+    assert_eq!(size_bytes as usize, upload_bytes.len());
+    assert_eq!(parsed_upload, upload_bytes);
+
+    let mut create_input_layout_payload = Vec::new();
+    push_u32(&mut create_input_layout_payload, 0x5566_7788); // input_layout_handle
+    push_u32(&mut create_input_layout_payload, input_layout_blob.len() as u32);
+    push_u32(&mut create_input_layout_payload, 0); // reserved0
+    create_input_layout_payload.extend_from_slice(input_layout_blob);
+    let input_layout_packet =
+        build_packet(AerogpuCmdOpcode::CreateInputLayout as u32, create_input_layout_payload);
+
+    let (create_layout, parsed_blob) = decode_cmd_create_input_layout_blob_le(&input_layout_packet).unwrap();
+    let input_layout_handle = create_layout.input_layout_handle;
+    let blob_size_bytes = create_layout.blob_size_bytes;
+    assert_eq!(input_layout_handle, 0x5566_7788);
+    assert_eq!(blob_size_bytes as usize, input_layout_blob.len());
+    assert_eq!(parsed_blob, input_layout_blob);
+
+    let mut set_vertex_buffers_payload = Vec::new();
+    push_u32(&mut set_vertex_buffers_payload, 2); // start_slot
+    push_u32(&mut set_vertex_buffers_payload, 2); // buffer_count
+    // binding[0]
+    push_u32(&mut set_vertex_buffers_payload, 11); // buffer
+    push_u32(&mut set_vertex_buffers_payload, 16); // stride_bytes
+    push_u32(&mut set_vertex_buffers_payload, 0); // offset_bytes
+    push_u32(&mut set_vertex_buffers_payload, 0); // reserved0
+    // binding[1]
+    push_u32(&mut set_vertex_buffers_payload, 22); // buffer
+    push_u32(&mut set_vertex_buffers_payload, 32); // stride_bytes
+    push_u32(&mut set_vertex_buffers_payload, 4); // offset_bytes
+    push_u32(&mut set_vertex_buffers_payload, 0); // reserved0
+    let set_vbs_packet = build_packet(AerogpuCmdOpcode::SetVertexBuffers as u32, set_vertex_buffers_payload);
+
+    let (set_vbs, bindings) = decode_cmd_set_vertex_buffers_bindings_le(&set_vbs_packet).unwrap();
+    let start_slot = set_vbs.start_slot;
+    let buffer_count = set_vbs.buffer_count;
+    assert_eq!(start_slot, 2);
+    assert_eq!(buffer_count, 2);
+    assert_eq!(bindings.len(), 2);
+    let binding0_buffer = bindings[0].buffer;
+    let binding1_buffer = bindings[1].buffer;
+    assert_eq!(binding0_buffer, 11);
+    assert_eq!(binding1_buffer, 22);
 }
