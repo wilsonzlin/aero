@@ -66,6 +66,11 @@ AERO_VIRTIO_INF_SOURCES: Mapping[str, Path] = {
     "virtio-input": REPO_ROOT / "drivers/windows/virtio-input/virtio-input.inf",
 }
 
+AERO_VIRTIO_PCI_IDENTITY_HEADER = REPO_ROOT / "drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h"
+AERO_VIRTIO_BLK_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio/blk/include/aerovblk.h"
+AERO_VIRTIO_NET_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio/net/include/aerovnet.h"
+AERO_VIRTIO_INPUT_DRIVER_HEADER = REPO_ROOT / "drivers/windows/virtio-input/src/virtio_input.h"
+
 
 def fail(message: str) -> None:
     print(f"error: {message}", file=sys.stderr)
@@ -88,6 +93,23 @@ def strip_inf_comment_lines(text: str) -> str:
     """Remove full-line INF comments (`; ...`) from `text`."""
 
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(";"))
+
+
+def parse_contract_major_version(md: str) -> int:
+    m = re.search(r"^\*\*Contract version:\*\*\s*`(?P<major>\d+)\.", md, flags=re.M)
+    if not m:
+        fail(f"could not parse contract major version from {W7_VIRTIO_CONTRACT_MD.as_posix()}")
+    return int(m.group("major"), 10)
+
+
+def parse_c_define_hex(text: str, name: str, *, file: Path) -> int | None:
+    m = re.search(rf"^\s*#define\s+{re.escape(name)}\s+(?P<hex>0x[0-9A-Fa-f]+)", text, flags=re.M)
+    if not m:
+        return None
+    try:
+        return int(m.group("hex"), 16)
+    except ValueError:
+        fail(f"{file.as_posix()}: invalid hex literal in #define {name}")
 
 
 def parse_hex(value: str) -> int:
@@ -701,6 +723,7 @@ def main() -> None:
     except json.JSONDecodeError as e:
         fail(f"invalid JSON in {WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {e}")
 
+    contract_major = parse_contract_major_version(w7_md)
     contract_rev = parse_contract_revision_id(w7_md)
     contract_ids = parse_w7_contract_pci_identities(w7_md)
     contract_queues = parse_w7_contract_queue_sizes(w7_md)
@@ -1169,6 +1192,17 @@ def main() -> None:
             inf_text = strip_inf_comment_lines(read_text(inf_path))
             inf_upper = inf_text.upper()
 
+            if inf_path.name != expected_inf:
+                errors.append(
+                    format_error(
+                        f"{device_name}: canonical INF path does not match expected INF file name from contract:",
+                        [
+                            f"expected: {expected_inf!r}",
+                            f"got: {inf_path.as_posix()}",
+                        ],
+                    )
+                )
+
             if base_hwid_upper not in inf_upper:
                 errors.append(
                     format_error(
@@ -1176,6 +1210,21 @@ def main() -> None:
                         [
                             f"expected to find: {base_hwid}",
                             f"file: {inf_path.as_posix()}",
+                            ],
+                        )
+                    )
+
+            if re.search(
+                r"PCI\\VEN_1AF4&DEV_(?:10[0-3][0-9A-Fa-f]|100[0-9A-Fa-f])",
+                inf_text,
+                flags=re.I,
+            ):
+                errors.append(
+                    format_error(
+                        f"{device_name}: canonical INF contains transitional virtio-pci device IDs (out of scope for AERO-W7-VIRTIO):",
+                        [
+                            f"file: {inf_path.as_posix()}",
+                            "hint: keep transitional IDs in separate opt-in legacy INFs only",
                         ],
                     )
                 )
@@ -1214,6 +1263,120 @@ def main() -> None:
                         ],
                     )
                 )
+
+    # ---------------------------------------------------------------------
+    # 2.2) Canonical Windows driver source constants must match the contract.
+    # ---------------------------------------------------------------------
+    pci_identity_text = read_text(AERO_VIRTIO_PCI_IDENTITY_HEADER)
+    pci_vendor = parse_c_define_hex(
+        pci_identity_text, "VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO", file=AERO_VIRTIO_PCI_IDENTITY_HEADER
+    )
+    if pci_vendor is None or pci_vendor != VIRTIO_PCI_VENDOR_ID:
+        errors.append(
+            format_error(
+                "virtio_pci_identity.h: VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO mismatch:",
+                [
+                    f"expected: 0x{VIRTIO_PCI_VENDOR_ID:04X}",
+                    f"got: {pci_vendor!r}",
+                    f"file: {AERO_VIRTIO_PCI_IDENTITY_HEADER.as_posix()}",
+                ],
+            )
+        )
+
+    pci_modern_base = parse_c_define_hex(
+        pci_identity_text, "VIRTIO_PCI_IDENTITY_DEVICE_ID_MODERN_BASE", file=AERO_VIRTIO_PCI_IDENTITY_HEADER
+    )
+    if pci_modern_base is None or pci_modern_base != VIRTIO_PCI_DEVICE_ID_BASE:
+        errors.append(
+            format_error(
+                "virtio_pci_identity.h: VIRTIO_PCI_IDENTITY_DEVICE_ID_MODERN_BASE mismatch:",
+                [
+                    f"expected: 0x{VIRTIO_PCI_DEVICE_ID_BASE:04X}",
+                    f"got: {pci_modern_base!r}",
+                    f"file: {AERO_VIRTIO_PCI_IDENTITY_HEADER.as_posix()}",
+                ],
+            )
+        )
+
+    contract_rev_macro = f"VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V{contract_major}_REVISION_ID"
+    pci_contract_rev = parse_c_define_hex(pci_identity_text, contract_rev_macro, file=AERO_VIRTIO_PCI_IDENTITY_HEADER)
+    if pci_contract_rev is None:
+        errors.append(
+            format_error(
+                f"virtio_pci_identity.h: missing required contract revision macro {contract_rev_macro}:",
+                [
+                    f"file: {AERO_VIRTIO_PCI_IDENTITY_HEADER.as_posix()}",
+                    "hint: add a macro like 'VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID 0x01u'",
+                ],
+            )
+        )
+    elif pci_contract_rev != contract_rev:
+        errors.append(
+            format_error(
+                f"virtio_pci_identity.h: {contract_rev_macro} mismatch:",
+                [
+                    f"expected: 0x{contract_rev:02X}",
+                    f"got: 0x{pci_contract_rev:02X}",
+                    f"file: {AERO_VIRTIO_PCI_IDENTITY_HEADER.as_posix()}",
+                ],
+            )
+        )
+
+    blk_header = read_text(AERO_VIRTIO_BLK_DRIVER_HEADER)
+    for macro, expected in (
+        ("AEROVBLK_PCI_VENDOR_ID", VIRTIO_PCI_VENDOR_ID),
+        ("AEROVBLK_PCI_DEVICE_ID", contract_ids["virtio-blk"].device_id),
+        ("AEROVBLK_VIRTIO_PCI_REVISION_ID", contract_rev),
+    ):
+        val = parse_c_define_hex(blk_header, macro, file=AERO_VIRTIO_BLK_DRIVER_HEADER)
+        if val is None or val != expected:
+            errors.append(
+                format_error(
+                    f"virtio-blk driver header mismatch for {macro}:",
+                    [
+                        f"expected: 0x{expected:04X}",
+                        f"got: {val!r}",
+                        f"file: {AERO_VIRTIO_BLK_DRIVER_HEADER.as_posix()}",
+                    ],
+                )
+            )
+
+    net_header = read_text(AERO_VIRTIO_NET_DRIVER_HEADER)
+    for macro, expected in (
+        ("AEROVNET_VENDOR_ID", VIRTIO_PCI_VENDOR_ID),
+        ("AEROVNET_PCI_DEVICE_ID", contract_ids["virtio-net"].device_id),
+        ("AEROVNET_PCI_REVISION_ID", contract_rev),
+    ):
+        val = parse_c_define_hex(net_header, macro, file=AERO_VIRTIO_NET_DRIVER_HEADER)
+        if val is None or val != expected:
+            errors.append(
+                format_error(
+                    f"virtio-net driver header mismatch for {macro}:",
+                    [
+                        f"expected: 0x{expected:04X}",
+                        f"got: {val!r}",
+                        f"file: {AERO_VIRTIO_NET_DRIVER_HEADER.as_posix()}",
+                    ],
+                )
+            )
+
+    input_header = read_text(AERO_VIRTIO_INPUT_DRIVER_HEADER)
+    for macro, expected in (
+        ("VIOINPUT_PCI_SUBSYSTEM_ID_KEYBOARD", contract_ids["virtio-input (keyboard)"].subsystem_device_id),
+        ("VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE", contract_ids["virtio-input (mouse)"].subsystem_device_id),
+    ):
+        val = parse_c_define_hex(input_header, macro, file=AERO_VIRTIO_INPUT_DRIVER_HEADER)
+        if val is None or val != expected:
+            errors.append(
+                format_error(
+                    f"virtio-input driver header mismatch for {macro}:",
+                    [
+                        f"expected: 0x{expected:04X}",
+                        f"got: {val!r}",
+                        f"file: {AERO_VIRTIO_INPUT_DRIVER_HEADER.as_posix()}",
+                    ],
+                )
+            )
 
     # ---------------------------------------------------------------------
     # 3) Feature bit guardrails: docs must agree on Win7 contract v1 ring features.
