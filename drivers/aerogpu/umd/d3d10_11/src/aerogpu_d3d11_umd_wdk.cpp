@@ -402,19 +402,14 @@ static const void* GetDeviceCallbacks(const D3D11DDIARG_CREATEDEVICE* cd) {
   if (!cd) {
     return nullptr;
   }
-  if constexpr (has_member_pCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
-    if (cd->pCallbacks) {
-      return cd->pCallbacks;
-    }
-  }
   if constexpr (has_member_pDeviceCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
     if (cd->pDeviceCallbacks) {
       return cd->pDeviceCallbacks;
     }
   }
-  if constexpr (has_member_pUMCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
-    if (cd->pUMCallbacks) {
-      return cd->pUMCallbacks;
+  if constexpr (has_member_pCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
+    if (cd->pCallbacks) {
+      return cd->pCallbacks;
     }
   }
   return nullptr;
