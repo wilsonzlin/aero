@@ -1,3 +1,9 @@
+//! Legacy virtio-snd device model.
+//!
+//! This implementation predates the `aero-virtio` virtio stack and is retained
+//! behind the `emulator/legacy-audio` feature for reference and targeted tests.
+//! The canonical virtio-snd device model lives in `crates/aero-virtio`.
+
 use crate::audio::worklet::AudioSink;
 use crate::io::virtio::vio_core::{
     Descriptor, DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE,

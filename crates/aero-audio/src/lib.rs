@@ -13,4 +13,4 @@ pub mod capture;
 pub mod sink;
 
 /// `SharedArrayBuffer` ring buffer layout used by the web `AudioWorkletProcessor`.
-pub use aero_platform::audio::worklet_bridge;
+pub use aero_platform::audio::{mic_bridge, worklet_bridge};

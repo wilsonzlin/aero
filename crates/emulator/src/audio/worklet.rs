@@ -1,3 +1,8 @@
+//! Legacy wrapper around the canonical AudioWorklet SharedArrayBuffer ring buffer layout.
+//!
+//! The canonical implementation lives in `aero_platform::audio::worklet_bridge` and is
+//! re-exported by `aero_audio::worklet_bridge`.
+
 use aero_platform::audio::worklet_bridge::InterleavedRingBuffer;
 use core::ops::{Deref, DerefMut};
 
@@ -90,4 +95,3 @@ mod tests {
         assert_eq!(rb.buffer_level_frames(), 0);
     }
 }
-

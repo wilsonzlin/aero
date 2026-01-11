@@ -1,3 +1,4 @@
+#[cfg(feature = "legacy-audio")]
 pub mod audio;
 pub mod chipset;
 pub mod display;

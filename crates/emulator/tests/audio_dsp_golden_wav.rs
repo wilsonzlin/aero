@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-audio")]
+
 use emulator::io::audio::dsp::pcm::{PcmSampleFormat, PcmSpec};
 use emulator::io::audio::dsp::resample::ResamplerKind;
 use emulator::io::audio::dsp::StreamProcessor;

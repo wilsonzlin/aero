@@ -4,6 +4,17 @@
 
 Windows 7 uses HD Audio (High Definition Audio, Intel HDA) as the primary audio interface. We must emulate this and translate to the Web Audio API.
 
+Canonical implementation pointers (to avoid duplicated stacks):
+
+- `crates/aero-audio/src/hda.rs` — canonical HDA device model (playback) + PCM helpers.
+- `crates/aero-virtio/src/devices/snd.rs` — canonical virtio-snd device model.
+- `crates/platform/src/audio/worklet_bridge.rs` — AudioWorklet output ring buffer (`SharedArrayBuffer`) layout.
+- `crates/platform/src/audio/mic_bridge.rs` — microphone capture ring buffer (`SharedArrayBuffer`) layout.
+- `web/src/platform/audio.ts` + `web/src/platform/audio-worklet-processor.js` — AudioWorklet consumer implementation.
+- `web/src/audio/mic_capture.ts` + `web/src/audio/mic-worklet-processor.js` — microphone capture producer implementation.
+
+The older `crates/emulator` audio stack is retained behind the `emulator/legacy-audio` feature for reference and targeted tests.
+
 ---
 
 ## Audio Architecture
@@ -675,20 +686,15 @@ Reference implementation files:
 
 - `web/src/audio/mic_capture.ts` (permission + lifecycle + ring buffer allocation)
 - `web/src/audio/mic-worklet-processor.js` (AudioWorklet capture writer)
-- `crates/emulator/src/io/audio/input.rs` + `crates/emulator/src/io/audio/dsp/pcm.rs` (ring buffer + float32→PCM16 conversion)
-- `crates/emulator/src/io/audio/hda/*` (HDA capture stream + mic pin exposure)
+- `crates/platform/src/audio/mic_bridge.rs` (ring buffer layout + wrap-around math)
+
+Guest-visible capture device integration is not yet implemented in the canonical audio stack; an earlier experimental implementation exists under `crates/emulator/src/io/audio/*` behind the `emulator/legacy-audio` feature.
 
 ### HDA capture exposure (guest)
 
-The emulator's HDA model now advertises one input stream and a microphone pin:
-
-- **Stream DMA**: `SD1` (input stream 0) writes capture bytes into guest memory.
-- **Codec topology**: input converter + mic pin widgets are exposed so Windows can
-  enumerate a recording endpoint.
-
-Host code should push capture PCM bytes into `HdaController::capture_ring()`; the
-controller drains this buffer into guest BDL entries when the capture stream is
-running.
+The canonical `aero-audio` HDA model is currently playback-only. Guest-visible
+capture (HDA input pin or virtio-snd capture stream) will be layered on once the
+guest driver strategy is finalized.
 
 ### Ring buffer layout
  

@@ -9,6 +9,9 @@ net-trace = []
 # Enable verbose debug logging from the user-space network stack.
 net_log = []
 sinc-resampler = []
+# Legacy audio stack (AC97/HDA/DSP + the old virtio-snd model). This is not part of the
+# browser/WASM runtime path; it is retained for reference and for targeted tests.
+legacy-audio = []
 
 [dependencies]
 aero-devices = { path = "../devices" }
@@ -57,6 +60,7 @@ path = "../../tests/windows7_boot.rs"
 [[bench]]
 name = "dsp"
 harness = false
+required-features = ["legacy-audio"]
 
 [[bench]]
 name = "storage_sequential"

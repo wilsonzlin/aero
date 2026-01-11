@@ -1,7 +1,11 @@
 use aero_devices::pci::profile::{
-    HDA_ICH6, IDE_PIIX3, NIC_E1000_82540EM, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3,
+    IDE_PIIX3, NIC_E1000_82540EM, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3,
 };
 
+#[cfg(feature = "legacy-audio")]
+use aero_devices::pci::profile::HDA_ICH6;
+
+#[cfg(feature = "legacy-audio")]
 use emulator::io::audio::hda::HdaPciDevice;
 use emulator::io::net::e1000_aero::{E1000Device, E1000PciDevice};
 use emulator::io::pci::PciDevice;
@@ -107,6 +111,7 @@ fn ahci_pci_config_matches_canonical_profile() {
 }
 
 #[test]
+#[cfg(feature = "legacy-audio")]
 fn hda_pci_config_matches_canonical_profile() {
     let dev = HdaPciDevice::new(emulator::io::audio::hda::HdaController::new(), 0xfebf_0000);
     assert_basic_identity(&dev, HDA_ICH6);

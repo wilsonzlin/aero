@@ -13,10 +13,11 @@ were considered, and what the consequences are.
 - [ADR 0005: Commit `Cargo.lock` for reproducible Rust builds](./0005-cargo-lock-policy.md)
 - [ADR 0006: Node monorepo tooling (npm workspaces + single lockfile)](./0006-node-monorepo-tooling.md)
 - [ADR 0009: Rust toolchain policy (pinned stable + pinned nightly for threaded WASM)](./0009-rust-toolchain-policy.md)
+- [ADR 0010: Canonical audio stack (aero-audio + aero-virtio; legacy emulator audio gated)](./0010-canonical-audio-stack.md)
 
 ## Creating a new ADR
 
-1. Pick the next number (`0010-...`).
+1. Pick the next number (`0011-...`).
 2. Use a descriptive slug (`kebab-case`).
 3. Include these sections:
    - **Context**

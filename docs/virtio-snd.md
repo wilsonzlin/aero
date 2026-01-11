@@ -1,6 +1,8 @@
 # Virtio-snd (Paravirtual Audio) Device
 
-This repository includes a minimal **virtio-snd** device model intended to be used as a high-performance alternative to full Intel HDA emulation once guest drivers exist.
+This repository includes a minimal **virtio-snd** device model (`crates/aero-virtio`, `aero_virtio::devices::snd`) intended to be used as a high-performance alternative to full Intel HDA emulation once guest drivers exist.
+
+The legacy virtio-snd implementation under `crates/emulator/src/io/virtio/devices/snd.rs` is retained behind the `emulator/legacy-audio` feature for reference.
 
 See also:
 
@@ -113,8 +115,10 @@ ring buffer (`SharedArrayBuffer`) via `aero_platform::audio::mic_bridge::MicBrid
 ### AudioWorklet ring buffer layout
 
 The AudioWorklet ring buffer used by the AU-WORKLET path uses **frame indices** (not sample indices).
-See `web/src/platform/audio.ts` and `web/src/platform/audio-worklet-processor.js` for the canonical
-layout and wrap-around behavior.
+The canonical layout is defined in:
+
+- Rust: `crates/platform/src/audio/worklet_bridge.rs` (`aero_platform::audio::worklet_bridge`, re-exported by `aero_audio::worklet_bridge`)
+- JS: `web/src/platform/audio.ts` + `web/src/platform/audio-worklet-processor.js`
 
 Layout (little-endian):
 
@@ -126,7 +130,7 @@ Layout (little-endian):
 
 ## Audio Output Path
 
-TX PCM samples are written into the same **AudioWorklet ring buffer** abstraction used by the AU-WORKLET layer (`web/src/platform/audio.ts`). The current implementation converts interleaved S16_LE samples into interleaved `f32` samples and writes them into the Float32 ring buffer consumed by `web/src/platform/audio-worklet-processor.js`.
+In the canonical Rust device model (`aero_virtio::devices::snd::VirtioSnd`), TX PCM samples are converted from interleaved S16_LE to interleaved `f32` and pushed into an `aero_audio::sink::AudioSink` (typically an AudioWorklet ring buffer producer).
 
 ## Windows 7 Driver Strategy
 

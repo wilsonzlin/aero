@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-audio")]
+
 use std::fs;
 use std::path::Path;
 
