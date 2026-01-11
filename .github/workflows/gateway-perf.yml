@@ -35,33 +35,20 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
-      - name: Determine Node workspace directory (candidate)
-        id: node-dir-head
-        run: node base/scripts/ci/detect_node_workspace.mjs --root head >> "$GITHUB_OUTPUT"
-
-      - name: Determine Node workspace directory (baseline)
-        id: node-dir-base
-        run: node base/scripts/ci/detect_node_workspace.mjs --root base >> "$GITHUB_OUTPUT"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Node workspace (candidate)
+        id: node-workspace-head
+        uses: ./base/.github/actions/setup-node-workspace
         with:
-          node-version-file: base/.nvmrc
-          cache: npm
-          cache-dependency-path: |
-            ${{ steps.node-dir-head.outputs.lockfile }}
-            ${{ steps.node-dir-base.outputs.lockfile }}
+          working-directory: head
 
-      - name: Install dependencies (baseline)
-        run: npm ci
-        working-directory: ${{ steps.node-dir-base.outputs.dir }}
-
-      - name: Install dependencies (candidate)
-        run: npm ci
-        working-directory: ${{ steps.node-dir-head.outputs.dir }}
+      - name: Setup Node workspace (baseline)
+        id: node-workspace-base
+        uses: ./base/.github/actions/setup-node-workspace
+        with:
+          working-directory: base
 
       - name: Run gateway bench (baseline)
-        working-directory: ${{ steps.node-dir-base.outputs.dir }}
+        working-directory: ${{ steps.node-workspace-base.outputs.dir }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/head/gateway-perf-results/base"
@@ -71,7 +58,7 @@ jobs:
             --json "$GITHUB_WORKSPACE/head/gateway-perf-results/base/raw.json"
 
       - name: Run gateway bench (candidate)
-        working-directory: ${{ steps.node-dir-head.outputs.dir }}
+        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: |
           set -euo pipefail
           mkdir -p gateway-perf-results/head gateway-perf-results/compare
