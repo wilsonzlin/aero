@@ -19,6 +19,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -348,15 +349,32 @@ def main() -> int:
 
     targets: list[_ExtractTarget]
     missing_optional: list[dict[str, Any]]
+    backend_used = backend
 
     sep_for_7z = "/"
     if backend == "7z":
         assert sevenz is not None
-        paths_norm, sep_for_7z = _list_iso_paths_with_7z(sevenz, iso_path)
-        tree = _build_tree_from_paths(paths_norm)
-        targets, missing_optional = _select_extract_targets(tree)
-        _extract_with_7z(sevenz, iso_path, out_root, targets, sep_for_7z)
-    else:
+        try:
+            paths_norm, sep_for_7z = _list_iso_paths_with_7z(sevenz, iso_path)
+            tree = _build_tree_from_paths(paths_norm)
+            targets, missing_optional = _select_extract_targets(tree)
+            _extract_with_7z(sevenz, iso_path, out_root, targets, sep_for_7z)
+        except subprocess.CalledProcessError as e:
+            # In auto mode, fall back to a pure-Python extractor if 7z is present but
+            # can't read the ISO on this platform.
+            if args.backend != "auto":
+                raise SystemExit(f"7z failed to read/extract ISO: {e}") from e
+            backend_used = "pycdlib"
+            print(
+                "warning: 7z extraction failed; falling back to pycdlib.\n"
+                f"7z stderr:\n{e.stderr or ''}",
+                file=sys.stderr,
+            )
+            _ensure_empty_dir(out_root, clean=True)
+            backend = "pycdlib"
+
+    if backend == "pycdlib":
+        backend_used = "pycdlib"
         # pycdlib: we still need to discover the targets. Since we do not have a
         # full path listing without opening the ISO, we reuse pycdlib walking
         # to build a normalized path list.
@@ -419,7 +437,7 @@ def main() -> int:
             "path": str(iso_path),
             "sha256": iso_hash,
         },
-        "backend": backend,
+        "backend": backend_used,
         "extracted": extracted,
         "missing_optional": missing_optional,
     }

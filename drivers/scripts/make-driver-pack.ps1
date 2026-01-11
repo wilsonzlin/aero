@@ -241,7 +241,12 @@ try {
             $isoPath = "" + $prov.virtio_win_iso.path
           }
           if (-not $isoHash -and $prov.virtio_win_iso.sha256) {
-            $isoHash = ("" + $prov.virtio_win_iso.sha256).ToLowerInvariant()
+            $h = ("" + $prov.virtio_win_iso.sha256).Trim()
+            if ($h -match '^[0-9a-fA-F]{64}$') {
+              $isoHash = $h.ToLowerInvariant()
+            } else {
+              Write-Warning "virtio-win provenance file '$provenancePath' contains an invalid sha256; ignoring."
+            }
           }
         }
       } catch {
