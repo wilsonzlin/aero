@@ -78,6 +78,11 @@ type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<v
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 void installWorkerPerfHandlers();
 
+// NOTE: Shared framebuffer headers use an Int32Array so Atomics can be used. The
+// magic constant is specified as a u32 in `ipc/shared-layout.ts` but is stored
+// via ToInt32 (signed) when written into the header.
+const SHARED_FRAMEBUFFER_MAGIC_I32 = SHARED_FRAMEBUFFER_MAGIC | 0;
+
 const postToMain = (msg: GpuRuntimeOutMessage, transfer?: Transferable[]) => {
   ctx.postMessage(msg, transfer ?? []);
 };
@@ -196,7 +201,7 @@ const refreshSharedFramebufferViews = (shared: SharedArrayBuffer, offsetBytes: n
   const header = new Int32Array(shared, offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
   const magic = Atomics.load(header, SharedFramebufferHeaderIndex.MAGIC);
   const version = Atomics.load(header, SharedFramebufferHeaderIndex.VERSION);
-  if (magic !== SHARED_FRAMEBUFFER_MAGIC || version !== SHARED_FRAMEBUFFER_VERSION) return;
+  if (magic !== SHARED_FRAMEBUFFER_MAGIC_I32 || version !== SHARED_FRAMEBUFFER_VERSION) return;
 
   try {
     const layout = layoutFromHeader(header);
@@ -278,7 +283,7 @@ const refreshFramebufferViews = (): void => {
   const magic = Atomics.load(header2, 0);
   const version = Atomics.load(header2, 1);
 
-  if (magic === SHARED_FRAMEBUFFER_MAGIC && version === SHARED_FRAMEBUFFER_VERSION) {
+  if (magic === SHARED_FRAMEBUFFER_MAGIC_I32 && version === SHARED_FRAMEBUFFER_VERSION) {
     refreshSharedFramebufferViews(shared, offsetBytes);
     return;
   }
