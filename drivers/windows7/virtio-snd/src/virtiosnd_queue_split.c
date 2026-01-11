@@ -215,10 +215,6 @@ VirtioSndQueueSplitCreate(
     if (!NT_SUCCESS(status)) {
         goto Fail;
     }
-    if ((((ULONG_PTR)qs->Ring.Va) & (PAGE_SIZE - 1u)) != 0 || (qs->Ring.DmaAddr & (PAGE_SIZE - 1u)) != 0) {
-        status = STATUS_DATATYPE_MISALIGNMENT;
-        goto Fail;
-    }
 
     /*
      * This DMA buffer is shared with the (potentially untrusted) device; clear it
