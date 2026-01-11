@@ -1963,6 +1963,63 @@ static void UnmapLocked(Device* dev, Resource* res) {
   }
 
   const bool is_write = (res->mapped_map_type != D3D11_MAP_READ);
+  if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
+    if (is_write && !res->storage.empty()) {
+      const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
+      const uint64_t off = res->mapped_offset;
+      const uint64_t size = res->mapped_size;
+
+      if (off <= res->storage.size()) {
+        const size_t remaining = res->storage.size() - static_cast<size_t>(off);
+        const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(size, remaining));
+        if (copy_bytes) {
+          if (res->kind == ResourceKind::Texture2D) {
+            const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+            const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+            const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+            const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
+            const uint32_t dst_pitch = res->row_pitch_bytes;
+
+            if (bpp != 0 && row_bytes_u64 != 0 && row_bytes_u64 <= UINT32_MAX && src_pitch != 0 && dst_pitch != 0 &&
+                src_pitch >= row_bytes_u64 && dst_pitch >= row_bytes_u64) {
+              const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+              for (uint32_t y = 0; y < res->height; y++) {
+                uint8_t* dst_row = res->storage.data() + static_cast<size_t>(y) * dst_pitch;
+                const uint8_t* src_row = src + static_cast<size_t>(y) * src_pitch;
+                std::memcpy(dst_row, src_row, row_bytes);
+                if (dst_pitch > row_bytes) {
+                  std::memset(dst_row + row_bytes, 0, dst_pitch - row_bytes);
+                }
+              }
+            } else {
+              // Fallback: best-effort linear copy.
+              std::memcpy(res->storage.data() + static_cast<size_t>(off), src + static_cast<size_t>(off), copy_bytes);
+            }
+          } else {
+            std::memcpy(res->storage.data() + static_cast<size_t>(off), src + static_cast<size_t>(off), copy_bytes);
+          }
+        }
+      }
+    }
+
+    const auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+    if (cb && cb->pfnUnlockCb) {
+      D3DDDICB_UNLOCK unlock = {};
+      unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock.SubresourceIndex = 0;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock.SubResourceIndex = 0;
+      }
+      const HRESULT unlock_hr =
+          CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+      if (FAILED(unlock_hr)) {
+        SetError(dev, unlock_hr);
+      }
+    }
+  }
+
   if (is_write && !res->storage.empty()) {
     EmitUploadLocked(dev, res, res->mapped_offset, res->mapped_size);
   }
@@ -1972,6 +2029,10 @@ static void UnmapLocked(Device* dev, Resource* res) {
   res->mapped_map_flags = 0;
   res->mapped_offset = 0;
   res->mapped_size = 0;
+  res->mapped_wddm_ptr = nullptr;
+  res->mapped_wddm_allocation = 0;
+  res->mapped_wddm_pitch = 0;
+  res->mapped_wddm_slice_pitch = 0;
 }
 // -------------------------------------------------------------------------------------------------
 // Adapter DDI
@@ -5052,32 +5113,22 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
   SetError(dev, E_NOTIMPL);
 }
 
-static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
-                         D3D11DDI_HRESOURCE hResource,
-                         UINT subresource,
-                         D3D11_DDI_MAP map_type,
-                         UINT map_flags,
-                         D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
-  auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !hResource.pDrvPrivate || !pMapped) {
+static HRESULT MapLocked11(Device* dev,
+                           Resource* res,
+                           UINT subresource,
+                           D3D11_DDI_MAP map_type,
+                           UINT map_flags,
+                           D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
+  if (!dev || !res || !pMapped) {
     if (dev) {
       SetError(dev, E_INVALIDARG);
     }
-    return E_INVALIDARG;
-  }
-
-  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
-  if (!res) {
-    SetError(dev, E_INVALIDARG);
     return E_INVALIDARG;
   }
   if (subresource != 0) {
     SetError(dev, E_INVALIDARG);
     return E_INVALIDARG;
   }
-
-  std::lock_guard<std::mutex> lock(dev->mutex);
-
   if (res->mapped) {
     SetError(dev, E_FAIL);
     return E_FAIL;
@@ -5126,14 +5177,160 @@ static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
   }
 
-  if (map_u32 == D3D11_MAP_WRITE_DISCARD && res->kind == ResourceKind::Buffer) {
-    // Approximate DISCARD renaming by allocating a fresh CPU backing store.
-    try {
-      res->storage.assign(res->storage.size(), 0);
-    } catch (...) {
-      SetError(dev, E_OUTOFMEMORY);
-      return E_OUTOFMEMORY;
+  if (map_u32 == D3D11_MAP_WRITE_DISCARD) {
+    if (res->kind == ResourceKind::Buffer) {
+      // Approximate DISCARD renaming by allocating a fresh CPU backing store.
+      try {
+        res->storage.assign(res->storage.size(), 0);
+      } catch (...) {
+        SetError(dev, E_OUTOFMEMORY);
+        return E_OUTOFMEMORY;
+      }
+    } else if (res->kind == ResourceKind::Texture2D) {
+      std::fill(res->storage.begin(), res->storage.end(), 0);
     }
+  }
+
+  const auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+  if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb) {
+    SetError(dev, E_FAIL);
+    return E_FAIL;
+  }
+  if (res->wddm.km_allocation_handles.empty() || res->wddm.km_allocation_handles[0] == 0) {
+    SetError(dev, E_FAIL);
+    return E_FAIL;
+  }
+
+  res->mapped_wddm_ptr = nullptr;
+  res->mapped_wddm_allocation = 0;
+  res->mapped_wddm_pitch = 0;
+  res->mapped_wddm_slice_pitch = 0;
+
+  const uint64_t km_alloc = res->wddm.km_allocation_handles[0];
+  D3DDDICB_LOCK lock = {};
+  lock.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
+  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+    lock.SubresourceIndex = subresource;
+  }
+  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+    lock.SubResourceIndex = subresource;
+  }
+  __if_exists(D3DDDICB_LOCK::Flags) {
+    std::memset(&lock.Flags, 0, sizeof(lock.Flags));
+
+    const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+    __if_exists(D3DDDICB_LOCKFLAGS::DoNotWait) {
+      lock.Flags.DoNotWait = do_not_wait ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::DonotWait) {
+      lock.Flags.DonotWait = do_not_wait ? 1u : 0u;
+    }
+
+    const bool is_read_only = (map_u32 == D3D11_MAP_READ);
+    const bool is_write_only =
+        (map_u32 == D3D11_MAP_WRITE || map_u32 == D3D11_MAP_WRITE_DISCARD || map_u32 == D3D11_MAP_WRITE_NO_OVERWRITE);
+    const bool discard = (map_u32 == D3D11_MAP_WRITE_DISCARD);
+    const bool no_overwrite = (map_u32 == D3D11_MAP_WRITE_NO_OVERWRITE);
+
+    __if_exists(D3DDDICB_LOCKFLAGS::ReadOnly) {
+      lock.Flags.ReadOnly = is_read_only ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
+      lock.Flags.WriteOnly = is_write_only ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
+      lock.Flags.Write = want_write ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Discard) {
+      lock.Flags.Discard = discard ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) {
+      lock.Flags.NoOverwrite = no_overwrite ? 1u : 0u;
+    }
+  }
+
+  const HRESULT lock_hr = CallCbMaybeHandle(cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &lock);
+  if (lock_hr == kDxgiErrorWasStillDrawing) {
+    return lock_hr;
+  }
+  if (FAILED(lock_hr)) {
+    SetError(dev, lock_hr);
+    return lock_hr;
+  }
+  if (!lock.pData) {
+    D3DDDICB_UNLOCK unlock = {};
+    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock.SubresourceIndex = subresource;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock.SubResourceIndex = subresource;
+    }
+    (void)CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+    SetError(dev, E_FAIL);
+    return E_FAIL;
+  }
+
+  res->mapped_wddm_ptr = lock.pData;
+  res->mapped_wddm_allocation = km_alloc;
+  __if_exists(D3DDDICB_LOCK::Pitch) {
+    res->mapped_wddm_pitch = lock.Pitch;
+  }
+  __if_exists(D3DDDICB_LOCK::SlicePitch) {
+    res->mapped_wddm_slice_pitch = lock.SlicePitch;
+  }
+
+  // Keep the software-backed shadow copy (`res->storage`) in sync with the
+  // runtime allocation pointer we hand back to the D3D runtime.
+  if (!res->storage.empty()) {
+    if (map_u32 == D3D11_MAP_WRITE_DISCARD) {
+      // Discard contents are undefined; clear for deterministic tests.
+      if (res->kind == ResourceKind::Texture2D) {
+        const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
+        const uint64_t bytes = static_cast<uint64_t>(pitch) * static_cast<uint64_t>(res->height);
+        if (pitch != 0 && bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+          std::memset(lock.pData, 0, static_cast<size_t>(bytes));
+        }
+      } else {
+        std::memset(lock.pData, 0, res->storage.size());
+      }
+    } else if (res->kind == ResourceKind::Texture2D) {
+      const uint32_t src_pitch = res->row_pitch_bytes;
+      const uint32_t dst_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : src_pitch;
+
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+      const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+      if (bpp != 0 && row_bytes_u64 != 0 && row_bytes_u64 <= UINT32_MAX && src_pitch != 0 && dst_pitch != 0 &&
+          src_pitch >= row_bytes_u64 && dst_pitch >= row_bytes_u64) {
+        const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+        auto* dst_bytes = static_cast<uint8_t*>(lock.pData);
+        const uint8_t* src_bytes = res->storage.data();
+        for (uint32_t y = 0; y < res->height; y++) {
+          std::memcpy(dst_bytes + static_cast<size_t>(y) * dst_pitch,
+                      src_bytes + static_cast<size_t>(y) * src_pitch,
+                      row_bytes);
+          if (dst_pitch > row_bytes) {
+            std::memset(dst_bytes + static_cast<size_t>(y) * dst_pitch + row_bytes, 0, dst_pitch - row_bytes);
+          }
+        }
+      } else {
+        std::memcpy(lock.pData, res->storage.data(), res->storage.size());
+      }
+    } else {
+      std::memcpy(lock.pData, res->storage.data(), res->storage.size());
+    }
+  }
+
+  pMapped->pData = lock.pData;
+  if (res->kind == ResourceKind::Texture2D) {
+    const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
+    pMapped->RowPitch = pitch;
+    const uint32_t slice = res->mapped_wddm_slice_pitch ? res->mapped_wddm_slice_pitch : pitch * res->height;
+    pMapped->DepthPitch = slice;
+  } else {
+    pMapped->RowPitch = static_cast<UINT>(res->storage.size());
+    pMapped->DepthPitch = static_cast<UINT>(res->storage.size());
   }
 
   res->mapped = true;
@@ -5141,16 +5338,35 @@ static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
   res->mapped_map_flags = map_flags;
   res->mapped_offset = 0;
   res->mapped_size = res->storage.size();
-
-  pMapped->pData = res->storage.empty() ? nullptr : res->storage.data();
-  if (res->kind == ResourceKind::Texture2D) {
-    pMapped->RowPitch = res->row_pitch_bytes;
-    pMapped->DepthPitch = res->row_pitch_bytes * res->height;
-  } else {
-    pMapped->RowPitch = static_cast<UINT>(res->storage.size());
-    pMapped->DepthPitch = static_cast<UINT>(res->storage.size());
-  }
   return S_OK;
+}
+
+static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
+                         D3D11DDI_HRESOURCE hResource,
+                         UINT subresource,
+                         D3D11_DDI_MAP map_type,
+                         UINT map_flags,
+                         D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !hResource.pDrvPrivate || !pMapped) {
+    if (dev) {
+      SetError(dev, E_INVALIDARG);
+    }
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
+  if (!res) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+  if (subresource != 0) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  return MapLocked11(dev, res, subresource, map_type, map_flags, pMapped);
 }
 
 HRESULT AEROGPU_APIENTRY Map11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -5229,26 +5445,17 @@ static HRESULT DynamicBufferMapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (res->mapped) {
-    SetError(dev, E_FAIL);
-    return E_FAIL;
+  D3D11DDI_MAPPED_SUBRESOURCE mapped = {};
+  const HRESULT hr = MapLocked11(dev,
+                                 res,
+                                 /*subresource=*/0,
+                                 static_cast<D3D11_DDI_MAP>(map_u32),
+                                 /*map_flags=*/0,
+                                 &mapped);
+  if (FAILED(hr)) {
+    return hr;
   }
-
-  if (map_u32 == D3D11_MAP_WRITE_DISCARD) {
-    try {
-      res->storage.assign(res->storage.size(), 0);
-    } catch (...) {
-      SetError(dev, E_OUTOFMEMORY);
-      return E_OUTOFMEMORY;
-    }
-  }
-
-  res->mapped = true;
-  res->mapped_map_type = map_u32;
-  res->mapped_map_flags = 0;
-  res->mapped_offset = 0;
-  res->mapped_size = res->storage.size();
-  *ppData = res->storage.empty() ? nullptr : res->storage.data();
+  *ppData = mapped.pData;
   return S_OK;
 }
 

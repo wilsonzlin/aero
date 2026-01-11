@@ -361,6 +361,12 @@ struct AeroGpuResource {
   uint32_t mapped_subresource = 0;
   uint64_t mapped_offset = 0;
   uint64_t mapped_size = 0;
+
+  // Win7/WDDM 1.1 runtime mapping state (pfnLockCb/pfnUnlockCb).
+  void* mapped_wddm_ptr = nullptr;
+  uint64_t mapped_wddm_allocation = 0;
+  uint32_t mapped_wddm_pitch = 0;
+  uint32_t mapped_wddm_slice_pitch = 0;
 };
 
 struct AeroGpuShader {
@@ -2754,11 +2760,13 @@ HRESULT ensure_resource_storage(AeroGpuResource* res, uint64_t bytes) {
   return S_OK;
 }
 
-HRESULT map_resource_locked(AeroGpuResource* res,
+HRESULT map_resource_locked(AeroGpuDevice* dev,
+                            AeroGpuResource* res,
                             uint32_t subresource,
                             uint32_t map_type,
+                            uint32_t map_flags,
                             D3D10DDI_MAPPED_SUBRESOURCE* pMapped) {
-  if (!res || !pMapped) {
+  if (!dev || !res || !pMapped) {
     return E_INVALIDARG;
   }
   if (res->mapped) {
@@ -2791,10 +2799,143 @@ HRESULT map_resource_locked(AeroGpuResource* res,
     return hr;
   }
 
-  pMapped->pData = res->storage.data();
+  if (map_type == kD3DMapWriteDiscard) {
+    // Discard contents are undefined; clear for deterministic tests.
+    if (res->kind == ResourceKind::Buffer) {
+      try {
+        res->storage.assign(static_cast<size_t>(total), 0);
+      } catch (...) {
+        return E_OUTOFMEMORY;
+      }
+    } else if (res->kind == ResourceKind::Texture2D) {
+      std::fill(res->storage.begin(), res->storage.end(), 0);
+    }
+  }
+
+  const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
+  if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb || res->wddm.km_allocation_handles.empty() ||
+      res->wddm.km_allocation_handles[0] == 0) {
+    return E_FAIL;
+  }
+
+  res->mapped_wddm_ptr = nullptr;
+  res->mapped_wddm_allocation = 0;
+  res->mapped_wddm_pitch = 0;
+  res->mapped_wddm_slice_pitch = 0;
+
+  const uint64_t km_alloc = res->wddm.km_allocation_handles[0];
+  D3DDDICB_LOCK lock_cb = {};
+  lock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
+  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+    lock_cb.SubresourceIndex = subresource;
+  }
+  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+    lock_cb.SubResourceIndex = subresource;
+  }
+  __if_exists(D3DDDICB_LOCK::Flags) {
+    std::memset(&lock_cb.Flags, 0, sizeof(lock_cb.Flags));
+
+    const bool do_not_wait = (map_flags & kD3DMapFlagDoNotWait) != 0;
+    __if_exists(D3DDDICB_LOCKFLAGS::DoNotWait) {
+      lock_cb.Flags.DoNotWait = do_not_wait ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::DonotWait) {
+      lock_cb.Flags.DonotWait = do_not_wait ? 1u : 0u;
+    }
+
+    const bool is_read_only = (map_type == kD3DMapRead);
+    const bool is_write_only =
+        (map_type == kD3DMapWrite || map_type == kD3DMapWriteDiscard || map_type == kD3DMapWriteNoOverwrite);
+    const bool discard = (map_type == kD3DMapWriteDiscard);
+    const bool no_overwrite = (map_type == kD3DMapWriteNoOverwrite);
+
+    __if_exists(D3DDDICB_LOCKFLAGS::ReadOnly) {
+      lock_cb.Flags.ReadOnly = is_read_only ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
+      lock_cb.Flags.WriteOnly = is_write_only ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
+      lock_cb.Flags.Write = want_write ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Discard) {
+      lock_cb.Flags.Discard = discard ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) {
+      lock_cb.Flags.NoOverwrite = no_overwrite ? 1u : 0u;
+    }
+  }
+
+  hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  if (!lock_cb.pData) {
+    D3DDDICB_UNLOCK unlock_cb = {};
+    unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_cb.SubresourceIndex = subresource;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_cb.SubResourceIndex = subresource;
+    }
+    (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+    return E_FAIL;
+  }
+
+  res->mapped_wddm_ptr = lock_cb.pData;
+  res->mapped_wddm_allocation = km_alloc;
+  __if_exists(D3DDDICB_LOCK::Pitch) {
+    res->mapped_wddm_pitch = lock_cb.Pitch;
+  }
+  __if_exists(D3DDDICB_LOCK::SlicePitch) {
+    res->mapped_wddm_slice_pitch = lock_cb.SlicePitch;
+  }
+
+  if (!res->storage.empty()) {
+    if (map_type == kD3DMapWriteDiscard) {
+      if (res->kind == ResourceKind::Texture2D) {
+        const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
+        const uint64_t bytes = static_cast<uint64_t>(pitch) * static_cast<uint64_t>(res->height);
+        if (pitch != 0 && bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+          std::memset(lock_cb.pData, 0, static_cast<size_t>(bytes));
+        }
+      } else {
+        std::memset(lock_cb.pData, 0, res->storage.size());
+      }
+    } else if (res->kind == ResourceKind::Texture2D) {
+      const uint32_t src_pitch = res->row_pitch_bytes;
+      const uint32_t dst_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : src_pitch;
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+      const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+      if (bpp != 0 && row_bytes_u64 != 0 && row_bytes_u64 <= UINT32_MAX && src_pitch != 0 && dst_pitch != 0 &&
+          src_pitch >= row_bytes_u64 && dst_pitch >= row_bytes_u64) {
+        const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+        auto* dst_bytes = static_cast<uint8_t*>(lock_cb.pData);
+        const uint8_t* src_bytes = res->storage.data();
+        for (uint32_t y = 0; y < res->height; y++) {
+          std::memcpy(dst_bytes + static_cast<size_t>(y) * dst_pitch,
+                      src_bytes + static_cast<size_t>(y) * src_pitch,
+                      row_bytes);
+          if (dst_pitch > row_bytes) {
+            std::memset(dst_bytes + static_cast<size_t>(y) * dst_pitch + row_bytes, 0, dst_pitch - row_bytes);
+          }
+        }
+      } else {
+        std::memcpy(lock_cb.pData, res->storage.data(), res->storage.size());
+      }
+    } else {
+      std::memcpy(lock_cb.pData, res->storage.data(), res->storage.size());
+    }
+  }
+
+  pMapped->pData = lock_cb.pData;
   if (res->kind == ResourceKind::Texture2D) {
-    pMapped->RowPitch = res->row_pitch_bytes;
-    pMapped->DepthPitch = res->row_pitch_bytes * res->height;
+    const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
+    pMapped->RowPitch = pitch;
+    const uint32_t slice = res->mapped_wddm_slice_pitch ? res->mapped_wddm_slice_pitch : pitch * res->height;
+    pMapped->DepthPitch = slice;
   } else {
     pMapped->RowPitch = 0;
     pMapped->DepthPitch = 0;
@@ -2819,6 +2960,61 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
     return;
   }
 
+  if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
+    if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
+      const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
+      const uint64_t off = res->mapped_offset;
+      const uint64_t size = res->mapped_size;
+      if (off <= res->storage.size()) {
+        const size_t remaining = res->storage.size() - static_cast<size_t>(off);
+        const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(size, remaining));
+        if (copy_bytes) {
+          if (res->kind == ResourceKind::Texture2D) {
+            const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+            const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+            const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+            const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
+            const uint32_t dst_pitch = res->row_pitch_bytes;
+            if (bpp != 0 && row_bytes_u64 != 0 && row_bytes_u64 <= UINT32_MAX && src_pitch != 0 && dst_pitch != 0 &&
+                src_pitch >= row_bytes_u64 && dst_pitch >= row_bytes_u64) {
+              const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+              for (uint32_t y = 0; y < res->height; y++) {
+                uint8_t* dst_row = res->storage.data() + static_cast<size_t>(y) * dst_pitch;
+                const uint8_t* src_row = src + static_cast<size_t>(y) * src_pitch;
+                std::memcpy(dst_row, src_row, row_bytes);
+                if (dst_pitch > row_bytes) {
+                  std::memset(dst_row + row_bytes, 0, dst_pitch - row_bytes);
+                }
+              }
+            } else {
+              std::memcpy(res->storage.data() + static_cast<size_t>(off),
+                          src + static_cast<size_t>(off),
+                          copy_bytes);
+            }
+          } else {
+            std::memcpy(res->storage.data() + static_cast<size_t>(off), src + static_cast<size_t>(off), copy_bytes);
+          }
+        }
+      }
+    }
+
+    const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
+    if (cb && cb->pfnUnlockCb) {
+      D3DDDICB_UNLOCK unlock_cb = {};
+      unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_cb.SubresourceIndex = subresource;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_cb.SubResourceIndex = subresource;
+      }
+      const HRESULT unlock_hr = CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+      if (FAILED(unlock_hr)) {
+        set_error(dev, unlock_hr);
+      }
+    }
+  }
+
   if (res->mapped_write) {
     emit_upload_resource_locked(dev, res, res->mapped_offset, res->mapped_size);
   }
@@ -2828,10 +3024,14 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
   res->mapped_subresource = 0;
   res->mapped_offset = 0;
   res->mapped_size = 0;
+  res->mapped_wddm_ptr = nullptr;
+  res->mapped_wddm_allocation = 0;
+  res->mapped_wddm_pitch = 0;
+  res->mapped_wddm_slice_pitch = 0;
 }
 
-HRESULT map_dynamic_buffer_locked(AeroGpuResource* res, bool discard, void** ppData) {
-  if (!res || !ppData) {
+HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool discard, void** ppData) {
+  if (!dev || !res || !ppData) {
     return E_INVALIDARG;
   }
   if (res->kind != ResourceKind::Buffer) {
@@ -2856,12 +3056,82 @@ HRESULT map_dynamic_buffer_locked(AeroGpuResource* res, bool discard, void** ppD
     }
   }
 
+  const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
+  if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb || res->wddm.km_allocation_handles.empty() ||
+      res->wddm.km_allocation_handles[0] == 0) {
+    return E_FAIL;
+  }
+
+  res->mapped_wddm_ptr = nullptr;
+  res->mapped_wddm_allocation = 0;
+  res->mapped_wddm_pitch = 0;
+  res->mapped_wddm_slice_pitch = 0;
+
+  const uint64_t km_alloc = res->wddm.km_allocation_handles[0];
+  D3DDDICB_LOCK lock_cb = {};
+  lock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
+  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+    lock_cb.SubresourceIndex = 0;
+  }
+  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+    lock_cb.SubResourceIndex = 0;
+  }
+  __if_exists(D3DDDICB_LOCK::Flags) {
+    std::memset(&lock_cb.Flags, 0, sizeof(lock_cb.Flags));
+    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
+      lock_cb.Flags.WriteOnly = 1u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
+      lock_cb.Flags.Write = 1u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Discard) {
+      lock_cb.Flags.Discard = discard ? 1u : 0u;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) {
+      lock_cb.Flags.NoOverwrite = discard ? 0u : 1u;
+    }
+  }
+
+  hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  if (!lock_cb.pData) {
+    D3DDDICB_UNLOCK unlock_cb = {};
+    unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_cb.SubresourceIndex = 0;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_cb.SubResourceIndex = 0;
+    }
+    (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+    return E_FAIL;
+  }
+
+  res->mapped_wddm_ptr = lock_cb.pData;
+  res->mapped_wddm_allocation = km_alloc;
+  __if_exists(D3DDDICB_LOCK::Pitch) {
+    res->mapped_wddm_pitch = lock_cb.Pitch;
+  }
+  __if_exists(D3DDDICB_LOCK::SlicePitch) {
+    res->mapped_wddm_slice_pitch = lock_cb.SlicePitch;
+  }
+
+  if (!res->storage.empty()) {
+    if (discard) {
+      std::memset(lock_cb.pData, 0, res->storage.size());
+    } else {
+      std::memcpy(lock_cb.pData, res->storage.data(), res->storage.size());
+    }
+  }
+
   res->mapped = true;
   res->mapped_write = true;
   res->mapped_subresource = 0;
   res->mapped_offset = 0;
   res->mapped_size = total;
-  *ppData = res->storage.data();
+  *ppData = lock_cb.pData;
   return S_OK;
 }
 
@@ -2894,7 +3164,7 @@ HRESULT AEROGPU_APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
   if (FAILED(sync_hr)) {
     return sync_hr;
   }
-  return map_resource_locked(res, subresource, map_type_u, pMapped);
+  return map_resource_locked(dev, res, subresource, map_type_u, map_flags, pMapped);
 }
 
 void AEROGPU_APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
@@ -2929,7 +3199,7 @@ HRESULT AEROGPU_APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  return map_dynamic_buffer_locked(res, /*discard=*/true, ppData);
+  return map_dynamic_buffer_locked(dev, res, /*discard=*/true, ppData);
 }
 
 HRESULT AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice,
@@ -2950,7 +3220,7 @@ HRESULT AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  return map_dynamic_buffer_locked(res, /*discard=*/false, ppData);
+  return map_dynamic_buffer_locked(dev, res, /*discard=*/false, ppData);
 }
 
 void AEROGPU_APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
@@ -2987,7 +3257,7 @@ HRESULT AEROGPU_APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevic
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  return map_dynamic_buffer_locked(res, /*discard=*/true, ppData);
+  return map_dynamic_buffer_locked(dev, res, /*discard=*/true, ppData);
 }
 
 void AEROGPU_APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
@@ -3041,7 +3311,7 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     }
     if (res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) {
       void* data = nullptr;
-      HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/true, &data);
+      HRESULT hr = map_dynamic_buffer_locked(dev, res, /*discard=*/true, &data);
       if (FAILED(hr)) {
         return hr;
       }
@@ -3052,7 +3322,7 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     }
     if (res->bind_flags & kD3D10BindConstantBuffer) {
       void* data = nullptr;
-      HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/true, &data);
+      HRESULT hr = map_dynamic_buffer_locked(dev, res, /*discard=*/true, &data);
       if (FAILED(hr)) {
         return hr;
       }
@@ -3067,7 +3337,7 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     }
     if (res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) {
       void* data = nullptr;
-      HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/false, &data);
+      HRESULT hr = map_dynamic_buffer_locked(dev, res, /*discard=*/false, &data);
       if (FAILED(hr)) {
         return hr;
       }
@@ -3084,10 +3354,10 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     return sync_hr;
   }
   if (res->kind == ResourceKind::Texture2D && res->bind_flags == 0) {
-    return map_resource_locked(res, subresource, map_type_u, pMapped);
+    return map_resource_locked(dev, res, subresource, map_type_u, map_flags, pMapped);
   }
   if (res->kind == ResourceKind::Buffer) {
-    return map_resource_locked(res, subresource, map_type_u, pMapped);
+    return map_resource_locked(dev, res, subresource, map_type_u, map_flags, pMapped);
   }
   return E_NOTIMPL;
 }
@@ -4253,7 +4523,7 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   if (map_type_u == kD3DMapWriteDiscard) {
     if (res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer | kD3D10BindConstantBuffer)) {
       void* data = nullptr;
-      const HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/true, &data);
+      const HRESULT hr = map_dynamic_buffer_locked(dev, res, /*discard=*/true, &data);
       if (FAILED(hr)) {
         set_error(dev, hr);
         return;
@@ -4266,7 +4536,7 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   } else if (map_type_u == kD3DMapWriteNoOverwrite) {
     if (res->bind_flags & (kD3D10BindVertexBuffer | kD3D10BindIndexBuffer)) {
       void* data = nullptr;
-      const HRESULT hr = map_dynamic_buffer_locked(res, /*discard=*/false, &data);
+      const HRESULT hr = map_dynamic_buffer_locked(dev, res, /*discard=*/false, &data);
       if (FAILED(hr)) {
         set_error(dev, hr);
         return;
@@ -4283,7 +4553,7 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     set_error(dev, sync_hr);
     return;
   }
-  const HRESULT hr = map_resource_locked(res, pMap->Subresource, map_type_u, pOut);
+  const HRESULT hr = map_resource_locked(dev, res, pMap->Subresource, map_type_u, map_flags_u, pOut);
   if (FAILED(hr)) {
     set_error(dev, hr);
     return;

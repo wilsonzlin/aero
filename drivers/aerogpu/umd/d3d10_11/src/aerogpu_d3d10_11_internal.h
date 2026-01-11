@@ -400,6 +400,16 @@ struct Resource {
   uint32_t mapped_map_flags = 0;
   uint64_t mapped_offset = 0;
   uint64_t mapped_size = 0;
+
+  // Win7/WDDM 1.1 runtime mapping state.
+  //
+  // The WDK UMDs map runtime-managed allocations via `pfnLockCb`/`pfnUnlockCb`.
+  // We keep these fields WDK-free (plain integers/pointers) so the core
+  // `Resource` struct can be shared with the non-WDK build.
+  void* mapped_wddm_ptr = nullptr;
+  uint64_t mapped_wddm_allocation = 0;
+  uint32_t mapped_wddm_pitch = 0;
+  uint32_t mapped_wddm_slice_pitch = 0;
 };
 
 struct Shader {
