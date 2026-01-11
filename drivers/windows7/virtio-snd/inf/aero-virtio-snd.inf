@@ -1,9 +1,9 @@
 ; SPDX-License-Identifier: MIT OR Apache-2.0
 
-; virtio-snd (Windows 7) - clean-room driver skeleton INF.
+; aero-virtio-snd.inf (Windows 7) - clean-room driver skeleton INF.
 ;
 ; Aero Windows 7 virtio device contract:
-;   - Modern virtio-pci only (no legacy/transitional I/O-port transport)
+;   - Modern virtio-pci only (PCI vendor-specific capabilities + MMIO)
 ;   - PCI Revision ID encodes the contract major version (v1 == REV_01)
 ; See: docs/windows7-virtio-driver-contract.md
 
@@ -13,7 +13,7 @@ Class       = MEDIA
 ClassGuid   = {4d36e96c-e325-11ce-bfc1-08002be10318}
 Provider    = %ProviderName%
 DriverVer   = 01/10/2026,0.0.0.1
-CatalogFile = virtio-snd.cat
+CatalogFile = aero-virtio-snd.cat
 
 [Manufacturer]
 %ProviderName% = VirtioSndModels,NTx86,NTamd64
@@ -27,12 +27,12 @@ CatalogFile = virtio-snd.cat
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 ;
 ; Optional: Further restrict binding to Aero’s virtio-snd subsystem ID.
-; (Subsystem Device ID 0x0003, Subsystem Vendor ID 0x1AF4 => SUBSYS_00031AF4)
-; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00031AF4&REV_01
+; (Subsystem Device ID 0x0019, Subsystem Vendor ID 0x1AF4 => SUBSYS_00191AF4)
+; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [VirtioSndModels.NTamd64]
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00031AF4&REV_01
+; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
@@ -90,7 +90,7 @@ HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSnd.TopologyDesc%
 virtiosnd.sys
  
 [VirtioSnd_Install.Services]
-AddService = virtiosnd, 0x00000002, VirtioSnd_Service_Inst
+AddService = aeroviosnd, 0x00000002, VirtioSnd_Service_Inst
 
 [VirtioSnd_Service_Inst]
 DisplayName   = %VirtioSnd.ServiceDesc%

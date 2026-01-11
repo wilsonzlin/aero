@@ -33,13 +33,20 @@ Virtio devices use the virtio PCI vendor ID:
 
 - `VIRTIO_PCI_VENDOR_ID = 0x1AF4`
 
-Device IDs follow the “transitional” virtio ID range commonly used by hypervisors:
+Device IDs follow the virtio 1.0+ “modern” virtio-pci ID range:
+
+```
+pci_device_id = 0x1040 + virtio_device_type
+```
+
+For compatibility with older stacks/driver packages, Aero drivers/INFs MAY also match the
+“transitional” virtio ID range commonly used by hypervisors:
 
 ```
 pci_device_id = 0x1000 + (virtio_device_type - 1)
 ```
 
-This does **not** force use of the legacy virtio PCI transport in the guest driver; it only fixes the PCI identification. See [Virtio transport contract](#virtio-transport-contract) for BAR/MMIO/I-O details.
+The emulator emits the modern IDs by default.
 
 Subsystem IDs are used to provide a stable secondary identifier:
 
@@ -63,10 +70,10 @@ All numeric values are shown as hexadecimal.
 
 | Device | PCI Vendor:Device | Subsystem Vendor:Device | Class Code (base/sub/prog) | Windows service | INF name |
 |---|---:|---:|---:|---|---|
-| virtio-blk | `1AF4:1001` | `1AF4:0002` | `01/00/00` (mass storage / SCSI) | `aerovioblk` | `aero-virtio-blk.inf` |
-| virtio-net | `1AF4:1000` | `1AF4:0001` | `02/00/00` (network / ethernet) | `aerovionet` | `aero-virtio-net.inf` |
-| virtio-snd | `1AF4:1018` | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
-| virtio-input | `1AF4:1011` | `1AF4:0012` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
+| virtio-blk | `1AF4:1042` | `1AF4:0002` | `01/00/00` (mass storage / SCSI) | `aerovioblk` | `aero-virtio-blk.inf` |
+| virtio-net | `1AF4:1041` | `1AF4:0001` | `02/00/00` (network / ethernet) | `aerovionet` | `aero-virtio-net.inf` |
+| virtio-snd | `1AF4:1059` | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
+| virtio-input | `1AF4:1052` | `1AF4:0012` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
 | Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `AeroGPU` | `aerogpu.inf` |
 
 Notes:
@@ -92,8 +99,8 @@ Where:
 
 ### Binding requirements (normative)
 
-- Each driver INF must match **at least** the short form: `PCI\VEN_xxxx&DEV_yyyy`.
-- For additional safety (and to avoid binding to non-Aero virtio devices in other hypervisors), Aero may choose to match the subsystem-qualified form as well, but then the emulator **must** keep subsystem IDs stable.
+- Each driver INF must match **at least** the vendor/device pair: `PCI\VEN_xxxx&DEV_yyyy`.
+- Matching MAY additionally be revision-gated (`&REV_RR`) and/or subsystem-qualified (`&SUBSYS_SSSSVVVV`) for safety, but then the emulator **must** keep those values stable.
 
 Example (illustrative) INF model entries:
 
@@ -103,8 +110,8 @@ Example (illustrative) INF model entries:
 %MfgName% = AeroModels,NTx86,NTamd64
 
 [AeroModels.NTamd64]
-%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1001
-%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1001&SUBSYS_00021AF4
+%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042
+%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
@@ -131,6 +138,7 @@ For virtio devices listed in this contract:
 - `device_id` matches the table above
 - `subsystem_vendor_id = 0x1AF4`
 - `subsystem_device_id = virtio_device_type`
+- `revision_id = 0x01` (Aero virtio contract v1; used for optional `REV_01` INF matching)
 - `class_code` matches the table above
 
 ### BARs / MMIO vs I/O ports
@@ -210,6 +218,6 @@ Consumers must not assume any particular device ordering and must tolerate new d
 ### Manifest field conventions (normative)
 
 - `pci_vendor_id` / `pci_device_id` are hex strings with `0x` prefix (e.g. `"0x1AF4"`).
-- `hardware_id_patterns` are Windows PnP PCI hardware ID strings using backslashes (e.g. `"PCI\\VEN_1AF4&DEV_1001"`).
+- `hardware_id_patterns` are Windows PnP PCI hardware ID strings using backslashes (e.g. `"PCI\\VEN_1AF4&DEV_1042"`).
   - They are intended to be **directly usable** in INF matching and transformable into registry key names for `CriticalDeviceDatabase`.
   - Tools must treat them as case-insensitive.

@@ -49,7 +49,9 @@ fn virtio_ids_include_transitional_and_modern_variants() {
     assert_eq!(PCI_DEVICE_ID_VIRTIO_BLK_TRANSITIONAL, 0x1001);
     assert_eq!(PCI_DEVICE_ID_VIRTIO_BLK_MODERN, 0x1042);
 
+    assert_eq!(PCI_DEVICE_ID_VIRTIO_INPUT_TRANSITIONAL, 0x1011);
     assert_eq!(PCI_DEVICE_ID_VIRTIO_INPUT_MODERN, 0x1052);
+    assert_eq!(PCI_DEVICE_ID_VIRTIO_SND_TRANSITIONAL, 0x1018);
     assert_eq!(PCI_DEVICE_ID_VIRTIO_SND_MODERN, 0x1059);
 }
 

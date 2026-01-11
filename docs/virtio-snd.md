@@ -17,6 +17,22 @@ Scope:
 - **TX queue** for PCM frame submission (playback)
 - **RX queue** for PCM capture (recording)
 
+## PCI identification (Aero)
+
+Aero exposes virtio-snd as a virtio-pci device using the standard virtio vendor ID:
+
+- Vendor ID: `0x1AF4`
+- Device ID (canonical / default): `0x1059` (modern ID space: `0x1040 + VIRTIO_ID_SND (25)`)
+- Subsystem Vendor ID: `0x1AF4`
+- Subsystem Device ID: `0x0019` (`VIRTIO_ID_SND`)
+
+For compatibility with stacks that expect transitional virtio-pci IDs, drivers MAY also match:
+
+- Transitional Device ID: `0x1018` (`0x1000 + (25 - 1)`)
+
+The authoritative Windows driver-binding values are tracked in
+[`docs/windows-device-contract.md`](./windows-device-contract.md).
+
 ## Device Configuration
 
 The device reports two PCM streams:

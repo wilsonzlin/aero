@@ -161,6 +161,8 @@ pub const PCI_DEVICE_ID_QEMU_NVME: u16 = 0x0010;
 
 pub const PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL: u16 = 0x1000;
 pub const PCI_DEVICE_ID_VIRTIO_BLK_TRANSITIONAL: u16 = 0x1001;
+pub const PCI_DEVICE_ID_VIRTIO_INPUT_TRANSITIONAL: u16 = 0x1011;
+pub const PCI_DEVICE_ID_VIRTIO_SND_TRANSITIONAL: u16 = 0x1018;
 pub const PCI_DEVICE_ID_VIRTIO_NET_MODERN: u16 = 0x1041;
 pub const PCI_DEVICE_ID_VIRTIO_BLK_MODERN: u16 = 0x1042;
 pub const PCI_DEVICE_ID_VIRTIO_INPUT_MODERN: u16 = 0x1052;
@@ -340,7 +342,7 @@ pub const VIRTIO_NET: PciDeviceProfile = PciDeviceProfile {
     device_id: PCI_DEVICE_ID_VIRTIO_NET_MODERN,
     subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
     subsystem_id: 1,
-    revision_id: 0,
+    revision_id: 1,
     class: PciClassCode::new(0x02, 0x00, 0x00),
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
@@ -355,7 +357,7 @@ pub const VIRTIO_BLK: PciDeviceProfile = PciDeviceProfile {
     device_id: PCI_DEVICE_ID_VIRTIO_BLK_MODERN,
     subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
     subsystem_id: 2,
-    revision_id: 0,
+    revision_id: 1,
     class: PciClassCode::new(0x01, 0x00, 0x00),
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
@@ -370,7 +372,7 @@ pub const VIRTIO_INPUT: PciDeviceProfile = PciDeviceProfile {
     device_id: PCI_DEVICE_ID_VIRTIO_INPUT_MODERN,
     subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
     subsystem_id: 18,
-    revision_id: 0,
+    revision_id: 1,
     class: PciClassCode::new(0x09, 0x80, 0x00),
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
@@ -385,7 +387,7 @@ pub const VIRTIO_SND: PciDeviceProfile = PciDeviceProfile {
     device_id: PCI_DEVICE_ID_VIRTIO_SND_MODERN,
     subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
     subsystem_id: 25,
-    revision_id: 0,
+    revision_id: 1,
     // Report as a generic multimedia audio device rather than HDA (0x0403), since the
     // virtio-snd programming model is not compatible with Intel HD Audio drivers.
     class: PciClassCode::new(0x04, 0x01, 0x00),

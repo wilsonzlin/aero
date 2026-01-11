@@ -238,7 +238,7 @@ The output will be under `objfre_win7_*` (or `objchk_win7_*` for checked builds)
 
 ## Installing (development/testing)
 
-1. Copy `virtiosnd.sys` next to `inf\virtio-snd.inf`.
+1. Copy `virtiosnd.sys` next to `inf\aero-virtio-snd.inf`.
 2. Use Device Manager → Update Driver → "Have Disk..." and point to the `inf` directory.
 
 For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
@@ -252,15 +252,15 @@ Contract v1 virtio-snd devices enumerate as:
 - Vendor ID: `VEN_1AF4`
 - Device ID: `DEV_1059` (`0x1040 + VIRTIO_ID_SOUND` where `VIRTIO_ID_SOUND = 25`)
 - Revision ID: `REV_01` (contract major version = 1)
-- Subsystem ID: `SUBSYS_0003xxxx` (Aero uses `SUBSYS_00031AF4`)
+- Subsystem ID: `SUBSYS_0019xxxx` (Aero uses `SUBSYS_00191AF4`)
 
-`inf/virtio-snd.inf` matches the **revision-gated** modern HWID:
+`inf/aero-virtio-snd.inf` matches the **revision-gated** modern HWID:
 
 - `PCI\VEN_1AF4&DEV_1059&REV_01`
 
 For additional safety in environments that expose multiple virtio-snd devices, you can further restrict the match to Aero’s subsystem ID:
 
-- `PCI\VEN_1AF4&DEV_1059&SUBSYS_00031AF4&REV_01`
+- `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
 Notes:
 
