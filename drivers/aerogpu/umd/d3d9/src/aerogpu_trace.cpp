@@ -316,6 +316,24 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::ApplyStateBlock (stub)";
     case D3d9TraceFunc::DeviceValidateDevice:
       return "Device::ValidateDevice (stub)";
+    case D3d9TraceFunc::DeviceSetSoftwareVertexProcessing:
+      return "Device::SetSoftwareVertexProcessing (stub)";
+    case D3d9TraceFunc::DeviceSetCursorProperties:
+      return "Device::SetCursorProperties (stub)";
+    case D3d9TraceFunc::DeviceSetCursorPosition:
+      return "Device::SetCursorPosition (stub)";
+    case D3d9TraceFunc::DeviceShowCursor:
+      return "Device::ShowCursor (stub)";
+    case D3d9TraceFunc::DeviceSetPaletteEntries:
+      return "Device::SetPaletteEntries (stub)";
+    case D3d9TraceFunc::DeviceSetCurrentTexturePalette:
+      return "Device::SetCurrentTexturePalette (stub)";
+    case D3d9TraceFunc::DeviceSetClipStatus:
+      return "Device::SetClipStatus (stub)";
+    case D3d9TraceFunc::DeviceGetClipStatus:
+      return "Device::GetClipStatus (stub)";
+    case D3d9TraceFunc::DeviceGetGammaRamp:
+      return "Device::GetGammaRamp (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

@@ -126,6 +126,15 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceCaptureStateBlock,
   DeviceApplyStateBlock,
   DeviceValidateDevice,
+  DeviceSetSoftwareVertexProcessing,
+  DeviceSetCursorProperties,
+  DeviceSetCursorPosition,
+  DeviceShowCursor,
+  DeviceSetPaletteEntries,
+  DeviceSetCurrentTexturePalette,
+  DeviceSetClipStatus,
+  DeviceGetClipStatus,
+  DeviceGetGammaRamp,
 
   kCount,
 };

@@ -200,6 +200,15 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnDeleteStateBlock);
 AEROGPU_DEFINE_HAS_MEMBER(pfnCaptureStateBlock);
 AEROGPU_DEFINE_HAS_MEMBER(pfnApplyStateBlock);
 AEROGPU_DEFINE_HAS_MEMBER(pfnValidateDevice);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetSoftwareVertexProcessing);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetCursorProperties);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetCursorPosition);
+AEROGPU_DEFINE_HAS_MEMBER(pfnShowCursor);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetPaletteEntries);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetCurrentTexturePalette);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetClipStatus);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetClipStatus);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetGammaRamp);
 
 // OpenResource arg fields (vary across WDK versions).
 AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
@@ -310,6 +319,22 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeleteStateBlock, D3d9TraceFunc::DeviceDeleteSta
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnCaptureStateBlock, D3d9TraceFunc::DeviceCaptureStateBlock, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnApplyStateBlock, D3d9TraceFunc::DeviceApplyStateBlock, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnValidateDevice, D3d9TraceFunc::DeviceValidateDevice, D3DERR_NOTAVAILABLE);
+
+// Cursor, palette, and clip-status management is not implemented yet, but these
+// can be treated as benign no-ops for bring-up.
+AEROGPU_D3D9_DEFINE_DDI_STUB(
+    pfnSetSoftwareVertexProcessing, D3d9TraceFunc::DeviceSetSoftwareVertexProcessing, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCursorProperties, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetPaletteEntries, D3d9TraceFunc::DeviceSetPaletteEntries, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetCurrentTexturePalette, D3d9TraceFunc::DeviceSetCurrentTexturePalette, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetClipStatus, D3d9TraceFunc::DeviceSetClipStatus, S_OK);
+
+// "Get" style queries have output parameters; return an explicit failure so the
+// runtime does not consume uninitialized output data.
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetClipStatus, D3d9TraceFunc::DeviceGetClipStatus, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetGammaRamp, D3d9TraceFunc::DeviceGetGammaRamp, D3DERR_NOTAVAILABLE);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
@@ -7144,6 +7169,52 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     AEROGPU_SET_D3D9DDI_FN(
         pfnValidateDevice,
         aerogpu_d3d9_stub_pfnValidateDevice<decltype(pDeviceFuncs->pfnValidateDevice)>::pfnValidateDevice);
+  }
+  if constexpr (aerogpu_has_member_pfnSetSoftwareVertexProcessing<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetSoftwareVertexProcessing,
+        aerogpu_d3d9_stub_pfnSetSoftwareVertexProcessing<decltype(
+            pDeviceFuncs->pfnSetSoftwareVertexProcessing)>::pfnSetSoftwareVertexProcessing);
+  }
+  if constexpr (aerogpu_has_member_pfnSetCursorProperties<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetCursorProperties,
+        aerogpu_d3d9_stub_pfnSetCursorProperties<decltype(pDeviceFuncs->pfnSetCursorProperties)>::pfnSetCursorProperties);
+  }
+  if constexpr (aerogpu_has_member_pfnSetCursorPosition<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetCursorPosition,
+        aerogpu_d3d9_stub_pfnSetCursorPosition<decltype(pDeviceFuncs->pfnSetCursorPosition)>::pfnSetCursorPosition);
+  }
+  if constexpr (aerogpu_has_member_pfnShowCursor<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnShowCursor,
+        aerogpu_d3d9_stub_pfnShowCursor<decltype(pDeviceFuncs->pfnShowCursor)>::pfnShowCursor);
+  }
+  if constexpr (aerogpu_has_member_pfnSetPaletteEntries<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetPaletteEntries,
+        aerogpu_d3d9_stub_pfnSetPaletteEntries<decltype(pDeviceFuncs->pfnSetPaletteEntries)>::pfnSetPaletteEntries);
+  }
+  if constexpr (aerogpu_has_member_pfnSetCurrentTexturePalette<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnSetCurrentTexturePalette,
+                           aerogpu_d3d9_stub_pfnSetCurrentTexturePalette<decltype(
+                               pDeviceFuncs->pfnSetCurrentTexturePalette)>::pfnSetCurrentTexturePalette);
+  }
+  if constexpr (aerogpu_has_member_pfnSetClipStatus<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetClipStatus,
+        aerogpu_d3d9_stub_pfnSetClipStatus<decltype(pDeviceFuncs->pfnSetClipStatus)>::pfnSetClipStatus);
+  }
+  if constexpr (aerogpu_has_member_pfnGetClipStatus<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetClipStatus,
+        aerogpu_d3d9_stub_pfnGetClipStatus<decltype(pDeviceFuncs->pfnGetClipStatus)>::pfnGetClipStatus);
+  }
+  if constexpr (aerogpu_has_member_pfnGetGammaRamp<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetGammaRamp,
+        aerogpu_d3d9_stub_pfnGetGammaRamp<decltype(pDeviceFuncs->pfnGetGammaRamp)>::pfnGetGammaRamp);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSource, device_set_stream_source);
