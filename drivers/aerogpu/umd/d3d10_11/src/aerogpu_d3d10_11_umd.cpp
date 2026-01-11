@@ -11,6 +11,8 @@
 // KMD submission path. For repository builds (no WDK), this code uses a minimal
 // DDI ABI subset declared in `include/aerogpu_d3d10_11_umd.h`.
 
+#if !defined(_WIN32) || !defined(AEROGPU_UMD_USE_WDK_HEADERS)
+
 #include "../include/aerogpu_d3d10_11_umd.h"
 
 #include <atomic>
@@ -1249,3 +1251,5 @@ HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
 }
 
 } // extern "C"
+
+#endif // !defined(_WIN32) || !defined(AEROGPU_UMD_USE_WDK_HEADERS)
