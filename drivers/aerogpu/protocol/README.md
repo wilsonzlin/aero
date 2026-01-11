@@ -140,7 +140,8 @@ Notable bits include:
 ### Ring setup (KMD)
 
 1. Allocate a contiguous guest memory region for the ring:
-   - at least `sizeof(aerogpu_ring_header) + entry_count * sizeof(aerogpu_submit_desc)`.
+   - at least `sizeof(aerogpu_ring_header) + entry_count * entry_stride_bytes`, where
+     `entry_stride_bytes >= sizeof(aerogpu_submit_desc)`.
 2. Initialize `aerogpu_ring_header` (magic, abi_version, entry_count, etc).
 3. Program MMIO:
    - `RING_GPA_LO/HI`

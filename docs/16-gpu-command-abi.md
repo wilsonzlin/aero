@@ -180,7 +180,7 @@ The ring is a contiguous guest memory region starting at `RING_GPA`:
 ```
 ring_gpa:
   +0x00  struct aerogpu_ring_header (64 bytes)
-  +0x40  struct aerogpu_submit_desc entries[entry_count]
+  +0x40  ring slots[entry_count] (each slot is `entry_stride_bytes` bytes and begins with an `aerogpu_submit_desc` prefix)
 ```
 
 `aerogpu_ring_header` fields (packed; 64 bytes total):
