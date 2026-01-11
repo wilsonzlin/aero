@@ -45,6 +45,9 @@ function toPosixPath(p) {
 
 function toRepoRelativePath(repoRoot, absPath) {
     const rel = path.relative(repoRoot, absPath);
+    if (rel === "") {
+        return ".";
+    }
     if (rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)) {
         return toPosixPath(rel);
     }
@@ -172,7 +175,11 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 if (!overrideDir) {
-    overrideDir = process.env.AERO_WASM_CRATE_DIR?.trim() || null;
+    overrideDir =
+        process.env.AERO_WASM_CRATE_DIR?.trim() ||
+        // Legacy compatibility: `AERO_WASM_DIR` predates `AERO_WASM_CRATE_DIR`.
+        process.env.AERO_WASM_DIR?.trim() ||
+        null;
 }
 
 if (!githubOutputPath) {
