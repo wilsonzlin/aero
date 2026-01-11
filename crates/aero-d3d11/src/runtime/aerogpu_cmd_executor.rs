@@ -22,7 +22,6 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
-use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, Sm4Program};
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
@@ -1393,13 +1392,7 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
 
-        let wgsl = if signatures.isgn.is_some() && signatures.osgn.is_some() {
-            try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?
-        } else {
-            translate_sm4_to_wgsl_bootstrap(&program)
-                .context("DXBC->WGSL translation failed")?
-                .wgsl
-        };
+        let wgsl = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
 
         let entry_point = match stage {
             ShaderStage::Vertex => "vs_main",
