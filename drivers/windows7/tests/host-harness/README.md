@@ -260,9 +260,12 @@ For safety and determinism, the provisioning script installs **only an allowlist
 `virtio-transport-test.inf`) that can match the same HWIDs and steal device binding.
 
 Note: the harness uses **modern-only** virtio device IDs (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`).
-For virtio-blk/virtio-net, use the contract-v1 drivers under `drivers/win7/virtio-blk/` and
-`drivers/win7/virtio-net/` (the legacy/transitional packages under `drivers/windows7/virtio/` bind
-`DEV_1000`/`DEV_1001` and will not match when `disable-legacy=on`).
+For virtio-net, use the contract-v1 driver under `drivers/win7/virtio-net/` (the legacy/transitional
+package under `drivers/windows7/virtio/net/` binds `DEV_1000` and will not match when `disable-legacy=on`).
+
+For virtio-blk, use a contract-v1 driver that binds `DEV_1042` (for example `drivers/windows7/virtio/blk/`
+or `drivers/win7/virtio-blk/`). Avoid installing multiple `aerovblk.inf` files that bind the same HWID,
+or disambiguate by passing a relative INF path via `-InfAllowList`.
 
 For fully repeatable provisioning, pass `-InfAllowList` explicitly:
 
