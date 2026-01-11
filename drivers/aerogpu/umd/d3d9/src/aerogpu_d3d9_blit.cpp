@@ -339,7 +339,13 @@ bool upload_resource_bytes_locked(Device* dev,
                                  uint64_t offset_bytes,
                                  const uint8_t* data,
                                  size_t size_bytes) {
-  if (!dev || !res || !res->handle || !data) {
+  if (!dev || !res || !res->handle) {
+    return false;
+  }
+  if (size_bytes == 0) {
+    return true;
+  }
+  if (!data) {
     return false;
   }
   if (res->backing_alloc_id != 0) {
@@ -352,13 +358,49 @@ bool upload_resource_bytes_locked(Device* dev,
     return false;
   }
 
-  size_t remaining = size_bytes;
-  uint64_t cur_offset = offset_bytes;
-  const uint8_t* src = data;
+  const uint64_t res_size = res->size_bytes;
+  const uint64_t size_u64 = static_cast<uint64_t>(size_bytes);
+  if (offset_bytes > res_size || size_u64 > res_size - offset_bytes) {
+    return false;
+  }
+
+  const bool is_buffer = (res->kind == ResourceKind::Buffer);
+  uint64_t upload_offset = offset_bytes;
+  size_t upload_size = size_bytes;
+  const uint8_t* upload_src = data;
+
+  if (is_buffer) {
+    // WebGPU buffer copies require 4-byte alignment for both offsets and sizes.
+    // For host-backed buffers we can do a read-modify-write using the CPU shadow
+    // storage to preserve any bytes outside of the caller's range.
+    if (res->storage.size() < res->size_bytes) {
+      try {
+        res->storage.resize(res->size_bytes, 0);
+      } catch (...) {
+        return false;
+      }
+    }
+
+    std::memmove(res->storage.data() + static_cast<size_t>(offset_bytes), data, size_bytes);
+
+    const uint64_t start = upload_offset & ~3ull;
+    const uint64_t end = (upload_offset + size_u64 + 3ull) & ~3ull;
+    if (end > res_size || end < start) {
+      return false;
+    }
+    upload_offset = start;
+    upload_size = static_cast<size_t>(end - start);
+    upload_src = res->storage.data() + static_cast<size_t>(start);
+  }
+
+  size_t remaining = upload_size;
+  uint64_t cur_offset = upload_offset;
+  const uint8_t* src = upload_src;
 
   while (remaining) {
-    // Ensure we can at least fit a minimal upload packet (header + 1 byte).
-    const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+    // Ensure we can at least fit a minimal upload packet (header + N bytes).
+    const size_t min_payload = is_buffer ? 4 : 1;
+    const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + min_payload, 4);
     if (!ensure_cmd_space(dev, min_needed)) {
       return false;
     }
@@ -383,9 +425,18 @@ bool upload_resource_bytes_locked(Device* dev,
       chunk = std::min(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
     }
 
-    // Account for 4-byte alignment padding at the end of the packet.
-    while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
-      chunk--;
+    if (is_buffer) {
+      chunk &= ~static_cast<size_t>(3);
+      if (!chunk) {
+        // Extremely small DMA buffer: force a submit and retry.
+        (void)submit_locked(dev);
+        continue;
+      }
+    } else {
+      // Account for 4-byte alignment padding at the end of the packet.
+      while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+        chunk--;
+      }
     }
     if (!chunk) {
       // Extremely small DMA buffer: force a submit and retry.
