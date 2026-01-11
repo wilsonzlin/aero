@@ -56,6 +56,19 @@ param(
   [Parameter(Mandatory = $false)]
   [string]$VirtioSndWavPath = "",
 
+  # If set, verify that the virtio-snd wav capture contains non-silent PCM audio.
+  # This closes the loop between guest-side playback success and host-side audio backend output.
+  [Parameter(Mandatory = $false)]
+  [switch]$VerifyVirtioSndWav,
+
+  # Peak absolute sample threshold for VerifyVirtioSndWav (16-bit PCM).
+  [Parameter(Mandatory = $false)]
+  [int]$VirtioSndWavPeakThreshold = 200,
+
+  # RMS threshold for VerifyVirtioSndWav (16-bit PCM).
+  [Parameter(Mandatory = $false)]
+  [int]$VirtioSndWavRmsThreshold = 50,
+
   # Extra args passed verbatim to QEMU (advanced use).
   [Parameter(Mandatory = $false)]
   [string[]]$QemuExtraArgs = @()
@@ -65,6 +78,14 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "AeroVirtioWin7QemuArgs.ps1")
+if ($VerifyVirtioSndWav) {
+  if (-not $WithVirtioSnd) {
+    throw "-VerifyVirtioSndWav requires -WithVirtioSnd."
+  }
+  if ($VirtioSndAudioBackend -ne "wav") {
+    throw "-VerifyVirtioSndWav requires -VirtioSndAudioBackend wav."
+  }
+}
 
 function Start-AeroSelftestHttpServer {
   param(
@@ -284,6 +305,203 @@ function Get-AeroVirtioSoundDeviceArg {
   return $device
 }
 
+function Sanitize-AeroMarkerValue {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Value
+  )
+  return $Value.Replace("|", "/").Replace("`r", " ").Replace("`n", " ").Trim()
+}
+
+function Invoke-AeroVirtioSndWavVerification {
+  param(
+    [Parameter(Mandatory = $true)] [string]$WavPath,
+    [Parameter(Mandatory = $true)] [int]$PeakThreshold,
+    [Parameter(Mandatory = $true)] [int]$RmsThreshold
+  )
+
+  $markerPrefix = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV"
+
+  try {
+    if (-not (Test-Path -LiteralPath $WavPath)) {
+      Write-Host "$markerPrefix|FAIL|reason=missing_wav_file|path=$(Sanitize-AeroMarkerValue $WavPath)"
+      return $false
+    }
+
+    $fi = Get-Item -LiteralPath $WavPath
+    if ($fi.Length -le 0) {
+      Write-Host "$markerPrefix|FAIL|reason=empty_wav_file|path=$(Sanitize-AeroMarkerValue $WavPath)"
+      return $false
+    }
+
+    $fs = [System.IO.File]::Open($WavPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $br = [System.IO.BinaryReader]::new($fs, [System.Text.Encoding]::ASCII, $true)
+
+    try {
+      $riffBytes = $br.ReadBytes(4)
+      if ($riffBytes.Length -lt 4) { throw "wav file too small for RIFF header" }
+      $riff = [System.Text.Encoding]::ASCII.GetString($riffBytes)
+      if ($riff -ne "RIFF") { throw "missing RIFF header" }
+      $null = $br.ReadUInt32() # file size (ignored)
+      $waveBytes = $br.ReadBytes(4)
+      if ($waveBytes.Length -lt 4) { throw "wav file too small for WAVE header" }
+      $wave = [System.Text.Encoding]::ASCII.GetString($waveBytes)
+      if ($wave -ne "WAVE") { throw "missing WAVE form type" }
+
+      $fmtFound = $false
+      $dataFound = $false
+      $formatTag = 0
+      $channels = 0
+      $sampleRate = 0
+      $blockAlign = 0
+      $bitsPerSample = 0
+      $dataOffset = 0L
+      $dataSize = 0L
+
+      while (($fs.Position + 8) -le $fs.Length) {
+        $chunkIdBytes = $br.ReadBytes(4)
+        if ($chunkIdBytes.Length -lt 4) { break }
+        $chunkId = [System.Text.Encoding]::ASCII.GetString($chunkIdBytes)
+        $chunkSize = [long]$br.ReadUInt32()
+        $chunkDataStart = $fs.Position
+        $remaining = $fs.Length - $chunkDataStart
+        if ($chunkSize -gt $remaining) { $chunkSize = $remaining }
+
+        if ($chunkId -eq "fmt ") {
+          if ($chunkSize -lt 16) { throw "fmt chunk too small" }
+          $formatTag = [int]$br.ReadUInt16()
+          $channels = [int]$br.ReadUInt16()
+          $sampleRate = [int]$br.ReadUInt32()
+          $null = $br.ReadUInt32() # avg bytes/sec (ignored)
+          $blockAlign = [int]$br.ReadUInt16()
+          $bitsPerSample = [int]$br.ReadUInt16()
+          $fmtFound = $true
+          $skip = $chunkSize - 16
+          if ($skip -gt 0) { $fs.Seek($skip, [System.IO.SeekOrigin]::Current) | Out-Null }
+        } elseif ($chunkId -eq "data") {
+          # If QEMU is killed hard, it may never rewrite the data chunk size (placeholder 0).
+          # Recover by treating the rest of the file as audio data when it doesn't look like another chunk header.
+          $effectiveSize = $chunkSize
+          if ($chunkSize -eq 0 -and $remaining -gt 0) {
+            $peekLen = 8
+            if ($remaining -lt 8) { $peekLen = [int]$remaining }
+            $peek = $br.ReadBytes($peekLen)
+            $fs.Seek(-$peek.Length, [System.IO.SeekOrigin]::Current) | Out-Null
+
+            $looksLikeChunk = $false
+            if ($peek.Length -ge 8) {
+              $printable = $true
+              for ($i = 0; $i -lt 4; $i++) {
+                $b = $peek[$i]
+                if ($b -lt 0x20 -or $b -gt 0x7E) { $printable = $false; break }
+              }
+              if ($printable) {
+                $nextSize = [System.BitConverter]::ToUInt32($peek, 4)
+                if ($nextSize -le ($remaining - 8)) { $looksLikeChunk = $true }
+              }
+            }
+
+            if (-not $looksLikeChunk) { $effectiveSize = $remaining }
+          }
+
+          if (-not $dataFound -or ($dataSize -eq 0 -and $effectiveSize -gt 0)) {
+            $dataOffset = [long]$chunkDataStart
+            $dataSize = [long]$effectiveSize
+            $dataFound = $true
+          }
+          $fs.Seek($effectiveSize, [System.IO.SeekOrigin]::Current) | Out-Null
+        } else {
+          $fs.Seek($chunkSize, [System.IO.SeekOrigin]::Current) | Out-Null
+        }
+
+        if (($chunkSize % 2) -eq 1 -and $fs.Position -lt $fs.Length) {
+          $fs.Seek(1, [System.IO.SeekOrigin]::Current) | Out-Null
+        }
+      }
+
+      if (-not $fmtFound) { throw "missing fmt chunk" }
+      if (-not $dataFound) { throw "missing data chunk" }
+
+      if ($formatTag -ne 1) {
+        Write-Host "$markerPrefix|FAIL|reason=unsupported_format_tag_$formatTag"
+        return $false
+      }
+      if ($bitsPerSample -ne 16) {
+        Write-Host "$markerPrefix|FAIL|reason=unsupported_bits_per_sample_$bitsPerSample"
+        return $false
+      }
+      if ($dataSize -le 0) {
+        Write-Host "$markerPrefix|FAIL|reason=missing_or_empty_data_chunk"
+        return $false
+      }
+
+      $fs.Seek($dataOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+      $peak = 0
+      $sumSq = 0.0
+      $sampleValues = 0L
+      $remainingData = $dataSize
+      $buf = New-Object byte[] 65536
+      $carry = $null
+
+      while ($remainingData -gt 0) {
+        $toRead = [int][Math]::Min($buf.Length, $remainingData)
+        $n = $fs.Read($buf, 0, $toRead)
+        if ($n -le 0) { break }
+        $remainingData -= $n
+
+        $start = 0
+        if ($null -ne $carry) {
+          if ($n -ge 1) {
+            $val = ([int]$carry) -bor (([int]$buf[0]) -shl 8)
+            if ($val -ge 0x8000) { $val -= 0x10000 }
+            $absVal = if ($val -lt 0) { -$val } else { $val }
+            if ($absVal -gt $peak) { $peak = $absVal }
+            $sumSq += [double]($val * $val)
+            $sampleValues++
+            $start = 1
+            $carry = $null
+          } else {
+            break
+          }
+        }
+
+        $limit = $start + (($n - $start) / 2) * 2
+        for ($i = $start; $i -lt $limit; $i += 2) {
+          $val = ([int]$buf[$i]) -bor (([int]$buf[$i + 1]) -shl 8)
+          if ($val -ge 0x8000) { $val -= 0x10000 }
+          $absVal = if ($val -lt 0) { -$val } else { $val }
+          if ($absVal -gt $peak) { $peak = $absVal }
+          $sumSq += [double]($val * $val)
+          $sampleValues++
+        }
+
+        if ($limit -lt $n) {
+          $carry = $buf[$limit]
+        }
+      }
+
+      $rms = if ($sampleValues -gt 0) { [Math]::Sqrt($sumSq / [double]$sampleValues) } else { 0.0 }
+      $rmsI = [int][Math]::Round($rms)
+      $frames = if ($channels -gt 0) { [long]($sampleValues / $channels) } else { [long]$sampleValues }
+
+      if ($peak -gt $PeakThreshold -or $rms -gt $RmsThreshold) {
+        Write-Host "$markerPrefix|PASS|peak=$peak|rms=$rmsI|samples=$frames|sr=$sampleRate|ch=$channels"
+        return $true
+      }
+
+      Write-Host "$markerPrefix|FAIL|reason=silent_pcm|peak=$peak|rms=$rmsI|samples=$frames|sr=$sampleRate|ch=$channels"
+      return $false
+    } finally {
+      if ($br) { $br.Dispose() }
+      if ($fs) { $fs.Dispose() }
+    }
+  } catch {
+    $reason = Sanitize-AeroMarkerValue ($_.Exception.Message)
+    if ([string]::IsNullOrEmpty($reason)) { $reason = "exception" }
+    Write-Host "$markerPrefix|FAIL|reason=$reason"
+    return $false
+  }
+}
+
 $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
 
 $serialParent = Split-Path -Parent $SerialLogPath
@@ -373,19 +591,25 @@ try {
   Write-Host "  $QemuSystem $($qemuArgs -join ' ')"
 
   $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru
+  $scriptExitCode = 0
 
   try {
     $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial)
   } finally {
     if (-not $proc.HasExited) {
-      Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+      Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue
+      try { $proc.WaitForExit(5000) } catch { }
+      if (-not $proc.HasExited) {
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        try { $proc.WaitForExit(5000) } catch { }
+      }
     }
   }
 
   switch ($result.Result) {
     "PASS" {
       Write-Host "PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS"
-      exit 0
+      $scriptExitCode = 0
     }
     "FAIL" {
       Write-Host "FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL"
@@ -393,7 +617,7 @@ try {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
-      exit 1
+      $scriptExitCode = 1
     }
     "QEMU_EXITED" {
       $exitCode = $null
@@ -403,7 +627,7 @@ try {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
-      exit 3
+      $scriptExitCode = 3
     }
     "TIMEOUT" {
       Write-Host "FAIL: timed out waiting for AERO_VIRTIO_SELFTEST result marker"
@@ -411,7 +635,7 @@ try {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
-      exit 2
+      $scriptExitCode = 2
     }
     "MISSING_VIRTIO_INPUT" {
       Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker"
@@ -419,7 +643,7 @@ try {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
-      exit 1
+      $scriptExitCode = 1
     }
     "MISSING_VIRTIO_SND" {
       Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker"
@@ -427,7 +651,7 @@ try {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
-      exit 1
+      $scriptExitCode = 1
     }
     default {
       Write-Host "FAIL: unexpected harness result: $($result.Result)"
@@ -435,11 +659,21 @@ try {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
-      exit 4
+      $scriptExitCode = 4
     }
   }
+
+  if ($VerifyVirtioSndWav) {
+    $wavOk = Invoke-AeroVirtioSndWavVerification -WavPath $VirtioSndWavPath -PeakThreshold $VirtioSndWavPeakThreshold -RmsThreshold $VirtioSndWavRmsThreshold
+    if (-not $wavOk -and $scriptExitCode -eq 0) {
+      $scriptExitCode = 5
+    }
+  }
+
 } finally {
   if ($httpListener) {
     try { $httpListener.Stop() } catch { }
   }
 }
+
+exit $scriptExitCode

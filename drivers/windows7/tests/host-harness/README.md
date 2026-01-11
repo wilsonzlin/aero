@@ -135,6 +135,43 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --virtio-snd-wav-path ./out/virtio-snd.wav
 ```
 
+#### Host-side wav verification (non-silence)
+
+Guest-side WaveOut success only proves Windows accepted the audio buffer; it does **not** guarantee the virtio-snd driver
+actually fed the host audio backend. When using the `wav` backend, the harness can validate that the captured PCM data is
+non-silent.
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithVirtioSnd `
+  -VirtioSndAudioBackend wav `
+  -VirtioSndWavPath ./out/virtio-snd.wav `
+  -VerifyVirtioSndWav
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --enable-virtio-snd \
+  --virtio-snd-audio-backend wav \
+  --virtio-snd-wav-path ./out/virtio-snd.wav \
+  --virtio-snd-verify-wav
+```
+
+Notes:
+
+- Verification requires the **guest virtio-snd selftest** to actually run (use an image provisioned with the virtio-snd
+  driver; to require the guest test section, provision with `--require-snd` / `-RequireSnd`).
+- The harness prints a single-line marker suitable for log scraping:
+  `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV|PASS|...` or `...|FAIL|reason=<...>`.
+
 ## Running in CI (self-hosted)
 
 This repo includes an **opt-in** GitHub Actions workflow that runs the host harness on a **self-hosted** runner:

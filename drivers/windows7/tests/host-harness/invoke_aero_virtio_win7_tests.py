@@ -22,14 +22,19 @@ from __future__ import annotations
 
 import argparse
 import http.server
+import math
 import os
 import shlex
 import socketserver
 import subprocess
+import struct
 import sys
 import time
+from array import array
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Thread
+from typing import Optional
 
 
 class _QuietHandler(http.server.BaseHTTPRequestHandler):
@@ -56,6 +61,22 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
 
 class _ReusableTcpServer(socketserver.TCPServer):
     allow_reuse_address = True
+
+
+@dataclass(frozen=True)
+class _WaveFmtChunk:
+    format_tag: int
+    channels: int
+    sample_rate: int
+    block_align: int
+    bits_per_sample: int
+
+
+@dataclass(frozen=True)
+class _WaveFileInfo:
+    fmt: _WaveFmtChunk
+    data_offset: int
+    data_size: int
 
 
 def _read_new_bytes(path: Path, pos: int) -> tuple[bytes, int]:
@@ -145,6 +166,26 @@ def main() -> int:
         help="Output wav path when --virtio-snd-audio-backend=wav",
     )
     parser.add_argument(
+        "--virtio-snd-verify-wav",
+        action="store_true",
+        help=(
+            "After QEMU exits, verify the captured wav file contains non-silent 16-bit PCM "
+            "(requires --enable-virtio-snd and --virtio-snd-audio-backend=wav)"
+        ),
+    )
+    parser.add_argument(
+        "--virtio-snd-wav-peak-threshold",
+        type=int,
+        default=200,
+        help="Peak absolute sample threshold for --virtio-snd-verify-wav (default: 200)",
+    )
+    parser.add_argument(
+        "--virtio-snd-wav-rms-threshold",
+        type=int,
+        default=50,
+        help="RMS threshold for --virtio-snd-verify-wav (default: 50)",
+    )
+    parser.add_argument(
         "--follow-serial",
         action="store_true",
         help="Stream newly captured COM1 serial output to stdout while waiting",
@@ -158,6 +199,12 @@ def main() -> int:
             parser.error("--virtio-snd-* options require --with-virtio-snd/--enable-virtio-snd")
     elif args.virtio_snd_audio_backend == "wav" and not args.virtio_snd_wav_path:
         parser.error("--virtio-snd-wav-path is required when --virtio-snd-audio-backend=wav")
+
+    if args.virtio_snd_verify_wav:
+        if not args.enable_virtio_snd:
+            parser.error("--virtio-snd-verify-wav requires --with-virtio-snd/--enable-virtio-snd")
+        if args.virtio_snd_audio_backend != "wav":
+            parser.error("--virtio-snd-verify-wav requires --virtio-snd-audio-backend=wav")
 
     disk_image = Path(args.disk_image).resolve()
     serial_log = Path(args.serial_log).resolve()
@@ -190,6 +237,7 @@ def main() -> int:
         virtio_kbd = f"virtio-keyboard-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
         virtio_mouse = f"virtio-mouse-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
 
+        wav_path: Optional[Path] = None
         virtio_snd_args: list[str] = []
         if args.enable_virtio_snd:
             try:
@@ -245,6 +293,7 @@ def main() -> int:
         print("Launching QEMU:")
         print("  " + " ".join(shlex.quote(str(a)) for a in qemu_args))
         proc = subprocess.Popen(qemu_args)
+        result_code: Optional[int] = None
         try:
             pos = 0
             tail = b""
@@ -293,27 +342,32 @@ def main() -> int:
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
-                            return 1
+                            result_code = 1
+                            break
                         if saw_virtio_snd_fail:
                             print(
                                 "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
-                            return 1
+                            result_code = 1
+                            break
                         if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
                             print(
                                 "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
-                            return 1
+                            result_code = 1
+                            break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
-                        return 0
+                        result_code = 0
+                        break
                     if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
                         print("FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
                         _print_tail(serial_log)
-                        return 1
+                        result_code = 1
+                        break
 
                 if proc.poll() is not None:
                     # One last read after exit in case QEMU shut down immediately after writing the marker.
@@ -344,40 +398,61 @@ def main() -> int:
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
-                                return 1
+                                result_code = 1
+                                break
                             if saw_virtio_snd_fail:
                                 print(
                                     "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
-                                return 1
+                                result_code = 1
+                                break
                             if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
                                 print(
                                     "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
-                                return 1
+                                result_code = 1
+                                break
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
-                            return 0
+                            result_code = 0
+                            break
                         if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
                             print("FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
                             _print_tail(serial_log)
-                            return 1
+                            result_code = 1
+                            break
 
                     print(f"FAIL: QEMU exited before selftest result marker (exit code: {proc.returncode})")
                     _print_tail(serial_log)
-                    return 3
+                    result_code = 3
+                    break
 
                 time.sleep(0.25)
 
-            print("FAIL: timed out waiting for AERO_VIRTIO_SELFTEST result marker")
-            _print_tail(serial_log)
-            return 2
+            if result_code is None:
+                print("FAIL: timed out waiting for AERO_VIRTIO_SELFTEST result marker")
+                _print_tail(serial_log)
+                result_code = 2
         finally:
             _stop_process(proc)
             httpd.shutdown()
+
+        if args.virtio_snd_verify_wav:
+            if wav_path is None:
+                raise AssertionError("--virtio-snd-verify-wav requires --virtio-snd-audio-backend=wav")
+            ok = _verify_virtio_snd_wav_non_silent(
+                wav_path,
+                peak_threshold=args.virtio_snd_wav_peak_threshold,
+                rms_threshold=args.virtio_snd_wav_rms_threshold,
+            )
+            if not ok and result_code == 0:
+                # Surface host-side audio failures even if the guest selftest passed.
+                result_code = 4
+
+        return result_code if result_code is not None else 2
 
 
 def _print_tail(path: Path) -> None:
@@ -427,6 +502,195 @@ def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
             "Upgrade QEMU or omit --with-virtio-snd/--enable-virtio-snd and pass custom QEMU args."
         )
     return device
+
+
+def _looks_like_chunk_id(chunk_id: bytes) -> bool:
+    if len(chunk_id) != 4:
+        return False
+    # Most RIFF chunk IDs are ASCII (e.g. b"fmt ", b"data", b"LIST"). Treat this as a heuristic only.
+    return all(0x20 <= b <= 0x7E for b in chunk_id)
+
+
+def _parse_wave_file(path: Path) -> _WaveFileInfo:
+    file_size = path.stat().st_size
+    if file_size <= 0:
+        raise ValueError("wav file is empty")
+
+    with path.open("rb") as f:
+        header = f.read(12)
+        if len(header) < 12:
+            raise ValueError("wav file too small for RIFF header")
+        if header[0:4] != b"RIFF":
+            raise ValueError("missing RIFF header")
+        if header[8:12] != b"WAVE":
+            raise ValueError("missing WAVE form type")
+
+        fmt: Optional[_WaveFmtChunk] = None
+        data_offset: Optional[int] = None
+        data_size: Optional[int] = None
+
+        while True:
+            chunk_hdr = f.read(8)
+            if len(chunk_hdr) == 0:
+                break
+            if len(chunk_hdr) < 8:
+                break
+
+            chunk_id = chunk_hdr[0:4]
+            chunk_size = struct.unpack("<I", chunk_hdr[4:8])[0]
+            chunk_data_start = f.tell()
+            remaining_in_file = max(0, file_size - chunk_data_start)
+
+            # Clamp chunk size to the actual file length to avoid seek errors on truncated writes.
+            if chunk_size > remaining_in_file:
+                chunk_size = remaining_in_file
+
+            if chunk_id == b"fmt ":
+                if chunk_size < 16:
+                    raise ValueError("fmt chunk too small")
+                fmt_head = f.read(16)
+                if len(fmt_head) < 16:
+                    raise ValueError("truncated fmt chunk")
+                (
+                    w_format_tag,
+                    n_channels,
+                    n_samples_per_sec,
+                    _n_avg_bytes_per_sec,
+                    n_block_align,
+                    w_bits_per_sample,
+                ) = struct.unpack("<HHIIHH", fmt_head)
+                fmt = _WaveFmtChunk(
+                    format_tag=w_format_tag,
+                    channels=n_channels,
+                    sample_rate=n_samples_per_sec,
+                    block_align=n_block_align,
+                    bits_per_sample=w_bits_per_sample,
+                )
+                if chunk_size > 16:
+                    f.seek(chunk_size - 16, os.SEEK_CUR)
+            elif chunk_id == b"data":
+                # QEMU normally finalizes the data chunk size on graceful exit. If QEMU is killed hard, it
+                # may leave a placeholder (0). Recover by treating the rest of the file as audio data when it
+                # doesn't look like another valid RIFF chunk header.
+                effective_size = chunk_size
+                if chunk_size == 0 and remaining_in_file > 0:
+                    peek = f.read(min(8, remaining_in_file))
+                    f.seek(-len(peek), os.SEEK_CUR)
+                    if len(peek) < 8 or not _looks_like_chunk_id(peek[0:4]):
+                        effective_size = remaining_in_file
+                    else:
+                        next_size = struct.unpack("<I", peek[4:8])[0]
+                        if next_size > remaining_in_file - 8:
+                            effective_size = remaining_in_file
+
+                if data_offset is None or (data_size is not None and data_size == 0 and effective_size > 0):
+                    data_offset = chunk_data_start
+                    data_size = effective_size
+
+                f.seek(effective_size, os.SEEK_CUR)
+            else:
+                f.seek(chunk_size, os.SEEK_CUR)
+
+            # Chunks are padded to an even boundary.
+            if chunk_size % 2 == 1 and f.tell() < file_size:
+                f.seek(1, os.SEEK_CUR)
+
+        if fmt is None:
+            raise ValueError("missing fmt chunk")
+        if data_offset is None or data_size is None:
+            raise ValueError("missing data chunk")
+
+        return _WaveFileInfo(fmt=fmt, data_offset=data_offset, data_size=data_size)
+
+
+def _compute_pcm16_metrics(path: Path, data_offset: int, data_size: int) -> tuple[int, float, int]:
+    peak = 0
+    sum_sq = 0
+    count = 0
+
+    with path.open("rb") as f:
+        f.seek(data_offset)
+        remaining = data_size
+        carry = b""
+
+        while remaining > 0:
+            chunk = f.read(min(remaining, 1024 * 1024))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+
+            if carry:
+                chunk = carry + chunk
+                carry = b""
+            if len(chunk) % 2 == 1:
+                carry = chunk[-1:]
+                chunk = chunk[:-1]
+            if not chunk:
+                continue
+
+            arr = array("h")
+            arr.frombytes(chunk)
+            if sys.byteorder != "little":
+                arr.byteswap()
+
+            for s in arr:
+                abs_s = -s if s < 0 else s
+                if abs_s > peak:
+                    peak = abs_s
+                sum_sq += s * s
+            count += len(arr)
+
+    rms = math.sqrt(sum_sq / count) if count else 0.0
+    return peak, rms, count
+
+
+def _sanitize_marker_value(value: str) -> str:
+    return value.replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
+
+
+def _verify_virtio_snd_wav_non_silent(path: Path, *, peak_threshold: int, rms_threshold: int) -> bool:
+    marker_prefix = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV"
+    try:
+        if not path.exists():
+            print(f"{marker_prefix}|FAIL|reason=missing_wav_file|path={_sanitize_marker_value(str(path))}")
+            return False
+
+        if path.stat().st_size <= 0:
+            print(f"{marker_prefix}|FAIL|reason=empty_wav_file|path={_sanitize_marker_value(str(path))}")
+            return False
+
+        info = _parse_wave_file(path)
+        fmt = info.fmt
+
+        if fmt.format_tag != 1:
+            print(f"{marker_prefix}|FAIL|reason=unsupported_format_tag_{fmt.format_tag}")
+            return False
+        if fmt.bits_per_sample != 16:
+            print(f"{marker_prefix}|FAIL|reason=unsupported_bits_per_sample_{fmt.bits_per_sample}")
+            return False
+        if info.data_size <= 0:
+            print(f"{marker_prefix}|FAIL|reason=missing_or_empty_data_chunk")
+            return False
+
+        peak, rms, sample_values = _compute_pcm16_metrics(path, info.data_offset, info.data_size)
+        rms_i = int(round(rms))
+        frames = sample_values // fmt.channels if fmt.channels else sample_values
+
+        ok = peak > peak_threshold or rms > rms_threshold
+        if ok:
+            print(
+                f"{marker_prefix}|PASS|peak={peak}|rms={rms_i}|samples={frames}|sr={fmt.sample_rate}|ch={fmt.channels}"
+            )
+            return True
+
+        print(
+            f"{marker_prefix}|FAIL|reason=silent_pcm|peak={peak}|rms={rms_i}|samples={frames}|sr={fmt.sample_rate}|ch={fmt.channels}"
+        )
+        return False
+    except Exception as e:
+        reason = _sanitize_marker_value(str(e) or type(e).__name__)
+        print(f"{marker_prefix}|FAIL|reason={reason}")
+        return False
 
 
 if __name__ == "__main__":
