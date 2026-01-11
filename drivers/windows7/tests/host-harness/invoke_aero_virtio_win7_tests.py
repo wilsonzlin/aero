@@ -44,6 +44,7 @@ from typing import Optional
 
 class _QuietHandler(http.server.BaseHTTPRequestHandler):
     expected_path: str = "/aero-virtio-selftest"
+    http_log_path: Optional[Path] = None
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == self.expected_path:
@@ -60,8 +61,26 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, fmt: str, *args: object) -> None:
-        # Silence default request logging (we only care about the selftest marker).
-        return
+        log_path = getattr(self, "http_log_path", None)
+        if not log_path:
+            # Silence default request logging unless explicitly enabled.
+            return
+
+        try:
+            msg = "%s - - [%s] %s\n" % (
+                self.address_string(),
+                self.log_date_time_string(),
+                fmt % args,
+            )
+        except Exception:
+            return
+
+        try:
+            with open(log_path, "a", encoding="utf-8", errors="replace") as f:
+                f.write(msg)
+        except Exception:
+            # Best-effort logging; never fail the harness due to HTTP log I/O.
+            return
 
 
 class _ReusableTcpServer(socketserver.TCPServer):
@@ -201,6 +220,11 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=int, default=600)
     parser.add_argument("--http-port", type=int, default=18080)
     parser.add_argument("--http-path", default="/aero-virtio-selftest")
+    parser.add_argument(
+        "--http-log",
+        default=None,
+        help="Optional path to write HTTP request logs (one line per request)",
+    )
     parser.add_argument("--snapshot", action="store_true", help="Discard disk writes (snapshot=on)")
     parser.add_argument(
         "--virtio-transitional",
@@ -291,7 +315,25 @@ def main() -> int:
     except FileNotFoundError:
         pass
 
-    handler = type("_Handler", (_QuietHandler,), {"expected_path": args.http_path})
+    http_log_path: Optional[Path] = None
+    if args.http_log:
+        try:
+            http_log_path = Path(args.http_log).resolve()
+            http_log_path.parent.mkdir(parents=True, exist_ok=True)
+            if http_log_path.exists():
+                http_log_path.unlink()
+        except OSError as e:
+            print(f"WARNING: failed to prepare HTTP request log at {args.http_log}: {e}", file=sys.stderr)
+            http_log_path = None
+
+    handler = type(
+        "_Handler",
+        (_QuietHandler,),
+        {
+            "expected_path": args.http_path,
+            "http_log_path": http_log_path,
+        },
+    )
 
     with _ReusableTcpServer(("127.0.0.1", args.http_port), handler) as httpd:
         thread = Thread(target=httpd.serve_forever, daemon=True)
