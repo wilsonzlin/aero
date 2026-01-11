@@ -6,6 +6,26 @@ async function waitForReady(page: Page) {
 
 test("aerogpu alloc_table backing: GPU worker uploads from shared guest RAM via RESOURCE_DIRTY_RANGE", async ({ page }) => {
   await page.goto("http://127.0.0.1:5173/web/aerogpu-alloc-table-smoke.html", { waitUntil: "load" });
+
+  const support = await page.evaluate(() => {
+    let wasmThreads = false;
+    try {
+      // eslint-disable-next-line no-new
+      new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+      wasmThreads = true;
+    } catch {
+      wasmThreads = false;
+    }
+    return {
+      crossOriginIsolated: globalThis.crossOriginIsolated === true,
+      sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
+      atomics: typeof Atomics !== "undefined",
+      wasmThreads,
+    };
+  });
+
+  test.skip(!support.crossOriginIsolated || !support.sharedArrayBuffer, "SharedArrayBuffer requires COOP/COEP headers.");
+  test.skip(!support.atomics || !support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
   await waitForReady(page);
 
   const result = await page.evaluate(() => (window as any).__aeroTest);
@@ -30,4 +50,3 @@ test("aerogpu alloc_table backing: GPU worker uploads from shared guest RAM via 
   // padding does not bleed into packed RGBA8 presentation.
   expect(samples.p01).toEqual([0, 0, 0, 0]);
 });
-
