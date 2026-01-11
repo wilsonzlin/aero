@@ -4495,11 +4495,17 @@ template <typename T>
 struct has_FormatSupport2<T, std::void_t<decltype(&T::FormatSupport2)>> : std::true_type {};
 
 HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
-  if (!pCaps || !pCaps->pData) {
+  if (!pCaps) {
     return E_INVALIDARG;
   }
 
   DebugLog("aerogpu-d3d10: GetCaps type=%u size=%u\n", (unsigned)pCaps->Type, (unsigned)pCaps->DataSize);
+
+  if (!pCaps->pData || pCaps->DataSize == 0) {
+    // Be conservative and avoid failing the runtime during bring-up: treat
+    // missing/empty output buffers as a no-op query.
+    return S_OK;
+  }
 
   DXGI_FORMAT in_format = DXGI_FORMAT_UNKNOWN;
   if (pCaps->Type == D3D10DDICAPS_TYPE_FORMAT_SUPPORT && pCaps->DataSize >= sizeof(D3D10DDIARG_FORMAT_SUPPORT)) {

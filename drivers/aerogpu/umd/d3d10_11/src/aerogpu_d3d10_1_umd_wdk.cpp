@@ -4911,8 +4911,13 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
     OutputDebugStringA(buf);
   }
 #endif
-  if (!pCaps || !pCaps->pData) {
+  if (!pCaps) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
+  if (!pCaps->pData || pCaps->DataSize == 0) {
+    // Be conservative and avoid failing the runtime during bring-up: treat
+    // missing/empty output buffers as a no-op query.
+    AEROGPU_D3D10_RET_HR(S_OK);
   }
 
   DXGI_FORMAT in_format = DXGI_FORMAT_UNKNOWN;
@@ -5055,8 +5060,13 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS*
     OutputDebugStringA(buf);
   }
 #endif
-  if (!pCaps || !pCaps->pData) {
+  if (!pCaps) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
+  if (!pCaps->pData || pCaps->DataSize == 0) {
+    // Be conservative and avoid failing the runtime during bring-up: treat
+    // missing/empty output buffers as a no-op query.
+    AEROGPU_D3D10_RET_HR(S_OK);
   }
 
   DXGI_FORMAT in_format = DXGI_FORMAT_UNKNOWN;
