@@ -871,12 +871,13 @@ See `drivers/aerogpu/README.md` for driver layout/entrypoints and `docs/16-windo
   ```
  
  4. After reboot, install the **signed** package by pointing at the INF in the copied package directory:
- 
- ```bat
- install.cmd C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
- :: or:
- pnputil -i -a C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
- ```
+  
+  ```bat
+  cd C:\path\to\out\packages\aerogpu\x64
+  pnputil -i -a aerogpu.inf
+  :: or (use the helper script shipped in the package):
+  packaging\win7\install.cmd
+  ```
  
  (If you staged the optional D3D10/11 INF, install that INF instead.)
   

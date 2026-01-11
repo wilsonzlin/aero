@@ -134,26 +134,27 @@ Newer Windows SDK/WDK releases (Windows Kits 10+) also include them (CI uses a p
 - Windows 7 x86: `out/packages/aerogpu/x86/`
 - Windows 7 x64: `out/packages/aerogpu/x64/`
 
-2. Copy the signing certificate into the VM:
+2. Copy the signing certificate into the VM **next to the INF** (package root):
 
-- `out/certs/aero-test.cer`
+- `out/certs/aero-test.cer` → `C:\path\to\out\packages\aerogpu\x64\aero-test.cer`
 
 3. In the Win7 VM, open an **elevated** Command Prompt (Run as Administrator) and trust the certificate (and enable test signing if needed):
 
 ```bat
-trust_test_cert.cmd aero-test.cer
+cd C:\path\to\out\packages\aerogpu\x64
+packaging\win7\trust_test_cert.cmd
 shutdown /r /t 0
 ```
 
-> Tip: `trust_test_cert.cmd` lives in this directory. Copy it into the VM (or pass an explicit path).
-> If you omit the cert argument, it will also search for `aero-test.cer` in parent directories (useful for bundle/ISO layouts).
+> Tip: If you omit the cert argument, `trust_test_cert.cmd` searches for `aero-test.cer` in parent directories (useful for bundle/ISO layouts).
 
 4. After reboot, install the **signed** package by pointing at the INF in the copied package directory:
 
 ```bat
-pnputil -i -a C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
-:: or (if you copied this packaging folder too):
-install.cmd C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
+cd C:\path\to\out\packages\aerogpu\x64
+pnputil -i -a aerogpu.inf
+:: or (use the helper script shipped in the package):
+packaging\win7\install.cmd
 ```
 
 If installing the optional D3D10/11 UMD variant, install `aerogpu_dx11.inf` from the copied package directory instead.
