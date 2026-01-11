@@ -243,12 +243,15 @@ constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
 constexpr uint32_t kDxgiFormatR32G32B32Float = 6;
 constexpr uint32_t kDxgiFormatR32G32Float = 16;
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
+constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
 constexpr uint32_t kDxgiFormatD32Float = 40;
 constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
 constexpr uint32_t kDxgiFormatR16Uint = 57;
 constexpr uint32_t kDxgiFormatR32Uint = 42;
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
 constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
+constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91;
+constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93;
 
 uint32_t f32_bits(float v) {
   uint32_t bits = 0;
@@ -273,10 +276,13 @@ uint32_t HashSemanticName(const char* s) {
 uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   switch (dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
+    case kDxgiFormatB8G8R8A8UnormSrgb:
       return AEROGPU_FORMAT_B8G8R8A8_UNORM;
     case kDxgiFormatB8G8R8X8Unorm:
+    case kDxgiFormatB8G8R8X8UnormSrgb:
       return AEROGPU_FORMAT_B8G8R8X8_UNORM;
     case kDxgiFormatR8G8B8A8Unorm:
+    case kDxgiFormatR8G8B8A8UnormSrgb:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
     case kDxgiFormatD24UnormS8Uint:
       return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
@@ -4141,18 +4147,21 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
           uint8_t* dst = row + static_cast<size_t>(x) * 4;
           switch (res->dxgi_format) {
             case kDxgiFormatR8G8B8A8Unorm:
+            case kDxgiFormatR8G8B8A8UnormSrgb:
               dst[0] = out_r;
               dst[1] = out_g;
               dst[2] = out_b;
               dst[3] = out_a;
               break;
             case kDxgiFormatB8G8R8X8Unorm:
+            case kDxgiFormatB8G8R8X8UnormSrgb:
               dst[0] = out_b;
               dst[1] = out_g;
               dst[2] = out_r;
               dst[3] = 255;
               break;
             case kDxgiFormatB8G8R8A8Unorm:
+            case kDxgiFormatB8G8R8A8UnormSrgb:
             default:
               dst[0] = out_b;
               dst[1] = out_g;
@@ -4341,18 +4350,21 @@ void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex)
             uint8_t* dst = row + static_cast<size_t>(x) * 4;
             switch (rt->dxgi_format) {
               case kDxgiFormatR8G8B8A8Unorm:
+              case kDxgiFormatR8G8B8A8UnormSrgb:
                 dst[0] = out_r;
                 dst[1] = out_g;
                 dst[2] = out_b;
                 dst[3] = out_a;
                 break;
               case kDxgiFormatB8G8R8X8Unorm:
+              case kDxgiFormatB8G8R8X8UnormSrgb:
                 dst[0] = out_b;
                 dst[1] = out_g;
                 dst[2] = out_r;
                 dst[3] = 255;
                 break;
               case kDxgiFormatB8G8R8A8Unorm:
+              case kDxgiFormatB8G8R8A8UnormSrgb:
               default:
                 dst[0] = out_b;
                 dst[1] = out_g;
@@ -4714,8 +4726,11 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
         UINT support = 0;
         switch (format) {
           case kDxgiFormatB8G8R8A8Unorm:
+          case kDxgiFormatB8G8R8A8UnormSrgb:
           case kDxgiFormatB8G8R8X8Unorm:
+          case kDxgiFormatB8G8R8X8UnormSrgb:
           case kDxgiFormatR8G8B8A8Unorm:
+          case kDxgiFormatR8G8B8A8UnormSrgb:
             support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
                       D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
@@ -4752,8 +4767,11 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
         bool supported_format = false;
         switch (static_cast<uint32_t>(msaa_format)) {
           case kDxgiFormatB8G8R8A8Unorm:
+          case kDxgiFormatB8G8R8A8UnormSrgb:
           case kDxgiFormatB8G8R8X8Unorm:
+          case kDxgiFormatB8G8R8X8UnormSrgb:
           case kDxgiFormatR8G8B8A8Unorm:
+          case kDxgiFormatR8G8B8A8UnormSrgb:
           case kDxgiFormatD24UnormS8Uint:
           case kDxgiFormatD32Float:
             supported_format = true;

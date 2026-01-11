@@ -2105,8 +2105,11 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       UINT support = 0;
       switch (static_cast<uint32_t>(format)) {
         case kDxgiFormatB8G8R8A8Unorm:
+        case kDxgiFormatB8G8R8A8UnormSrgb:
         case kDxgiFormatB8G8R8X8Unorm:
+        case kDxgiFormatB8G8R8X8UnormSrgb:
         case kDxgiFormatR8G8B8A8Unorm:
+        case kDxgiFormatR8G8B8A8UnormSrgb:
           support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
                     D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
                     D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
@@ -2171,8 +2174,11 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       bool supported_format = false;
       switch (static_cast<uint32_t>(in.Format)) {
         case kDxgiFormatB8G8R8A8Unorm:
+        case kDxgiFormatB8G8R8A8UnormSrgb:
         case kDxgiFormatB8G8R8X8Unorm:
+        case kDxgiFormatB8G8R8X8UnormSrgb:
         case kDxgiFormatR8G8B8A8Unorm:
+        case kDxgiFormatR8G8B8A8UnormSrgb:
         case kDxgiFormatD24UnormS8Uint:
         case kDxgiFormatD32Float:
           supported_format = true;
@@ -4812,13 +4818,16 @@ static void SoftwareClearTexture2D(Resource* rt, const FLOAT rgba[4]) {
   uint8_t px[4] = {0, 0, 0, 0};
   switch (rt->dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
+    case kDxgiFormatB8G8R8A8UnormSrgb:
     case kDxgiFormatB8G8R8X8Unorm:
+    case kDxgiFormatB8G8R8X8UnormSrgb:
       px[0] = b;
       px[1] = g;
       px[2] = r;
       px[3] = a;
       break;
     case kDxgiFormatR8G8B8A8Unorm:
+    case kDxgiFormatR8G8B8A8UnormSrgb:
       px[0] = r;
       px[1] = g;
       px[2] = b;
@@ -5190,8 +5199,9 @@ static bool SampleTexturePoint(Resource* tex, float u, float v, uint32_t addr_u,
   if (tex->storage.size() < static_cast<size_t>(tex->row_pitch_bytes) * static_cast<size_t>(tex->height)) {
     return false;
   }
-  if (!(tex->dxgi_format == kDxgiFormatB8G8R8A8Unorm || tex->dxgi_format == kDxgiFormatB8G8R8X8Unorm ||
-        tex->dxgi_format == kDxgiFormatR8G8B8A8Unorm)) {
+  if (!(tex->dxgi_format == kDxgiFormatB8G8R8A8Unorm || tex->dxgi_format == kDxgiFormatB8G8R8A8UnormSrgb ||
+        tex->dxgi_format == kDxgiFormatB8G8R8X8Unorm || tex->dxgi_format == kDxgiFormatB8G8R8X8UnormSrgb ||
+        tex->dxgi_format == kDxgiFormatR8G8B8A8Unorm || tex->dxgi_format == kDxgiFormatR8G8B8A8UnormSrgb)) {
     return false;
   }
 
@@ -5211,18 +5221,21 @@ static bool SampleTexturePoint(Resource* tex, float u, float v, uint32_t addr_u,
   uint8_t r = 0, g = 0, b = 0, a = 255;
   switch (tex->dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
+    case kDxgiFormatB8G8R8A8UnormSrgb:
       b = tex->storage[off + 0];
       g = tex->storage[off + 1];
       r = tex->storage[off + 2];
       a = tex->storage[off + 3];
       break;
     case kDxgiFormatB8G8R8X8Unorm:
+    case kDxgiFormatB8G8R8X8UnormSrgb:
       b = tex->storage[off + 0];
       g = tex->storage[off + 1];
       r = tex->storage[off + 2];
       a = 255;
       break;
     case kDxgiFormatR8G8B8A8Unorm:
+    case kDxgiFormatR8G8B8A8UnormSrgb:
       r = tex->storage[off + 0];
       g = tex->storage[off + 1];
       b = tex->storage[off + 2];
@@ -5503,13 +5516,16 @@ static void SoftwareRasterTriangle(Device* dev,
       uint8_t dst_u8[4] = {};
       switch (rt->dxgi_format) {
         case kDxgiFormatB8G8R8A8Unorm:
+        case kDxgiFormatB8G8R8A8UnormSrgb:
         case kDxgiFormatB8G8R8X8Unorm:
+        case kDxgiFormatB8G8R8X8UnormSrgb:
           dst_u8[0] = dst[2];
           dst_u8[1] = dst[1];
           dst_u8[2] = dst[0];
           dst_u8[3] = dst[3];
           break;
         case kDxgiFormatR8G8B8A8Unorm:
+        case kDxgiFormatR8G8B8A8UnormSrgb:
           dst_u8[0] = dst[0];
           dst_u8[1] = dst[1];
           dst_u8[2] = dst[2];
@@ -5558,13 +5574,16 @@ static void SoftwareRasterTriangle(Device* dev,
 
       switch (rt->dxgi_format) {
         case kDxgiFormatB8G8R8A8Unorm:
+        case kDxgiFormatB8G8R8A8UnormSrgb:
         case kDxgiFormatB8G8R8X8Unorm:
+        case kDxgiFormatB8G8R8X8UnormSrgb:
           dst[0] = out_u8[2];
           dst[1] = out_u8[1];
           dst[2] = out_u8[0];
           dst[3] = out_u8[3];
           break;
         case kDxgiFormatR8G8B8A8Unorm:
+        case kDxgiFormatR8G8B8A8UnormSrgb:
           dst[0] = out_u8[0];
           dst[1] = out_u8[1];
           dst[2] = out_u8[2];
@@ -5592,8 +5611,9 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
   if (rt->storage.size() < static_cast<size_t>(rt->row_pitch_bytes) * static_cast<size_t>(rt->height)) {
     return;
   }
-  if (!(rt->dxgi_format == kDxgiFormatB8G8R8A8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8X8Unorm ||
-        rt->dxgi_format == kDxgiFormatR8G8B8A8Unorm)) {
+  if (!(rt->dxgi_format == kDxgiFormatB8G8R8A8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8A8UnormSrgb ||
+        rt->dxgi_format == kDxgiFormatB8G8R8X8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8X8UnormSrgb ||
+        rt->dxgi_format == kDxgiFormatR8G8B8A8Unorm || rt->dxgi_format == kDxgiFormatR8G8B8A8UnormSrgb)) {
     return;
   }
   if (dev->current_topology != AEROGPU_TOPOLOGY_TRIANGLELIST) {
@@ -5674,8 +5694,9 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
   if (rt->storage.size() < static_cast<size_t>(rt->row_pitch_bytes) * static_cast<size_t>(rt->height)) {
     return;
   }
-  if (!(rt->dxgi_format == kDxgiFormatB8G8R8A8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8X8Unorm ||
-        rt->dxgi_format == kDxgiFormatR8G8B8A8Unorm)) {
+  if (!(rt->dxgi_format == kDxgiFormatB8G8R8A8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8A8UnormSrgb ||
+        rt->dxgi_format == kDxgiFormatB8G8R8X8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8X8UnormSrgb ||
+        rt->dxgi_format == kDxgiFormatR8G8B8A8Unorm || rt->dxgi_format == kDxgiFormatR8G8B8A8UnormSrgb)) {
     return;
   }
   if (dev->current_topology != AEROGPU_TOPOLOGY_TRIANGLELIST) {

@@ -65,12 +65,15 @@ constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
 constexpr uint32_t kDxgiFormatR32G32B32Float = 6;
 constexpr uint32_t kDxgiFormatR32G32Float = 16;
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
+constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
 constexpr uint32_t kDxgiFormatR32Uint = 42;
 constexpr uint32_t kDxgiFormatD32Float = 40;
 constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
 constexpr uint32_t kDxgiFormatR16Uint = 57;
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
 constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
+constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91;
+constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93;
 
 inline uint32_t f32_bits(float v) {
   uint32_t bits = 0;
@@ -95,10 +98,13 @@ inline uint32_t HashSemanticName(const char* s) {
 inline uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   switch (dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
+    case kDxgiFormatB8G8R8A8UnormSrgb:
       return AEROGPU_FORMAT_B8G8R8A8_UNORM;
     case kDxgiFormatB8G8R8X8Unorm:
+    case kDxgiFormatB8G8R8X8UnormSrgb:
       return AEROGPU_FORMAT_B8G8R8X8_UNORM;
     case kDxgiFormatR8G8B8A8Unorm:
+    case kDxgiFormatR8G8B8A8UnormSrgb:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
     case kDxgiFormatD24UnormS8Uint:
       return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
