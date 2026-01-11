@@ -2247,6 +2247,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->abi_version_u32 = version;
         out->features_lo = features;
         out->features_hi = 0;
+        out->reserved0 = 0;
         return STATUS_SUCCESS;
     }
 

@@ -28,6 +28,9 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_DUMP_VBLANK AEROGPU_ESCAPE_OP_QUERY_VBLANK
 #define AEROGPU_ESCAPE_OP_DUMP_RING_V2 6u
 
+/* Extended base Escape ops used by bring-up tooling. */
+#define AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2 7u
+
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 
 #define AEROGPU_DBGCTL_CONCAT2_(a, b) a##b
@@ -50,6 +53,32 @@ enum aerogpu_dbgctl_vblank_flags {
 };
 
 #pragma pack(push, 1)
+
+/*
+ * Query device response (v2).
+ *
+ * - `detected_mmio_magic` is the BAR0 magic register value.
+ *   - Legacy device: 'A''R''G''P' (0x41524750)
+ *   - New device:    "AGPU" little-endian (0x55504741)
+ *
+ * - `abi_version_u32` is the device's reported ABI version:
+ *   - New device: `AEROGPU_MMIO_REG_ABI_VERSION` value.
+ *   - Legacy device: legacy MMIO version register value.
+ *
+ * - `features_lo/hi` is a 128-bit feature bitset. New devices should report
+ *   their FEATURES_LO/HI (lower 64 bits) in `features_lo` with `features_hi=0`.
+ *   Legacy devices must return 0 for both.
+ */
+typedef struct aerogpu_escape_query_device_v2_out {
+  aerogpu_escape_header hdr;
+  uint32_t detected_mmio_magic;
+  uint32_t abi_version_u32;
+  uint64_t features_lo;
+  uint64_t features_hi;
+  uint64_t reserved0;
+} aerogpu_escape_query_device_v2_out;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_device_v2_out) == 48);
 
 typedef struct aerogpu_escape_query_fence_out {
   aerogpu_escape_header hdr;

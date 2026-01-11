@@ -32,22 +32,14 @@ extern "C" {
 
 #define AEROGPU_ESCAPE_VERSION 1u
 
-enum aerogpu_escape_op {
-  /*
-   * Query-device operation retained for backwards compatibility with early
-   * bring-up tools.
-   */
-  AEROGPU_ESCAPE_OP_QUERY_DEVICE = 1u,
-
-  /* Extended device info (dual-ABI). */
-  AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2 = 7u,
-};
+/* Base Escape ops (shared between tooling and the KMD). */
+#define AEROGPU_ESCAPE_OP_QUERY_DEVICE 1u
 
 #pragma pack(push, 1)
 
 typedef struct aerogpu_escape_header {
   uint32_t version; /* AEROGPU_ESCAPE_VERSION */
-  uint32_t op;      /* enum aerogpu_escape_op */
+  uint32_t op;      /* AEROGPU_ESCAPE_OP_* */
   uint32_t size;    /* total size including this header */
   uint32_t reserved0;
 } aerogpu_escape_header;
@@ -81,36 +73,6 @@ typedef struct aerogpu_escape_query_device_out {
 
 AEROGPU_ESCAPE_STATIC_ASSERT(sizeof(aerogpu_escape_query_device_out) == 24);
 AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_out, mmio_version) == 16);
-
-/*
- * Query device response (v2).
- *
- * - `detected_mmio_magic` is the BAR0 magic register value.
- *   - Legacy device: 'A''R''G''P' (0x41524750)
- *   - New device:    "AGPU" little-endian (0x55504741)
- *
- * - `abi_version_u32` is the device's reported ABI version:
- *   - New device: `AEROGPU_MMIO_REG_ABI_VERSION` value.
- *   - Legacy device: legacy MMIO version register value.
- *
- * - `features_lo/hi` is a 128-bit feature bitset. New devices should report
- *   their FEATURES_LO/HI (lower 64 bits) in `features_lo` with `features_hi=0`.
- *   Legacy devices must return 0 for both.
- */
-typedef struct aerogpu_escape_query_device_v2_out {
-  aerogpu_escape_header hdr;
-  uint32_t detected_mmio_magic;
-  uint32_t abi_version_u32;
-  uint64_t features_lo;
-  uint64_t features_hi;
-} aerogpu_escape_query_device_v2_out;
-
-AEROGPU_ESCAPE_STATIC_ASSERT(sizeof(aerogpu_escape_query_device_v2_out) == 40);
-AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, detected_mmio_magic) == 16);
-AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, abi_version_u32) == 20);
-AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, features_lo) == 24);
-AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, features_hi) == 32);
-
 #pragma pack(pop)
 
 #ifdef __cplusplus
