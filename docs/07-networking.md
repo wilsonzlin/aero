@@ -156,7 +156,8 @@ talks to a single HTTPS origin:
 Auth note (Option C): `/l2` should be treated like `/tcp` — **Origin allowlist + authentication**
 are required. The production Rust L2 proxy (`crates/aero-l2-proxy`) enforces an Origin allowlist by
 default, and can optionally require a pre-shared token (`AERO_L2_TOKEN`) provided via `?token=...`
-(or `aero-l2-token.<token>` in `Sec-WebSocket-Protocol`). When using the gateway session bootstrap,
+(or an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<token>` alongside
+`aero-l2-tunnel-v1`). When using the gateway session bootstrap,
 prefer `endpoints.l2` from `POST /session` instead of hardcoding `/l2`.
 
 Note: WebRTC’s **data plane** still requires UDP connectivity to the relay’s ICE port range (or a
