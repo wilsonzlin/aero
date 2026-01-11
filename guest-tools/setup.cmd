@@ -740,6 +740,7 @@ exit /b 0
 call :log ""
 call :log "Validating virtio-blk storage service name against driver INF packages..."
 call :log "Driver directory: %DRIVER_DIR%"
+call :log "Config file: %SCRIPT_DIR%config\devices.cmd"
 
 set "TARGET_SVC=%AERO_VIRTIO_BLK_SERVICE%"
 set "SCAN_LIST=%TEMP%\aerogt_infscan_%RANDOM%.txt"
