@@ -285,6 +285,7 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
 # Create a sample file (5 MiB).
 dd if=/dev/urandom of=./scratch.img bs=1M count=5
 
+# Default chunk size is 4 MiB (4194304). Pass --chunk-size to override.
 cargo run --manifest-path tools/image-chunker/Cargo.toml -- publish \
   --file ./scratch.img \
   --bucket disk-images \
@@ -292,7 +293,6 @@ cargo run --manifest-path tools/image-chunker/Cargo.toml -- publish \
   --endpoint http://localhost:9000 \
   --force-path-style \
   --region us-east-1 \
-  --chunk-size 1048576 \
   --concurrency 4
 ```
 
