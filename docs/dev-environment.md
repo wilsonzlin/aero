@@ -15,6 +15,8 @@ Aero’s canonical workflows assume a small set of native tooling (pinned Rust t
 2. Open it in VS Code.
 3. Run **“Dev Containers: Reopen in Container”**.
 
+On first launch, the dev container runs `just setup` automatically (via `postCreateCommand`). This installs Rust toolchains/targets and runs `npm ci` with Playwright browser downloads disabled.
+
 The container image installs:
 
 - Rust toolchains: **pinned stable + pinned nightly**
@@ -36,6 +38,8 @@ It also applies the recommended environment defaults from [`scripts/agent-env.sh
 From the repo root **inside the container**:
 
 ```bash
+# (If you just created the container, this already ran via postCreateCommand,
+# but it's safe to re-run.)
 just setup
 cargo xtask test-all --skip-e2e
 # (Or use the transitional wrapper: ./scripts/test-all.sh --skip-e2e)
@@ -52,10 +56,9 @@ AERO_NODE_DIR=web cargo xtask test-all --skip-e2e
 
 The container includes the native libraries Playwright needs, but it does **not** pre-download browser binaries.
 
-Install the repo-root Node dependencies (Playwright lives in the root `package.json`), then install the browsers once:
+If you used the dev container defaults, `npm ci` has already been run (via `just setup`). Install the browsers once:
 
 ```bash
-PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
 npx playwright install chromium
 ```
 
