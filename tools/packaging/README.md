@@ -25,8 +25,8 @@ cd tools/packaging/aero_packager
 #   guest-tools/ contains:
 #     setup.cmd
 #     uninstall.cmd
-#     verify.cmd (optional, but included if present)
-#     verify.ps1 (optional, but required if verify.cmd is present)
+#     verify.cmd
+#     verify.ps1
 #     README.md
 #     THIRD_PARTY_NOTICES.md
 #     config/devices.cmd
