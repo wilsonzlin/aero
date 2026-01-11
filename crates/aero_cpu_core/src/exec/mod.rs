@@ -385,8 +385,9 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         .state
                         .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
                     let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
-                    let addr_size_override = has_addr_size_override(&bytes, cpu.cpu.state.bitness());
-                    let decoded = aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness())
+                    let bitness = cpu.cpu.state.bitness();
+                    let addr_size_override = has_addr_size_override(&bytes, bitness);
+                    let decoded = aero_x86::decode(&bytes, ip, bitness)
                         .expect("decode tier0 assist");
                     let inhibits_interrupt = matches!(decoded.instr.mnemonic(), Mnemonic::Mov | Mnemonic::Pop)
                         && decoded.instr.op_count() > 0
