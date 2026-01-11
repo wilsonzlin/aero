@@ -785,6 +785,8 @@ NTSTATUS VirtioPciModernTransportReadDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *t
 	UINT8 *out;
 	UINT32 i;
 	UINT32 attempt;
+	UINT8 gen1;
+	UINT8 gen2;
 
 	if (t == NULL || t->CommonCfg == NULL || t->DeviceCfg == NULL || buffer == NULL) {
 		return STATUS_INVALID_PARAMETER;
@@ -800,11 +802,11 @@ NTSTATUS VirtioPciModernTransportReadDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *t
 	out = (UINT8 *)buffer;
 
 	for (attempt = 0; attempt < VIRTIO_PCI_CONFIG_MAX_READ_RETRIES; ++attempt) {
-		UINT8 gen1 = t->CommonCfg->config_generation;
+		gen1 = t->CommonCfg->config_generation;
 		for (i = 0; i < length; ++i) {
 			out[i] = t->DeviceCfg[offset + i];
 		}
-		UINT8 gen2 = t->CommonCfg->config_generation;
+		gen2 = t->CommonCfg->config_generation;
 		if (gen1 == gen2) {
 			return STATUS_SUCCESS;
 		}
@@ -819,6 +821,8 @@ NTSTATUS VirtioPciModernTransportWriteDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *
 	const UINT8 *in;
 	UINT32 i;
 	UINT32 attempt;
+	UINT8 gen1;
+	UINT8 gen2;
 
 	if (t == NULL || t->CommonCfg == NULL || t->DeviceCfg == NULL || buffer == NULL) {
 		return STATUS_INVALID_PARAMETER;
@@ -834,11 +838,11 @@ NTSTATUS VirtioPciModernTransportWriteDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *
 	in = (const UINT8 *)buffer;
 
 	for (attempt = 0; attempt < VIRTIO_PCI_CONFIG_MAX_READ_RETRIES; ++attempt) {
-		UINT8 gen1 = t->CommonCfg->config_generation;
+		gen1 = t->CommonCfg->config_generation;
 		for (i = 0; i < length; ++i) {
 			t->DeviceCfg[offset + i] = in[i];
 		}
-		UINT8 gen2 = t->CommonCfg->config_generation;
+		gen2 = t->CommonCfg->config_generation;
 		if (gen1 == gen2) {
 			return STATUS_SUCCESS;
 		}
