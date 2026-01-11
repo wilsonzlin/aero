@@ -699,7 +699,15 @@ fn rust_layout_matches_c_headers() {
 
     // Fixed-layout packet field offsets (helps catch accidental field reordering even when the
     // overall struct size stays constant).
-    assert_off!(AerogpuCmdCreateBuffer, hdr, "aerogpu_cmd_create_buffer", "hdr");
+    let mut cmd_offset_structs_seen: Vec<&'static str> = Vec::new();
+    macro_rules! assert_cmd_hdr_off {
+        ($ty:ty, $c_ty:literal) => {{
+            cmd_offset_structs_seen.push($c_ty);
+            assert_off!($ty, hdr, $c_ty, "hdr");
+        }};
+    }
+
+    assert_cmd_hdr_off!(AerogpuCmdCreateBuffer, "aerogpu_cmd_create_buffer");
     assert_off!(
         AerogpuCmdCreateBuffer,
         buffer_handle,
@@ -737,12 +745,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
-        AerogpuCmdCreateTexture2d,
-        hdr,
-        "aerogpu_cmd_create_texture2d",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdCreateTexture2d, "aerogpu_cmd_create_texture2d");
     assert_off!(
         AerogpuCmdCreateTexture2d,
         texture_handle,
@@ -810,12 +813,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
-        AerogpuCmdDestroyResource,
-        hdr,
-        "aerogpu_cmd_destroy_resource",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdDestroyResource, "aerogpu_cmd_destroy_resource");
     assert_off!(
         AerogpuCmdDestroyResource,
         resource_handle,
@@ -829,11 +827,9 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdResourceDirtyRange,
-        hdr,
-        "aerogpu_cmd_resource_dirty_range",
-        "hdr"
+        "aerogpu_cmd_resource_dirty_range"
     );
     assert_off!(
         AerogpuCmdResourceDirtyRange,
@@ -860,12 +856,7 @@ fn rust_layout_matches_c_headers() {
         "size_bytes"
     );
 
-    assert_off!(
-        AerogpuCmdUploadResource,
-        hdr,
-        "aerogpu_cmd_upload_resource",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdUploadResource, "aerogpu_cmd_upload_resource");
     assert_off!(
         AerogpuCmdUploadResource,
         resource_handle,
@@ -891,7 +882,7 @@ fn rust_layout_matches_c_headers() {
         "size_bytes"
     );
 
-    assert_off!(AerogpuCmdCopyBuffer, hdr, "aerogpu_cmd_copy_buffer", "hdr");
+    assert_cmd_hdr_off!(AerogpuCmdCopyBuffer, "aerogpu_cmd_copy_buffer");
     assert_off!(
         AerogpuCmdCopyBuffer,
         dst_buffer,
@@ -930,12 +921,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
-        AerogpuCmdCopyTexture2d,
-        hdr,
-        "aerogpu_cmd_copy_texture2d",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdCopyTexture2d, "aerogpu_cmd_copy_texture2d");
     assert_off!(
         AerogpuCmdCopyTexture2d,
         dst_texture,
@@ -986,11 +972,9 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdCreateShaderDxbc,
-        hdr,
-        "aerogpu_cmd_create_shader_dxbc",
-        "hdr"
+        "aerogpu_cmd_create_shader_dxbc"
     );
     assert_off!(
         AerogpuCmdCreateShaderDxbc,
@@ -1017,12 +1001,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
-        AerogpuCmdDestroyShader,
-        hdr,
-        "aerogpu_cmd_destroy_shader",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdDestroyShader, "aerogpu_cmd_destroy_shader");
     assert_off!(
         AerogpuCmdDestroyShader,
         shader_handle,
@@ -1036,7 +1015,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(AerogpuCmdBindShaders, hdr, "aerogpu_cmd_bind_shaders", "hdr");
+    assert_cmd_hdr_off!(AerogpuCmdBindShaders, "aerogpu_cmd_bind_shaders");
     assert_off!(AerogpuCmdBindShaders, vs, "aerogpu_cmd_bind_shaders", "vs");
     assert_off!(AerogpuCmdBindShaders, ps, "aerogpu_cmd_bind_shaders", "ps");
     assert_off!(AerogpuCmdBindShaders, cs, "aerogpu_cmd_bind_shaders", "cs");
@@ -1047,11 +1026,9 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdSetShaderConstantsF,
-        hdr,
-        "aerogpu_cmd_set_shader_constants_f",
-        "hdr"
+        "aerogpu_cmd_set_shader_constants_f"
     );
     assert_off!(
         AerogpuCmdSetShaderConstantsF,
@@ -1078,11 +1055,9 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdCreateInputLayout,
-        hdr,
-        "aerogpu_cmd_create_input_layout",
-        "hdr"
+        "aerogpu_cmd_create_input_layout"
     );
     assert_off!(
         AerogpuCmdCreateInputLayout,
@@ -1103,11 +1078,9 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdDestroyInputLayout,
-        hdr,
-        "aerogpu_cmd_destroy_input_layout",
-        "hdr"
+        "aerogpu_cmd_destroy_input_layout"
     );
     assert_off!(
         AerogpuCmdDestroyInputLayout,
@@ -1122,12 +1095,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
-        AerogpuCmdSetInputLayout,
-        hdr,
-        "aerogpu_cmd_set_input_layout",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetInputLayout, "aerogpu_cmd_set_input_layout");
     assert_off!(
         AerogpuCmdSetInputLayout,
         input_layout_handle,
@@ -1172,12 +1140,7 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_blend_state",
         "reserved0"
     );
-    assert_off!(
-        AerogpuCmdSetBlendState,
-        hdr,
-        "aerogpu_cmd_set_blend_state",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetBlendState, "aerogpu_cmd_set_blend_state");
     assert_off!(
         AerogpuCmdSetBlendState,
         state,
@@ -1227,11 +1190,9 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_depth_stencil_state",
         "reserved0"
     );
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdSetDepthStencilState,
-        hdr,
-        "aerogpu_cmd_set_depth_stencil_state",
-        "hdr"
+        "aerogpu_cmd_set_depth_stencil_state"
     );
     assert_off!(
         AerogpuCmdSetDepthStencilState,
@@ -1276,11 +1237,9 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_rasterizer_state",
         "reserved0"
     );
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdSetRasterizerState,
-        hdr,
-        "aerogpu_cmd_set_rasterizer_state",
-        "hdr"
+        "aerogpu_cmd_set_rasterizer_state"
     );
     assert_off!(
         AerogpuCmdSetRasterizerState,
@@ -1289,11 +1248,9 @@ fn rust_layout_matches_c_headers() {
         "state"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdSetRenderTargets,
-        hdr,
-        "aerogpu_cmd_set_render_targets",
-        "hdr"
+        "aerogpu_cmd_set_render_targets"
     );
     assert_off!(
         AerogpuCmdSetRenderTargets,
@@ -1314,12 +1271,7 @@ fn rust_layout_matches_c_headers() {
         "colors"
     );
 
-    assert_off!(
-        AerogpuCmdSetViewport,
-        hdr,
-        "aerogpu_cmd_set_viewport",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetViewport, "aerogpu_cmd_set_viewport");
     assert_off!(
         AerogpuCmdSetViewport,
         x_f32,
@@ -1357,12 +1309,7 @@ fn rust_layout_matches_c_headers() {
         "max_depth_f32"
     );
 
-    assert_off!(
-        AerogpuCmdSetScissor,
-        hdr,
-        "aerogpu_cmd_set_scissor",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetScissor, "aerogpu_cmd_set_scissor");
     assert_off!(AerogpuCmdSetScissor, x, "aerogpu_cmd_set_scissor", "x");
     assert_off!(AerogpuCmdSetScissor, y, "aerogpu_cmd_set_scissor", "y");
     assert_off!(
@@ -1402,11 +1349,9 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_vertex_buffer_binding",
         "reserved0"
     );
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdSetVertexBuffers,
-        hdr,
-        "aerogpu_cmd_set_vertex_buffers",
-        "hdr"
+        "aerogpu_cmd_set_vertex_buffers"
     );
     assert_off!(
         AerogpuCmdSetVertexBuffers,
@@ -1421,12 +1366,7 @@ fn rust_layout_matches_c_headers() {
         "buffer_count"
     );
 
-    assert_off!(
-        AerogpuCmdSetIndexBuffer,
-        hdr,
-        "aerogpu_cmd_set_index_buffer",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetIndexBuffer, "aerogpu_cmd_set_index_buffer");
     assert_off!(
         AerogpuCmdSetIndexBuffer,
         buffer,
@@ -1452,11 +1392,9 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdSetPrimitiveTopology,
-        hdr,
-        "aerogpu_cmd_set_primitive_topology",
-        "hdr"
+        "aerogpu_cmd_set_primitive_topology"
     );
     assert_off!(
         AerogpuCmdSetPrimitiveTopology,
@@ -1471,12 +1409,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
-        AerogpuCmdSetTexture,
-        hdr,
-        "aerogpu_cmd_set_texture",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetTexture, "aerogpu_cmd_set_texture");
     assert_off!(
         AerogpuCmdSetTexture,
         shader_stage,
@@ -1497,12 +1430,7 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
-        AerogpuCmdSetSamplerState,
-        hdr,
-        "aerogpu_cmd_set_sampler_state",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetSamplerState, "aerogpu_cmd_set_sampler_state");
     assert_off!(
         AerogpuCmdSetSamplerState,
         shader_stage,
@@ -1528,12 +1456,7 @@ fn rust_layout_matches_c_headers() {
         "value"
     );
 
-    assert_off!(
-        AerogpuCmdSetRenderState,
-        hdr,
-        "aerogpu_cmd_set_render_state",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdSetRenderState, "aerogpu_cmd_set_render_state");
     assert_off!(
         AerogpuCmdSetRenderState,
         state,
@@ -1631,7 +1554,7 @@ fn rust_layout_matches_c_headers() {
     );
     assert_off!(AerogpuCmdCopyTexture2d, flags, "aerogpu_cmd_copy_texture2d", "flags");
 
-    assert_off!(AerogpuCmdClear, hdr, "aerogpu_cmd_clear", "hdr");
+    assert_cmd_hdr_off!(AerogpuCmdClear, "aerogpu_cmd_clear");
     assert_off!(AerogpuCmdClear, flags, "aerogpu_cmd_clear", "flags");
     assert_off!(
         AerogpuCmdClear,
@@ -1652,7 +1575,7 @@ fn rust_layout_matches_c_headers() {
         "stencil"
     );
 
-    assert_off!(AerogpuCmdDraw, hdr, "aerogpu_cmd_draw", "hdr");
+    assert_cmd_hdr_off!(AerogpuCmdDraw, "aerogpu_cmd_draw");
     assert_off!(
         AerogpuCmdDraw,
         vertex_count,
@@ -1678,12 +1601,7 @@ fn rust_layout_matches_c_headers() {
         "first_instance"
     );
 
-    assert_off!(
-        AerogpuCmdDrawIndexed,
-        hdr,
-        "aerogpu_cmd_draw_indexed",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdDrawIndexed, "aerogpu_cmd_draw_indexed");
     assert_off!(
         AerogpuCmdDrawIndexed,
         index_count,
@@ -1715,7 +1633,7 @@ fn rust_layout_matches_c_headers() {
         "first_instance"
     );
 
-    assert_off!(AerogpuCmdPresent, hdr, "aerogpu_cmd_present", "hdr");
+    assert_cmd_hdr_off!(AerogpuCmdPresent, "aerogpu_cmd_present");
     assert_off!(
         AerogpuCmdPresent,
         scanout_id,
@@ -1724,12 +1642,7 @@ fn rust_layout_matches_c_headers() {
     );
     assert_off!(AerogpuCmdPresent, flags, "aerogpu_cmd_present", "flags");
 
-    assert_off!(
-        AerogpuCmdPresentEx,
-        hdr,
-        "aerogpu_cmd_present_ex",
-        "hdr"
-    );
+    assert_cmd_hdr_off!(AerogpuCmdPresentEx, "aerogpu_cmd_present_ex");
     assert_off!(
         AerogpuCmdPresentEx,
         scanout_id,
@@ -1755,11 +1668,9 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdExportSharedSurface,
-        hdr,
-        "aerogpu_cmd_export_shared_surface",
-        "hdr"
+        "aerogpu_cmd_export_shared_surface"
     );
     assert_off!(
         AerogpuCmdExportSharedSurface,
@@ -1780,11 +1691,9 @@ fn rust_layout_matches_c_headers() {
         "share_token"
     );
 
-    assert_off!(
+    assert_cmd_hdr_off!(
         AerogpuCmdImportSharedSurface,
-        hdr,
-        "aerogpu_cmd_import_shared_surface",
-        "hdr"
+        "aerogpu_cmd_import_shared_surface"
     );
     assert_off!(
         AerogpuCmdImportSharedSurface,
@@ -1805,7 +1714,7 @@ fn rust_layout_matches_c_headers() {
         "share_token"
     );
 
-    assert_off!(AerogpuCmdFlush, hdr, "aerogpu_cmd_flush", "hdr");
+    assert_cmd_hdr_off!(AerogpuCmdFlush, "aerogpu_cmd_flush");
     assert_off!(
         AerogpuCmdFlush,
         reserved0,
@@ -1817,6 +1726,17 @@ fn rust_layout_matches_c_headers() {
         reserved1,
         "aerogpu_cmd_flush",
         "reserved1"
+    );
+
+    let mut cmd_offset_structs_seen: Vec<String> = cmd_offset_structs_seen
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    cmd_offset_structs_seen.sort();
+    cmd_offset_structs_seen.dedup();
+    assert_eq!(
+        cmd_offset_structs_seen, expected_cmd_structs,
+        "command packet offset coverage"
     );
 
     // WDDM allocation private-data contract (stable across x86/x64).
