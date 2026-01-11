@@ -1501,6 +1501,12 @@ function renderRemoteDiskPanel(): HTMLElement {
     return modeSelect.value === "chunked" ? handle !== null : rangeOpened;
   }
 
+  function formatCacheLimitBytes(cacheLimitBytes: number | null): string {
+    if (cacheLimitBytes === 0) return "off";
+    if (cacheLimitBytes === null) return "unlimited";
+    return formatBytes(cacheLimitBytes);
+  }
+
   function updateButtons(): void {
     const enabled = enabledInput.checked;
     probeButton.disabled = !enabled;
@@ -1689,12 +1695,7 @@ function renderRemoteDiskPanel(): HTMLElement {
         const hitRateDenom = deltaCacheHits + deltaCacheMisses;
         const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
         const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
-        const cacheLimitText =
-          remote.cacheLimitBytes === 0
-            ? "off"
-            : remote.cacheLimitBytes === null
-              ? "unlimited"
-              : formatBytes(remote.cacheLimitBytes);
+        const cacheLimitText = formatCacheLimitBytes(remote.cacheLimitBytes);
         const deltaIoBytesRead = res.io.bytesRead - baseIoBytesRead;
         const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
         const downloadAmplification = deltaIoBytesRead > 0 ? deltaBytesDownloaded / deltaIoBytesRead : 0;
@@ -1735,12 +1736,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       const hitRateDenom = deltaCacheHits + deltaCacheMisses;
       const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
       const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
-      const cacheLimitText =
-        remote.cacheLimitBytes === 0
-          ? "off"
-          : remote.cacheLimitBytes === null
-            ? "unlimited"
-            : formatBytes(remote.cacheLimitBytes);
+      const cacheLimitText = formatCacheLimitBytes(remote.cacheLimitBytes);
       const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
       const lastFetchRangeText = remote.lastFetchRange
         ? `${formatBytes(remote.lastFetchRange.start)}-${formatBytes(remote.lastFetchRange.end - 1)}`

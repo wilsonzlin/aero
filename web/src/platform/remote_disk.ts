@@ -217,9 +217,9 @@ export type RemoteDiskOptions = {
   /**
    * Maximum bytes to keep in the persistent cache (LRU-evicted).
    *
-   * - `undefined` (default): use a reasonable default limit (currently 512MiB)
+   * - `undefined` (default): use the default limit (currently 512 MiB)
    * - `null`: disable eviction (unbounded cache; subject to browser storage quota)
-   * - `0`: disable caching entirely (always fetch via HTTP Range)
+   * - `0`: disable caching entirely (no OPFS/IDB usage; always fetch via HTTP Range)
    */
   cacheLimitBytes?: number | null;
   prefetchSequentialBlocks?: number;
