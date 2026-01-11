@@ -1021,7 +1021,6 @@ export class WorkerCoordinator {
         return;
       }
     }
-
     const maybeSerial = data as Partial<SerialOutputMessage>;
     if (
       maybeSerial?.kind === "serial.output" &&
