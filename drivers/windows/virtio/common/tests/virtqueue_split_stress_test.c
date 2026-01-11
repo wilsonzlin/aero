@@ -796,15 +796,21 @@ static void ScenarioWraparoundTorture(BOOLEAN event_idx, BOOLEAN indirect)
 
 	/* Drain everything that remains outstanding. */
 	ShuffleU16(&rng, outstanding, outstanding_count);
-	for (UINT16 i = 0; i < outstanding_count; i++) {
+	{
+		UINT16 i;
+		for (i = 0; i < outstanding_count; i++) {
 		DeviceWriteUsed(&ctx, outstanding[i], 0);
+		}
 	}
 	DeviceCommitUsed(&ctx);
-	for (UINT16 i = 0; i < outstanding_count; i++) {
+	{
+		UINT16 i;
+		for (i = 0; i < outstanding_count; i++) {
 		void *cookie_out = NULL;
 		UINT32 len_out = 0;
 		ASSERT_TRUE(NT_SUCCESS(VirtqSplitGetUsed(ctx.vq, &cookie_out, &len_out)));
 		ModelOnPop(&ctx, outstanding[i]);
+		}
 	}
 	AssertInvariants(&ctx);
 	ASSERT_EQ_U16(ctx.vq->num_free, qsz);
@@ -829,7 +835,10 @@ static void ScenarioNotifyDecisionSanity(BOOLEAN event_idx, BOOLEAN indirect)
 	sg[0].len = 16;
 	sg[0].write = TRUE;
 
-	for (UINT16 iter = 0; iter < 256; iter++) {
+	{
+		UINT16 iter;
+		for (iter = 0; iter < 256; iter++) {
+			UINT16 i;
 		UINT16 base = (UINT16)(start + (UINT16)PrngRange(&rng, 0x40));
 		UINT16 batch = (UINT16)(1 + (UINT16)PrngRange(&rng, 4));
 		UINT16 heads[8];
@@ -855,7 +864,7 @@ static void ScenarioNotifyDecisionSanity(BOOLEAN event_idx, BOOLEAN indirect)
 			VirtioWriteU16((volatile UINT16 *)&ctx.vq->used->flags, flags);
 		}
 
-		for (UINT16 i = 0; i < batch; i++) {
+		for (i = 0; i < batch; i++) {
 			UINT16 head;
 			void *cookie = (void *)(uintptr_t)(0x50000000u + (UINT32)i);
 			ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(ctx.vq, sg, sg_count, cookie, &head)));
@@ -882,17 +891,18 @@ static void ScenarioNotifyDecisionSanity(BOOLEAN event_idx, BOOLEAN indirect)
 		/* Drain published buffers. */
 		got_heads = DeviceConsumeAvail(&ctx, heads, (UINT16)(sizeof(heads) / sizeof(heads[0])));
 		ASSERT_EQ_U16(got_heads, batch);
-		for (UINT16 i = 0; i < batch; i++) {
+		for (i = 0; i < batch; i++) {
 			DeviceWriteUsed(&ctx, heads[i], 0xAA00u + i);
 		}
 		DeviceCommitUsed(&ctx);
-		for (UINT16 i = 0; i < batch; i++) {
+		for (i = 0; i < batch; i++) {
 			void *cookie_out = NULL;
 			UINT32 len_out = 0;
 			ASSERT_TRUE(NT_SUCCESS(VirtqSplitGetUsed(ctx.vq, &cookie_out, &len_out)));
 			ModelOnPop(&ctx, heads[i]);
 			AssertInvariants(&ctx);
 		}
+	}
 	}
 
 	CtxDestroy(&ctx);
@@ -910,7 +920,9 @@ int main(void)
 		{TRUE, TRUE},
 	};
 
-	for (size_t i = 0; i < sizeof(matrix) / sizeof(matrix[0]); i++) {
+	{
+		size_t i;
+		for (i = 0; i < sizeof(matrix) / sizeof(matrix[0]); i++) {
 		const BOOLEAN event_idx = matrix[i].event_idx;
 		const BOOLEAN indirect = matrix[i].indirect;
 
@@ -921,6 +933,7 @@ int main(void)
 			ScenarioIndirectPoolExhaustionFallback(event_idx);
 		}
 		ScenarioWraparoundTorture(event_idx, indirect);
+	}
 	}
 
 	printf("virtqueue_split_stress_test: all tests passed\n");
