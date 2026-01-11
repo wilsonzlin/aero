@@ -21,8 +21,9 @@ request/response structures.
   - *Virtio over PCI Bus* (legacy / transitional transport): I/O-port register map
     used by transitional devices (e.g. `DEV_1018`). This driver keeps an in-tree
     legacy backend for bring-up/testing, but the default build targets Aero’s
-    modern-only contract (`AERO-W7-VIRTIO` v1) and the shipped INFs do not bind
-    to transitional IDs.
+    modern-only contract (`AERO-W7-VIRTIO` v1) and the default contract INF does
+    not bind to transitional IDs. (An opt-in QEMU/transitional INF exists as
+    `inf/aero-virtio-snd-legacy.inf`.)
   - *Split Virtqueues*: descriptor table, available ring, used ring, and memory
     ordering requirements.
   - URL: https://docs.oasis-open.org/virtio/ (select the specific 1.x revision used by

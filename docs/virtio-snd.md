@@ -41,6 +41,12 @@ The clean-room Win7 INF (`aero-virtio-snd.inf`) is intentionally strict and matc
 `PCI\VEN_1AF4&DEV_1059&REV_01`. If Windows shows `DEV_1018` (transitional) or `REV_00`, configure the hypervisor to
 expose the contract v1 IDs (for example QEMU `disable-legacy=on,x-pci-revision=0x01`).
 
+For QEMU bring-up/regression (where the virtio-snd device often enumerates as transitional by default), the repo also
+contains an opt-in transitional driver package:
+
+- `drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` (binds `PCI\VEN_1AF4&DEV_1018`)
+- `virtiosnd_legacy.sys` (build with MSBuild `Configuration=Legacy`)
+
 The authoritative Windows driver-binding values are tracked in
 [`docs/windows-device-contract.md`](./windows-device-contract.md).
 
