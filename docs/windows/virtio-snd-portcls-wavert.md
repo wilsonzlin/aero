@@ -6,7 +6,7 @@ The goal is to make the first bring-up deterministic: if the driver matches the 
 
 ## Scope / assumptions (minimum viable endpoint)
 
-* **Windows target:** Windows 7 SP1 (x86/x64). The driver can be built with WDK 7.1 or with newer WDKs (CI uses WDK10/MSBuild).
+* **Windows target:** Windows 7 SP1 (x86/x64). The driver can be built with a Win7-era WinDDK (7600) layout or with newer WDKs (CI uses WDK10/MSBuild).
 * **Device model:** `virtio-snd` PCI function (`PCI\VEN_1AF4&DEV_1059&REV_01`; Aero `AERO-W7-VIRTIO` v1).
 * **Audio direction:** render-only (no capture).
 * **Streams:** device exposes **2** fixed-format virtio-snd streams by contract; this driver design uses only:
