@@ -383,6 +383,7 @@ dependencies = [
  "aero-bios",
  "aero-devices",
  "js-sys",
+ "memory",
  "wasm-bindgen",
 ]
 

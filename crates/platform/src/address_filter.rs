@@ -14,6 +14,10 @@ impl AddressFilter {
         Self { a20 }
     }
 
+    pub fn a20(&self) -> A20GateHandle {
+        self.a20.clone()
+    }
+
     #[inline]
     pub fn filter_paddr(&self, paddr: u64) -> u64 {
         if self.a20.enabled() {
