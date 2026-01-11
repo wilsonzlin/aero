@@ -418,7 +418,7 @@ fn enforce_security(
                     "rejected l2 websocket upgrade",
                 );
                 return Err(Box::new(
-                    (StatusCode::UNAUTHORIZED, "invalid api key".to_string()).into_response(),
+                    (StatusCode::UNAUTHORIZED, "invalid token".to_string()).into_response(),
                 ));
             }
         }
