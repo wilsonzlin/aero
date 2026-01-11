@@ -52,6 +52,9 @@ For a fully scripted/reproducible build (matching CI), see `drivers/aerogpu/buil
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers aerogpu
 ```
 
+Note: CI scripts only build/package drivers that include `ci-package.json` at the driver root (explicit opt-in).
+See `drivers/_template/ci-package.json`.
+
 ## virtio-win source builds
 
 The upstream virtio-win drivers (viostor/NetKVM/viosnd/vioinput) are the practical baseline for Win7 virtio support.
