@@ -16,6 +16,7 @@
 
 #include "aerogpu_pci.h"
 #include "aerogpu_dbgctl_escape.h"
+#include "aerogpu_umd_private.h"
 
 typedef LONG NTSTATUS;
 
@@ -57,6 +58,13 @@ typedef struct D3DKMT_GETSCANLINE {
   UINT ScanLine;
 } D3DKMT_GETSCANLINE;
 
+typedef struct D3DKMT_QUERYADAPTERINFO {
+  D3DKMT_HANDLE hAdapter;
+  UINT Type; // KMTQUERYADAPTERINFOTYPE
+  VOID *pPrivateDriverData;
+  UINT PrivateDriverDataSize;
+} D3DKMT_QUERYADAPTERINFO;
+
 typedef enum D3DKMT_ESCAPETYPE {
   D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
 } D3DKMT_ESCAPETYPE;
@@ -86,6 +94,7 @@ typedef NTSTATUS(WINAPI *PFND3DKMTCloseAdapter)(D3DKMT_CLOSEADAPTER *pData);
 typedef NTSTATUS(WINAPI *PFND3DKMTEscape)(D3DKMT_ESCAPE *pData);
 typedef NTSTATUS(WINAPI *PFND3DKMTWaitForVerticalBlankEvent)(D3DKMT_WAITFORVERTICALBLANKEVENT *pData);
 typedef NTSTATUS(WINAPI *PFND3DKMTGetScanLine)(D3DKMT_GETSCANLINE *pData);
+typedef NTSTATUS(WINAPI *PFND3DKMTQueryAdapterInfo)(D3DKMT_QUERYADAPTERINFO *pData);
 typedef ULONG(WINAPI *PFNRtlNtStatusToDosError)(NTSTATUS Status);
 
 typedef struct D3DKMT_FUNCS {
@@ -95,6 +104,7 @@ typedef struct D3DKMT_FUNCS {
   PFND3DKMTEscape Escape;
   PFND3DKMTWaitForVerticalBlankEvent WaitForVerticalBlankEvent;
   PFND3DKMTGetScanLine GetScanLine;
+  PFND3DKMTQueryAdapterInfo QueryAdapterInfo;
   PFNRtlNtStatusToDosError RtlNtStatusToDosError;
 } D3DKMT_FUNCS;
 
@@ -107,6 +117,7 @@ static void PrintUsage() {
            L"Commands:\n"
            L"  --list-displays\n"
            L"  --query-version\n"
+           L"  --query-umd-private\n"
            L"  --query-fence\n"
            L"  --dump-ring\n"
            L"  --dump-vblank  (alias: --query-vblank)\n"
@@ -153,6 +164,7 @@ static bool LoadD3DKMT(D3DKMT_FUNCS *out) {
   out->WaitForVerticalBlankEvent =
       (PFND3DKMTWaitForVerticalBlankEvent)GetProcAddress(out->gdi32, "D3DKMTWaitForVerticalBlankEvent");
   out->GetScanLine = (PFND3DKMTGetScanLine)GetProcAddress(out->gdi32, "D3DKMTGetScanLine");
+  out->QueryAdapterInfo = (PFND3DKMTQueryAdapterInfo)GetProcAddress(out->gdi32, "D3DKMTQueryAdapterInfo");
 
   HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   if (ntdll) {
@@ -352,6 +364,85 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.last_submitted_fence);
   wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_completed_fence,
           (unsigned long long)q.last_completed_fence);
+  return 0;
+}
+
+static int DoQueryUmdPrivate(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
+  if (!f->QueryAdapterInfo) {
+    fwprintf(stderr, L"D3DKMTQueryAdapterInfo not available (missing gdi32 export)\n");
+    return 1;
+  }
+
+  aerogpu_umd_private_v1 blob;
+  ZeroMemory(&blob, sizeof(blob));
+
+  D3DKMT_QUERYADAPTERINFO q;
+  ZeroMemory(&q, sizeof(q));
+  q.hAdapter = hAdapter;
+  q.pPrivateDriverData = &blob;
+  q.PrivateDriverDataSize = sizeof(blob);
+
+  // We intentionally avoid depending on WDK headers for the numeric
+  // KMTQAITYPE_UMDRIVERPRIVATE constant. Instead, probe a small range of values
+  // and look for a valid AeroGPU UMDRIVERPRIVATE v1 blob.
+  UINT foundType = 0xFFFFFFFFu;
+  NTSTATUS lastStatus = 0;
+  for (UINT type = 0; type < 64; ++type) {
+    ZeroMemory(&blob, sizeof(blob));
+    q.Type = type;
+
+    NTSTATUS st = f->QueryAdapterInfo(&q);
+    lastStatus = st;
+    if (!NT_SUCCESS(st)) {
+      continue;
+    }
+
+    if (blob.size_bytes != sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+      continue;
+    }
+
+    const uint32_t magic = blob.device_mmio_magic;
+    if (magic != 0 && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+      continue;
+    }
+
+    foundType = type;
+    break;
+  }
+
+  if (foundType == 0xFFFFFFFFu) {
+    PrintNtStatus(L"D3DKMTQueryAdapterInfo(UMDRIVERPRIVATE) failed", f, lastStatus);
+    fwprintf(stderr, L"(note: UMDRIVERPRIVATE type probing range exhausted)\n");
+    return 2;
+  }
+
+  wchar_t magicStr[5] = {0, 0, 0, 0, 0};
+  {
+    const uint32_t m = blob.device_mmio_magic;
+    magicStr[0] = (wchar_t)((m >> 0) & 0xFF);
+    magicStr[1] = (wchar_t)((m >> 8) & 0xFF);
+    magicStr[2] = (wchar_t)((m >> 16) & 0xFF);
+    magicStr[3] = (wchar_t)((m >> 24) & 0xFF);
+  }
+
+  wprintf(L"UMDRIVERPRIVATE (type %lu)\n", (unsigned long)foundType);
+  wprintf(L"  size_bytes: %lu\n", (unsigned long)blob.size_bytes);
+  wprintf(L"  struct_version: %lu\n", (unsigned long)blob.struct_version);
+  wprintf(L"  device_mmio_magic: 0x%08lx (%s)\n", (unsigned long)blob.device_mmio_magic, magicStr);
+
+  const uint32_t abiMajor = (uint32_t)(blob.device_abi_version_u32 >> 16);
+  const uint32_t abiMinor = (uint32_t)(blob.device_abi_version_u32 & 0xFFFFu);
+  wprintf(L"  device_abi_version_u32: 0x%08lx (%lu.%lu)\n",
+          (unsigned long)blob.device_abi_version_u32,
+          (unsigned long)abiMajor,
+          (unsigned long)abiMinor);
+
+  wprintf(L"  device_features: 0x%I64x\n", (unsigned long long)blob.device_features);
+  wprintf(L"  flags: 0x%08lx\n", (unsigned long)blob.flags);
+  wprintf(L"    is_legacy: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_IS_LEGACY) != 0));
+  wprintf(L"    has_vblank: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0));
+  wprintf(L"    has_fence_page: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE) != 0));
+
   return 0;
 }
 
@@ -938,6 +1029,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_NONE = 0,
     CMD_LIST_DISPLAYS,
     CMD_QUERY_VERSION,
+    CMD_QUERY_UMD_PRIVATE,
     CMD_QUERY_FENCE,
     CMD_DUMP_RING,
     CMD_DUMP_VBLANK,
@@ -1015,6 +1107,12 @@ int wmain(int argc, wchar_t **argv) {
 
     if (wcscmp(a, L"--query-version") == 0) {
       if (!SetCommand(CMD_QUERY_VERSION)) {
+        return 1;
+      }
+      continue;
+    }
+    if (wcscmp(a, L"--query-umd-private") == 0) {
+      if (!SetCommand(CMD_QUERY_UMD_PRIVATE)) {
         return 1;
       }
       continue;
@@ -1116,6 +1214,9 @@ int wmain(int argc, wchar_t **argv) {
   switch (cmd) {
   case CMD_QUERY_VERSION:
     rc = DoQueryVersion(&f, open.hAdapter);
+    break;
+  case CMD_QUERY_UMD_PRIVATE:
+    rc = DoQueryUmdPrivate(&f, open.hAdapter);
     break;
   case CMD_QUERY_FENCE:
     rc = DoQueryFence(&f, open.hAdapter);

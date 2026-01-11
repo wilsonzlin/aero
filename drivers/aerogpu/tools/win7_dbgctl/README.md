@@ -25,6 +25,9 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-version`  
   Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (for AGPU) device feature bits.
 
+- `aerogpu_dbgctl --query-umd-private`  
+  Calls `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` and prints the `aerogpu_umd_private_v1` blob used by UMDs to discover the active ABI + feature bits.
+
 - `aerogpu_dbgctl --query-fence`  
   Prints the last submitted fence and last completed fence.
 
@@ -60,6 +63,7 @@ Examples:
 ```
 aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --query-version
+aerogpu_dbgctl --query-umd-private
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --dump-vblank
@@ -119,6 +123,7 @@ Escape ops used:
 
 Additional WDDM queries (do not use the escape channel):
 
+- `--query-umd-private` uses `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` to query the KMD-provided discovery blob.
 - `--wait-vblank` uses `D3DKMTWaitForVerticalBlankEvent` to measure vblank delivery from the OS.
 - `--query-scanline` uses `D3DKMTGetScanLine` to report the current scanline and vblank state.
 
