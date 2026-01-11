@@ -143,7 +143,7 @@ There are two related but distinct “driver ISO” concepts in Aero:
    - Intended for Windows Setup’s **Load Driver** flow (so Setup can see a virtio-blk boot disk).
 
 2) **Aero Guest Tools ISO** (`aero-guest-tools.iso`)
-   - Contains install scripts (`setup.cmd`), certificates, and the driver payload under `drivers/x86/...` and `drivers/amd64/...`.
+   - Contains install scripts (`setup.cmd`), the driver payload under `drivers/x86/...` and `drivers/amd64/...`, and (optionally) certificate files under `certs/` depending on `manifest.json` `signing_policy`.
    - Intended for the recommended post-install flow:
      - install Win7 using AHCI/e1000
      - mount Guest Tools ISO
