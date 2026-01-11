@@ -658,7 +658,19 @@ static int RunChild(int argc,
                             tex.put(),
                             &open_handle);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateTexture(open shared)", hr);
+      const HRESULT create_hr = hr;
+      open_handle = shared_handle;
+      HRESULT open_hr =
+          dev->OpenSharedResource(shared_handle,
+                                  IID_IDirect3DTexture9,
+                                  reinterpret_cast<void**>(tex.put()));
+      if (FAILED(open_hr)) {
+        return aerogpu_test::Fail(kTestName,
+                                  "CreateTexture(open shared) failed with %s; OpenSharedResource(shared texture) failed with %s",
+                                  aerogpu_test::HresultToString(create_hr).c_str(),
+                                  aerogpu_test::HresultToString(open_hr).c_str());
+      }
+      aerogpu_test::PrintfStdout("INFO: %s: CreateTexture(open shared) failed; OpenSharedResource(texture) succeeded", kTestName);
     }
     hr = tex->GetSurfaceLevel(0, surface.put());
     if (FAILED(hr)) {
@@ -675,7 +687,19 @@ static int RunChild(int argc,
                                    &open_handle,
                                    0);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetEx(open shared)", hr);
+      const HRESULT create_hr = hr;
+      open_handle = shared_handle;
+      HRESULT open_hr =
+          dev->OpenSharedResource(shared_handle,
+                                  IID_IDirect3DSurface9,
+                                  reinterpret_cast<void**>(surface.put()));
+      if (FAILED(open_hr)) {
+        return aerogpu_test::Fail(kTestName,
+                                  "CreateRenderTargetEx(open shared) failed with %s; OpenSharedResource(shared surface) failed with %s",
+                                  aerogpu_test::HresultToString(create_hr).c_str(),
+                                  aerogpu_test::HresultToString(open_hr).c_str());
+      }
+      aerogpu_test::PrintfStdout("INFO: %s: CreateRenderTargetEx(open shared) failed; OpenSharedResource(surface) succeeded", kTestName);
     }
   }
 
