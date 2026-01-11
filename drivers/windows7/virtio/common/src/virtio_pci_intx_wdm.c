@@ -35,14 +35,10 @@ VirtioIntxDpcRoutine(_In_ KDPC *Dpc, _In_ PVOID DeferredContext, _In_ PVOID Syst
 
     remaining = InterlockedDecrement(&intx->DpcInFlight);
     if (remaining <= 0) {
-        /*
-         * Ensure the idle event is always signaled when no DPC instances remain,
-         * even if DpcInFlight gets out of sync due to unexpected callers.
-         */
+        /* Ensure the in-flight count is always non-negative. */
         if (remaining < 0) {
             (VOID)InterlockedExchange(&intx->DpcInFlight, 0);
         }
-        KeSetEvent(&intx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
     }
 }
 
@@ -88,9 +84,7 @@ VirtioIntxIsrRoutine(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext)
          * DpcInFlight tracks both queued and running DPC instances so teardown can
          * safely wait even if the DPC is re-queued while executing.
          */
-        if (InterlockedIncrement(&intx->DpcInFlight) == 1) {
-            KeClearEvent(&intx->DpcIdleEvent);
-        }
+        (VOID)InterlockedIncrement(&intx->DpcInFlight);
     }
     return TRUE;
 }
@@ -104,7 +98,7 @@ VirtioIntxConnect(_In_ PDEVICE_OBJECT DeviceObject,
                   _In_opt_ PVOID EvtQueueDpcContext,
                   _In_opt_ EVT_VIRTIO_INTX_WDM_CONFIG_DPC *EvtConfigDpc,
                   _In_opt_ PVOID EvtConfigDpcContext,
-                  _Out_ VIRTIO_INTX_WDM *Intx)
+                   _Out_ VIRTIO_INTX_WDM *Intx)
 {
     NTSTATUS status;
     BOOLEAN shareVector;
@@ -133,7 +127,6 @@ VirtioIntxConnect(_In_ PDEVICE_OBJECT DeviceObject,
     Intx->EvtConfigDpcContext = EvtConfigDpcContext;
 
     KeInitializeDpc(&Intx->Dpc, VirtioIntxDpcRoutine, Intx);
-    KeInitializeEvent(&Intx->DpcIdleEvent, NotificationEvent, TRUE);
 
     UNREFERENCED_PARAMETER(DeviceObject);
 
@@ -141,7 +134,15 @@ VirtioIntxConnect(_In_ PDEVICE_OBJECT DeviceObject,
     irql = (KIRQL)InterruptDescTranslated->u.Interrupt.Level;
     affinity = InterruptDescTranslated->u.Interrupt.Affinity;
 
+    shareVector = TRUE;
+#if defined(CmShareShared)
     shareVector = (InterruptDescTranslated->ShareDisposition == CmShareShared) ? TRUE : FALSE;
+#elif defined(CmResourceShareShared)
+    shareVector = (InterruptDescTranslated->ShareDisposition == CmResourceShareShared) ? TRUE : FALSE;
+#else
+    /* Assume shared if headers do not expose the share disposition constants. */
+    shareVector = TRUE;
+#endif
     mode = (InterruptDescTranslated->Flags & CM_RESOURCE_INTERRUPT_LATCHED) ? Latched : LevelSensitive;
 
     status = IoConnectInterrupt(&Intx->InterruptObject,
@@ -167,6 +168,8 @@ _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
 VirtioIntxDisconnect(_Inout_ VIRTIO_INTX_WDM *Intx)
 {
+    LARGE_INTEGER delay;
+
     if (Intx == NULL) {
         return;
     }
@@ -191,17 +194,17 @@ VirtioIntxDisconnect(_Inout_ VIRTIO_INTX_WDM *Intx)
     /* Cancel any DPC that is queued but not yet running. */
     if (KeRemoveQueueDpc(&Intx->Dpc)) {
         LONG remaining = InterlockedDecrement(&Intx->DpcInFlight);
-        if (remaining <= 0) {
-            if (remaining < 0) {
-                (VOID)InterlockedExchange(&Intx->DpcInFlight, 0);
-            }
-            KeSetEvent(&Intx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
+        if (remaining < 0) {
+            (VOID)InterlockedExchange(&Intx->DpcInFlight, 0);
         }
     }
 
     /* Wait for any in-flight DPC to finish before callers unmap MMIO/free queues. */
     if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
-        (VOID)KeWaitForSingleObject(&Intx->DpcIdleEvent, Executive, KernelMode, FALSE, NULL);
+        delay.QuadPart = -10 * 1000; /* 1ms */
+        while (InterlockedCompareExchange(&Intx->DpcInFlight, 0, 0) != 0) {
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
     } else {
         ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
     }
@@ -210,7 +213,6 @@ VirtioIntxDisconnect(_Inout_ VIRTIO_INTX_WDM *Intx)
     Intx->PendingIsrStatus = 0;
     Intx->Stopping = 1;
     (VOID)InterlockedExchange(&Intx->DpcInFlight, 0);
-    KeSetEvent(&Intx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
 
     Intx->EvtQueueDpc = NULL;
     Intx->EvtQueueDpcContext = NULL;

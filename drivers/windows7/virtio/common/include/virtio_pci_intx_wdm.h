@@ -24,7 +24,6 @@ typedef VOID EVT_VIRTIO_INTX_WDM_CONFIG_DPC(_In_opt_ PVOID Context);
 typedef struct _VIRTIO_INTX_WDM {
     PKINTERRUPT InterruptObject;
     KDPC Dpc;
-    KEVENT DpcIdleEvent;
 
     volatile UCHAR *IsrStatus; /* MMIO: read-to-ack */
     volatile LONG PendingIsrStatus;
@@ -35,6 +34,10 @@ typedef struct _VIRTIO_INTX_WDM {
      *   resources are being freed.
      * - DpcInFlight tracks both queued and running DPC instances so Disconnect
      *   can safely wait even if the KDPC is re-queued while executing.
+     *
+     * Note: INTx ISRs run at DIRQL, so they cannot safely manipulate dispatcher
+     * objects (KEVENT). Disconnect therefore waits for DpcInFlight to drain
+     * using polling at PASSIVE_LEVEL.
      */
     volatile LONG Stopping;
     volatile LONG DpcInFlight;

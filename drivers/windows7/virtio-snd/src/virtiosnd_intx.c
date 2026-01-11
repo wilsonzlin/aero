@@ -115,7 +115,15 @@ NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOU
             Dx->InterruptIrql = (KIRQL)desc[i].u.Interrupt.Level;
             Dx->InterruptAffinity = desc[i].u.Interrupt.Affinity;
             Dx->InterruptMode = ((desc[i].Flags & CM_RESOURCE_INTERRUPT_LATCHED) != 0) ? Latched : LevelSensitive;
+            Dx->InterruptShareVector = TRUE;
+#if defined(CmResourceShareShared)
             Dx->InterruptShareVector = (desc[i].ShareDisposition == CmResourceShareShared) ? TRUE : FALSE;
+#elif defined(CmShareShared)
+            Dx->InterruptShareVector = (desc[i].ShareDisposition == CmShareShared) ? TRUE : FALSE;
+#else
+            /* Assume shared if headers do not expose the share disposition constants. */
+            Dx->InterruptShareVector = TRUE;
+#endif
 
             VIRTIOSND_TRACE(
                 "INTx resource: vector=%lu level=%lu affinity=%I64x mode=%s share=%u\n",
