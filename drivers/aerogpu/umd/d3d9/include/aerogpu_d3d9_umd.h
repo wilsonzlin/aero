@@ -282,6 +282,21 @@ typedef D3D9DDIARG_OPENADAPTER2 AEROGPU_D3D9DDIARG_OPENADAPTER2;
 typedef D3D9DDIARG_OPENADAPTERFROMHDC AEROGPU_D3D9DDIARG_OPENADAPTERFROMHDC;
 typedef D3D9DDIARG_OPENADAPTERFROMLUID AEROGPU_D3D9DDIARG_OPENADAPTERFROMLUID;
 
+// GetCaps / QueryAdapterInfo are adapter-level queries.
+// These argument layouts are intended to match the Windows 7-era WDK D3D9 UMD DDI.
+// The runtime selects the payload format based on `type`.
+typedef struct AEROGPU_D3D9DDIARG_GETCAPS {
+  uint32_t type; // D3DDDICAPS_TYPE / D3D9DDICAPS_TYPE (WDK)
+  void* pData;
+  uint32_t data_size;
+} AEROGPU_D3D9DDIARG_GETCAPS;
+
+typedef struct AEROGPU_D3D9DDIARG_QUERYADAPTERINFO {
+  uint32_t type; // D3DDDIQUERYADAPTERINFO_* / D3D9QUERYADAPTERINFO_* (WDK)
+  void* pPrivateDriverData;
+  uint32_t private_driver_data_size;
+} AEROGPU_D3D9DDIARG_QUERYADAPTERINFO;
+
 typedef struct AEROGPU_D3D9DDIARG_CREATEDEVICE {
   AEROGPU_D3D9DDI_HADAPTER hAdapter;
   AEROGPU_D3D9DDI_HDEVICE hDevice; // out: driver-owned handle

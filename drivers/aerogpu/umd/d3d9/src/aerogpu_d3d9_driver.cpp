@@ -19,6 +19,7 @@
   #define D3DPS_VERSION(major, minor) (0xFFFF0000u | ((major) << 8) | (minor))
 #endif
 
+#include "aerogpu_d3d9_caps.h"
 #include "aerogpu_d3d9_blit.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
@@ -34,39 +35,6 @@ constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 constexpr uint32_t kD3DQueryTypeEvent = 8u;
 constexpr uint32_t kD3DIssueEnd = 0x1u;
 constexpr uint32_t kD3DGetDataFlush = 0x1u;
-
-// -----------------------------------------------------------------------------
-// Minimal caps structure (compat only)
-// -----------------------------------------------------------------------------
-// The Windows 7 D3D9Ex runtime consumes D3DCAPS9. We intentionally do not embed
-// the full public D3DCAPS9 here because this repository is not built with the
-// Windows SDK/WDK by default. When integrating into a real driver build,
-// implement GetCaps using the real D3DCAPS9.
-//
-// Fields included here are the ones commonly consulted by the D3D9 runtime and
-// DWM to decide whether to enable the advanced composition pipeline.
-struct Caps {
-  uint32_t max_texture_width;
-  uint32_t max_texture_height;
-  uint32_t max_volume_extent;
-  uint32_t max_simultaneous_textures;
-  uint32_t max_streams;
-
-  uint32_t vertex_shader_version;
-  uint32_t pixel_shader_version;
-
-  uint32_t presentation_intervals; // bitmask: 1=immediate, 2=one
-
-  uint32_t raster_caps;
-  uint32_t texture_caps;
-  uint32_t texture_filter_caps;
-  uint32_t texture_address_caps;
-  uint32_t alpha_cmp_caps;
-  uint32_t src_blend_caps;
-  uint32_t dest_blend_caps;
-  uint32_t shade_caps;
-  uint32_t stencil_caps;
-};
 
 uint32_t f32_bits(float v) {
   uint32_t bits = 0;
@@ -833,99 +801,55 @@ HRESULT AEROGPU_D3D9_CALL adapter_close(D3D9DDI_HADAPTER hAdapter) {
   return S_OK;
 }
 
-HRESULT AEROGPU_D3D9_CALL adapter_get_caps(D3D9DDI_HADAPTER, const D3D9DDIARG_GETCAPS* pGetCaps) {
-  if (!pGetCaps || (pGetCaps->DataSize && !pGetCaps->pData)) {
+HRESULT AEROGPU_D3D9_CALL adapter_get_caps(
+    D3D9DDI_HADAPTER hAdapter,
+    const D3D9DDIARG_GETCAPS* pGetCaps) {
+  auto* adapter = as_adapter(hAdapter);
+  if (!adapter || !pGetCaps) {
     return E_INVALIDARG;
   }
 
-  if (pGetCaps->pData && pGetCaps->DataSize) {
-    std::memset(pGetCaps->pData, 0, pGetCaps->DataSize);
-  }
-
-  bool handled = false;
-
-#if defined(_WIN32)
-  if (pGetCaps->pData && pGetCaps->DataSize >= sizeof(D3DCAPS9)) {
-    auto* caps = reinterpret_cast<D3DCAPS9*>(pGetCaps->pData);
-    caps->MaxTextureWidth = 4096;
-    caps->MaxTextureHeight = 4096;
-    caps->MaxVolumeExtent = 256;
-    caps->MaxSimultaneousTextures = 8;
-    caps->MaxStreams = 16;
-
-    caps->VertexShaderVersion = D3DVS_VERSION(2, 0);
-    caps->PixelShaderVersion = D3DPS_VERSION(2, 0);
-
-    caps->PresentationIntervals = D3DPRESENT_INTERVAL_IMMEDIATE | D3DPRESENT_INTERVAL_ONE;
-    handled = true;
-  }
-#else
-  if (pGetCaps->pData && pGetCaps->DataSize >= sizeof(Caps)) {
-    Caps caps{};
-    caps.max_texture_width = 4096;
-    caps.max_texture_height = 4096;
-    caps.max_volume_extent = 256;
-    caps.max_simultaneous_textures = 8;
-    caps.max_streams = 16;
-
-    caps.vertex_shader_version = D3DVS_VERSION(2, 0);
-    caps.pixel_shader_version = D3DPS_VERSION(2, 0);
-    caps.presentation_intervals = 0x1u | 0x2u;
-    std::memcpy(pGetCaps->pData, &caps, sizeof(caps));
-    handled = true;
-  }
-#endif
-
-  if (!handled) {
-    aerogpu::logf("aerogpu-d3d9: GetCaps type=%u size=%u unsupported\n",
-                  static_cast<unsigned>(pGetCaps->Type),
-                  static_cast<unsigned>(pGetCaps->DataSize));
-    return E_INVALIDARG;
-  }
-
-  return S_OK;
+  AEROGPU_D3D9DDIARG_GETCAPS args{};
+  args.type = static_cast<uint32_t>(pGetCaps->Type);
+  args.pData = pGetCaps->pData;
+  args.data_size = pGetCaps->DataSize;
+  return aerogpu::get_caps(adapter, &args);
 }
 
-HRESULT AEROGPU_D3D9_CALL adapter_query_adapter_info(D3D9DDI_HADAPTER hAdapter,
-                                                     const D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo) {
-  if (!pQueryAdapterInfo || (pQueryAdapterInfo->DataSize && !pQueryAdapterInfo->pData)) {
+HRESULT AEROGPU_D3D9_CALL adapter_query_adapter_info(
+    D3D9DDI_HADAPTER hAdapter,
+    const D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo) {
+  auto* adapter = as_adapter(hAdapter);
+  if (!adapter || !pQueryAdapterInfo) {
     return E_INVALIDARG;
   }
 
-  if (pQueryAdapterInfo->pData && pQueryAdapterInfo->DataSize) {
-    std::memset(pQueryAdapterInfo->pData, 0, pQueryAdapterInfo->DataSize);
-  }
+  void* data = nullptr;
+  uint32_t size = 0;
 
-  Adapter* adapter = as_adapter(hAdapter);
-  if (!adapter) {
-    return E_INVALIDARG;
-  }
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  data = pQueryAdapterInfo->pPrivateDriverData;
+  size = pQueryAdapterInfo->PrivateDriverDataSize;
+#else
+  data = pQueryAdapterInfo->pData;
+  size = pQueryAdapterInfo->DataSize;
+#endif
 
   // Best-effort: if the runtime asks for an 8-byte payload, treat it as a LUID
   // (common for adapter identity queries).
-  if (pQueryAdapterInfo->pData && pQueryAdapterInfo->DataSize == sizeof(LUID)) {
-    *reinterpret_cast<LUID*>(pQueryAdapterInfo->pData) = adapter->luid;
+  if (data && size == sizeof(LUID)) {
+    aerogpu::logf("aerogpu-d3d9: QueryAdapterInfo type=%u size=%u (LUID)\n",
+                  static_cast<unsigned>(pQueryAdapterInfo->Type),
+                  static_cast<unsigned>(size));
+    *reinterpret_cast<LUID*>(data) = adapter->luid;
     return S_OK;
   }
 
-#if defined(_WIN32)
-  if (pQueryAdapterInfo->pData && pQueryAdapterInfo->DataSize >= sizeof(D3DADAPTER_IDENTIFIER9)) {
-    auto* ident = reinterpret_cast<D3DADAPTER_IDENTIFIER9*>(pQueryAdapterInfo->pData);
-    std::strncpy(ident->Driver, "aerogpu_d3d9", sizeof(ident->Driver) - 1);
-    std::strncpy(ident->Description, "AeroGPU (virtual)", sizeof(ident->Description) - 1);
-    std::strncpy(ident->DeviceName, "\\\\.\\DISPLAY1", sizeof(ident->DeviceName) - 1);
-    ident->VendorId = 0xFFFF;  // Microsoft reserved / virtual
-    ident->DeviceId = 0x0001;
-    ident->SubSysId = 0;
-    ident->Revision = 0;
-    return S_OK;
-  }
-#endif
-
-  aerogpu::logf("aerogpu-d3d9: QueryAdapterInfo type=%u size=%u unsupported\n",
-                static_cast<unsigned>(pQueryAdapterInfo->Type),
-                static_cast<unsigned>(pQueryAdapterInfo->DataSize));
-  return E_INVALIDARG;
+  AEROGPU_D3D9DDIARG_QUERYADAPTERINFO args{};
+  args.type = static_cast<uint32_t>(pQueryAdapterInfo->Type);
+  args.pPrivateDriverData = data;
+  args.private_driver_data_size = size;
+  return aerogpu::query_adapter_info(adapter, &args);
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
