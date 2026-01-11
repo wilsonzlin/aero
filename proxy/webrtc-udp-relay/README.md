@@ -132,7 +132,7 @@ Relay env:
 
 Security note: TURN REST credentials are still usable by any JavaScript running
 under an allowed origin. Keep `ALLOWED_ORIGINS` tight (or leave it unset to
-default to same-host only).
+default to same host:port only).
 
 ## E2E interoperability test (Playwright)
 
@@ -183,6 +183,7 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - `GET /webrtc/signal` → WebSocket signaling (trickle ICE)
 - `POST /webrtc/offer` → HTTP offer → answer (non-trickle ICE fallback)
 - `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`)
+  - guarded by the same origin policy as signaling endpoints
 
 ## Implemented
 
@@ -325,7 +326,7 @@ The container + client integration uses the following environment variables and 
 
 - `ALLOWED_ORIGINS`: CORS allow-list for browser clients (comma-separated).
   - Example: `http://localhost:5173,http://localhost:3000`
-  - If unset, the relay defaults to allowing only same-host origins (so TURN credentials from `/webrtc/ice` are not exposed cross-origin).
+  - If unset, the relay defaults to allowing only same host:port requests, so sensitive endpoints like `/webrtc/ice` and WebSocket upgrades (`/webrtc/signal`, `/udp`) are not exposed cross-origin.
   - Entries must be `http(s)://host[:port]` (no path/query/fragment). `*` and `null` are also accepted.
 - `WEBRTC_UDP_PORT_MIN` / `WEBRTC_UDP_PORT_MAX`: UDP port range used for ICE candidates.
   - Must match your firewall rules and any container port publishing (see below).

@@ -13,6 +13,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
@@ -868,22 +869,11 @@ func parseAllowedOrigins(raw string) ([]string, error) {
 			continue
 		}
 
-		u, err := url.Parse(entry)
-		if err != nil || u.Scheme == "" || u.Host == "" {
+		normalizedOrigin, _, ok := origin.NormalizeHeader(entry)
+		if !ok {
 			return nil, fmt.Errorf("invalid origin %q (expected full origin like https://example.com)", entry)
 		}
-		if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return nil, fmt.Errorf("invalid origin %q (must not include credentials, query, or fragment)", entry)
-		}
-		if u.Path != "" && u.Path != "/" {
-			return nil, fmt.Errorf("invalid origin %q (must not include a path)", entry)
-		}
-
-		scheme := strings.ToLower(u.Scheme)
-		if scheme != "http" && scheme != "https" {
-			return nil, fmt.Errorf("invalid origin %q (unsupported scheme %q)", entry, u.Scheme)
-		}
-		out = append(out, scheme+"://"+strings.ToLower(u.Host))
+		out = append(out, normalizedOrigin)
 	}
 
 	return out, nil
