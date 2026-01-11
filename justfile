@@ -24,7 +24,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 #
 # If `node` is unavailable (e.g. Rust-only workflows), fall back to a best-effort
 # heuristic rather than failing justfile parsing.
-WEB_DIR := env_var_or_default("AERO_NODE_DIR", env_var_or_default("AERO_WEB_DIR", env_var_or_default("WEB_DIR", `bash -c 'if command -v node >/dev/null 2>&1 && [[ -f scripts/ci/detect-node-dir.mjs ]]; then node scripts/ci/detect-node-dir.mjs | sed -n "s/^dir=//p" | head -n1 | tr -d "\\r" | xargs; elif [[ -f package.json ]]; then echo .; elif [[ -f frontend/package.json ]]; then echo frontend; elif [[ -f web/package.json ]]; then echo web; else echo .; fi'`)))
+WEB_DIR := env_var_or_default("AERO_NODE_DIR", env_var_or_default("AERO_WEB_DIR", env_var_or_default("WEB_DIR", `bash -c 'dir=""; if command -v node >/dev/null 2>&1 && [[ -f scripts/ci/detect-node-dir.mjs ]]; then dir="$(node scripts/ci/detect-node-dir.mjs 2>/dev/null | sed -n "s/^dir=//p" | head -n1 | tr -d "\\r" | xargs || true)"; fi; if [[ -n "$dir" ]]; then echo "$dir"; elif [[ -f package.json ]]; then echo .; elif [[ -f frontend/package.json ]]; then echo frontend; elif [[ -f web/package.json ]]; then echo web; else echo .; fi'`)))
 
 [private]
 _warn_deprecated_env:
@@ -339,7 +339,6 @@ dev:
   #!/usr/bin/env bash
   set -euo pipefail
 
-  just _warn_deprecated_env
   just _check_node_version
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
