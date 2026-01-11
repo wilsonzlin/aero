@@ -44,6 +44,10 @@
 	encode zstd gzip
 
 	# WebSocket L2 tunnel proxy endpoint.
+	#
+	# Auth note: `/l2` is authenticated by `aero-l2-proxy` using the same `aero_session` cookie
+	# issued by `backend/aero-gateway` at `POST /session`. Browsers must create a session (and
+	# receive the cookie) before opening the WebSocket.
 	@aero_l2 path /l2*
 	handle @aero_l2 {
 		import aero_headers

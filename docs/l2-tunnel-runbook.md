@@ -32,8 +32,15 @@ cargo run --locked -p aero-l2-proxy
 #   AERO_L2_ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy
 # - Trusted local dev escape hatch (disables Origin enforcement):
 #   AERO_L2_OPEN=1 cargo run --locked -p aero-l2-proxy
-# - Optional token auth (recommended for any internet-exposed deployment):
-#   AERO_L2_TOKEN=sekrit cargo run --locked -p aero-l2-proxy
+# - Auth (recommended; matches the gateway’s session model):
+#   - Cookie session (single-origin deployments; requires `aero_session` cookie from `POST /session`):
+#     AERO_L2_AUTH_MODE=cookie AERO_L2_SESSION_SECRET=sekrit cargo run --locked -p aero-l2-proxy
+#   - API key (simple cross-origin / server-to-server; dev-only if long-lived):
+#     AERO_L2_AUTH_MODE=api_key AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
+#   - JWT (recommended for cross-origin / short-lived tokens):
+#     AERO_L2_AUTH_MODE=jwt AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
+#   - Mixed mode (cookie browser clients + JWT for WebRTC relay bridging):
+#     AERO_L2_AUTH_MODE=cookie_or_jwt AERO_L2_SESSION_SECRET=sekrit AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
 ```
 
 - Node (WebSocket upgrade policy / quota harness; **dev/test-only** and **does not implement the L2 data plane**; used by `tests/l2_proxy_security.test.js`):
@@ -119,6 +126,67 @@ DHCP verification (until the automated probe covers it):
 - Boot a guest and confirm it receives a lease (Windows: `ipconfig /all`).
 - Force renewal (Windows: `ipconfig /renew`) and capture traffic with the built-in PCAP tracing
   hooks described in [`07-networking.md`](./07-networking.md#network-tracing-pcappcapng-export).
+
+## Secure deployment (recommended)
+
+Treat the L2 proxy as a **high-risk network egress surface**. A secure deployment needs:
+**Origin enforcement + authentication + egress policy**.
+
+### 1) Single-origin deployment (cookie session) — recommended
+
+This is the default deployment model in `deploy/docker-compose.yml`:
+
+1. The browser calls the gateway to create a session cookie:
+
+   - `POST https://<origin>/session` with `credentials: "include"`
+   - The response sets `Set-Cookie: aero_session=...; HttpOnly; Secure`
+
+2. The browser opens the L2 tunnel WebSocket on the same origin:
+
+   - `wss://<origin>/l2` with subprotocol `aero-l2-tunnel-v1`
+   - The `aero_session` cookie is sent automatically by the browser.
+
+Server-side configuration requirements:
+
+- `backend/aero-gateway` and `crates/aero-l2-proxy` must share the same session signing secret:
+  - `SESSION_SECRET` (gateway)
+  - `AERO_L2_SESSION_SECRET` (L2 proxy)
+
+### 2) Cross-origin deployment (JWT / API key token forwarding)
+
+If the frontend is hosted on a different origin (or you need non-browser clients), cookies may not
+work. In that case, deploy `aero-l2-proxy` with token-based auth and forward the token during the
+WebSocket upgrade (typically via query string, since browsers can’t set arbitrary WS headers):
+
+- **JWT** (recommended):
+  - Configure: `AERO_L2_AUTH_MODE=jwt` and `AERO_L2_JWT_SECRET=...`
+  - Connect with: `wss://proxy.example.com/l2?token=<jwt>`
+- **API key** (simpler, but avoid long-lived keys for public deployments):
+  - Configure: `AERO_L2_AUTH_MODE=api_key` and `AERO_L2_API_KEY=...`
+  - Connect with: `wss://proxy.example.com/l2?apiKey=<key>`
+
+### 3) WebRTC L2 bridging (relay forwards auth + Origin)
+
+When carrying the L2 tunnel over WebRTC, the browser connects to `proxy/webrtc-udp-relay` and the
+relay opens a backend WebSocket to `aero-l2-proxy` and bridges:
+
+- **auth** (forwarded to the backend, e.g. via query string), and
+- **Origin** (forwarded so the backend can enforce the same allowlist).
+
+In the canonical compose stack, enable the backend wiring in `deploy/.env`:
+
+```bash
+L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
+L2_BACKEND_AUTH_FORWARD_MODE=query
+L2_BACKEND_FORWARD_ORIGIN=1
+```
+
+Then ensure auth is compatible end-to-end:
+
+- Configure `aero-l2-proxy` to accept the forwarded credential (for example
+  `AERO_L2_AUTH_MODE=cookie_or_jwt`).
+- Configure the relay auth mode (`AUTH_MODE=jwt` or `AUTH_MODE=api_key`) so the browser presents a
+  credential that the relay can forward to the backend.
 
 ## Production checklist
 

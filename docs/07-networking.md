@@ -150,6 +150,12 @@ talks to a single HTTPS origin:
 - `/webrtc/*`, `/offer`, `/udp` → **webrtc-udp-relay**
 - `/l2` → **aero-l2-proxy** (Option C; `aero-l2-tunnel-v1`)
 
+Auth note (Option C): `/l2` should be treated like `/tcp` — **Origin allowlist + authentication**
+are required. In the default single-origin deployment model, browsers call `POST /session` first to
+receive the `aero_session` cookie, then connect to `wss://<origin>/l2` (cookie auth). For
+cross-origin deployments (or WebRTC relay bridging), configure token-based auth (JWT / API key) and
+forward the credential during the WebSocket upgrade (typically via query params).
+
 Note: WebRTC’s **data plane** still requires UDP connectivity to the relay’s ICE port range (or a
 TURN server). The reverse proxy only fronts the relay’s HTTP/WebSocket signaling endpoints.
 

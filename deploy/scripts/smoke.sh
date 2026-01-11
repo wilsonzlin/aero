@@ -13,6 +13,7 @@ SMOKE_WEBRTC_API_KEY="__aero_smoke_${PROJECT_NAME}"
 SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE=101
 SMOKE_WEBRTC_UDP_PORT_MIN=50000
 SMOKE_WEBRTC_UDP_PORT_MAX=$((SMOKE_WEBRTC_UDP_PORT_MIN + SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE - 1))
+SMOKE_SESSION_SECRET="__aero_smoke_session_${PROJECT_NAME}"
 
 compose() {
   env \
@@ -20,6 +21,12 @@ compose() {
     -u AERO_L2_ALLOWED_UDP_PORTS \
     -u AERO_L2_ALLOWED_DOMAINS \
     -u AERO_L2_BLOCKED_DOMAINS \
+    -u AERO_L2_AUTH_MODE \
+    -u AERO_L2_API_KEY \
+    -u AERO_L2_JWT_SECRET \
+    -u L2_BACKEND_WS_URL \
+    -u L2_BACKEND_AUTH_FORWARD_MODE \
+    -u L2_BACKEND_FORWARD_ORIGIN \
     AERO_DOMAIN=localhost \
     AERO_GATEWAY_UPSTREAM=aero-gateway:8080 \
     AERO_GATEWAY_GIT_SHA= \
@@ -63,7 +70,7 @@ compose() {
     WEBRTC_NAT_1TO1_IPS= \
     WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE= \
     WEBRTC_UDP_LISTEN_IP= \
-    SESSION_SECRET= \
+    SESSION_SECRET="$SMOKE_SESSION_SECRET" \
     ALLOWED_ORIGINS= \
     AERO_GATEWAY_IMAGE="aero-gateway:${PROJECT_NAME}" \
     AERO_L2_PROXY_IMAGE="aero-l2-proxy:${PROJECT_NAME}" \
@@ -968,6 +975,7 @@ if command -v node >/dev/null 2>&1; then
   for _ in $(seq 1 30); do
     if l2_last_error="$(
       node --input-type=commonjs - 2>&1 <<'NODE'
+const https = require("node:https");
 const tls = require("node:tls");
 const crypto = require("node:crypto");
 
@@ -976,72 +984,121 @@ const port = 443;
 const path = "/l2";
 const expectedProtocol = "aero-l2-tunnel-v1";
 
-const key = crypto.randomBytes(16).toString("base64");
-const req = [
-  `GET ${path} HTTP/1.1`,
-  `Host: ${host}`,
-  "Connection: Upgrade",
-  "Upgrade: websocket",
-  "Sec-WebSocket-Version: 13",
-  `Sec-WebSocket-Key: ${key}`,
-  `Sec-WebSocket-Protocol: ${expectedProtocol}`,
-  `Origin: https://${host}`,
-  "",
-  "",
-].join("\r\n");
+function requestSessionCookie() {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from("{}", "utf8");
+    const req = https.request(
+      {
+        host,
+        port,
+        method: "POST",
+        path: "/session",
+        rejectUnauthorized: false,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(body.length),
+        },
+      },
+      (res) => {
+        const setCookie = res.headers["set-cookie"];
+        if (!setCookie) {
+          reject(new Error("missing Set-Cookie from /session"));
+          return;
+        }
+        const cookieLine = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+        if (typeof cookieLine !== "string" || cookieLine.length === 0) {
+          reject(new Error("invalid Set-Cookie from /session"));
+          return;
+        }
+        const cookiePair = cookieLine.split(";", 1)[0] ?? "";
+        if (!cookiePair.startsWith("aero_session=")) {
+          reject(new Error(`unexpected session cookie from /session: ${cookiePair}`));
+          return;
+        }
+        resolve(cookiePair);
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
 
-const socket = tls.connect({
-  host,
-  port,
-  servername: host,
-  rejectUnauthorized: false,
-});
+async function checkL2Upgrade(cookiePair) {
+  const key = crypto.randomBytes(16).toString("base64");
+  const req = [
+    `GET ${path} HTTP/1.1`,
+    `Host: ${host}`,
+    "Connection: Upgrade",
+    "Upgrade: websocket",
+    "Sec-WebSocket-Version: 13",
+    `Sec-WebSocket-Key: ${key}`,
+    `Sec-WebSocket-Protocol: ${expectedProtocol}`,
+    `Origin: https://${host}`,
+    `Cookie: ${cookiePair}`,
+    "",
+    "",
+  ].join("\r\n");
 
-const timeout = setTimeout(() => {
-  console.error("timeout waiting for /l2 upgrade response");
-  process.exit(1);
-}, 2_000);
+  const socket = tls.connect({
+    host,
+    port,
+    servername: host,
+    rejectUnauthorized: false,
+  });
 
-let buf = "";
-socket.on("secureConnect", () => {
-  socket.write(req);
-});
-
-socket.on("data", (chunk) => {
-  buf += chunk.toString("utf8");
-  const idx = buf.indexOf("\r\n\r\n");
-  if (idx === -1) return;
-
-  clearTimeout(timeout);
-  socket.end();
-
-  const headerBlock = buf.slice(0, idx);
-  const lines = headerBlock.split("\r\n");
-  const statusLine = lines[0] ?? "";
-  if (!statusLine.includes(" 101 ")) {
-    console.error(`unexpected status line from /l2: ${statusLine}`);
+  const timeout = setTimeout(() => {
+    console.error("timeout waiting for /l2 upgrade response");
     process.exit(1);
-  }
+  }, 2_000);
 
-  const protoLine = lines.find((line) => /^sec-websocket-protocol:/i.test(line));
-  if (!protoLine) {
-    console.error("missing Sec-WebSocket-Protocol in /l2 upgrade response");
+  let buf = "";
+  socket.on("secureConnect", () => {
+    socket.write(req);
+  });
+
+  socket.on("data", (chunk) => {
+    buf += chunk.toString("utf8");
+    const idx = buf.indexOf("\r\n\r\n");
+    if (idx === -1) return;
+
+    clearTimeout(timeout);
+    socket.end();
+
+    const headerBlock = buf.slice(0, idx);
+    const lines = headerBlock.split("\r\n");
+    const statusLine = lines[0] ?? "";
+    if (!statusLine.includes(" 101 ")) {
+      console.error(`unexpected status line from /l2: ${statusLine}`);
+      process.exit(1);
+    }
+
+    const protoLine = lines.find((line) => /^sec-websocket-protocol:/i.test(line));
+    if (!protoLine) {
+      console.error("missing Sec-WebSocket-Protocol in /l2 upgrade response");
+      process.exit(1);
+    }
+    const proto = protoLine.split(":", 2)[1]?.trim() ?? "";
+    if (proto !== expectedProtocol) {
+      console.error(`unexpected subprotocol for /l2 (expected ${expectedProtocol}, got ${proto})`);
+      process.exit(1);
+    }
+
+    process.exit(0);
+  });
+
+  socket.on("error", (err) => {
+    clearTimeout(timeout);
+    console.error("error waiting for /l2 upgrade response:", err);
     process.exit(1);
-  }
-  const proto = protoLine.split(":", 2)[1]?.trim() ?? "";
-  if (proto !== expectedProtocol) {
-    console.error(`unexpected subprotocol for /l2 (expected ${expectedProtocol}, got ${proto})`);
+  });
+}
+
+requestSessionCookie()
+  .then((cookie) => checkL2Upgrade(cookie))
+  .catch((err) => {
+    console.error("l2 upgrade check failed:", err);
     process.exit(1);
-  }
-
-  process.exit(0);
-});
-
-socket.on("error", (err) => {
-  clearTimeout(timeout);
-  console.error("error waiting for /l2 upgrade response:", err);
-  process.exit(1);
-});
+  });
 NODE
     )"; then
       l2_ok=1

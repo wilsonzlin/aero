@@ -136,6 +136,19 @@ services:
       #   AERO_L2_ALLOWED_ORIGINS_EXTRA=",https://localhost:5173"
       AERO_L2_ALLOWED_ORIGINS: https://${AERO_DOMAIN:-localhost}${AERO_L2_ALLOWED_ORIGINS_EXTRA:-}
 
+      # Authentication (recommended).
+      #
+      # Default: require the same `aero_session` cookie issued by `aero-gateway` at `POST /session`.
+      #
+      # IMPORTANT: Cookie auth requires `AERO_L2_SESSION_SECRET` to match the gateway's
+      # `SESSION_SECRET`. If you leave SESSION_SECRET unset, the gateway will generate a temporary
+      # secret and the L2 proxy will be unable to validate the cookie.
+      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-cookie}
+      AERO_L2_SESSION_SECRET: ${SESSION_SECRET:-}
+      # Optional token-based auth (for cross-origin deployments or WebRTC relay L2 bridging).
+      AERO_L2_API_KEY: ${AERO_L2_API_KEY:-}
+      AERO_L2_JWT_SECRET: ${AERO_L2_JWT_SECRET:-}
+
       # Egress policy (highly recommended to set allowlists for production deployments).
       AERO_L2_ALLOW_PRIVATE_IPS: ${AERO_L2_ALLOW_PRIVATE_IPS:-0}
       # NOTE: Leave these unset by default; setting them to an empty string means
@@ -187,6 +200,17 @@ services:
       - SIGNALING_AUTH_TIMEOUT
       - MAX_SIGNALING_MESSAGE_BYTES
       - MAX_SIGNALING_MESSAGES_PER_SECOND
+
+      # Optional: L2 tunnel bridging (WebRTC DataChannel label `l2` <-> backend WS `/l2`).
+      #
+      # Enable by setting in `deploy/.env`:
+      #   L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
+      # Then ensure the relay can forward auth + Origin to the backend:
+      #   L2_BACKEND_AUTH_FORWARD_MODE=query
+      #   L2_BACKEND_FORWARD_ORIGIN=1
+      - L2_BACKEND_WS_URL
+      - L2_BACKEND_AUTH_FORWARD_MODE=${L2_BACKEND_AUTH_FORWARD_MODE:-query}
+      - L2_BACKEND_FORWARD_ORIGIN=${L2_BACKEND_FORWARD_ORIGIN:-1}
 
       # UDP egress policy (highly recommended for public deployments).
       - DESTINATION_POLICY_PRESET
