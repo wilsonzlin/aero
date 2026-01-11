@@ -14,4 +14,5 @@ INCLUDES=$(INCLUDES);..\include
 
 SOURCES= \
     driver.c \
+    pci_interface.c \
     virtio_snd_proto.c
