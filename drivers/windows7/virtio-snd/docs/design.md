@@ -15,11 +15,11 @@ There are currently **two virtio transport implementations** in-tree:
 1. **Shipped/default driver package:** `AERO-W7-VIRTIO` v1 **virtio-pci modern**
    transport (PCI vendor-specific capabilities + MMIO) with split-ring virtqueues.
 2. **Legacy/transitional bring-up code (not shipped):** legacy virtio-pci
-   **I/O-port** register layout for transitional devices. This exists for
+   **I/O-port** register layout for transitional devices (e.g. `DEV_1018`). This exists for
    historical bring-up, but it is **not** part of the `AERO-W7-VIRTIO` contract.
    This path only negotiates the low 32 bits of virtio feature flags and is not
-   suitable for contract v1 devices (`VIRTIO_F_VERSION_1` is bit 32). The shipped
-   INFs do not bind to transitional IDs.
+   suitable for contract v1 devices (`VIRTIO_F_VERSION_1` is bit 32). The shipped/CI
+   INF (`aero-virtio-snd.inf`) does not bind to transitional IDs.
 
 ## Code organization
 
@@ -48,7 +48,7 @@ path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and
 
 ## Default build architecture (virtio-pci modern endpoint driver)
 
-- **Transport:** virtio-pci **modern** (MMIO + PCI vendor-specific capabilities; `VIRTIO_F_VERSION_1`).
+- **Transport:** virtio-pci **modern** (MMIO + PCI vendor-specific capabilities; negotiates `VIRTIO_F_VERSION_1`).
 - **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four, but the current
   PortCls integration is render-only and primarily uses `controlq` (0) + `txq` (2); capture endpoint plumbing is still pending.
 - **Interrupts:** INTx only.
@@ -63,8 +63,7 @@ other Windows 7 virtio drivers (blk/net/input).
 
 ### 1) virtio-pci modern transport layer
 
-This section describes the virtio-pci modern architecture used by the driver
-package.
+This section describes the virtio-pci modern architecture used by the driver package.
 
 Responsibilities:
 
@@ -139,7 +138,7 @@ Current behavior:
   - submit one period of PCM into a backend callback.
 - Uses a backend abstraction (`include/backend.h`) so the WaveRT period timer path
   can remain decoupled from virtio transport details.
-- The shipped driver package uses the virtio-pci modern backend (`backend_virtio.c`). A legacy backend exists for
+- The shipped driver package uses the virtio-pci modern backend (`backend_virtio.c`). A legacy I/O-port backend exists for
   transitional devices but is not shipped. Capture is not yet exposed as a Windows endpoint.
 
 ### 5) Interrupt + timer pacing model

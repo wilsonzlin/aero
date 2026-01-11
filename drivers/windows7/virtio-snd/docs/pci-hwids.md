@@ -61,12 +61,16 @@ So, a fully-qualified expected HWID looks like:
 Note: `docs/windows-device-contract.json` lists **both** revision-gated and
 non-revision-gated patterns for tooling convenience. Automation (Guest Tools,
 CI) should prefer the revision-gated forms (`...&REV_01`) as described in
-`docs/windows-device-contract.md`. The virtio-snd INF is intentionally stricter
-and requires `REV_01`.
+`docs/windows-device-contract.md`.
+
+The virtio-snd INF is intentionally strict and requires `REV_01`. CI packaging
+stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping
+multiple INFs that match the same contract-v1 device IDs.
 
 The repository also contains an optional **legacy filename alias** INF
-(`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf` (and regenerate/sign
-`virtio-snd.cat`), it can be used for development bring-up against less strict HWIDs such as:
+(`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf` (and
+regenerate/sign `virtio-snd.cat`), it can be used for development bring-up
+against less strict HWIDs such as:
 
 * `PCI\VEN_1AF4&DEV_1059` (no `REV_01` gate)
 * Transitional virtio-snd: `PCI\VEN_1AF4&DEV_1018`
@@ -125,8 +129,10 @@ Audio: PCI device 1af4:1059
 ## Windows 7 caveats
 
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with `SUBSYS_...` and
-  `REV_...`). The Aero INF requires a `REV_01` match; if your device reports `REV_00`, the driver will
-  not bind.
-* The transitional ID `PCI\VEN_1AF4&DEV_1018` exists in the virtio spec. The Aero Win7 contract v1
-  INF does **not** match it; if Windows shows `DEV_1018`, configure the hypervisor to expose a
-  modern-only device (e.g. QEMU `disable-legacy=on`) so Windows enumerates `DEV_1059`.
+  `REV_...`). `aero-virtio-snd.inf` requires a `REV_01` match; if your device reports `REV_00`, that
+  strict contract-v1 INF will not bind (use `x-pci-revision=0x01` in QEMU, or use the `virtio-snd.inf`
+  compatibility alias during bring-up).
+* The transitional ID `PCI\VEN_1AF4&DEV_1018` exists in the virtio spec.
+  - `aero-virtio-snd.inf` (contract v1) does **not** match it; if Windows shows `DEV_1018`, configure the hypervisor to expose a
+    modern-only device (e.g. QEMU `disable-legacy=on`) so Windows enumerates `DEV_1059`.
+  - `virtio-snd.inf` can be used to install the same driver on transitional `DEV_1018` devices when needed.

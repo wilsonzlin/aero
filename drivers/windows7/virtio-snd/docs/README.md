@@ -45,6 +45,8 @@ The INF does **not** match:
 - Transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`)
 - Any “short form” without the revision gate (for example `PCI\VEN_1AF4&DEV_1059`), even though those appear in the Windows device contract manifest for tooling convenience
 
+The source tree also contains a legacy filename alias INF (`inf/virtio-snd.inf`) for bring-up and compatibility with older tooling. It installs the same driver/service but matches additional HWIDs (including transitional `DEV_1018`). CI packaging stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping multiple INFs that match the same modern contract-v1 device IDs.
+
 See also: [`pci-hwids.md`](pci-hwids.md) and `inf/aero-virtio-snd.inf`.
 
 ### Expected virtio features and queues (contract v1 §3.4)
@@ -131,7 +133,8 @@ Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 
 Notes:
 
-* **Queues:** playback uses `controlq` (0) + `txq` (2). The contract also defines `eventq` (1) and `rxq` (3).
+* **Queues:** `controlq`/`eventq`/`txq`/`rxq` are initialized per contract v1; playback uses `controlq` (0) + `txq` (2).
+  `rxq` (capture) bring-up exists in-tree, but capture is not yet exposed as a Windows endpoint.
 * **Interrupts:** **INTx** only (MSI/MSI-X not currently used by this driver package).
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32).
 

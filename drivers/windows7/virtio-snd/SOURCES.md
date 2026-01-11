@@ -19,8 +19,8 @@ request/response structures.
   - *Virtio over PCI Bus* (`virtio-pci` modern transport): PCI capability discovery,
     common configuration, notification mechanism, and interrupt routing.
   - *Virtio over PCI Bus* (legacy / transitional transport): I/O-port register map
-    used by transitional devices. This driver keeps an in-tree legacy backend for
-    reference/testing, but the default build targets the modern Aero contract.
+    used by transitional devices (e.g. `DEV_1018`). This driver keeps an in-tree legacy backend for
+    reference/testing, but the default build targets Aero’s modern-only contract (`AERO-W7-VIRTIO` v1).
   - *Split Virtqueues*: descriptor table, available ring, used ring, and memory
     ordering requirements.
   - URL: https://docs.oasis-open.org/virtio/ (select the specific 1.x revision used by
@@ -35,8 +35,8 @@ Aero constrains virtio to a small, testable subset. The definitive contract is:
   - §2: split-ring virtqueue subset
   - §3.4: virtio-snd device contract (queue layout, minimum feature set, minimal PCM)
 
-Note: `AERO-W7-VIRTIO` v1 is modern-only, and the default virtio-snd driver build
-targets that modern transport subset.
+Note: `AERO-W7-VIRTIO` v1 is modern-only. The default virtio-snd driver build targets
+that modern transport subset and negotiates `VIRTIO_F_VERSION_1` as required by the contract.
 
 ## In-repo implementation guides consulted
  
@@ -77,22 +77,23 @@ exact upstream URL + revision/date here and ensure any required notices are pres
 
 ### In-repo shared code reused by this driver
   
-The virtio-snd driver is linked against in-repo virtio support code (no copying;
-the build pulls these sources directly).
+The virtio-snd driver is linked against in-repo virtio support code (no copying; the build pulls these sources directly).
 
-Default PortCls build (virtio-pci modern):
+Default PortCls build (virtio-pci modern, contract v1):
 
 - Split virtqueue implementation:
   - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
 - Virtio PCI capability parsing:
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c` (plus `virtio_pci_cap_parser.h`)
+- INTx ISR/DPC helper:
+  - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c` (plus `virtio_pci_intx_wdm.h`)
 - Spec constants/layouts (headers):
   - `drivers/win7/virtio/virtio-core/include/virtio_spec.h`
   - `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`
 - Shared SG entry definition used by `virtiosnd_sg_*` helpers:
   - `drivers/windows7/virtio/common/include/virtqueue_split.h` (`virtio_sg_entry_t`)
 
-Legacy backend (not built by default) additionally references:
+Legacy virtio-pci backend (not built by default) additionally uses:
 
 - `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`
 - `drivers/windows7/virtio/common/src/virtio_queue.c`
