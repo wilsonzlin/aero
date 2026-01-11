@@ -69,7 +69,9 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            response.headers()["access-control-allow-origin"].to_str().unwrap(),
+            response.headers()["access-control-allow-origin"]
+                .to_str()
+                .unwrap(),
             "*"
         );
 
