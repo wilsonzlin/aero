@@ -68,7 +68,13 @@ NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE
   RtlZeroMemory(Queue, sizeof(*Queue));
   Queue->QueueIndex = QueueIndex;
 
-  High.QuadPart = ~0ull;
+  /*
+   * Legacy virtio-pci programs the ring base address via a 32-bit QUEUE_PFN
+   * register containing (ring_pa >> 12). Cap the allocation to the maximum
+   * address representable by a 32-bit PFN (16 TiB - 1) so the PFN write cannot
+   * truncate.
+   */
+  High.QuadPart = 0xFFFFFFFFFFFLL;
 
   VirtioPciSelectQueue(Device, QueueIndex);
   Queue->QueueSize = VirtioPciReadQueueSize(Device);
