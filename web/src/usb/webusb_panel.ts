@@ -217,6 +217,8 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       status.textContent = "WebUSB: missing (navigator.usb is not available in this browser/context)";
       requestButton.disabled = true;
       openButton.disabled = true;
+      listButton.disabled = true;
+      cloneButton.disabled = true;
       return;
     }
 
@@ -231,11 +233,15 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     if (!selected) {
       status.textContent = `WebUSB: supported. No device selected.\n\n${envInfo}`;
       openButton.disabled = true;
+      listButton.disabled = false;
+      cloneButton.disabled = true;
       return;
     }
 
     status.textContent = `Selected device: ${JSON.stringify(summarizeUsbDevice(selected))}\n\n${envInfo}`;
     openButton.disabled = false;
+    listButton.disabled = false;
+    cloneButton.disabled = false;
   };
 
   refreshStatus();
