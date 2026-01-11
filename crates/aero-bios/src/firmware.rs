@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory as AcpiPhysicalMemory};
+use aero_devices::pci::{PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 
 use crate::types::{
     E820Entry, RealModeCpu, E820_TYPE_ACPI, E820_TYPE_NVS, E820_TYPE_RAM, E820_TYPE_RESERVED,
@@ -381,6 +382,7 @@ impl Bios {
 
     fn enumerate_pci<P: PciConfigSpace + ?Sized>(&mut self, pci: &mut P) {
         self.pci_devices.clear();
+        let router = PciIntxRouter::new(PciIntxRouterConfig::default());
         for bus in 0u8..=0xFF {
             for device in 0u8..32 {
                 for function in 0u8..8 {
@@ -397,7 +399,11 @@ impl Bios {
                     let class_code = (class_reg >> 8) & 0x00FF_FFFF;
                     let reg_3c = pci.read_config_dword(bus, device, function, 0x3C);
                     let interrupt_pin = ((reg_3c >> 8) & 0xFF) as u8; // 1=INTA#, 2=INTB#, ...
-                    let irq_line = assign_pci_irq(device, interrupt_pin);
+                    let irq_line = assign_pci_irq(
+                        &router,
+                        PciBdf::new(bus, device, function),
+                        interrupt_pin,
+                    );
 
                     // Program Interrupt Line register (0x3C, low byte).
                     let new_3c = (reg_3c & 0xFFFF_FF00) | irq_line as u32;
@@ -1416,21 +1422,15 @@ fn civil_from_days(days: i64) -> (i32, u8, u8) {
     (year as i32, m as u8, d as u8)
 }
 
-fn assign_pci_irq(device: u8, interrupt_pin: u8) -> u8 {
-    // Deterministic, simple routing: QEMU-style INTx swizzle.
-    //
-    // - Compute PIRQ from the slot device number + the function's Interrupt Pin:
-    //     PIRQ = (pin + device) mod 4
-    //   where `pin` is 0 for INTA#, 1 for INTB#, etc.
-    // - Map PIRQ[A-D] -> ISA IRQ/GSI 10-13.
-    //
-    // This must stay consistent with the ACPI DSDT `_PRT`.
-    if interrupt_pin == 0 {
+fn assign_pci_irq(router: &PciIntxRouter, bdf: PciBdf, interrupt_pin: u8) -> u8 {
+    // BIOS assigns config-space interrupt lines for the guest OS. Keep the policy in
+    // lock-step with the device model (`aero_devices::pci::PciIntxRouter`) and ACPI
+    // `_PRT` so Windows sees a consistent PCI INTx routing picture.
+    let Some(pin) = PciInterruptPin::from_config_u8(interrupt_pin) else {
         return 0xFF;
-    }
-    let pin_index = interrupt_pin.wrapping_sub(1) & 0x03;
-    let pirq = device.wrapping_add(pin_index) & 0x03;
-    [10, 11, 12, 13][pirq as usize]
+    };
+    let gsi = router.gsi_for_intx(bdf, pin);
+    u8::try_from(gsi).unwrap_or(0xFF)
 }
 
 fn acpi_reclaimable_region_from_tables(tables: &AcpiTables) -> (u64, u64) {

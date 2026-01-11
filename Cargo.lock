@@ -59,6 +59,7 @@ name = "aero-bios"
 version = "0.1.0"
 dependencies = [
  "aero-acpi",
+ "aero-devices",
  "firmware",
 ]
 

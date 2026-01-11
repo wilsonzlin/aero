@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-acpi = { path = "../aero-acpi" }
+aero-devices = { path = "../devices" }
 firmware-tables = { package = "firmware", path = "../firmware" }
 
 [dev-dependencies]
