@@ -34,9 +34,12 @@ pub mod paging_bus;
 pub mod segmentation;
 pub mod sse_state;
 pub mod state;
-pub mod system;
 pub mod time;
 pub mod time_insn;
+
+// Legacy CPU core stack. Kept default-off while the Tier-0 + JIT stack matures.
+#[cfg(feature = "legacy-interp")]
+pub mod system;
 
 #[cfg(feature = "legacy-interp")]
 pub mod bus;
