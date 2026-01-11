@@ -434,6 +434,19 @@ function Try-GetDriverBuildTargetFromDirectory {
     }
   }
 
+  # Skip legacy WDK 7.1 build.exe wrapper projects (NMake/Makefile).
+  # This CI workflow provisions a modern WDK/MSBuild toolchain and does not guarantee
+  # classic build.exe is available.
+  if ($kind -eq 'vcxproj') {
+    if (Test-IsMakefileVcxproj -VcxprojPath $buildPath) {
+      return $null
+    }
+  } elseif ($kind -eq 'sln') {
+    if (Test-IsMakefileSolution -SolutionPath $buildPath) {
+      return $null
+    }
+  }
+
   # Require an INF in the same directory tree so downstream catalog/sign/package steps can run.
   if (-not (Test-HasInfInTree -DirectoryPath $Directory.FullName)) {
     return $null

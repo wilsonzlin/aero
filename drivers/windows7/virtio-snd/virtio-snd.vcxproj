@@ -35,6 +35,7 @@
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <DriverType>WDM</DriverType>
     <TargetVersion>Windows7</TargetVersion>
+    <SignMode>Off</SignMode>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
@@ -43,6 +44,7 @@
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <DriverType>WDM</DriverType>
     <TargetVersion>Windows7</TargetVersion>
+    <SignMode>Off</SignMode>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -51,6 +53,7 @@
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <DriverType>WDM</DriverType>
     <TargetVersion>Windows7</TargetVersion>
+    <SignMode>Off</SignMode>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
@@ -59,6 +62,7 @@
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <DriverType>WDM</DriverType>
     <TargetVersion>Windows7</TargetVersion>
+    <SignMode>Off</SignMode>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
@@ -66,66 +70,34 @@
   <PropertyGroup Label="UserMacros" />
 
   <PropertyGroup>
-    <!-- Match the binary name referenced by inf/aero-virtio-snd.inf. -->
+    <!-- Match the binary name referenced by inf/virtio-snd.inf. -->
     <TargetName>virtiosnd</TargetName>
+    <TargetExt>.sys</TargetExt>
   </PropertyGroup>
 
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+  <ItemDefinitionGroup>
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
-      <TreatWarningAsError>true</TreatWarningAsError>
-      <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <TreatWarningAsError>false</TreatWarningAsError>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_KERNEL_MODE;_WIN32_WINNT=0x0601;WINVER=0x0601;NTDDI_VERSION=NTDDI_WIN7;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\virtio\common\include;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
+    <Link>
       <TargetMachine>MachineX86</TargetMachine>
     </Link>
   </ItemDefinitionGroup>
 
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <ClCompile>
-      <WarningLevel>Level4</WarningLevel>
-      <TreatWarningAsError>true</TreatWarningAsError>
-      <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <SpectreMitigation>false</SpectreMitigation>
-    </ClCompile>
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <Link>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <TargetMachine>MachineX86</TargetMachine>
-    </Link>
-  </ItemDefinitionGroup>
-
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ClCompile>
-      <WarningLevel>Level4</WarningLevel>
-      <TreatWarningAsError>true</TreatWarningAsError>
-      <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <SpectreMitigation>false</SpectreMitigation>
-    </ClCompile>
-    <Link>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <TargetMachine>MachineX64</TargetMachine>
-    </Link>
-  </ItemDefinitionGroup>
-
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ClCompile>
-      <WarningLevel>Level4</WarningLevel>
-      <TreatWarningAsError>true</TreatWarningAsError>
-      <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <SpectreMitigation>false</SpectreMitigation>
-    </ClCompile>
-    <Link>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
       <TargetMachine>MachineX64</TargetMachine>
     </Link>
   </ItemDefinitionGroup>
@@ -135,9 +107,22 @@
     <ClCompile Include="src\**\*.cpp" />
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+
+    <!-- WDM modern virtio-pci helpers (Tasks 422/424). -->
+    <ClCompile Include="..\virtio\common\src\*_wdm*.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)..\virtio\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemGroup>
+
+  <ItemGroup>
     <ClInclude Include="include\**\*.h" />
     <ClInclude Include="src\**\*.h" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="inf\virtio-snd.inf" />
+  </ItemGroup>
+
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
 </Project>
