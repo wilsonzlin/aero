@@ -2030,10 +2030,15 @@ function renderAudioPanel(): HTMLElement {
       // Expose for Playwright smoke tests / e2e assertions.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (globalThis as any).__aeroAudioOutputHdaDemo = output;
+      // Back-compat: older tests/debug helpers look for `__aeroAudioOutput`.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioOutput = output;
       if (!output.enabled) {
         status.textContent = output.message;
         return;
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioToneBackend = "wasm-hda";
 
       // Prefill the entire ring with silence so the worker has time to attach and
       // start producing audio without incurring startup underruns.

@@ -130,7 +130,6 @@ export interface WasmApi {
         push_hda_pcm_bytes(bridge: unknown, hdaFormat: number, pcmBytes: Uint8Array): number;
         free(): void;
     };
-
     HdaPlaybackDemo?: new (
         ringSab: SharedArrayBuffer,
         capacityFrames: number,
@@ -452,6 +451,8 @@ async function loadSingle(options: WasmInitOptions): Promise<WasmLoadResult> {
                 "Build it with:",
                 "  cd web",
                 "  npm run wasm:build:single",
+                "Or a faster dev build:",
+                "  npm run wasm:build:dev",
                 "",
                 "Or build both variants:",
                 "  npm run wasm:build",
@@ -474,6 +475,8 @@ async function loadThreaded(options: WasmInitOptions): Promise<WasmLoadResult> {
                 "Build it with:",
                 "  cd web",
                 "  npm run wasm:build:threaded",
+                "Or a faster dev build:",
+                "  node ./scripts/build_wasm.mjs threaded dev",
                 "",
                 "Or build both variants:",
                 "  npm run wasm:build",

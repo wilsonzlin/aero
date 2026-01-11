@@ -972,6 +972,14 @@ function renderAudioPanel(): HTMLElement {
   let toneTimer: number | null = null;
   let tonePhase = 0;
   const workerCoordinator = new WorkerCoordinator();
+  let hdaDemoWorker: Worker | null = null;
+
+  function stopHdaDemo(): void {
+    if (!hdaDemoWorker) return;
+    hdaDemoWorker.postMessage({ type: "audioOutputHdaDemo.stop" });
+    hdaDemoWorker.terminate();
+    hdaDemoWorker = null;
+  }
 
   function stopTone() {
     if (toneTimer !== null) {
@@ -1036,6 +1044,7 @@ function renderAudioPanel(): HTMLElement {
     text: "Init audio output (test tone)",
     onclick: async () => {
       status.textContent = "";
+      stopHdaDemo();
       const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
       // Expose for Playwright smoke tests.
       (globalThis as typeof globalThis & { __aeroAudioOutput?: unknown }).__aeroAudioOutput = output;
@@ -1063,6 +1072,7 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       stopTone();
+      stopHdaDemo();
 
       const workerConfig: AeroConfig = {
         guestMemoryMiB: 256,
@@ -1117,7 +1127,6 @@ function renderAudioPanel(): HTMLElement {
           output.ringBuffer.channelCount,
           output.ringBuffer.capacityFrames,
         );
-
         await output.resume();
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
@@ -1128,11 +1137,60 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
+  const hdaDemoButton = el("button", {
+    id: "init-audio-output-hda-demo",
+    text: "Init audio output (HDA demo)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+      stopHdaDemo();
+
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        ringBufferFrames: 16_384, // ~340ms @ 48k; gives the worker/WASM init some slack.
+      });
+
+      // Expose for Playwright smoke tests / e2e assertions.
+      (globalThis as typeof globalThis & { __aeroAudioOutputHdaDemo?: unknown }).__aeroAudioOutputHdaDemo = output;
+      // Back-compat: other tests/debug helpers look for `__aeroAudioOutput`.
+      (globalThis as typeof globalThis & { __aeroAudioOutput?: unknown }).__aeroAudioOutput = output;
+      (globalThis as typeof globalThis & { __aeroAudioToneBackend?: unknown }).__aeroAudioToneBackend = "wasm-hda";
+
+      if (!output.enabled) {
+        status.textContent = output.message;
+        return;
+      }
+
+      // Prefill the entire ring with silence so the worker has time to attach and
+      // start producing audio without incurring startup underruns.
+      output.writeInterleaved(
+        new Float32Array(output.ringBuffer.capacityFrames * output.ringBuffer.channelCount),
+        output.context.sampleRate,
+      );
+
+      // Start the CPU worker in a standalone "audio demo" mode.
+      hdaDemoWorker = new Worker(new URL("../web/src/workers/cpu.worker.ts", import.meta.url), { type: "module" });
+      hdaDemoWorker.postMessage({
+        type: "audioOutputHdaDemo.start",
+        ringBuffer: output.ringBuffer.buffer,
+        capacityFrames: output.ringBuffer.capacityFrames,
+        channelCount: output.ringBuffer.channelCount,
+        sampleRate: output.context.sampleRate,
+        freqHz: 440,
+        gain: 0.1,
+      });
+
+      await output.resume();
+      status.textContent = "Audio initialized and HDA playback demo started in CPU worker.";
+    },
+  });
+
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
-    el("div", { class: "row" }, button, workerButton),
+    el("div", { class: "row" }, button, workerButton, hdaDemoButton),
     status,
   );
 }

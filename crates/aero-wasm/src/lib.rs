@@ -27,22 +27,25 @@ use aero_platform::audio::mic_bridge::MicBridge;
 use js_sys::{SharedArrayBuffer, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
-use aero_audio::pcm::{LinearResampler, StreamFormat, decode_pcm_to_stereo_f32_into};
-
-#[cfg(target_arch = "wasm32")]
 use aero_audio::hda::HdaController;
 
 #[cfg(target_arch = "wasm32")]
 use aero_audio::mem::{GuestMemory, MemoryAccess};
 
 #[cfg(target_arch = "wasm32")]
+use aero_audio::pcm::{decode_pcm_to_stereo_f32_into, LinearResampler, StreamFormat};
+
+#[cfg(target_arch = "wasm32")]
+use aero_audio::sink::AudioSink;
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+use std::sync::atomic::{AtomicU32, Ordering};
+
+#[cfg(target_arch = "wasm32")]
 use aero_usb::{
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     usb::{UsbDevice, UsbHandshake},
 };
-
-#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
-use std::sync::atomic::{AtomicU32, Ordering};
 
 // wasm-bindgen's "threads" transform expects TLS metadata symbols (e.g.
 // `__tls_size`) to exist in shared-memory builds. Those symbols are only emitted
@@ -562,6 +565,16 @@ pub struct HdaPlaybackDemo {
     hda: HdaController,
     mem: GuestMemory,
     bridge: WorkletBridge,
+    host_sample_rate_hz: u32,
+
+    total_frames_produced: u32,
+    total_frames_written: u32,
+    total_frames_dropped: u32,
+
+    last_tick_requested_frames: u32,
+    last_tick_produced_frames: u32,
+    last_tick_written_frames: u32,
+    last_tick_dropped_frames: u32,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -594,7 +607,28 @@ impl HdaPlaybackDemo {
         // a short BDL + PCM buffer and loops it forever.
         let mem = GuestMemory::new(0x20_000);
 
-        Ok(Self { hda, mem, bridge })
+        // Default to a 440Hz tone so the demo works even if callers don't invoke
+        // `init_sine_dma()` explicitly.
+        let mut demo = Self {
+            hda,
+            mem,
+            bridge,
+            host_sample_rate_hz: host_sample_rate,
+            total_frames_produced: 0,
+            total_frames_written: 0,
+            total_frames_dropped: 0,
+            last_tick_requested_frames: 0,
+            last_tick_produced_frames: 0,
+            last_tick_written_frames: 0,
+            last_tick_dropped_frames: 0,
+        };
+        demo.init_sine_dma(440.0, 0.1);
+        Ok(demo)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn host_sample_rate_hz(&self) -> u32 {
+        self.host_sample_rate_hz
     }
 
     /// Program a looping DMA buffer containing a simple sine wave.
@@ -657,9 +691,94 @@ impl HdaPlaybackDemo {
     ///
     /// Returns the current ring buffer fill level (frames).
     pub fn tick(&mut self, frames: u32) -> u32 {
+        self.last_tick_requested_frames = frames;
+        self.last_tick_produced_frames = 0;
+        self.last_tick_written_frames = 0;
+        self.last_tick_dropped_frames = 0;
+
+        if frames == 0 {
+            return self.bridge.buffer_level_frames();
+        }
+
+        let mut sink = WorkletBridgeStatsSink {
+            bridge: &self.bridge,
+            channel_count: self.bridge.channel_count(),
+            produced_frames: 0,
+            written_frames: 0,
+            dropped_frames: 0,
+        };
         self.hda
-            .process_into(&mut self.mem, frames as usize, &mut self.bridge);
+            .process_into(&mut self.mem, frames as usize, &mut sink);
+
+        self.last_tick_produced_frames = sink.produced_frames;
+        self.last_tick_written_frames = sink.written_frames;
+        self.last_tick_dropped_frames = sink.dropped_frames;
+
+        self.total_frames_produced = self.total_frames_produced.wrapping_add(sink.produced_frames);
+        self.total_frames_written = self.total_frames_written.wrapping_add(sink.written_frames);
+        self.total_frames_dropped = self.total_frames_dropped.wrapping_add(sink.dropped_frames);
+
         self.bridge.buffer_level_frames()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn total_frames_produced(&self) -> u32 {
+        self.total_frames_produced
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn total_frames_written(&self) -> u32 {
+        self.total_frames_written
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn total_frames_dropped(&self) -> u32 {
+        self.total_frames_dropped
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_tick_requested_frames(&self) -> u32 {
+        self.last_tick_requested_frames
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_tick_produced_frames(&self) -> u32 {
+        self.last_tick_produced_frames
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_tick_written_frames(&self) -> u32 {
+        self.last_tick_written_frames
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_tick_dropped_frames(&self) -> u32 {
+        self.last_tick_dropped_frames
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct WorkletBridgeStatsSink<'a> {
+    bridge: &'a WorkletBridge,
+    channel_count: u32,
+    produced_frames: u32,
+    written_frames: u32,
+    dropped_frames: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<'a> AudioSink for WorkletBridgeStatsSink<'a> {
+    fn push_interleaved_f32(&mut self, samples: &[f32]) {
+        let requested_frames = (samples.len() as u32) / self.channel_count;
+        if requested_frames == 0 {
+            return;
+        }
+        let written = self.bridge.write_f32_interleaved(samples);
+        self.produced_frames = self.produced_frames.wrapping_add(requested_frames);
+        self.written_frames = self.written_frames.wrapping_add(written);
+        self.dropped_frames = self
+            .dropped_frames
+            .wrapping_add(requested_frames.saturating_sub(written));
     }
 }
 

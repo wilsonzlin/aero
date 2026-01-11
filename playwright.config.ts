@@ -120,6 +120,7 @@ export default defineConfig({
     {
       command: 'npm run serve:coi:harness',
       port: PREVIEW_PORT,
+      timeout: 300_000,
       reuseExistingServer: !process.env.CI,
     },
     {

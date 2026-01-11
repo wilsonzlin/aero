@@ -840,6 +840,7 @@ impl HdaController {
         let num_input_streams: usize = 1;
         let num_bidir_streams: usize = 0;
         let num_streams = num_output_streams + num_input_streams + num_bidir_streams;
+        let audio_ring_frames = (output_rate_hz as usize / 10).max(1); // ~100ms
         Self {
             // GCAP: OSS=1, ISS=1, BSS=0, NSDO=1.
             gcap: ((num_output_streams as u16) & 0xF)
@@ -879,7 +880,7 @@ impl HdaController {
                 .collect(),
 
             codec: HdaCodec::new(),
-            audio_out: AudioRingBuffer::new_stereo((output_rate_hz / 10).max(1) as usize), // ~100ms
+            audio_out: AudioRingBuffer::new_stereo(audio_ring_frames),
 
             irq_pending: false,
             output_rate_hz,
