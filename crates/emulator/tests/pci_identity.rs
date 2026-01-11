@@ -87,6 +87,10 @@ fn uhci_pci_config_matches_canonical_profile() {
     uhci.config_write(0x20, 4, 0xffff_ffff);
     let mask = uhci.config_read(0x20, 4);
     assert_eq!(mask, (!(0x20u32 - 1) & 0xffff_fffc) | 0x1);
+
+    uhci.config_write(0x20, 4, 0x1235);
+    assert_eq!(uhci.io_base, 0x1220);
+    assert_eq!(uhci.config_read(0x20, 4), 0x1221);
 }
 
 #[test]

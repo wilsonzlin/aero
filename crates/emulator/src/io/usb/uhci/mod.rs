@@ -225,7 +225,9 @@ impl PciDevice for UhciPciDevice {
             }
 
             self.io_base_probe = false;
-            self.io_base = (value as u16) & 0xfff0;
+            let value = value as u16;
+            let io_base = value & !0x3 & !((Self::IO_BAR_SIZE as u16) - 1);
+            self.io_base = io_base;
             let encoded = u32::from(self.io_base) | 0x1;
             self.config.write(offset, size, encoded);
             return;
