@@ -79,6 +79,41 @@ static bool ParseSwapEffect(const std::string& s, DXGI_SWAP_EFFECT* out) {
   return false;
 }
 
+static const char* FormatName(DXGI_FORMAT fmt) {
+  switch (fmt) {
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+      return "b8g8r8a8_unorm";
+    case DXGI_FORMAT_B8G8R8X8_UNORM:
+      return "b8g8r8x8_unorm";
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+      return "r8g8b8a8_unorm";
+    default:
+      return "unknown";
+  }
+}
+
+static bool ParseFormat(const std::string& s, DXGI_FORMAT* out_fmt) {
+  if (!out_fmt) {
+    return false;
+  }
+  if (s.empty()) {
+    return false;
+  }
+  if (lstrcmpiA(s.c_str(), "b8g8r8a8") == 0 || lstrcmpiA(s.c_str(), "b8g8r8a8_unorm") == 0) {
+    *out_fmt = DXGI_FORMAT_B8G8R8A8_UNORM;
+    return true;
+  }
+  if (lstrcmpiA(s.c_str(), "b8g8r8x8") == 0 || lstrcmpiA(s.c_str(), "b8g8r8x8_unorm") == 0) {
+    *out_fmt = DXGI_FORMAT_B8G8R8X8_UNORM;
+    return true;
+  }
+  if (lstrcmpiA(s.c_str(), "r8g8b8a8") == 0 || lstrcmpiA(s.c_str(), "r8g8b8a8_unorm") == 0) {
+    *out_fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    return true;
+  }
+  return false;
+}
+
 static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
                                        const char* test_name,
                                        const char* what,
@@ -325,7 +360,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--api=d3d11|d3d10|d3d10_1] [--width=N] [--height=N] [--buffers=1|2] "
-        "[--swap-effect=discard|sequential] [--hidden] [--frames=N] [--json[=PATH]] "
+        "[--swap-effect=discard|sequential] [--format=b8g8r8a8_unorm|r8g8b8a8_unorm|87] "
+        "[--buffer-usage=0x####] [--swapchain-flags=0x####] [--hidden] [--frames=N] [--json[=PATH]] "
         "[--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
@@ -409,6 +445,47 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     }
   }
 
+  DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM;
+  std::string format_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--format", &format_str)) {
+    if (format_str.empty()) {
+      return reporter.Fail("--format requires a value (e.g. b8g8r8a8_unorm or 87)");
+    }
+    DXGI_FORMAT parsed = DXGI_FORMAT_UNKNOWN;
+    if (ParseFormat(format_str, &parsed)) {
+      format = parsed;
+    } else {
+      uint32_t v = 0;
+      std::string err;
+      if (!aerogpu_test::ParseUint32(format_str, &v, &err)) {
+        return reporter.Fail("invalid --format: %s", err.c_str());
+      }
+      format = (DXGI_FORMAT)v;
+    }
+  }
+
+  uint32_t buffer_usage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+  std::string buffer_usage_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--buffer-usage", &buffer_usage_str)) {
+    uint32_t v = 0;
+    std::string err;
+    if (!aerogpu_test::ParseUint32(buffer_usage_str, &v, &err)) {
+      return reporter.Fail("invalid --buffer-usage: %s", err.c_str());
+    }
+    buffer_usage = v;
+  }
+
+  uint32_t swapchain_flags = 0;
+  std::string swapchain_flags_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--swapchain-flags", &swapchain_flags_str)) {
+    uint32_t v = 0;
+    std::string err;
+    if (!aerogpu_test::ParseUint32(swapchain_flags_str, &v, &err)) {
+      return reporter.Fail("invalid --swapchain-flags: %s", err.c_str());
+    }
+    swapchain_flags = v;
+  }
+
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_DXGISwapchainProbe",
                                               L"AeroGPU DXGI Swapchain Probe",
                                               (int)width,
@@ -422,25 +499,29 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   ZeroMemory(&scd, sizeof(scd));
   scd.BufferDesc.Width = width;
   scd.BufferDesc.Height = height;
-  scd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+  scd.BufferDesc.Format = format;
   scd.BufferDesc.RefreshRate.Numerator = 60;
   scd.BufferDesc.RefreshRate.Denominator = 1;
   scd.SampleDesc.Count = 1;
   scd.SampleDesc.Quality = 0;
-  scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+  scd.BufferUsage = buffer_usage;
   scd.BufferCount = buffers;
   scd.OutputWindow = hwnd;
   scd.Windowed = TRUE;
   scd.SwapEffect = swap_effect;
-  scd.Flags = 0;
+  scd.Flags = swapchain_flags;
 
-  aerogpu_test::PrintfStdout("INFO: %s: api=%s size=%ux%u buffers=%u swap_effect=%s",
+  aerogpu_test::PrintfStdout("INFO: %s: api=%s size=%ux%u buffers=%u swap_effect=%s fmt=%s(%u) usage=0x%08X flags=0x%08X",
                              kTestName,
                              ProbeApiName(api),
                              (unsigned)width,
                              (unsigned)height,
                              (unsigned)buffers,
-                             SwapEffectName(swap_effect));
+                             SwapEffectName(swap_effect),
+                             FormatName(format),
+                             (unsigned)format,
+                             (unsigned)buffer_usage,
+                             (unsigned)swapchain_flags);
 
   if (api == kProbeApiD3D10) {
     ComPtr<ID3D10Device> device;

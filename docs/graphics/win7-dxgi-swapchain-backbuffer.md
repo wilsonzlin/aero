@@ -58,6 +58,9 @@ The probe defaults to a 256x256 swapchain with 2 buffers (`DXGI_SWAP_EFFECT_DISC
 * `--height=N`
 * `--buffers=1|2`
 * `--swap-effect=discard|sequential`
+* `--format=b8g8r8a8_unorm|r8g8b8a8_unorm|87`
+* `--buffer-usage=0x########`
+* `--swapchain-flags=0x########`
 
 Using an “odd” size can make it easier to correlate `--dump-createalloc` entries by allocation size.
 
