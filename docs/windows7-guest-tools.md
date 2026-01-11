@@ -324,6 +324,9 @@ Use either `pnputil` (Windows 7 built-in) or DISM:
     - `dism /online /add-driver /driver:X:\drivers\x86\ /recurse`
 - Alternative (if you prefer `pnputil`):
   - `pnputil -i -a X:\drivers\amd64\some-driver.inf` (x64) or `X:\drivers\x86\some-driver.inf` (x86)
+  - Tip: the AeroGPU display driver INF is named `aerogpu.inf` (no hyphen). In typical Guest Tools layouts it is:
+    - `X:\drivers\amd64\aerogpu\aerogpu.inf` (x64)
+    - `X:\drivers\x86\aerogpu\aerogpu.inf` (x86)
   - To bulk-install multiple INFs from an elevated Command Prompt:
     - Windows 7 x64:
       - `for /r "X:\drivers\amd64" %i in (*.inf) do pnputil -i -a "%i"`

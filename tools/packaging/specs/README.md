@@ -3,6 +3,9 @@
 These JSON files are consumed by `tools/packaging/aero_packager/` (`--spec`) to validate
 driver artifacts before producing `aero-guest-tools.iso` / `aero-guest-tools.zip`.
 
+`drivers[].name` is the **driver directory name** under the packager input tree:
+`drivers/{x86,amd64}/<name>/`.
+
 ## `win7-virtio-win.json`
 
 Intended for packaging Guest Tools using a driver payload extracted from **virtio-win**.
@@ -25,13 +28,13 @@ Intended for packaging Guest Tools media from **Aero-built** (in-repo) Windows 7
 This spec is the default used by `ci/package-guest-tools.ps1` and aims to match what
 `guest-tools/setup.cmd` expects for a full "switch to virtio + Aero GPU" installation.
 
-- Requires: `aero-gpu` + `virtio-blk` + `virtio-net` + `virtio-input`
+- Requires: `aerogpu` + `virtio-blk` + `virtio-net` + `virtio-input`
 - Optional: `virtio-snd`
 
 Notes:
 
-- `aero-gpu` is the canonical Guest Tools-facing directory name for the AeroGPU driver (source: `drivers/aerogpu/`).
-- The `aero-gpu.expected_hardware_ids` list intentionally includes **both** AeroGPU HWID families
+- `aerogpu` is the canonical Guest Tools-facing directory name for the AeroGPU driver (source: `drivers/aerogpu/`).
+- The `aerogpu.expected_hardware_ids` list intentionally includes **both** AeroGPU HWID families
   (`PCI\\VEN_A3A0&DEV_0001` and `PCI\\VEN_1AED&DEV_0001`) so packaging fails if either HWID is
   accidentally dropped from the Win7 AeroGPU INFs.
 

@@ -307,8 +307,8 @@ function Get-GuestToolsDriverNameFromDriverRel {
   $overrides = @{
     "windows7/virtio/blk" = "virtio-blk"
     "windows7/virtio/net" = "virtio-net"
-    # Canonical Guest Tools-facing name keeps the dash to match guest-tools/ skeleton.
-    "aerogpu"             = "aero-gpu"
+    # Support staging from historical layouts that used a dash in the driver directory name.
+    "aero-gpu"            = "aerogpu"
   }
 
   $relNorm = Normalize-DriverRel -Value $DriverRel
@@ -329,10 +329,11 @@ function Normalize-GuestToolsDriverName {
 
   $normalized = (Normalize-PathComponent -Value $Name.Trim()).ToLowerInvariant()
   $overrides = @{
+    # Support staging from historical layouts that used a dash in the AeroGPU directory name.
+    "aero-gpu" = "aerogpu"
     # Support staging from legacy driver bundle layouts (ci/package-drivers.ps1) that use leaf names.
-    "aerogpu" = "aero-gpu"
-    "blk"     = "virtio-blk"
-    "net"     = "virtio-net"
+    "blk"      = "virtio-blk"
+    "net"      = "virtio-net"
   }
   if ($overrides.ContainsKey($normalized)) {
     return $overrides[$normalized]

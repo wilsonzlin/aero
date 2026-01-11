@@ -130,7 +130,7 @@ produced by `ci/package-drivers.ps1`.
 
 When staging from `out/packages/**`, the script maps nested driver paths (`<driverRel>`) to stable,
 Guest Tools-facing driver directory names so the packager spec and the `guest-tools/` repo skeleton
-do not drift (e.g. `drivers/aerogpu` → `aero-gpu`, `windows7/virtio/blk` → `virtio-blk`).
+do not drift (e.g. `drivers/aerogpu` → `aerogpu`, `windows7/virtio/blk` → `virtio-blk`).
 
 This script is intended to be run after `ci/package-drivers.ps1` in CI so that the release
 contains both:

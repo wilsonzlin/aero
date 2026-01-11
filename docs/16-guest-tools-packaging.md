@@ -25,7 +25,7 @@ By default this will:
   - `drivers/x86/<driver>/...`
   - `drivers/amd64/<driver>/...`
 - map CI package roots (`out/packages/<driverRel>/{x86,x64}`) into stable Guest Tools-facing driver
-  directory names (e.g. `drivers/aerogpu` → `aero-gpu`, `windows7/virtio/blk` → `virtio-blk`)
+  directory names (e.g. `drivers/aerogpu` → `aerogpu`, `windows7/virtio/blk` → `virtio-blk`)
 - stage `guest-tools/` and replace `guest-tools/certs/*` with `out/certs/aero-test.cer` (keeping `certs/README.md` if present)
 - produce:
   - `out/artifacts/guest-tools/aero-guest-tools.iso`
@@ -39,7 +39,7 @@ The default packaging spec is:
 
 This spec currently:
 
-- requires: `aero-gpu`, `virtio-blk`, `virtio-net`, `virtio-input`
+- requires: `aerogpu`, `virtio-blk`, `virtio-net`, `virtio-input`
 - includes if present: `virtio-snd`
 
 ## Inputs
