@@ -32,6 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           node_version="$(tr -d '\r\n' < .nvmrc)"
+          node_version="${node_version#v}"
           echo "node_version=$node_version" >> "$GITHUB_OUTPUT"
 
       - name: Compute build metadata

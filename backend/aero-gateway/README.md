@@ -51,7 +51,7 @@ Build:
 
 ```bash
 docker build -f backend/aero-gateway/Dockerfile -t aero-gateway . \
-  --build-arg NODE_VERSION="$(cat .nvmrc)" \
+  --build-arg NODE_VERSION="$(tr -d '\r\n' < .nvmrc | sed 's/^v//')" \
   --build-arg VERSION="dev" \
   --build-arg GIT_SHA="$(git rev-parse HEAD)" \
   --build-arg BUILD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
