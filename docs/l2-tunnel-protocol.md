@@ -212,7 +212,7 @@ Recommended behavior:
 This tunnel provides an **egress path** from the guest VM to the public Internet via the proxy.
 It MUST be treated as a high-risk surface (SSRF / open proxy).
 
-- The `/l2` endpoint MUST enforce the same authentication and origin checks as `/tcp`.
+- For internet-exposed deployments, the `/l2` endpoint MUST enforce the same authentication and origin checks as `/tcp`.
   - Browser clients SHOULD authenticate using the gateway session cookie (`aero_session`), matching `/tcp`.
   - Non-browser clients / internal bridges SHOULD authenticate using a token (see below).
   - If the deployment uses cookies, it MUST apply the same CSRF protections as `/tcp`.
@@ -320,7 +320,7 @@ Notes:
   - `cookie_and_api_key` → `session_and_token`
 - Defaults: if `AERO_L2_AUTH_MODE` is unset/empty, `aero-l2-proxy` selects a safe default:
   - If a session secret is configured (`AERO_GATEWAY_SESSION_SECRET` / `SESSION_SECRET` / `AERO_L2_SESSION_SECRET`),
-    default to `session_or_token` (so browser cookie auth works, and internal bridge tokens can be added without breaking it).
+    default to `session_or_token` (so browser session-cookie auth works, and internal bridge tokens can be added without breaking it).
   - Else if a token is configured (`AERO_L2_API_KEY` / `AERO_L2_TOKEN`), default to `token`.
   - Else refuse to start unless `AERO_L2_OPEN=1` and `AERO_L2_INSECURE_ALLOW_NO_AUTH=1`.
 - `AERO_L2_TOKEN` is a legacy alias for token auth when `AERO_L2_AUTH_MODE` is unset (and is also
