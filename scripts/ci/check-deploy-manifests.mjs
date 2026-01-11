@@ -11,27 +11,32 @@ function readHeaderLines(filePath, maxLines = 25) {
   return text.split(/\r?\n/).slice(0, maxLines);
 }
 
-function findLabel(lines) {
-  const commentLines = lines.filter((line) => line.trim().startsWith('#'));
-  return commentLines.join('\n').toUpperCase();
+function extractLabels(lines) {
+  const labels = new Set();
+  for (const line of lines) {
+    const match = line.match(/^\s*#\s*(CANONICAL|EXAMPLE|LEGACY)\b/i);
+    if (!match) continue;
+    labels.add(match[1].toUpperCase());
+  }
+  return labels;
 }
 
 function requireLabel({ relPath, anyOf = [], mustContain = [] }) {
   const filePath = resolve(repoRoot, relPath);
   if (!existsSync(filePath)) return;
 
-  const header = findLabel(readHeaderLines(filePath));
+  const labels = extractLabels(readHeaderLines(filePath));
   const missing = [];
 
   if (anyOf.length > 0) {
-    const ok = anyOf.some((token) => header.includes(token.toUpperCase()));
+    const ok = anyOf.some((token) => labels.has(token.toUpperCase()));
     if (!ok) {
       missing.push(`one of: ${anyOf.map((t) => `'${t}'`).join(', ')}`);
     }
   }
 
   for (const token of mustContain) {
-    if (!header.includes(token.toUpperCase())) {
+    if (!labels.has(token.toUpperCase())) {
       missing.push(`'${token}'`);
     }
   }
@@ -41,6 +46,20 @@ function requireLabel({ relPath, anyOf = [], mustContain = [] }) {
   return {
     relPath,
     message: `Expected ${relPath} to be clearly labelled (${missing.join(' and ')}) in the first ~25 lines.`,
+  };
+}
+
+function forbidLabel({ relPath, forbidden = [] }) {
+  const filePath = resolve(repoRoot, relPath);
+  if (!existsSync(filePath)) return;
+
+  const labels = extractLabels(readHeaderLines(filePath));
+  const hits = forbidden.filter((token) => labels.has(token.toUpperCase()));
+  if (hits.length === 0) return;
+
+  return {
+    relPath,
+    message: `Expected ${relPath} to NOT be labelled with ${hits.map((t) => `'${t}'`).join(', ')}.`,
   };
 }
 
@@ -64,6 +83,12 @@ errors.push(
     mustContain: ['CANONICAL'],
   }),
 );
+errors.push(
+  forbidLabel({
+    relPath: 'deploy/docker-compose.yml',
+    forbidden: ['EXAMPLE', 'LEGACY'],
+  }),
+);
 
 // Any other Compose manifests are treated as reference-only examples, since the
 // canonical production entry point is `deploy/docker-compose.yml`.
@@ -82,6 +107,12 @@ for (const relPath of composeManifests) {
     requireLabel({
       relPath,
       anyOf: ['EXAMPLE', 'LEGACY'],
+    }),
+  );
+  errors.push(
+    forbidLabel({
+      relPath,
+      forbidden: ['CANONICAL'],
     }),
   );
 }
