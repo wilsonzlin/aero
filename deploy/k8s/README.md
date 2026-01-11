@@ -17,7 +17,7 @@ The chart includes:
 - Kubernetes v1.22+ (Ingress v1)
 - Helm v3
 - An Ingress controller (example install commands below):
-  - `ingress-nginx` (default; uses `configuration-snippet` to add COOP/COEP headers), or
+  - `ingress-nginx` (default; uses `configuration-snippet` to add COOP/COEP + CSP headers), or
   - Traefik (supported via `Middleware` when `ingress.coopCoep.mode=traefik`)
 - A DNS name pointing at your Ingress load balancer
 - TLS certificate:
@@ -68,7 +68,8 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   -n ingress-nginx --create-namespace
 ```
 
-If you plan to use `ingress.coopCoep.enabled=true` with nginx mode, you may need to allow snippet annotations:
+If you plan to use nginx mode with ingress-level header injection (`ingress.coopCoep.enabled=true` or `ingress.securityHeaders.enabled=true`),
+you may need to allow snippet annotations:
 
 ```bash
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -388,9 +389,10 @@ Newer `ingress-nginx` releases may disable snippet annotations by default (for s
 
 1. Enable snippet annotations in the controller (cluster-level decision).
 2. Switch to Traefik and use a `Middleware` for headers (see below).
-3. Inject COOP/COEP headers directly in `aero-gateway` (application-level) by setting:
+3. Disable ingress-level header injection and rely on application/edge headers instead:
    - `gateway.crossOriginIsolation.enabled=true`
    - `ingress.coopCoep.enabled=false`
+   - `ingress.securityHeaders.enabled=false` (CSP must be set by your edge proxy / frontend hosting layer)
 
 ### Traefik (alternative)
 
@@ -399,7 +401,7 @@ Set:
 - `ingress.className=traefik`
 - `ingress.coopCoep.mode=traefik`
 
-The chart will create a `Middleware` that sets COOP/COEP headers and wire it to the Ingress.
+The chart will create a `Middleware` that sets COOP/COEP + CSP headers (when enabled) and wire it to the Ingress.
 
 ## Network policy (recommended)
 
