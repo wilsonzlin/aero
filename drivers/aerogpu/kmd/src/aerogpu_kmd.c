@@ -1097,6 +1097,12 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
             }
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
         } else {
+            /* Prevent the legacy device from touching freed ring memory. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_HI, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
         }
     }
