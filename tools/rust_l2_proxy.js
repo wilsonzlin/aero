@@ -37,6 +37,7 @@ function signalProcessTree(child, signal) {
 
 async function withBuildLock(fn) {
   const targetDir = await getCargoTargetDir();
+  await mkdir(targetDir, { recursive: true });
   const lockDir = path.join(targetDir, ".aero-l2-proxy-build.lock");
   const start = Date.now();
 
