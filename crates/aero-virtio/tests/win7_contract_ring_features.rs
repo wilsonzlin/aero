@@ -1,6 +1,6 @@
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
 use aero_virtio::devices::gpu::{NullScanoutSink, VirtioGpu2d};
-use aero_virtio::devices::input::VirtioInput;
+use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::{LoopbackNet, VirtioNet};
 use aero_virtio::devices::snd::VirtioSnd;
 use aero_virtio::devices::VirtioDevice;
@@ -39,8 +39,11 @@ fn win7_contract_ring_features_are_consistent_across_devices() {
     let net = VirtioNet::new(LoopbackNet::default(), [0; 6]);
     assert_win7_contract_ring_features("virtio-net", net.device_features());
 
-    let input = VirtioInput::new();
-    assert_win7_contract_ring_features("virtio-input", input.device_features());
+    let keyboard = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    assert_win7_contract_ring_features("virtio-input (keyboard)", keyboard.device_features());
+
+    let mouse = VirtioInput::new(VirtioInputDeviceKind::Mouse);
+    assert_win7_contract_ring_features("virtio-input (mouse)", mouse.device_features());
 
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     assert_win7_contract_ring_features("virtio-snd", snd.device_features());

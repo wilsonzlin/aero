@@ -1,10 +1,11 @@
 use aero_devices::pci::profile::{
     PciDeviceProfile, PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL, VIRTIO_BLK, VIRTIO_CAP_COMMON,
-    VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY, VIRTIO_INPUT, VIRTIO_NET, VIRTIO_SND,
+    VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY, VIRTIO_INPUT_KEYBOARD,
+    VIRTIO_INPUT_MOUSE, VIRTIO_NET, VIRTIO_SND,
 };
 
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
-use aero_virtio::devices::input::VirtioInput;
+use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::{LoopbackNet, VirtioNet};
 use aero_virtio::devices::snd::VirtioSnd;
 use aero_virtio::pci::{InterruptLog, VirtioPciDevice};
@@ -97,11 +98,17 @@ fn virtio_pci_device_ids_match_canonical_profile() {
     );
     assert_virtio_identity_matches_profile(&blk, VIRTIO_BLK);
 
-    let input = VirtioPciDevice::new(
-        Box::new(VirtioInput::new()),
+    let keyboard = VirtioPciDevice::new(
+        Box::new(VirtioInput::new(VirtioInputDeviceKind::Keyboard)),
         Box::new(InterruptLog::default()),
     );
-    assert_virtio_identity_matches_profile(&input, VIRTIO_INPUT);
+    assert_virtio_identity_matches_profile(&keyboard, VIRTIO_INPUT_KEYBOARD);
+
+    let mouse = VirtioPciDevice::new(
+        Box::new(VirtioInput::new(VirtioInputDeviceKind::Mouse)),
+        Box::new(InterruptLog::default()),
+    );
+    assert_virtio_identity_matches_profile(&mouse, VIRTIO_INPUT_MOUSE);
 
     let snd = VirtioPciDevice::new(
         Box::new(VirtioSnd::new(

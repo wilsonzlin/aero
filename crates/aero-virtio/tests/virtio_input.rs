@@ -1,4 +1,7 @@
-use aero_virtio::devices::input::{VirtioInput, VirtioInputEvent};
+use aero_virtio::devices::input::{
+    VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_LEFT, EV_KEY, EV_LED, EV_REL, KEY_A,
+    REL_X, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+};
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
 };
@@ -52,6 +55,18 @@ fn bar_read_u32(dev: &mut VirtioPciDevice, off: u64) -> u32 {
     u32::from_le_bytes(buf)
 }
 
+fn bar_read_u8(dev: &mut VirtioPciDevice, off: u64) -> u8 {
+    let mut buf = [0u8; 1];
+    dev.bar0_read(off, &mut buf);
+    buf[0]
+}
+
+fn bar_read(dev: &mut VirtioPciDevice, off: u64, len: usize) -> Vec<u8> {
+    let mut buf = vec![0u8; len];
+    dev.bar0_read(off, &mut buf);
+    buf
+}
+
 fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u32) {
     dev.bar0_write(off, &val.to_le_bytes(), mem);
 }
@@ -86,7 +101,7 @@ fn write_desc(
 
 #[test]
 fn virtio_input_posts_buffers_then_delivers_events() {
-    let input = VirtioInput::new();
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
 
     // Basic PCI identification.
@@ -189,7 +204,7 @@ fn virtio_input_posts_buffers_then_delivers_events() {
 
 #[test]
 fn virtio_input_statusq_buffers_are_consumed() {
-    let input = VirtioInput::new();
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
 
     let caps = parse_caps(&dev);
@@ -266,4 +281,130 @@ fn virtio_input_statusq_buffers_are_consumed() {
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
     let len = read_u32_le(&mem, used + 4 + 4).unwrap();
     assert_eq!(len, 0);
+}
+
+#[test]
+fn virtio_input_config_exposes_name_devids_and_ev_bits() {
+    let keyboard = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(keyboard), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+
+    let mut mem = GuestRam::new(0x10000);
+
+    // ID_NAME (NUL-terminated string).
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_ID_NAME,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    let payload = bar_read(&mut dev, caps.device + 8, size);
+    assert!(payload.starts_with(b"Aero Virtio Keyboard"));
+    assert_eq!(payload.last().copied(), Some(0));
+
+    // ID_DEVIDS (BUS_VIRTUAL, virtio vendor id, keyboard product id, version).
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_ID_DEVIDS,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    assert_eq!(bar_read_u8(&mut dev, caps.device + 2), 8);
+    let payload = bar_read(&mut dev, caps.device + 8, 8);
+    assert_eq!(
+        payload,
+        [
+            0x06, 0x00, // bustype
+            0xf4, 0x1a, // vendor
+            0x01, 0x00, // product
+            0x01, 0x00 // version
+        ]
+    );
+
+    // EV_BITS: subsel=0 returns supported event types (keyboard: SYN/KEY/LED).
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_EV_BITS,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    assert_eq!(size, 128);
+    let ev_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(ev_bits[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
+    assert_ne!(ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
+    assert_eq!(ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
+
+    // EV_BITS: subsel=EV_KEY returns supported key bitmap (keyboard should include KEY_A).
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_EV_BITS,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_KEY as u8);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    assert_eq!(size, 128);
+    let key_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(key_bits[(KEY_A / 8) as usize] & (1u8 << (KEY_A % 8)), 0);
+
+    // Mouse variant exposes a different name and capability bitmap.
+    let mouse = VirtioInput::new(VirtioInputDeviceKind::Mouse);
+    let mut dev = VirtioPciDevice::new(Box::new(mouse), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_ID_NAME,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    let payload = bar_read(&mut dev, caps.device + 8, size);
+    assert!(payload.starts_with(b"Aero Virtio Mouse"));
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_EV_BITS,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    let ev_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(ev_bits[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
+    assert_ne!(ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
+    assert_eq!(ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
+
+    // Mouse key bitmap includes BTN_LEFT.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_EV_BITS,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_KEY as u8);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    let key_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(
+        key_bits[(BTN_LEFT / 8) as usize] & (1u8 << (BTN_LEFT % 8)),
+        0
+    );
+
+    // Mouse rel bitmap includes REL_X.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_EV_BITS,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_REL as u8);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    let rel_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(rel_bits[(REL_X / 8) as usize] & (1u8 << (REL_X % 8)), 0);
 }

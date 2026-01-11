@@ -2,14 +2,138 @@ use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
+use std::collections::VecDeque;
 
 pub const VIRTIO_DEVICE_TYPE_INPUT: u16 = 18;
 
-#[derive(Debug, Clone, Copy)]
+pub const VIRTIO_INPUT_SUBSYSTEM_KEYBOARD: u16 = 0x0010;
+pub const VIRTIO_INPUT_SUBSYSTEM_MOUSE: u16 = 0x0011;
+
+pub const VIRTIO_INPUT_CFG_UNSET: u8 = 0x00;
+pub const VIRTIO_INPUT_CFG_ID_NAME: u8 = 0x01;
+pub const VIRTIO_INPUT_CFG_ID_SERIAL: u8 = 0x02;
+pub const VIRTIO_INPUT_CFG_ID_DEVIDS: u8 = 0x03;
+pub const VIRTIO_INPUT_CFG_PROP_BITS: u8 = 0x10;
+pub const VIRTIO_INPUT_CFG_EV_BITS: u8 = 0x11;
+pub const VIRTIO_INPUT_CFG_ABS_INFO: u8 = 0x12;
+
+pub const EV_SYN: u16 = 0x00;
+pub const EV_KEY: u16 = 0x01;
+pub const EV_REL: u16 = 0x02;
+pub const EV_LED: u16 = 0x11;
+
+pub const SYN_REPORT: u16 = 0x00;
+
+pub const REL_X: u16 = 0x00;
+pub const REL_Y: u16 = 0x01;
+pub const REL_WHEEL: u16 = 0x08;
+
+pub const LED_NUML: u16 = 0x00;
+pub const LED_CAPSL: u16 = 0x01;
+pub const LED_SCROLLL: u16 = 0x02;
+
+pub const BTN_LEFT: u16 = 0x110;
+pub const BTN_RIGHT: u16 = 0x111;
+pub const BTN_MIDDLE: u16 = 0x112;
+
+// Keyboard key codes (Linux input ABI).
+pub const KEY_ESC: u16 = 1;
+pub const KEY_1: u16 = 2;
+pub const KEY_2: u16 = 3;
+pub const KEY_3: u16 = 4;
+pub const KEY_4: u16 = 5;
+pub const KEY_5: u16 = 6;
+pub const KEY_6: u16 = 7;
+pub const KEY_7: u16 = 8;
+pub const KEY_8: u16 = 9;
+pub const KEY_9: u16 = 10;
+pub const KEY_0: u16 = 11;
+pub const KEY_MINUS: u16 = 12;
+pub const KEY_EQUAL: u16 = 13;
+pub const KEY_BACKSPACE: u16 = 14;
+pub const KEY_TAB: u16 = 15;
+pub const KEY_Q: u16 = 16;
+pub const KEY_W: u16 = 17;
+pub const KEY_E: u16 = 18;
+pub const KEY_R: u16 = 19;
+pub const KEY_T: u16 = 20;
+pub const KEY_Y: u16 = 21;
+pub const KEY_U: u16 = 22;
+pub const KEY_I: u16 = 23;
+pub const KEY_O: u16 = 24;
+pub const KEY_P: u16 = 25;
+pub const KEY_LEFTBRACE: u16 = 26;
+pub const KEY_RIGHTBRACE: u16 = 27;
+pub const KEY_ENTER: u16 = 28;
+pub const KEY_LEFTCTRL: u16 = 29;
+pub const KEY_A: u16 = 30;
+pub const KEY_S: u16 = 31;
+pub const KEY_D: u16 = 32;
+pub const KEY_F: u16 = 33;
+pub const KEY_G: u16 = 34;
+pub const KEY_H: u16 = 35;
+pub const KEY_J: u16 = 36;
+pub const KEY_K: u16 = 37;
+pub const KEY_L: u16 = 38;
+pub const KEY_SEMICOLON: u16 = 39;
+pub const KEY_APOSTROPHE: u16 = 40;
+pub const KEY_GRAVE: u16 = 41;
+pub const KEY_LEFTSHIFT: u16 = 42;
+pub const KEY_BACKSLASH: u16 = 43;
+pub const KEY_Z: u16 = 44;
+pub const KEY_X: u16 = 45;
+pub const KEY_C: u16 = 46;
+pub const KEY_V: u16 = 47;
+pub const KEY_B: u16 = 48;
+pub const KEY_N: u16 = 49;
+pub const KEY_M: u16 = 50;
+pub const KEY_COMMA: u16 = 51;
+pub const KEY_DOT: u16 = 52;
+pub const KEY_SLASH: u16 = 53;
+pub const KEY_RIGHTSHIFT: u16 = 54;
+pub const KEY_LEFTALT: u16 = 56;
+pub const KEY_SPACE: u16 = 57;
+pub const KEY_CAPSLOCK: u16 = 58;
+pub const KEY_F1: u16 = 59;
+pub const KEY_F2: u16 = 60;
+pub const KEY_F3: u16 = 61;
+pub const KEY_F4: u16 = 62;
+pub const KEY_F5: u16 = 63;
+pub const KEY_F6: u16 = 64;
+pub const KEY_F7: u16 = 65;
+pub const KEY_F8: u16 = 66;
+pub const KEY_F9: u16 = 67;
+pub const KEY_F10: u16 = 68;
+pub const KEY_NUMLOCK: u16 = 69;
+pub const KEY_SCROLLLOCK: u16 = 70;
+pub const KEY_F11: u16 = 87;
+pub const KEY_F12: u16 = 88;
+pub const KEY_RIGHTCTRL: u16 = 97;
+pub const KEY_RIGHTALT: u16 = 100;
+pub const KEY_HOME: u16 = 102;
+pub const KEY_UP: u16 = 103;
+pub const KEY_PAGEUP: u16 = 104;
+pub const KEY_LEFT: u16 = 105;
+pub const KEY_RIGHT: u16 = 106;
+pub const KEY_END: u16 = 107;
+pub const KEY_DOWN: u16 = 108;
+pub const KEY_PAGEDOWN: u16 = 109;
+pub const KEY_INSERT: u16 = 110;
+pub const KEY_DELETE: u16 = 111;
+pub const KEY_LEFTMETA: u16 = 125;
+pub const KEY_RIGHTMETA: u16 = 126;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirtioInputDeviceKind {
+    Keyboard,
+    Mouse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioInputEvent {
     pub type_: u16,
     pub code: u16,
-    pub value: u32,
+    pub value: i32,
 }
 
 impl VirtioInputEvent {
@@ -22,33 +146,238 @@ impl VirtioInputEvent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtioInputDevids {
+    pub bustype: u16,
+    pub vendor: u16,
+    pub product: u16,
+    pub version: u16,
+}
+
+impl VirtioInputDevids {
+    pub fn to_le_bytes(self) -> [u8; 8] {
+        let mut out = [0u8; 8];
+        out[0..2].copy_from_slice(&self.bustype.to_le_bytes());
+        out[2..4].copy_from_slice(&self.vendor.to_le_bytes());
+        out[4..6].copy_from_slice(&self.product.to_le_bytes());
+        out[6..8].copy_from_slice(&self.version.to_le_bytes());
+        out
+    }
+}
+
+#[derive(Debug, Clone)]
+struct VirtioInputBitmaps {
+    ev: [u8; 128],
+    key: [u8; 128],
+    rel: [u8; 128],
+    led: [u8; 128],
+}
+
+impl VirtioInputBitmaps {
+    fn empty() -> Self {
+        Self {
+            ev: [0u8; 128],
+            key: [0u8; 128],
+            rel: [0u8; 128],
+            led: [0u8; 128],
+        }
+    }
+
+    fn set(bitmap: &mut [u8; 128], bit: u16) {
+        let bit = bit as usize;
+        if bit / 8 >= bitmap.len() {
+            return;
+        }
+        bitmap[bit / 8] |= 1u8 << (bit % 8);
+    }
+
+    fn with_bits(bits: &[u16]) -> [u8; 128] {
+        let mut bitmap = [0u8; 128];
+        for &bit in bits {
+            Self::set(&mut bitmap, bit);
+        }
+        bitmap
+    }
+
+    fn for_keyboard() -> Self {
+        let mut bitmaps = Self::empty();
+        bitmaps.ev = Self::with_bits(&[EV_SYN, EV_KEY, EV_LED]);
+        bitmaps.key = Self::with_bits(&[
+            KEY_ESC,
+            KEY_1,
+            KEY_2,
+            KEY_3,
+            KEY_4,
+            KEY_5,
+            KEY_6,
+            KEY_7,
+            KEY_8,
+            KEY_9,
+            KEY_0,
+            KEY_MINUS,
+            KEY_EQUAL,
+            KEY_BACKSPACE,
+            KEY_TAB,
+            KEY_Q,
+            KEY_W,
+            KEY_E,
+            KEY_R,
+            KEY_T,
+            KEY_Y,
+            KEY_U,
+            KEY_I,
+            KEY_O,
+            KEY_P,
+            KEY_LEFTBRACE,
+            KEY_RIGHTBRACE,
+            KEY_ENTER,
+            KEY_LEFTCTRL,
+            KEY_A,
+            KEY_S,
+            KEY_D,
+            KEY_F,
+            KEY_G,
+            KEY_H,
+            KEY_J,
+            KEY_K,
+            KEY_L,
+            KEY_SEMICOLON,
+            KEY_APOSTROPHE,
+            KEY_GRAVE,
+            KEY_LEFTSHIFT,
+            KEY_BACKSLASH,
+            KEY_Z,
+            KEY_X,
+            KEY_C,
+            KEY_V,
+            KEY_B,
+            KEY_N,
+            KEY_M,
+            KEY_COMMA,
+            KEY_DOT,
+            KEY_SLASH,
+            KEY_RIGHTSHIFT,
+            KEY_LEFTALT,
+            KEY_RIGHTALT,
+            KEY_SPACE,
+            KEY_CAPSLOCK,
+            KEY_F1,
+            KEY_F2,
+            KEY_F3,
+            KEY_F4,
+            KEY_F5,
+            KEY_F6,
+            KEY_F7,
+            KEY_F8,
+            KEY_F9,
+            KEY_F10,
+            KEY_F11,
+            KEY_F12,
+            KEY_NUMLOCK,
+            KEY_SCROLLLOCK,
+            KEY_RIGHTCTRL,
+            KEY_LEFTMETA,
+            KEY_RIGHTMETA,
+            KEY_HOME,
+            KEY_UP,
+            KEY_PAGEUP,
+            KEY_DOWN,
+            KEY_LEFT,
+            KEY_RIGHT,
+            KEY_END,
+            KEY_PAGEDOWN,
+            KEY_INSERT,
+            KEY_DELETE,
+        ]);
+        bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL]);
+        bitmaps
+    }
+
+    fn for_mouse() -> Self {
+        let mut bitmaps = Self::empty();
+        bitmaps.ev = Self::with_bits(&[EV_SYN, EV_KEY, EV_REL]);
+        bitmaps.key = Self::with_bits(&[BTN_LEFT, BTN_RIGHT, BTN_MIDDLE]);
+        bitmaps.rel = Self::with_bits(&[REL_X, REL_Y, REL_WHEEL]);
+        bitmaps
+    }
+}
+
 pub struct VirtioInput {
-    pending: std::collections::VecDeque<VirtioInputEvent>,
-    buffers: std::collections::VecDeque<DescriptorChain>,
+    kind: VirtioInputDeviceKind,
+    name: String,
+    serial: String,
+    devids: VirtioInputDevids,
+    config_select: u8,
+    config_subsel: u8,
+    bitmaps: VirtioInputBitmaps,
+
+    pending: VecDeque<VirtioInputEvent>,
+    buffers: VecDeque<DescriptorChain>,
 }
 
 impl VirtioInput {
-    pub fn new() -> Self {
+    pub fn new(kind: VirtioInputDeviceKind) -> Self {
+        let (name, devids, bitmaps) = match kind {
+            VirtioInputDeviceKind::Keyboard => (
+                "Aero Virtio Keyboard".to_string(),
+                VirtioInputDevids {
+                    bustype: 0x0006,
+                    vendor: 0x1af4,
+                    product: 0x0001,
+                    version: 0x0001,
+                },
+                VirtioInputBitmaps::for_keyboard(),
+            ),
+            VirtioInputDeviceKind::Mouse => (
+                "Aero Virtio Mouse".to_string(),
+                VirtioInputDevids {
+                    bustype: 0x0006,
+                    vendor: 0x1af4,
+                    product: 0x0002,
+                    version: 0x0001,
+                },
+                VirtioInputBitmaps::for_mouse(),
+            ),
+        };
+
         Self {
-            pending: std::collections::VecDeque::new(),
-            buffers: std::collections::VecDeque::new(),
+            kind,
+            name,
+            serial: "0".to_string(),
+            devids,
+            config_select: VIRTIO_INPUT_CFG_UNSET,
+            config_subsel: 0,
+            bitmaps,
+            pending: VecDeque::new(),
+            buffers: VecDeque::new(),
         }
     }
 
     pub fn push_event(&mut self, event: VirtioInputEvent) {
         self.pending.push_back(event);
     }
+
+    pub fn kind(&self) -> VirtioInputDeviceKind {
+        self.kind
+    }
 }
 
 impl Default for VirtioInput {
     fn default() -> Self {
-        Self::new()
+        Self::new(VirtioInputDeviceKind::Keyboard)
     }
 }
 
 impl VirtioDevice for VirtioInput {
     fn device_type(&self) -> u16 {
         VIRTIO_DEVICE_TYPE_INPUT
+    }
+
+    fn subsystem_device_id(&self) -> u16 {
+        match self.kind {
+            VirtioInputDeviceKind::Keyboard => VIRTIO_INPUT_SUBSYSTEM_KEYBOARD,
+            VirtioInputDeviceKind::Mouse => VIRTIO_INPUT_SUBSYSTEM_MOUSE,
+        }
     }
 
     fn device_features(&self) -> u64 {
@@ -105,17 +434,28 @@ impl VirtioDevice for VirtioInput {
     }
 
     fn read_config(&self, _offset: u64, data: &mut [u8]) {
-        // Full virtio-input config is quite involved; drivers typically probe it.
-        // For now, expose an empty device and rely on a custom driver that only
-        // consumes the event queue.
-        data.fill(0);
+        let bytes = self.config_bytes();
+        let start = _offset as usize;
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = *bytes.get(start + i).unwrap_or(&0);
+        }
     }
 
-    fn write_config(&mut self, _offset: u64, _data: &[u8]) {}
+    fn write_config(&mut self, offset: u64, data: &[u8]) {
+        for (i, &byte) in data.iter().enumerate() {
+            match offset.saturating_add(i as u64) {
+                0 => self.config_select = byte,
+                1 => self.config_subsel = byte,
+                _ => {}
+            }
+        }
+    }
 
     fn reset(&mut self) {
         self.pending.clear();
         self.buffers.clear();
+        self.config_select = VIRTIO_INPUT_CFG_UNSET;
+        self.config_subsel = 0;
     }
 
     fn as_any(&self) -> &dyn core::any::Any {
@@ -168,5 +508,59 @@ impl VirtioInput {
         }
 
         Ok(need_irq)
+    }
+
+    fn config_bytes(&self) -> [u8; 8 + 128] {
+        let mut cfg = [0u8; 8 + 128];
+        cfg[0] = self.config_select;
+        cfg[1] = self.config_subsel;
+
+        let (size, payload) = self.config_payload();
+        cfg[2] = size;
+        cfg[8..].copy_from_slice(&payload);
+        cfg
+    }
+
+    fn config_payload(&self) -> (u8, [u8; 128]) {
+        let mut payload = [0u8; 128];
+
+        match self.config_select {
+            VIRTIO_INPUT_CFG_ID_NAME => {
+                let bytes = self.name.as_bytes();
+                let len = (bytes.len() + 1).min(payload.len());
+                payload[..len - 1].copy_from_slice(&bytes[..len - 1]);
+                payload[len - 1] = 0;
+                (len as u8, payload)
+            }
+            VIRTIO_INPUT_CFG_ID_SERIAL => {
+                let bytes = self.serial.as_bytes();
+                let len = (bytes.len() + 1).min(payload.len());
+                payload[..len - 1].copy_from_slice(&bytes[..len - 1]);
+                payload[len - 1] = 0;
+                (len as u8, payload)
+            }
+            VIRTIO_INPUT_CFG_ID_DEVIDS => {
+                payload[..8].copy_from_slice(&self.devids.to_le_bytes());
+                (8, payload)
+            }
+            VIRTIO_INPUT_CFG_PROP_BITS | VIRTIO_INPUT_CFG_ABS_INFO => (0, payload),
+            VIRTIO_INPUT_CFG_EV_BITS => {
+                let bitmap = match self.config_subsel {
+                    0 => Some(&self.bitmaps.ev),
+                    x if x == EV_KEY as u8 => Some(&self.bitmaps.key),
+                    x if x == EV_REL as u8 => Some(&self.bitmaps.rel),
+                    x if x == EV_LED as u8 => Some(&self.bitmaps.led),
+                    _ => None,
+                };
+
+                if let Some(bitmap) = bitmap {
+                    payload.copy_from_slice(bitmap);
+                    (payload.len() as u8, payload)
+                } else {
+                    (0, payload)
+                }
+            }
+            _ => (0, payload),
+        }
     }
 }
