@@ -142,6 +142,11 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceGetRasterStatus,
   DeviceSetDialogBoxMode,
   DeviceDrawIndexedPrimitiveUP,
+  DeviceGetSoftwareVertexProcessing,
+  DeviceGetTransform,
+  DeviceGetClipPlane,
+  DeviceGetViewport,
+  DeviceGetScissorRect,
 
   kCount,
 };

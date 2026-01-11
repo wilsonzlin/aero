@@ -348,6 +348,16 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::SetDialogBoxMode (stub)";
     case D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP:
       return "Device::DrawIndexedPrimitiveUP (stub)";
+    case D3d9TraceFunc::DeviceGetSoftwareVertexProcessing:
+      return "Device::GetSoftwareVertexProcessing (stub)";
+    case D3d9TraceFunc::DeviceGetTransform:
+      return "Device::GetTransform (stub)";
+    case D3d9TraceFunc::DeviceGetClipPlane:
+      return "Device::GetClipPlane (stub)";
+    case D3d9TraceFunc::DeviceGetViewport:
+      return "Device::GetViewport (stub)";
+    case D3d9TraceFunc::DeviceGetScissorRect:
+      return "Device::GetScissorRect (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

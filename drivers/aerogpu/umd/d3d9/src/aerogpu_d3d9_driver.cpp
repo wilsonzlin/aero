@@ -221,6 +221,11 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnProcessVertices);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetRasterStatus);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetDialogBoxMode);
 AEROGPU_DEFINE_HAS_MEMBER(pfnDrawIndexedPrimitiveUP);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetSoftwareVertexProcessing);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetTransform);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetClipPlane);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetViewport);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetScissorRect);
 
 // OpenResource arg fields (vary across WDK versions).
 AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
@@ -364,6 +369,16 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialog
 // Legacy user-pointer draw path (indexed). Not supported yet.
 AEROGPU_D3D9_DEFINE_DDI_STUB(
     pfnDrawIndexedPrimitiveUP, D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP, D3DERR_NOTAVAILABLE);
+
+// Various state "getters" (largely used by legacy apps). These have output
+// parameters; return a clean failure so callers don't consume uninitialized
+// memory.
+AEROGPU_D3D9_DEFINE_DDI_STUB(
+    pfnGetSoftwareVertexProcessing, D3d9TraceFunc::DeviceGetSoftwareVertexProcessing, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetTransform, D3d9TraceFunc::DeviceGetTransform, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetClipPlane, D3d9TraceFunc::DeviceGetClipPlane, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetViewport, D3d9TraceFunc::DeviceGetViewport, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetScissorRect, D3d9TraceFunc::DeviceGetScissorRect, D3DERR_NOTAVAILABLE);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
@@ -7840,6 +7855,30 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnDrawIndexedPrimitive2<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnDrawIndexedPrimitive2, device_draw_indexed_primitive2);
   }
+
+  if constexpr (aerogpu_has_member_pfnGetSoftwareVertexProcessing<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetSoftwareVertexProcessing,
+                           aerogpu_d3d9_stub_pfnGetSoftwareVertexProcessing<decltype(
+                               pDeviceFuncs->pfnGetSoftwareVertexProcessing)>::pfnGetSoftwareVertexProcessing);
+  }
+  if constexpr (aerogpu_has_member_pfnGetTransform<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetTransform,
+                           aerogpu_d3d9_stub_pfnGetTransform<decltype(pDeviceFuncs->pfnGetTransform)>::pfnGetTransform);
+  }
+  if constexpr (aerogpu_has_member_pfnGetClipPlane<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetClipPlane,
+                           aerogpu_d3d9_stub_pfnGetClipPlane<decltype(pDeviceFuncs->pfnGetClipPlane)>::pfnGetClipPlane);
+  }
+  if constexpr (aerogpu_has_member_pfnGetViewport<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetViewport,
+                           aerogpu_d3d9_stub_pfnGetViewport<decltype(pDeviceFuncs->pfnGetViewport)>::pfnGetViewport);
+  }
+  if constexpr (aerogpu_has_member_pfnGetScissorRect<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnGetScissorRect,
+                           aerogpu_d3d9_stub_pfnGetScissorRect<decltype(
+                               pDeviceFuncs->pfnGetScissorRect)>::pfnGetScissorRect);
+  }
+
   AEROGPU_SET_D3D9DDI_FN(pfnCreateSwapChain, device_create_swap_chain);
   AEROGPU_SET_D3D9DDI_FN(pfnDestroySwapChain, device_destroy_swap_chain);
   AEROGPU_SET_D3D9DDI_FN(pfnGetSwapChain, device_get_swap_chain);
