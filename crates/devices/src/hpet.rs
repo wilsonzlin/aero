@@ -1,5 +1,7 @@
 use crate::clock::Clock;
 use crate::ioapic::GsiSink;
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 
 pub const HPET_MMIO_BASE: u64 = 0xFED0_0000;
 pub const HPET_MMIO_SIZE: u64 = 0x400;
@@ -137,6 +139,107 @@ pub struct Hpet<C: Clock> {
     remainder_fs: u64,
 
     timers: Vec<HpetTimer>,
+}
+
+impl<C: Clock> IoSnapshot for Hpet<C> {
+    const DEVICE_ID: [u8; 4] = *b"HPET";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_GENERAL_CONFIG: u16 = 1;
+        const TAG_GENERAL_INT_STATUS: u16 = 2;
+        const TAG_MAIN_COUNTER: u16 = 3;
+        const TAG_REMAINDER_FS: u16 = 4;
+        const TAG_TIMERS: u16 = 5;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u64(TAG_GENERAL_CONFIG, self.general_config);
+        w.field_u64(TAG_GENERAL_INT_STATUS, self.general_int_status);
+        w.field_u64(TAG_MAIN_COUNTER, self.main_counter);
+        w.field_u64(TAG_REMAINDER_FS, self.remainder_fs);
+
+        let mut enc = Encoder::new().u32(self.timers.len() as u32);
+        for timer in &self.timers {
+            enc = enc
+                .u64(timer.config)
+                .u64(timer.comparator)
+                .u64(timer.period)
+                .u64(timer.fsb_route)
+                .bool(timer.armed);
+        }
+        w.field_bytes(TAG_TIMERS, enc.finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_GENERAL_CONFIG: u16 = 1;
+        const TAG_GENERAL_INT_STATUS: u16 = 2;
+        const TAG_MAIN_COUNTER: u16 = 3;
+        const TAG_REMAINDER_FS: u16 = 4;
+        const TAG_TIMERS: u16 = 5;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        self.general_config = 0;
+        self.general_int_status = 0;
+        self.main_counter = 0;
+        self.remainder_fs = 0;
+        self.last_update_ns = self.clock.now_ns();
+
+        for timer in &mut self.timers {
+            // Preserve the reset/default route, but clear dynamic state.
+            timer.config &= TIMER_CFG_INT_ROUTE_MASK;
+            timer.comparator = 0;
+            timer.period = 0;
+            timer.fsb_route = 0;
+            timer.armed = false;
+            timer.irq_asserted = false;
+        }
+
+        if let Some(cfg) = r.u64(TAG_GENERAL_CONFIG)? {
+            self.general_config = cfg & (GEN_CONF_ENABLE | GEN_CONF_LEGACY_ROUTE);
+        }
+        if let Some(sts) = r.u64(TAG_GENERAL_INT_STATUS)? {
+            self.general_int_status = sts;
+        }
+        if let Some(counter) = r.u64(TAG_MAIN_COUNTER)? {
+            self.main_counter = counter;
+        }
+        if let Some(rem) = r.u64(TAG_REMAINDER_FS)? {
+            self.remainder_fs = rem;
+        }
+
+        if let Some(buf) = r.bytes(TAG_TIMERS) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            for idx in 0..count {
+                let config = d.u64()?;
+                let comparator = d.u64()?;
+                let period = d.u64()?;
+                let fsb_route = d.u64()?;
+                let armed = d.bool()?;
+
+                if idx < self.timers.len() {
+                    let timer = &mut self.timers[idx];
+                    timer.config = config & TIMER_WRITABLE_MASK & !TIMER_CFG_FSB_ENABLE;
+                    timer.comparator = comparator;
+                    timer.period = if timer.is_periodic() { period } else { 0 };
+                    timer.fsb_route = fsb_route;
+                    timer.armed = armed;
+
+                    // `irq_asserted` is not snapshotted: it is a runtime handshake with the
+                    // interrupt sink. The first `poll()` after restore reasserts lines based
+                    // on `general_int_status` and timer configuration.
+                    timer.irq_asserted = false;
+                }
+            }
+            d.finish()?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<C: Clock> Hpet<C> {
@@ -286,6 +389,27 @@ impl<C: Clock> Hpet<C> {
         }
 
         for (idx, timer) in self.timers.iter_mut().enumerate() {
+            let status_bit = 1u64 << idx;
+            let legacy = self.general_config & GEN_CONF_LEGACY_ROUTE != 0;
+            let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
+
+            // Level-triggered IRQs are asserted for as long as the interrupt status bit
+            // remains set, independent of whether the comparator is still armed.
+            let pending = self.general_int_status & status_bit != 0;
+            if timer.is_level_triggered() && timer.int_enabled() {
+                match (pending, timer.irq_asserted) {
+                    (true, false) => {
+                        sink.raise_gsi(gsi);
+                        timer.irq_asserted = true;
+                    }
+                    (false, true) => {
+                        sink.lower_gsi(gsi);
+                        timer.irq_asserted = false;
+                    }
+                    _ => {}
+                }
+            }
+
             if !timer.int_enabled() {
                 continue;
             }
@@ -297,12 +421,8 @@ impl<C: Clock> Hpet<C> {
                 continue;
             }
 
-            let status_bit = 1u64 << idx;
             let was_pending = self.general_int_status & status_bit != 0;
             self.general_int_status |= status_bit;
-
-            let legacy = self.general_config & GEN_CONF_LEGACY_ROUTE != 0;
-            let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
 
             if timer.is_level_triggered() {
                 if !timer.irq_asserted {

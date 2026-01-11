@@ -36,13 +36,15 @@ impl IoApic {
 
 impl GsiSink for IoApic {
     fn raise_gsi(&mut self, gsi: u32) {
-        self.asserted.insert(gsi);
-        self.events.push(GsiEvent::Raise(gsi));
+        if self.asserted.insert(gsi) {
+            self.events.push(GsiEvent::Raise(gsi));
+        }
     }
 
     fn lower_gsi(&mut self, gsi: u32) {
-        self.asserted.remove(&gsi);
-        self.events.push(GsiEvent::Lower(gsi));
+        if self.asserted.remove(&gsi) {
+            self.events.push(GsiEvent::Lower(gsi));
+        }
     }
 }
 

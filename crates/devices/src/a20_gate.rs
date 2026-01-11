@@ -1,11 +1,50 @@
 use aero_platform::chipset::A20GateHandle;
 use aero_platform::io::PortIoDevice;
 use aero_platform::reset::{PlatformResetSink, ResetKind};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 
 pub struct A20Gate {
     a20: A20GateHandle,
     reset: Option<Box<dyn PlatformResetSink>>,
     value: u8,
+}
+
+impl IoSnapshot for A20Gate {
+    const DEVICE_ID: [u8; 4] = *b"A20G";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_VALUE: u16 = 1;
+        const TAG_A20_ENABLED: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u8(TAG_VALUE, self.value);
+        w.field_bool(TAG_A20_ENABLED, self.a20.enabled());
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_VALUE: u16 = 1;
+        const TAG_A20_ENABLED: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Deterministic baseline.
+        self.value = 0;
+        self.a20.set_enabled(false);
+
+        let value = r.u8(TAG_VALUE)?.unwrap_or(0) & !0x01;
+        let enabled = r
+            .bool(TAG_A20_ENABLED)?
+            .unwrap_or_else(|| (value & 0x02) != 0);
+
+        self.value = value;
+        self.a20.set_enabled(enabled);
+
+        // `reset` is a host integration point; it is expected to be (re)attached by the coordinator.
+        Ok(())
+    }
 }
 
 impl A20Gate {
