@@ -446,3 +446,81 @@ fn protected_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -
 
     Ok(())
 }
+
+#[test]
+fn protected_mode_iret_syncs_bus_before_popping_supervisor_stack() -> Result<(), CpuExit> {
+    // Regression: `interrupts::iret` should `bus.sync(state)` before it starts popping
+    // the return frame, otherwise `PagingBus` could still be caching CPL=3 and fault
+    // while reading from a supervisor-only kernel stack page.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pd_base = 0x10000u64;
+    let pt_base = 0x11000u64;
+
+    phys.write_u32(
+        pd_base + 0 * 4,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
+
+    set_pte32(&mut phys, pt_base, 0x0, PTE_P32 | PTE_RW32 | PTE_US32); // user code
+    set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT supervisor-only
+    set_pte32(&mut phys, pt_base, 0x2, PTE_P32 | PTE_RW32); // handler supervisor-only
+    set_pte32(&mut phys, pt_base, 0x4, PTE_P32 | PTE_RW32); // TSS supervisor-only
+    set_pte32(&mut phys, pt_base, 0x7, PTE_P32 | PTE_RW32 | PTE_US32); // user stack
+    set_pte32(&mut phys, pt_base, 0x9, PTE_P32 | PTE_RW32); // kernel stack supervisor-only
+
+    let mut bus = PagingBus::new(phys);
+
+    let idt_base = 0x1000u64;
+    let handler = 0x2000u32;
+    let tss_base = 0x4000u64;
+    let user_stack_top = 0x8000u32;
+    let kernel_stack_top = 0xA000u32;
+
+    write_idt_gate32(bus.inner_mut(), idt_base, 0x80, 0x08, handler, 0xEE);
+    write_idt_gate32(bus.inner_mut(), idt_base, 13, 0x08, handler, 0x8E);
+
+    bus.inner_mut().write_u32(tss_base + 4, kernel_stack_top);
+    bus.inner_mut().write_u16(tss_base + 8, 0x10);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.update_mode();
+
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x07FF;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+
+    cpu.state.segments.cs.selector = 0x1B; // CPL3
+    cpu.state.segments.ss.selector = 0x23;
+    cpu.state.write_gpr32(gpr::RSP, user_stack_top);
+    cpu.state.set_rflags(0x202);
+
+    bus.sync(&cpu.state);
+
+    let return_rip = 0x5555u64;
+    cpu.pending.raise_software_interrupt(0x80, return_rip);
+    cpu.deliver_pending_event(&mut bus)?;
+
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.segments.ss.selector, 0x10);
+    assert_eq!(cpu.state.read_gpr32(gpr::RSP), kernel_stack_top - 20);
+
+    // Force the bus to cache CPL=3, then return state to CPL0 without syncing the bus.
+    cpu.state.segments.cs.selector = 0x1B;
+    bus.sync(&cpu.state);
+    cpu.state.segments.cs.selector = 0x08;
+
+    cpu.iret(&mut bus)?;
+
+    assert_eq!(cpu.state.segments.cs.selector, 0x1B);
+    assert_eq!(cpu.state.segments.ss.selector, 0x23);
+    assert_eq!(cpu.state.rip(), return_rip);
+    assert_eq!(cpu.state.read_gpr32(gpr::RSP), user_stack_top);
+
+    Ok(())
+}

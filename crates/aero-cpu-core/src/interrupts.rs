@@ -344,6 +344,7 @@ pub fn iret<B: CpuBus>(
     bus: &mut B,
     pending: &mut PendingEventState,
 ) -> Result<(), CpuExit> {
+    bus.sync(state);
     let Some(frame) = pending.interrupt_frames.pop() else {
         // No pending frame; on real hardware this would be #GP(0).
         return deliver_exception(
