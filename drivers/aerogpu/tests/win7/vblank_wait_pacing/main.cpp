@@ -21,6 +21,7 @@ typedef struct D3DKMT_CLOSEADAPTER {
 
 typedef struct D3DKMT_WAITFORVERTICALBLANKEVENT {
   D3DKMT_HANDLE hAdapter;
+  D3DKMT_HANDLE hDevice;
   UINT VidPnSourceId;
 } D3DKMT_WAITFORVERTICALBLANKEVENT;
 
@@ -201,6 +202,7 @@ static int RunVblankWaitPacing(int argc, char **argv) {
     D3DKMT_WAITFORVERTICALBLANKEVENT wait;
     ZeroMemory(&wait, sizeof(wait));
     wait.hAdapter = open.hAdapter;
+    wait.hDevice = 0;
     wait.VidPnSourceId = open.VidPnSourceId;
     st = f.WaitForVerticalBlankEvent(&wait);
     if (!NtSuccess(st)) {
