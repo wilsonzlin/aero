@@ -1096,10 +1096,8 @@ async fn trust_proxy_host_allows_forwarded_host_to_satisfy_allowlist() {
         let mut req = base_ws_request(addr);
         req.headers_mut()
             .insert("host", HeaderValue::from_static("blocked.test"));
-        req.headers_mut().insert(
-            "x-forwarded-host",
-            HeaderValue::from_static("allowed.test"),
-        );
+        req.headers_mut()
+            .insert("x-forwarded-host", HeaderValue::from_static("allowed.test"));
         let err = tokio_tungstenite::connect_async(req)
             .await
             .expect_err("expected untrusted X-Forwarded-Host to be ignored");
