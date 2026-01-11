@@ -75,7 +75,7 @@ fn create_texture2d_requires_row_pitch_for_backed_textures() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
+        let guest_mem = VecGuestMemory::new(0x2000);
         let err = exec
             .execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
             .expect_err("expected CREATE_TEXTURE2D to reject missing row_pitch_bytes");
@@ -134,7 +134,7 @@ fn create_texture2d_validates_all_mips_against_allocation_size() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
+        let guest_mem = VecGuestMemory::new(0x2000);
         let err = exec
             .execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
             .expect_err("expected CREATE_TEXTURE2D to reject undersized allocation");

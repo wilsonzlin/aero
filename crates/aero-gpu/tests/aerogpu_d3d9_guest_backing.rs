@@ -836,6 +836,7 @@ fn d3d9_create_buffer_rebind_updates_guest_backing() {
         (
             ALLOC_A,
             AllocEntry {
+                flags: 0,
                 gpa: GPA_A,
                 size_bytes: 0x1000,
             },
@@ -843,11 +844,13 @@ fn d3d9_create_buffer_rebind_updates_guest_backing() {
         (
             ALLOC_B,
             AllocEntry {
+                flags: 0,
                 gpa: GPA_B,
                 size_bytes: 0x1000,
             },
         ),
-    ]);
+    ])
+    .expect("alloc table");
 
     let pattern_a = [0x01u8; 16];
     let pattern_b = [0xBBu8; 16];
@@ -1142,6 +1145,7 @@ fn d3d9_create_texture2d_rebind_updates_guest_backing() {
         (
             ALLOC_A,
             AllocEntry {
+                flags: 0,
                 gpa: GPA_A,
                 size_bytes: 0x1000,
             },
@@ -1149,11 +1153,13 @@ fn d3d9_create_texture2d_rebind_updates_guest_backing() {
         (
             ALLOC_B,
             AllocEntry {
+                flags: 0,
                 gpa: GPA_B,
                 size_bytes: 0x1000,
             },
         ),
-    ]);
+    ])
+    .expect("alloc table");
 
     let pixel_a = [0x10u8, 0x20, 0x30, 0x40];
     let pixel_b = [0xABu8, 0xCD, 0xEF, 0x01];
@@ -1370,10 +1376,12 @@ fn d3d9_copy_texture2d_writeback_respects_copy_region() {
     let alloc_table = AllocTable::new([(
         DST_ALLOC_ID,
         AllocEntry {
+            flags: 0,
             gpa: DST_GPA,
             size_bytes: 0x1000,
         },
-    )]);
+    )])
+    .expect("alloc table");
 
     let dst_x = 1u32;
     let dst_y = 1u32;

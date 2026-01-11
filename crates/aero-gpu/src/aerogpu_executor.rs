@@ -1412,20 +1412,32 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_BUFFER: missing staging buffer for writeback".into(),
                 ));
             };
-            let table = alloc_table.ok_or_else(|| {
-                ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
-            })?;
-            let alloc_offset = dst_backing
-                .alloc_offset_bytes
-                .checked_add(dst_offset_bytes)
-                .ok_or_else(|| ExecutorError::Validation("COPY_BUFFER: dst alloc offset overflow".into()))?;
-            let dst_gpa = table.resolve_gpa(dst_backing.alloc_id, alloc_offset, size_bytes)?;
             let data = self.read_buffer_to_vec_blocking(&staging, size_bytes, "COPY_BUFFER")?;
             if data.len() != size_usize {
                 return Err(ExecutorError::Validation(
                     "COPY_BUFFER: internal writeback size mismatch".into(),
                 ));
             }
+            let table = alloc_table.ok_or_else(|| {
+                ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
+            })?;
+            let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "COPY_BUFFER: unknown dst backing_alloc_id={}",
+                    dst_backing.alloc_id
+                ))
+            })?;
+            if (entry.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
+                return Err(ExecutorError::Validation(format!(
+                    "COPY_BUFFER: dst backing_alloc_id={} is read-only",
+                    dst_backing.alloc_id
+                )));
+            }
+            let alloc_offset = dst_backing
+                .alloc_offset_bytes
+                .checked_add(dst_offset_bytes)
+                .ok_or_else(|| ExecutorError::Validation("COPY_BUFFER: dst alloc offset overflow".into()))?;
+            let dst_gpa = table.resolve_gpa(dst_backing.alloc_id, alloc_offset, size_bytes)?;
             guest_memory.write(dst_gpa, &data)?;
         }
         Ok(())
@@ -1679,6 +1691,22 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ));
             }
 
+            let table = alloc_table.ok_or_else(|| {
+                ExecutorError::Validation("COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into())
+            })?;
+            let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: unknown dst backing_alloc_id={}",
+                    dst_backing.alloc_id
+                ))
+            })?;
+            if (entry.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
+                return Err(ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: dst backing_alloc_id={} is read-only",
+                    dst_backing.alloc_id
+                )));
+            }
+
             for row in 0..height {
                 let src_off = row as usize * bytes_per_row_usize;
                 let src_end = src_off + row_bytes_usize;
@@ -1708,17 +1736,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                         "COPY_TEXTURE2D: writeback out of bounds".into(),
                     ));
                 }
-                let table = alloc_table.ok_or_else(|| {
-                    ExecutorError::Validation(
-                        "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
-                    )
-                })?;
                 let alloc_offset = dst_backing
                     .alloc_offset_bytes
                     .checked_add(write_offset)
-                    .ok_or_else(|| {
-                        ExecutorError::Validation("COPY_TEXTURE2D: dst alloc offset overflow".into())
-                    })?;
+                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst alloc offset overflow".into()))?;
                 let dst_gpa =
                     table.resolve_gpa(dst_backing.alloc_id, alloc_offset, u64::from(row_bytes))?;
 

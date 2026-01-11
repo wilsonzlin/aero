@@ -364,7 +364,7 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory containing two potential backing locations for the same alloc_id.
-        let mut guest = VecGuestMemory::new(0x20_000);
+        let guest = VecGuestMemory::new(0x20_000);
         const ALLOC_TEX: u32 = 1;
         let tex_gpa_a = 0x1000u64;
         let tex_gpa_b = 0x2000u64;
