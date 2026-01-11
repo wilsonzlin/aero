@@ -57,6 +57,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check Windows 7 virtio contract consistency (docs + INFs)
+        run: python3 scripts/ci/check-windows7-virtio-contract-consistency.py
+
       - name: Check virtio-snd.vcxproj sources (modern vs legacy)
         shell: bash
         run: |
