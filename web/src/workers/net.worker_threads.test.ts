@@ -103,15 +103,23 @@ describe("workers/net.worker (worker_threads)", () => {
     } as unknown as WorkerOptions);
 
     try {
-      // Configure the worker to connect to an L2 tunnel.
-      worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("wss://gateway.example.com") });
-      worker.postMessage(makeInit(segments));
-
-      await waitForWorkerMessage(
+      const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
+        url?: string;
+      }>;
+      const workerReady = waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "net",
         10000,
       );
+
+      // Configure the worker to connect to an L2 tunnel.
+      worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("https://gateway.example.com") });
+      worker.postMessage(makeInit(segments));
+
+      const createdMsg = await wsCreated;
+      expect(createdMsg.url).toBe("wss://gateway.example.com/l2");
+
+      await workerReady;
 
       const frame = Uint8Array.of(1, 2, 3, 4, 5);
       while (!netTxRing.tryPush(frame)) {
@@ -187,7 +195,12 @@ describe("workers/net.worker (worker_threads)", () => {
       // If the tunnel closes unexpectedly, the net worker should reconnect and
       // resume forwarding frames.
       worker.postMessage({ type: "ws.close", code: 1000, reason: "test" });
-      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000);
+      const wsCreated2 = (await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "ws.created",
+        10000,
+      )) as { url?: string };
+      expect(wsCreated2.url).toBe("wss://gateway.example.com/l2");
 
       const frame2 = Uint8Array.of(6, 7, 8);
       while (!netTxRing.tryPush(frame2)) {
