@@ -1831,7 +1831,13 @@ impl AerogpuD3d11Executor {
         let size_bytes = cmd.size_bytes;
         let flags = cmd.flags;
 
-        let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+        let writeback_requested = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+        let writeback = writeback_requested;
+        // WebGPU buffer mapping is promise-based on wasm, but this executor is synchronous today.
+        // Until the wasm execution path is made async, ignore WRITEBACK_DST rather than failing the
+        // entire submission.
+        #[cfg(target_arch = "wasm32")]
+        let writeback = false;
         if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
             bail!("COPY_BUFFER: unknown flags {flags:#x}");
         }
@@ -1980,62 +1986,55 @@ impl AerogpuD3d11Executor {
 
         self.encoder_has_commands = true;
 
+        #[cfg(not(target_arch = "wasm32"))]
         if writeback {
-            #[cfg(target_arch = "wasm32")]
-            {
-                bail!("COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported on wasm yet");
+            let Some(staging) = staging else {
+                bail!("COPY_BUFFER: internal error: missing staging buffer for writeback");
+            };
+
+            let dst_gpa = allocs.validate_write_range(
+                dst_backing.alloc_id,
+                dst_backing
+                    .offset_bytes
+                    .checked_add(dst_offset_bytes)
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?,
+                size_bytes,
+            )?;
+
+            self.submit_encoder(encoder, "aerogpu_cmd encoder after COPY_BUFFER writeback");
+
+            let slice = staging.slice(..);
+            let state = std::sync::Arc::new((
+                std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
+                std::sync::Condvar::new(),
+            ));
+            let state_clone = state.clone();
+            slice.map_async(wgpu::MapMode::Read, move |res| {
+                let (lock, cv) = &*state_clone;
+                *lock.lock().unwrap() = Some(res);
+                cv.notify_one();
+            });
+            self.device.poll(wgpu::Maintain::Wait);
+
+            let (lock, cv) = &*state;
+            let mut guard = lock.lock().unwrap();
+            while guard.is_none() {
+                guard = cv.wait(guard).unwrap();
             }
+            guard
+                .take()
+                .unwrap()
+                .map_err(|e| anyhow!("COPY_BUFFER: writeback map_async failed: {e:?}"))?;
 
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let Some(staging) = staging else {
-                    bail!("COPY_BUFFER: internal error: missing staging buffer for writeback");
-                };
-
-                let dst_gpa = allocs.validate_write_range(
-                    dst_backing.alloc_id,
-                    dst_backing
-                        .offset_bytes
-                        .checked_add(dst_offset_bytes)
-                        .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?,
-                    size_bytes,
-                )?;
-
-                self.submit_encoder(encoder, "aerogpu_cmd encoder after COPY_BUFFER writeback");
-
-                let slice = staging.slice(..);
-                let state = std::sync::Arc::new((
-                    std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
-                    std::sync::Condvar::new(),
-                ));
-                let state_clone = state.clone();
-                slice.map_async(wgpu::MapMode::Read, move |res| {
-                    let (lock, cv) = &*state_clone;
-                    *lock.lock().unwrap() = Some(res);
-                    cv.notify_one();
-                });
-                self.device.poll(wgpu::Maintain::Wait);
-
-                let (lock, cv) = &*state;
-                let mut guard = lock.lock().unwrap();
-                while guard.is_none() {
-                    guard = cv.wait(guard).unwrap();
-                }
-                guard
-                    .take()
-                    .unwrap()
-                    .map_err(|e| anyhow!("COPY_BUFFER: writeback map_async failed: {e:?}"))?;
-
-                let mapped = slice.get_mapped_range();
-                let len: usize = size_bytes
-                    .try_into()
-                    .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
-                guest_mem
-                    .write(dst_gpa, &mapped[..len])
-                    .map_err(anyhow_guest_mem)?;
-                drop(mapped);
-                staging.unmap();
-            }
+            let mapped = slice.get_mapped_range();
+            let len: usize = size_bytes
+                .try_into()
+                .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
+            guest_mem
+                .write(dst_gpa, &mapped[..len])
+                .map_err(anyhow_guest_mem)?;
+            drop(mapped);
+            staging.unmap();
         }
 
         // The destination GPU buffer content has changed; discard any pending "dirty" ranges that
@@ -2072,7 +2071,13 @@ impl AerogpuD3d11Executor {
         let height = cmd.height;
         let flags = cmd.flags;
 
-        let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+        let writeback_requested = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+        let writeback = writeback_requested;
+        // WebGPU buffer mapping is promise-based on wasm, but this executor is synchronous today.
+        // Until the wasm execution path is made async, ignore WRITEBACK_DST rather than failing the
+        // entire submission.
+        #[cfg(target_arch = "wasm32")]
+        let writeback = false;
         if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
             bail!("COPY_TEXTURE2D: unknown flags {flags:#x}");
         }
@@ -2293,119 +2298,106 @@ impl AerogpuD3d11Executor {
         }
         self.encoder_has_commands = true;
 
+        #[cfg(not(target_arch = "wasm32"))]
         if writeback {
-            #[cfg(target_arch = "wasm32")]
-            {
-                bail!(
-                    "COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported on wasm yet"
-                );
+            let Some((staging, padded_bpr, unpadded_bpr, copy_h)) = staging else {
+                bail!("COPY_TEXTURE2D: internal error: missing staging buffer for writeback");
+            };
+            if dst_row_pitch_bytes == 0 {
+                bail!("COPY_TEXTURE2D: WRITEBACK_DST requires non-zero dst row_pitch_bytes");
             }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let Some((staging, padded_bpr, unpadded_bpr, copy_h)) = staging else {
-                    bail!("COPY_TEXTURE2D: internal error: missing staging buffer for writeback");
-                };
-                if dst_row_pitch_bytes == 0 {
-                    bail!("COPY_TEXTURE2D: WRITEBACK_DST requires non-zero dst row_pitch_bytes");
-                }
-                let row_pitch = dst_row_pitch_bytes as u64;
-                let bytes_per_pixel = {
-                    let dst = self.resources.textures.get(&dst_texture).ok_or_else(|| {
+            let row_pitch = dst_row_pitch_bytes as u64;
+            let bytes_per_pixel = {
+                let dst =
+                    self.resources.textures.get(&dst_texture).ok_or_else(|| {
                         anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}")
                     })?;
-                    bytes_per_texel(dst.desc.format)?
-                };
-                let dst_x_bytes = (dst_x as u64)
-                    .checked_mul(bytes_per_pixel as u64)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow"))?;
-                let row_bytes = unpadded_bpr as u64;
-                if dst_x_bytes
-                    .checked_add(row_bytes)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst row byte range overflow"))?
-                    > row_pitch
-                {
-                    bail!("COPY_TEXTURE2D: dst row_pitch_bytes too small for writeback region");
-                }
-
-                let start_offset = dst_backing
-                    .offset_bytes
-                    .checked_add(
-                        (dst_y as u64)
-                            .checked_mul(row_pitch)
-                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_y row_pitch overflow"))?,
-                    )
-                    .and_then(|v| v.checked_add(dst_x_bytes))
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing offset overflow"))?;
-
-                let last_row_start = start_offset
-                    .checked_add(
-                        (copy_h as u64)
-                            .checked_sub(1)
-                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: copy_h underflow"))?
-                            .checked_mul(row_pitch)
-                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row offset overflow"))?,
-                    )
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row start overflow"))?;
-                let end_offset = last_row_start
-                    .checked_add(row_bytes)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing end overflow"))?;
-                let validate_size = end_offset
-                    .checked_sub(start_offset)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size underflow"))?;
-
-                let base_gpa = allocs.validate_write_range(
-                    dst_backing.alloc_id,
-                    start_offset,
-                    validate_size,
-                )?;
-
-                self.submit_encoder(
-                    encoder,
-                    "aerogpu_cmd encoder after COPY_TEXTURE2D writeback",
-                );
-
-                let slice = staging.slice(..);
-                let state = std::sync::Arc::new((
-                    std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
-                    std::sync::Condvar::new(),
-                ));
-                let state_clone = state.clone();
-                slice.map_async(wgpu::MapMode::Read, move |res| {
-                    let (lock, cv) = &*state_clone;
-                    *lock.lock().unwrap() = Some(res);
-                    cv.notify_one();
-                });
-                self.device.poll(wgpu::Maintain::Wait);
-
-                let (lock, cv) = &*state;
-                let mut guard = lock.lock().unwrap();
-                while guard.is_none() {
-                    guard = cv.wait(guard).unwrap();
-                }
-                guard
-                    .take()
-                    .unwrap()
-                    .map_err(|e| anyhow!("COPY_TEXTURE2D: writeback map_async failed: {e:?}"))?;
-
-                let mapped = slice.get_mapped_range();
-                for row in 0..copy_h as u64 {
-                    let src_start = row as usize * padded_bpr as usize;
-                    let src_end = src_start + unpadded_bpr as usize;
-                    let dst_gpa = base_gpa
-                        .checked_add(row.checked_mul(row_pitch).ok_or_else(|| {
-                            anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
-                        })?)
-                        .ok_or_else(|| {
-                            anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
-                        })?;
-                    guest_mem
-                        .write(dst_gpa, &mapped[src_start..src_end])
-                        .map_err(anyhow_guest_mem)?;
-                }
-                drop(mapped);
-                staging.unmap();
+                bytes_per_texel(dst.desc.format)?
+            };
+            let dst_x_bytes = (dst_x as u64)
+                .checked_mul(bytes_per_pixel as u64)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow"))?;
+            let row_bytes = unpadded_bpr as u64;
+            if dst_x_bytes
+                .checked_add(row_bytes)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst row byte range overflow"))?
+                > row_pitch
+            {
+                bail!("COPY_TEXTURE2D: dst row_pitch_bytes too small for writeback region");
             }
+
+            let start_offset = dst_backing
+                .offset_bytes
+                .checked_add(
+                    (dst_y as u64)
+                        .checked_mul(row_pitch)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_y row_pitch overflow"))?,
+                )
+                .and_then(|v| v.checked_add(dst_x_bytes))
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing offset overflow"))?;
+
+            let last_row_start = start_offset
+                .checked_add(
+                    (copy_h as u64)
+                        .checked_sub(1)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: copy_h underflow"))?
+                        .checked_mul(row_pitch)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row offset overflow"))?,
+                )
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row start overflow"))?;
+            let end_offset = last_row_start
+                .checked_add(row_bytes)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing end overflow"))?;
+            let validate_size = end_offset
+                .checked_sub(start_offset)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size underflow"))?;
+
+            let base_gpa =
+                allocs.validate_write_range(dst_backing.alloc_id, start_offset, validate_size)?;
+
+            self.submit_encoder(
+                encoder,
+                "aerogpu_cmd encoder after COPY_TEXTURE2D writeback",
+            );
+
+            let slice = staging.slice(..);
+            let state = std::sync::Arc::new((
+                std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
+                std::sync::Condvar::new(),
+            ));
+            let state_clone = state.clone();
+            slice.map_async(wgpu::MapMode::Read, move |res| {
+                let (lock, cv) = &*state_clone;
+                *lock.lock().unwrap() = Some(res);
+                cv.notify_one();
+            });
+            self.device.poll(wgpu::Maintain::Wait);
+
+            let (lock, cv) = &*state;
+            let mut guard = lock.lock().unwrap();
+            while guard.is_none() {
+                guard = cv.wait(guard).unwrap();
+            }
+            guard
+                .take()
+                .unwrap()
+                .map_err(|e| anyhow!("COPY_TEXTURE2D: writeback map_async failed: {e:?}"))?;
+
+            let mapped = slice.get_mapped_range();
+            for row in 0..copy_h as u64 {
+                let src_start = row as usize * padded_bpr as usize;
+                let src_end = src_start + unpadded_bpr as usize;
+                let dst_gpa = base_gpa
+                    .checked_add(row.checked_mul(row_pitch).ok_or_else(|| {
+                        anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
+                    })?)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)"))?;
+                guest_mem
+                    .write(dst_gpa, &mapped[src_start..src_end])
+                    .map_err(anyhow_guest_mem)?;
+            }
+            drop(mapped);
+            staging.unmap();
         }
 
         // The destination GPU texture content has changed; discard any pending "dirty" marker that

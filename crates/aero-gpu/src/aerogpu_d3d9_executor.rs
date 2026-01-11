@@ -1684,20 +1684,17 @@ impl AerogpuD3d9Executor {
                     if size_bytes == 0 {
                         return Ok(());
                     }
-                    let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+                    let writeback_requested = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+                    let writeback = writeback_requested;
+                    // WebGPU buffer mapping is promise-based on wasm, but this executor is
+                    // synchronous today. Until the wasm path is made async, ignore WRITEBACK_DST
+                    // rather than failing the submission.
+                    #[cfg(target_arch = "wasm32")]
+                    let writeback = false;
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "COPY_BUFFER: unknown flags 0x{flags:08X}"
                         )));
-                    }
-                    if writeback {
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            return Err(AerogpuD3d9Error::Validation(
-                                "COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported on wasm yet"
-                                    .into(),
-                            ));
-                        }
                     }
 
                     if dst_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
@@ -1910,19 +1907,17 @@ impl AerogpuD3d9Executor {
                     if width == 0 || height == 0 {
                         return Ok(());
                     }
-                    let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+                    let writeback_requested = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+                    let writeback = writeback_requested;
+                    // WebGPU buffer mapping is promise-based on wasm, but this executor is
+                    // synchronous today. Until the wasm path is made async, ignore WRITEBACK_DST
+                    // rather than failing the submission.
+                    #[cfg(target_arch = "wasm32")]
+                    let writeback = false;
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "COPY_TEXTURE2D: unknown flags 0x{flags:08X}"
                         )));
-                    }
-                    if writeback {
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            return Err(AerogpuD3d9Error::Validation(
-                                "COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported on wasm yet".into(),
-                            ));
-                        }
                     }
 
                     let src_underlying = self.resolve_resource_handle(src_texture)?;
