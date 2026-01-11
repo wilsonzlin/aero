@@ -141,7 +141,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 | `mem`     | number (MiB) | `guestMemoryMiB` | `?mem=2048` |
 | `workers` | bool | `enableWorkers` | `?workers=0` |
 | `webgpu`  | bool | `enableWebGPU` | `?webgpu=1` |
-| `proxy`   | string \| `null` | `proxyUrl` | `?proxy=wss%3A%2F%2Fproxy.example%2Fws` |
+| `proxy`   | string \| `null` | `proxyUrl` | `?proxy=wss%3A%2F%2Fgateway.example.com` |
 | `disk`    | string \| `null` | `activeDiskImage` | `?disk=win7-sp1.img` |
 | `log`     | `trace|debug|info|warn|error` | `logLevel` | `?log=debug` |
 | `scale`   | number | `uiScale` | `?scale=1.25` |
@@ -150,7 +150,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 
 ```text
 /?mem=2048&log=debug
-/?proxy=wss%3A%2F%2Flocalhost%3A1234%2Fws&workers=0
+/?proxy=ws%3A%2F%2F127.0.0.1%3A8081&workers=0
 ```
 
 ### Notes
@@ -261,13 +261,27 @@ VITE_DISABLE_COOP_COEP=1 npm -w web run dev
 In this mode the loader will select the non-shared-memory build automatically, and the UI will report which variant
 was loaded (and why).
 
-## Optional guest networking support (TCP/UDP via WebSocket relay)
+## Optional guest networking support (TCP over WebSocket, DNS-over-HTTPS, UDP over WebRTC)
 
-Browsers cannot open arbitrary TCP/UDP sockets directly. For guest networking, Aero can use a small local proxy that exposes WebSocket endpoints and relays to real TCP/UDP sockets from the server side.
+Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networking support therefore relies on server-side relays.
 
-This repo includes a standalone proxy service at [`net-proxy/`](./net-proxy/).
+### Production / deployment (recommended)
+
+- **TCP + DNS:** [`backend/aero-gateway`](./backend/aero-gateway/) provides a policy-driven gateway with:
+  - `WS /tcp` (one TCP connection per WebSocket)
+  - `WS /tcp-mux` (multiplexed TCP over one WebSocket; subprotocol `aero-tcp-mux-v1`) for scaling high connection counts
+  - `POST /session` + `GET/POST /dns-query` (DNS-over-HTTPS)
+
+  Wire contracts: [`docs/backend/01-aero-gateway-api.md`](./docs/backend/01-aero-gateway-api.md)
+
+- **UDP:** [`proxy/webrtc-udp-relay`](./proxy/webrtc-udp-relay/) is the primary UDP path. It relays UDP over a WebRTC DataChannel (`label="udp"`, `ordered=false`, `maxRetransmits=0`) using versioned v1/v2 datagram framing and signaling defined in:
+  - [`proxy/webrtc-udp-relay/PROTOCOL.md`](./proxy/webrtc-udp-relay/PROTOCOL.md)
+
+  A WebSocket UDP fallback is planned; it is intended to reuse the same v1/v2 framing.
 
 ### Local dev workflow (run alongside Vite)
+
+This repo includes a standalone proxy service at [`net-proxy/`](./net-proxy/) that’s convenient to run next to `vite dev`.
 
 Terminal 1 (network proxy):
 
@@ -287,10 +301,17 @@ npm -w web run dev
 The proxy exposes:
 
 - `GET /healthz`
-- `WS /tcp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`)
-- `WS /udp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`)
+- `WS /tcp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — compatible with the gateway `/tcp` URL format.
+- `WS /udp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — **legacy per-target** UDP relay (one destination per WebSocket). This is *not* the multiplexed v1/v2 datagram framing used by `proxy/webrtc-udp-relay`.
+
+A multiplexed WebSocket UDP mode (same v1/v2 datagram framing as `proxy/webrtc-udp-relay/PROTOCOL.md`) is planned but not yet implemented in `net-proxy`.
 
 See `net-proxy/README.md` for allowlisting and client URL examples.
+
+### Networking architecture choices
+
+- [`docs/networking-architecture-rfc.md`](./docs/networking-architecture-rfc.md)
+- [`docs/07-networking.md`](./docs/07-networking.md)
 
 ## Optional disk image gateway (S3 + CloudFront Range streaming)
 

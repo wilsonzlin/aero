@@ -154,10 +154,9 @@ See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitiona
 │       │                     │                                    │
 │       ▼                     ▼                                    │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │           Aero Gateway (Required)                        │    │
-│  │    - TCP connection relay                                │    │
-│  │    - UDP packet relay                                    │    │
-│  │    - DNS resolution                                      │    │
+│  │          Networking backends (production)                │    │
+│  │    - backend/aero-gateway: TCP proxy + DNS-over-HTTPS    │    │
+│  │    - proxy/webrtc-udp-relay: UDP relay (WebRTC)          │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -554,7 +553,9 @@ This repository includes a standalone WebSocket → TCP/UDP relay service in [`n
 
 - local development (run alongside `vite dev`)
 - E2E testing (no public internet required)
-- eventual production deployments (configure allowlists)
+
+For production deployments, prefer `backend/aero-gateway` (TCP+DNS) and
+`proxy/webrtc-udp-relay` (UDP).
 
 To run in trusted local development mode (allows `127.0.0.1`, RFC1918, etc):
 
