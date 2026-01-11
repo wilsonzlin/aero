@@ -25,13 +25,11 @@
  *  - The payload buffers described by VirtIoSndRxSubmitSg are written by the
  *    device (VRING_DESC_F_WRITE). Callers must ensure the provided buffers are
  *    DMA-accessible and resident (nonpaged) for the duration of the request.
- *  - On Windows 7 x86/x64, DMA is cache coherent, so no explicit cache
- *    maintenance is required for normal MDL-backed allocations.
- *  - If this code is ported to a non-coherent DMA architecture, the caller must
- *    ensure coherency before reading captured samples. For MDL-backed buffers,
- *    this typically means invalidating the CPU cache lines after DMA completion
- *    (e.g. KeFlushIoBuffers(ReadOperation=TRUE)). See VirtIoSndSgFlushIoBuffers
- *    in virtiosnd_sg.h for a DISPATCH_LEVEL-safe helper.
+ *  - Callers must ensure CPU cache coherency before reading captured samples.
+ *    For MDL-backed buffers, this typically means invalidating the CPU cache
+ *    lines after DMA completion (e.g. KeFlushIoBuffers(ReadOperation=TRUE)).
+ *    See VirtIoSndSgFlushIoBuffers in virtiosnd_sg.h for a DISPATCH_LEVEL-safe
+ *    helper used by the PortCls/WaveRT capture miniport.
  */
 
 /*
