@@ -1493,6 +1493,18 @@ impl AerogpuD3d11Executor {
         let mut bound_bind_groups: Vec<Option<*const wgpu::BindGroup>> =
             vec![None; pipeline_bindings.group_layouts.len()];
 
+        let mut d3d_slot_to_wgpu_slot: Vec<Option<u32>> = vec![None; DEFAULT_MAX_VERTEX_SLOTS];
+        let mut used_vertex_slots = vec![false; DEFAULT_MAX_VERTEX_SLOTS];
+        for (wgpu_slot, &d3d_slot) in wgpu_slot_to_d3d_slot.iter().enumerate() {
+            let slot_usize: usize = d3d_slot
+                .try_into()
+                .map_err(|_| anyhow!("wgpu vertex slot out of range"))?;
+            if slot_usize < d3d_slot_to_wgpu_slot.len() {
+                d3d_slot_to_wgpu_slot[slot_usize] = Some(wgpu_slot as u32);
+                used_vertex_slots[slot_usize] = true;
+            }
+        }
+
         // Precompute which binding slots are actually referenced by the current shader pair so we
         // can avoid breaking the render pass for state updates that will not be read by any draw
         // in this pass.
@@ -1552,6 +1564,8 @@ impl AerogpuD3d11Executor {
                 | OPCODE_DRAW_INDEXED
                 | OPCODE_SET_VIEWPORT
                 | OPCODE_SET_SCISSOR
+                | OPCODE_SET_VERTEX_BUFFERS
+                | OPCODE_SET_INDEX_BUFFER
                 | OPCODE_SET_TEXTURE
                 | OPCODE_SET_SAMPLER_STATE
                 | OPCODE_SET_SAMPLERS
@@ -1607,6 +1621,69 @@ impl AerogpuD3d11Executor {
                             }
                         }
                     }
+                }
+            }
+
+            if opcode == OPCODE_SET_VERTEX_BUFFERS {
+                let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes) else {
+                    break;
+                };
+                let start_slot = cmd.start_slot as usize;
+
+                let mut needs_break = false;
+                for (i, binding) in bindings.iter().copied().enumerate() {
+                    let slot = start_slot.saturating_add(i);
+                    if slot >= used_vertex_slots.len() || !used_vertex_slots[slot] {
+                        continue;
+                    }
+
+                    let buffer = u32::from_le(binding.buffer);
+                    if buffer == 0 {
+                        // The current pipeline requires this slot; allow the outer loop to restart
+                        // the pass so we don't accidentally keep using the previous vertex buffer.
+                        needs_break = true;
+                        break;
+                    }
+
+                    let stride_bytes = u32::from_le(binding.stride_bytes);
+                    let current_stride = self
+                        .state
+                        .vertex_buffers
+                        .get(slot)
+                        .and_then(|v| *v)
+                        .map(|vb| vb.stride_bytes)
+                        .unwrap_or(0);
+                    if current_stride != stride_bytes {
+                        // Vertex buffer stride affects the pipeline's vertex buffer layout.
+                        needs_break = true;
+                        break;
+                    }
+
+                    if let Some(buf) = self.resources.buffers.get(&buffer) {
+                        if buf.backing.is_some() && buf.dirty.is_some() {
+                            needs_break = true;
+                            break;
+                        }
+                    }
+                }
+                if needs_break {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_SET_INDEX_BUFFER {
+                // `struct aerogpu_cmd_set_index_buffer` (24 bytes)
+                if cmd_bytes.len() >= 12 {
+                    let buffer = read_u32_le(cmd_bytes, 8)?;
+                    if buffer != 0 {
+                        if let Some(buf) = self.resources.buffers.get(&buffer) {
+                            if buf.backing.is_some() && buf.dirty.is_some() {
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    break;
                 }
             }
 
@@ -1853,6 +1930,74 @@ impl AerogpuD3d11Executor {
                                 }
                             }
                         }
+                    }
+                }
+                OPCODE_SET_VERTEX_BUFFERS => {
+                    let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
+                    else {
+                        bail!("SET_VERTEX_BUFFERS: invalid payload");
+                    };
+                    let start_slot = cmd.start_slot as usize;
+                    let buffer_count = cmd.buffer_count as usize;
+
+                    self.exec_set_vertex_buffers(cmd_bytes)?;
+
+                    for slot in start_slot..start_slot.saturating_add(buffer_count) {
+                        let Some(wgpu_slot) = d3d_slot_to_wgpu_slot.get(slot).and_then(|v| *v)
+                        else {
+                            continue;
+                        };
+                        let d3d_slot = u32::try_from(slot)
+                            .map_err(|_| anyhow!("SET_VERTEX_BUFFERS: slot out of range"))?;
+                        let Some(vb) = self.state.vertex_buffers.get(slot).and_then(|v| *v) else {
+                            bail!("input layout requires vertex buffer slot {d3d_slot}");
+                        };
+                        if vb.stride_bytes != u32::from_le(bindings[slot - start_slot].stride_bytes)
+                        {
+                            bail!("SET_VERTEX_BUFFERS: stride update requires restarting render pass");
+                        }
+
+                        let (buf_ptr, buf_size): (*const wgpu::Buffer, u64) = {
+                            let buf = self
+                                .resources
+                                .buffers
+                                .get(&vb.buffer)
+                                .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+                            (&buf.buffer as *const wgpu::Buffer, buf.size)
+                        };
+                        if vb.offset_bytes > buf_size {
+                            bail!(
+                                "vertex buffer {} offset {} out of bounds (size={})",
+                                vb.buffer,
+                                vb.offset_bytes,
+                                buf_size
+                            );
+                        }
+                        let buf = unsafe { &*buf_ptr };
+                        pass.set_vertex_buffer(wgpu_slot, buf.slice(vb.offset_bytes..));
+                    }
+                }
+                OPCODE_SET_INDEX_BUFFER => {
+                    self.exec_set_index_buffer(cmd_bytes)?;
+                    if let Some(ib) = self.state.index_buffer {
+                        let (buf_ptr, buf_size): (*const wgpu::Buffer, u64) = {
+                            let buf = self
+                                .resources
+                                .buffers
+                                .get(&ib.buffer)
+                                .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+                            (&buf.buffer as *const wgpu::Buffer, buf.size)
+                        };
+                        if ib.offset_bytes > buf_size {
+                            bail!(
+                                "index buffer {} offset {} out of bounds (size={})",
+                                ib.buffer,
+                                ib.offset_bytes,
+                                buf_size
+                            );
+                        }
+                        let buf = unsafe { &*buf_ptr };
+                        pass.set_index_buffer(buf.slice(ib.offset_bytes..), ib.format);
                     }
                 }
                 OPCODE_SET_TEXTURE => self.exec_set_texture(cmd_bytes)?,
