@@ -109,6 +109,22 @@ fn protocol_parses_all_opcodes() {
     push_u32(&mut expected_vb_bindings, 64);
     push_u32(&mut expected_vb_bindings, 0);
 
+    let mut expected_sampler_handles = Vec::new();
+    push_u32(&mut expected_sampler_handles, 0x55);
+    push_u32(&mut expected_sampler_handles, 0x56);
+
+    let mut expected_cb_bindings = Vec::new();
+    // binding[0]
+    push_u32(&mut expected_cb_bindings, 0x90); // buffer
+    push_u32(&mut expected_cb_bindings, 16); // offset_bytes
+    push_u32(&mut expected_cb_bindings, 64); // size_bytes
+    push_u32(&mut expected_cb_bindings, 0); // reserved0
+    // binding[1]
+    push_u32(&mut expected_cb_bindings, 0); // buffer
+    push_u32(&mut expected_cb_bindings, 0); // offset_bytes
+    push_u32(&mut expected_cb_bindings, 0); // size_bytes
+    push_u32(&mut expected_cb_bindings, 0); // reserved0
+
     let stream = build_stream(|out| {
         emit_packet(out, AeroGpuOpcode::Nop as u32, |_| {});
 
@@ -318,6 +334,35 @@ fn protocol_parses_all_opcodes() {
             push_u32(out, 9); // value
         });
 
+        emit_packet(out, AeroGpuOpcode::CreateSampler as u32, |out| {
+            push_u32(out, 0x55); // sampler_handle
+            push_u32(out, 1); // filter
+            push_u32(out, 2); // address_u
+            push_u32(out, 3); // address_v
+            push_u32(out, 4); // address_w
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetSamplers as u32, |out| {
+            push_u32(out, 1); // shader_stage
+            push_u32(out, 3); // start_slot
+            push_u32(out, 2); // sampler_count
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&expected_sampler_handles);
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetConstantBuffers as u32, |out| {
+            push_u32(out, 1); // shader_stage
+            push_u32(out, 0); // start_slot
+            push_u32(out, 2); // buffer_count
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&expected_cb_bindings);
+        });
+
+        emit_packet(out, AeroGpuOpcode::DestroySampler as u32, |out| {
+            push_u32(out, 0x55); // sampler_handle
+            push_u32(out, 0); // reserved0
+        });
+
         emit_packet(out, AeroGpuOpcode::SetRenderState as u32, |out| {
             push_u32(out, 0x10); // state
             push_u32(out, 0x20); // value
@@ -384,7 +429,7 @@ fn protocol_parses_all_opcodes() {
     });
 
     let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
-    assert_eq!(parsed.cmds.len(), 37);
+    assert_eq!(parsed.cmds.len(), 41);
 
     let mut cmds = parsed.cmds.into_iter();
 
@@ -732,6 +777,60 @@ fn protocol_parses_all_opcodes() {
             assert_eq!(slot, 2);
             assert_eq!(state, 7);
             assert_eq!(value, 9);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match cmds.next().unwrap() {
+        AeroGpuCmd::CreateSampler {
+            sampler_handle,
+            filter,
+            address_u,
+            address_v,
+            address_w,
+        } => {
+            assert_eq!(sampler_handle, 0x55);
+            assert_eq!(filter, 1);
+            assert_eq!(address_u, 2);
+            assert_eq!(address_v, 3);
+            assert_eq!(address_w, 4);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match cmds.next().unwrap() {
+        AeroGpuCmd::SetSamplers {
+            shader_stage,
+            start_slot,
+            sampler_count,
+            handles_bytes,
+        } => {
+            assert_eq!(shader_stage, 1);
+            assert_eq!(start_slot, 3);
+            assert_eq!(sampler_count, 2);
+            assert_eq!(handles_bytes, expected_sampler_handles);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match cmds.next().unwrap() {
+        AeroGpuCmd::SetConstantBuffers {
+            shader_stage,
+            start_slot,
+            buffer_count,
+            bindings_bytes,
+        } => {
+            assert_eq!(shader_stage, 1);
+            assert_eq!(start_slot, 0);
+            assert_eq!(buffer_count, 2);
+            assert_eq!(bindings_bytes, expected_cb_bindings);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match cmds.next().unwrap() {
+        AeroGpuCmd::DestroySampler { sampler_handle } => {
+            assert_eq!(sampler_handle, 0x55);
         }
         other => panic!("unexpected cmd: {other:?}"),
     }

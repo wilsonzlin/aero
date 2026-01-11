@@ -950,7 +950,13 @@ impl AerogpuD3d9Executor {
         ctx: SubmissionCtx<'_>,
     ) -> Result<(), AerogpuD3d9Error> {
         match cmd {
-            AeroGpuCmd::Nop | AeroGpuCmd::DebugMarker { .. } | AeroGpuCmd::Unknown { .. } => Ok(()),
+            AeroGpuCmd::Nop
+            | AeroGpuCmd::DebugMarker { .. }
+            | AeroGpuCmd::CreateSampler { .. }
+            | AeroGpuCmd::DestroySampler { .. }
+            | AeroGpuCmd::SetSamplers { .. }
+            | AeroGpuCmd::SetConstantBuffers { .. }
+            | AeroGpuCmd::Unknown { .. } => Ok(()),
             AeroGpuCmd::CreateBuffer {
                 buffer_handle,
                 size_bytes,

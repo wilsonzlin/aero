@@ -348,6 +348,28 @@ pub enum AeroGpuCmd<'a> {
         state: u32,
         value: u32,
     },
+    CreateSampler {
+        sampler_handle: u32,
+        filter: u32,
+        address_u: u32,
+        address_v: u32,
+        address_w: u32,
+    },
+    DestroySampler {
+        sampler_handle: u32,
+    },
+    SetSamplers {
+        shader_stage: u32,
+        start_slot: u32,
+        sampler_count: u32,
+        handles_bytes: &'a [u8],
+    },
+    SetConstantBuffers {
+        shader_stage: u32,
+        start_slot: u32,
+        buffer_count: u32,
+        bindings_bytes: &'a [u8],
+    },
     SetRenderState {
         state: u32,
         value: u32,
@@ -807,6 +829,66 @@ pub fn parse_cmd_stream(
                     slot: u32::from_le(cmd.slot),
                     state: u32::from_le(cmd.state),
                     value: u32::from_le(cmd.value),
+                }
+            }
+            Some(AeroGpuOpcode::CreateSampler) => {
+                let cmd: protocol::AerogpuCmdCreateSampler = read_packed_prefix(packet)?;
+                AeroGpuCmd::CreateSampler {
+                    sampler_handle: u32::from_le(cmd.sampler_handle),
+                    filter: u32::from_le(cmd.filter),
+                    address_u: u32::from_le(cmd.address_u),
+                    address_v: u32::from_le(cmd.address_v),
+                    address_w: u32::from_le(cmd.address_w),
+                }
+            }
+            Some(AeroGpuOpcode::DestroySampler) => {
+                let cmd: protocol::AerogpuCmdDestroySampler = read_packed_prefix(packet)?;
+                AeroGpuCmd::DestroySampler {
+                    sampler_handle: u32::from_le(cmd.sampler_handle),
+                }
+            }
+            Some(AeroGpuOpcode::SetSamplers) => {
+                let cmd: protocol::AerogpuCmdSetSamplers = read_packed_prefix(packet)?;
+                let handles_start = size_of::<protocol::AerogpuCmdSetSamplers>();
+                let sampler_count = u32::from_le(cmd.sampler_count);
+                let count = usize::try_from(sampler_count)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let handles_len = count
+                    .checked_mul(size_of::<u32>())
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let handles_end = handles_start
+                    .checked_add(handles_len)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let handles_bytes = packet
+                    .get(handles_start..handles_end)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                AeroGpuCmd::SetSamplers {
+                    shader_stage: u32::from_le(cmd.shader_stage),
+                    start_slot: u32::from_le(cmd.start_slot),
+                    sampler_count,
+                    handles_bytes,
+                }
+            }
+            Some(AeroGpuOpcode::SetConstantBuffers) => {
+                let cmd: protocol::AerogpuCmdSetConstantBuffers = read_packed_prefix(packet)?;
+                let bindings_start = size_of::<protocol::AerogpuCmdSetConstantBuffers>();
+                let buffer_count = u32::from_le(cmd.buffer_count);
+                let count = usize::try_from(buffer_count)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_len = count
+                    .checked_mul(size_of::<protocol::AerogpuConstantBufferBinding>())
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_end = bindings_start
+                    .checked_add(bindings_len)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_bytes = packet
+                    .get(bindings_start..bindings_end)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                AeroGpuCmd::SetConstantBuffers {
+                    shader_stage: u32::from_le(cmd.shader_stage),
+                    start_slot: u32::from_le(cmd.start_slot),
+                    buffer_count,
+                    bindings_bytes,
                 }
             }
             Some(AeroGpuOpcode::SetRenderState) => {
