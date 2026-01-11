@@ -8,6 +8,7 @@ on:
       - "README*"
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
+      - "scripts/ci/check-aerogpu-share-token-contract.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
       - "scripts/generate-guest-tools-devices-cmd.py"
       - "guest-tools/config/devices.cmd"
@@ -26,6 +27,11 @@ on:
       - "drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h"
       - "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h"
       - "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c"
+      - "drivers/aerogpu/protocol/**"
+      - "drivers/aerogpu/kmd/README.md"
+      - "drivers/aerogpu/tests/win7/README.md"
+      - "drivers/aerogpu/umd/d3d9/README.md"
+      - "drivers/aerogpu/umd/d3d10_11/README.md"
       - ".github/workflows/docs.yml"
   push:
     branches: ["main"]
@@ -35,6 +41,7 @@ on:
       - "README*"
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
+      - "scripts/ci/check-aerogpu-share-token-contract.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
       - "scripts/generate-guest-tools-devices-cmd.py"
       - "guest-tools/config/devices.cmd"
@@ -53,6 +60,11 @@ on:
       - "drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h"
       - "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h"
       - "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c"
+      - "drivers/aerogpu/protocol/**"
+      - "drivers/aerogpu/kmd/README.md"
+      - "drivers/aerogpu/tests/win7/README.md"
+      - "drivers/aerogpu/umd/d3d9/README.md"
+      - "drivers/aerogpu/umd/d3d10_11/README.md"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
@@ -87,6 +99,9 @@ jobs:
 
       - name: Check Windows 7 virtio contract consistency
         run: python3 scripts/ci/check-windows7-virtio-contract-consistency.py
+
+      - name: Check AeroGPU shared surface ShareToken contract
+        run: python3 scripts/ci/check-aerogpu-share-token-contract.py
 
       - name: Check Guest Tools devices.cmd is generated from contract
         run: python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
