@@ -168,8 +168,18 @@ jobs:
             lines.push(`Iterations: median-of-${summary.candidateMeta?.iterations ?? "?"}`);
 
             if (summary.status === "unstable") {
+              const unstableCount = summary.summary?.unstable ?? 0;
+              const missingCount = summary.summary?.missing ?? 0;
+              const reasons = [];
+              if (unstableCount > 0) reasons.push("extreme variance");
+              if (missingCount > 0) reasons.push("missing metrics");
+
               lines.push("");
-              lines.push("Result: **Unstable** (extreme variance detected; see artifacts for raw samples)");
+              lines.push(
+                `Result: **Unstable**${
+                  reasons.length ? ` (${reasons.join(" / ")}; see artifacts for details)` : " (see artifacts for details)"
+                }`,
+              );
             } else if (summary.status === "regression") {
               lines.push("");
               lines.push("Result: **Regression**");
