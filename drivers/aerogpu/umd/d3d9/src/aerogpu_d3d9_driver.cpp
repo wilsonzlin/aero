@@ -104,6 +104,7 @@ constexpr int32_t kMinGpuThreadPriority = -7;
 constexpr int32_t kMaxGpuThreadPriority = 7;
 
 // D3DERR_INVALIDCALL (0x8876086C) is returned by the UMD for invalid arguments.
+constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 
 // S_PRESENT_OCCLUDED (0x08760868) is returned by CheckDeviceState/PresentEx when
 // the target window is occluded/minimized. Prefer the SDK macro when available
@@ -2310,16 +2311,6 @@ HRESULT AEROGPU_D3D9_CALL adapter_query_adapter_info(
   data = pQueryAdapterInfo->pData;
   size = pQueryAdapterInfo->DataSize;
 #endif
-
-  // Best-effort: if the runtime asks for an 8-byte payload, treat it as a LUID
-  // (common for adapter identity queries).
-  if (data && size == sizeof(LUID)) {
-    aerogpu::logf("aerogpu-d3d9: QueryAdapterInfo type=%u size=%u (LUID)\n",
-                  static_cast<unsigned>(pQueryAdapterInfo->Type),
-                  static_cast<unsigned>(size));
-    *reinterpret_cast<LUID*>(data) = adapter->luid;
-    return trace.ret(S_OK);
-  }
 
   AEROGPU_D3D9DDIARG_QUERYADAPTERINFO args{};
   args.type = static_cast<uint32_t>(pQueryAdapterInfo->Type);
