@@ -2397,6 +2397,51 @@ HRESULT AEROGPU_D3D9_CALL device_flush(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   return flush_locked(dev);
 }
 
+HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice, uint32_t /*swap_chain_index*/) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+#if defined(_WIN32)
+  ::Sleep(16);
+#else
+  std::this_thread::sleep_for(std::chrono::milliseconds(16));
+#endif
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE hDevice, int32_t priority) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  const int32_t clamped = std::max<int32_t>(-7, std::min<int32_t>(7, priority));
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->gpu_thread_priority = clamped;
+  }
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE hDevice, int32_t* pPriority) {
+  if (!hDevice.pDrvPrivate || !pPriority) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  *pPriority = dev->gpu_thread_priority;
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_check_resource_residency(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDI_HRESOURCE* /*pResources*/,
+    uint32_t /*count*/) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_create_query(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDIARG_CREATEQUERY* pCreateQuery) {
@@ -2652,6 +2697,10 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnReset = device_reset;
   pDeviceFuncs->pfnResetEx = device_reset_ex;
   pDeviceFuncs->pfnCheckDeviceState = device_check_device_state;
+  pDeviceFuncs->pfnWaitForVBlank = device_wait_for_vblank;
+  pDeviceFuncs->pfnSetGPUThreadPriority = device_set_gpu_thread_priority;
+  pDeviceFuncs->pfnGetGPUThreadPriority = device_get_gpu_thread_priority;
+  pDeviceFuncs->pfnCheckResourceResidency = device_check_resource_residency;
   pDeviceFuncs->pfnRotateResourceIdentities = device_rotate_resource_identities;
   pDeviceFuncs->pfnPresent = device_present;
   pDeviceFuncs->pfnPresentEx = device_present_ex;

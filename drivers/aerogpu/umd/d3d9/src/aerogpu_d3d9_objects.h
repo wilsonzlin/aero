@@ -221,6 +221,8 @@ struct Device {
   std::vector<SwapChain*> swapchains;
   SwapChain* current_swapchain = nullptr;
 
+  int32_t gpu_thread_priority = 0;
+
   // Cached pipeline state.
   Resource* render_targets[4] = {nullptr, nullptr, nullptr, nullptr};
   Resource* depth_stencil = nullptr;
