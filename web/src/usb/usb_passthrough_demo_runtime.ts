@@ -202,9 +202,14 @@ export class UsbPassthroughDemoRuntime {
 
   tick(): void {
     const rawActions = this.#demo.drain_actions();
-    if (!Array.isArray(rawActions)) return;
+    if (rawActions === null || rawActions === undefined) return;
+    if (!Array.isArray(rawActions)) {
+      throw new Error("UsbPassthroughDemo emitted an invalid actions payload (expected array).");
+    }
     for (const raw of rawActions) {
-      if (!raw || typeof raw !== "object") continue;
+      if (!isRecord(raw)) {
+        throw new Error("UsbPassthroughDemo emitted an invalid USB action (expected object).");
+      }
       const action = raw as WasmUsbHostAction;
       const kind = (action as { kind?: unknown }).kind;
       const id = (action as { id?: unknown }).id;
@@ -233,7 +238,9 @@ export class UsbPassthroughDemoRuntime {
       const raw = this.#demo.poll_last_result();
       if (raw === null || raw === undefined) return;
       const result = parseDemoResult(raw);
-      if (!result) return;
+      if (!result) {
+        throw new Error("UsbPassthroughDemo emitted an invalid result payload.");
+      }
       this.#postMessage({ type: "usb.demoResult", result });
     }
   }

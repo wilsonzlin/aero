@@ -278,4 +278,49 @@ describe("UsbPassthroughDemoRuntime", () => {
 
     expect(() => runtime.tick()).toThrow(/invalid usb action id/i);
   });
+
+  it("treats null drain_actions as no actions (compat with Option-returning wasm bindings)", () => {
+    class NullActionsDemo extends FakeDemo {
+      override drain_actions(): unknown {
+        return null;
+      }
+    }
+
+    const demo = new NullActionsDemo();
+    const posted: unknown[] = [];
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: (msg) => posted.push(msg),
+    });
+
+    expect(() => runtime.tick()).not.toThrow();
+    expect(posted).toEqual([]);
+  });
+
+  it("throws when drain_actions returns a non-array value", () => {
+    class NonArrayActionsDemo extends FakeDemo {
+      override drain_actions(): unknown {
+        return { kind: "controlIn" };
+      }
+    }
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo: new NonArrayActionsDemo(),
+      postMessage: () => undefined,
+    });
+
+    expect(() => runtime.tick()).toThrow(/invalid actions payload/i);
+  });
+
+  it("throws when the demo emits an invalid result payload", () => {
+    const demo = new FakeDemo();
+    demo.nextResult = { status: "success", data: ["oops"] };
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: () => undefined,
+    });
+
+    expect(() => runtime.pollResults()).toThrow(/invalid result payload/i);
+  });
 });
