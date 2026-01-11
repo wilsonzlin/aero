@@ -175,28 +175,27 @@ fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static st
     })));
 }
 
-fn error_wire(state: &AppState, code: u16, message: &str) -> Option<Vec<u8>> {
-    let payload =
-        protocol::encode_error_payload(code, message, state.l2_limits.max_control_payload);
+fn error_wire(l2_limits: &aero_l2_protocol::Limits, code: u16, message: &str) -> Option<Vec<u8>> {
+    let payload = protocol::encode_error_payload(code, message, l2_limits.max_control_payload);
     aero_l2_protocol::encode_with_limits(
         aero_l2_protocol::L2_TUNNEL_TYPE_ERROR,
         0,
         &payload,
-        &state.l2_limits,
+        l2_limits,
     )
     .ok()
 }
 
 async fn close_with_error(
     ws_out_tx: &mpsc::Sender<Message>,
-    state: &AppState,
+    l2_limits: &aero_l2_protocol::Limits,
     code: u16,
     message: &str,
 ) {
     // Sending on `ws_out_tx` can block if the writer task is backpressured and the bounded channel
     // is full. Close paths should not hang indefinitely, so apply a short timeout.
     let send_timeout = Duration::from_millis(100);
-    if let Some(wire) = error_wire(state, code, message) {
+    if let Some(wire) = error_wire(l2_limits, code, message) {
         let _ = timeout(send_timeout, ws_out_tx.send(Message::Binary(wire))).await;
     }
 
@@ -385,7 +384,13 @@ async fn run_session_inner(
 
                 if let Some(exceeded) = quotas.on_inbound_message(&msg) {
                     close_handshake = true;
-                    close_with_error(&ws_out_tx, &state, exceeded.code(), exceeded.reason()).await;
+                    close_with_error(
+                        &ws_out_tx,
+                        &state.l2_limits,
+                        exceeded.code(),
+                        exceeded.reason(),
+                    )
+                    .await;
                     break;
                 }
 
@@ -445,7 +450,7 @@ async fn run_session_inner(
                                                 close_handshake = true;
                                                 close_with_error(
                                                     &ws_out_tx,
-                                                    &state,
+                                                    &state.l2_limits,
                                                     exceeded.code(),
                                                     exceeded.reason(),
                                                 )
@@ -486,7 +491,7 @@ async fn run_session_inner(
                                 close_handshake = true;
                                 close_with_error(
                                     &ws_out_tx,
-                                    &state,
+                                    &state.l2_limits,
                                     protocol::ERROR_CODE_PROTOCOL_ERROR,
                                     &msg,
                                 )
@@ -500,8 +505,13 @@ async fn run_session_inner(
                             send_ws_message(&ws_out_tx, Message::Pong(payload), &mut quotas).await
                         {
                             close_handshake = true;
-                            close_with_error(&ws_out_tx, &state, exceeded.code(), exceeded.reason())
-                                .await;
+                            close_with_error(
+                                &ws_out_tx,
+                                &state.l2_limits,
+                                exceeded.code(),
+                                exceeded.reason(),
+                            )
+                            .await;
                             break;
                         }
                     }
@@ -537,8 +547,13 @@ async fn run_session_inner(
                             send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
                         {
                             close_handshake = true;
-                            close_with_error(&ws_out_tx, &state, exceeded.code(), exceeded.reason())
-                                .await;
+                            close_with_error(
+                                &ws_out_tx,
+                                &state.l2_limits,
+                                exceeded.code(),
+                                exceeded.reason(),
+                            )
+                            .await;
                             break;
                         }
                         ping_outstanding = Some((ping_id, tokio::time::Instant::now()));
@@ -718,7 +733,13 @@ async fn process_actions(
                 if let Err(exceeded) =
                     send_ws_message(ws_out_tx, Message::Binary(wire), quotas).await
                 {
-                    close_with_error(ws_out_tx, state, exceeded.code(), exceeded.reason()).await;
+                    close_with_error(
+                        ws_out_tx,
+                        &state.l2_limits,
+                        exceeded.code(),
+                        exceeded.reason(),
+                    )
+                    .await;
                     return Ok(SessionControl::Close);
                 }
                 state.metrics.frame_tx(frame.len());
@@ -1093,4 +1114,37 @@ async fn resolve_host_port(host: &str, port: u16) -> std::io::Result<SocketAddr>
     addrs
         .next()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses found"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn close_with_error_does_not_hang_when_ws_channel_full() {
+        let l2_limits = aero_l2_protocol::Limits {
+            max_frame_payload: 1024,
+            max_control_payload: 1024,
+        };
+
+        let (ws_out_tx, _ws_out_rx) = mpsc::channel::<Message>(1);
+        // Fill the channel so `ws_out_tx.send(...)` would block without the timeout in
+        // `close_with_error`.
+        ws_out_tx
+            .send(Message::Text("block".to_string()))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            close_with_error(
+                &ws_out_tx,
+                &l2_limits,
+                protocol::ERROR_CODE_PROTOCOL_ERROR,
+                "test error",
+            ),
+        )
+        .await
+        .expect("close_with_error should not hang when the outbound channel is backpressured");
+    }
 }
