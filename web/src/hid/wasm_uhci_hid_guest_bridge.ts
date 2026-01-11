@@ -38,6 +38,14 @@ function normalizePreferredPort(path: GuestUsbPath | undefined, guestPort: Guest
   return preferredPort === undefined ? undefined : (preferredPort >>> 0);
 }
 
+function normalizeExternalHubGuestPath(path: GuestUsbPath | undefined, guestPort: GuestUsbPort | undefined): GuestUsbPath | null {
+  if (path && path.length >= 2) return path;
+
+  const rootPort = path?.[0] ?? guestPort;
+  if (rootPort !== 0 && rootPort !== 1) return null;
+  return [0, rootPort + 1];
+}
+
 export class WasmUhciHidGuestBridge implements HidGuestBridge {
   readonly #uhci: UhciRuntimeHidApi;
   readonly #host: HidHostSink;
@@ -52,17 +60,28 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
     this.detach({ type: "hid.detach", deviceId: msg.deviceId });
 
     const preferredPort = normalizePreferredPort(msg.guestPath, msg.guestPort);
-    const guestPath = msg.guestPath;
     try {
-      if (guestPath && guestPath.length >= 2 && typeof this.#uhci.webhid_attach_at_path === "function") {
-        this.#uhci.webhid_attach_at_path(
-          msg.deviceId >>> 0,
-          msg.vendorId >>> 0,
-          msg.productId >>> 0,
-          msg.productName,
-          msg.collections,
-          guestPath,
-        );
+      if (typeof this.#uhci.webhid_attach_at_path === "function") {
+        const normalizedPath = normalizeExternalHubGuestPath(msg.guestPath, msg.guestPort);
+        if (normalizedPath) {
+          this.#uhci.webhid_attach_at_path(
+            msg.deviceId >>> 0,
+            msg.vendorId >>> 0,
+            msg.productId >>> 0,
+            msg.productName,
+            msg.collections,
+            normalizedPath,
+          );
+        } else {
+          this.#uhci.webhid_attach(
+            msg.deviceId >>> 0,
+            msg.vendorId >>> 0,
+            msg.productId >>> 0,
+            msg.productName,
+            msg.collections,
+            preferredPort,
+          );
+        }
       } else {
         this.#uhci.webhid_attach(
           msg.deviceId >>> 0,
@@ -126,4 +145,3 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
     }
   }
 }
-
