@@ -18,14 +18,14 @@ Everything else in this doc is secondary to this.
 
 ## Quick Setup
 
-Run this once to configure your environment:
+Run this once per checkout (sanity checks and prints activation instructions):
 
 ```bash
 # From repo root
 ./scripts/agent-env-setup.sh
 ```
 
-Or source the environment directly:
+Then activate the recommended environment in your current shell:
 
 ```bash
 source ./scripts/agent-env.sh
@@ -70,32 +70,18 @@ export RUSTFLAGS="-C codegen-units=4"  # Reduce per-crate parallelism
 
 These balance speed with reasonable memory usage. They're defaults, not hard constraints—override if you know what you're doing.
 
-### `.cargo/config.toml`
+### Cargo config (`.cargo/config.toml`)
 
-```toml
-[build]
-# 4 parallel rustc processes is a good balance
-# Each can use 1-4 GB, so peak ~16 GB which fits in our 12 GB limit 
-# (with codegen-units=4, actual peak is lower)
-jobs = 4
+This repo tracks `.cargo/config.toml` for the `cargo xtask` alias, and it is kept intentionally minimal so CI isn't affected by agent-only settings.
 
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "codegen-units=4"]
-
-[profile.dev]
-incremental = true
-debug = 1  # Reduced debug info = faster links, less disk
-
-[profile.dev.package."*"]
-opt-level = 0
-debug = false  # No debug info for deps
-```
+Recommended memory-friendly Cargo settings live in environment variables (next section), not in the repo-tracked Cargo config.
 
 ### Environment (source `scripts/agent-env.sh`)
 
 ```bash
 # Rust
 export CARGO_BUILD_JOBS=4
+export RUSTFLAGS="-C codegen-units=4"
 export CARGO_INCREMENTAL=1
 
 # Node (if running JS/TS tooling)
@@ -192,7 +178,7 @@ The `scripts/` directory contains:
 | Script               | Purpose                                           |
 | -------------------- | ------------------------------------------------- |
 | `agent-env.sh`       | Source this to set recommended env vars           |
-| `agent-env-setup.sh` | One-time setup (creates .cargo/config.toml, etc.) |
+| `agent-env-setup.sh` | One-time sanity checks (does not overwrite repo Cargo config) |
 | `mem-limit.sh`       | Run a command with a memory limit                 |
 | `with-timeout.sh`    | Run a command with a timeout                      |
 
@@ -271,4 +257,3 @@ Functional tests pass; performance is not representative.
 3. **Timeouts for long commands** — catch runaway processes
 4. **Everything else is fine** — let the scheduler do its job
 5. **GPU-less is fine** — WebGPU tests skip gracefully, WebGL2 works via software
-

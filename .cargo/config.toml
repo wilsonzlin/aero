@@ -1,3 +1,8 @@
+# Repo-tracked Cargo config.
+#
+# Keep this file minimal to avoid impacting CI. Agent-only build/memory limits are
+# applied via environment variables in `scripts/agent-env.sh`.
+
 [alias]
 # `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
 xtask = "run -p xtask --"

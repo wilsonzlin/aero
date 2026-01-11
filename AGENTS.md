@@ -13,6 +13,7 @@
 **The one rule:** Use `./scripts/mem-limit.sh 12G <command>` for memory-hungry operations (mainly `cargo build --release`).
 
 ```bash
+./scripts/agent-env-setup.sh                            # One-time sanity checks (safe to re-run)
 source ./scripts/agent-env.sh                           # Set recommended env vars
 ./scripts/mem-limit.sh 12G cargo build --release        # Memory-limited build
 ```
