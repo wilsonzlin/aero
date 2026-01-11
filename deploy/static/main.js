@@ -79,3 +79,32 @@ try {
   el.textContent = "failed";
   el.className = "bad";
 }
+
+try {
+  const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = new URL("/l2", `${wsProto}//${location.host}`);
+  const wsEl = document.querySelector("#ws-l2");
+  const ws = new WebSocket(wsUrl.toString(), "aero-l2-tunnel-v1");
+  const timeout = setTimeout(() => {
+    wsEl.textContent = "timeout";
+    wsEl.className = "bad";
+    ws.close();
+  }, 5000);
+
+  ws.onopen = () => {
+    clearTimeout(timeout);
+    wsEl.textContent = "ok";
+    wsEl.className = "ok";
+    ws.close();
+  };
+
+  ws.onerror = () => {
+    clearTimeout(timeout);
+    wsEl.textContent = "failed";
+    wsEl.className = "bad";
+  };
+} catch (err) {
+  const el = document.querySelector("#ws-l2");
+  el.textContent = "failed";
+  el.className = "bad";
+}
