@@ -139,6 +139,19 @@ export interface WasmApi {
     };
 
     /**
+     * Guest-visible UHCI controller bridge (PCI IO BAR + 1ms frame stepping).
+     *
+     * Optional until all deployed WASM builds include it.
+     */
+    UhciControllerBridge?: new (guestBase: number) => {
+        io_read(offset: number, size: number): number;
+        io_write(offset: number, size: number, value: number): void;
+        tick_1ms(): void;
+        irq_asserted(): boolean;
+        free(): void;
+    };
+
+    /**
      * Synthesize a HID report descriptor from WebHID-normalized collections metadata.
      *
      * Optional while older wasm builds are still in circulation.
@@ -394,6 +407,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UsbHidPassthroughBridge: mod.UsbHidPassthroughBridge,
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
+        UhciControllerBridge: mod.UhciControllerBridge,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,

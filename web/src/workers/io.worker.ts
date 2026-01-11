@@ -30,6 +30,7 @@ import {
 import { DeviceManager, type IrqSink } from "../io/device_manager";
 import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
+import { UhciPciDevice } from "../io/devices/uhci";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import { WebSocketL2TunnelClient } from "../net/l2Tunnel";
@@ -85,6 +86,7 @@ type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayB
 let role: "cpu" | "gpu" | "io" | "jit" = "io";
 let status!: Int32Array;
 let guestU8!: Uint8Array;
+let guestBase = 0;
 
 let commandRing!: RingBuffer;
 let eventRing: RingBuffer | null = null;
@@ -115,9 +117,31 @@ let mmioWriteCount = 0;
 
 type UsbHidBridge = InstanceType<WasmApi["UsbHidBridge"]>;
 let usbHid: UsbHidBridge | null = null;
+let wasmApi: WasmApi | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
+let uhciDevice: UhciPciDevice | null = null;
+
+function maybeInitUhciDevice(): void {
+  if (uhciDevice) return;
+  const api = wasmApi;
+  const mgr = deviceManager;
+  if (!api || !mgr) return;
+  const Bridge = api.UhciControllerBridge;
+  if (!Bridge) return;
+  if (!guestBase) return;
+
+  try {
+    const bridge = new Bridge(guestBase >>> 0);
+    const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
+    uhciDevice = dev;
+    mgr.registerPciDevice(dev);
+    mgr.addTickable(dev);
+  } catch (err) {
+    console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
+  }
+}
 
 let hidInputRing: HidReportRing | null = null;
 let hidOutputRing: HidReportRing | null = null;
@@ -826,7 +850,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           module: init.wasmModule,
           memory: init.guestMemory,
         });
+        wasmApi = api;
         usbHid = new api.UsbHidBridge();
+        maybeInitUhciDevice();
 
         try {
           const wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink);
@@ -903,6 +929,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       const views = createSharedMemoryViews(segments);
       status = views.status;
       guestU8 = views.guestU8;
+      guestBase = views.guestLayout.guest_base >>> 0;
       const regions = ringRegionsForWorker(role);
       commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
@@ -961,6 +988,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       mgr.registerPortIo(0x0064, 0x0064, i8042);
 
       mgr.registerPciDevice(new PciTestDevice());
+      maybeInitUhciDevice();
 
       const uart = new Uart16550(UART_COM1, serialSink);
       mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
@@ -1605,6 +1633,8 @@ function shutdown(): void {
       usbPassthroughRuntime = null;
       usbUhciHarnessRuntime?.destroy();
       usbUhciHarnessRuntime = null;
+      uhciDevice?.destroy();
+      uhciDevice = null;
       deviceManager = null;
       i8042 = null;
       pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
