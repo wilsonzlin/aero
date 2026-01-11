@@ -144,6 +144,13 @@ Compatibility note (transitional virtio PCI Device IDs):
 `AERO-W7-VIRTIO` v1 is modern-only (emulator-visible PCI IDs + `REV_01`). The older virtio-pci **transitional** PCI
 Device ID space exists for ecosystem compatibility, but is intentionally out of scope for the contract.
 
+For a virtio device type `virtio_device_type` (as recorded in `windows-device-contract.json`), the corresponding
+transitional virtio-pci Device ID is:
+
+```text
+pci_device_id_transitional = 0x1000 + (virtio_device_type - 1)
+```
+
 For reference, this repository records the corresponding transitional IDs as `pci_device_id_transitional` in
 `docs/windows-device-contract{,-virtio-win}.json`:
 
