@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 
 #if !defined(_KERNEL_MODE)
 #error virtio-snd is a kernel-mode driver
@@ -140,4 +140,3 @@ _Use_decl_annotations_ NTSTATUS VirtIoSndBackendLegacy_Create(PAEROVIOSND_DEVICE
     VIRTIOSND_TRACE("backend(legacy-virtio): created\n");
     return STATUS_SUCCESS;
 }
-

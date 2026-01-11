@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 
 #if !defined(_KERNEL_MODE)
 #error virtio-snd is a kernel-mode driver
