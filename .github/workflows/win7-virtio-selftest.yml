@@ -1,0 +1,139 @@
+name: Win7 virtio selftest (guest tool)
+
+on:
+  pull_request:
+    paths:
+      - "drivers/windows7/tests/guest-selftest/**"
+      - "drivers/windows7/tests/host-harness/**"
+      - ".github/workflows/win7-virtio-selftest.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "drivers/windows7/tests/guest-selftest/**"
+      - "drivers/windows7/tests/host-harness/**"
+      - ".github/workflows/win7-virtio-selftest.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86
+            cmake_arch: Win32
+            out_exe: aero-virtio-selftest-x86.exe
+          - arch: x64
+            cmake_arch: x64
+            out_exe: aero-virtio-selftest-x64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure + build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $srcDir = Join-Path $env:GITHUB_WORKSPACE 'drivers/windows7/tests/guest-selftest'
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE "build-guest-selftest-${{ matrix.arch }}"
+          $outDir = Join-Path $env:GITHUB_WORKSPACE "out-guest-selftest-${{ matrix.arch }}"
+
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          $configureLog = Join-Path $outDir 'cmake-configure.log'
+          $buildLog = Join-Path $outDir 'cmake-build.log'
+
+          cmake -S $srcDir -B $buildDir -G "Visual Studio 17 2022" -A "${{ matrix.cmake_arch }}" 2>&1 | Tee-Object -FilePath $configureLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "CMake configure failed with exit code $LASTEXITCODE"
+          }
+
+          cmake --build $buildDir --config Release 2>&1 | Tee-Object -FilePath $buildLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "CMake build failed with exit code $LASTEXITCODE"
+          }
+
+          $exePath = Join-Path $buildDir 'Release/aero-virtio-selftest.exe'
+          if (!(Test-Path -LiteralPath $exePath)) {
+            throw "Expected built binary to exist at $exePath"
+          }
+
+          function Assert-Win7CompatibleExe([string]$Path) {
+            $bytes = [System.IO.File]::ReadAllBytes($Path)
+            if ($bytes.Length -lt 256) {
+              throw "File is too small to be a valid PE executable: $Path"
+            }
+
+            # DOS header ("MZ") and PE signature ("PE\0\0")
+            if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+              throw "Expected MZ header for PE executable: $Path"
+            }
+
+            $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3C)
+            if ($peOffset -lt 0 -or $peOffset + 4 -gt $bytes.Length) {
+              throw "Invalid PE header offset in executable: $Path"
+            }
+
+            if ([System.BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550) {
+              throw "Missing PE signature in executable: $Path"
+            }
+
+            # IMAGE_OPTIONAL_HEADER(32/64) starts after signature (4) + COFF header (20).
+            $optionalOffset = $peOffset + 4 + 20
+            if ($optionalOffset + 52 -gt $bytes.Length) {
+              throw "Truncated optional header in executable: $Path"
+            }
+
+            $magic = [System.BitConverter]::ToUInt16($bytes, $optionalOffset)
+            if ($magic -ne 0x10B -and $magic -ne 0x20B) {
+              throw ("Unexpected PE optional header magic 0x{0:X} in executable: {1}" -f $magic, $Path)
+            }
+
+            $majorOs = [System.BitConverter]::ToUInt16($bytes, $optionalOffset + 40)
+            $minorOs = [System.BitConverter]::ToUInt16($bytes, $optionalOffset + 42)
+            $majorSub = [System.BitConverter]::ToUInt16($bytes, $optionalOffset + 48)
+            $minorSub = [System.BitConverter]::ToUInt16($bytes, $optionalOffset + 50)
+
+            $osTooNew = ($majorOs -gt 6) -or ($majorOs -eq 6 -and $minorOs -gt 1)
+            if ($osTooNew) {
+              throw "Executable targets OS version $majorOs.$minorOs, which is newer than Windows 7 (6.1): $Path"
+            }
+
+            $subTooNew = ($majorSub -gt 6) -or ($majorSub -eq 6 -and $minorSub -gt 1)
+            if ($subTooNew) {
+              throw "Executable targets subsystem version $majorSub.$minorSub, which is newer than Windows 7 (6.1): $Path"
+            }
+
+            # Ensure we didn't accidentally drop the static runtime configuration. A clean Windows 7 SP1
+            # image does not have the Universal CRT by default.
+            $ascii = [System.Text.Encoding]::ASCII.GetString($bytes).ToLowerInvariant()
+            $forbiddenSubstrings = @(
+              'api-ms-win-crt-',
+              'ucrtbase.dll',
+              'vcruntime140.dll',
+              'vcruntime140_1.dll',
+              'msvcp140.dll'
+            )
+            foreach ($needle in $forbiddenSubstrings) {
+              if ($ascii.Contains($needle)) {
+                throw "Executable appears to depend on '$needle' (likely dynamic MSVC/UCRT). Expected a standalone Win7-compatible binary: $Path"
+              }
+            }
+          }
+
+          Assert-Win7CompatibleExe $exePath
+
+          Copy-Item -LiteralPath $exePath -Destination (Join-Path $outDir "${{ matrix.out_exe }}") -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: win7-virtio-selftest-${{ matrix.arch }}
+          if-no-files-found: error
+          path: out-guest-selftest-${{ matrix.arch }}/
+

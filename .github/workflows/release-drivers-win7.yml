@@ -68,6 +68,34 @@ jobs:
           }
           Copy-Item -LiteralPath 'out/certs/aero-test.cer' -Destination 'out/artifacts/aero-driver-public.cer' -Force
 
+      - name: Build Win7 virtio selftest (guest tool)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $srcDir = Join-Path $env:GITHUB_WORKSPACE 'drivers/windows7/tests/guest-selftest'
+          if (!(Test-Path -LiteralPath $srcDir)) {
+            throw "Expected guest selftest source directory to exist at $srcDir"
+          }
+
+          if (!(Test-Path -LiteralPath 'out/artifacts')) {
+            throw "Expected out/artifacts directory to exist (created by packaging step)"
+          }
+
+          cmake -S $srcDir -B build-guest-selftest-x64 -G "Visual Studio 17 2022" -A x64
+          cmake --build build-guest-selftest-x64 --config Release
+          if (!(Test-Path -LiteralPath 'build-guest-selftest-x64/Release/aero-virtio-selftest.exe')) {
+            throw "Expected x64 selftest binary to exist at build-guest-selftest-x64/Release/aero-virtio-selftest.exe"
+          }
+          Copy-Item -LiteralPath 'build-guest-selftest-x64/Release/aero-virtio-selftest.exe' -Destination 'out/artifacts/aero-virtio-selftest-x64.exe' -Force
+
+          cmake -S $srcDir -B build-guest-selftest-x86 -G "Visual Studio 17 2022" -A Win32
+          cmake --build build-guest-selftest-x86 --config Release
+          if (!(Test-Path -LiteralPath 'build-guest-selftest-x86/Release/aero-virtio-selftest.exe')) {
+            throw "Expected x86 selftest binary to exist at build-guest-selftest-x86/Release/aero-virtio-selftest.exe"
+          }
+          Copy-Item -LiteralPath 'build-guest-selftest-x86/Release/aero-virtio-selftest.exe' -Destination 'out/artifacts/aero-virtio-selftest-x86.exe' -Force
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -94,4 +122,5 @@ jobs:
             artifacts/*.iso
             artifacts/*.cer
             artifacts/*.vhd
+            artifacts/*.exe
           generate_release_notes: true
