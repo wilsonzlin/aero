@@ -307,19 +307,19 @@ This model is intentionally simple: it is enough for DWM frame pacing without re
 
 ## Suggested implementation layout
 
-The concrete file paths will depend on the current codebase layout, but a typical split looks like:
+The supported, in-tree AeroGPU Windows 7 driver stack lives under `drivers/aerogpu/`:
 
-- Guest Windows UMD:
-  - `drivers/aerogpu/umd/d3d9/` (D3D9 + D3D9Ex; or split Ex-specific code into a submodule)
-- Guest Windows KMD:
-  - `drivers/aerogpu/kmd/` (WDDM kernel-mode display driver)
-- Guest tests:
-  - `drivers/aerogpu/tests/win7/d3d9ex_dwm_probe/` (D3D9Ex + DWM compatibility smoke test)
+- Guest Windows UMD (D3D9 + D3D9Ex): `drivers/aerogpu/umd/d3d9/` (or split Ex-specific code into a submodule)
+- Guest Windows KMD (WDDM miniport): `drivers/aerogpu/kmd/` (WDDM kernel-mode display driver)
+- Guest tests / probes (D3D9Ex + DWM): `drivers/aerogpu/tests/win7/` (see `d3d9ex_dwm_probe/` for a smoke test)
+- Guest↔host protocol headers (canonical ABI): `drivers/aerogpu/protocol/`
+
 - Host protocol + command processor:
-  - `crates/aero-gpu/src/protocol.rs` (opcode + payload definitions; event types)
-  - `crates/aero-gpu/src/command_processor.rs` (implement `PRESENT_EX`, shared surface import/export, fence signaling)
+  - `crates/aero-gpu/src/protocol*.rs` (opcode + payload definitions; event types)
+  - `crates/aero-gpu/src/command_processor*.rs` (implement `PRESENT_EX`, shared surface import/export, fence signaling)
 
-Keeping the protocol definitions in one crate and having both guest and host generate/consume the same structs helps avoid silent ABI drift.
+Note: `guest/windows/*` contains an older prototype driver stack with different PCI IDs and a different ABI.
+It is kept for reference only and is not the canonical AeroGPU driver source tree.
 
 ---
 
