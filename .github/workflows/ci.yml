@@ -106,7 +106,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
 
       - name: Check pinned Rust toolchains
         run: node scripts/ci/check-toolchains.mjs
@@ -123,7 +123,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
 
       - name: Read pinned nightly toolchain
         id: toolchains
