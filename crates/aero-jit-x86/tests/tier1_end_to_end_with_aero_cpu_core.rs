@@ -4,8 +4,9 @@ use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, St
 use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
-use aero_jit_x86::backend::{compile_and_install_with_options, CompileQueue, Tier1Cpu, WasmBackend};
+use aero_jit_x86::backend::{Tier1Cpu, WasmBackend};
 use aero_jit_x86::tier1::ir::interp as tier1_interp;
+use aero_jit_x86::tier1::pipeline::{Tier1CompileQueue, Tier1Compiler};
 use aero_jit_x86::tier1::wasm::Tier1WasmOptions;
 use aero_jit_x86::tier1::{discover_block, translate_block, BlockLimits};
 use aero_jit_x86::Tier1Bus;
@@ -87,7 +88,7 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
         bus: backend.clone(),
     };
 
-    let queue = CompileQueue::default();
+    let queue = Tier1CompileQueue::new();
     let config = JitConfig {
         enabled: true,
         hot_threshold: 3,
@@ -116,20 +117,15 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
         }
     }
 
-    assert_eq!(queue.snapshot(), vec![entry]);
     let requested = queue.drain();
+    assert_eq!(requested, vec![entry]);
 
+    let mut compiler = Tier1Compiler::new(backend.clone(), backend.clone())
+        .with_wasm_options(Tier1WasmOptions { inline_tlb: true });
     for rip in requested {
-        let handle = {
-            let jit = dispatcher.jit_mut();
-            compile_and_install_with_options(
-                &mut backend,
-                jit,
-                rip,
-                Tier1WasmOptions { inline_tlb: true },
-            )
-        };
-        dispatcher.jit_mut().install_handle(handle);
+        compiler
+            .compile_and_install(dispatcher.jit_mut(), rip)
+            .unwrap();
     }
 
     // Prove we actually executed the compiled block by seeding RAX to a different value and

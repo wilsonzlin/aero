@@ -1,25 +1,26 @@
+//! Tier-1 compilation pipeline glue for [`aero_cpu_core::jit::runtime::JitRuntime`].
+//!
+//! This module defines the "canonical" Tier-1 plumbing used by embedders:
+//! - [`Tier1CompileQueue`]: a de-duplicating [`CompileRequestSink`] implementation that can be
+//!   drained by a driver/worker thread.
+//! - [`Tier1Compiler`]: compiles a single x86 basic block into WASM, registers it into a
+//!   [`Tier1WasmRegistry`], and returns a [`CompiledBlockHandle`] suitable for
+//!   [`JitRuntime::install_handle`].
+//!
+//! `Tier1Compiler` snapshots page-version metadata via [`JitRuntime::snapshot_meta`] *before* it
+//! reads guest code bytes, and then shrinks the snapshot to the actual discovered block length.
+
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta};
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime};
-use aero_x86::tier1::{decode_one, InstKind};
-use thiserror::Error;
+use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
+use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime, PAGE_SHIFT};
 
-use crate::tier1::wasm::{Tier1WasmCodegen, Tier1WasmOptions};
-use crate::tier1::{translate_block, BasicBlock, BlockEndKind, BlockLimits};
-use crate::tier1_ir::{IrInst, IrTerminator};
+use crate::compiler::tier1::compile_tier1_block_with_options;
+use crate::tier1::wasm::Tier1WasmOptions;
+use crate::tier1::BlockLimits;
 
-/// Source of guest code bytes for the Tier-1 compiler.
-pub trait CodeProvider {
-    fn fetch(&self, rip: u64, max: usize) -> Vec<u8>;
-}
-
-impl<T: crate::Tier1Bus> CodeProvider for T {
-    fn fetch(&self, rip: u64, max: usize) -> Vec<u8> {
-        crate::Tier1Bus::fetch(self, rip, max)
-    }
-}
+pub use crate::compiler::tier1::Tier1CompileError;
 
 /// Queue-based Tier-1 compilation sink.
 ///
@@ -91,18 +92,11 @@ pub trait Tier1WasmRegistry {
     fn register_tier1_block(&mut self, wasm: Vec<u8>, exit_to_interpreter: bool) -> u32;
 }
 
-#[derive(Debug, Error)]
-pub enum Tier1CompileError {
-    #[error("Tier-1 IR contains unsupported helper call: {helper}")]
-    UnsupportedHelper { helper: String },
-}
-
 /// Tier-1 compilation pipeline for a single basic block.
 pub struct Tier1Compiler<P, R> {
     provider: P,
     registry: R,
     limits: BlockLimits,
-    codegen: Tier1WasmCodegen,
     wasm_options: Tier1WasmOptions,
 }
 
@@ -112,7 +106,6 @@ impl<P, R> Tier1Compiler<P, R> {
             provider,
             registry,
             limits: BlockLimits::default(),
-            codegen: Tier1WasmCodegen::new(),
             wasm_options: Tier1WasmOptions::default(),
         }
     }
@@ -138,7 +131,7 @@ impl<P, R> Tier1Compiler<P, R> {
 
 impl<P, R> Tier1Compiler<P, R>
 where
-    P: CodeProvider,
+    P: crate::Tier1Bus,
     R: Tier1WasmRegistry,
 {
     /// Compile a block to a [`CompiledBlockHandle`].
@@ -155,31 +148,24 @@ where
         B: JitBackend,
         C: CompileRequestSink,
     {
-        let block = discover_block_from_provider(&self.provider, entry_rip, self.limits);
-        let byte_len: u32 = block.insts.iter().map(|inst| inst.len as u32).sum();
-
         // For Tier-1 bring-up we treat code_paddr=rip. Higher layers can replace this once a real
         // RIP→PADDR mapping exists.
         let code_paddr = entry_rip;
-        let meta: CompiledBlockMeta = jit.snapshot_meta(code_paddr, byte_len);
+        let snapshot_len = snapshot_len_for_limits(self.limits);
+        let pre_meta: CompiledBlockMeta = jit.snapshot_meta(code_paddr, snapshot_len);
 
-        let ir = translate_block(&block);
-        if let Some(helper) = ir.insts.iter().find_map(|inst| match inst {
-            IrInst::CallHelper { helper, .. } => Some(helper),
-            _ => None,
-        }) {
-            return Err(Tier1CompileError::UnsupportedHelper {
-                helper: helper.to_string(),
-            });
-        }
+        let compilation = compile_tier1_block_with_options(
+            &self.provider,
+            entry_rip,
+            self.limits,
+            self.wasm_options,
+        )?;
+        let meta = shrink_meta(pre_meta, compilation.byte_len);
 
-        let exit_to_interpreter = matches!(ir.terminator, IrTerminator::ExitToInterpreter { .. });
-        let wasm = self
-            .codegen
-            .compile_block_with_options(&ir, self.wasm_options);
-        let table_index = self
-            .registry
-            .register_tier1_block(wasm, exit_to_interpreter);
+        let table_index = self.registry.register_tier1_block(
+            compilation.wasm_bytes,
+            compilation.exit_to_interpreter,
+        );
 
         Ok(CompiledBlockHandle {
             entry_rip,
@@ -202,48 +188,35 @@ where
     }
 }
 
-fn discover_block_from_provider<P: CodeProvider>(
-    provider: &P,
-    entry_rip: u64,
-    limits: BlockLimits,
-) -> BasicBlock {
-    let mut insts = Vec::new();
-    let mut rip = entry_rip;
-    let mut total_bytes = 0usize;
+fn snapshot_len_for_limits(limits: BlockLimits) -> u32 {
+    // `discover_block` fetches 15 bytes per instruction; when close to `max_bytes` we can read a
+    // little past the limit for decoder lookahead.
+    let max_bytes = u32::try_from(limits.max_bytes).unwrap_or(u32::MAX);
+    max_bytes.saturating_add(15)
+}
 
-    loop {
-        if insts.len() >= limits.max_insts || total_bytes >= limits.max_bytes {
-            return BasicBlock {
-                entry_rip,
-                insts,
-                end_kind: BlockEndKind::Limit { next_rip: rip },
-            };
-        }
+fn shrink_meta(mut meta: CompiledBlockMeta, byte_len: u32) -> CompiledBlockMeta {
+    meta.byte_len = byte_len;
+    meta.page_versions = shrink_page_versions(meta.code_paddr, byte_len, meta.page_versions);
+    meta
+}
 
-        let bytes = provider.fetch(rip, 15);
-        let inst = decode_one(rip, &bytes);
-        total_bytes += inst.len as usize;
-        rip = inst.next_rip();
-
-        let end_kind = match inst.kind {
-            InstKind::JmpRel { .. } => Some(BlockEndKind::Jmp),
-            InstKind::JccRel { .. } => Some(BlockEndKind::Jcc),
-            InstKind::CallRel { .. } => Some(BlockEndKind::Call),
-            InstKind::Ret => Some(BlockEndKind::Ret),
-            InstKind::Invalid => Some(BlockEndKind::ExitToInterpreter {
-                next_rip: inst.next_rip(),
-            }),
-            _ => None,
-        };
-
-        insts.push(inst);
-
-        if let Some(kind) = end_kind {
-            return BasicBlock {
-                entry_rip,
-                insts,
-                end_kind: kind,
-            };
-        }
+fn shrink_page_versions(
+    code_paddr: u64,
+    byte_len: u32,
+    mut page_versions: Vec<PageVersionSnapshot>,
+) -> Vec<PageVersionSnapshot> {
+    if byte_len == 0 {
+        page_versions.clear();
+        return page_versions;
     }
+
+    let start_page = code_paddr >> PAGE_SHIFT;
+    let end = code_paddr
+        .checked_add(byte_len as u64 - 1)
+        .unwrap_or(u64::MAX);
+    let end_page = end >> PAGE_SHIFT;
+
+    page_versions.retain(|snap| snap.page >= start_page && snap.page <= end_page);
+    page_versions
 }

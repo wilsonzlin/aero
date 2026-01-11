@@ -4,20 +4,21 @@
 //! - A reference `wasmtime`-powered Tier-1 executor (`WasmtimeBackend`)
 //! - A shareable wrapper (`WasmBackend`) suitable for driving
 //!   `aero_cpu_core::jit::runtime::JitRuntime` from a compile worker
-//! - Minimal plumbing helpers (`CompileQueue`, `compile_and_install`)
+//! - Convenience wrappers for Tier-1 compilation (`compile_and_install`)
+//!
+//! The canonical Tier-1 compilation pipeline + compile request queue live in
+//! [`crate::tier1::pipeline`]. The helpers in this module are thin wrappers
+//! around that API for consumers that already depend on `WasmBackend`.
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::rc::Rc;
 
-use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime, PAGE_SHIFT};
+use aero_cpu_core::jit::cache::CompiledBlockHandle;
+use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime};
 use aero_cpu_core::state::CpuState as CoreCpuState;
 
-use crate::compiler::tier1::compile_tier1_block_with_options;
 use crate::tier1::wasm::Tier1WasmOptions;
-use crate::tier1::BlockLimits;
-use crate::tier1_pipeline::Tier1WasmRegistry;
+use crate::tier1_pipeline::{Tier1Compiler, Tier1WasmRegistry};
 use crate::Tier1Bus;
 
 /// Minimal interface a host CPU type must expose to execute Tier-1 WASM blocks.
@@ -113,38 +114,6 @@ where
     }
 }
 
-/// A simple FIFO queue of compile requests emitted by [`aero_cpu_core::jit::runtime::JitRuntime`].
-///
-/// The runtime owns a [`CompileRequestSink`] by value, so this uses interior mutability to allow a
-/// driver thread to drain the queue out-of-band.
-#[derive(Clone, Default)]
-pub struct CompileQueue(Rc<RefCell<VecDeque<u64>>>);
-
-impl CompileQueue {
-    /// Drain all pending compile requests in FIFO order.
-    #[must_use]
-    pub fn drain(&self) -> Vec<u64> {
-        self.0.borrow_mut().drain(..).collect()
-    }
-
-    /// Snapshot the currently queued RIPs without clearing them.
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<u64> {
-        self.0.borrow().iter().copied().collect()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.borrow().is_empty()
-    }
-}
-
-impl CompileRequestSink for CompileQueue {
-    fn request_compile(&mut self, entry_rip: u64) {
-        self.0.borrow_mut().push_back(entry_rip);
-    }
-}
-
 /// Compile the Tier-1 block starting at `entry_rip`, instantiate it in `backend`, and return a
 /// cache-installable [`CompiledBlockHandle`].
 ///
@@ -174,53 +143,8 @@ where
     Cpu: Tier1Cpu,
     C: CompileRequestSink,
 {
-    let limits = BlockLimits::default();
-
-    // Capture page-version metadata *before* reading guest code. We snapshot the full discovery
-    // range (plus decoder lookahead) and then shrink it to the actual byte length after block
-    // formation.
-    let snapshot_len = snapshot_len_for_limits(limits);
-    let pre_meta = runtime.snapshot_meta(entry_rip, snapshot_len);
-
-    let compilation = compile_tier1_block_with_options(backend, entry_rip, limits, options);
-    let table_index = backend.add_compiled_block(&compilation.wasm_bytes);
-
-    CompiledBlockHandle {
-        entry_rip,
-        table_index,
-        meta: shrink_meta(pre_meta, compilation.byte_len),
-    }
-}
-
-fn snapshot_len_for_limits(limits: BlockLimits) -> u32 {
-    // `discover_block` fetches 15 bytes per instruction; when close to `max_bytes` we can read a
-    // little past the limit for decoder lookahead.
-    let max_bytes = u32::try_from(limits.max_bytes).unwrap_or(u32::MAX);
-    max_bytes.saturating_add(15)
-}
-
-fn shrink_meta(mut meta: CompiledBlockMeta, byte_len: u32) -> CompiledBlockMeta {
-    meta.byte_len = byte_len;
-    meta.page_versions = shrink_page_versions(meta.code_paddr, byte_len, meta.page_versions);
-    meta
-}
-
-fn shrink_page_versions(
-    code_paddr: u64,
-    byte_len: u32,
-    mut page_versions: Vec<PageVersionSnapshot>,
-) -> Vec<PageVersionSnapshot> {
-    if byte_len == 0 {
-        page_versions.clear();
-        return page_versions;
-    }
-
-    let start_page = code_paddr >> PAGE_SHIFT;
-    let end = code_paddr
-        .checked_add(byte_len as u64 - 1)
-        .unwrap_or(u64::MAX);
-    let end_page = end >> PAGE_SHIFT;
-
-    page_versions.retain(|snap| snap.page >= start_page && snap.page <= end_page);
-    page_versions
+    Tier1Compiler::new(backend.clone(), backend.clone())
+        .with_wasm_options(options)
+        .compile_handle(runtime, entry_rip)
+        .expect("Tier-1 compilation failed")
 }
