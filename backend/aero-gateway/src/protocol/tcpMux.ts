@@ -77,6 +77,15 @@ export class TcpMuxFrameParser {
     return this.buffer.length;
   }
 
+  peekHeader(): { msgType: TcpMuxMsgType; streamId: number; payloadLength: number } | null {
+    if (this.buffer.length < TCP_MUX_HEADER_BYTES) return null;
+    return {
+      msgType: this.buffer.readUInt8(0) as TcpMuxMsgType,
+      streamId: this.buffer.readUInt32BE(1),
+      payloadLength: this.buffer.readUInt32BE(5),
+    };
+  }
+
   finish(): void {
     if (this.buffer.length === 0) return;
     throw new Error(`truncated tcp-mux frame stream (${this.buffer.length} pending bytes)`);

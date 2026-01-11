@@ -294,6 +294,11 @@ class WebSocketTcpMuxBridge {
     }
 
     const maxFramePayloadBytes = this.opts.maxFramePayloadBytes ?? 16 * 1024 * 1024;
+    const pending = this.muxParser.peekHeader();
+    if (pending && pending.payloadLength > maxFramePayloadBytes) {
+      this.closeWithProtocolError();
+      return;
+    }
     if (this.muxParser.pendingBytes() > TCP_MUX_HEADER_BYTES + maxFramePayloadBytes) {
       this.closeWithProtocolError();
     }

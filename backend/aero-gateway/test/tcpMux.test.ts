@@ -14,6 +14,7 @@ import {
   TcpMuxErrorCode,
   TcpMuxFrameParser,
   TcpMuxMsgType,
+  TCP_MUX_HEADER_BYTES,
   TCP_MUX_SUBPROTOCOL,
 } from "../src/protocol/tcpMux.js";
 import { SessionConnectionTracker } from "../src/session.js";
@@ -59,6 +60,46 @@ async function closeWebSocket(ws: WebSocket): Promise<void> {
 }
 
 describe("tcpMux route", () => {
+  it("closes the WebSocket with 1002 when a frame exceeds maxFramePayloadBytes", async () => {
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpMuxUpgrade(req, socket, head, { maxFramePayloadBytes: 16 });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+
+    try {
+      const header = Buffer.alloc(TCP_MUX_HEADER_BYTES);
+      header.writeUInt8(TcpMuxMsgType.DATA, 0);
+      header.writeUInt32BE(1, 1);
+      header.writeUInt32BE(1024, 5);
+
+      const closePromise = new Promise<number>((resolve, reject) => {
+        const id = setTimeout(() => reject(new Error("expected close")), 2_000);
+        // Avoid keeping the process open just for the timer in case the close
+        // event arrives quickly.
+        (id as unknown as { unref?: () => void }).unref?.();
+        ws.addEventListener(
+          "close",
+          (event) => {
+            clearTimeout(id);
+            resolve(event.code);
+          },
+          { once: true },
+        );
+      });
+
+      ws.send(header);
+
+      const code = await closePromise;
+      assert.equal(code, 1002);
+    } finally {
+      await closeWebSocket(ws);
+      await closeServer(proxyServer);
+    }
+  });
+
   it("multiplexes multiple concurrent streams to an echo server", async () => {
     const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
     const echoPort = await listen(echoServer, "127.0.0.1");
