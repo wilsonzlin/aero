@@ -89,7 +89,8 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
           Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
 
           const writerVsync = new AerogpuCmdWriter();
-          writerVsync.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
+          // Use PRESENT_EX so the test covers VSYNC flag scanning for both PRESENT and PRESENT_EX packets.
+          writerVsync.presentEx(0, AEROGPU_PRESENT_FLAG_VSYNC, 0);
           const cmdStreamVsync = writerVsync.finish().buffer;
 
           const writerImmediate = new AerogpuCmdWriter();
@@ -281,7 +282,7 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions advance one-per-tick
           const cmdStream1 = writer1.finish().buffer;
 
           const writer2 = new AerogpuCmdWriter();
-          writer2.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
+          writer2.presentEx(0, AEROGPU_PRESENT_FLAG_VSYNC, 0);
           const cmdStream2 = writer2.finish().buffer;
 
           const submitRequestId1 = nextRequestId++;
