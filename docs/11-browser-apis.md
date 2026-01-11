@@ -947,9 +947,12 @@ To maintain broad browser coverage, the GPU presenter should support a **main-th
 
 ### CPU Worker
 
+> Note: The snippet below is illustrative. The current wasm-bindgen entrypoint is `aero_wasm.js`
+> (built from `crates/aero-wasm`), and the worker harness lives under `web/src/runtime/`.
+
 ```javascript
 // cpu-worker.js
-import init, { CpuEmulator } from './aero_cpu.js';
+import init, { CpuEmulator } from './aero_wasm.js';
 
 let emulator = null;
 let guestMemory = null;

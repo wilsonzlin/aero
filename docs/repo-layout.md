@@ -35,7 +35,7 @@ Prefer `aero-*` crate names for new crates.
 This repo still contains some older crates that are either:
 
 - not `aero-*` prefixed (e.g. `crates/emulator`, `crates/memory`), and/or
-- use underscore naming (e.g. `crates/aero_cpu`, `crates/aero_types`)
+- use underscore naming (e.g. `crates/aero_cpu_core`, `crates/aero_types`)
 
 These are in the workspace for now, but **new crates should not add more naming variants**.
 

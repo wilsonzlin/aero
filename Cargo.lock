@@ -599,13 +599,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero_cpu"
-version = "0.1.0"
-dependencies = [
- "aero_types",
-]
-
-[[package]]
 name = "aero_cpu_core"
 version = "0.1.0"
 dependencies = [

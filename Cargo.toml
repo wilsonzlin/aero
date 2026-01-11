@@ -40,7 +40,6 @@ members = [
     "crates/aero-virtio",
     "crates/aero-vm",
     "crates/aero-webgpu",
-    "crates/aero_cpu",
     "crates/aero_cpu_core",
     "crates/aero_types",
     "crates/aero_x86",
