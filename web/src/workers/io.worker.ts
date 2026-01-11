@@ -60,14 +60,22 @@ import {
   type HidRingAttachMessage,
   type HidSendReportMessage,
 } from "../hid/hid_proxy_protocol";
-import { isGuestUsbPath, type GuestUsbPath, type GuestUsbPort, type HidPassthroughMessage } from "../platform/hid_passthrough_protocol";
+import {
+  isHidAttachMessage as isHidPassthroughAttachMessage,
+  isHidDetachMessage as isHidPassthroughDetachMessage,
+  isHidInputReportMessage as isHidPassthroughInputReportMessage,
+  type GuestUsbPath,
+  type GuestUsbPort,
+  type HidAttachMessage as HidPassthroughAttachMessage,
+  type HidDetachMessage as HidPassthroughDetachMessage,
+  type HidInputReportMessage as HidPassthroughInputReportMessage,
+  type HidPassthroughMessage,
+} from "../platform/hid_passthrough_protocol";
 import { HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 void installWorkerPerfHandlers();
-
-type DistributivePartial<T> = T extends any ? Partial<T> : never;
 
 type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
 type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayBuffer };
@@ -376,6 +384,145 @@ const hidHostSink: HidHostSink = {
 const hidGuestInMemory = new InMemoryHidGuestBridge(hidHostSink);
 let hidGuest: HidGuestBridge = hidGuestInMemory;
 const hidPassthroughPathsByDeviceId = new Map<string, GuestUsbPath>();
+
+// -----------------------------------------------------------------------------
+// WebHID passthrough (main thread ↔ I/O worker) debug plumbing
+// -----------------------------------------------------------------------------
+
+type HidPassthroughInputReportDebugEntry = {
+  reportId: number;
+  byteLength: number;
+  receivedAtMs: number;
+  previewHex: string;
+};
+
+const HID_PASSTHROUGH_INPUT_REPORT_HISTORY_LIMIT = 32;
+const HID_PASSTHROUGH_INPUT_REPORT_PREVIEW_BYTES = 16;
+const HID_PASSTHROUGH_DEBUG_MAX_OUTPUT_REPORT_BYTES = 1024;
+
+const hidPassthroughAttachById = new Map<string, HidPassthroughAttachMessage>();
+const hidPassthroughInputReportHistoryById = new Map<string, HidPassthroughInputReportDebugEntry[]>();
+const hidPassthroughInputReportCountById = new Map<string, number>();
+const hidPassthroughDebugOutputRequested = new Set<string>();
+
+type NormalizedHidCollection = HidPassthroughAttachMessage["collections"][number];
+type NormalizedHidReportInfo = NormalizedHidCollection["outputReports"][number];
+
+function formatHexPreview(buffer: ArrayBuffer, limit = HID_PASSTHROUGH_INPUT_REPORT_PREVIEW_BYTES): string {
+  const bytes = new Uint8Array(buffer);
+  const slice = bytes.byteLength > limit ? bytes.subarray(0, limit) : bytes;
+  const hex = Array.from(slice, (b) => b.toString(16).padStart(2, "0")).join(" ");
+  return bytes.byteLength > limit ? `${hex} …` : hex;
+}
+
+function estimateReportByteLength(report: NormalizedHidReportInfo): number {
+  let bits = 0;
+  for (const item of report.items) {
+    bits += (item.reportSize >>> 0) * (item.reportCount >>> 0);
+  }
+  return Math.ceil(bits / 8);
+}
+
+function findFirstSendableReport(
+  collections: readonly NormalizedHidCollection[],
+): { reportType: "output" | "feature"; reportId: number; byteLength: number } | null {
+  for (const col of collections) {
+    const out = col.outputReports[0];
+    if (out) {
+      return { reportType: "output", reportId: out.reportId, byteLength: estimateReportByteLength(out) };
+    }
+    const feature = col.featureReports[0];
+    if (feature) {
+      return { reportType: "feature", reportId: feature.reportId, byteLength: estimateReportByteLength(feature) };
+    }
+    const nested = findFirstSendableReport(col.children);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function handleHidPassthroughAttach(msg: HidPassthroughAttachMessage): void {
+  const guestPath = msg.guestPath ?? (msg.guestPort !== undefined ? [msg.guestPort as GuestUsbPort] : null);
+  if (!guestPath) return;
+
+  hidPassthroughPathsByDeviceId.set(msg.deviceId, guestPath);
+  hidPassthroughAttachById.set(msg.deviceId, msg);
+  hidPassthroughInputReportHistoryById.delete(msg.deviceId);
+  hidPassthroughInputReportCountById.delete(msg.deviceId);
+  hidPassthroughDebugOutputRequested.delete(msg.deviceId);
+
+  if (import.meta.env.DEV) {
+    console.info(
+      `[hid] attach deviceId=${msg.deviceId} path=${guestPath.join(".")} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId
+        .toString(16)
+        .padStart(4, "0")}`,
+    );
+  }
+
+  // Dev-only smoke: issue a best-effort output/feature report request so the
+  // worker→main→device round trip is exercised even before the USB stack is wired up.
+  if (import.meta.env.DEV && !hidPassthroughDebugOutputRequested.has(msg.deviceId)) {
+    const report = findFirstSendableReport(msg.collections);
+    if (!report) return;
+
+    const byteLength = Math.min(HID_PASSTHROUGH_DEBUG_MAX_OUTPUT_REPORT_BYTES, report.byteLength);
+    const payload = new Uint8Array(byteLength);
+    const data = payload.buffer;
+    hidPassthroughDebugOutputRequested.add(msg.deviceId);
+    try {
+      ctx.postMessage(
+        {
+          type: "hid:sendReport",
+          deviceId: msg.deviceId,
+          reportType: report.reportType,
+          reportId: report.reportId,
+          data,
+        } satisfies Extract<HidPassthroughMessage, { type: "hid:sendReport" }>,
+        [data],
+      );
+      console.info(
+        `[hid] debug requested ${report.reportType} report deviceId=${msg.deviceId} reportId=${report.reportId} len=${byteLength}`,
+      );
+    } catch (err) {
+      console.warn("[hid] debug sendReport request failed", err);
+    }
+  }
+}
+
+function handleHidPassthroughDetach(msg: HidPassthroughDetachMessage): void {
+  hidPassthroughPathsByDeviceId.delete(msg.deviceId);
+  hidPassthroughAttachById.delete(msg.deviceId);
+  hidPassthroughInputReportHistoryById.delete(msg.deviceId);
+  hidPassthroughInputReportCountById.delete(msg.deviceId);
+  hidPassthroughDebugOutputRequested.delete(msg.deviceId);
+
+  if (import.meta.env.DEV) {
+    console.info(`[hid] detach deviceId=${msg.deviceId}`);
+  }
+}
+
+function handleHidPassthroughInputReport(msg: HidPassthroughInputReportMessage): void {
+  const count = (hidPassthroughInputReportCountById.get(msg.deviceId) ?? 0) + 1;
+  hidPassthroughInputReportCountById.set(msg.deviceId, count);
+
+  const entry: HidPassthroughInputReportDebugEntry = {
+    reportId: msg.reportId,
+    byteLength: msg.data.byteLength,
+    receivedAtMs: performance.now(),
+    previewHex: formatHexPreview(msg.data),
+  };
+
+  const history = hidPassthroughInputReportHistoryById.get(msg.deviceId) ?? [];
+  history.push(entry);
+  while (history.length > HID_PASSTHROUGH_INPUT_REPORT_HISTORY_LIMIT) history.shift();
+  hidPassthroughInputReportHistoryById.set(msg.deviceId, history);
+
+  if (import.meta.env.DEV && (count <= 3 || (count & 0x7f) === 0)) {
+    console.debug(
+      `[hid] inputReport deviceId=${msg.deviceId} reportId=${msg.reportId} bytes=${msg.data.byteLength} #${count} ${entry.previewHex}`,
+    );
+  }
+}
 
 // -----------------------------------------------------------------------------
 // L2 tunnel forwarder telemetry (best-effort observability)
@@ -953,28 +1100,18 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
-    if ((data as Partial<HidPassthroughMessage>).type === "hid:attach") {
-      const msg = data as DistributivePartial<Extract<HidPassthroughMessage, { type: "hid:attach" }>>;
-      const deviceId = typeof msg.deviceId === "string" ? msg.deviceId : null;
-      if (!deviceId) return;
-
-      let guestPath: GuestUsbPath | null = null;
-      if (isGuestUsbPath(msg.guestPath)) {
-        guestPath = msg.guestPath;
-      } else if (msg.guestPort === 0 || msg.guestPort === 1) {
-        guestPath = [msg.guestPort as GuestUsbPort];
-      }
-
-      if (!guestPath) return;
-      hidPassthroughPathsByDeviceId.set(deviceId, guestPath);
+    if (isHidPassthroughAttachMessage(data)) {
+      handleHidPassthroughAttach(data);
       return;
     }
 
-    if ((data as Partial<HidPassthroughMessage>).type === "hid:detach") {
-      const msg = data as DistributivePartial<Extract<HidPassthroughMessage, { type: "hid:detach" }>>;
-      const deviceId = typeof msg.deviceId === "string" ? msg.deviceId : null;
-      if (!deviceId) return;
-      hidPassthroughPathsByDeviceId.delete(deviceId);
+    if (isHidPassthroughDetachMessage(data)) {
+      handleHidPassthroughDetach(data);
+      return;
+    }
+
+    if (isHidPassthroughInputReportMessage(data)) {
+      handleHidPassthroughInputReport(data);
       return;
     }
 
