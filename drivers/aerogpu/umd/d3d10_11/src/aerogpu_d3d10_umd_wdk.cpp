@@ -1876,8 +1876,10 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if constexpr (has_CpuAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
       cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->CpuAccessFlags) != 0);
     }
+    bool is_staging = false;
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
-      cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      is_staging = (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      cpu_visible = cpu_visible || is_staging;
     }
     const bool is_rt = (res->bind_flags & kD3D10BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D10BindDepthStencil) != 0;
@@ -1887,6 +1889,8 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
 #endif
+    const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
+    cpu_visible = cpu_visible || want_guest_backed;
 
     bool want_host_owned = false;
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
@@ -2004,8 +2008,10 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if constexpr (has_CpuAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
       cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->CpuAccessFlags) != 0);
     }
+    bool is_staging = false;
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
-      cpu_visible = cpu_visible || (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      is_staging = (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      cpu_visible = cpu_visible || is_staging;
     }
     const bool is_rt = (res->bind_flags & kD3D10BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D10BindDepthStencil) != 0;
@@ -2015,6 +2021,8 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
 #endif
+    const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
+    cpu_visible = cpu_visible || want_guest_backed;
 
     bool want_host_owned = false;
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
@@ -2198,6 +2206,23 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     }
   }
 
+  if (res->handle != kInvalidHandle) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+  }
+
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
+  if (is_guest_backed && !dev->cmd.empty()) {
+    // Flush before releasing the WDDM allocation so submissions that referenced
+    // backing_alloc_id can still build an alloc_table from this allocation.
+    HRESULT submit_hr = S_OK;
+    submit_locked(dev, /*want_present=*/false, &submit_hr);
+    if (FAILED(submit_hr)) {
+      SetError(hDevice, submit_hr);
+    }
+  }
+
   if (res->wddm.km_resource_handle != 0 || !res->wddm.km_allocation_handles.empty()) {
     std::vector<D3DKMT_HANDLE> km_allocs;
     km_allocs.reserve(res->wddm.km_allocation_handles.size());
@@ -2229,11 +2254,6 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     res->wddm.km_resource_handle = 0;
   }
 
-  if (res->handle != kInvalidHandle) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
-  }
   res->~AeroGpuResource();
 }
 

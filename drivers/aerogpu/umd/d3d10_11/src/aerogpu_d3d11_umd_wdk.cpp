@@ -2337,7 +2337,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return E_OUTOFMEMORY;
     }
     const uint64_t alloc_size = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 256);
-    const bool cpu_visible = (res->usage == kD3D11UsageStaging) || (res->cpu_access_flags != 0);
+    const bool is_staging = (res->usage == kD3D11UsageStaging);
+    bool cpu_visible = is_staging || (res->cpu_access_flags != 0);
     const bool is_rt = (res->bind_flags & kD3D11BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D11BindDepthStencil) != 0;
     bool is_shared = false;
@@ -2349,6 +2350,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       is_shared = true;
     }
 #endif
+    const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
+    cpu_visible = cpu_visible || want_guest_backed;
     HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0);
     if (FAILED(hr)) {
       SetError(dev, hr);
@@ -2422,7 +2425,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     res->row_pitch_bytes = AlignUpU32(row_bytes, 256);
     const uint64_t total_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
 
-    const bool cpu_visible = (res->usage == kD3D11UsageStaging) || (res->cpu_access_flags != 0);
+    const bool is_staging = (res->usage == kD3D11UsageStaging);
+    bool cpu_visible = is_staging || (res->cpu_access_flags != 0);
     const bool is_rt = (res->bind_flags & kD3D11BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D11BindDepthStencil) != 0;
     bool is_shared = false;
@@ -2434,6 +2438,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       is_shared = true;
     }
 #endif
+    const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
+    cpu_visible = cpu_visible || want_guest_backed;
     HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes);
     if (FAILED(hr)) {
       SetError(dev, hr);
@@ -2506,6 +2512,24 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
   if (res->mapped) {
     (void)UnmapLocked(dev, res);
   }
+
+  if (res->handle) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+  }
+
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
+  if (is_guest_backed && !dev->cmd.empty()) {
+    // Flush before releasing the WDDM allocation so submissions that referenced
+    // backing_alloc_id can still build an alloc_table from this allocation.
+    HRESULT submit_hr = S_OK;
+    submit_locked(dev, /*want_present=*/false, &submit_hr);
+    if (FAILED(submit_hr)) {
+      SetError(dev, submit_hr);
+    }
+  }
+
   auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
   if (callbacks && callbacks->pfnDeallocateCb && dev->runtime_device &&
       (res->wddm.km_resource_handle != 0 || !res->wddm.km_allocation_handles.empty())) {
@@ -2537,11 +2561,6 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
     }
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_resource_handle = 0;
-  }
-  if (res->handle) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
   }
   dev->pending_staging_writes.erase(
       std::remove(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), res),
