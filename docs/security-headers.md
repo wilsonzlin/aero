@@ -134,6 +134,11 @@ CI validates that the following stay in sync with the canonical values:
 - Vite configs:
   - `web/vite.config.ts` (production app)
   - `vite.harness.config.ts` (repo-root dev harness)
+- Backend (when `aero-gateway` serves as the origin / injects headers itself):
+  - `backend/aero-gateway/src/middleware/crossOriginIsolation.ts`
+  - `backend/aero-gateway/src/middleware/securityHeaders.ts`
+- Legacy backend (`server/`) that can optionally serve the frontend:
+  - `server/src/http.js`
 - Deployment templates:
   - Static hosts (`_headers`):
     - `web/public/_headers`
@@ -146,11 +151,6 @@ CI validates that the following stay in sync with the canonical values:
     - `deploy/vercel.json` (headers-only template)
   - Kubernetes (Helm chart defaults):
     - `deploy/k8s/chart/aero-gateway/values.yaml`
-  - Backend (aero-gateway) middleware:
-    - `backend/aero-gateway/src/middleware/crossOriginIsolation.ts`
-    - `backend/aero-gateway/src/middleware/securityHeaders.ts`
-  - Legacy backend (`server/`):
-    - `server/src/http.js`
   - `deploy/caddy/Caddyfile`
   - `deploy/nginx/nginx.conf`
 
