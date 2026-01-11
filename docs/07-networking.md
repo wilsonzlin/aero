@@ -181,8 +181,9 @@ supports multiple auth modes via `AERO_L2_AUTH_MODE`:
 - `api_key` / `jwt` / `cookie_or_jwt`: useful for cross-origin deployments and non-browser/internal
   clients. Credentials can be delivered via:
   - query params: `?token=...` / `?apiKey=...`, or
-  - `Sec-WebSocket-Protocol: aero-l2-token.<credential>` (requires the credential be valid for the
-    WebSocket subprotocol token grammar; prefer query mode for JWTs).
+  - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<credential>` (offered alongside
+    `aero-l2-tunnel-v1`; requires the credential be valid for the WebSocket subprotocol token grammar;
+    prefer query mode for JWTs).
 - `AERO_L2_TOKEN` is a legacy alias for API-key auth (used when `AERO_L2_AUTH_MODE` is unset and also
   accepted as a fallback value for `AERO_L2_API_KEY` in `api_key` mode).
 

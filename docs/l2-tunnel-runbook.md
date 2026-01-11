@@ -42,8 +42,9 @@ cargo run --locked -p aero-l2-proxy
 #     - API key: AERO_L2_AUTH_MODE=api_key AERO_L2_API_KEY=sekrit
 #       (Legacy alias: AERO_L2_TOKEN=sekrit with AERO_L2_AUTH_MODE unset.)
 #     - JWT (HS256): AERO_L2_AUTH_MODE=jwt AERO_L2_JWT_SECRET=sekrit
-#   - Credentials can be provided via `?token=...` / `?apiKey=...` or
-#     `Sec-WebSocket-Protocol: aero-l2-token.<credential>` (in addition to `aero-l2-tunnel-v1`).
+#   - Credentials can be provided via `?token=...` / `?apiKey=...` or an additional
+#     `Sec-WebSocket-Protocol` entry `aero-l2-token.<credential>` (offered alongside
+#     `aero-l2-tunnel-v1`).
 #
 # Observability knobs:
 # - Optional: per-session PCAPNG capture (writes one file per tunnel session):
@@ -245,10 +246,10 @@ Single-origin flow:
 Credentials can be delivered via:
 
 - Query string: `wss://proxy.example.com/l2?token=<value>` (or `?apiKey=<value>`)
-- WebSocket subprotocol: `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to
-  `aero-l2-tunnel-v1`)
-  - The credential must be valid for the WebSocket subprotocol token grammar; prefer query-string
-    delivery for JWTs.
+- WebSocket subprotocol: offer an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>`
+  alongside `aero-l2-tunnel-v1`.
+  - The credential must be valid for the WebSocket subprotocol token grammar; prefer query-string delivery
+    for JWTs.
 
 Missing/incorrect credentials reject the upgrade with **HTTP 401**.
 
