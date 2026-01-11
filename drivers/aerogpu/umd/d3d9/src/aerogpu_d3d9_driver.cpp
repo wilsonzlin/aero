@@ -3888,10 +3888,6 @@ HRESULT AEROGPU_D3D9_CALL device_check_device_state(
     if (IsIconic(hWnd)) {
       return trace.ret(kSPresentOccluded);
     }
-    // IsWindowVisible is cheap; treat hidden windows the same as minimized.
-    if (!IsWindowVisible(hWnd)) {
-      return trace.ret(kSPresentOccluded);
-    }
   }
 #endif
   return trace.ret(S_OK);
@@ -5747,7 +5743,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
     bool occluded = false;
 #if defined(_WIN32)
     // Returning S_PRESENT_OCCLUDED from PresentEx helps some D3D9Ex clients avoid
-    // pathological present loops when their target window is minimized/hidden.
+    // pathological present loops when their target window is minimized.
     // Keep the check cheap and never block on it.
     HWND hwnd = pPresentEx->hWnd;
     if (!hwnd) {
@@ -5758,7 +5754,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       hwnd = sc ? sc->hwnd : nullptr;
     }
     if (hwnd) {
-      if (IsIconic(hwnd) || !IsWindowVisible(hwnd)) {
+      if (IsIconic(hwnd)) {
         occluded = true;
       }
     }
@@ -6015,7 +6011,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
       hwnd = sc ? sc->hwnd : nullptr;
     }
     if (hwnd) {
-      if (IsIconic(hwnd) || !IsWindowVisible(hwnd)) {
+      if (IsIconic(hwnd)) {
         occluded = true;
       }
     }
