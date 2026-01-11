@@ -3,9 +3,27 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "aero_virtio_pci_modern.h"
+
+/*
+ * Keep assertions active in all build configurations.
+ *
+ * CMake Release builds define NDEBUG, which would normally compile out
+ * assert() checks. These tests are meant to be run under Release in CI, so we
+ * override assert() to always evaluate.
+ */
+#undef assert
+#define assert(expr)                                                                                                   \
+    do {                                                                                                               \
+        if (!(expr)) {                                                                                                 \
+            fprintf(stderr, "ASSERT failed at %s:%d: %s\n", __FILE__, __LINE__, #expr);                                \
+            abort();                                                                                                   \
+        }                                                                                                              \
+    } while (0)
 
 #define FAKE_MAX_QUEUES 8
 
@@ -514,4 +532,3 @@ int main(void)
     test_device_cfg_generation_retry();
     return 0;
 }
-

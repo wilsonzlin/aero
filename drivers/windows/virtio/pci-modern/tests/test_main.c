@@ -8,6 +8,22 @@
 
 #include "../../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.h"
 
+/*
+ * Keep assertions active in all build configurations.
+ *
+ * These host tests run under Release in CI. CMake Release builds define NDEBUG,
+ * which would normally compile out assert() checks. Override assert() so test
+ * coverage is preserved and side-effectful expressions still execute.
+ */
+#undef assert
+#define assert(expr)                                                                                                   \
+	do {                                                                                                           \
+		if (!(expr)) {                                                                                        \
+			fprintf(stderr, "ASSERT failed at %s:%d: %s\n", __FILE__, __LINE__, #expr);                   \
+			abort();                                                                                     \
+		}                                                                                                      \
+	} while (0)
+
 enum {
 	PCI_STATUS_OFF = 0x06,
 	PCI_REVISION_OFF = 0x08,
