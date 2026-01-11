@@ -152,12 +152,14 @@ impl SecurityConfig {
             parse_allowed_origins(sources)?
         };
 
-        let token = std::env::var("AERO_L2_TOKEN")
+        // Prefer the canonical API key env var but keep `AERO_L2_TOKEN` as a legacy alias for
+        // backwards compatibility.
+        let token = std::env::var("AERO_L2_API_KEY")
             .ok()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
             .or_else(|| {
-                std::env::var("AERO_L2_API_KEY")
+                std::env::var("AERO_L2_TOKEN")
                     .ok()
                     .map(|v| v.trim().to_string())
                     .filter(|v| !v.is_empty())
