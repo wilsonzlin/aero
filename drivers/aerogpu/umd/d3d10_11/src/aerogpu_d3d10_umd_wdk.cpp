@@ -742,6 +742,11 @@ struct AeroGpuResource {
 
   std::vector<uint8_t> storage;
 
+  // Fence value of the most recent GPU submission that writes into this resource
+  // (conservative). Used for staging readback Map(READ) synchronization so
+  // Map(DO_NOT_WAIT) does not spuriously fail due to unrelated in-flight work.
+  uint64_t last_gpu_write_fence = 0;
+
   // Map state (for resources backed by `storage`).
   bool mapped = false;
   bool mapped_write = false;
@@ -894,6 +899,7 @@ struct AeroGpuDevice {
   std::mutex mutex;
   aerogpu::CmdWriter cmd;
   std::vector<uint32_t> wddm_submit_allocation_handles;
+  std::vector<AeroGpuResource*> pending_staging_writes;
 
   // Cached state.
   aerogpu_handle_t current_rtv = 0;
@@ -1062,6 +1068,30 @@ static bool SupportsTransfer(const AeroGpuDevice* dev) {
   const uint32_t major = blob.device_abi_version_u32 >> 16;
   const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
   return (major == AEROGPU_ABI_MAJOR) && (minor >= 1);
+}
+
+static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
+  if (!dev || !dst) {
+    return;
+  }
+
+  // D3D10 staging readback resources are typically created with no bind flags.
+  // Track writes so Map(READ)/Map(DO_NOT_WAIT) can wait on the fence that
+  // actually produces the bytes, instead of waiting on the device's latest
+  // fence (which can include unrelated work).
+  if (dst->bind_flags != 0) {
+    return;
+  }
+
+  // Prefer to only track CPU-readable staging resources, but fall back to
+  // tracking all bindless resources if CPU access flags were not captured (WDK
+  // struct layout differences).
+  if (dst->cpu_access_flags != 0 &&
+      (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) == 0) {
+    return;
+  }
+
+  dev->pending_staging_writes.push_back(dst);
 }
 
 static void InitLockForWrite(D3DDDICB_LOCK* lock) {
@@ -1345,6 +1375,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     if (out_hr) {
       *out_hr = E_FAIL;
     }
+    dev->pending_staging_writes.clear();
     dev->cmd.reset();
     return 0;
   }
@@ -1363,12 +1394,19 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     if (out_hr) {
       *out_hr = hr;
     }
+    dev->pending_staging_writes.clear();
     return 0;
   }
 
   if (fence != 0) {
     dev->last_submitted_fence = std::max(dev->last_submitted_fence, fence);
+    for (AeroGpuResource* res : dev->pending_staging_writes) {
+      if (res) {
+        res->last_gpu_write_fence = fence;
+      }
+    }
   }
+  dev->pending_staging_writes.clear();
   AEROGPU_D3D10_11_LOG("D3D10 submit_locked: present=%u bytes=%llu fence=%llu completed=%llu",
                        want_present ? 1u : 0u,
                        static_cast<unsigned long long>(submit_bytes),
@@ -2032,6 +2070,11 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (!dev->pending_staging_writes.empty()) {
+    dev->pending_staging_writes.erase(
+        std::remove(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), res),
+        dev->pending_staging_writes.end());
+  }
   if (res->wddm_allocation_handle != 0) {
     dev->wddm_submit_allocation_handles.erase(
         std::remove(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle),
@@ -2254,11 +2297,13 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
         return submit_hr;
       }
     }
-    const uint64_t fence = dev->last_submitted_fence;
-    const uint32_t timeout_ms = (map_flags_u & kD3DMapFlagDoNotWait) ? 0u : kAeroGpuTimeoutMsInfinite;
-    const HRESULT wait = AeroGpuWaitForFence(dev, fence, timeout_ms);
-    if (FAILED(wait)) {
-      return wait;
+    const uint64_t fence = res->last_gpu_write_fence;
+    if (fence != 0) {
+      const uint32_t timeout_ms = (map_flags_u & kD3DMapFlagDoNotWait) ? 0u : kAeroGpuTimeoutMsInfinite;
+      const HRESULT wait = AeroGpuWaitForFence(dev, fence, timeout_ms);
+      if (FAILED(wait)) {
+        return wait;
+      }
     }
   }
 
@@ -3075,6 +3120,7 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     }
     cmd->flags = copy_flags;
     cmd->reserved0 = 0;
+    TrackStagingWriteLocked(dev, dst);
     return;
   }
 
@@ -3194,6 +3240,7 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     }
     cmd->flags = copy_flags;
     cmd->reserved0 = 0;
+    TrackStagingWriteLocked(dev, dst);
     return;
   }
 
@@ -4727,8 +4774,11 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
     uint32_t backing_alloc_id = 0;
     uint32_t backing_offset_bytes = 0;
     uint32_t wddm_allocation_handle = 0;
+    uint32_t usage = 0;
+    uint32_t cpu_access_flags = 0;
     AeroGpuResource::WddmIdentity wddm;
     std::vector<uint8_t> storage;
+    uint64_t last_gpu_write_fence = 0;
   };
 
   auto take_identity = [](AeroGpuResource* res) -> ResourceIdentity {
@@ -4740,8 +4790,11 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
     id.backing_alloc_id = res->backing_alloc_id;
     id.backing_offset_bytes = res->backing_offset_bytes;
     id.wddm_allocation_handle = res->wddm_allocation_handle;
+    id.usage = res->usage;
+    id.cpu_access_flags = res->cpu_access_flags;
     id.wddm = std::move(res->wddm);
     id.storage = std::move(res->storage);
+    id.last_gpu_write_fence = res->last_gpu_write_fence;
     return id;
   };
 
@@ -4753,8 +4806,11 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
     res->backing_alloc_id = id.backing_alloc_id;
     res->backing_offset_bytes = id.backing_offset_bytes;
     res->wddm_allocation_handle = id.wddm_allocation_handle;
+    res->usage = id.usage;
+    res->cpu_access_flags = id.cpu_access_flags;
     res->wddm = std::move(id.wddm);
     res->storage = std::move(id.storage);
+    res->last_gpu_write_fence = id.last_gpu_write_fence;
   };
 
   std::vector<aerogpu_handle_t> old_handles;
