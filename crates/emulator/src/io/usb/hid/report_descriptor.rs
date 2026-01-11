@@ -1475,6 +1475,56 @@ mod tests {
     }
 
     #[test]
+    fn parse_truncates_large_usage_ranges() {
+        // Range length is 4097 (> MAX_EXPANDED_USAGE_RANGE), so it should not be expanded.
+        let desc = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x06, // Usage (Keyboard)
+            0xA1, 0x01, // Collection (Application)
+            0x05, 0x07, // Usage Page (Keyboard)
+            0x19, 0x00, // Usage Minimum (0)
+            0x2A, 0x00, 0x10, // Usage Maximum (4096) (2 bytes)
+            0x15, 0x00, // Logical Minimum (0)
+            0x25, 0x01, // Logical Maximum (1)
+            0x75, 0x01, // Report Size (1)
+            0x95, 0x01, // Report Count (1)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0xC0, // End Collection
+        ];
+
+        let parsed = parse_report_descriptor(&desc).unwrap();
+        assert!(parsed.truncated_ranges);
+
+        let item = &parsed.collections[0].input_reports[0].items[0];
+        assert!(item.is_range);
+        assert_eq!(item.usages, vec![0, 4096]);
+    }
+
+    #[test]
+    fn parse_rejects_usage_min_greater_than_max() {
+        let desc = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x06, // Usage (Keyboard)
+            0xA1, 0x01, // Collection (Application)
+            0x05, 0x07, // Usage Page (Keyboard)
+            0x19, 0x10, // Usage Minimum (16)
+            0x29, 0x00, // Usage Maximum (0)
+            0x75, 0x01, // Report Size (1)
+            0x95, 0x01, // Report Count (1)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0xC0, // End Collection
+        ];
+
+        match parse_report_descriptor(&desc) {
+            Err(HidDescriptorError::UsageRangeMinGreaterThanMax { min, max }) => {
+                assert_eq!(min, 0x10);
+                assert_eq!(max, 0x00);
+            }
+            other => panic!("expected UsageRangeMinGreaterThanMax, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn synth_range_single_usage_emits_min_eq_max() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
