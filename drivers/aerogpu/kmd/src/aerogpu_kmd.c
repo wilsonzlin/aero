@@ -117,9 +117,38 @@ static VOID AeroGpuFreeContiguous(_In_opt_ PVOID Va)
     }
 }
 
+static ULONG AeroGpuLegacyScanoutFormatToNew(_In_ ULONG LegacyFormat)
+{
+    switch (LegacyFormat) {
+    case AEROGPU_SCANOUT_X8R8G8B8:
+        /* D3DFMT_X8R8G8B8 == B8G8R8X8 in little-endian memory. */
+        return AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    default:
+        return AEROGPU_FORMAT_INVALID;
+    }
+}
+
 static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICAL_ADDRESS FbPa)
 {
     const ULONG enable = Adapter->SourceVisible ? 1u : 0u;
+
+    if (Adapter->UsingNewAbi) {
+        AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_WIDTH, Adapter->CurrentWidth);
+        AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT, Adapter->CurrentHeight);
+        AeroGpuWriteRegU32(Adapter,
+                           AEROGPU_MMIO_REG_SCANOUT0_FORMAT,
+                           AeroGpuLegacyScanoutFormatToNew(Adapter->CurrentFormat));
+        AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES, Adapter->CurrentPitch);
+        AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO, FbPa.LowPart);
+        AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI, (ULONG)(FbPa.QuadPart >> 32));
+        AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE, enable);
+
+        if (!enable) {
+            /* Be robust against stale vblank IRQ state on scanout disable. */
+            AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+        }
+        return;
+    }
 
     AeroGpuWriteRegU32(Adapter, AEROGPU_REG_SCANOUT_FB_LO, FbPa.LowPart);
     AeroGpuWriteRegU32(Adapter, AEROGPU_REG_SCANOUT_FB_HI, (ULONG)(FbPa.QuadPart >> 32));
@@ -324,8 +353,14 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     }
 
     const ULONG magic = AeroGpuReadRegU32(adapter, AEROGPU_REG_MAGIC);
-    const ULONG version = AeroGpuReadRegU32(adapter, AEROGPU_REG_VERSION);
-    AEROGPU_LOG("StartDevice: MMIO magic=0x%08lx version=0x%08lx", magic, version);
+    adapter->UsingNewAbi = (magic == AEROGPU_PCI_MMIO_MAGIC) ? TRUE : FALSE;
+    if (adapter->UsingNewAbi) {
+        const ULONG abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
+        AEROGPU_LOG("StartDevice: MMIO magic=0x%08lx (new ABI) abi=0x%08lx", magic, abiVersion);
+    } else {
+        const ULONG version = AeroGpuReadRegU32(adapter, AEROGPU_REG_VERSION);
+        AEROGPU_LOG("StartDevice: MMIO magic=0x%08lx (legacy) version=0x%08lx", magic, version);
+    }
 
     if (adapter->DxgkInterface.DxgkCbRegisterInterrupt) {
         NTSTATUS st = adapter->DxgkInterface.DxgkCbRegisterInterrupt(adapter->StartInfo.hDxgkHandle);
@@ -678,7 +713,16 @@ static NTSTATUS APIENTRY AeroGpuDdiSetVidPnSourceVisibility(_In_ const HANDLE hA
     }
 
     adapter->SourceVisible = pVisibility->Visible ? TRUE : FALSE;
-    AeroGpuWriteRegU32(adapter, AEROGPU_REG_SCANOUT_ENABLE, adapter->SourceVisible ? 1u : 0u);
+    if (adapter->UsingNewAbi) {
+        const ULONG enable = adapter->SourceVisible ? 1u : 0u;
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE, enable);
+        if (!enable) {
+            /* Be robust against stale vblank IRQ state on scanout disable. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+        }
+    } else {
+        AeroGpuWriteRegU32(adapter, AEROGPU_REG_SCANOUT_ENABLE, adapter->SourceVisible ? 1u : 0u);
+    }
     return STATUS_SUCCESS;
 }
 

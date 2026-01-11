@@ -4,6 +4,20 @@
 #include <d3dkmddi.h>
 
 #include "aerogpu_log.h"
+
+/*
+ * NOTE: The AeroGPU project has two MMIO ABIs:
+ * - Legacy: `aerogpu_protocol.h` (used by the current bring-up KMD).
+ * - New:    `aerogpu_pci.h` (versioned, feature-gated; required for vblank).
+ *
+ * Both headers define a small set of overlapping macros (PCI IDs, MMIO magic),
+ * so we capture the new ABI's magic value before including the legacy header.
+ */
+#include "aerogpu_pci.h"
+#define AEROGPU_PCI_MMIO_MAGIC AEROGPU_MMIO_MAGIC /* "AGPU" */
+#undef AEROGPU_PCI_VENDOR_ID
+#undef AEROGPU_PCI_DEVICE_ID
+#undef AEROGPU_MMIO_MAGIC
 #include "aerogpu_protocol.h"
 
 /* Driver pool tag: 'A','G','P','U' */
@@ -97,6 +111,7 @@ typedef struct _AEROGPU_ADAPTER {
     ULONG CurrentPitch;
     ULONG CurrentFormat; /* aerogpu_scanout_format */
     BOOLEAN SourceVisible;
+    BOOLEAN UsingNewAbi;
 
     /* VBlank / scanline estimation state (see DxgkDdiGetScanLine). */
     volatile ULONGLONG LastVblankSeq;
