@@ -210,6 +210,7 @@ VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
     }
 
     status = VirtioSndCtrlRelease(&ctx->Dx->Control);
+    VirtIoSndUninitTxEngine(ctx->Dx);
     ctx->BufferBytes = 0;
     ctx->PeriodBytes = 0;
     return status;
