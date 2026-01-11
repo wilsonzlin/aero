@@ -361,13 +361,24 @@ Aero mapping (current `aero-usb` stack):
       `wLength == 0`).
     - Control-OUT: OUT **DATA** TDs are ACKed as bytes are buffered; pending is applied to
       **STATUS (IN)** once the full payload is buffered (or immediately when `wLength == 0`).
-  - When the host completion arrives:
-    - Control-IN: the completion’s `data` is served to IN TDs. An empty payload is represented as an
-      ACK with `bytes=0` (ZLP). (`UhciController` encodes a 0-byte completion as `actlen=0x7FF`.)
-    - Control-OUT: once the completion reports `status: "success"`, the STATUS stage ACKs with a
-      0-byte packet.
-    - `status: "stall"` maps to STALL; `status: "error"` maps to TIMEOUT (see
-      [Host completion to guest TD status mapping](#host-completion-to-guest-td-status-mapping)).
+- When the host completion arrives:
+  - Control-IN: the completion’s `data` is served to IN TDs. An empty payload is represented as an
+    ACK with `bytes=0` (ZLP). (`UhciController` encodes a 0-byte completion as `actlen=0x7FF`.)
+  - Control-OUT: once the completion reports `status: "success"`, the STATUS stage ACKs with a
+    0-byte packet.
+  - `status: "stall"` maps to STALL; `status: "error"` maps to TIMEOUT (see
+    [Host completion to guest TD status mapping](#host-completion-to-guest-td-status-mapping)).
+
+Note on **short packets** (Control-IN):
+
+- Real devices may legally return fewer bytes than `wLength` (e.g. descriptor reads where the OS
+  asks for 255 bytes but the descriptor is shorter). This appears to the UHCI layer as a **short
+  packet** (`actlen < maxlen`) on an IN DATA TD.
+- Guest UHCI drivers typically rely on the UHCI **short packet detect** (SPD) bit + the
+  `USBINTR_SHORT_PACKET` enable bit to get an interrupt and terminate the DATA stage early (skipping
+  any remaining IN TDs and proceeding to the STATUS stage).
+- `aero-usb`’s UHCI model honors SPD by stopping further TD processing for the current queue head
+  within the same frame when a short packet is received and SPD is set.
 
 Special-case note: `SET_ADDRESS` must be virtualized for full guest enumeration (guest-visible USB
 address changes must not be forwarded to the physical device, which is already host-enumerated).
