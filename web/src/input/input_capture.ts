@@ -103,6 +103,7 @@ export class InputCapture {
   private flushTimer: number | null = null;
 
   private hasFocus = false;
+  private windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
 
   private mouseButtons = 0;
   private mouseFracX = 0;
@@ -134,13 +135,16 @@ export class InputCapture {
   };
 
   private readonly handleWindowBlur = (): void => {
-    // Do not change `hasFocus` here; the canvas may still be the active element
-    // and we want capture to resume naturally when the window regains focus.
+    this.windowFocused = false;
     this.pointerLock.exit();
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
     this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+  };
+
+  private readonly handleWindowFocus = (): void => {
+    this.windowFocused = true;
   };
 
   private readonly handleVisibilityChange = (): void => {
@@ -318,6 +322,7 @@ export class InputCapture {
     window.addEventListener('keydown', this.handleKeyDown, { capture: true });
     window.addEventListener('keyup', this.handleKeyUp, { capture: true });
     window.addEventListener("blur", this.handleWindowBlur);
+    window.addEventListener("focus", this.handleWindowFocus);
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
 
     // Mouse events should be observed at the document level while pointer locked.
@@ -361,6 +366,7 @@ export class InputCapture {
     window.removeEventListener('keydown', this.handleKeyDown, { capture: true } as AddEventListenerOptions);
     window.removeEventListener('keyup', this.handleKeyUp, { capture: true } as AddEventListenerOptions);
     window.removeEventListener("blur", this.handleWindowBlur);
+    window.removeEventListener("focus", this.handleWindowFocus);
     document.removeEventListener("visibilitychange", this.handleVisibilityChange);
 
     document.removeEventListener('mousemove', this.handleMouseMove, { capture: true } as AddEventListenerOptions);
@@ -409,13 +415,13 @@ export class InputCapture {
   }
 
   private isCapturingKeyboard(): boolean {
-    return this.hasFocus || this.pointerLock.isLocked;
+    return this.windowFocused && (this.hasFocus || this.pointerLock.isLocked);
   }
 
   private isCapturingMouse(): boolean {
     // If pointer lock is active, we always capture. Otherwise require focus to avoid
     // eating wheel events while the user scrolls elsewhere on the page.
-    return this.pointerLock.isLocked || this.hasFocus;
+    return this.windowFocused && (this.pointerLock.isLocked || this.hasFocus);
   }
 
   private releaseAllKeys(): void {
