@@ -34,6 +34,9 @@ concurrency:
   group: win7-virtio-harness
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   win7-virtio-harness:
     runs-on: [self-hosted, aero-win7-harness]
