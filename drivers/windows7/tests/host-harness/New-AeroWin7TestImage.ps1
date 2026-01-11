@@ -11,6 +11,21 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$DriversDir,
 
+  # Optional: restrict which .inf files are installed by the guest provisioning script.
+  #
+  # Each entry can be either:
+  # - An INF basename (e.g. "aerovblk.inf") which must match exactly one file under -DriversDir, or
+  # - A relative path under -DriversDir (e.g. "amd64\\viostor\\viostor.inf") to disambiguate duplicates.
+  #
+  # If not specified, a conservative default allowlist is used to avoid accidentally installing test/smoke INFs
+  # that can steal device binding (e.g. virtio-transport-test).
+  [Parameter(Mandatory = $false)]
+  [string[]]$InfAllowList = @(),
+
+  # Escape hatch: restore legacy behavior (install every .inf found under -DriversDir).
+  [Parameter(Mandatory = $false)]
+  [switch]$InstallAllInfs,
+
   # Output directory for provisioning media contents (always generated).
   [Parameter(Mandatory = $false)]
   [string]$OutputDir = "./out/aero-win7-provisioning",
@@ -60,6 +75,24 @@ function Write-TextFileUtf8NoBom {
   [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
 }
 
+$dirSepChars = @([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+
+function Get-PathRelativeToBase {
+  param(
+    [Parameter(Mandatory = $true)][string]$BaseDir,
+    [Parameter(Mandatory = $true)][string]$ChildPath
+  )
+  $baseFull = (Resolve-Path -LiteralPath $BaseDir).Path
+  $childFull = (Resolve-Path -LiteralPath $ChildPath).Path
+
+  $basePrefix = $baseFull.TrimEnd($dirSepChars) + [System.IO.Path]::DirectorySeparatorChar
+  if (-not $childFull.StartsWith($basePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Path '$childFull' is not under base directory '$baseFull'."
+  }
+
+  return $childFull.Substring($basePrefix.Length)
+}
+
 $SelftestExePath = (Resolve-Path -LiteralPath $SelftestExePath).Path
 $DriversDir = (Resolve-Path -LiteralPath $DriversDir).Path
 
@@ -85,6 +118,158 @@ New-Item -ItemType Directory -Path $provisionDir -Force | Out-Null
 
 Copy-Item -LiteralPath $SelftestExePath -Destination (Join-Path $selftestDir "aero-virtio-selftest.exe") -Force
 Copy-Item -LiteralPath $DriversDir -Destination $driversOutDir -Recurse -Force
+
+if ($InstallAllInfs -and $PSBoundParameters.ContainsKey("InfAllowList") -and $InfAllowList.Count -gt 0) {
+  throw "Do not specify -InfAllowList together with -InstallAllInfs. Use one mode or the other."
+}
+
+$driversOutDirResolved = (Resolve-Path -LiteralPath $driversOutDir).Path
+$infFiles = Get-ChildItem -LiteralPath $driversOutDirResolved -Recurse -Filter "*.inf" -File | Sort-Object FullName
+if ($infFiles.Count -eq 0) {
+  throw "No .inf files found under -DriversDir '$DriversDir'."
+}
+
+$driversDirLeaf = Split-Path -Leaf $DriversDir
+
+$infIndex = foreach ($inf in $infFiles) {
+  $rel = Get-PathRelativeToBase -BaseDir $driversOutDirResolved -ChildPath $inf.FullName
+  $relWin = ($rel -replace "/", "\")
+
+  $relWinNoLeaf = $relWin
+  if (-not [string]::IsNullOrEmpty($driversDirLeaf)) {
+    $leafPrefix = $driversDirLeaf + "\"
+    if ($relWinNoLeaf.StartsWith($leafPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $relWinNoLeaf = $relWinNoLeaf.Substring($leafPrefix.Length)
+    }
+  }
+
+  [pscustomobject]@{
+    FullPath = $inf.FullName
+    Name = $inf.Name
+    RelPathWin = $relWin
+    RelPathWinNoLeaf = $relWinNoLeaf
+  }
+}
+
+$defaultInfAllowList = @(
+  "aerovblk.inf",
+  "aerovnet.inf",
+  "virtio-input.inf",
+  "virtio-snd.inf"
+)
+
+$installDriversCmd = ""
+$readmeDriverInstallDesc = ""
+if ($InstallAllInfs) {
+  $installDriversCmd = @"
+REM Install drivers (legacy mode: all .inf files under AERO\drivers).
+echo [AERO] installing drivers (InstallAllInfs)... >> "%LOG%"
+for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
+  echo [AERO] pnputil -i -a "%%F" >> "%LOG%"
+  pnputil -i -a "%%F" >> "%LOG%" 2>&1
+  if errorlevel 1 (
+    echo [AERO] ERROR: pnputil failed for "%%F" >> "%LOG%"
+    exit /b 1
+  )
+)
+"@
+  $readmeDriverInstallDesc = "Install ALL driver .inf files under AERO\drivers via pnputil (InstallAllInfs mode)"
+} else {
+  $effectiveAllowList = @()
+  $allowListSource = ""
+  if ($PSBoundParameters.ContainsKey("InfAllowList")) {
+    if ($InfAllowList.Count -eq 0) {
+      throw "-InfAllowList was provided but is empty. Provide at least one INF or omit the parameter."
+    }
+    $effectiveAllowList = $InfAllowList
+    $allowListSource = "user allowlist"
+  } else {
+    $effectiveAllowList = $defaultInfAllowList
+    $allowListSource = "default allowlist"
+  }
+
+  $resolvedInfRelPaths = New-Object System.Collections.Generic.List[string]
+  $resolvedRelPathSet = @{}
+
+  foreach ($entry in $effectiveAllowList) {
+    $entryNorm = ([string]$entry).Trim()
+    if ([string]::IsNullOrEmpty($entryNorm)) {
+      throw "InfAllowList contains an empty entry."
+    }
+
+    $entryWin = ($entryNorm -replace "/", "\").TrimStart("\")
+    if ($entryWin.StartsWith(".\", [System.StringComparison]::OrdinalIgnoreCase)) {
+      $entryWin = $entryWin.Substring(2)
+    }
+    $isRelative = $entryWin.Contains("\")
+
+    $matches = @()
+    if ($isRelative) {
+      $matches = $infIndex | Where-Object { $_.RelPathWinNoLeaf -ieq $entryWin -or $_.RelPathWin -ieq $entryWin }
+    } else {
+      $matches = $infIndex | Where-Object { $_.Name -ieq $entryWin }
+    }
+
+    if ($matches.Count -eq 0) {
+      if ($allowListSource -eq "default allowlist") {
+        Write-Warning "Default allowlisted INF '$entryNorm' was not found under -DriversDir '$DriversDir' and will be skipped."
+        continue
+      }
+
+      $available = ($infIndex | Select-Object -ExpandProperty RelPathWin | Sort-Object) -join ", "
+      throw "InfAllowList entry '$entryNorm' did not match any .inf under -DriversDir '$DriversDir'. Available INFs: $available"
+    }
+
+    if ($matches.Count -gt 1) {
+      $ambiguous = ($matches | Select-Object -ExpandProperty RelPathWin | Sort-Object) -join ", "
+      throw "InfAllowList entry '$entryNorm' matched multiple INFs under -DriversDir '$DriversDir': $ambiguous. Use a relative path (e.g. 'subdir\\driver.inf') to disambiguate."
+    }
+
+    $relPathWin = $matches[0].RelPathWin
+    if (-not $resolvedRelPathSet.ContainsKey($relPathWin.ToLowerInvariant())) {
+      $resolvedRelPathSet[$relPathWin.ToLowerInvariant()] = $true
+      $resolvedInfRelPaths.Add($relPathWin)
+    }
+  }
+
+  if ($resolvedInfRelPaths.Count -eq 0) {
+    throw "No allowed INF files resolved from $allowListSource. Pass -InfAllowList or use -InstallAllInfs."
+  }
+
+  $resolvedListStr = ($resolvedInfRelPaths | Sort-Object) -join ", "
+  Write-Host "Driver install mode: $allowListSource"
+  Write-Host "Will install INF(s): $resolvedListStr"
+  $readmeDriverInstallDesc = "Install allowlisted driver .inf files via pnputil ($allowListSource): $resolvedListStr"
+
+  $ignored = $infIndex | Where-Object { -not $resolvedRelPathSet.ContainsKey($_.RelPathWin.ToLowerInvariant()) }
+  if ($ignored.Count -gt 0) {
+    $ignoredStr = ($ignored | Select-Object -ExpandProperty RelPathWin | Sort-Object) -join ", "
+    Write-Warning "The following INF(s) are present under -DriversDir but will NOT be installed unless allowlisted: $ignoredStr"
+  }
+
+  $installBlocks = New-Object System.Collections.Generic.List[string]
+  foreach ($relPathWin in $resolvedInfRelPaths) {
+    $infMediaPath = "%MEDIA%\AERO\drivers\$relPathWin"
+    $installBlocks.Add(@"
+if not exist "$infMediaPath" (
+  echo [AERO] ERROR: allowed INF not found: "$infMediaPath" >> "%LOG%"
+  exit /b 1
+)
+echo [AERO] pnputil -i -a "$infMediaPath" >> "%LOG%"
+pnputil -i -a "$infMediaPath" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [AERO] ERROR: pnputil failed for "$infMediaPath" >> "%LOG%"
+  exit /b 1
+)
+"@)
+  }
+
+  $installDriversCmd = @"
+REM Install drivers (INF allowlist).
+echo [AERO] installing drivers (allowlist)... >> "%LOG%"
+$($installBlocks -join "`r`n")
+"@
+}
 
 $blkArg = ""
 if (-not [string]::IsNullOrEmpty($BlkRoot)) {
@@ -142,12 +327,7 @@ if "%MEDIA%"=="" (
 
 echo [AERO] MEDIA=%MEDIA% >> "%LOG%"
 
-REM Install drivers (all .inf files under AERO\drivers).
-echo [AERO] installing drivers... >> "%LOG%"
-for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
-  echo [AERO] pnputil -i -a "%%F" >> "%LOG%"
-  pnputil -i -a "%%F" >> "%LOG%" 2>&1
-)
+$installDriversCmd
 
 REM Install selftest binary.
 mkdir C:\AeroTests >> "%LOG%" 2>&1
@@ -183,7 +363,7 @@ To provision an already-installed Windows 7 image:
    <CD>:\AERO\provision\provision.cmd
 
 The script will:
-- Install all driver .inf files via pnputil
+- $readmeDriverInstallDesc
 - Copy the selftest to C:\AeroTests\
 - Create a scheduled task (SYSTEM, ONSTART) that runs the selftest each boot.
 

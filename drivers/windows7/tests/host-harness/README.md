@@ -186,6 +186,16 @@ The guest-side README includes an example `schtasks /Create ...` command.
 
 If you want to fully automate provisioning, see `New-AeroWin7TestImage.ps1` (template generator / scaffold).
 
+### Driver allowlisting (recommended)
+
+`New-AeroWin7TestImage.ps1` generates a guest-side `provision.cmd` that installs drivers via `pnputil`.
+
+For safety and determinism, the provisioning script installs **only an allowlisted set of INF files** by default
+(virtio blk/net/input/snd). This avoids accidentally installing experimental/test INFs (for example
+`virtio-transport-test.inf`) that can match the same HWIDs and steal device binding.
+
+For fully repeatable provisioning, pass `-InfAllowList` explicitly:
+
 `New-AeroWin7TestImage.ps1` also supports baking `--blk-root` into the installed scheduled task (useful if the VM boots
 from a non-virtio disk but has a separate virtio data volume):
 
@@ -193,6 +203,12 @@ from a non-virtio disk but has a separate virtio data volume):
 pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -SelftestExePath ./aero-virtio-selftest.exe `
   -DriversDir ./drivers-out `
+  -InfAllowList @(
+    "aerovblk.inf",
+    "aerovnet.inf",
+    "virtio-input.inf",
+    "virtio-snd.inf"
+  ) `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
 
@@ -207,8 +223,17 @@ To disable the guest selftest's virtio-snd section even if a device is present (
 pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -SelftestExePath ./aero-virtio-selftest.exe `
   -DriversDir ./drivers-out `
+  -InfAllowList @(
+    "aerovblk.inf",
+    "aerovnet.inf",
+    "virtio-input.inf",
+    "virtio-snd.inf"
+  ) `
   -DisableSnd
 ```
+
+If your `-DriversDir` contains duplicate INF basenames, disambiguate by passing a relative path (e.g.
+`"amd64\\aerovnet.inf"`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
 
 ### Enabling test-signing mode (unsigned / test-signed drivers)
 
@@ -221,6 +246,12 @@ step into the provisioning script:
 pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -SelftestExePath ./aero-virtio-selftest.exe `
   -DriversDir ./drivers-out `
+  -InfAllowList @(
+    "aerovblk.inf",
+    "aerovnet.inf",
+    "virtio-input.inf",
+    "virtio-snd.inf"
+  ) `
   -EnableTestSigning `
   -AutoReboot
 ```
