@@ -597,6 +597,7 @@ fn package_rejects_private_key_materials_in_config_dir() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out_dir.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -634,6 +635,7 @@ fn package_rejects_private_key_materials_in_certs_dir() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out_dir.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -847,6 +849,7 @@ fn utf8_bom_infs_are_parsed_for_reference_validation() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir: drivers_tmp.path().to_path_buf(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
