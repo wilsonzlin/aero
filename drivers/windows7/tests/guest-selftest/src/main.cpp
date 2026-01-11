@@ -827,6 +827,21 @@ static std::optional<std::wstring> QueryDeviceDriverRegString(HDEVINFO devinfo, 
   return std::wstring(buf.data());
 }
 
+static std::optional<DWORD> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_DATA* dev, const wchar_t* value_name) {
+  if (!devinfo || devinfo == INVALID_HANDLE_VALUE || !dev || !value_name) return std::nullopt;
+
+  HKEY key = SetupDiOpenDevRegKey(devinfo, dev, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_QUERY_VALUE);
+  if (key == INVALID_HANDLE_VALUE) return std::nullopt;
+
+  DWORD type = 0;
+  DWORD data = 0;
+  DWORD bytes = sizeof(data);
+  const LONG rc = RegQueryValueExW(key, value_name, nullptr, &type, reinterpret_cast<LPBYTE>(&data), &bytes);
+  RegCloseKey(key);
+  if (rc != ERROR_SUCCESS || type != REG_DWORD || bytes < sizeof(DWORD)) return std::nullopt;
+  return data;
+}
+
 struct VirtioSndPciDevice {
   std::wstring instance_id;
   std::wstring description;
@@ -844,6 +859,7 @@ struct VirtioSndPciDevice {
   bool is_modern = false;
   bool has_rev_01 = false;
   bool is_transitional = false;
+  std::optional<DWORD> force_null_backend;
 };
 
 // KSCATEGORY_TOPOLOGY {DDA54A40-1E4C-11D1-A050-405705C10000}
@@ -919,6 +935,9 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     if (auto match = QueryDeviceDriverRegString(devinfo, &dev, L"MatchingDeviceId")) {
       snd.matching_device_id = *match;
     }
+    if (auto force = QueryDeviceDevRegDword(devinfo, &dev, L"ForceNullBackend")) {
+      snd.force_null_backend = *force;
+    }
 
     ULONG status = 0;
     ULONG problem = 0;
@@ -942,6 +961,10 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
           id_info.modern_rev01 ? 1 : 0, id_info.transitional ? 1 : 0, allowed ? 1 : 0);
       if (!hwids.empty()) {
         log.Logf("virtio-snd: detected PCI device hwid0=%s", WideToUtf8(hwids[0]).c_str());
+      }
+      if (snd.force_null_backend.has_value()) {
+        log.Logf("virtio-snd: detected PCI device ForceNullBackend=%lu",
+                 static_cast<unsigned long>(*snd.force_null_backend));
       }
     }
     const std::wstring expected_service = snd.is_transitional && !snd.is_modern
@@ -4670,18 +4693,54 @@ int wmain(int argc, wchar_t** argv) {
             if (!d.description.empty()) match_names.push_back(d.description);
           }
 
-          // The scheduled task that runs the selftest can start before the Windows audio services are
-          // fully initialized. Wait briefly for AudioSrv/AudioEndpointBuilder so endpoint enumeration
-          // doesn't fail spuriously (which would make host-side virtio-snd wav verification flaky).
-          if (want_snd_playback || want_snd_capture) {
-            WaitForWindowsAudioServices(log, 30000);
+          bool force_null_backend = false;
+          for (const auto& dev : snd_pci) {
+            if (dev.force_null_backend.has_value() && *dev.force_null_backend != 0) {
+              force_null_backend = true;
+              break;
+            }
           }
 
+          if (force_null_backend) {
+            log.LogLine(
+                "virtio-snd: ForceNullBackend=1 set; virtio transport disabled (host wav capture will be silent)");
+
+            if (want_snd_playback) {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend");
+              all_ok = false;
+            } else {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
+            }
+
+            if (opt.disable_snd_capture) {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
+            } else if (want_snd_capture) {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|force_null_backend");
+              all_ok = false;
+              if (want_snd_playback && capture_smoke_test) {
+                log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|force_null_backend");
+                all_ok = false;
+              } else {
+                log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
+              }
+            } else {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
+            }
+          } else {
+            // The scheduled task that runs the selftest can start before the Windows audio services are
+            // fully initialized. Wait briefly for AudioSrv/AudioEndpointBuilder so endpoint enumeration
+            // doesn't fail spuriously (which would make host-side virtio-snd wav verification flaky).
+            if (want_snd_playback || want_snd_capture) {
+              WaitForWindowsAudioServices(log, 30000);
+            }
+
          if (want_snd_playback) {
-           bool snd_ok = false;
-           const auto snd = VirtioSndTest(log, match_names, opt.allow_virtio_snd_transitional);
-           if (snd.ok) {
-             snd_ok = true;
+            bool snd_ok = false;
+            const auto snd = VirtioSndTest(log, match_names, opt.allow_virtio_snd_transitional);
+            if (snd.ok) {
+              snd_ok = true;
           } else {
             log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
                      snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
@@ -4691,11 +4750,11 @@ int wmain(int argc, wchar_t** argv) {
           }
 
           log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
-          all_ok = all_ok && snd_ok;
-        }
+           all_ok = all_ok && snd_ok;
+         }
 
-         if (opt.disable_snd_capture) {
-           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+          if (opt.disable_snd_capture) {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
          } else if (want_snd_capture) {
            const DWORD capture_wait_ms =
                (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
@@ -4782,12 +4841,13 @@ int wmain(int argc, wchar_t** argv) {
              log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|reason=%s|hr=0x%08lx",
                       duplex.fail_reason.empty() ? "unknown" : duplex.fail_reason.c_str(),
                       static_cast<unsigned long>(duplex.hr));
-             all_ok = false;
-           }
-         }
-       }
-     }
-   }
+              all_ok = false;
+            }
+          }
+        }
+      }
+    }
+  }
 
   // Network tests require Winsock initialized for getaddrinfo.
   WSADATA wsa{};
