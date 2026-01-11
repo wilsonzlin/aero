@@ -8,12 +8,13 @@ The suite also includes an optional `aerogpu_timeout_runner.exe` helper (built b
 
 Common flags:
 
- * `--dump` – write a `*.bmp` next to the executable.
- * `--hidden` – for the windowed triangle tests: create the window but do not show it (useful for automation).
- * `--show` – for `d3d9ex_shared_surface` only: show the parent window (it defaults to hidden).
- * `--validate-sharing` – for `d3d9ex_shared_surface`: also validate cross-process pixel sharing via readback (implied by `--dump`).
- * `--samples=N` – control sample count for pacing/sampling tests (defaults vary per test).
- * `--wait-timeout-ms=N` – for `wait_vblank_pacing` and `vblank_wait_sanity`: per-wait timeout for `D3DKMTWaitForVerticalBlankEvent` (default 2000).
+  * `--dump` – write a `*.bmp` next to the executable.
+  * `--hidden` – for the windowed triangle tests: create the window but do not show it (useful for automation).
+  * `--show` – for `d3d9ex_shared_surface` only: show the parent window (it defaults to hidden).
+  * `--validate-sharing` – for `d3d9ex_shared_surface`: kept for backwards compatibility (pixel sharing is validated by default; `--dump` always validates).
+  * `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
+  * `--samples=N` – control sample count for pacing/sampling tests (defaults vary per test).
+  * `--wait-timeout-ms=N` – for `wait_vblank_pacing` and `vblank_wait_sanity`: per-wait timeout for `D3DKMTWaitForVerticalBlankEvent` (default 2000).
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
 * `--allow-non-aerogpu` – allow running on adapters whose description does not contain `AeroGPU` (by default, rendering tests expect to be running on an AeroGPU adapter).
@@ -149,7 +150,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
-* `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and verifies the child can open it and submit GPU work (pass `--validate-sharing` / `--dump` to also validate pixels)
+* `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)
   * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token` via allocation private driver data: the miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
 * `d3d9ex_shared_allocations` creates shared D3D9Ex resources (shared render-target surface + shared mipmapped texture) to exercise shared-surface allocation behavior
 * `d3d10_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback

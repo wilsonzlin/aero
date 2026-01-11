@@ -1298,9 +1298,10 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--show] [--validate-sharing] [--require-vid=0x####] "
+        "Usage: %s.exe [--dump] [--show] [--validate-sharing] [--no-validate-sharing] [--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
+    aerogpu_test::PrintfStdout("Note: pixel sharing is validated by default; pass --no-validate-sharing to skip readback validation.");
     aerogpu_test::PrintfStdout("Note: --dump implies --validate-sharing.");
     aerogpu_test::PrintfStdout("Note: window is hidden by default; pass --show to display it.");
     aerogpu_test::PrintfStdout(
@@ -1312,8 +1313,10 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
 
   const bool child = aerogpu_test::HasArg(argc, argv, "--child");
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
-  const bool validate_sharing =
-      aerogpu_test::HasArg(argc, argv, "--validate-sharing") || dump;
+  bool validate_sharing = !aerogpu_test::HasArg(argc, argv, "--no-validate-sharing");
+  if (aerogpu_test::HasArg(argc, argv, "--validate-sharing") || dump) {
+    validate_sharing = true;
+  }
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
