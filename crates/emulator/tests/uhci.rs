@@ -1063,7 +1063,7 @@ fn uhci_control_in_pending_large_data_stage_completes_after_ready() {
     assert_eq!(qh_elem, TD1);
     assert_eq!(
         mem.slice(BUF_DATA as usize..BUF_DATA as usize + data.len()),
-        sentinel[..data.len()]
+        &sentinel[..data.len()]
     );
 
     *ready.borrow_mut() = true;
