@@ -29,8 +29,8 @@ impl Port {
         const CSC: u16 = 1 << 1;
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
-        const LSDA: u16 = 1 << 7;
-        const PR: u16 = 1 << 8;
+        const LSDA: u16 = 1 << 8;
+        const PR: u16 = 1 << 9;
 
         let mut v = 0u16;
         if self.connected {
@@ -57,7 +57,7 @@ impl Port {
         const CSC: u16 = 1 << 1;
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
-        const PR: u16 = 1 << 8;
+        const PR: u16 = 1 << 9;
 
         // Write-1-to-clear status change bits.
         if value & CSC != 0 {

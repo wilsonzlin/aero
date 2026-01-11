@@ -1183,22 +1183,43 @@ impl Bios {
                 // - AX = KB between 1MiB and 16MiB
                 // - BX = number of 64KiB blocks above 16MiB
                 // - CX, DX may mirror AX/BX (many BIOSes do)
+                //
+                // This function is not a replacement for E820 and is only expected to
+                // describe memory below 4GiB. We still count ACPI/NVS regions since they
+                // are backed by physical RAM, even if they are marked reserved in E820.
                 const SIXTEEN_MIB: u64 = 16 * 1024 * 1024;
                 const ONE_MIB: u64 = 1024 * 1024;
-                let mut ext_bytes = 0u64;
-                for entry in &self.e820 {
-                    if entry.base >= ONE_MIB
-                        && matches!(entry.region_type, E820_TYPE_RAM | E820_TYPE_ACPI)
-                    {
-                        ext_bytes = ext_bytes.saturating_add(entry.length);
+                const FOUR_GIB: u64 = 0x1_0000_0000;
+
+                fn sum_e820_bytes(entries: &[E820Entry], start: u64, end: u64) -> u64 {
+                    let mut total = 0u64;
+                    for entry in entries {
+                        if entry.length == 0
+                            || !matches!(
+                                entry.region_type,
+                                E820_TYPE_RAM | E820_TYPE_ACPI | E820_TYPE_NVS
+                            )
+                        {
+                            continue;
+                        }
+
+                        let entry_start = entry.base;
+                        let entry_end = entry.base.saturating_add(entry.length);
+                        let overlap_start = entry_start.max(start);
+                        let overlap_end = entry_end.min(end);
+                        if overlap_end > overlap_start {
+                            total = total.saturating_add(overlap_end - overlap_start);
+                        }
                     }
+                    total
                 }
 
-                let below_16m = ext_bytes.min(SIXTEEN_MIB.saturating_sub(ONE_MIB));
-                let above_16m = ext_bytes.saturating_sub(SIXTEEN_MIB.saturating_sub(ONE_MIB));
+                let bytes_1m_to_16m = sum_e820_bytes(&self.e820, ONE_MIB, SIXTEEN_MIB);
+                let bytes_16m_to_4g = sum_e820_bytes(&self.e820, SIXTEEN_MIB, FOUR_GIB);
 
-                let ax_kb = (below_16m / 1024).min(0xFFFF) as u16;
-                let bx_blocks = (above_16m / 65_536).min(0xFFFF) as u16;
+                // 1MiB..16MiB = 15MiB max = 15360KiB (0x3C00).
+                let ax_kb = (bytes_1m_to_16m / 1024).min(0x3C00) as u16;
+                let bx_blocks = (bytes_16m_to_4g / 65_536).min(0xFFFF) as u16;
 
                 cpu.set_ax(ax_kb);
                 cpu.set_bx(bx_blocks);

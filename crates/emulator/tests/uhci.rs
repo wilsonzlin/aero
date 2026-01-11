@@ -22,6 +22,14 @@ const PID_SETUP: u8 = 0x2d;
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
 const TD_CTRL_IOC: u32 = 1 << 24;
 
+// UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
+const PORTSC_CCS: u16 = 0x0001;
+const PORTSC_CSC: u16 = 0x0002;
+const PORTSC_PED: u16 = 0x0004;
+const PORTSC_PEDC: u16 = 0x0008;
+const PORTSC_LSDA: u16 = 0x0100;
+const PORTSC_PR: u16 = 0x0200;
+
 struct TestMemBus {
     mem: Vec<u8>,
 }
@@ -95,6 +103,62 @@ fn run_one_frame(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, first_td: u32) 
     uhci.tick_1ms(mem);
 }
 
+fn read_portsc(uhci: &UhciPciDevice, portsc: u16) -> u16 {
+    uhci.port_read(portsc, 2) as u16
+}
+
+fn write_portsc(uhci: &mut UhciPciDevice, portsc: u16, value: u16) {
+    uhci.port_write(portsc, 2, value as u32);
+}
+
+fn write_portsc_w1c(uhci: &mut UhciPciDevice, portsc: u16, w1c: u16) {
+    // Preserve the port enable bit when clearing change bits, matching the usual
+    // read-modify-write pattern of UHCI drivers.
+    let cur = read_portsc(uhci, portsc);
+    let value = (cur & PORTSC_PED) | w1c;
+    write_portsc(uhci, portsc, value);
+}
+
+fn reset_port(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, portsc: u16) {
+    // Clear connection status change if present.
+    if read_portsc(uhci, portsc) & PORTSC_CSC != 0 {
+        write_portsc_w1c(uhci, portsc, PORTSC_CSC);
+    }
+
+    // Trigger port reset and wait the UHCI-mandated ~50ms.
+    write_portsc(uhci, portsc, PORTSC_PR);
+    for _ in 0..50 {
+        uhci.tick_1ms(mem);
+    }
+}
+
+#[test]
+fn uhci_root_hub_portsc_reset_enables_port() {
+    let mut mem = TestMemBus::new(0x1000);
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let keyboard = UsbHidKeyboardHandle::new();
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+
+    let st = read_portsc(&uhci, 0x10);
+    assert_eq!(st & (PORTSC_CCS | PORTSC_CSC), PORTSC_CCS | PORTSC_CSC);
+
+    write_portsc(&mut uhci, 0x10, PORTSC_PR);
+    let st = read_portsc(&uhci, 0x10);
+    assert_ne!(st & PORTSC_PR, 0);
+    assert_eq!(st & PORTSC_LSDA, 0);
+
+    for _ in 0..50 {
+        uhci.tick_1ms(&mut mem);
+    }
+
+    let st = read_portsc(&uhci, 0x10);
+    assert_eq!(st & PORTSC_PR, 0);
+    assert_ne!(st & PORTSC_PED, 0);
+    assert_ne!(st & PORTSC_PEDC, 0);
+}
+
 #[test]
 fn uhci_control_get_descriptor_device() {
     let mut mem = TestMemBus::new(0x20000);
@@ -105,7 +169,7 @@ fn uhci_control_get_descriptor_device() {
     uhci.controller
         .hub_mut()
         .attach(0, Box::new(keyboard.clone()));
-    uhci.controller.hub_mut().force_enable_for_tests(0);
+    reset_port(&mut uhci, &mut mem, 0x10);
 
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);
     uhci.port_write(0x00, 2, 0x0001);
@@ -169,7 +233,7 @@ fn uhci_interrupt_in_polling_reads_hid_reports() {
     uhci.controller
         .hub_mut()
         .attach(0, Box::new(keyboard.clone()));
-    uhci.controller.hub_mut().force_enable_for_tests(0);
+    reset_port(&mut uhci, &mut mem, 0x10);
 
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);
     uhci.port_write(0x00, 2, 0x0001);
