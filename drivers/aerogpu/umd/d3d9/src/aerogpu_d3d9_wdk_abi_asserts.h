@@ -145,17 +145,295 @@ AEROGPU_ABI_STATIC_ASSERT(
   #endif
 #endif
 
+#define AEROGPU_D3D9_WDK_ASSERT_SIZEOF(Type, Expected) \
+  AEROGPU_ABI_STATIC_ASSERT(sizeof(Type) == (Expected), "sizeof(" #Type ") does not match expected value")
+
+#define AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(Type, Member, Expected)                                   \
+  AEROGPU_ABI_STATIC_ASSERT(offsetof(Type, Member) == (Expected), "offsetof(" #Type ", " #Member \
+                                                                  ") does not match expected value")
+
 #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTER)
-AEROGPU_ABI_STATIC_ASSERT(
-    sizeof(D3DDDIARG_OPENADAPTER) == AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTER,
-    "sizeof(D3DDDIARG_OPENADAPTER) does not match expected value");
+AEROGPU_D3D9_WDK_ASSERT_SIZEOF(D3DDDIARG_OPENADAPTER, AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTER);
 #endif
 
 #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_pAdapterFuncs)
-AEROGPU_ABI_STATIC_ASSERT(
-    offsetof(D3DDDIARG_OPENADAPTER, pAdapterFuncs) == AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_pAdapterFuncs,
-    "offsetof(D3DDDIARG_OPENADAPTER, pAdapterFuncs) does not match expected value");
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTER,
+                                 pAdapterFuncs,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_pAdapterFuncs);
 #endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_pAdapterCallbacks2)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTER,
+                                 pAdapterCallbacks2,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER_pAdapterCallbacks2);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTER2)
+AEROGPU_D3D9_WDK_ASSERT_SIZEOF(D3DDDIARG_OPENADAPTER2, AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTER2);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_pAdapterFuncs)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTER2,
+                                 pAdapterFuncs,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_pAdapterFuncs);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_pAdapterCallbacks2)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTER2,
+                                 pAdapterCallbacks2,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTER2_pAdapterCallbacks2);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTERFROMHDC)
+AEROGPU_D3D9_WDK_ASSERT_SIZEOF(D3DDDIARG_OPENADAPTERFROMHDC,
+                               AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTERFROMHDC);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMHDC_pAdapterFuncs)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTERFROMHDC,
+                                 pAdapterFuncs,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMHDC_pAdapterFuncs);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMHDC_pAdapterCallbacks2)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTERFROMHDC,
+                                 pAdapterCallbacks2,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMHDC_pAdapterCallbacks2);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMHDC_AdapterLuid)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTERFROMHDC,
+                                 AdapterLuid,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMHDC_AdapterLuid);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTERFROMLUID)
+AEROGPU_D3D9_WDK_ASSERT_SIZEOF(D3DDDIARG_OPENADAPTERFROMLUID,
+                               AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTERFROMLUID);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMLUID_pAdapterFuncs)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTERFROMLUID,
+                                 pAdapterFuncs,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMLUID_pAdapterFuncs);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMLUID_pAdapterCallbacks2)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTERFROMLUID,
+                                 pAdapterCallbacks2,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMLUID_pAdapterCallbacks2);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMLUID_AdapterLuid)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3DDDIARG_OPENADAPTERFROMLUID,
+                                 AdapterLuid,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3DDDIARG_OPENADAPTERFROMLUID_AdapterLuid);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDI_DEVICEFUNCS)
+AEROGPU_D3D9_WDK_ASSERT_SIZEOF(D3D9DDI_DEVICEFUNCS, AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDI_DEVICEFUNCS);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateResource)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnCreateResource,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateResource);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyDevice)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnDestroyDevice,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyDevice);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyResource)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnDestroyResource,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyResource);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnLock)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnLock,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnLock);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUnlock)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnUnlock,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUnlock);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetRenderTarget)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetRenderTarget,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetRenderTarget);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateVertexDecl)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnCreateVertexDecl,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateVertexDecl);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateShader)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnCreateShader,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateShader);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateVertexShader)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnCreateVertexShader,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateVertexShader);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnBeginScene)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnBeginScene,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnBeginScene);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnEndScene)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnEndScene,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnEndScene);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetFVF)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetFVF,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetFVF);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDrawPrimitive2)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnDrawPrimitive2,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDrawPrimitive2);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetViewport)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetViewport,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetViewport);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetStreamSource)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetStreamSource,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetStreamSource);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetIndices)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetIndices,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetIndices);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnClear)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnClear,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnClear);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDrawPrimitive)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnDrawPrimitive,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDrawPrimitive);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDrawIndexedPrimitive)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnDrawIndexedPrimitive,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDrawIndexedPrimitive);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnPresent)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnPresent,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnPresent);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnPresentEx)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnPresentEx,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnPresentEx);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnFlush)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnFlush,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnFlush);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetPresentStats)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnGetPresentStats,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetPresentStats);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetLastPresentCount)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnGetLastPresentCount,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetLastPresentCount);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateQuery)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnCreateQuery,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateQuery);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnIssueQuery)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnIssueQuery,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnIssueQuery);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetQueryData)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnGetQueryData,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetQueryData);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetRenderTargetData)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnGetRenderTargetData,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnGetRenderTargetData);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCopyRects)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnCopyRects,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCopyRects);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnBlt)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnBlt,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnBlt);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnColorFill)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnColorFill,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnColorFill);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUpdateSurface)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnUpdateSurface,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUpdateSurface);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUpdateTexture)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnUpdateTexture,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnUpdateTexture);
+#endif
+
+#undef AEROGPU_D3D9_WDK_ASSERT_SIZEOF
+#undef AEROGPU_D3D9_WDK_ASSERT_OFFSETOF
 
 // -----------------------------------------------------------------------------
 // D3D9UMDDI device arg structs (Win7 D3D9 runtime -> UMD)
