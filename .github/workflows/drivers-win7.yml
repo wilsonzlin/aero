@@ -114,44 +114,197 @@ jobs:
             exit 0
           }
 
-          $files = Get-ChildItem -LiteralPath $driversDir -Recurse -File -ErrorAction SilentlyContinue
-          if (!$files) {
+          $entries = Get-ChildItem -LiteralPath $driversDir -ErrorAction SilentlyContinue
+          if (!$entries) {
             Write-Host "drivers/ exists but is empty; skipping Win7 driver build."
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
 
-          # Only run CI when we have *CI-buildable* driver projects.
+          function Test-IsMakefileVcxproj {
+            param([Parameter(Mandatory = $true)][string]$Path)
+            $content = $null
+            try {
+              $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+            } catch {
+              # If we cannot inspect the project, treat it as buildable so CI does not silently skip.
+              return $false
+            }
+            if ([string]::IsNullOrWhiteSpace($content)) {
+              # Malformed/empty project; treat as buildable so CI surfaces the error.
+              return $false
+            }
+            return (
+              $content -match '<Keyword>\s*MakeFileProj\s*</Keyword>' -or
+              $content -match '<ConfigurationType>\s*Makefile\s*</ConfigurationType>'
+            )
+          }
+
+          function Test-SlnHasBuildableProjects {
+            param([Parameter(Mandatory = $true)][string]$SlnPath)
+
+            $lines = $null
+            try {
+              $lines = Get-Content -LiteralPath $SlnPath -ErrorAction Stop
+            } catch {
+              # If we cannot read the solution, err on the side of running CI.
+              return $true
+            }
+            if (-not $lines) { return $true }
+
+            $slnDir = Split-Path -Path $SlnPath -Parent
+            $projectPaths = New-Object System.Collections.Generic.List[string]
+
+            foreach ($line in $lines) {
+              # Example: Project("{GUID}") = "name", "path\\to\\proj.vcxproj", "{GUID}"
+              if ($line -match '^Project\(".*?"\)\s*=\s*".*?",\s*"(.*?)",\s*".*?"\s*$') {
+                $p = [string]$Matches[1]
+                if (-not [string]::IsNullOrWhiteSpace($p)) {
+                  [void]$projectPaths.Add($p)
+                }
+              }
+            }
+
+            if ($projectPaths.Count -eq 0) {
+              # Unknown/empty solution; treat as buildable to avoid silent skips.
+              return $true
+            }
+
+            foreach ($projRel in $projectPaths) {
+              $ext = [IO.Path]::GetExtension($projRel)
+              if ([string]::IsNullOrWhiteSpace($ext)) {
+                # Likely a Solution Folder entry.
+                continue
+              }
+
+              if ($ext -ieq '.vcxproj') {
+                $full = [IO.Path]::GetFullPath((Join-Path $slnDir $projRel))
+                if (!(Test-Path -LiteralPath $full -PathType Leaf)) {
+                  # If the solution references a missing project, run CI so it fails loudly.
+                  return $true
+                }
+                if (-not (Test-IsMakefileVcxproj -Path $full)) {
+                  return $true
+                }
+                continue
+              }
+
+              # Any other MSBuild project type (.csproj, .vcproj, etc) should run in CI.
+              return $true
+            }
+
+            # Every referenced project was a MakeFileProj wrapper (or solution folders only).
+            return $false
+          }
+
+          function Try-GetDriverBuildTarget {
+            param(
+              [Parameter(Mandatory = $true)][System.IO.DirectoryInfo]$Directory,
+              [Parameter(Mandatory = $true)][string]$DriversRootResolved
+            )
+
+            $name = $Directory.Name
+            $sln = Join-Path $Directory.FullName ("{0}.sln" -f $name)
+            if (Test-Path -LiteralPath $sln -PathType Leaf) {
+              $kind = 'sln'
+              $buildPath = (Resolve-Path -LiteralPath $sln).Path
+            } else {
+              $vcxprojs = @(Get-ChildItem -LiteralPath $Directory.FullName -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue)
+              if ($vcxprojs.Count -eq 0) { return $null }
+              if ($vcxprojs.Count -eq 1) {
+                $kind = 'vcxproj'
+                $buildPath = (Resolve-Path -LiteralPath $vcxprojs[0].FullName).Path
+              } else {
+                # Mirrors ci/build-drivers.ps1 behaviour: without a matching <dir>.sln, the build
+                # target is ambiguous. Treat this as "buildable" so CI runs and surfaces the issue.
+                $kind = 'ambiguous'
+                $buildPath = $Directory.FullName
+              }
+            }
+
+            $sep = [IO.Path]::DirectorySeparatorChar
+            $altSep = [IO.Path]::AltDirectorySeparatorChar
+            $driversRootNormalized = $DriversRootResolved.TrimEnd($sep, $altSep)
+            $dirResolved = (Resolve-Path -LiteralPath $Directory.FullName).Path.TrimEnd($sep, $altSep)
+            $prefix = $driversRootNormalized + $sep
+            if (-not $dirResolved.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+              return $null
+            }
+
+            $relativePath = $dirResolved.Substring($prefix.Length)
+            $displayName = $relativePath.Replace($sep, '/')
+            if ($altSep -ne $sep) {
+              $displayName = $displayName.Replace($altSep, '/')
+            }
+
+            return [pscustomobject]@{
+              Name = $displayName
+              Kind = $kind
+              BuildPath = $buildPath
+            }
+          }
+
+          # Only run CI when we have *CI-buildable* driver targets as discovered by ci/build-drivers.ps1:
+          #   - drivers/<name>/<name>.sln OR drivers/<name>/*.vcxproj
+          #   - drivers/<group>/<name>/<name>.sln OR drivers/<group>/<name>/*.vcxproj
           #
           # We intentionally ignore classic WDK 7.1 NMake wrapper projects that invoke build.exe
           # (Keyword=MakeFileProj / ConfigurationType=Makefile), because this workflow provisions
           # a modern Windows Kits toolchain and does not guarantee a WDK 7.1 build environment.
           #
-          # Additionally, require an INF in the same directory tree so we only run when we can
-          # generate catalogs + signed driver packages.
-          $buildable = New-Object System.Collections.Generic.List[object]
+          # We do *not* require .inf files to be colocated with projects; packaging INFs may live
+          # elsewhere under a driver root (e.g. drivers/aerogpu/packaging/win7/*.inf).
 
-          $vcxprojs = $files | Where-Object { $_.Extension -eq '.vcxproj' }
-          foreach ($proj in $vcxprojs) {
-            $content = Get-Content -LiteralPath $proj.FullName -Raw -ErrorAction SilentlyContinue
-            if (-not $content) { continue }
-            if ($content -match '<Keyword>\\s*MakeFileProj\\s*</Keyword>' -or $content -match '<ConfigurationType>\\s*Makefile\\s*</ConfigurationType>') {
+          $driversRootResolved = (Resolve-Path -LiteralPath $driversDir).Path
+          $level1 = @(Get-ChildItem -LiteralPath $driversDir -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
+
+          $targets = New-Object System.Collections.Generic.List[object]
+          foreach ($dir1 in $level1) {
+            $t1 = Try-GetDriverBuildTarget -Directory $dir1 -DriversRootResolved $driversRootResolved
+            if ($null -ne $t1) {
+              [void]$targets.Add($t1)
               continue
             }
 
-            $inf = Get-ChildItem -LiteralPath $proj.DirectoryName -Recurse -File -Filter '*.inf' -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $inf) { continue }
+            $level2 = @(Get-ChildItem -LiteralPath $dir1.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
+            foreach ($dir2 in $level2) {
+              $t2 = Try-GetDriverBuildTarget -Directory $dir2 -DriversRootResolved $driversRootResolved
+              if ($null -ne $t2) {
+                [void]$targets.Add($t2)
+              }
+            }
+          }
 
-            [void]$buildable.Add($proj.FullName)
+          $buildable = New-Object System.Collections.Generic.List[object]
+          foreach ($t in $targets) {
+            if ($t.Kind -eq 'vcxproj') {
+              if (-not (Test-IsMakefileVcxproj -Path $t.BuildPath)) {
+                [void]$buildable.Add($t)
+              }
+              continue
+            }
+
+            if ($t.Kind -eq 'sln') {
+              if (Test-SlnHasBuildableProjects -SlnPath $t.BuildPath) {
+                [void]$buildable.Add($t)
+              }
+              continue
+            }
+
+            # "ambiguous" target (multiple vcxproj, no matching <dir>.sln): run CI to surface it.
+            [void]$buildable.Add($t)
           }
 
           if ($buildable.Count -eq 0) {
-            Write-Host "No CI-buildable Win7 driver projects were found (expected MSBuild-based *.vcxproj with an .inf; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
+            Write-Host "No CI-buildable Win7 driver targets were found (expected MSBuild-based solution/project under drivers/<name>/ or drivers/<group>/<name>/; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
 
-          Write-Host "Found $($buildable.Count) CI-buildable driver project(s); running Win7 driver build."
+          Write-Host "Found $($buildable.Count) CI-buildable driver target(s); running Win7 driver build:"
+          foreach ($t in $buildable) {
+            Write-Host ("- {0} ({1}): {2}" -f $t.Name, $t.Kind, $t.BuildPath)
+          }
           "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Prepare WDK download cache directory
