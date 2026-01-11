@@ -7,8 +7,14 @@
 #include "virtiosnd_queue.h"
 #include "virtiosnd_dma.h"
 
-/* Explicit include to avoid picking up the legacy virtqueue header via include path order. */
-#include "../../../windows/virtio/common/virtqueue_split.h"
+/*
+ * Shared split-ring virtqueue implementation (drivers/windows7/virtio/common).
+ *
+ * This header is intentionally included via a relative path to avoid
+ * accidentally picking up the unrelated `drivers/windows/virtio/common`
+ * implementation when multiple virtio trees are on the include path.
+ */
+#include "../../virtio/common/include/virtqueue_split.h"
 
 /*
  * Indirect descriptor sizing (Aero contract v1).
@@ -23,13 +29,12 @@
  * of in-flight requests equals the ring size.
  */
 #define VIRTIOSND_QUEUE_SPLIT_INDIRECT_MAX_DESC 16u
-#define VIRTIOSND_QUEUE_SPLIT_INDIRECT_TABLE_COUNT(_qsz) (_qsz)
 
 typedef struct _VIRTIOSND_QUEUE_SPLIT {
     USHORT QueueIndex;
     USHORT QueueSize;
 
-    VIRTQ_SPLIT* Vq;
+    virtqueue_split_t Vq;
 
     /*
      * Protects all access to Vq (descriptor free list, avail/used indices, etc).
@@ -37,19 +42,27 @@ typedef struct _VIRTIOSND_QUEUE_SPLIT {
      * Submit/PopUsed/Kick are expected to be callable at IRQL <= DISPATCH_LEVEL.
      * The implementation uses KeAcquireSpinLock when called below DISPATCH_LEVEL,
      * and KeAcquireSpinLockAtDpcLevel when already at DISPATCH_LEVEL.
-     */
+    */
     KSPIN_LOCK Lock;
 
-    /* Transport-supplied virtio-pci modern notify doorbell address. */
-    volatile UINT16* NotifyAddr;
+    /*
+     * virtqueue_split uses the generic virtio OS shim. virtio-snd provides a
+     * small per-queue shim context so the shared code can allocate DMA-able
+     * buffers via virtiosnd_dma.
+     *
+     * The backing allocations are tracked internally by the virtiosnd queue
+     * implementation; callers should treat this as opaque.
+     */
+    struct _VIRTIOSND_QUEUE_SPLIT_OS_CTX {
+        PVIRTIOSND_DMA_CONTEXT DmaCtx;
+        LIST_ENTRY DmaAllocs;
+    } OsCtx;
 
     /* Split ring (desc + avail + used) memory (DMA-safe). */
-    VIRTIOSND_DMA_BUFFER Ring;
+    virtio_dma_buffer_t Ring;
 
-    /* Indirect descriptor table pool (DMA-safe, required by the Aero contract v1). */
-    VIRTIOSND_DMA_BUFFER IndirectPool;
-    USHORT IndirectTableCount;
-    USHORT IndirectMaxDesc;
+    /* Precomputed virtio-pci modern notify MMIO address for this queue. */
+    volatile UINT16* NotifyAddr;
 } VIRTIOSND_QUEUE_SPLIT, *PVIRTIOSND_QUEUE_SPLIT;
 
 #ifdef __cplusplus

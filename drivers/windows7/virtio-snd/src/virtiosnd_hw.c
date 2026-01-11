@@ -38,8 +38,8 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     NTSTATUS status;
     ULONG q;
-    const BOOLEAN eventIdx = (Dx->NegotiatedFeatures & (1ui64 << VIRTIO_F_RING_EVENT_IDX)) != 0;
-    const BOOLEAN indirect = (Dx->NegotiatedFeatures & (1ui64 << VIRTIO_F_RING_INDIRECT_DESC)) != 0;
+    const BOOLEAN eventIdx = (Dx->NegotiatedFeatures & (UINT64)VIRTIO_RING_F_EVENT_IDX) != 0;
+    const BOOLEAN indirect = (Dx->NegotiatedFeatures & (UINT64)VIRTIO_RING_F_INDIRECT_DESC) != 0;
 
     /*
      * Contract v1 requires four virtqueues (control/event/tx/rx).
@@ -59,14 +59,20 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
         USHORT size;
+        USHORT notifyOff;
         volatile UINT16* notifyAddr;
         UINT64 descPa, availPa, usedPa;
+        USHORT notifyOffReadback;
+        volatile UINT16* notifyAddrReadback;
 
         size = 0;
+        notifyOff = 0;
+        notifyOffReadback = 0;
         notifyAddr = NULL;
         descPa = 0;
         availPa = 0;
         usedPa = 0;
+        notifyAddrReadback = NULL;
 
         status = VirtioPciGetQueueSize(&Dx->Transport, (USHORT)q, &size);
         if (!NT_SUCCESS(status)) {
@@ -86,6 +92,28 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             return status;
         }
 
+        if (Dx->Transport.NotifyBase == NULL || Dx->Transport.NotifyOffMultiplier == 0) {
+            return STATUS_INVALID_DEVICE_STATE;
+        }
+
+        {
+            ULONGLONG delta;
+            delta = (ULONGLONG)((volatile UCHAR*)notifyAddr - Dx->Transport.NotifyBase);
+            if ((delta % (ULONGLONG)Dx->Transport.NotifyOffMultiplier) != 0) {
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
+            notifyOff = (USHORT)(delta / (ULONGLONG)Dx->Transport.NotifyOffMultiplier);
+        }
+
+        if (notifyOff != (USHORT)q) {
+            VIRTIOSND_TRACE_ERROR(
+                "queue %lu notify_off mismatch: device=%u expected=%lu\n",
+                q,
+                (UINT)notifyOff,
+                q);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
         status = VirtioSndQueueSplitCreate(
             &Dx->DmaCtx,
             &Dx->QueueSplit[q],
@@ -102,52 +130,54 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             return status;
         }
 
-        /*
-         * Contract v1 requires VIRTIO_F_RING_INDIRECT_DESC. Prefer indirect
-         * descriptors (threshold=0) for controlq/txq/rxq as long as an indirect
-         * table pool is available.
-         */
-        if (Dx->QueueSplit[q].Vq != NULL && Dx->QueueSplit[q].Vq->indirect_pool_va != NULL) {
-            if (q == VIRTIOSND_QUEUE_CONTROL || q == VIRTIOSND_QUEUE_TX || q == VIRTIOSND_QUEUE_RX) {
-                Dx->QueueSplit[q].Vq->indirect_threshold = 0;
-            }
-        }
-
+        notifyOffReadback = 0;
         status = VirtioPciSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa);
         if (!NT_SUCCESS(status)) {
             return status;
         }
 
+        status = VirtioPciGetQueueNotifyAddress(&Dx->Transport, (USHORT)q, &notifyAddrReadback);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        {
+            ULONGLONG delta;
+            delta = (ULONGLONG)((volatile UCHAR*)notifyAddrReadback - Dx->Transport.NotifyBase);
+            if ((delta % (ULONGLONG)Dx->Transport.NotifyOffMultiplier) != 0) {
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
+            notifyOffReadback = (USHORT)(delta / (ULONGLONG)Dx->Transport.NotifyOffMultiplier);
+        }
+
+        if (notifyOffReadback != notifyOff) {
+            VIRTIOSND_TRACE_ERROR(
+                "queue %lu notify_off readback mismatch: init=%u readback=%u\n",
+                q,
+                (UINT)notifyOff,
+                (UINT)notifyOffReadback);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
         VIRTIOSND_TRACE("queue %lu enabled (size=%u)\n", q, (UINT)size);
 
-        if (Dx->QueueSplit[q].Vq != NULL) {
+        if (Dx->QueueSplit[q].Ring.vaddr != NULL) {
             VIRTIOSND_TRACE(
-                "queue %lu ring: VA=%p DMA=%I64x bytes=%Iu cache=%s\n",
+                "queue %lu ring: VA=%p DMA=%I64x bytes=%Iu\n",
                 q,
-                Dx->QueueSplit[q].Ring.Va,
-                (ULONGLONG)Dx->QueueSplit[q].Ring.DmaAddr,
-                Dx->QueueSplit[q].Ring.Size,
-                Dx->QueueSplit[q].Ring.CacheEnabled ? "MmCached" : "MmNonCached");
+                Dx->QueueSplit[q].Ring.vaddr,
+                (ULONGLONG)Dx->QueueSplit[q].Ring.paddr,
+                Dx->QueueSplit[q].Ring.size);
 
             VIRTIOSND_TRACE(
                 "queue %lu desc VA=%p PA=%I64x | avail VA=%p PA=%I64x | used VA=%p PA=%I64x\n",
                 q,
-                Dx->QueueSplit[q].Vq->desc,
-                (ULONGLONG)Dx->QueueSplit[q].Vq->desc_pa,
-                Dx->QueueSplit[q].Vq->avail,
-                (ULONGLONG)Dx->QueueSplit[q].Vq->avail_pa,
-                Dx->QueueSplit[q].Vq->used,
-                (ULONGLONG)Dx->QueueSplit[q].Vq->used_pa);
-
-            VIRTIOSND_TRACE(
-                "queue %lu indirect: VA=%p DMA=%I64x bytes=%Iu tables=%u max_desc=%u cache=%s\n",
-                q,
-                Dx->QueueSplit[q].IndirectPool.Va,
-                (ULONGLONG)Dx->QueueSplit[q].IndirectPool.DmaAddr,
-                Dx->QueueSplit[q].IndirectPool.Size,
-                (UINT)Dx->QueueSplit[q].IndirectTableCount,
-                (UINT)Dx->QueueSplit[q].IndirectMaxDesc,
-                Dx->QueueSplit[q].IndirectPool.CacheEnabled ? "MmCached" : "MmNonCached");
+                Dx->QueueSplit[q].Vq.desc,
+                (ULONGLONG)descPa,
+                Dx->QueueSplit[q].Vq.avail,
+                (ULONGLONG)availPa,
+                Dx->QueueSplit[q].Vq.used,
+                (ULONGLONG)usedPa);
         }
     }
 
@@ -240,18 +270,25 @@ NTSTATUS VirtIoSndStartHardware(
     }
 
     VIRTIOSND_TRACE(
-        "transport: rev=0x%02X bar0=0x%I64x len=0x%I64x notify_mult=%lu\n",
+        "transport: rev=0x%02X bar0=0x%I64x len=0x%Ix notify_mult=%lu\n",
         (UINT)Dx->Transport.PciRevisionId,
-        Dx->Transport.Bars[0].Base,
-        (ULONGLONG)Dx->Transport.Bars[0].Length,
+        (ULONGLONG)Dx->Transport.Bars[0].Base,
+        Dx->Transport.Bars[0].Length,
         Dx->Transport.NotifyOffMultiplier);
 
+    /* Contract v1 requires notify_off_multiplier == 4 (docs/windows7-virtio-driver-contract.md §1.6). */
+    if (Dx->Transport.NotifyOffMultiplier != 4u) {
+        VIRTIOSND_TRACE_ERROR("unexpected notify_off_multiplier=%lu (expected 4)\n", (ULONG)Dx->Transport.NotifyOffMultiplier);
+        status = STATUS_NOT_SUPPORTED;
+        goto fail;
+    }
+
     /*
-     * Contract v1 requires VIRTIO_F_RING_INDIRECT_DESC and uses split virtqueues.
+     * Contract v1 requires VIRTIO_RING_F_INDIRECT_DESC and uses split virtqueues.
      * EVENT_IDX/PACKED are tolerated but are not negotiated by this driver.
      */
     status = VirtioPciNegotiateFeatures(&Dx->Transport,
-                                        /*Required=*/(1ui64 << VIRTIO_F_RING_INDIRECT_DESC),
+                                        /*Required=*/(UINT64)VIRTIO_RING_F_INDIRECT_DESC,
                                         /*Wanted=*/0,
                                         &Dx->NegotiatedFeatures);
     if (!NT_SUCCESS(status)) {

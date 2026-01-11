@@ -375,14 +375,15 @@ static VOID VirtIoSndRxHandleUsedLocked(
         return;
     }
 
-    /*
-     * Ensure device writes are visible before reading response bytes.
-     *
-     * Note: VirtqSplitGetUsed issues a VIRTIO_RMB after observing used->idx, so
-     * this is largely redundant, but keeps the RX path consistent with TX and
-     * protects against alternate queue implementations.
-     */
-    KeMemoryBarrier();
+     /*
+      * Ensure device writes are visible before reading response bytes.
+      *
+      * Note: the split-ring virtqueue implementation issues a read memory
+      * barrier after observing used->idx, so this is largely redundant, but
+      * keeps the RX path consistent with TX and protects against alternate
+      * queue implementations.
+      */
+     KeMemoryBarrier();
 
     st = VIRTIO_SND_S_BAD_MSG;
     latency = 0;

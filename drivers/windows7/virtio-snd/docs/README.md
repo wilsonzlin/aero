@@ -154,7 +154,7 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * `src/virtiosnd_control.c` / `src/virtiosnd_tx.c` / `src/virtiosnd_rx.c` — control/TX/RX protocol engines
 * `drivers/windows7/virtio/common/src/virtio_pci_contract.c` — `AERO-W7-VIRTIO` v1 contract identity validation used at `START_DEVICE` (requires `DEV_1059` + `REV_01`)
 * Shared virtqueue / PCI support code:
-  - `drivers/windows/virtio/common/virtqueue_split.c`
+  - `drivers/windows7/virtio/common/src/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c`
@@ -174,7 +174,7 @@ Notes:
 
 ## Legacy / transitional virtio-pci path (not shipped)
 
-The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the default contract INF (`inf/aero-virtio-snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for QEMU defaults).
+The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`). That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the default contract INF (`inf/aero-virtio-snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for QEMU defaults).
 
 CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
 

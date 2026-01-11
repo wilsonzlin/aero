@@ -41,18 +41,17 @@ only; it is not built/shipped.
   - `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
   - `src/virtiosnd_intx.c`
 - Shared virtio support code linked in from:
-  - `drivers/windows/virtio/common/virtqueue_split.c`
+  - `drivers/windows7/virtio/common/src/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c`
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
   - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
 
 ### Legacy virtio-pci I/O-port bring-up (not shipped)
 
 The repository also contains an older legacy/transitional virtio-pci I/O-port
 path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and
-`drivers/windows7/virtio/common`). It is kept for historical bring-up only.
+`drivers/windows7/virtio/common/src/virtio_pci_legacy.c`). It is kept for historical bring-up only.
 
 CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
 

@@ -12,15 +12,10 @@ TARGETNAME=virtiosnd
 TARGETTYPE=DRIVER
 TARGETPATH=obj
 #
-# Include ordering matters:
-# - `drivers/windows/virtio/common` provides the reusable split virtqueue engine
-#   used by virtiosnd_queue_split.c and virtqueue_split.c.
-# - `drivers/windows7/virtio/common/include` also contains a header named
-#   `virtqueue_split.h` (legacy/transitional implementation).
-# Ensure the split virtqueue engine's headers win by putting its directory
-# earlier in the include path.
+# This driver links against shared virtio transport + virtqueue code under
+# `drivers/windows7/virtio/common`.
 #
-INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\common;..\..\virtio\common\include;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
+INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 TARGETLIBS=$(TARGETLIBS) \
   $(DDK_LIB_PATH)\portcls.lib \
@@ -49,7 +44,7 @@ SOURCES= \
     virtiosnd_sg.c \
     virtiosnd_sg_core.c \
     virtiosnd_sg_tx.c \
-    ..\..\..\windows\virtio\common\virtqueue_split.c \
+    ..\..\virtio\common\src\virtqueue_split.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_aero_layout.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c

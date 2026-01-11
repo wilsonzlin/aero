@@ -73,7 +73,7 @@
     <ClCompile Include="src\wavert.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c">
+    <ClCompile Include="..\virtio\common\src\virtqueue_split.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_aero_layout.c">
