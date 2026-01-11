@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("GPU worker: contextId isolates AeroGPU resource state across submissions", async ({ page }) => {
+test("GPU worker: contextId isolates AeroGPU per-context state across submissions", async ({ page }) => {
   await page.goto("/web/blank.html");
 
   await page.setContent(`
@@ -15,6 +15,7 @@ test("GPU worker: contextId isolates AeroGPU resource state across submissions",
       import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
 
       const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+      const H = 64;
 
       (async () => {
         try {
@@ -42,9 +43,13 @@ test("GPU worker: contextId isolates AeroGPU resource state across submissions",
             }
             if (msg.type === "error") {
               errors.push(String(msg.message ?? ""));
+              // Prevent hangs if the worker reports an error mid-flight.
+              readyReject(new Error("gpu worker error: " + String(msg.message ?? "")));
+              for (const [, v] of pending) v.reject(new Error("gpu worker error: " + String(msg.message ?? "")));
+              pending.clear();
               return;
             }
-            if (msg.type === "submit_complete") {
+            if (msg.type === "submit_complete" || msg.type === "screenshot") {
               const entry = pending.get(msg.requestId);
               if (!entry) return;
               pending.delete(msg.requestId);
@@ -69,10 +74,21 @@ test("GPU worker: contextId isolates AeroGPU resource state across submissions",
 
           await ready;
 
-          const makeCmdStream = (w, h) => {
+          function solidRgba(w, h, r, g, b, a) {
+            const out = new Uint8Array(w * h * 4);
+            for (let i = 0; i < out.length; i += 4) {
+              out[i + 0] = r;
+              out[i + 1] = g;
+              out[i + 2] = b;
+              out[i + 3] = a;
+            }
+            return out;
+          }
+
+          const makeCreateAndPresentCmdStream = (handle, w, h, rgba) => {
             const writer = new AerogpuCmdWriter();
             writer.createTexture2d(
-              /* textureHandle */ 1,
+              /* textureHandle */ handle,
               AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT,
               AerogpuFormat.R8G8B8A8Unorm,
               w >>> 0,
@@ -83,15 +99,26 @@ test("GPU worker: contextId isolates AeroGPU resource state across submissions",
               /* backingAllocId */ 0,
               /* backingOffsetBytes */ 0,
             );
-            writer.setRenderTargets([1], 0);
+            writer.setRenderTargets([handle], 0);
+            writer.uploadResource(handle, 0n, rgba);
             writer.present(0, 0);
             return writer.finish().buffer;
           };
 
-          // Same texture handle but mismatched dimensions. Without per-context state isolation,
-          // the second submission would trigger a CREATE_TEXTURE2D rebind mismatch error.
-          const cmdStream0 = makeCmdStream(64, 64);
-          const cmdStream1 = makeCmdStream(32, 64);
+          const makePresentOnlyCmdStream = () => {
+            const writer = new AerogpuCmdWriter();
+            writer.present(0, 0);
+            return writer.finish().buffer;
+          };
+
+          // Each context creates and binds its own render target. The second submission overwrites
+          // global state if contextId isolation is broken. The final present should still render
+          // the context 0 target.
+          const W0 = 64;
+          const W1 = 32;
+          const cmdStream0 = makeCreateAndPresentCmdStream(1, W0, H, solidRgba(W0, H, 255, 0, 0, 255));
+          const cmdStream1 = makeCreateAndPresentCmdStream(2, W1, H, solidRgba(W1, H, 0, 255, 0, 255));
+          const cmdStream2 = makePresentOnlyCmdStream();
 
           const submit = (contextId, signalFence, cmdStream) => {
             const requestId = nextRequestId++;
@@ -112,10 +139,22 @@ test("GPU worker: contextId isolates AeroGPU resource state across submissions",
 
           const submit0 = await submit(0, 1n, cmdStream0);
           const submit1 = await submit(1, 2n, cmdStream1);
+          const submit2 = await submit(0, 3n, cmdStream2);
+
+          const screenshotRequestId = nextRequestId++;
+          const screenshotPromise = new Promise((resolve, reject) => pending.set(screenshotRequestId, { resolve, reject }));
+          worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId: screenshotRequestId });
+          const screenshot = await screenshotPromise;
+          const pixels = new Uint8Array(screenshot.rgba8);
 
           window.__AERO_CONTEXT_ID_RESULT__ = {
             errors,
-            presentCounts: [submit0.presentCount ?? null, submit1.presentCount ?? null],
+            presentCounts: [submit0.presentCount ?? null, submit1.presentCount ?? null, submit2.presentCount ?? null],
+            screenshot: {
+              width: screenshot.width,
+              height: screenshot.height,
+              firstPixel: [pixels[0], pixels[1], pixels[2], pixels[3]],
+            },
           };
 
           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
@@ -133,5 +172,6 @@ test("GPU worker: contextId isolates AeroGPU resource state across submissions",
   expect(result.error ?? null).toBeNull();
   expect(result.errors).toEqual([]);
   // presentCount is a monotonic counter for the runtime (not per-context).
-  expect(result.presentCounts).toEqual([1n, 2n]);
+  expect(result.presentCounts).toEqual([1n, 2n, 3n]);
+  expect(result.screenshot).toEqual({ width: 64, height: 64, firstPixel: [255, 0, 0, 255] });
 });
