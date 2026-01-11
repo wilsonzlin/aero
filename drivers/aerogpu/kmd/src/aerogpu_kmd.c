@@ -2748,13 +2748,45 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     PHYSICAL_ADDRESS dmaPa;
     dmaPa.QuadPart = 0;
     PVOID dmaVa = NULL;
-    if (pSubmitCommand->DmaBufferSize != 0) {
-        dmaVa = AeroGpuAllocContiguous(pSubmitCommand->DmaBufferSize, &dmaPa);
+    ULONG dmaSizeBytes = (ULONG)pSubmitCommand->DmaBufferSize;
+
+    if (dmaSizeBytes != 0) {
+        dmaVa = AeroGpuAllocContiguous(dmaSizeBytes, &dmaPa);
         if (!dmaVa) {
             AeroGpuFreeSubmissionMeta(meta);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        RtlCopyMemory(dmaVa, pSubmitCommand->pDmaBuffer, pSubmitCommand->DmaBufferSize);
+        RtlCopyMemory(dmaVa, pSubmitCommand->pDmaBuffer, dmaSizeBytes);
+    } else if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        /*
+         * Paging submissions use a 0-byte DMA buffer in this bring-up driver, but the
+         * versioned (AGPU) ABI expects `cmd_gpa/cmd_size_bytes` to describe an AeroGPU
+         * command stream. Provide a minimal NOP stream so the submission is well-formed
+         * and future host-side validators can accept it.
+         */
+        dmaSizeBytes = sizeof(struct aerogpu_cmd_stream_header) + sizeof(struct aerogpu_cmd_hdr);
+        dmaVa = AeroGpuAllocContiguous(dmaSizeBytes, &dmaPa);
+        if (!dmaVa) {
+            AeroGpuFreeSubmissionMeta(meta);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        struct aerogpu_cmd_stream_header stream;
+        RtlZeroMemory(&stream, sizeof(stream));
+        stream.magic = AEROGPU_CMD_STREAM_MAGIC;
+        stream.abi_version = AEROGPU_ABI_VERSION_U32;
+        stream.size_bytes = (uint32_t)dmaSizeBytes;
+        stream.flags = AEROGPU_CMD_STREAM_FLAG_NONE;
+        stream.reserved0 = 0;
+        stream.reserved1 = 0;
+
+        struct aerogpu_cmd_hdr nop;
+        RtlZeroMemory(&nop, sizeof(nop));
+        nop.opcode = AEROGPU_CMD_NOP;
+        nop.size_bytes = (uint32_t)sizeof(struct aerogpu_cmd_hdr);
+
+        RtlCopyMemory(dmaVa, &stream, sizeof(stream));
+        RtlCopyMemory((PUCHAR)dmaVa + sizeof(stream), &nop, sizeof(nop));
     }
 
     PVOID allocTableVa = NULL;
@@ -2812,7 +2844,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     RtlZeroMemory(sub, sizeof(*sub));
     sub->Fence = fence;
     sub->DmaCopyVa = dmaVa;
-    sub->DmaCopySize = pSubmitCommand->DmaBufferSize;
+    sub->DmaCopySize = dmaSizeBytes;
     sub->DmaCopyPa = dmaPa;
     sub->DescVa = descVa;
     sub->DescSize = descSize;
@@ -2840,7 +2872,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         ringSt = AeroGpuV1RingPushSubmit(adapter,
                                          submitFlags,
                                          dmaPa,
-                                         pSubmitCommand->DmaBufferSize,
+                                         dmaSizeBytes,
                                          allocTableGpa,
                                          (uint32_t)allocTableSizeBytes,
                                          fence);
@@ -2871,7 +2903,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
     }
 
-    AeroGpuLogSubmission(adapter, fence, type, pSubmitCommand->DmaBufferSize);
+    AeroGpuLogSubmission(adapter, fence, type, dmaSizeBytes);
 
     return STATUS_SUCCESS;
 }
