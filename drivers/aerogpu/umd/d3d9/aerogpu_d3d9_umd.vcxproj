@@ -123,6 +123,7 @@
     <ClInclude Include="src\aerogpu_log.h" />
     <ClInclude Include="src\aerogpu_wddm_alloc_list.h" />
     <ClInclude Include="src\aerogpu_wddm_context.h" />
+    <ClInclude Include="..\..\protocol\aerogpu_wddm_alloc.h" />
   </ItemGroup>
 
   <ItemGroup>
