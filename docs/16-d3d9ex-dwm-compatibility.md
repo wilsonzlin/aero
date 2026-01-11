@@ -328,7 +328,9 @@ Guest-side rules:
 - Fence completion is tracked in a bitset/map.
 - Blocking calls:
   - `PresentEx` without `DONOTWAIT` may wait until `in_flight < MaxLatency`
-  - `GetData` may wait/poll for a fence associated with the query
+  - `GetData` should be **non-blocking**: return `S_FALSE` until the query fence is complete. If `D3DGETDATA_FLUSH`
+    is specified, the UMD may attempt a best-effort flush/submission but must not wait (DWM can call `GetData` while
+    holding global compositor locks).
   - `GetPresentStats` may report stats from the last completed present (or the last submitted present if initial bring-up prefers optimism)
 
 This model is intentionally simple: it is enough for DWM frame pacing without requiring full D3D9 query semantics on day one.

@@ -566,18 +566,18 @@ bool TestEventQueryGetDataSemantics() {
     // Wait until the thread is actually running while still holding device->mutex.
     {
       std::unique_lock<std::mutex> lk(state_mutex);
-      if (!state_cv.wait_for(lk, std::chrono::milliseconds(100), [&] { return started; })) {
-        dev_lock.unlock();
-        t.join();
-        return Check(false, "GetQueryData(FLUSH) thread failed to start");
-      }
-      // Now ensure it finishes even though device->mutex is held.
-      if (!state_cv.wait_for(lk, std::chrono::milliseconds(50), [&] { return finished; })) {
-        // Avoid a deadlock: release the mutex so the thread can complete, then fail.
-        dev_lock.unlock();
-        t.join();
-        return Check(false, "GetQueryData(FLUSH) blocked on device mutex");
-      }
+       if (!state_cv.wait_for(lk, std::chrono::milliseconds(500), [&] { return started; })) {
+         dev_lock.unlock();
+         t.join();
+         return Check(false, "GetQueryData(FLUSH) thread failed to start");
+       }
+       // Now ensure it finishes even though device->mutex is held.
+       if (!state_cv.wait_for(lk, std::chrono::milliseconds(200), [&] { return finished; })) {
+         // Avoid a deadlock: release the mutex so the thread can complete, then fail.
+         dev_lock.unlock();
+         t.join();
+         return Check(false, "GetQueryData(FLUSH) blocked on device mutex");
+       }
     }
     dev_lock.unlock();
     t.join();

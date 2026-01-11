@@ -4169,8 +4169,8 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
 
   const uint64_t fence_value = q->fence_value.load(std::memory_order_acquire);
 
-  uint64_t completed = refresh_fence_snapshot(adapter).last_completed;
-  if (completed < fence_value && (pGetQueryData->flags & kD3DGetDataFlush)) {
+  FenceWaitResult wait_result = wait_for_fence(dev, fence_value, 0);
+  if (wait_result == FenceWaitResult::NotReady && (pGetQueryData->flags & kD3DGetDataFlush)) {
     // Non-blocking GetData(FLUSH): attempt a single flush then re-check. Never
     // wait here (DWM can call into GetData while holding global locks). Also
     // avoid blocking on the device mutex: if another thread is inside the UMD
@@ -4179,10 +4179,10 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     if (dev_lock.owns_lock()) {
       (void)flush_locked(dev);
     }
-    completed = refresh_fence_snapshot(adapter).last_completed;
+    wait_result = wait_for_fence(dev, fence_value, 0);
   }
 
-  if (completed >= fence_value) {
+  if (wait_result == FenceWaitResult::Complete) {
     if (need_data) {
       // D3DQUERYTYPE_EVENT expects a BOOL-like result.
       if (pGetQueryData->data_size < sizeof(uint32_t)) {
@@ -4192,11 +4192,19 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     }
 
     if (!q->completion_logged.exchange(true, std::memory_order_relaxed)) {
+      uint64_t completed = 0;
+      {
+        std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+        completed = adapter->completed_fence;
+      }
       logf("aerogpu-d3d9: event_query ready fence=%llu completed=%llu\n",
            static_cast<unsigned long long>(fence_value),
            static_cast<unsigned long long>(completed));
     }
     return S_OK;
+  }
+  if (wait_result == FenceWaitResult::Failed) {
+    return E_FAIL;
   }
   return S_FALSE;
 }
