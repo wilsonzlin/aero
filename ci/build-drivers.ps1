@@ -450,18 +450,20 @@ function Discover-DriverBuildTargets {
   #
   # MakeFileProj/Makefile wrapper projects are discovered but skipped later unless
   # -IncludeMakefileProjects is passed (CI default is to skip them).
-  $buildFiles = @()
-  $buildFiles += @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue)
-  $buildFiles += @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter '*.sln' -ErrorAction SilentlyContinue)
+  #
+  # For performance and determinism, start discovery from the packaging manifests rather than
+  # scanning every MSBuild file under drivers/. A CI-packaged driver must declare ci-package.json
+  # at its root, so this yields the exact candidate set we care about.
+  $manifestFiles = @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter 'ci-package.json' -ErrorAction SilentlyContinue)
 
   $dirMap = @{}
-  foreach ($file in $buildFiles) {
-    if (-not $file.Directory) { continue }
-    $full = $file.Directory.FullName
+  foreach ($mf in $manifestFiles) {
+    if (-not $mf.Directory) { continue }
+    $full = $mf.Directory.FullName
     if ([string]::IsNullOrWhiteSpace($full)) { continue }
     $key = $full.ToLowerInvariant()
     if (-not $dirMap.ContainsKey($key)) {
-      $dirMap[$key] = $file.Directory
+      $dirMap[$key] = $mf.Directory
     }
   }
 
