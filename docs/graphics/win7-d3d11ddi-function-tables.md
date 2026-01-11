@@ -147,7 +147,7 @@ The D3D11 UMD DDI has two error-reporting styles:
 
 Practical rule:
 
-* If the DDI is `void`, use: `pfnSetErrorCb(hRTDevice, E_NOTIMPL)` (or `E_INVALIDARG`).
+* If the DDI is `void`, use: `pfnSetErrorCb(<device-handle>, E_NOTIMPL)` (or `E_INVALIDARG`) using whatever handle type your headers declare (`D3D11DDI_HRTDEVICE` vs `D3D11DDI_HDEVICE`).
 * If the DDI returns `HRESULT`, return the error code directly.
 
 Do **not** “half-stub” a `void` DDI by silently doing nothing if it is supposed to create/modify state the runtime relies on; that often leads to later GPU hangs or invalid command streams.
@@ -156,11 +156,11 @@ Important detail: most `void` DDIs live on the **device context table** and are 
 
 * `pfnSomething(D3D11DDI_HDEVICECONTEXT hCtx, ...)` (no `hDevice` parameter)
 
-But the error callback is device-scoped and typically expects the **runtime device handle** (`D3D11DDI_HRTDEVICE`), not your driver `D3D11DDI_HDEVICE`.
+But the error callback is device-scoped and Win7-era WDK headers disagree on whether it expects the **runtime device handle** (`D3D11DDI_HRTDEVICE`) or the driver `D3D11DDI_HDEVICE`.
 
-In practice that means your context-private struct should point back to the parent device object so you can reach the stored `hRTDevice` and call:
+In practice that means your context-private struct should point back to the parent device object so you can reach the stored device handle and call:
 
-* `pfnSetErrorCb(hRTDevice, E_NOTIMPL);`
+* `pfnSetErrorCb(<device-handle>, E_NOTIMPL);`
 
 For exact Win7 WDK symbol names/fields (`D3D11DDIARG_CREATEDEVICE::hRTDevice`, `...::pCallbacks->pfnSetErrorCb`, etc), see:
 
@@ -184,7 +184,7 @@ Pseudocode shape:
 // 1) A stub that matches the failure style of the DDI entrypoint.
 static HRESULT APIENTRY Stub_HRESULT(...) { return E_NOTIMPL; }
 static void APIENTRY Stub_VOID(D3D11DDI_HDEVICECONTEXT hCtx, ...) {
-  g_DeviceCallbacks.pfnSetErrorCb(RtDeviceFromContext(hCtx), E_NOTIMPL);
+  g_DeviceCallbacks.pfnSetErrorCb(DeviceHandleFromContext(hCtx), E_NOTIMPL);
 }
 
 // 2) A fully-populated table (every field assigned).
