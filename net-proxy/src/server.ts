@@ -1,7 +1,7 @@
 import http from "node:http";
 import net from "node:net";
 import dgram from "node:dgram";
-import { PassThrough } from "node:stream";
+import { PassThrough, type Duplex } from "node:stream";
 import { createWebSocketStream, WebSocketServer, type WebSocket } from "ws";
 import ipaddr from "ipaddr.js";
 import { loadConfigFromEnv, type ProxyConfig } from "./config";
@@ -43,6 +43,21 @@ function truncateCloseReason(reason: string, maxBytes = 123): string {
 function wsCloseSafe(ws: WebSocket, code: number, reason: string): void {
   const safeReason = truncateCloseReason(reason);
   ws.close(code, safeReason);
+}
+
+function rejectWsUpgrade(socket: Duplex, status: number, message: string): void {
+  const statusText = status === 400 ? "Bad Request" : "Error";
+  const body = `${message}\n`;
+  socket.end(
+    [
+      `HTTP/1.1 ${status} ${statusText}`,
+      "Content-Type: text/plain; charset=utf-8",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "Connection: close",
+      "\r\n",
+      body
+    ].join("\r\n")
+  );
 }
 
 function stripOptionalIpv6Brackets(host: string): string {
@@ -124,6 +139,17 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname === "/tcp-mux") {
+      const protocolHeader = req.headers["sec-websocket-protocol"];
+      const offered = Array.isArray(protocolHeader) ? protocolHeader.join(",") : protocolHeader ?? "";
+      const protocols = offered
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      if (!protocols.includes(TCP_MUX_SUBPROTOCOL)) {
+        rejectWsUpgrade(socket, 400, `Missing required subprotocol: ${TCP_MUX_SUBPROTOCOL}`);
+        return;
+      }
+
       wssMux.handleUpgrade(req, socket, head, (ws) => {
         wssMux.emit("connection", ws, req);
       });

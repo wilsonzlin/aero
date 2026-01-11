@@ -131,6 +131,46 @@ async function waitForEcho(waiter: FrameWaiter, streamId: number, expected: Buff
   assert.deepEqual(received, expected);
 }
 
+test("tcp-mux upgrade requires aero-tcp-mux-v1 subprotocol", async () => {
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  try {
+    for (const protocol of [undefined, "bogus-subprotocol"]) {
+      const ws = protocol
+        ? new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, protocol)
+        : new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`);
+
+      const statusCode = await new Promise<number>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket rejection")), 2_000);
+        timeout.unref();
+
+        ws.once("open", () => {
+          clearTimeout(timeout);
+          ws.close();
+          reject(new Error("expected websocket upgrade to be rejected"));
+        });
+
+        ws.once("unexpected-response", (_req, res) => {
+          clearTimeout(timeout);
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        });
+
+        ws.once("error", (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+
+      assert.equal(statusCode, 400);
+    }
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("tcp-mux relay echoes bytes on multiple concurrent streams", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
@@ -181,4 +221,3 @@ test("tcp-mux relay echoes bytes on multiple concurrent streams", async () => {
     await echoServer.close();
   }
 });
-
