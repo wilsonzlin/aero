@@ -95,3 +95,36 @@ fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
         .expect("device should be visible at address 0 after reset");
     assert_eq!(dev.address(), 0);
 }
+
+#[test]
+fn uhci_portsc_connect_event_disables_previously_enabled_port() {
+    const PORTSC_CCS: u16 = 1 << 0;
+    const PORTSC_CSC: u16 = 1 << 1;
+    const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_PEDC: u16 = 1 << 3;
+
+    let mut hub = RootHub::new();
+    hub.attach(0, Box::new(TestUsbDevice));
+
+    // Clear initial connection-change.
+    hub.write_portsc(0, PORTSC_CSC);
+
+    // Enable the port and clear its enable-change bit.
+    hub.write_portsc(0, PORTSC_PED);
+    hub.write_portsc(0, PORTSC_PED | PORTSC_PEDC);
+
+    let st = hub.read_portsc(0);
+    assert_eq!(st & (PORTSC_CCS | PORTSC_CSC), PORTSC_CCS);
+    assert_eq!(st & (PORTSC_PED | PORTSC_PEDC), PORTSC_PED);
+
+    // Attaching a new device while the port was enabled should clear PED and set PEDC/CSC.
+    hub.attach(0, Box::new(TestUsbDevice));
+    let st = hub.read_portsc(0);
+    assert_eq!(st & PORTSC_CCS, PORTSC_CCS);
+    assert_eq!(st & PORTSC_CSC, PORTSC_CSC);
+    assert_eq!(st & PORTSC_PED, 0);
+    assert_eq!(st & PORTSC_PEDC, PORTSC_PEDC);
+
+    // Port is disabled, so the device should no longer be routable.
+    assert!(hub.device_mut_for_address(0).is_none());
+}
