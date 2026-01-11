@@ -11,18 +11,21 @@
 #
 # Default to no rustc wrapper for this repo. Developers/CI that want sccache can
 # opt back in by setting `CARGO_BUILD_RUSTC_WRAPPER=sccache` / `RUSTC_WRAPPER=sccache`
-# (or by overriding `build.rustc-wrapper` in a higher-precedence Cargo config).
+# (or `CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=sccache` / `RUSTC_WORKSPACE_WRAPPER=sccache`)
+# or by overriding the corresponding `build.*wrapper` keys in a higher-precedence Cargo config.
 CARGO_BUILD_RUSTC_WRAPPER = ""
+CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER = ""
 
 [alias]
 # `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
 xtask = "run --locked -p xtask --"
 
 [build]
-# Some sandbox environments configure `build.rustc-wrapper = "sccache"` globally.
-# When that daemon/socket is broken, Cargo will fail before compiling anything.
+# Some sandbox environments configure Cargo wrappers (e.g. `build.rustc-wrapper = "sccache"`)
+# globally. When that daemon/socket is broken, Cargo will fail before compiling anything.
 #
-# Setting an explicit (empty) wrapper here overrides any inherited global config.
-# Developers can still opt back in by exporting `RUSTC_WRAPPER=sccache` or setting
-# `build.rustc-wrapper` in a higher-precedence config.
+# Setting explicit (empty) wrappers here overrides any inherited global config.
+# Developers can still opt back in per-invocation by exporting `RUSTC_WRAPPER=sccache` (or
+# `RUSTC_WORKSPACE_WRAPPER=sccache`).
 rustc-wrapper = ""
+rustc-workspace-wrapper = ""
