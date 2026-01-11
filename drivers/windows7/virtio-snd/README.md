@@ -176,6 +176,12 @@ If you want virtio-snd to bind automatically on first boot (for example when bui
 
 - `tests/offline-install/README.md`
 
+## Manual QEMU test plan
+
+For a repeatable manual bring-up/validation plan under QEMU (including required `disable-legacy=on` and `x-pci-revision=0x01` settings for the Aero contract v1 HWID), see:
+
+- `tests/qemu/README.md`
+
 ## Release packaging (optional)
 
 Once the package has been built/signed, you can stage a Guest Tools–ready folder under `release\<arch>\virtio-snd\` using:

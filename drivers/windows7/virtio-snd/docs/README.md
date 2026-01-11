@@ -44,9 +44,10 @@ Modern virtio transport (bring-up notes):
 
 ## Design notes
 
-* Driver architecture overview: [`design.md`](design.md)
-* PortCls/WaveRT plan: [`portcls-wavert-design.md`](portcls-wavert-design.md)
-* Source tracking (clean-room policy): [`../SOURCES.md`](../SOURCES.md)
+- Driver architecture overview: [`design.md`](design.md)
+- PortCls/WaveRT plan: [`portcls-wavert-design.md`](portcls-wavert-design.md)
+- QEMU manual test plan: [`../tests/qemu/README.md`](../tests/qemu/README.md)
+- Source tracking (clean-room policy): [`../SOURCES.md`](../SOURCES.md)
 
 ## See also
 
