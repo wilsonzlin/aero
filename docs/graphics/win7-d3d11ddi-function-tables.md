@@ -225,7 +225,7 @@ static void APIENTRY Stub_Destroy_VOID(...) {
 // For bring-up, consider special-casing “unbind” calls as a no-op (do not set
 // an error) since the runtime will frequently reset state by binding NULLs.
 static void APIENTRY Stub_Ctx_VOID(D3D11DDI_HDEVICECONTEXT hCtx, ...) {
-  g_DeviceCallbacks.pfnSetErrorCb(RtDeviceFromContext(hCtx), E_NOTIMPL);
+  g_DeviceCallbacks.pfnSetErrorCb(DeviceHandleFromContext(hCtx), E_NOTIMPL);
 }
 ```
 
@@ -271,7 +271,7 @@ Practical guidance:
 * Store callbacks in the object that “owns” the handle they are associated with:
   * adapter callbacks in the adapter private struct
   * device callbacks in the device private struct
-  * context private struct should point back to the parent device (so it can reach the stored `hRTDevice` and call `pfnSetErrorCb`)
+  * context private struct should point back to the parent device (so it can reach the stored device handle and call `pfnSetErrorCb`)
 * Never call callbacks after `pfnCloseAdapter` / `pfnDestroyDevice`.
 
 Win7-specific gotchas:
