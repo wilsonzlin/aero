@@ -115,7 +115,7 @@ fn convert_dxbc_signature_chunk(
         let stream_u32 = entry.stream.unwrap_or(0);
         let stream = u8::try_from(stream_u32).map_err(|_| SignatureError::MalformedChunk {
             fourcc,
-            reason: format!("entry stream {stream_u32} does not fit in u8"),
+            reason: "stream index out of range".to_owned(),
         })?;
 
         parameters.push(DxbcSignatureParameter {

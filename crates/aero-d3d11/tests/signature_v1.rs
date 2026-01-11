@@ -188,7 +188,7 @@ fn rejects_v1_stream_out_of_range() {
         SignatureError::MalformedChunk {
             fourcc: FOURCC_ISG1,
             reason
-        } if reason.contains("stream") && reason.contains("u8")
+        } if reason == "stream index out of range"
     ));
 }
 
