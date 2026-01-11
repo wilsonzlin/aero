@@ -13,10 +13,17 @@ REGF hives without any Windows-only dependencies.
 ## Usage
 
 ```bash
+# Run directly if `bcd_patch` is on PATH (e.g. installed via `cargo install`):
 bcd_patch --store boot/BCD
 
 # Explicitly disable one of the flags:
 bcd_patch --store boot/BCD --testsigning off
+```
+
+To run without installing the binary (from the repo root workspace):
+
+```bash
+cargo run --locked -p bcd-patch -- --store boot/BCD
 ```
 
 To patch all three standard store locations inside an extracted Windows 7 media tree:
