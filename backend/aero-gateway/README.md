@@ -77,6 +77,22 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET ws(s)://<host>/tcp?...` TCP proxy upgrade endpoint (WebSocket; see `docs/backend/01-aero-gateway-api.md` and `deploy/README.md`)
 - `GET ws(s)://<host>/tcp-mux` Multiplexed TCP proxy upgrade endpoint (WebSocket; subprotocol `aero-tcp-mux-v1`)
 
+## Examples
+
+### `/tcp-mux` client
+
+After starting the gateway locally, you can run a simple Node client that:
+
+- bootstraps a session cookie via `POST /session`
+- opens a `/tcp-mux` WebSocket using the `aero-tcp-mux-v1` framing
+- sends a basic HTTP/1.1 request and prints the response bytes
+
+```bash
+node backend/aero-gateway/examples/tcp-mux-client.js http://127.0.0.1:8080 example.com 80
+```
+
+Note: the gateway blocks private/loopback IPs by default. To test against a local TCP echo server, run the gateway with `TCP_ALLOW_PRIVATE_IPS=1` (local-dev only).
+
 ## DNS-over-HTTPS (`/dns-query`)
 
 ### Supported request formats
