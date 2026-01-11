@@ -1,3 +1,5 @@
+import type { UsbHostAction, UsbHostCompletion } from "../usb/webusb_backend";
+
 export type WasmVariant = "threaded" | "single";
 
 export type MicBridgeHandle = {
@@ -69,10 +71,15 @@ export interface WasmApi {
      * Note: This is optional for older WASM builds.
      */
     UsbPassthroughBridge?: new () => {
-        drain_actions(): unknown;
-        push_completion(completion: unknown): void;
+        drain_actions(): UsbHostAction[];
+        push_completion(completion: UsbHostCompletion): void;
         reset(): void;
-        pending_summary(): unknown;
+        pending_summary(): {
+            queued_actions: number;
+            queued_completions: number;
+            inflight_control?: number | null;
+            inflight_endpoints: number;
+        };
         free(): void;
     };
 
