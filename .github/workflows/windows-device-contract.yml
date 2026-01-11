@@ -24,6 +24,17 @@ on:
       - "tools/packaging/**"
       - "tools/device_contract_validator/**"
       - ".github/workflows/windows-device-contract.yml"
+  merge_group:
+    paths:
+      - "docs/windows-device-contract*.json"
+      - "docs/windows-device-contract.md"
+      - "guest-tools/**"
+      - "crates/devices/src/pci/profile.rs"
+      - "drivers/**"
+      - "emulator/protocol/aerogpu/aerogpu_pci.rs"
+      - "tools/packaging/**"
+      - "tools/device_contract_validator/**"
+      - ".github/workflows/windows-device-contract.yml"
   workflow_dispatch:
 
 permissions:
