@@ -411,7 +411,7 @@ At a “flush boundary” (e.g. `D3D10DDI_DEVICEFUNCS::pfnFlush` or `D3D11DDI_DE
 
 ### 3.4 Minimal call sequence (present submission)
 
-In the runtime’s **Present DDI**:
+In the runtime’s **Present DDI** (Win7 DXGI 1.1; uses `D3D10DDIARG_PRESENT` even for D3D11 devices):
 
 - D3D10 / D3D10.1: `D3D10DDI_DEVICEFUNCS::pfnPresent`
 - D3D11: `D3D11DDI_DEVICECONTEXTFUNCS::pfnPresent`

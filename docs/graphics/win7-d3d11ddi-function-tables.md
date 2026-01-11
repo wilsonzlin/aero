@@ -22,17 +22,23 @@ This doc is intentionally biased toward a **safe skeleton**:
 > Repo pointers (AeroGPU implementation):
 > * UMD code: `drivers/aerogpu/umd/d3d10_11/`
 > * Win7 D3D11 guest tests referenced below:
+>   * `drivers/aerogpu/tests/win7/d3d11_caps_smoke`
 >   * `drivers/aerogpu/tests/win7/d3d11_triangle`
 >   * `drivers/aerogpu/tests/win7/d3d11_texture_sampling_sanity`
 >   * `drivers/aerogpu/tests/win7/d3d11_dynamic_constant_buffer_sanity`
 >   * `drivers/aerogpu/tests/win7/d3d11_depth_test_sanity`
+>   * `drivers/aerogpu/tests/win7/d3d11_update_subresource_texture_sanity`
+>   * `drivers/aerogpu/tests/win7/d3d11_map_dynamic_buffer_sanity`
+>   * `drivers/aerogpu/tests/win7/d3d11_rs_om_state_sanity`
+>   * `drivers/aerogpu/tests/win7/d3d11_swapchain_rotate_sanity`
+>   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
 >   * `drivers/aerogpu/tests/win7/readback_sanity`
 
 ---
 
-## TL;DR: minimal non-null + must-work set (FL10_0 + repo Win7 tests)
+## TL;DR: minimal non-null + must-work set (FL10_0 + core Win7 D3D11 tests)
 
-If your goal is “the Win7 runtime creates a D3D11 device at **FL10_0** and the repo tests don’t crash”,
+If your goal is “the Win7 runtime creates a D3D11 device at **FL10_0** and the core Win7 D3D11 tests don’t crash”,
 this is the smallest practical set to treat as **must be non-null and must succeed**.
 
 > Tests referenced:
@@ -41,6 +47,8 @@ this is the smallest practical set to treat as **must be non-null and must succe
 > * `drivers/aerogpu/tests/win7/d3d11_dynamic_constant_buffer_sanity`
 > * `drivers/aerogpu/tests/win7/d3d11_depth_test_sanity`
 > * `drivers/aerogpu/tests/win7/readback_sanity`
+>
+> See §6.6+ for additional Win7 D3D11 tests that tighten semantics (swapchain rotation, scissor/blend, geometry shaders, etc).
 
 ### Adapter (`D3D11DDI_ADAPTERFUNCS`)
 
@@ -74,13 +82,10 @@ Must be non-null and must succeed for the tests:
 * Shaders:
   * `pfnCalcPrivateVertexShaderSize`, `pfnCreateVertexShader`, `pfnDestroyVertexShader`
   * `pfnCalcPrivatePixelShaderSize`, `pfnCreatePixelShader`, `pfnDestroyPixelShader`
-* Input layout:
-  * `pfnCalcPrivateElementLayoutSize`, `pfnCreateElementLayout`, `pfnDestroyElementLayout`
-* Win7 DXGI present integration:
-  * `pfnPresent` (DXGI uses `D3D10DDIARG_PRESENT` even for D3D11 devices on Win7)
-  * `pfnRotateResourceIdentities`
-
-Everything else should still be **non-null** (stubbed), but may return `E_NOTIMPL`.
+ * Input layout:
+   * `pfnCalcPrivateElementLayoutSize`, `pfnCreateElementLayout`, `pfnDestroyElementLayout`
+ 
+ Everything else should still be **non-null** (stubbed), but may return `E_NOTIMPL`.
 
 ### Immediate context (`D3D11DDI_DEVICECONTEXTFUNCS`)
 
@@ -100,10 +105,13 @@ Must be non-null and must succeed for the tests:
   * `pfnDraw`, `pfnDrawIndexed`
 * Resource updates:
   * `pfnUpdateSubresourceUP`
-* Readback path:
-  * `pfnCopyResource`
-  * `pfnFlush`
-  * `pfnMap`, `pfnUnmap`
+ * Readback path:
+   * `pfnCopyResource`
+   * `pfnFlush`
+   * `pfnMap`, `pfnUnmap`
+ * Win7 DXGI present integration (swapchains):
+   * `pfnPresent` (DXGI uses `D3D10DDIARG_PRESENT` even for D3D11 devices on Win7)
+   * `pfnRotateResourceIdentities`
 
 Everything else should still be **non-null** (stubbed, usually via `SetErrorCb(E_NOTIMPL)` for `void` DDIs),
 because the runtime may call “reset to default” entrypoints like `ClearState` during initialization.
@@ -122,7 +130,7 @@ Practical stub tip:
 
 Each entrypoint is marked as one of:
 
-* **REQUIRED**: must be non-null and implemented correctly to credibly claim **FL10_0** and pass the repo’s Win7 guest tests.
+* **REQUIRED**: must be non-null and implemented correctly for a functional **FL10_0** device (and the “core bring-up” tests listed in the TL;DR section above).
 * **REQUIRED-BUT-STUBBABLE**: must be non-null (the runtime *may* call it), but it can fail cleanly until the feature is implemented.
 * **OPTIONAL**: not required for FL10_0 bring-up; can usually be stubbed and may never be called unless the app opts into the feature.
 
@@ -339,6 +347,8 @@ The exact set can vary, but in practice the Win7 D3D11 runtime usually needs at 
 | `D3D11DDICAPS_TYPE_D3D10_X_HARDWARE_OPTIONS` | Recommended | For FL10_0 bring-up: set `ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x = FALSE` unless you implement CS + raw/structured buffers. |
 | `D3D11DDICAPS_TYPE_D3D11_OPTIONS` | Recommended | Return all options `FALSE` initially (no UAV-only features, no logic ops, etc). |
 | `D3D11DDICAPS_TYPE_ARCHITECTURE_INFO` | Recommended | Conservative: `TileBasedDeferredRenderer = FALSE`, `UMA = FALSE`, `CacheCoherentUMA = FALSE`. |
+| `D3D11DDICAPS_TYPE_DOUBLES` | Recommended | For FL10_0 bring-up: return `DoublePrecisionFloatShaderOps = FALSE`. |
+| `D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS` | Recommended | If asked for `SampleCount==1`, return `NumQualityLevels >= 1` for supported formats (Win7 apps often probe this early). |
 
 > Why “Recommended” is still important: many apps call `ID3D11Device::CheckFeatureSupport(...)`
 > early. Even if the runtime can create a device without these, returning garbage here causes
@@ -353,6 +363,8 @@ For the current guest tests, the runtime needs at least:
 | `DXGI_FORMAT_B8G8R8A8_UNORM` | `RENDER_TARGET`, `TEXTURE2D` | swapchain backbuffer in `d3d11_triangle` and render-target texture in `readback_sanity`. |
 | `DXGI_FORMAT_R8G8B8A8_UNORM` | `RENDER_TARGET`, `TEXTURE2D` | common app fallback; good to support early even if tests use BGRA. |
 | Depth formats (`DXGI_FORMAT_D24_UNORM_S8_UINT` or `DXGI_FORMAT_D32_FLOAT`) | `DEPTH_STENCIL`, `TEXTURE2D` | required by `d3d11_depth_test_sanity`; common for real apps. |
+| `DXGI_FORMAT_R16_UINT` / `DXGI_FORMAT_R32_UINT` | `BUFFER`, `IA_INDEX_BUFFER` | required by `d3d11_caps_smoke` and common for indexed draws. |
+| `DXGI_FORMAT_R32G32_FLOAT`, `DXGI_FORMAT_R32G32B32A32_FLOAT` | `BUFFER`, `IA_VERTEX_BUFFER` | required for the repo’s input layouts (multiple tests). |
 
 BGRA device flag note:
 
@@ -439,8 +451,8 @@ Optional but common for real apps:
 | `pfnCalcPrivatePixelShaderSize` | REQUIRED | Return `sizeof(PS)`. |
 | `pfnCreatePixelShader` | REQUIRED | `HRESULT`: must accept SM4.x DXBC. |
 | `pfnDestroyPixelShader` | REQUIRED | `void`. |
-| `pfnCalcPrivateGeometryShaderSize` | REQUIRED-BUT-STUBBABLE | Return `sizeof(GS)`. If claiming FL10_0, implement GS eventually. |
-| `pfnCreateGeometryShader` | REQUIRED-BUT-STUBBABLE | `HRESULT`: `E_NOTIMPL` allowed for bring-up, but breaks FL10_0 apps using GS. |
+| `pfnCalcPrivateGeometryShaderSize` | REQUIRED-BUT-STUBBABLE | Return `sizeof(GS)`. Required to pass `d3d11_geometry_shader_smoke`. |
+| `pfnCreateGeometryShader` | REQUIRED-BUT-STUBBABLE | `HRESULT`: `E_NOTIMPL` allowed for bring-up, but breaks FL10_0 apps using GS and the `d3d11_geometry_shader_smoke` test. |
 | `pfnDestroyGeometryShader` | REQUIRED-BUT-STUBBABLE | `void`. |
 | `pfnCalcPrivateGeometryShaderWithStreamOutputSize` | OPTIONAL | Return `sizeof(GS+SO)`; `Create*` may return `E_NOTIMPL` until SO is implemented. |
 | `pfnCreateGeometryShaderWithStreamOutput` | OPTIONAL | `HRESULT`: `E_NOTIMPL`. |
@@ -461,8 +473,8 @@ SM5/tessellation/compute (not required for FL10_0 bring-up):
 | `pfnCreateElementLayout` | REQUIRED | `HRESULT`: must work (D3D11 input layouts are required for most apps). |
 | `pfnDestroyElementLayout` | REQUIRED | `void`. |
 | `pfnCalcPrivateSamplerSize` / `pfnCreateSampler` / `pfnDestroySampler` | REQUIRED | Must succeed for point/clamp samplers (`d3d11_texture_sampling_sanity`). |
-| `pfnCalcPrivateRasterizerStateSize` / `pfnCreateRasterizerState` / `pfnDestroyRasterizerState` | REQUIRED-BUT-STUBBABLE | Accept + store; can be conservative. |
-| `pfnCalcPrivateBlendStateSize` / `pfnCreateBlendState` / `pfnDestroyBlendState` | REQUIRED-BUT-STUBBABLE | Accept + store; can be conservative. |
+| `pfnCalcPrivateRasterizerStateSize` / `pfnCreateRasterizerState` / `pfnDestroyRasterizerState` | REQUIRED-BUT-STUBBABLE | Accept + store. To pass `d3d11_rs_om_state_sanity`, cull mode + front-face winding + scissor enable must work. |
+| `pfnCalcPrivateBlendStateSize` / `pfnCreateBlendState` / `pfnDestroyBlendState` | REQUIRED-BUT-STUBBABLE | Accept + store. To pass `d3d11_rs_om_state_sanity`, basic alpha blending must work. |
 | `pfnCalcPrivateDepthStencilStateSize` / `pfnCreateDepthStencilState` / `pfnDestroyDepthStencilState` | REQUIRED | Must succeed for depth test state (`d3d11_depth_test_sanity`). |
 
 #### 4.2.6 Queries / predication / counters
@@ -486,20 +498,15 @@ If you don’t implement deferred contexts yet, **still provide stubs** so an ap
 
 #### 4.2.8 DXGI present integration (Win7 specific)
 
-These are required if you want `IDXGISwapChain::Present` to work.
+On Win7, DXGI uses `D3D10DDIARG_PRESENT` (DXGI 1.1) even for D3D11 devices.
 
-| Field | Status | Stub failure mode |
-|---|---|---|
-| `pfnPresent` | REQUIRED | `HRESULT`: must succeed for windowed swapchains (handle `DXGI_PRESENT_TEST` if surfaced). |
-| `pfnRotateResourceIdentities` | REQUIRED | `void`: must rotate the “identity” of backbuffer resources after present. |
+Depending on `D3D11DDI_INTERFACE_VERSION`, the present/rotation entrypoints may be surfaced on either:
 
-> Win7 uses `D3D10DDIARG_PRESENT` (DXGI 1.1) even for D3D11 devices. Don’t invent a D3D11-specific present structure.
->
-> Note: depending on `D3D11DDI_INTERFACE_VERSION`, these entrypoints can live on either:
-> * `D3D11DDI_DEVICEFUNCS` (device table), or
-> * `D3D11DDI_DEVICECONTEXTFUNCS` (immediate context table).
->
-> Treat them as REQUIRED wherever they appear.
+* `D3D11DDI_DEVICEFUNCS` (device table), or
+* `D3D11DDI_DEVICECONTEXTFUNCS` (immediate context table; common for Win7 D3D11).
+
+Treat `pfnPresent` and `pfnRotateResourceIdentities` as REQUIRED wherever they appear.
+See §5.8 for the checklist entries and stub guidance.
 
 ---
 
@@ -526,7 +533,7 @@ If a field exists in your `d3d11umddi.h` but is not explicitly mentioned in this
 | `pfnIaSetTopology` | REQUIRED | Required for `IASetPrimitiveTopology`. |
 | `pfnVsSetShader` | REQUIRED | Must accept NULL to unbind. |
 | `pfnPsSetShader` | REQUIRED | Must accept NULL to unbind. |
-| `pfnGsSetShader` | REQUIRED-BUT-STUBBABLE | Required for FL10_0 correctness; can initially accept NULL only (and `SetErrorCb` if non-NULL). |
+| `pfnGsSetShader` | REQUIRED-BUT-STUBBABLE | Required to pass `d3d11_geometry_shader_smoke`. For bring-up you can accept NULL only (and `SetErrorCb` if a non-NULL GS is bound). |
 
 Resource/CB/sampler binding for FL10_0 pipeline:
 
@@ -560,9 +567,9 @@ Recommended stub behavior:
 | Field | Status | Notes / stub guidance |
 |---|---|---|
 | `pfnSetViewports` | REQUIRED | `RSSetViewports`. |
-| `pfnSetScissorRects` | REQUIRED-BUT-STUBBABLE | Many apps use scissor; safe to clamp to viewport initially. |
-| `pfnSetRasterizerState` | REQUIRED-BUT-STUBBABLE | Accept + store; conservative defaults OK. |
-| `pfnSetBlendState` | REQUIRED-BUT-STUBBABLE | Accept + store; conservative defaults OK. |
+| `pfnSetScissorRects` | REQUIRED-BUT-STUBBABLE | `d3d11_rs_om_state_sanity` requires scissor to clip rendering. If unimplemented, at minimum treat NULL/empty as disable (no error), but expect scissor-dependent tests to fail. |
+| `pfnSetRasterizerState` | REQUIRED-BUT-STUBBABLE | `d3d11_rs_om_state_sanity` requires cull mode + front-face winding + scissor enable. For bring-up you can accept+store only, but expect state-dependent tests to fail. |
+| `pfnSetBlendState` | REQUIRED-BUT-STUBBABLE | `d3d11_rs_om_state_sanity` requires basic alpha blending. For bring-up you can accept+store only, but expect blend-dependent tests to fail. |
 | `pfnSetDepthStencilState` | REQUIRED | Must accept/store state for `d3d11_depth_test_sanity`. |
 | `pfnSetRenderTargets` | REQUIRED | Must bind RTVs/DSV for draws and clears. |
 
@@ -587,7 +594,7 @@ Recommended stub behavior:
 
 | Field | Status | Notes / stub guidance |
 |---|---|---|
-| `pfnUpdateSubresourceUP` | REQUIRED | Must accept user-memory uploads (required by `d3d11_texture_sampling_sanity` and `d3d11_update_subresource_texture_sanity`). |
+| `pfnUpdateSubresourceUP` | REQUIRED | Must accept user-memory uploads. `d3d11_update_subresource_texture_sanity` specifically checks: padded `RowPitch` (not tightly packed) and non-NULL `D3D11_BOX` partial updates for both textures and buffers. |
 | `pfnCopyResource` | REQUIRED | Used by multiple Win7 tests for staging readback. |
 | `pfnCopySubresourceRegion` | REQUIRED-BUT-STUBBABLE | Many real apps use subresource copies; implement soon. |
 | `pfnResolveSubresource` | OPTIONAL | Stub until MSAA is implemented. |
@@ -604,7 +611,7 @@ Recommended stub behavior:
 
 | Field | Status | Notes / stub guidance |
 |---|---|---|
-| `pfnMap` | REQUIRED | Must support at least: `D3D11_MAP_READ` on STAGING textures and `D3D11_MAP_WRITE_DISCARD` for dynamic buffer uploads. |
+| `pfnMap` | REQUIRED | Must support at least: `D3D11_MAP_READ` on STAGING textures and `D3D11_MAP_WRITE_DISCARD` for dynamic buffer uploads. `d3d11_map_dynamic_buffer_sanity` also exercises `D3D11_MAP_WRITE_NO_OVERWRITE` and DISCARD renaming hazards (in-flight copies must see the pre-discard contents). |
 | `pfnUnmap` | REQUIRED | Must commit writes / release mappings. |
 
 Special note for Win7 bring-up:
@@ -625,7 +632,15 @@ Special note for Win7 bring-up:
 
 ### 5.8 Present callouts (Win7 DXGI)
 
-Present/RotateResourceIdentities may be surfaced on either the device or immediate context table (interface-version dependent), but it interacts with context submission:
+Present/RotateResourceIdentities may be surfaced on either the device or immediate context table (interface-version dependent).
+On Win7, DXGI uses `D3D10DDIARG_PRESENT` (DXGI 1.1) even for D3D11 devices:
+
+| Field | Status | Notes / stub guidance |
+|---|---|---|
+| `pfnPresent` | REQUIRED | `HRESULT`: must succeed for windowed swapchains. Signature is table-dependent, but DXGI always passes a `D3D10DDIARG_PRESENT` (DXGI 1.1). Consider implicit flush/submit so rendering to the backbuffer is visible by the time present returns. |
+| `pfnRotateResourceIdentities` | REQUIRED | `void`: must rotate the “identity” of backbuffer resources after present. `d3d11_swapchain_rotate_sanity` validates `BufferCount=2` rotation. |
+
+Present also interacts with context submission:
 
 * DXGI typically expects rendering to the backbuffer to be **submitted** before present returns.
 * A common minimal policy is: `pfnPresent` performs an implicit `Flush` / submit of outstanding work.
@@ -635,15 +650,21 @@ Present/RotateResourceIdentities may be surfaced on either the device or immedia
 
 ## 6) Mapping: Win7 guest tests → DDI entrypoints exercised
 
-The repo’s Win7 tests are good coverage targets because they exercise device creation, basic rendering, staging readback, and (for `d3d11_triangle`) swapchain present.
+The repo’s Win7 D3D11 tests are good coverage targets because they exercise device creation + caps queries, basic rendering, staging readback, dynamic updates, and swapchain present/rotation.
 
 Tests:
 
+* `drivers/aerogpu/tests/win7/d3d11_caps_smoke`
 * `drivers/aerogpu/tests/win7/d3d11_triangle`
+* `drivers/aerogpu/tests/win7/readback_sanity`
 * `drivers/aerogpu/tests/win7/d3d11_texture_sampling_sanity`
 * `drivers/aerogpu/tests/win7/d3d11_dynamic_constant_buffer_sanity`
 * `drivers/aerogpu/tests/win7/d3d11_depth_test_sanity`
-* `drivers/aerogpu/tests/win7/readback_sanity`
+* `drivers/aerogpu/tests/win7/d3d11_update_subresource_texture_sanity`
+* `drivers/aerogpu/tests/win7/d3d11_map_dynamic_buffer_sanity`
+* `drivers/aerogpu/tests/win7/d3d11_rs_om_state_sanity`
+* `drivers/aerogpu/tests/win7/d3d11_swapchain_rotate_sanity`
+* `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
 
 ### 6.1 `d3d11_triangle` (D3D11CreateDeviceAndSwapChain + Present)
 
@@ -665,13 +686,13 @@ Tests:
 | `CopyResource` | context `pfnCopyResource`. |
 | `Flush` | context `pfnFlush`. |
 | `Map` / `Unmap` | context `pfnMap` / `pfnUnmap`. |
-| `IDXGISwapChain::Present` | `pfnPresent` + likely `pfnRotateResourceIdentities` (table depends on interface version; DXGI uses `D3D10DDIARG_PRESENT`). |
+| `IDXGISwapChain::Present` | `pfnPresent` + `pfnRotateResourceIdentities` (table depends on interface version; DXGI uses `D3D10DDIARG_PRESENT`). |
 
 ### 6.2 `readback_sanity` (render-to-texture + staging readback; no Present)
 
 Same as above except:
 
-* No swapchain creation / `pfnPresent` required.
+* No swapchain creation / `pfnPresent` / `pfnRotateResourceIdentities` required.
 * Render target is a regular `Texture2D` created via `pfnCreateResource` + `pfnCreateRenderTargetView` (BGRA, `D3D11_BIND_RENDER_TARGET`).
 
 ### 6.3 `d3d11_texture_sampling_sanity` (SRV + sampler + indexed draw + readback)
@@ -708,6 +729,65 @@ Same as above except:
 | `ClearDepthStencilView` | context `pfnClearDepthStencilView`. |
 | `Draw` | context `pfnDraw`. |
 
+### 6.6 `d3d11_update_subresource_texture_sanity` (UpdateSubresource on textures + boxed updates)
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `UpdateSubresource(tex, 0, NULL, pData, RowPitch, ...)` | context `pfnUpdateSubresourceUP` (must respect the caller-provided `RowPitch`, which may be larger than `Width*BytesPerPixel`). |
+| `UpdateSubresource(tex, 0, &D3D11_BOX, ...)` | context `pfnUpdateSubresourceUP` (partial/boxed update). |
+| `UpdateSubresource(buffer, 0, &D3D11_BOX, ...)` | context `pfnUpdateSubresourceUP` (for buffers, the box encodes byte offsets in `left/right`). |
+| Readback verification | context `pfnCopyResource` + `pfnFlush` + `pfnMap`/`pfnUnmap`. |
+
+### 6.7 `d3d11_map_dynamic_buffer_sanity` (Map DISCARD/NO_OVERWRITE correctness)
+
+This test is intentionally “mean”: it checks that `Map(WRITE_DISCARD)` renames/allocates fresh storage so that
+GPU work queued before the discard still sees the **old** contents.
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `CreateBuffer(DYNAMIC, CPU_WRITE)` (VB/IB/CB) | device `pfnCalcPrivateResourceSize` → `pfnCreateResource`. |
+| Bind dynamic buffers (`IASetVertexBuffers`, `IASetIndexBuffer`, `VSSetConstantBuffers`) | context `pfnIaSetVertexBuffers` / `pfnIaSetIndexBuffer` / `pfnVsSetConstantBuffers`. |
+| `Map(WRITE_DISCARD)` / `Map(WRITE_NO_OVERWRITE)` | context `pfnMap` / `pfnUnmap` (some interface versions route these through specialized dynamic-map DDIs; if your struct has them, keep them non-null and implement equivalent semantics). |
+| `CopyResource(staging, dynamic_buf)` | context `pfnCopyResource` (copies must read the correct “version” of a renamed/discarded buffer). |
+| Readback verification | context `pfnFlush` + `pfnMap(READ)` on staging buffers. |
+
+### 6.8 `d3d11_rs_om_state_sanity` (scissor + cull mode + blending)
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `CreateRasterizerState` | device `pfnCalcPrivateRasterizerStateSize` → `pfnCreateRasterizerState`. |
+| `RSSetState` / `RSSetScissorRects` | context `pfnSetRasterizerState` / `pfnSetScissorRects`. |
+| `CreateBlendState` | device `pfnCalcPrivateBlendStateSize` → `pfnCreateBlendState`. |
+| `OMSetBlendState` | context `pfnSetBlendState`. |
+| Draw + readback | context `pfnDraw` + `pfnCopyResource` + `pfnFlush` + `pfnMap`/`pfnUnmap`. |
+
+### 6.9 `d3d11_swapchain_rotate_sanity` (RotateResourceIdentities, BufferCount=2)
+
+This test validates that after `Present`, swapchain buffer identities rotate (buffer0 becomes buffer1, etc).
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `IDXGISwapChain::Present` | context `pfnPresent` + `pfnRotateResourceIdentities` (rotation is what the test is checking). |
+| Readback of both swapchain buffers | context `pfnCopyResource` + `pfnFlush` + `pfnMap`/`pfnUnmap`. |
+
+### 6.10 `d3d11_geometry_shader_smoke` (GS creation + bind + draw)
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `CreateGeometryShader` | device `pfnCalcPrivateGeometryShaderSize` → `pfnCreateGeometryShader`. |
+| `GSSetShader` | context `pfnGsSetShader`. |
+| Draw + readback | context `pfnDraw` + `pfnCopyResource` + `pfnFlush` + `pfnMap`/`pfnUnmap`. |
+
+### 6.11 `d3d11_caps_smoke` (caps queries: feature support, formats, MSAA)
+
+This test is primarily about making `pfnGetCaps` return conservative-but-consistent answers:
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `CheckFeatureSupport(D3D11_FEATURE_THREADING/DOUBLES/D3D10_X_HARDWARE_OPTIONS/D3D11_OPTIONS)` | adapter `pfnGetCaps` with `D3D11DDICAPS_TYPE_*` matching the queried feature. |
+| `CheckFormatSupport(...)` | adapter `pfnGetCaps(D3D11DDICAPS_TYPE_FORMAT)` for the probed `DXGI_FORMAT`s (BGRA/RGBA/depth/index). |
+| `CheckMultisampleQualityLevels(format, 1, ...)` | adapter `pfnGetCaps(D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS)` should report at least 1 quality level for `SampleCount==1` on supported formats. |
+
 ---
 
 ## 7) Practical bring-up ordering (what to implement first)
@@ -725,7 +805,7 @@ If your goal is “device creates and the basic Win7 guest tests pass”:
 4. **Upload + readback path**
    * `pfnUpdateSubresourceUP`, `pfnCopyResource`, `pfnFlush`, `pfnMap`/`pfnUnmap` for STAGING read
 5. **DXGI present** (swapchain tests)
-   * device `pfnPresent` + `pfnRotateResourceIdentities`
+   * context `pfnPresent` + `pfnRotateResourceIdentities`
 
 Everything else can initially be “present-but-stubbed”, as long as it fails cleanly and never dereferences invalid handles.
 
