@@ -82,11 +82,34 @@ pub trait CpuBus {
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception>;
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception>;
 
+    /// Perform a read-modify-write cycle as a single operation when possible.
+    ///
+    /// This is used by the Tier-0 interpreter for `LOCK`ed instructions and other
+    /// atomic RMW operations (e.g. `XCHG` with a memory operand).
+    ///
+    /// Bus implementations may override this to provide true atomicity against
+    /// concurrent devices/threads. The default implementation falls back to a
+    /// plain read + conditional write using the scalar `read_u*`/`write_u*`
+    /// operations.
+    fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
+    where
+        T: CpuBusValue,
+        Self: Sized,
+    {
+        let old = T::read_from(self, vaddr)?;
+        let (new, ret) = f(old);
+        if new != old {
+            T::write_to(self, vaddr, new)?;
+        }
+        Ok(ret)
+    }
+
     /// Read a contiguous byte slice from memory.
     ///
-    /// This is a hint/fast-path only; implementations may override for more
-    /// efficient reads. The default implementation performs scalar `read_u8`
-    /// operations.
+    /// This is primarily a convenience helper for instructions that naturally
+    /// operate on byte arrays (FXSAVE/FXRSTOR, REP string ops). Implementations
+    /// may override this for more efficient access, but the default
+    /// implementation safely falls back to scalar `read_u8` accesses.
     fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
         for (i, slot) in dst.iter_mut().enumerate() {
             let addr = vaddr
@@ -99,9 +122,8 @@ pub trait CpuBus {
 
     /// Write a contiguous byte slice into memory.
     ///
-    /// This is a hint/fast-path only; implementations may override for more
-    /// efficient writes. The default implementation performs scalar `write_u8`
-    /// operations.
+    /// This is a hint/fast-path only; the default implementation safely falls
+    /// back to scalar `write_u8` accesses.
     fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
         for (i, byte) in src.iter().copied().enumerate() {
             let addr = vaddr
@@ -112,45 +134,12 @@ pub trait CpuBus {
         Ok(())
     }
 
-    /// Fetch up to 15 bytes from instruction memory. Implementations should
-    /// allow reads that cross page boundaries (the caller handles page faults
-    /// separately), but for tests we just bounds-check.
-    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception>;
-
-    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception>;
-    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception>;
-
-    /// Perform a read-modify-write cycle as a single operation when possible.
-    ///
-    /// This is used by Tier-0 for `LOCK`ed instructions and other atomic RMW
-    /// instructions (for example, `CMPXCHG`, `XADD`, and `XCHG` with a memory
-    /// operand).
-    ///
-    /// Implementations may override this to provide true atomicity against
-    /// concurrent devices/threads. The default implementation falls back to a
-    /// plain read + conditional write.
-    fn atomic_rmw<T, R>(
-        &mut self,
-        addr: u64,
-        f: impl FnOnce(T) -> (T, R),
-    ) -> Result<R, Exception>
-    where
-        T: CpuBusValue,
-        Self: Sized,
-    {
-        let old = T::read_from(self, addr)?;
-        let (new, ret) = f(old);
-        if new != old {
-            T::write_to(self, addr, new)?;
-        }
-        Ok(ret)
-    }
-
     /// Whether this bus can perform fast contiguous copies between RAM regions.
     ///
-    /// This is a hint only; callers may still invoke [`CpuBus::bulk_copy`] when
+    /// This is a hint only: callers may still invoke [`CpuBus::bulk_copy`] when
     /// this returns `false` and will get correct results (via the default scalar
-    /// fallback implementation).
+    /// fallback implementation), but Tier-0 fast paths will typically avoid
+    /// attempting the bulk call in that case.
     fn supports_bulk_copy(&self) -> bool {
         false
     }
@@ -189,10 +178,6 @@ pub trait CpuBus {
     }
 
     /// Whether this bus can perform fast contiguous repeated sets/fills in RAM.
-    ///
-    /// This is a hint only; callers may still invoke [`CpuBus::bulk_set`] when
-    /// this returns `false` and will get correct results (via the default scalar
-    /// fallback implementation).
     fn supports_bulk_set(&self) -> bool {
         false
     }
@@ -201,13 +186,10 @@ pub trait CpuBus {
     ///
     /// Returns `true` when the fill was performed.
     ///
-    /// The default implementation performs a byte-at-a-time copy and is correct
+    /// The default implementation performs a byte-at-a-time fill and is correct
     /// but potentially slow.
     fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
-        if repeat == 0 {
-            return Ok(true);
-        }
-        if pattern.is_empty() {
+        if repeat == 0 || pattern.is_empty() {
             return Ok(true);
         }
 
@@ -227,6 +209,14 @@ pub trait CpuBus {
 
         Ok(true)
     }
+
+    /// Fetch up to 15 bytes from instruction memory. Implementations should
+    /// allow reads that cross page boundaries (the caller handles page faults
+    /// separately), but for tests we just bounds-check.
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception>;
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception>;
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception>;
 }
 
 /// Identity-mapped memory bus used by unit tests.
@@ -240,18 +230,6 @@ impl FlatTestBus {
         Self { mem: vec![0; size] }
     }
 
-    pub fn load(&mut self, addr: u64, data: &[u8]) {
-        let start = addr as usize;
-        let end = start + data.len();
-        self.mem[start..end].copy_from_slice(data);
-    }
-
-    pub fn slice(&self, addr: u64, len: usize) -> &[u8] {
-        let start = addr as usize;
-        let end = start + len;
-        &self.mem[start..end]
-    }
-
     fn range(&self, addr: u64, len: usize) -> Result<Range<usize>, Exception> {
         let start = usize::try_from(addr).map_err(|_| Exception::MemoryFault)?;
         let end = start.checked_add(len).ok_or(Exception::MemoryFault)?;
@@ -259,6 +237,20 @@ impl FlatTestBus {
             return Err(Exception::MemoryFault);
         }
         Ok(start..end)
+    }
+
+    pub fn load(&mut self, addr: u64, data: &[u8]) {
+        let range = self
+            .range(addr, data.len())
+            .unwrap_or_else(|_| panic!("FlatTestBus load out of bounds: {addr:#x}+{}", data.len()));
+        self.mem[range].copy_from_slice(data);
+    }
+
+    pub fn slice(&self, addr: u64, len: usize) -> &[u8] {
+        let range = self
+            .range(addr, len)
+            .unwrap_or_else(|_| panic!("FlatTestBus slice out of bounds: {addr:#x}+{len}"));
+        &self.mem[range]
     }
 }
 
@@ -327,22 +319,6 @@ impl CpuBus for FlatTestBus {
         Ok(())
     }
 
-    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
-        let mut buf = [0u8; 15];
-        let len = max_len.min(15);
-        let range = self.range(vaddr, len)?;
-        buf[..len].copy_from_slice(&self.mem[range]);
-        Ok(buf)
-    }
-
-    fn io_read(&mut self, _port: u16, _size: u32) -> Result<u64, Exception> {
-        Ok(0)
-    }
-
-    fn io_write(&mut self, _port: u16, _size: u32, _val: u64) -> Result<(), Exception> {
-        Ok(())
-    }
-
     fn supports_bulk_copy(&self) -> bool {
         true
     }
@@ -351,17 +327,12 @@ impl CpuBus for FlatTestBus {
         if len == 0 || dst == src {
             return Ok(true);
         }
-
         let src_range = self.range(src, len)?;
         let dst_range = self.range(dst, len)?;
-
         if src_range.start == dst_range.start {
             return Ok(true);
         }
-
-        // `copy_within` provides memmove semantics.
-        let src_range_owned = src_range.clone();
-        self.mem.copy_within(src_range_owned, dst_range.start);
+        self.mem.copy_within(src_range.clone(), dst_range.start);
         Ok(true)
     }
 
@@ -370,10 +341,7 @@ impl CpuBus for FlatTestBus {
     }
 
     fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
-        if repeat == 0 {
-            return Ok(true);
-        }
-        if pattern.is_empty() {
+        if repeat == 0 || pattern.is_empty() {
             return Ok(true);
         }
 
@@ -381,8 +349,8 @@ impl CpuBus for FlatTestBus {
             .len()
             .checked_mul(repeat)
             .ok_or(Exception::MemoryFault)?;
-        let dst_range = self.range(dst, total)?;
-        let dst_slice = &mut self.mem[dst_range];
+        let range = self.range(dst, total)?;
+        let dst_slice = &mut self.mem[range];
 
         if pattern.len() == 1 {
             dst_slice.fill(pattern[0]);
@@ -394,6 +362,21 @@ impl CpuBus for FlatTestBus {
         }
 
         Ok(true)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        let mut buf = [0u8; 15];
+        let len = max_len.min(15);
+        self.read_bytes(vaddr, &mut buf[..len])?;
+        Ok(buf)
+    }
+
+    fn io_read(&mut self, _port: u16, _size: u32) -> Result<u64, Exception> {
+        Ok(0)
+    }
+
+    fn io_write(&mut self, _port: u16, _size: u32, _val: u64) -> Result<(), Exception> {
+        Ok(())
     }
 }
 

@@ -1,8 +1,13 @@
-use aero_cpu_core::{
-    mem::{CpuBus as MemCpuBus, FlatTestBus},
-    sse_state::MXCSR_MASK,
-    Bus, CpuState, Exception, RamBus, FXSAVE_AREA_SIZE,
-};
+use aero_cpu_core::interp::tier0::exec::{step, StepExit};
+use aero_cpu_core::mem::{CpuBus, FlatTestBus};
+use aero_cpu_core::sse_state::MXCSR_MASK;
+use aero_cpu_core::state::{CpuMode, CpuState, CR0_EM, CR0_TS, CR4_OSFXSR, CR4_OSXMMEXCPT};
+use aero_cpu_core::{Exception, FXSAVE_AREA_SIZE};
+use aero_x86::Register;
+
+const BUS_SIZE: usize = 0x4000;
+const CODE_BASE: u64 = 0x0100;
+const DATA_BASE: u64 = 0x0200;
 
 const ST80_MASK: u128 = (1u128 << 80) - 1;
 const FSW_TOP_MASK: u16 = 0b111 << 11;
@@ -27,46 +32,58 @@ fn mask_st80(raw: u128) -> u128 {
     raw & ST80_MASK
 }
 
-#[test]
-fn fxsave_legacy_layout_matches_intel_sdm() {
-    let mut cpu = CpuState::default();
-    cpu.fpu.fcw = 0x1234;
-    cpu.fpu.fsw = 0x4567;
-    cpu.fpu.top = 3;
-    cpu.fpu.ftw = 0x9A;
-    cpu.fpu.fop = 0xBEEF;
-    cpu.fpu.fip = 0x1122_3344;
-    cpu.fpu.fcs = 0x5566;
-    cpu.fpu.fdp = 0x7788_99AA;
-    cpu.fpu.fds = 0xBBCC;
+fn step_ok(state: &mut CpuState, bus: &mut FlatTestBus) {
+    match step(state, bus) {
+        Ok(StepExit::Continue) => {}
+        Ok(other) => panic!("unexpected tier0 exit: {other:?}"),
+        Err(e) => panic!("unexpected tier0 exception: {e:?}"),
+    }
+}
 
-    cpu.sse.mxcsr = 0xAABB_CCDD;
+#[test]
+fn fxsave_legacy_layout_matches_intel_sdm_via_tier0() {
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.control.cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
+    state.set_rip(CODE_BASE);
+    state.write_reg(Register::RAX, DATA_BASE);
+
+    state.fpu.fcw = 0x1234;
+    state.fpu.fsw = 0x4567;
+    state.fpu.top = 3;
+    state.fpu.ftw = 0x9A;
+    state.fpu.fop = 0xBEEF;
+    state.fpu.fip = 0x1122_3344;
+    state.fpu.fcs = 0x5566;
+    state.fpu.fdp = 0x7788_99AA;
+    state.fpu.fds = 0xBBCC;
+
+    state.sse.mxcsr = 0xCCDD & MXCSR_MASK;
 
     for i in 0..8 {
         // Fill the reserved bytes to ensure FXSAVE zeroes them in the output.
-        cpu.fpu.st[i] = patterned_u128(0x10 + i as u8);
+        state.fpu.st[i] = patterned_u128(0x10 + i as u8);
     }
-
     for i in 0..16 {
-        cpu.sse.xmm[i] = patterned_u128(0x80 + i as u8);
+        state.sse.xmm[i] = patterned_u128(0x80 + i as u8);
     }
 
-    let mut bus = RamBus::new(4096);
-    let base = 0x100u64;
-    cpu.fxsave_to_bus(&mut bus, base);
-    let mut image = [0u8; FXSAVE_AREA_SIZE];
-    image.copy_from_slice(&bus.as_slice()[base as usize..base as usize + FXSAVE_AREA_SIZE]);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x00]); // fxsave [rax]
+
+    step_ok(&mut state, &mut bus);
+
+    let image = bus.slice(DATA_BASE, FXSAVE_AREA_SIZE);
 
     let mut expected = [0u8; FXSAVE_AREA_SIZE];
     expected[0..2].copy_from_slice(&0x1234u16.to_le_bytes());
-    expected[2..4].copy_from_slice(&(cpu.fpu.fsw_with_top()).to_le_bytes());
+    expected[2..4].copy_from_slice(&(state.fpu.fsw_with_top()).to_le_bytes());
     expected[4] = 0x9A;
     expected[6..8].copy_from_slice(&0xBEEFu16.to_le_bytes());
     expected[8..12].copy_from_slice(&(0x1122_3344u32).to_le_bytes());
     expected[12..14].copy_from_slice(&0x5566u16.to_le_bytes());
     expected[16..20].copy_from_slice(&(0x7788_99AAu32).to_le_bytes());
     expected[20..22].copy_from_slice(&0xBBCCu16.to_le_bytes());
-    expected[24..28].copy_from_slice(&0xAABB_CCDDu32.to_le_bytes());
+    expected[24..28].copy_from_slice(&(0xCCDDu32).to_le_bytes());
     expected[28..32].copy_from_slice(&MXCSR_MASK.to_le_bytes());
 
     for i in 0..8 {
@@ -76,381 +93,283 @@ fn fxsave_legacy_layout_matches_intel_sdm() {
 
     for i in 0..8 {
         let start = 160 + i * 16;
-        expected[start..start + 16].copy_from_slice(&cpu.sse.xmm[i].to_le_bytes());
+        expected[start..start + 16].copy_from_slice(&state.sse.xmm[i].to_le_bytes());
     }
 
     assert_eq!(image, expected);
 }
 
 #[test]
-fn fxrstor_legacy_restores_state() {
-    let mut image = [0u8; FXSAVE_AREA_SIZE];
+fn fxsave_fxrstor_legacy_roundtrip_restores_state() {
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.control.cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
+    state.set_rip(CODE_BASE);
+    state.write_reg(Register::RAX, DATA_BASE);
 
-    // Fill in a recognisable state.
-    image[0..2].copy_from_slice(&0x1111u16.to_le_bytes());
-    image[2..4].copy_from_slice(&0x2222u16.to_le_bytes());
-    image[4] = 0xFE;
-    image[6..8].copy_from_slice(&0x3333u16.to_le_bytes());
-    image[8..12].copy_from_slice(&0x4444_5555u32.to_le_bytes());
-    image[12..14].copy_from_slice(&0x6666u16.to_le_bytes());
-    image[16..20].copy_from_slice(&0x7777_8888u32.to_le_bytes());
-    image[20..22].copy_from_slice(&0x9999u16.to_le_bytes());
-    image[24..28].copy_from_slice(&0x1F80u32.to_le_bytes());
-    image[28..32].copy_from_slice(&0xFFFFu32.to_le_bytes());
+    state.fpu.fcw = 0x1111;
+    state.fpu.fsw = 0x2222 & !FSW_TOP_MASK;
+    state.fpu.top = 6;
+    state.fpu.ftw = 0x0F;
+    state.fpu.fop = 0x3333;
+    state.fpu.fip = 0x4444_5555;
+    state.fpu.fcs = 0x6666;
+    state.fpu.fdp = 0x7777_8888;
+    state.fpu.fds = 0x9999;
 
-    for i in 0..8 {
-        let start = 32 + i * 16;
-        image[start..start + 16].copy_from_slice(&patterned_u128(0x20 + i as u8).to_le_bytes());
-    }
+    state.sse.mxcsr = 0x1F80;
 
     for i in 0..8 {
-        let start = 160 + i * 16;
-        image[start..start + 16].copy_from_slice(&patterned_u128(0xA0 + i as u8).to_le_bytes());
+        state.fpu.st[i] = patterned_st80(0x40 + i as u8);
+        state.sse.xmm[i] = patterned_u128(0xA0 + i as u8);
     }
-
-    let mut bus = RamBus::new(4096);
-    let base = 0x200u64;
-    bus.as_mut_slice()[base as usize..base as usize + FXSAVE_AREA_SIZE].copy_from_slice(&image);
-
-    let mut cpu = CpuState::default();
-    cpu.fxrstor_from_bus(&mut bus, base).unwrap();
-
-    assert_eq!(cpu.fpu.fcw, 0x1111);
-    assert_eq!(cpu.fpu.fsw, 0x2222 & !FSW_TOP_MASK);
-    assert_eq!(cpu.fpu.top, ((0x2222u16 >> 11) & 0b111) as u8);
-    assert_eq!(cpu.fpu.ftw, 0xFE);
-    assert_eq!(cpu.fpu.fop, 0x3333);
-    assert_eq!(cpu.fpu.fip, 0x4444_5555);
-    assert_eq!(cpu.fpu.fcs, 0x6666);
-    assert_eq!(cpu.fpu.fdp, 0x7777_8888);
-    assert_eq!(cpu.fpu.fds, 0x9999);
-    assert_eq!(cpu.sse.mxcsr, 0x1F80);
-
-    for i in 0..8 {
-        assert_eq!(cpu.fpu.st[i], mask_st80(patterned_u128(0x20 + i as u8)));
-        assert_eq!(cpu.sse.xmm[i], patterned_u128(0xA0 + i as u8));
+    for i in 8..16 {
+        state.sse.xmm[i] = patterned_u128(0xC0 + i as u8);
     }
+    let original_fpu = state.fpu.clone();
+    let original_low_xmm = state.sse.xmm[0..8].to_vec();
+
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    // fxsave [rax]; fxrstor [rax]
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x00, 0x0F, 0xAE, 0x08]);
+
+    // Save.
+    step_ok(&mut state, &mut bus);
+
+    // Clobber the state (including upper XMM registers, which legacy FXRSTOR should NOT restore).
+    state.fpu.fcw = 0;
+    state.fpu.fsw = 0;
+    state.fpu.top = 0;
+    state.fpu.ftw = 0;
+    state.fpu.fop = 0;
+    state.fpu.fip = 0;
+    state.fpu.fcs = 0;
+    state.fpu.fdp = 0;
+    state.fpu.fds = 0;
+    state.fpu.st = [0u128; 8];
+    state.sse.mxcsr = 0;
+    state.sse.xmm[0..8].fill(0);
+    for i in 8..16 {
+        state.sse.xmm[i] = patterned_u128(0xD0 + i as u8);
+    }
+    let clobbered_upper_xmm = state.sse.xmm[8..16].to_vec();
+
+    // Restore.
+    step_ok(&mut state, &mut bus);
+
+    assert_eq!(state.fpu, original_fpu);
+    assert_eq!(&state.sse.xmm[0..8], &original_low_xmm[..]);
+    assert_eq!(&state.sse.xmm[8..16], &clobbered_upper_xmm[..]);
 }
 
 #[test]
-fn fxsave64_roundtrip_restores_state() {
-    let mut original = CpuState::default();
-    original.fpu.fcw = 0xABCD;
-    original.fpu.fsw = 0x7777 & !FSW_TOP_MASK;
-    original.fpu.top = 7;
-    original.fpu.ftw = 0x55;
-    original.fpu.fop = 0x0BAD;
-    original.fpu.fip = 0x1122_3344_5566_7788;
-    original.fpu.fdp = 0x99AA_BBCC_DDEE_FF00;
+fn fxsave64_fxrstor64_roundtrip_restores_state() {
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.control.cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
+    state.set_rip(CODE_BASE);
+    state.write_reg(Register::RAX, DATA_BASE);
 
-    original.sse.mxcsr = 0x1F80;
+    state.fpu.fcw = 0xABCD;
+    state.fpu.fsw = 0x7777 & !FSW_TOP_MASK;
+    state.fpu.top = 7;
+    state.fpu.ftw = 0x55;
+    state.fpu.fop = 0x0BAD;
+    state.fpu.fip = 0x1122_3344_5566_7788;
+    state.fpu.fdp = 0x99AA_BBCC_DDEE_FF00;
+    state.fpu.fcs = 0x1111;
+    state.fpu.fds = 0x2222;
 
-    for i in 0..8 {
-        original.fpu.st[i] = patterned_st80(0x40 + i as u8);
-    }
-    for i in 0..16 {
-        original.sse.xmm[i] = patterned_u128(0xC0 + i as u8);
-    }
-
-    let mut bus = RamBus::new(4096);
-    let base = 0x300u64;
-    original.fxsave64_to_bus(&mut bus, base);
-
-    let mut restored = CpuState::default();
-    // Ensure we're not accidentally passing due to defaults.
-    restored.fpu.fcw = 0;
-    restored.fpu.fsw = 0;
-    restored.fpu.ftw = 0;
-    restored.fpu.fop = 0;
-    restored.fpu.fip = 0;
-    restored.fpu.fdp = 0;
-    restored.sse.mxcsr = 0;
-    restored.fpu.st = [0u128; 8];
-    restored.sse.xmm = [0u128; 16];
-
-    restored.fxrstor64_from_bus(&mut bus, base).unwrap();
-
-    assert_eq!(restored.fpu.fcw, original.fpu.fcw);
-    assert_eq!(restored.fpu.fsw, original.fpu.fsw);
-    assert_eq!(restored.fpu.top, original.fpu.top);
-    assert_eq!(restored.fpu.ftw, original.fpu.ftw);
-    assert_eq!(restored.fpu.fop, original.fpu.fop);
-    assert_eq!(restored.fpu.fip, original.fpu.fip);
-    assert_eq!(restored.fpu.fdp, original.fpu.fdp);
-    assert_eq!(restored.sse.mxcsr, original.sse.mxcsr);
-
-    assert_eq!(restored.fpu.st, original.fpu.st);
-    assert_eq!(restored.sse.xmm, original.sse.xmm);
-}
-
-#[test]
-fn fxsave64_layout_matches_intel_sdm() {
-    let mut cpu = CpuState::default();
-    cpu.fpu.fcw = 0x1234;
-    cpu.fpu.fsw = 0x4567 & !FSW_TOP_MASK;
-    cpu.fpu.top = 3;
-    cpu.fpu.ftw = 0x9A;
-    cpu.fpu.fop = 0xBEEF;
-    cpu.fpu.fip = 0x1122_3344_5566_7788;
-    cpu.fpu.fdp = 0x99AA_BBCC_DDEE_FF00;
-
-    cpu.sse.mxcsr = 0xCCDD;
+    state.sse.mxcsr = 0x1F80;
 
     for i in 0..8 {
-        // Fill reserved bytes to ensure they are cleared in the image.
-        cpu.fpu.st[i] = patterned_u128(0x10 + i as u8);
+        state.fpu.st[i] = patterned_st80(0x40 + i as u8);
     }
     for i in 0..16 {
-        cpu.sse.xmm[i] = patterned_u128(0x80 + i as u8);
+        state.sse.xmm[i] = patterned_u128(0xC0 + i as u8);
     }
 
-    let mut image = [0u8; FXSAVE_AREA_SIZE];
-    cpu.fxsave64(&mut image);
+    let original_fpu = state.fpu.clone();
+    let original_xmm = state.sse.xmm.to_vec();
 
-    let mut expected = [0u8; FXSAVE_AREA_SIZE];
-    expected[0..2].copy_from_slice(&0x1234u16.to_le_bytes());
-    expected[2..4].copy_from_slice(&cpu.fpu.fsw_with_top().to_le_bytes());
-    expected[4] = 0x9A;
-    expected[6..8].copy_from_slice(&0xBEEFu16.to_le_bytes());
-    expected[8..16].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
-    expected[16..24].copy_from_slice(&0x99AA_BBCC_DDEE_FF00u64.to_le_bytes());
-    expected[24..28].copy_from_slice(&0xCCDDu32.to_le_bytes());
-    expected[28..32].copy_from_slice(&MXCSR_MASK.to_le_bytes());
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    // fxsave64 [rax]; fxrstor64 [rax]
+    bus.load(
+        CODE_BASE,
+        &[0x48, 0x0F, 0xAE, 0x00, 0x48, 0x0F, 0xAE, 0x08],
+    );
 
-    for i in 0..8 {
-        let start = 32 + i * 16;
-        expected[start..start + 16].copy_from_slice(&patterned_st80(0x10 + i as u8).to_le_bytes());
-    }
+    step_ok(&mut state, &mut bus);
 
-    for i in 0..16 {
-        let start = 160 + i * 16;
-        expected[start..start + 16].copy_from_slice(&cpu.sse.xmm[i].to_le_bytes());
-    }
+    // Change the non-restored legacy fields (FCS/FDS) to ensure FXRSTOR64 doesn't touch them.
+    state.fpu.fcs = 0xAAAA;
+    state.fpu.fds = 0xBBBB;
+    // Clobber the rest of the image-covered state.
+    state.fpu.fcw = 0;
+    state.fpu.fsw = 0;
+    state.fpu.top = 0;
+    state.fpu.ftw = 0;
+    state.fpu.fop = 0;
+    state.fpu.fip = 0;
+    state.fpu.fdp = 0;
+    state.fpu.st = [0u128; 8];
+    state.sse.mxcsr = 0;
+    state.sse.xmm.fill(0);
 
-    assert_eq!(image, expected);
+    step_ok(&mut state, &mut bus);
+
+    assert_eq!(state.fpu.fcw, original_fpu.fcw);
+    assert_eq!(state.fpu.fsw, original_fpu.fsw);
+    assert_eq!(state.fpu.top, original_fpu.top);
+    assert_eq!(state.fpu.ftw, original_fpu.ftw);
+    assert_eq!(state.fpu.fop, original_fpu.fop);
+    assert_eq!(state.fpu.fip, original_fpu.fip);
+    assert_eq!(state.fpu.fdp, original_fpu.fdp);
+    assert_eq!(state.fpu.st, original_fpu.st);
+    assert_eq!(state.sse.mxcsr, 0x1F80);
+    assert_eq!(&state.sse.xmm[..], &original_xmm[..]);
+
+    // FCS/FDS are not part of the 64-bit image.
+    assert_eq!(state.fpu.fcs, 0xAAAA);
+    assert_eq!(state.fpu.fds, 0xBBBB);
 }
 
 #[test]
 fn fxrstor_rejects_reserved_mxcsr_without_modifying_state() {
-    let mut cpu = CpuState::default();
-    cpu.fpu.fcw = 0x1234;
-    cpu.sse.mxcsr = 0x1F80;
-    cpu.sse.xmm[0] = patterned_u128(0xAA);
-    let snapshot = cpu.clone();
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.control.cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
+    state.set_rip(CODE_BASE);
+    state.write_reg(Register::RAX, DATA_BASE);
+
+    state.fpu.fcw = 0x1234;
+    state.sse.mxcsr = 0x1F80;
+    state.sse.xmm[0] = patterned_u128(0xAA);
+    let snapshot_fpu = state.fpu.clone();
+    let snapshot_sse = state.sse;
 
     let mut image = [0u8; FXSAVE_AREA_SIZE];
-    snapshot.fxsave(&mut image);
+    state.fxsave32(&mut image);
 
     // Set a reserved MXCSR bit (outside MXCSR_MASK).
     image[24..28].copy_from_slice(&(MXCSR_MASK | (1 << 31)).to_le_bytes());
 
-    let err = cpu.fxrstor(&image).unwrap_err();
-    assert!(matches!(
-        err,
-        aero_cpu_core::FxStateError::MxcsrReservedBits { .. }
-    ));
-    assert_eq!(cpu, snapshot);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x08]); // fxrstor [rax]
+    bus.load(DATA_BASE, &image);
+
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::gp0()));
+    assert_eq!(state.fpu, snapshot_fpu);
+    assert_eq!(state.sse, snapshot_sse);
 }
 
 #[test]
-fn fxrstor64_rejects_reserved_mxcsr_without_modifying_state() {
-    let mut cpu = CpuState::default();
-    cpu.fpu.fcw = 0xBEEF;
-    cpu.fpu.fip = 0x1122_3344_5566_7788;
-    cpu.sse.mxcsr = 0x1F80;
-    cpu.sse.xmm[15] = patterned_u128(0xCC);
-    let snapshot = cpu.clone();
+fn ldmxcsr_rejects_reserved_mxcsr_without_modifying_state() {
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.control.cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
+    state.set_rip(CODE_BASE);
+    state.write_reg(Register::RAX, DATA_BASE);
+    state.sse.mxcsr = 0x1F80;
 
-    let mut image = [0u8; FXSAVE_AREA_SIZE];
-    snapshot.fxsave64(&mut image);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x10]); // ldmxcsr [rax]
+    bus.write_u32(DATA_BASE, MXCSR_MASK | (1 << 31)).unwrap();
 
-    image[24..28].copy_from_slice(&(MXCSR_MASK | (1 << 30)).to_le_bytes());
-
-    let err = cpu.fxrstor64(&image).unwrap_err();
-    assert!(matches!(
-        err,
-        aero_cpu_core::FxStateError::MxcsrReservedBits { .. }
-    ));
-    assert_eq!(cpu, snapshot);
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::gp0()));
+    assert_eq!(state.sse.mxcsr, 0x1F80);
 }
 
 #[test]
-fn fxsave_legacy_does_not_store_upper_xmm_registers() {
-    let mut cpu = CpuState::default();
-    for i in 0..16 {
-        cpu.sse.xmm[i] = patterned_u128(0x50 + i as u8);
+fn fx_instructions_enforce_control_register_gating() {
+    // CR4.OSFXSR=0 => #UD
+    {
+        let mut state = CpuState::new(CpuMode::Bit64);
+        state.control.cr4 = 0;
+        state.set_rip(CODE_BASE);
+        state.write_reg(Register::RAX, DATA_BASE);
+
+        let mut bus = FlatTestBus::new(BUS_SIZE);
+        bus.load(CODE_BASE, &[0x0F, 0xAE, 0x00]); // fxsave [rax]
+
+        assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
     }
 
-    let mut image = [0u8; FXSAVE_AREA_SIZE];
-    cpu.fxsave(&mut image);
+    // CR0.EM=1 => #UD
+    {
+        let mut state = CpuState::new(CpuMode::Bit64);
+        state.control.cr4 |= CR4_OSFXSR;
+        state.control.cr0 |= CR0_EM;
+        state.set_rip(CODE_BASE);
+        state.write_reg(Register::RAX, DATA_BASE);
 
-    // Legacy FXSAVE only stores XMM0-7; the remaining slots are reserved and
-    // should be left as zero in the memory image.
-    for i in 8..16 {
-        let start = 160 + i * 16;
-        assert_eq!(&image[start..start + 16], &[0u8; 16]);
+        let mut bus = FlatTestBus::new(BUS_SIZE);
+        bus.load(CODE_BASE, &[0x0F, 0xAE, 0x00]); // fxsave [rax]
+
+        assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
+    }
+
+    // CR0.TS=1 => #NM
+    {
+        let mut state = CpuState::new(CpuMode::Bit64);
+        state.control.cr4 |= CR4_OSFXSR;
+        state.control.cr0 |= CR0_TS;
+        state.set_rip(CODE_BASE);
+        state.write_reg(Register::RAX, DATA_BASE);
+
+        let mut bus = FlatTestBus::new(BUS_SIZE);
+        bus.load(CODE_BASE, &[0x0F, 0xAE, 0x00]); // fxsave [rax]
+
+        assert_eq!(step(&mut state, &mut bus), Err(Exception::DeviceNotAvailable));
     }
 }
 
 #[test]
-fn fxrstor_legacy_does_not_clobber_upper_xmm_registers() {
-    let mut cpu = CpuState::default();
-    for i in 0..16 {
-        cpu.sse.xmm[i] = patterned_u128(0x60 + i as u8);
-    }
-    let original_upper = cpu.sse.xmm[8..16].to_vec();
+fn fx_instructions_require_aligned_memory_operands() {
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.control.cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
+    state.set_rip(CODE_BASE);
 
-    let mut image = [0u8; FXSAVE_AREA_SIZE];
-    cpu.fxsave(&mut image);
-
-    // Overwrite the stored XMM0-7 slots to simulate a different saved context.
-    for i in 0..8 {
-        let start = 160 + i * 16;
-        image[start..start + 16].copy_from_slice(&patterned_u128(0xA0 + i as u8).to_le_bytes());
-    }
-
-    cpu.fxrstor(&image).unwrap();
-    for i in 0..8 {
-        assert_eq!(cpu.sse.xmm[i], patterned_u128(0xA0 + i as u8));
-    }
-    assert_eq!(cpu.sse.xmm[8..16], original_upper[..]);
-}
-
-#[test]
-fn fninit_resets_x87_state_but_preserves_sse() {
-    let mut cpu = CpuState::default();
-    cpu.fpu.fcw = 0x1234;
-    cpu.fpu.fsw = 0xFFFF;
-    cpu.fpu.top = 5;
-    cpu.fpu.ftw = 0xAA;
-    cpu.sse.mxcsr = 0x0;
-
-    cpu.fninit();
-
-    assert_eq!(cpu.fpu.fcw, 0x037F);
-    assert_eq!(cpu.fpu.fsw, 0);
-    assert_eq!(cpu.fpu.top, 0);
-    assert_eq!(cpu.fpu.ftw, 0);
-    assert_eq!(cpu.sse.mxcsr, 0);
-}
-
-#[test]
-fn emms_marks_all_x87_tags_empty() {
-    let mut cpu = CpuState::default();
-    cpu.fpu.ftw = 0xFF;
-    cpu.emms();
-    assert_eq!(cpu.fpu.ftw, 0);
-}
-
-#[test]
-fn stmxcsr_ldmxcsr_bus_roundtrip() {
-    let mut cpu = CpuState::default();
-    cpu.sse.mxcsr = 0xA5A5_5A5A & MXCSR_MASK;
-
-    let mut bus = RamBus::new(16);
-    cpu.stmxcsr_to_bus(&mut bus, 4);
-
-    cpu.sse.mxcsr = 0;
-    cpu.ldmxcsr_from_bus(&mut bus, 4).unwrap();
-
-    assert_eq!(cpu.sse.mxcsr, 0xA5A5_5A5A & MXCSR_MASK);
-}
-
-#[test]
-fn ldmxcsr_bus_rejects_reserved_bits() {
-    let mut cpu = CpuState::default();
-    cpu.sse.mxcsr = 0x1F80;
-    let snapshot = cpu.clone();
-
-    let mut bus = RamBus::new(16);
-    bus.write_u32(0, MXCSR_MASK | (1 << 31));
-    assert!(cpu.ldmxcsr_from_bus(&mut bus, 0).is_err());
-    assert_eq!(cpu, snapshot);
-}
-
-#[test]
-fn fxsave_to_mem_writes_same_image_as_fxsave() {
-    let mut cpu = CpuState::default();
-    cpu.fpu.fcw = 0x4242;
-    cpu.sse.mxcsr = 0x1F80;
-
-    let mut expected = [0u8; FXSAVE_AREA_SIZE];
-    cpu.fxsave(&mut expected);
-
-    let mut bus = FlatTestBus::new(4096);
-    let base = 0x100u64;
-    cpu.fxsave_to_mem(&mut bus, base).unwrap();
-    assert_eq!(bus.slice(base, FXSAVE_AREA_SIZE), &expected);
-}
-
-#[test]
-fn fxrstor_from_mem_restores_state() {
-    let mut original = CpuState::default();
-    original.fpu.fcw = 0x1111;
-    original.fpu.fsw = 0x2222 & !FSW_TOP_MASK;
-    original.fpu.top = 6;
-    original.fpu.ftw = 0x0F;
-    original.sse.mxcsr = 0x1F80;
-    original.sse.xmm[0] = patterned_u128(0x42);
-
-    let mut image = [0u8; FXSAVE_AREA_SIZE];
-    original.fxsave(&mut image);
-
-    let mut bus = FlatTestBus::new(4096);
-    let base = 0x200u64;
-    bus.load(base, &image);
-
-    let mut restored = CpuState::default();
-    restored.fxrstor_from_mem(&mut bus, base).unwrap();
-    assert_eq!(restored, original);
-}
-
-#[test]
-fn ldmxcsr_from_mem_returns_gp0_on_reserved_bits() {
-    let mut cpu = CpuState::default();
-    let mut bus = FlatTestBus::new(16);
-    bus.write_u32(0, MXCSR_MASK | (1 << 31)).unwrap();
-
-    assert_eq!(
-        cpu.ldmxcsr_from_mem(&mut bus, 0).unwrap_err(),
-        Exception::gp0()
-    );
-}
-
-#[test]
-fn fpu_state_instructions_require_aligned_memory_operands() {
-    let mut cpu = CpuState::default();
-    cpu.sse.mxcsr = 0x1F80;
+    let mut bus = FlatTestBus::new(BUS_SIZE);
 
     // MXCSR load/store require 4-byte alignment.
-    let mut bus = FlatTestBus::new(128);
-    bus.write_u32(4, cpu.sse.mxcsr).unwrap();
-    assert_eq!(
-        cpu.ldmxcsr_from_mem(&mut bus, 1).unwrap_err(),
-        Exception::gp0()
-    );
-    assert_eq!(
-        cpu.stmxcsr_to_mem(&mut bus, 1).unwrap_err(),
-        Exception::gp0()
-    );
+    state.write_reg(Register::RAX, DATA_BASE + 1);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x18]); // stmxcsr [rax]
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::gp0()));
+
+    state.set_rip(CODE_BASE);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x10]); // ldmxcsr [rax]
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::gp0()));
 
     // FXSAVE/FXRSTOR require 16-byte alignment.
-    let mut img = [0u8; FXSAVE_AREA_SIZE];
-    cpu.fxsave(&mut img);
+    state.set_rip(CODE_BASE);
+    state.write_reg(Register::RAX, DATA_BASE + 1);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x00]); // fxsave [rax]
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::gp0()));
 
-    let mut bus = FlatTestBus::new(4096);
-    bus.load(0x101, &img);
+    state.set_rip(CODE_BASE);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x08]); // fxrstor [rax]
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::gp0()));
+}
 
-    let snapshot = cpu.clone();
-    assert_eq!(
-        cpu.fxrstor_from_mem(&mut bus, 0x101).unwrap_err(),
-        Exception::gp0()
-    );
-    assert_eq!(cpu, snapshot);
+#[test]
+fn fxrstor_masks_st_reserve_bits() {
+    // Ensure that the non-architectural bytes in the ST/MM image are ignored by FXRSTOR.
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.control.cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
+    state.set_rip(CODE_BASE);
+    state.write_reg(Register::RAX, DATA_BASE);
 
-    let mut bus = FlatTestBus::new(4096);
-    assert_eq!(
-        cpu.fxsave_to_mem(&mut bus, 0x101).unwrap_err(),
-        Exception::gp0()
-    );
+    let mut image = [0u8; FXSAVE_AREA_SIZE];
+    image[24..28].copy_from_slice(&0x1F80u32.to_le_bytes());
+    for i in 0..8 {
+        let start = 32 + i * 16;
+        image[start..start + 16].copy_from_slice(&patterned_u128(0x10 + i as u8).to_le_bytes());
+    }
+
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x08]); // fxrstor [rax]
+    bus.load(DATA_BASE, &image);
+
+    step_ok(&mut state, &mut bus);
+
+    for i in 0..8 {
+        assert_eq!(state.fpu.st[i], mask_st80(patterned_u128(0x10 + i as u8)));
+    }
 }
