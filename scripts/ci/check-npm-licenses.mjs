@@ -18,7 +18,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 function usageAndExit() {
     console.error(
@@ -54,63 +54,9 @@ function toRepoRelativePath(repoRoot, absPath) {
     return toPosixPath(absPath);
 }
 
-const argv = process.argv.slice(2);
-let outDir = null;
-const projects = [];
-
-for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "-h" || arg === "--help") {
-        usageAndExit();
-    }
-    if (arg === "--project") {
-        const next = argv[i + 1];
-        if (!next) {
-            die("--project requires a value");
-        }
-        projects.push(next);
-        i++;
-        continue;
-    }
-    if (arg.startsWith("--project=")) {
-        const value = arg.split("=", 2)[1] ?? "";
-        if (!value) {
-            die("--project requires a value");
-        }
-        projects.push(value);
-        continue;
-    }
-    if (arg === "--out-dir") {
-        const next = argv[i + 1];
-        if (!next) {
-            die("--out-dir requires a value");
-        }
-        outDir = next;
-        i++;
-        continue;
-    }
-    if (arg.startsWith("--out-dir=")) {
-        const value = arg.split("=", 2)[1] ?? "";
-        if (!value) {
-            die("--out-dir requires a value");
-        }
-        outDir = value;
-        continue;
-    }
-
-    die(`unknown argument: ${arg}`);
-}
-
-if (projects.length === 0) {
-    die("at least one --project <dir> must be provided");
-}
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
-
-const outDirAbs = path.resolve(repoRoot, outDir ?? "license-reports/npm");
-mkdirSync(outDirAbs, { recursive: true });
 
 const ALLOWED_LICENSES = new Set([
     "Apache-2.0",
@@ -172,7 +118,14 @@ function tokenizeExpression(expr) {
 }
 
 function evaluateLicenseExpression(expr) {
-    const normalized = expr.replaceAll(";", " OR ").replaceAll(",", " OR ").replaceAll("|", " OR ").trim();
+    let normalized = expr.replaceAll(";", " OR ").replaceAll(",", " OR ").replaceAll("|", " OR ").trim();
+    // `license-checker` occasionally emits a human-readable license name rather than a
+    // single SPDX token (e.g. "Apache 2.0"). Normalize these before tokenizing so the
+    // whitespace doesn't split the identifier into invalid tokens.
+    for (const [alias, canonical] of LICENSE_ALIASES.entries()) {
+        normalized = normalized.replaceAll(alias, canonical);
+    }
+    normalized = normalized.trim();
     if (!normalized) {
         return false;
     }
@@ -286,152 +239,224 @@ function slugForProject(projectRel) {
     return projectRel.replaceAll("\\", "/").replaceAll("/", "__");
 }
 
-const require = createRequire(import.meta.url);
-let licenseCheckerBin = null;
+export { ALLOWED_LICENSES, LICENSE_ALIASES, evaluateLicenseExpression, isAllowlisted, normalizeLicenseId, tokenizeExpression };
 
-try {
-    const pkgJsonPath = require.resolve("license-checker-rseidelsohn/package.json");
-    const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
-    const pkgDir = path.dirname(pkgJsonPath);
-    const bin = pkgJson.bin;
-    let binRel = null;
-    if (typeof bin === "string") {
-        binRel = bin;
-    } else if (bin && typeof bin === "object") {
-        binRel = bin["license-checker-rseidelsohn"] ?? Object.values(bin)[0] ?? null;
-    }
-    if (!binRel) {
-        throw new Error("unable to resolve license-checker-rseidelsohn bin from package.json");
-    }
-    licenseCheckerBin = path.resolve(pkgDir, binRel);
-} catch (err) {
-    die(
-        `unable to locate license-checker-rseidelsohn. ` +
-            `Run 'npm ci' in the repo root before running this script.\n` +
-            `details: ${err instanceof Error ? err.message : String(err)}`,
-    );
-}
+function runCli(argv) {
+    let outDir = null;
+    const projects = [];
 
-const results = [];
-let totalViolations = 0;
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === "-h" || arg === "--help") {
+            usageAndExit();
+        }
+        if (arg === "--project") {
+            const next = argv[i + 1];
+            if (!next) {
+                die("--project requires a value");
+            }
+            projects.push(next);
+            i++;
+            continue;
+        }
+        if (arg.startsWith("--project=")) {
+            const value = arg.split("=", 2)[1] ?? "";
+            if (!value) {
+                die("--project requires a value");
+            }
+            projects.push(value);
+            continue;
+        }
+        if (arg === "--out-dir") {
+            const next = argv[i + 1];
+            if (!next) {
+                die("--out-dir requires a value");
+            }
+            outDir = next;
+            i++;
+            continue;
+        }
+        if (arg.startsWith("--out-dir=")) {
+            const value = arg.split("=", 2)[1] ?? "";
+            if (!value) {
+                die("--out-dir requires a value");
+            }
+            outDir = value;
+            continue;
+        }
 
-for (const project of projects) {
-    const projectAbs = path.isAbsolute(project) ? path.normalize(project) : path.normalize(path.join(repoRoot, project));
-    const projectRel = toRepoRelativePath(repoRoot, projectAbs);
-  const slug = slugForProject(projectRel);
-
-  if (!existsSync(path.join(projectAbs, "package.json"))) {
-    die(`project '${projectRel}' does not contain package.json`);
-  }
-  // npm workspaces: dependencies are typically installed at the repo root even when
-  // the project being scanned is a workspace subdirectory.
-  const projectNodeModules = path.join(projectAbs, "node_modules");
-  const repoNodeModules = path.join(repoRoot, "node_modules");
-  if (!existsSync(projectNodeModules) && !existsSync(repoNodeModules)) {
-    die(
-      `project '${projectRel}' is missing node_modules; ` +
-        `run 'npm ci --ignore-scripts' in the repo root before running this script`,
-    );
-  }
-
-    const proc = spawnSync(
-        process.execPath,
-        [
-            licenseCheckerBin,
-            "--json",
-            "--excludePrivatePackages",
-            "--start",
-            projectAbs,
-        ],
-        { encoding: "utf8", maxBuffer: 1024 * 1024 * 50 },
-    );
-
-    if (proc.status !== 0) {
-        const stderr = proc.stderr?.trim();
-        die(
-            `license-checker-rseidelsohn failed for '${projectRel}' (exit ${proc.status}).` +
-                (stderr ? `\n${stderr}` : ""),
-        );
+        die(`unknown argument: ${arg}`);
     }
 
-    let report = null;
+    if (projects.length === 0) {
+        die("at least one --project <dir> must be provided");
+    }
+
+    const outDirAbs = path.resolve(repoRoot, outDir ?? "license-reports/npm");
+    mkdirSync(outDirAbs, { recursive: true });
+
+    const require = createRequire(import.meta.url);
+    let licenseCheckerBin = null;
+
     try {
-        report = JSON.parse(proc.stdout);
+        const pkgJsonPath = require.resolve("license-checker-rseidelsohn/package.json");
+        const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
+        const pkgDir = path.dirname(pkgJsonPath);
+        const bin = pkgJson.bin;
+        let binRel = null;
+        if (typeof bin === "string") {
+            binRel = bin;
+        } else if (bin && typeof bin === "object") {
+            binRel = bin["license-checker-rseidelsohn"] ?? Object.values(bin)[0] ?? null;
+        }
+        if (!binRel) {
+            throw new Error("unable to resolve license-checker-rseidelsohn bin from package.json");
+        }
+        licenseCheckerBin = path.resolve(pkgDir, binRel);
     } catch (err) {
         die(
-            `failed to parse license-checker output for '${projectRel}'. ` +
-                `Ensure the tool is producing valid JSON.\n` +
+            `unable to locate license-checker-rseidelsohn. ` +
+                `Run 'npm ci' in the repo root before running this script.\n` +
                 `details: ${err instanceof Error ? err.message : String(err)}`,
         );
     }
 
-    const violations = [];
-    const entries = Object.entries(report).sort(([a], [b]) => a.localeCompare(b));
-    for (const [pkg, info] of entries) {
-        const pkgPath = info?.path;
-        if (!pkgPath || typeof pkgPath !== "string") {
-            continue;
+    const results = [];
+    let totalViolations = 0;
+
+    for (const project of projects) {
+        const projectAbs = path.isAbsolute(project)
+            ? path.normalize(project)
+            : path.normalize(path.join(repoRoot, project));
+        const projectRel = toRepoRelativePath(repoRoot, projectAbs);
+        const slug = slugForProject(projectRel);
+
+        if (!existsSync(path.join(projectAbs, "package.json"))) {
+            die(`project '${projectRel}' does not contain package.json`);
         }
-        if (!isThirdPartyPath(pkgPath)) {
-            continue;
+        // npm workspaces: dependencies are typically installed at the repo root even when
+        // the project being scanned is a workspace subdirectory.
+        const projectNodeModules = path.join(projectAbs, "node_modules");
+        const repoNodeModules = path.join(repoRoot, "node_modules");
+        if (!existsSync(projectNodeModules) && !existsSync(repoNodeModules)) {
+            die(
+                `project '${projectRel}' is missing node_modules; ` +
+                    `run 'npm ci --ignore-scripts' in the repo root before running this script`,
+            );
         }
 
-        const licenseValue = info.licenses;
-        if (!isAllowlisted(licenseValue)) {
-            violations.push({
-                package: pkg,
-                licenses: licenseValue,
-                licenseFile: info.licenseFile ?? null,
-                path: pkgPath,
-            });
+        const proc = spawnSync(
+            process.execPath,
+            [
+                licenseCheckerBin,
+                "--json",
+                "--excludePrivatePackages",
+                "--start",
+                projectAbs,
+            ],
+            { encoding: "utf8", maxBuffer: 1024 * 1024 * 50 },
+        );
+
+        if (proc.status !== 0) {
+            const stderr = proc.stderr?.trim();
+            die(
+                `license-checker-rseidelsohn failed for '${projectRel}' (exit ${proc.status}).` +
+                    (stderr ? `\n${stderr}` : ""),
+            );
         }
-    }
 
-    const reportPath = path.join(outDirAbs, `${slug}.json`);
-    writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", { encoding: "utf8" });
+        let report = null;
+        try {
+            report = JSON.parse(proc.stdout);
+        } catch (err) {
+            die(
+                `failed to parse license-checker output for '${projectRel}'. ` +
+                    `Ensure the tool is producing valid JSON.\n` +
+                    `details: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
 
-    const summaryLines = [];
-    summaryLines.push(`Project: ${projectRel}`);
-    summaryLines.push(`Allowlist: ${Array.from(ALLOWED_LICENSES).sort().join(", ")}`);
-    summaryLines.push(`Total dependencies scanned: ${entries.length}`);
-    summaryLines.push(`Violations: ${violations.length}`);
-    summaryLines.push("");
-
-    if (violations.length) {
-        summaryLines.push("Disallowed dependencies:");
-        for (const v of violations) {
-            summaryLines.push(`- ${v.package}: ${typeof v.licenses === "string" ? v.licenses : JSON.stringify(v.licenses)}`);
-            if (v.licenseFile) {
-                summaryLines.push(`  licenseFile: ${v.licenseFile}`);
+        const violations = [];
+        const entries = Object.entries(report).sort(([a], [b]) => a.localeCompare(b));
+        for (const [pkg, info] of entries) {
+            const pkgPath = info?.path;
+            if (!pkgPath || typeof pkgPath !== "string") {
+                continue;
             }
-            summaryLines.push(`  path: ${v.path}`);
+            if (!isThirdPartyPath(pkgPath)) {
+                continue;
+            }
+
+            const licenseValue = info.licenses;
+            if (!isAllowlisted(licenseValue)) {
+                violations.push({
+                    package: pkg,
+                    licenses: licenseValue,
+                    licenseFile: info.licenseFile ?? null,
+                    path: pkgPath,
+                });
+            }
         }
-    } else {
-        summaryLines.push("No disallowed dependency licenses found.");
+
+        const reportPath = path.join(outDirAbs, `${slug}.json`);
+        writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", { encoding: "utf8" });
+
+        const summaryLines = [];
+        summaryLines.push(`Project: ${projectRel}`);
+        summaryLines.push(`Allowlist: ${Array.from(ALLOWED_LICENSES).sort().join(", ")}`);
+        summaryLines.push(`Total dependencies scanned: ${entries.length}`);
+        summaryLines.push(`Violations: ${violations.length}`);
+        summaryLines.push("");
+
+        if (violations.length) {
+            summaryLines.push("Disallowed dependencies:");
+            for (const v of violations) {
+                summaryLines.push(
+                    `- ${v.package}: ${typeof v.licenses === "string" ? v.licenses : JSON.stringify(v.licenses)}`,
+                );
+                if (v.licenseFile) {
+                    summaryLines.push(`  licenseFile: ${v.licenseFile}`);
+                }
+                summaryLines.push(`  path: ${v.path}`);
+            }
+        } else {
+            summaryLines.push("No disallowed dependency licenses found.");
+        }
+
+        const summaryPath = path.join(outDirAbs, `${slug}.summary.txt`);
+        writeFileSync(summaryPath, summaryLines.join("\n") + "\n", { encoding: "utf8" });
+
+        results.push({
+            project: projectRel,
+            reportPath: toRepoRelativePath(repoRoot, reportPath),
+            violations: violations.length,
+        });
+        totalViolations += violations.length;
     }
 
-    const summaryPath = path.join(outDirAbs, `${slug}.summary.txt`);
-    writeFileSync(summaryPath, summaryLines.join("\n") + "\n", { encoding: "utf8" });
-
-    results.push({ project: projectRel, reportPath: toRepoRelativePath(repoRoot, reportPath), violations: violations.length });
-    totalViolations += violations.length;
-}
-
-if (process.env.GITHUB_STEP_SUMMARY) {
-    const lines = [];
-    lines.push("### npm license allowlist");
-    lines.push("");
-    lines.push("| project | violations | report |");
-    lines.push("| --- | ---: | --- |");
-    for (const result of results) {
-        lines.push(`| \`${result.project}\` | ${result.violations} | \`${result.reportPath}\` |`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+        const lines = [];
+        lines.push("### npm license allowlist");
+        lines.push("");
+        lines.push("| project | violations | report |");
+        lines.push("| --- | ---: | --- |");
+        for (const result of results) {
+            lines.push(`| \`${result.project}\` | ${result.violations} | \`${result.reportPath}\` |`);
+        }
+        lines.push("");
+        writeFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n", { encoding: "utf8", flag: "a" });
     }
-    lines.push("");
-    writeFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n", { encoding: "utf8", flag: "a" });
+
+    if (totalViolations > 0) {
+        die(
+            `found ${totalViolations} npm dependencies with disallowed licenses; see ${toRepoRelativePath(repoRoot, outDirAbs)}`,
+        );
+    }
+
+    console.error(`[check-npm-licenses] OK (${results.length} projects scanned).`);
 }
 
-if (totalViolations > 0) {
-    die(`found ${totalViolations} npm dependencies with disallowed licenses; see ${toRepoRelativePath(repoRoot, outDirAbs)}`);
+const mainPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === mainPath) {
+    runCli(process.argv.slice(2));
 }
-
-console.error(`[check-npm-licenses] OK (${results.length} projects scanned).`);
