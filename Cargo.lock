@@ -543,6 +543,7 @@ dependencies = [
 name = "aero_cpu_core"
 version = "0.1.0"
 dependencies = [
+ "aero-mmu",
  "aero-perf",
  "aero_x86",
  "criterion",

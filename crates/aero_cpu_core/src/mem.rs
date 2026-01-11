@@ -58,6 +58,18 @@ impl CpuBusValue for u128 {
 }
 
 pub trait CpuBus {
+    /// Synchronize any paging/MMU state cached by the bus with the current CPU state.
+    ///
+    /// The tier-0 interpreter calls this once per instruction boundary, before
+    /// instruction fetch, so a paging-aware bus can observe CR0/CR3/CR4/EFER/CPL
+    /// updates performed by assist handlers.
+    #[inline]
+    fn sync(&mut self, _state: &crate::state::CpuState) {}
+
+    /// Invalidate a single linear address translation (INVLPG).
+    #[inline]
+    fn invlpg(&mut self, _vaddr: u64) {}
+
     fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception>;
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception>;
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception>;

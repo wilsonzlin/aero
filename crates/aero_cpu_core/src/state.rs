@@ -10,6 +10,7 @@
 use aero_x86::Register;
 use core::fmt;
 
+use crate::exception::Exception;
 use crate::{fpu::FpuState, sse_state::SseState};
 
 /// Number of general purpose registers in [`CpuState::gpr`].
@@ -809,7 +810,7 @@ impl CpuState {
     }
 
     /// Recomputes [`CpuState::mode`] from control registers, EFER and CS
-    /// descriptor cache.
+     /// descriptor cache.
     ///
     /// This should be called after writes to CR0/CR4/EFER or after loading CS.
     #[inline]
@@ -836,6 +837,34 @@ impl CpuState {
         }
 
         self.mode
+    }
+
+    /// Synchronize an [`aero_mmu::Mmu`] instance with the paging-related CPU state.
+    ///
+    /// This is used by paging-aware [`crate::mem::CpuBus`] implementations to
+    /// observe changes to CR0/CR3/CR4/EFER.
+    pub fn sync_mmu(&self, mmu: &mut aero_mmu::Mmu) {
+        if mmu.cr0() != self.control.cr0 {
+            mmu.set_cr0(self.control.cr0);
+        }
+        if mmu.cr3() != self.control.cr3 {
+            mmu.set_cr3(self.control.cr3);
+        }
+        if mmu.cr4() != self.control.cr4 {
+            mmu.set_cr4(self.control.cr4);
+        }
+        if mmu.efer() != self.msr.efer {
+            mmu.set_efer(self.msr.efer);
+        }
+    }
+
+    /// Apply architectural side effects of an exception raised by the interpreter.
+    ///
+    /// For now this only models CR2 updates on #PF.
+    pub fn apply_exception_side_effects(&mut self, exception: &Exception) {
+        if let Exception::PageFault { addr, .. } = exception {
+            self.control.cr2 = *addr;
+        }
     }
 
     #[inline]

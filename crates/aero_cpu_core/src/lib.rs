@@ -24,6 +24,7 @@ pub mod interp;
 pub mod interrupts;
 pub mod jit;
 pub mod mem;
+pub mod paging_bus;
 pub mod mode;
 pub mod msr;
 pub mod segmentation;
@@ -35,6 +36,7 @@ pub mod time_insn;
 
 pub use exception::{AssistReason, Exception};
 pub use mem::CpuBus;
+pub use paging_bus::PagingBus;
 
 pub use bus::{Bus, RamBus};
 pub use cpu::{Cpu, CpuMode, Segment};

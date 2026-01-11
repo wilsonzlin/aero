@@ -28,13 +28,26 @@ pub struct BatchResult {
 }
 
 pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Exception> {
+    bus.sync(state);
     let ip = state.rip();
     let fetch_addr = state.seg_base_reg(Register::CS).wrapping_add(ip);
-    let bytes = bus.fetch(fetch_addr, 15)?;
+    let bytes = match bus.fetch(fetch_addr, 15) {
+        Ok(v) => v,
+        Err(e) => {
+            state.apply_exception_side_effects(&e);
+            return Err(e);
+        }
+    };
     let decoded =
         aero_x86::decode(&bytes, ip, state.bitness()).map_err(|_| Exception::InvalidOpcode)?;
     let next_ip = ip.wrapping_add(decoded.len as u64) & state.mode.ip_mask();
-    let outcome = exec_decoded(state, bus, &decoded, next_ip)?;
+    let outcome = match exec_decoded(state, bus, &decoded, next_ip) {
+        Ok(v) => v,
+        Err(e) => {
+            state.apply_exception_side_effects(&e);
+            return Err(e);
+        }
+    };
     match outcome {
         ExecOutcome::Continue => {
             state.set_rip(next_ip);

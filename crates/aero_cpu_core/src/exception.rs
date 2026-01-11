@@ -10,11 +10,12 @@ pub enum Exception {
     GeneralProtection(u16),
     /// #DE
     DivideError,
-    /// Memory access fault (e.g. page fault/MMIO error).
+    /// #PF with CR2 and the architecturally defined error code already computed.
+    PageFault { addr: u64, error_code: u32 },
+    /// Non-architectural memory/bus fault (e.g. unmapped physical memory / MMIO failure).
     ///
-    /// The real project will likely split this into architecturally correct
-    /// faults (#PF/#GP) once paging/MMIO are modeled. For now, Tier-0 uses this
-    /// as a catch-all for bus failures.
+    /// Tier-0 uses this as a catch-all for bus failures that are *not* an x86
+    /// page fault.
     MemoryFault,
     /// #NP(error_code)
     SegmentNotPresent(u16),
@@ -67,6 +68,9 @@ impl fmt::Display for Exception {
         match self {
             Exception::GeneralProtection(code) => write!(f, "#GP({code})"),
             Exception::DivideError => write!(f, "#DE"),
+            Exception::PageFault { addr, error_code } => {
+                write!(f, "#PF(addr={addr:#x}, ec={error_code:#x})")
+            }
             Exception::MemoryFault => write!(f, "memory fault"),
             Exception::SegmentNotPresent(code) => write!(f, "#NP({code})"),
             Exception::StackSegment(code) => write!(f, "#SS({code})"),
