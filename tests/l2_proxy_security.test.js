@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { WebSocket } from "../tools/minimal_ws.js";
+import { encodeL2Frame } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
@@ -62,12 +63,6 @@ async function waitForClose(ws, timeoutMs = 2_000) {
     };
     ws.once("error", onError);
   });
-}
-
-function encodeL2Frame(payload) {
-  // L2 tunnel v1 header (aero-l2-protocol): magic=0xa2, version=0x03, type=FRAME(0x00), flags=0.
-  const header = Buffer.from([0xa2, 0x03, 0x00, 0x00]);
-  return Buffer.concat([header, payload]);
 }
 
 test("l2 proxy requires Origin by default", async () => {

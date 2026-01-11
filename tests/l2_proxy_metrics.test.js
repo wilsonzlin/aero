@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { WebSocket } from "../tools/minimal_ws.js";
+import { encodeL2Frame } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
@@ -139,11 +140,6 @@ async function waitForClose(ws, timeoutMs = 2_000) {
     ws.on("close", onClose);
     ws.on("error", onError);
   });
-}
-
-function encodeL2Frame(payload) {
-  const header = Buffer.from([0xa2, 0x03, 0x00, 0x00]);
-  return Buffer.concat([header, payload]);
 }
 
 test("l2 proxy exposes /metrics and counts rx frames", { timeout: 660_000 }, async () => {
