@@ -298,8 +298,11 @@ impl<B: NetBackend> VirtioNet<B> {
                 if (descs[0].len as usize) < hdr_len {
                     return false;
                 }
-                let capacity: usize = descs.iter().map(|d| d.len as usize).sum();
-                capacity >= needed
+                let capacity = descs
+                    .iter()
+                    .map(|d| u64::from(d.len))
+                    .fold(0u64, u64::saturating_add);
+                capacity >= needed as u64
             }) else {
                 // No buffer available: drop the frame.
                 continue;

@@ -107,8 +107,11 @@ impl<S: ScanoutSink> VirtioGpu2d<S> {
         };
 
         let resp_len = resp.len();
-        let total_resp_cap: usize = resp_descs.iter().map(|d| d.len as usize).sum();
-        if resp_len > total_resp_cap {
+        let total_resp_cap = resp_descs
+            .iter()
+            .map(|d| u64::from(d.len))
+            .fold(0u64, u64::saturating_add);
+        if (resp_len as u64) > total_resp_cap {
             return Err(VirtioDeviceError::BadDescriptorChain);
         }
 

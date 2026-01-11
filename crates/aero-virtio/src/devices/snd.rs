@@ -568,13 +568,13 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     fn handle_rx_chain(&mut self, mem: &mut dyn GuestMemory, chain: &DescriptorChain) -> u32 {
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
-        let out_bytes: usize = chain
+        let out_bytes: u64 = chain
             .descriptors()
             .iter()
             .filter(|d| !d.is_write_only())
-            .map(|d| d.len as usize)
-            .sum();
-        let extra_out = out_bytes > hdr.len();
+            .map(|d| u64::from(d.len))
+            .fold(0u64, u64::saturating_add);
+        let extra_out = out_bytes > hdr.len() as u64;
 
         for desc in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
             if hdr_len >= hdr.len() {
@@ -626,7 +626,10 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let resp_desc = *in_descs.last().unwrap();
         let payload_descs = &in_descs[..in_descs.len().saturating_sub(1)];
 
-        let payload_bytes: usize = payload_descs.iter().map(|d| d.len as usize).sum();
+        let payload_bytes: u64 = payload_descs
+            .iter()
+            .map(|d| u64::from(d.len))
+            .fold(0u64, u64::saturating_add);
         if payload_bytes % 2 != 0 {
             status = VIRTIO_SND_S_BAD_MSG;
         }
@@ -639,7 +642,13 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let payload_written = if payload_descs.is_empty() {
             0usize
         } else if status == VIRTIO_SND_S_OK {
-            let samples_needed = payload_bytes / 2;
+            let samples_needed = match usize::try_from(payload_bytes / 2) {
+                Ok(samples) => samples,
+                Err(_) => {
+                    status = VIRTIO_SND_S_BAD_MSG;
+                    0
+                }
+            };
             if samples_needed == 0 {
                 write_payload_silence(mem, payload_descs)
             } else {
