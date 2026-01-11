@@ -82,10 +82,10 @@ Must be non-null and must succeed for the tests:
 * Shaders:
   * `pfnCalcPrivateVertexShaderSize`, `pfnCreateVertexShader`, `pfnDestroyVertexShader`
   * `pfnCalcPrivatePixelShaderSize`, `pfnCreatePixelShader`, `pfnDestroyPixelShader`
- * Input layout:
-   * `pfnCalcPrivateElementLayoutSize`, `pfnCreateElementLayout`, `pfnDestroyElementLayout`
- 
- Everything else should still be **non-null** (stubbed), but may return `E_NOTIMPL`.
+* Input layout:
+  * `pfnCalcPrivateElementLayoutSize`, `pfnCreateElementLayout`, `pfnDestroyElementLayout`
+
+Everything else should still be **non-null** (stubbed), but may return `E_NOTIMPL`.
 
 ### Immediate context (`D3D11DDI_DEVICECONTEXTFUNCS`)
 
@@ -96,8 +96,9 @@ Must be non-null and must succeed for the tests:
   * `pfnSetViewports`
   * `pfnIaSetInputLayout`, `pfnIaSetTopology`, `pfnIaSetVertexBuffers`, `pfnIaSetIndexBuffer`
   * `pfnVsSetShader`, `pfnPsSetShader`
-  * `pfnPsSetShaderResources`, `pfnPsSetSamplers`
-  * `pfnPsSetConstantBuffers` (dynamic constant buffer binding)
+  * `pfnVsSetShaderResources`, `pfnPsSetShaderResources`
+  * `pfnVsSetSamplers`, `pfnPsSetSamplers`
+  * `pfnVsSetConstantBuffers`, `pfnPsSetConstantBuffers` (dynamic constant buffer binding)
   * `pfnSetDepthStencilState`
 * Clears/draws:
   * `pfnClearRenderTargetView`
@@ -105,13 +106,13 @@ Must be non-null and must succeed for the tests:
   * `pfnDraw`, `pfnDrawIndexed`
 * Resource updates:
   * `pfnUpdateSubresourceUP`
- * Readback path:
-   * `pfnCopyResource`
-   * `pfnFlush`
-   * `pfnMap`, `pfnUnmap`
- * Win7 DXGI present integration (swapchains):
-   * `pfnPresent` (DXGI uses `D3D10DDIARG_PRESENT` even for D3D11 devices on Win7)
-   * `pfnRotateResourceIdentities`
+* Readback path:
+  * `pfnCopyResource`
+  * `pfnFlush`
+  * `pfnMap`, `pfnUnmap`
+* Win7 DXGI present integration (swapchains):
+  * `pfnPresent` (DXGI uses `D3D10DDIARG_PRESENT` even for D3D11 devices on Win7)
+  * `pfnRotateResourceIdentities`
 
 Everything else should still be **non-null** (stubbed, usually via `SetErrorCb(E_NOTIMPL)` for `void` DDIs),
 because the runtime may call “reset to default” entrypoints like `ClearState` during initialization.
