@@ -338,6 +338,26 @@ jobs:
             cmake --build out/virtiosnd-host-tests-clang --parallel --config Release
             ctest --test-dir out/virtiosnd-host-tests-clang --output-on-failure --no-tests=error --timeout 60 -C Release
           fi
+
+  aerogpu-d3d9-portable-tests:
+    name: AeroGPU D3D9 UMD (portable tests)
+    needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + run AeroGPU D3D9 UMD portable tests
+        run: |
+          set -euo pipefail
+          cmake -S drivers/aerogpu/umd/d3d9/tests -B out/aerogpu-d3d9-tests -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/aerogpu-d3d9-tests --parallel --config Release
+          ctest --test-dir out/aerogpu-d3d9-tests --output-on-failure --no-tests=error --timeout 60 -C Release
+          if command -v clang >/dev/null 2>&1; then
+            CC=clang CXX=clang++ cmake -S drivers/aerogpu/umd/d3d9/tests -B out/aerogpu-d3d9-tests-clang -DCMAKE_BUILD_TYPE=Release
+            cmake --build out/aerogpu-d3d9-tests-clang --parallel --config Release
+            ctest --test-dir out/aerogpu-d3d9-tests-clang --output-on-failure --no-tests=error --timeout 60 -C Release
+          fi
   qemu-boot:
     name: QEMU boot tests (boot sector + FreeDOS)
     needs: policy
@@ -682,6 +702,7 @@ jobs:
       - rust
       - acpi-iasl
       - win7-virtio-portable-tests
+      - aerogpu-d3d9-portable-tests
       - qemu-boot
       - wasm
       - node-unit
@@ -732,15 +753,20 @@ jobs:
             failures=1
           fi
 
-          if [[ "${{ needs['win7-virtio-portable-tests'].result }}" != "success" ]]; then
-            echo "::error::win7-virtio-portable-tests job result: ${{ needs['win7-virtio-portable-tests'].result }}"
-            failures=1
-          fi
+           if [[ "${{ needs['win7-virtio-portable-tests'].result }}" != "success" ]]; then
+             echo "::error::win7-virtio-portable-tests job result: ${{ needs['win7-virtio-portable-tests'].result }}"
+             failures=1
+           fi
 
-          if [[ "${{ needs['qemu-boot'].result }}" != "success" ]]; then
-            echo "::error::qemu-boot job result: ${{ needs['qemu-boot'].result }}"
-            failures=1
-          fi
+           if [[ "${{ needs['aerogpu-d3d9-portable-tests'].result }}" != "success" ]]; then
+             echo "::error::aerogpu-d3d9-portable-tests job result: ${{ needs['aerogpu-d3d9-portable-tests'].result }}"
+             failures=1
+           fi
+
+           if [[ "${{ needs['qemu-boot'].result }}" != "success" ]]; then
+             echo "::error::qemu-boot job result: ${{ needs['qemu-boot'].result }}"
+             failures=1
+           fi
 
           if [[ "${{ needs.wasm.result }}" != "success" ]]; then
             echo "::error::wasm job result: ${{ needs.wasm.result }}"
