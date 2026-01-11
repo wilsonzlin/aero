@@ -63,6 +63,12 @@ function normalizeU32(value: unknown): number | null {
   return asNum;
 }
 
+function isUsbEndpointAddress(endpoint: number): boolean {
+  // `endpoint` is a USB endpoint address. Bit7 is direction; bits0..3 are the endpoint number.
+  // Only endpoint numbers 1..=15 are valid for bulk/interrupt transfers.
+  return (endpoint & 0x70) === 0 && (endpoint & 0x0f) !== 0;
+}
+
 function ensureTransferableBytes(bytes: Uint8Array): Uint8Array {
   // `postMessage(..., transfer)` only supports `ArrayBuffer`, not `SharedArrayBuffer`.
   // Also, transferring detaches the *entire* underlying buffer, so ensure the
@@ -118,12 +124,14 @@ function normalizeUsbHostAction(raw: unknown): UsbHostAction | null {
       const endpoint = normalizeU8(obj.endpoint);
       const length = normalizeU32(obj.length);
       if (endpoint === null || length === null) return null;
+      if ((endpoint & 0x80) === 0 || !isUsbEndpointAddress(endpoint)) return null;
       return { kind: "bulkIn", id, endpoint, length };
     }
     case "bulkOut": {
       const endpoint = normalizeU8(obj.endpoint);
       const data = normalizeBytes(obj.data);
       if (endpoint === null || !data) return null;
+      if ((endpoint & 0x80) !== 0 || !isUsbEndpointAddress(endpoint)) return null;
       return { kind: "bulkOut", id, endpoint, data };
     }
     default: {
