@@ -84,7 +84,7 @@ jobs:
             ${{ runner.os }}-tflint-
 
       - name: terraform fmt (check)
-        run: terraform fmt -check -recursive infra
+        run: terraform fmt -check -diff -recursive infra
 
       - name: terraform init + validate (backend disabled)
         shell: bash
