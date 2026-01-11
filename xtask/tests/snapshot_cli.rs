@@ -495,6 +495,24 @@ fn snapshot_validate_rejects_disks_path_too_long() {
         .stderr(predicate::str::contains("disk base_image too long"));
 }
 
+#[test]
+fn snapshot_validate_rejects_disks_truncated_string_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("disks_truncated_string.aerosnap");
+    let mut bytes = write_disk_snapshot(&snap);
+    // Max allowed length (64KiB) but larger than the actual remaining bytes in the section.
+    corrupt_disks_base_image_len(&mut bytes, 64 * 1024);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "disk base_image: truncated string bytes",
+        ));
+}
+
 struct LargeDirtySource;
 
 impl SnapshotSource for LargeDirtySource {
