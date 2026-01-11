@@ -2,9 +2,11 @@
 
 use std::time::{Duration, Instant};
 
-use aero_protocol::aerogpu::aerogpu_cmd::{AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_WRITEBACK_DST};
-use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+};
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
 use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control};
 use emulator::devices::aerogpu_ring::{AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC};
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
@@ -247,4 +249,3 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
         assert_eq!(px, [0, 255, 0, 255]);
     }
 }
-
