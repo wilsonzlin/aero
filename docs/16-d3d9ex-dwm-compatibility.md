@@ -226,6 +226,8 @@ See `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` for the concrete private-dat
 
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
+**Guest-side validation:** run `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` to exercise this exact cross-process “create shared → open shared” path. Use `--validate-sharing` (or `--dump`) to additionally validate pixel sharing via readback.
+
 ##### MVP limitation: shared surfaces must be single-allocation
 
 Many WDDM resources *can* be represented as multiple allocations (for example: per-mip allocations, texture arrays, or multi-plane formats). AeroGPU’s MVP shared-surface protocol (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`) currently associates a share token with a **single** backing resource/allocation.
