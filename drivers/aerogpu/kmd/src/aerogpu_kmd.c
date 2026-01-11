@@ -1093,7 +1093,14 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         }
 
         aerogpu_umd_private_v1* out = (aerogpu_umd_private_v1*)pQueryAdapterInfo->pOutputData;
-        RtlZeroMemory(out, sizeof(*out));
+        /*
+         * The UMDRIVERPRIVATE blob is intentionally forward-compatible:
+         * consumers may pass a larger buffer and ignore trailing bytes.
+         *
+         * Always clear the entire output buffer so we don't leak uninitialized
+         * kernel memory if OutputDataSize > sizeof(aerogpu_umd_private_v1).
+         */
+        RtlZeroMemory(out, pQueryAdapterInfo->OutputDataSize);
 
         out->size_bytes = sizeof(*out);
         out->struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
