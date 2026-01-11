@@ -9,7 +9,7 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 > - `disable-legacy=on` (ensures the device enumerates as `DEV_1041`)
 > - `x-pci-revision=0x01` (ensures the device enumerates as `REV_01`)
 >
-> See [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (§3.2).
+> See [`docs/windows7-virtio-driver-contract.md`](../../../docs/windows7-virtio-driver-contract.md) (§3.2).
 
 ## What it provides
 
