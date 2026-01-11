@@ -26,7 +26,12 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 
 ## Building
 
-Build with a Windows driver toolchain that can target Windows 7 (e.g. WDK 7.1). This directory includes a `sources`/`makefile` pair for the WDK 7.1 `build` utility.
+CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via the MSBuild project `aerovnet.vcxproj`.
+
+For local development you can use either:
+
+- `aerovnet.vcxproj` (Visual Studio / MSBuild + WDK 10), or
+- the legacy WDK 7.1 `build` utility (`sources`/`makefile` are kept for that workflow).
 
 ## Installing on Windows 7
 

@@ -2,6 +2,15 @@
 
 `aerovblk.sys` is a StorPort miniport driver intended for Windows 7 SP1 x86/x64.
 
+## Building
+
+CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via the MSBuild project `aerovblk.vcxproj`.
+
+For local development you can use either:
+
+- `aerovblk.vcxproj` (Visual Studio / MSBuild + WDK 10), or
+- the legacy WDK 7.1 `build` utility (`sources`/`makefile` are kept for that workflow).
+
 ## Hardware IDs
 
 The INF binds to the standard virtio-blk PCI ID used by QEMU/virtio:

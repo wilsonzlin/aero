@@ -5,20 +5,20 @@
 Builds all Aero Windows 7 kernel drivers (x86 + x64) in CI.
 
 .DESCRIPTION
-Discovers driver projects under `drivers/<name>/` and builds each driver for the requested
+Discovers CI-buildable driver projects under `drivers/` and builds each driver for the requested
 platforms/configuration using MSBuild (command-line only).
 
 Discovery conventions (encoded here for CI determinism):
-  - Each driver lives under `drivers/<name>/`.
-  - Each driver provides either:
-      - a solution file `drivers/<name>/<name>.sln`, OR
-      - exactly one project file `drivers/<name>/*.vcxproj`.
+  - Drivers may live at any depth under `drivers/` (example: `drivers/windows7/virtio/net`).
+  - Each driver directory provides either:
+      - a solution file `<dir>/<dirName>.sln`, OR
+      - exactly one project file `<dir>/*.vcxproj`.
   - Only CI-buildable drivers are selected:
       - Require at least one `.inf` somewhere under the driver directory tree (excluding
         common build-output directories: `obj/`, `out/`, `build/`, `target/`).
       - Skip WDK 7.1 "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile).
   - Build outputs are staged under:
-      - `out/drivers/<name>/<arch>/...`
+      - `out/drivers/<driver-relative-path>/<arch>/...`
 
 Toolchain:
   - If `-ToolchainJson` is provided, the script will try to use it to locate MSBuild and
