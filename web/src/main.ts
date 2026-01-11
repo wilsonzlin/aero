@@ -1847,7 +1847,7 @@ function renderInputPanel(): HTMLElement {
 
   const hint = el("div", {
     class: "mono",
-    text: "Click the canvas to focus + request pointer lock. Keyboard/mouse events are batched and forwarded to the I/O worker.",
+    text: "Click the canvas to focus + request pointer lock. Keyboard/mouse/gamepad events are batched and forwarded to the I/O worker.",
   });
 
   const clear = el("button", {
@@ -1870,7 +1870,7 @@ function renderInputPanel(): HTMLElement {
   return el(
     "div",
     { class: "panel" },
-    el("h2", { text: "Input capture (PS/2 Set-2 scancodes)" }),
+    el("h2", { text: "Input capture (PS/2 + USB HID gamepad reports)" }),
     hint,
     status,
     el("div", { class: "row" }, clear),

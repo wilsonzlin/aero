@@ -552,6 +552,7 @@ Event types are defined in `web/src/input/event_queue.ts` (`InputEventType`):
 - `MouseMove (2)`: `a=dx`, `b=dy` (PS/2 coords: `dx` right, `dy` up)
 - `MouseButtons (3)`: `a=buttons` (bit0=left, bit1=right, bit2=middle)
 - `MouseWheel (4)`: `a=dz` (positive=wheel up)
+- `GamepadReport (5)`: `a=packedBytes0to3LE`, `b=packedBytes4to7LE` (8-byte USB HID gamepad input report; see `crates/emulator/src/io/usb/hid/gamepad.rs` for the canonical report layout)
 
 This keeps the hot path allocation-free and allows the worker to convert to
 i8042 keyboard/mouse bytes with minimal overhead.
