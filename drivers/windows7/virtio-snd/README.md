@@ -132,9 +132,14 @@ This signs:
 4. Browse to `drivers/windows7/virtio-snd/inf/`
 5. Select `virtio-snd.inf`
 
+## Offline / slipstream installation (optional)
+
+If you want virtio-snd to bind automatically on first boot (for example when building unattended Win7 images), see:
+
+- `tests/offline-install/README.md`
+
 ## Release packaging (optional)
 
 Once the package has been built/signed, you can produce a deterministic ZIP bundle from `inf/` using:
 
 - `scripts/package-release.ps1` (see `release/README.md`)
-

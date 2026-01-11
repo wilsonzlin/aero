@@ -1,60 +1,58 @@
 # Offline / slipstream install: virtio-snd driver into Windows 7 (WIM or offline OS)
 
-This document describes how to **stage** (preinstall) the `virtio-snd` driver package into a Windows 7 image so that Plug‑and‑Play can bind it **on first boot** (useful for automated test images / unattended installs where you want the device installed without a manual “Have Disk…” step).
+This document describes how to **stage** (preinstall) the Aero `virtio-snd` Windows 7 driver so that Plug-and-Play can bind it **automatically on first boot**.
 
-The driver artifacts referenced here are built/staged in this repo under:
+This is useful when you want a Win7 image that comes up with the virtio-snd PCI device already installed (for example: unattended installs, automated test images, or prebuilt VHD/VHDX disks).
 
+The driver package you inject must ultimately be a normal driver folder containing at least:
+
+```text
+virtio-snd.inf
+virtiosnd.sys
+virtio-snd.cat   (recommended; required for unattended Win7 x64)
 ```
+
+In this repo, the packaging/staging directory is:
+
+```text
 drivers/windows7/virtio-snd/inf/
 ```
 
-Point DISM at the directory (or `.inf`) produced by your build. In a “ready to inject” package, that directory should contain:
-
-- `virtio-snd.inf`
-- `virtiosnd.sys` (architecture-specific)
-- `virtio-snd.cat` (optional but strongly recommended; required for signature enforcement scenarios)
-
-`virtio-snd.inf` is architecture-decorated (`NTx86` and `NTamd64`) but the package still includes a single `virtiosnd.sys` filename, so the `virtiosnd.sys` you stage must match the target OS architecture.
-
-> Note: `virtio-snd` is **not boot-critical** (it’s a PnP media device, StartType=3). If staging fails or the driver is blocked by signature policy at runtime, **Windows will still boot**; you’ll just have missing audio / an unknown device to troubleshoot.
+> `virtio-snd` is **not boot-critical** (it’s a PnP media device, StartType=3). If staging fails or the driver is blocked by signature policy at runtime, Windows should still boot; you’ll just have an unbound device to troubleshoot.
 
 ---
 
 ## Prerequisites
 
 - A Windows host with `dism.exe` available:
-  - Windows 7 (built-in DISM), or
-  - Windows 10/11 (built-in DISM; generally works fine for servicing Win7 WIMs).
-- An **elevated** Command Prompt (`Run as administrator`).
-- Writable working directory with enough free space (mounting a WIM expands it).
-- Windows 7 install media contents available on disk (USB folder or extracted ISO).
+  - Windows 7: built-in DISM
+  - Windows 10/11: built-in DISM (usually works fine for servicing Win7 WIMs)
+- An **elevated** Command Prompt (`Run as administrator`)
+- A writable working directory with enough free space (mounting a WIM expands it)
+- Windows 7 install media extracted to a folder (or copied from a USB stick)
 
 Notes:
-- If your install media is mounted as a read-only ISO, **copy `install.wim` to a writable folder** before servicing.
-- These steps are for `install.wim` (the installed OS). If you also need the driver available inside Windows Setup/WinPE, see [Optional: boot.wim (WinPE) injection](#optional-bootwim-winpe-injection).
+
+- If your install media is mounted as a read-only ISO, copy `install.wim` somewhere writable before servicing.
+- The main goal is staging into `install.wim` (the installed OS). Injecting into `boot.wim` is optional; see [Optional: inject into `boot.wim` (WinPE/Setup)](#optional-inject-into-bootwim-winpesetup).
 
 ---
 
-## Choose the correct driver (x86 vs x64)
+## Choose the correct driver architecture (x86 vs x64)
 
-You must inject a driver matching the target Windows 7 architecture:
+You must inject a driver package that matches the target Windows 7 architecture:
 
-- **Win7 x86 (32-bit)** → use an x86 build of `virtiosnd.sys`
-- **Win7 x64 (64-bit)** → use an amd64/x64 build of `virtiosnd.sys`
+- Windows 7 **x86** → use an x86 build of `virtiosnd.sys`
+- Windows 7 **x64** → use an amd64/x64 build of `virtiosnd.sys`
 
-Because both architectures use the same filenames (`virtiosnd.sys`, `virtio-snd.cat`), it’s easiest to keep two separate package directories (example only):
+`virtio-snd.inf` has `NTx86` and `NTamd64` models, but the binary filename is the same (`virtiosnd.sys`) for both architectures. To avoid mixing them up, it’s easiest to keep separate per-arch folders (example only):
 
-```
-C:\drivers\virtio-snd\x86\virtio-snd.inf
-C:\drivers\virtio-snd\x86\virtiosnd.sys
-C:\drivers\virtio-snd\x86\virtio-snd.cat
-
-C:\drivers\virtio-snd\amd64\virtio-snd.inf
-C:\drivers\virtio-snd\amd64\virtiosnd.sys
-C:\drivers\virtio-snd\amd64\virtio-snd.cat
+```text
+C:\drivers\virtio-snd\x86\   (virtio-snd.inf + virtiosnd.sys (x86) + virtio-snd.cat)
+C:\drivers\virtio-snd\amd64\ (virtio-snd.inf + virtiosnd.sys (x64) + virtio-snd.cat)
 ```
 
-In all cases, DISM’s `/Driver:` should ultimately point at a folder (or file) that contains the correct `virtio-snd.inf` for the image you’re servicing.
+Point DISM at the folder (or the `.inf`) for the specific architecture you are servicing.
 
 ---
 
@@ -62,14 +60,14 @@ In all cases, DISM’s `/Driver:` should ultimately point at a folder (or file) 
 
 ### 1) Identify which image index you will install
 
-`install.wim` typically contains multiple editions. List them:
+`install.wim` commonly contains multiple editions. List them:
 
 ```bat
 set WIM=C:\win7\sources\install.wim
 dism /Get-WimInfo /WimFile:%WIM%
 ```
 
-Pick the `Index` for the edition you will actually install (e.g. “Windows 7 PROFESSIONAL”).
+Pick the `Index` for the edition you will actually install.
 
 ### 2) Mount the WIM
 
@@ -77,73 +75,65 @@ Pick the `Index` for the edition you will actually install (e.g. “Windows 7 PR
 set MOUNT=C:\wim\mount
 mkdir %MOUNT%
 
-REM Example: mount index 1. Replace 1 with the index you chose.
+REM Example mounts index 1; replace with your chosen index.
 dism /Mount-Wim /WimFile:%WIM% /Index:1 /MountDir:%MOUNT%
 ```
 
-### 3) Add the virtio-snd driver
+### 3) Add (stage) the virtio-snd driver
 
-Assuming this repo is checked out at `C:\src\aero`:
+Assuming this repo is checked out at `C:\src\aero` and your driver package is prepared under `drivers\windows7\virtio-snd\inf\`:
 
 ```bat
 set REPO=C:\src\aero
 
 REM Point this at a folder containing virtio-snd.inf + virtiosnd.sys for the
-REM correct architecture (x86 vs amd64).
-set VIRTIO_SND_INF_DIR=%REPO%\drivers\windows7\virtio-snd\inf\
+REM correct architecture.
+set VIRTIO_SND_INF_DIR=%REPO%\drivers\windows7\virtio-snd\inf
 
 dism /Image:%MOUNT% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
 ```
 
-If DISM rejects the package due to signature issues and you’re doing test-only images, you can try:
+If you are building a test-only image and don’t have a trusted signature yet, DISM can be forced to stage the package:
 
 ```bat
 dism /Image:%MOUNT% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse /ForceUnsigned
 ```
 
-See [Driver signing / test signing warnings](#driver-signing--test-signing-warnings) before relying on `/ForceUnsigned`.
+See [Driver signing / test-signing warnings](#driver-signing--test-signing-warnings) before relying on `/ForceUnsigned` for Windows 7 x64.
 
 ### 4) Verify the driver is staged in the offline DriverStore
 
-List 3rd-party drivers in the mounted image:
+List staged 3rd-party drivers in the mounted image:
 
 ```bat
 dism /Image:%MOUNT% /Get-Drivers /Format:Table
 ```
 
-Then locate the `oem#.inf` entry corresponding to virtio-snd and inspect it:
+Locate the `oem#.inf` entry corresponding to `virtio-snd.inf`, then inspect it:
 
 ```bat
 dism /Image:%MOUNT% /Get-DriverInfo /Driver:oem#.inf
 ```
 
-Additional sanity check (optional): the driver package should be present under the mounted image’s DriverStore, for example:
+(Optional) The package should also appear under:
 
-```
+```text
 %MOUNT%\Windows\System32\DriverStore\FileRepository\
 ```
 
 ### 5) Commit changes and unmount
 
-DISM supports committing without unmounting (useful if you plan more modifications):
-
-```bat
-dism /Commit-Wim /MountDir:%MOUNT%
-```
-
-Then unmount:
-
 ```bat
 dism /Unmount-Wim /MountDir:%MOUNT% /Commit
 ```
 
-If something went wrong and you want to abandon changes:
+To discard changes instead:
 
 ```bat
 dism /Unmount-Wim /MountDir:%MOUNT% /Discard
 ```
 
-If DISM reports an “already mounted”/stale mount directory from a previous run, you may need:
+If DISM reports a stale mount from a previous run:
 
 ```bat
 dism /Cleanup-Wim
@@ -152,19 +142,17 @@ dism /Cleanup-Wim
 ### 6) Use the updated `install.wim`
 
 - If you serviced `install.wim` in place under your extracted install media folder, you’re done.
-- If you serviced a copied `install.wim`, copy it back into `...\sources\install.wim` before creating bootable media.
+- If you serviced a copy, copy it back to `...\sources\install.wim` before creating bootable media.
 
-On first boot of the installed OS, Windows will enumerate the virtio-snd hardware and should automatically select the best matching driver from the DriverStore.
+On first boot of the installed OS, Windows will enumerate the virtio-snd PCI device and should automatically select the best matching driver from the offline DriverStore.
 
 ---
 
-## Option B: Inject into an already-installed *offline* Windows directory (mounted VHD/VHDX)
+## Option B: Inject into an already-installed offline Windows directory (mounted disk)
 
 This is useful if you already have a Windows 7 VM disk image and want the driver present on next boot without reinstalling.
 
-1) Mount the VM’s system disk so it shows up as a drive letter (example uses DiskPart; you can also use Disk Management GUI).
-
-For VHD/VHDX on Windows 10/11:
+1) Mount the disk so it shows up as a drive letter (example uses DiskPart; Disk Management GUI also works):
 
 ```bat
 diskpart
@@ -181,7 +169,7 @@ Identify the volume letter that contains `\Windows\` (example uses `W:`).
 ```bat
 set OFFLINE=W:\
 set REPO=C:\src\aero
-set VIRTIO_SND_INF_DIR=%REPO%\drivers\windows7\virtio-snd\inf\
+set VIRTIO_SND_INF_DIR=%REPO%\drivers\windows7\virtio-snd\inf
 
 dism /Image:%OFFLINE% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
 ```
@@ -201,7 +189,7 @@ DISKPART> detach vdisk
 DISKPART> exit
 ```
 
-On the next boot of that VM, PnP should bind the device to the staged driver.
+On the next boot, Plug-and-Play should bind the device to the staged driver.
 
 ---
 
@@ -209,72 +197,84 @@ On the next boot of that VM, PnP should bind the device to the staged driver.
 
 Once the system boots with virtio-snd hardware present:
 
-- `devmgmt.msc`:
-  - Under **Sound, video and game controllers** (Class=`MEDIA`), you should see the virtio-snd device (e.g. `Aero VirtIO Sound Device` from `virtio-snd.inf`).
-  - Driver Details should include `virtiosnd.sys`.
-  - If your build exposes PortCls endpoints, you should also see playback/capture endpoints under **Audio inputs and outputs**.
-- `pnputil -e` (lists staged driver packages) → verify the virtio-snd INF package exists (look for `virtio-snd.inf` and its `Published name` like `oem#.inf`).
-- `%WINDIR%\inf\setupapi.dev.log` → search for:
-  - the device’s Hardware ID (`PCI\\VEN_1AF4&DEV_1059...`), or
-  - `virtio-snd.inf` / `virtiosnd.sys`
+- **Device Manager** (`devmgmt.msc`)
+  - Under **Sound, video and game controllers**, you should see the virtio-snd device (the INF default name is **“Aero VirtIO Sound Device”**).
+  - In **Properties → Driver → Driver Details**, you should see `virtiosnd.sys`.
+  - If/when the driver exposes PortCls endpoints, you should also see playback endpoints under **Audio inputs and outputs**.
+- **PnP driver store**
 
-If the driver is staged but the device doesn’t bind:
+  `pnputil -e` lists staged packages:
 
-1) Confirm you injected the correct architecture (x86 vs x64).
-2) Confirm the INF actually matches the device’s Hardware IDs (Device Manager → device → Details → “Hardware Ids”).
-3) Confirm signature policy didn’t block installation/loading (see below).
+  ```cmd
+  pnputil -e
+  ```
+
+  Look for the entry whose “Original name” is `virtio-snd.inf` (the “Published name” will be `oem#.inf`).
+
+- **SetupAPI log**
+
+  Inspect `%WINDIR%\inf\setupapi.dev.log` and search for:
+
+  - `virtio-snd.inf`, or
+  - the device hardware ID (for Aero virtio-snd: `PCI\VEN_1AF4&DEV_1059&REV_01`)
+
+If the driver package is staged but the device doesn’t bind:
+
+1. Confirm you injected the correct architecture (x86 vs x64).
+2. Confirm the device’s Hardware IDs match what `virtio-snd.inf` declares (Device Manager → Details → **Hardware Ids**).
+3. Confirm signature policy didn’t block installation/loading (next section).
 
 ---
 
-## Driver signing / test signing warnings
+## Driver signing / test-signing warnings
 
 Windows 7’s kernel-mode driver signature policy can prevent unattended first-boot use:
 
-- **x64 Windows 7** will not load unsigned kernel-mode drivers under normal boot policy.
-- **x86 Windows 7** is more permissive, but may still prompt/warn depending on policy.
+- **Windows 7 x64** will not load unsigned kernel-mode drivers under normal boot policy.
+- **Windows 7 x86** is more permissive, but may still prompt/warn depending on policy.
 
 Important implications:
 
-- `dism /Add-Driver /ForceUnsigned` can stage an unsigned driver into the image, but that does **not** guarantee Windows will install and load it at runtime.
-- For automated / unattended first boot, you generally want a **properly signed** driver package (or you must arrange for test-signing / signature enforcement changes *before* the driver needs to load).
+- `dism /Add-Driver /ForceUnsigned` can stage an unsigned driver into the image, but that does **not** guarantee Windows will install/load it at runtime.
+- Common symptom on Win7 x64 when signature enforcement blocks a driver: **Code 52** (“Windows cannot verify the digital signature…”).
 
-Common symptom on Win7 x64 when signature enforcement blocks the driver: the device shows up with **Code 52** (“Windows cannot verify the digital signature…”).
+For automated / unattended first boot you generally want one of:
 
-Recommended workflow for development/test images:
+- a properly signed driver package, or
+- a test-signed package **plus**:
+  - test-signing enabled in the guest boot configuration, and
+  - the signing certificate installed into the guest’s trusted roots/publishers.
 
-1) Use the virtio-snd package’s test certificate + signing workflow (Task 239) to produce a test-signed `.sys` + `.cat` (see `drivers/windows7/virtio-snd/README.md` and `drivers/windows7/virtio-snd/scripts/`).
-2) Ensure the target system boots with **test signing enabled** (and trusts the test certificate) before the virtio-snd device is enumerated.
-
-If you’re experimenting on an already-booted machine, you can enable test signing (elevated cmd) and reboot:
+If you’re experimenting on an already-booted machine, you can enable test signing and reboot:
 
 ```bat
 bcdedit /set testsigning on
 shutdown /r /t 0
 ```
 
-For unattended “works on first boot” images, you generally want `testsigning` set **offline** in the image’s BCD (or `BCD-Template`) before the first boot.
+For images that must “just work” on first boot, you’ll typically want to set `testsigning` offline in the image BCD (or `BCD-Template`) and inject the needed certificates offline.
 
-For end-to-end Win7 media patching (BCD `testsigning` + offline cert injection into `boot.wim`/`install.wim`), see:
+See:
 
-- `docs/16-win7-image-servicing.md`
-- `docs/win7-bcd-offline-patching.md`
-
-Reminder: virtio-snd is non-boot-critical. A signature failure typically results in a Code 52 device error or an unknown PCI device, not a boot failure.
+- `drivers/windows7/virtio-snd/README.md` (test cert + signing workflow)
+- `docs/16-win7-image-servicing.md` (end-to-end servicing notes)
+- `docs/win7-bcd-offline-patching.md` (offline BCD edits for test-signing / nointegritychecks)
 
 ---
 
-## Optional: `boot.wim` (WinPE) injection
+## Optional: inject into `boot.wim` (WinPE/Setup)
 
-`install.wim` injection makes the driver available in the installed OS. If you also need virtio-snd present inside the Windows Setup environment (WinPE), inject the same driver into `boot.wim` index 2 (the actual Setup environment):
+`install.wim` injection makes the driver available in the installed OS. If you also want the driver staged in the Windows Setup environment (WinPE), inject the same driver into `boot.wim` **index 2**:
 
 ```bat
 set BOOTWIM=C:\win7\sources\boot.wim
-set MOUNT=C:\wim\boot-mount
-mkdir %MOUNT%
+set BOOTMOUNT=C:\wim\boot-mount
+mkdir %BOOTMOUNT%
 
-dism /Mount-Wim /WimFile:%BOOTWIM% /Index:2 /MountDir:%MOUNT%
-dism /Image:%MOUNT% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
-dism /Unmount-Wim /MountDir:%MOUNT% /Commit
+REM Ensure VIRTIO_SND_INF_DIR points at the correct arch package.
+dism /Mount-Wim /WimFile:%BOOTWIM% /Index:2 /MountDir:%BOOTMOUNT%
+dism /Image:%BOOTMOUNT% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
+dism /Unmount-Wim /MountDir:%BOOTMOUNT% /Commit
 ```
 
-This is optional for “first boot driver availability”; most setups do not need audio drivers during installation, but it can be useful for validating the driver in WinPE.
+Most installs don’t need an audio driver during setup, but this can be useful if you’re validating driver staging in WinPE.
