@@ -147,6 +147,52 @@ test("compare_gpu_benchmarks exits 2 on unstable CV", async () => {
   }
 });
 
+test("compare_gpu_benchmarks exits 2 when a required candidate metric is missing", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "aero-gpu-compare-"));
+  try {
+    const baselinePath = path.join(dir, "baseline.json");
+    const candidatePath = path.join(dir, "candidate.json");
+    const thresholdsPath = path.join(dir, "thresholds.json");
+    const outDir = path.join(dir, "out");
+
+    await writeThresholds(thresholdsPath);
+    await writeJson(baselinePath, {
+      meta: { gitSha: "base", iterations: 3 },
+      summary: {
+        scenarios: {
+          vbe_lfb_blit: {
+            name: "VBE LFB full-screen blit",
+            status: "ok",
+            metrics: { frameTimeMsP95: { median: 100, cv: 0.1, n: 3 } },
+          },
+        },
+      },
+    });
+
+    // Candidate intentionally missing frameTimeMsP95.
+    await writeJson(candidatePath, {
+      meta: { gitSha: "head", iterations: 3 },
+      summary: {
+        scenarios: {
+          vbe_lfb_blit: {
+            name: "VBE LFB full-screen blit",
+            status: "ok",
+            metrics: {},
+          },
+        },
+      },
+    });
+
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir, thresholdsFile: thresholdsPath });
+    assert.equal(result.status, 2, `expected exit code 2, got ${result.status}\n${result.stderr}`);
+
+    const summary = JSON.parse(await readFile(path.join(outDir, "summary.json"), "utf8"));
+    assert.equal(summary.status, "unstable");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("compare_gpu_benchmarks supports aero-gpu-bench schemaVersion=1 baseline", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "aero-gpu-compare-"));
   try {

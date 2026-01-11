@@ -266,7 +266,7 @@ export function compareGpuBenchmarks({
     }
   }
 
-  return buildCompareResult({
+  const result = buildCompareResult({
     suite: "gpu",
     profile: profileName,
     thresholdsFile,
@@ -274,6 +274,20 @@ export function compareGpuBenchmarks({
     candidateMeta: candidate?.meta ?? candidate?.summary?.meta ?? null,
     cases,
   });
+
+  // Treat missing candidate metrics as unstable. This avoids silently passing
+  // when a benchmark scenario fails or a metric stops being reported.
+  //
+  // Note: missing baseline metrics are allowed so we can add new metrics without
+  // breaking comparisons against older baselines.
+  const missingCandidateRequired = (result.comparisons ?? []).some(
+    (c: any) => c?.status === "missing_candidate" && !c?.informational,
+  );
+  if (missingCandidateRequired) {
+    result.status = "unstable";
+  }
+
+  return result;
 }
 
 async function main() {
