@@ -1,10 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { detectPlatformFeatures } from "../../../src/platform/features";
 
 const originalValidate = WebAssembly.validate;
 
-test.afterEach(() => {
+afterEach(() => {
   WebAssembly.validate = originalValidate;
   delete (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated;
 
@@ -20,8 +20,8 @@ test.afterEach(() => {
   delete (globalThis as typeof globalThis & { OffscreenCanvas?: unknown }).OffscreenCanvas;
 });
 
-test.describe("detectPlatformFeatures", () => {
-  test("treats WASM threads as requiring crossOriginIsolated, SharedArrayBuffer, and Atomics", () => {
+describe("detectPlatformFeatures", () => {
+  it("treats WASM threads as requiring crossOriginIsolated, SharedArrayBuffer, and Atomics", () => {
     let validateCalls = 0;
     WebAssembly.validate = (() => {
       validateCalls += 1;
@@ -45,7 +45,7 @@ test.describe("detectPlatformFeatures", () => {
     expect(validateCalls).toBeGreaterThan(0);
   });
 
-  test("detects exposed browser APIs via globals (navigator.*, Audio*, OffscreenCanvas)", () => {
+  it("detects exposed browser APIs via globals (navigator.*, Audio*, OffscreenCanvas)", () => {
     WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
     (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated = true;
 
@@ -70,4 +70,3 @@ test.describe("detectPlatformFeatures", () => {
     expect(report.wasmSimd).toBe(false);
   });
 });
-

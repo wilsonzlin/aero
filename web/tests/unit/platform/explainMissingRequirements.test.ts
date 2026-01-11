@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { describe, expect, it } from "vitest";
 
 import { explainMissingRequirements, type PlatformFeatureReport } from "../../../src/platform/features";
 
@@ -15,13 +15,12 @@ function report(overrides: Partial<PlatformFeatureReport> = {}): PlatformFeature
     opfsSyncAccessHandle: false,
     audioWorklet: false,
     offscreenCanvas: false,
-    jit_dynamic_wasm: false,
     ...overrides,
   };
 }
 
-test.describe("explainMissingRequirements", () => {
-  test("returns no messages when all requirements are satisfied", () => {
+describe("explainMissingRequirements", () => {
+  it("returns no messages when all requirements are satisfied", () => {
     expect(
       explainMissingRequirements(
         report({
@@ -41,7 +40,7 @@ test.describe("explainMissingRequirements", () => {
     ).toEqual([]);
   });
 
-  test("returns actionable messages for missing capabilities", () => {
+  it("returns actionable messages for missing capabilities", () => {
     const messages = explainMissingRequirements(report());
 
     // Keep this intentionally broad (copy edits shouldn't break tests).
@@ -55,4 +54,3 @@ test.describe("explainMissingRequirements", () => {
     expect(messages.join("\n")).toContain("wasm-unsafe-eval");
   });
 });
-
