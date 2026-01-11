@@ -124,13 +124,11 @@ All fields are written **in the order below** (little-endian):
   - `u32 MXCSR`
   - `u128 XMM[16]` (XMM0..XMM15)
 - `u8 FXSAVE_AREA[512]` (raw 512-byte image; currently `FXSAVE64`-compatible layout)
-- **CPU v2 extension (optional)**:
-  - `u32 EXT_LEN`
-  - `u8 EXT[EXT_LEN]` (currently `EXT_LEN = 4`):
-    - `u8 A20_ENABLED` (0/1)
-    - `u8 IRQ13_PENDING` (0/1)
-    - `u8 PENDING_BIOS_INT_VALID` (0/1)
-    - `u8 PENDING_BIOS_INT` (interrupt vector)
+
+Note: `CpuState` captures architectural state only. Any runtime bookkeeping that is not part of
+the architectural CPU/MMU model (e.g. interrupt shadow state, memory bus/A20 state, pending BIOS
+interrupts for the minimal BIOS VM) should be captured via the `DEVICES` section by the snapshot
+adapter.
 
 ---
 
@@ -198,6 +196,8 @@ Guest RAM dominates snapshot size (multi-GB for Windows 7). `aero-snapshot` supp
   `SaveOptions.ram.page_size == SnapshotSource::dirty_page_size()` when `RamMode::Dirty`.
 - Dirty snapshots are **not standalone**: they must only be applied on top of the snapshot they
   reference via `SnapshotMeta.parent_snapshot_id`.
+  - To enforce this at restore time, use `restore_snapshot_with_options()` and pass
+    `RestoreOptions { expected_parent_snapshot_id: <currently loaded snapshot id> }`.
   - If you have a seekable reader (`Read + Seek`), use `aero_snapshot::restore_snapshot_with_options`
     and pass `RestoreOptions { expected_parent_snapshot_id: Some(base_snapshot_id) }` to guard
     against accidentally applying a diff to the wrong base.
