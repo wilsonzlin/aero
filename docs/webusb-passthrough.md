@@ -99,6 +99,8 @@ Cancellation behavior (important):
 - A new control SETUP can legally abort a previous control transfer. The passthrough model may
   drop the previous in-flight request and ignore its eventual completion (WebUSB does not provide
   strong cancellation for an in-flight transfer).
+- If the host has not yet dequeued the old `UsbHostAction`, the model may also remove it from the
+  action queue so the host does not execute a stale transfer.
 - Stale completions are therefore expected and must be safely ignored (the Rust model already
   does this by checking `id` against in-flight state).
 
@@ -213,8 +215,9 @@ Aero mapping (current code):
     `crates/emulator/src/io/usb/core/mod.rs`).
   - For **Control-IN** requests (Device→Host), `AttachedUsbDevice::handle_setup` calls the device
     model’s `handle_control_request(setup, None)` immediately:
-    - `ControlResponse::Nak` → SETUP TD is NAKed and retried (this is how “WebUSB Promise pending” is
-      represented today).
+    - `ControlResponse::Nak` → SETUP TD **ACKs** and the control pipe enters a pending state. The
+      subsequent **DATA (IN)** stage is NAKed until the asynchronous host completion arrives (this
+      is how “WebUSB Promise pending” is represented).
     - `ControlResponse::Data(bytes)` → SETUP TD ACKs and the bytes become the source for subsequent
       IN DATA TDs.
     - `ControlResponse::Ack` → SETUP TD ACKs and the control transfer skips to STATUS.
@@ -228,16 +231,22 @@ Aero mapping (current code):
 - **DATA TD(s)**
   - **Control-IN:** IN DATA TDs read from the already-buffered `Data(bytes)` returned by
     `handle_control_request` and are chunked to each TD’s `max_len`.
+    - If the control pipe is still waiting on an async completion, **IN DATA TDs are NAKed**
+      (the SETUP TD is not retried).
   - **Control-OUT:** OUT DATA TDs append into an internal buffer until `wLength` bytes are received.
     Once complete, the device model is called exactly once:
     - `handle_control_request(setup, Some(data))`
-    - If it returns `Nak`, the *final* OUT DATA TD is NAKed and the buffered payload is retained so
-      retries do not append duplicate bytes.
+    - If it returns `Nak`, the *final* OUT DATA TD **ACKs** (payload already buffered) and the
+      control pipe represents “still waiting” by NAKing the **STATUS (IN)** stage until completion.
 
 - **STATUS TD**
   - Driven entirely by the control-pipe state machine (zero-length IN for Control-OUT, or zero-length
     OUT for Control-IN).
-  - The passthrough device model is not called during STATUS in the current architecture.
+  - When a control transfer is pending (`ControlResponse::Nak`), STATUS TDs are where the NAK
+    backpressure is applied for:
+    - Control-IN requests with `wLength == 0` (NAK the STATUS OUT stage), and
+    - Control-OUT requests (NAK the STATUS IN stage).
+  - This stage may call back into the device model to poll for completion.
 
 Net effect: control requests are emitted as **one host action per request**, and NAK is used to keep
 the relevant TD active until the asynchronous host completion arrives.
