@@ -32,6 +32,7 @@
 #include "aerogpu_cmd_writer.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "../../../protocol/aerogpu_dbgctl_escape.h"
+#include "../../../protocol/aerogpu_umd_private.h"
 
 #ifndef NT_SUCCESS
   #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
@@ -167,11 +168,50 @@ struct AeroGpuAdapter {
   uint64_t next_fence = 1;
   uint64_t completed_fence = 0;
 
-  // Optional D3DKMT adapter handle for dev-only escapes (e.g. QUERY_FENCE).
+  aerogpu_umd_private_v1 umd_private = {};
+  bool umd_private_valid = false;
+
+  // Optional D3DKMT adapter handle for dev-only calls (e.g. QUERY_FENCE via Escape).
   // This is best-effort bring-up plumbing; the real submission path should use
   // runtime callbacks and context-owned sync objects instead.
   D3DKMT_HANDLE kmt_adapter = 0;
 };
+
+static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {
+  if (!out) {
+    return false;
+  }
+
+  DISPLAY_DEVICEW dd;
+  ZeroMemory(&dd, sizeof(dd));
+  dd.cb = sizeof(dd);
+
+  for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &dd, 0); ++i) {
+    if ((dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0) {
+      wcsncpy(out, dd.DeviceName, CCHDEVICENAME - 1);
+      out[CCHDEVICENAME - 1] = 0;
+      return true;
+    }
+    ZeroMemory(&dd, sizeof(dd));
+    dd.cb = sizeof(dd);
+  }
+
+  ZeroMemory(&dd, sizeof(dd));
+  dd.cb = sizeof(dd);
+  for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &dd, 0); ++i) {
+    if ((dd.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0) {
+      wcsncpy(out, dd.DeviceName, CCHDEVICENAME - 1);
+      out[CCHDEVICENAME - 1] = 0;
+      return true;
+    }
+    ZeroMemory(&dd, sizeof(dd));
+    dd.cb = sizeof(dd);
+  }
+
+  wcsncpy(out, L"\\\\.\\DISPLAY1", CCHDEVICENAME - 1);
+  out[CCHDEVICENAME - 1] = 0;
+  return true;
+}
 
 struct AeroGpuResource {
   aerogpu_handle_t handle = 0;
@@ -288,6 +328,7 @@ void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
 struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTOpenAdapterFromHdc) pfn_open_adapter_from_hdc = nullptr;
   decltype(&D3DKMTCloseAdapter) pfn_close_adapter = nullptr;
+  decltype(&D3DKMTQueryAdapterInfo) pfn_query_adapter_info = nullptr;
   decltype(&D3DKMTEscape) pfn_escape = nullptr;
   decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
 };
@@ -307,6 +348,8 @@ const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
         reinterpret_cast<decltype(&D3DKMTOpenAdapterFromHdc)>(GetProcAddress(gdi32, "D3DKMTOpenAdapterFromHdc"));
     p.pfn_close_adapter =
         reinterpret_cast<decltype(&D3DKMTCloseAdapter)>(GetProcAddress(gdi32, "D3DKMTCloseAdapter"));
+    p.pfn_query_adapter_info =
+        reinterpret_cast<decltype(&D3DKMTQueryAdapterInfo)>(GetProcAddress(gdi32, "D3DKMTQueryAdapterInfo"));
     p.pfn_escape = reinterpret_cast<decltype(&D3DKMTEscape)>(GetProcAddress(gdi32, "D3DKMTEscape"));
     p.pfn_wait_for_syncobj = reinterpret_cast<decltype(&D3DKMTWaitForSynchronizationObject)>(
         GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
@@ -325,7 +368,12 @@ void InitKmtAdapterHandle(AeroGpuAdapter* adapter) {
     return;
   }
 
-  HDC hdc = GetDC(nullptr);
+  wchar_t displayName[CCHDEVICENAME] = {};
+  if (!GetPrimaryDisplayName(displayName)) {
+    return;
+  }
+
+  HDC hdc = CreateDCW(L"DISPLAY", displayName, nullptr, nullptr);
   if (!hdc) {
     return;
   }
@@ -337,7 +385,7 @@ void InitKmtAdapterHandle(AeroGpuAdapter* adapter) {
   open.VidPnSourceId = 0;
 
   const NTSTATUS st = procs.pfn_open_adapter_from_hdc(&open);
-  ReleaseDC(nullptr, hdc);
+  DeleteDC(hdc);
 
   if (NT_SUCCESS(st) && open.hAdapter) {
     adapter->kmt_adapter = open.hAdapter;
@@ -357,6 +405,55 @@ void DestroyKmtAdapterHandle(AeroGpuAdapter* adapter) {
   }
 
   adapter->kmt_adapter = 0;
+}
+
+void InitUmdPrivate(AeroGpuAdapter* adapter) {
+  if (!adapter || adapter->umd_private_valid) {
+    return;
+  }
+
+  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+  if (!procs.pfn_query_adapter_info) {
+    return;
+  }
+
+  InitKmtAdapterHandle(adapter);
+  if (!adapter->kmt_adapter) {
+    return;
+  }
+
+  aerogpu_umd_private_v1 blob;
+  std::memset(&blob, 0, sizeof(blob));
+
+  D3DKMT_QUERYADAPTERINFO q{};
+  q.hAdapter = adapter->kmt_adapter;
+  q.pPrivateDriverData = &blob;
+  q.PrivateDriverDataSize = sizeof(blob);
+
+  // Avoid relying on the WDK's numeric KMTQAITYPE_UMDRIVERPRIVATE constant by probing a
+  // small range of values and looking for a valid AeroGPU UMDRIVERPRIVATE v1 blob.
+  for (UINT type = 0; type < 256; ++type) {
+    std::memset(&blob, 0, sizeof(blob));
+    q.Type = static_cast<KMTQUERYADAPTERINFOTYPE>(type);
+
+    const NTSTATUS st = procs.pfn_query_adapter_info(&q);
+    if (!NT_SUCCESS(st)) {
+      continue;
+    }
+
+    if (blob.size_bytes != sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+      continue;
+    }
+
+    const uint32_t magic = blob.device_mmio_magic;
+    if (magic != 0 && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+      continue;
+    }
+
+    adapter->umd_private = blob;
+    adapter->umd_private_valid = true;
+    break;
+  }
 }
 
 void UpdateCompletedFence(AeroGpuDevice* dev, uint64_t completed) {
@@ -1768,7 +1865,11 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRE
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
   cmd->scanout_id = 0;
-  cmd->flags = (pPresent->SyncInterval == 1) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+  bool vsync = (pPresent->SyncInterval == 1);
+  if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
+    vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
+  }
+  cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
 
   submit_locked(dev);
   return S_OK;
@@ -2344,6 +2445,7 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
     pOpenData->Version = D3D10DDI_SUPPORTED;
     auto* adapter = new AeroGpuAdapter();
     InitKmtAdapterHandle(adapter);
+    InitUmdPrivate(adapter);
     pOpenData->hAdapter.pDrvPrivate = adapter;
 
     auto* funcs = reinterpret_cast<D3D10DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
@@ -2368,6 +2470,7 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
 
     auto* adapter = new AeroGpuAdapter();
     InitKmtAdapterHandle(adapter);
+    InitUmdPrivate(adapter);
     pOpenData->hAdapter.pDrvPrivate = adapter;
 
     auto* funcs = reinterpret_cast<D3D10_1DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
