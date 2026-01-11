@@ -2,6 +2,7 @@
 
 #include <ntddk.h>
 
+#include "adapter_context.h"
 #include "portcls_compat.h"
 #include "trace.h"
 #include "virtiosnd.h"
@@ -527,6 +528,7 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWav
     PVIRTIOSND_WAVERT_MINIPORT miniport = VirtIoSndWaveRtMiniportFromInterface(This);
     LONG ref = InterlockedDecrement(&miniport->RefCount);
     if (ref == 0) {
+        miniport->Dx = NULL;
         ExFreePoolWithTag(miniport, VIRTIOSND_POOL_TAG);
         return 0;
     }
@@ -543,7 +545,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
 {
     PVIRTIOSND_WAVERT_MINIPORT miniport = VirtIoSndWaveRtMiniportFromInterface(This);
 
-    UNREFERENCED_PARAMETER(UnknownAdapter);
     UNREFERENCED_PARAMETER(ResourceList);
     UNREFERENCED_PARAMETER(Port);
 
@@ -551,7 +552,13 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
         *ServiceGroup = NULL;
     }
 
-    UNREFERENCED_PARAMETER(miniport);
+    if (miniport->Dx == NULL) {
+        miniport->Dx = VirtIoSndAdapterContext_Lookup(UnknownAdapter);
+        if (miniport->Dx == NULL) {
+            VIRTIOSND_TRACE_ERROR("WaveRT miniport: adapter context lookup failed\n");
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+    }
     return STATUS_SUCCESS;
 }
 
@@ -1537,7 +1544,7 @@ static const IMiniportWaveRTStreamVtbl g_VirtIoSndWaveRtStreamVtbl = {
 };
 
 NTSTATUS
-VirtIoSndMiniportWaveRT_Create(_In_ struct _VIRTIOSND_DEVICE_EXTENSION *Dx, _Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
+VirtIoSndMiniportWaveRT_Create(_Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
 {
     PVIRTIOSND_WAVERT_MINIPORT miniport;
 
@@ -1547,10 +1554,6 @@ VirtIoSndMiniportWaveRT_Create(_In_ struct _VIRTIOSND_DEVICE_EXTENSION *Dx, _Out
 
     *OutUnknown = NULL;
 
-    if (Dx == NULL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     miniport = (PVIRTIOSND_WAVERT_MINIPORT)ExAllocatePoolWithTag(NonPagedPool, sizeof(*miniport), VIRTIOSND_POOL_TAG);
     if (miniport == NULL) {
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -1559,7 +1562,7 @@ VirtIoSndMiniportWaveRT_Create(_In_ struct _VIRTIOSND_DEVICE_EXTENSION *Dx, _Out
     RtlZeroMemory(miniport, sizeof(*miniport));
     miniport->Interface.lpVtbl = &g_VirtIoSndWaveRtMiniportVtbl;
     miniport->RefCount = 1;
-    miniport->Dx = Dx;
+    miniport->Dx = NULL;
     KeInitializeSpinLock(&miniport->Lock);
 
     *OutUnknown = (PUNKNOWN)&miniport->Interface;

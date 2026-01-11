@@ -7,5 +7,4 @@
 #include "portcls_compat.h"
 
 NTSTATUS
-VirtIoSndMiniportWaveRT_Create(_In_ struct _VIRTIOSND_DEVICE_EXTENSION *Dx,
-                               _Outptr_result_maybenull_ PUNKNOWN *OutUnknown);
+VirtIoSndMiniportWaveRT_Create(_Outptr_result_maybenull_ PUNKNOWN *OutUnknown);
