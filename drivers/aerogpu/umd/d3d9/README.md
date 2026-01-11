@@ -32,7 +32,12 @@ On Win7/WDDM 1.1, the D3D9 runtime provides a `D3DDDI_DEVICECALLBACKS` table dur
 In practice, different header/runtime combinations can expose different callback entrypoints. The AeroGPU D3D9 UMD prefers:
 
 1. `pfnPresentCb` for present submissions and `pfnRenderCb` for render submissions, and
-2. falls back to `pfnSubmitCommandCb` (`D3DDDIARG_SUBMITCOMMAND`) when needed (only using it for present submissions when the callback args can unambiguously signal “present”).
+2. falls back to `pfnSubmitCommandCb` (`D3DDDIARG_SUBMITCOMMAND`) when needed.
+
+For present submissions specifically, some runtimes only expose `pfnRenderCb` + a present bit in the callback args; others route directly through `pfnSubmitCommandCb`. AeroGPU supports both:
+
+- when a callback arg struct can explicitly signal “present”, the UMD sets that bit, and
+- when dxgkrnl routes straight to `DxgkDdiSubmitCommand` (no prior `DxgkDdiRender`/`DxgkDdiPresent`), the KMD can still classify present vs render via `AEROGPU_DMA_PRIV::Type` and build the per-submit allocation table on-demand from the submit args.
 
 The UMD logs the available callback pointers once at `CreateDevice` so Win7 bring-up can confirm which path the runtime is using.
 
