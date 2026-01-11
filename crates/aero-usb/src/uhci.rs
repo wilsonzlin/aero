@@ -501,6 +501,10 @@ impl UhciController {
         let Some(pid) = UsbPid::from_u8(pid_raw) else {
             self.complete_td(mem, td_addr, td.ctrl_sts | TD_CTRL_STALLED, 0);
             self.set_usberr();
+            if td.ctrl_sts & TD_CTRL_IOC != 0 {
+                self.usbint_causes |= USBINT_CAUSE_IOC;
+                self.set_usbint();
+            }
             return TdAdvance::Stop;
         };
 
@@ -578,6 +582,7 @@ impl UhciController {
                 UhciTd::write_status(mem, td_addr, ctrl);
                 self.set_usberr();
                 if td.ctrl_sts & TD_CTRL_IOC != 0 {
+                    self.usbint_causes |= USBINT_CAUSE_IOC;
                     self.set_usbint();
                 }
                 TdAdvance::Stop
@@ -594,6 +599,7 @@ impl UhciController {
                 UhciTd::write_status(mem, td_addr, ctrl);
                 self.set_usberr();
                 if td.ctrl_sts & TD_CTRL_IOC != 0 {
+                    self.usbint_causes |= USBINT_CAUSE_IOC;
                     self.set_usbint();
                 }
                 TdAdvance::Stop
@@ -1125,6 +1131,79 @@ mod tests {
         assert_eq!(irq.last_irq, Some(11));
 
         // Clearing USBSTS_USBINT must clear the internal cause bits and deassert IRQ.
+        ctrl.port_write(io_base + REG_USBSTS, 2, USBSTS_USBINT as u32, &mut irq);
+        assert_eq!(ctrl.usbsts & USBSTS_USBINT, 0);
+        assert_eq!(ctrl.usbint_causes, 0);
+        assert!(!irq.raised);
+    }
+
+    struct StallDevice;
+
+    impl UsbDevice for StallDevice {
+        fn as_any(&self) -> &dyn core::any::Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+            self
+        }
+
+        fn reset(&mut self) {}
+
+        fn address(&self) -> u8 {
+            0
+        }
+
+        fn handle_setup(&mut self, _setup: SetupPacket) {}
+
+        fn handle_out(&mut self, _ep: u8, _data: &[u8]) -> UsbHandshake {
+            UsbHandshake::Ack { bytes: 0 }
+        }
+
+        fn handle_in(&mut self, _ep: u8, _buf: &mut [u8]) -> UsbHandshake {
+            UsbHandshake::Stall
+        }
+    }
+
+    #[test]
+    fn uhci_ioc_interrupt_is_raised_for_stalled_td() {
+        let io_base = 0x3200;
+        let mut ctrl = UhciController::new(io_base, 11);
+        ctrl.connect_device(0, Box::new(StallDevice));
+
+        let mut mem = TestMemory::new(0x8000);
+        let mut irq = TestIrq::default();
+
+        ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PED as u32, &mut irq);
+        ctrl.port_write(io_base + REG_USBINTR, 2, USBINTR_IOC as u32, &mut irq);
+        ctrl.port_write(io_base + REG_FRBASEADD, 4, 0x1000, &mut irq);
+        for i in 0..1024u32 {
+            mem.write_u32(0x1000 + i * 4, 0x2000 | LINK_PTR_Q);
+        }
+
+        mem.write_u32(0x2000, LINK_PTR_T);
+        mem.write_u32(0x2004, 0x3000);
+
+        // TD: IN to addr0/ep0, maxlen 4, with IOC.
+        let maxlen_field = (4u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
+        let token = 0x69u32 | maxlen_field;
+        mem.write_u32(0x3000, LINK_PTR_T);
+        mem.write_u32(0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
+        mem.write_u32(0x3008, token);
+        mem.write_u32(0x300C, 0x4000);
+
+        ctrl.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut irq);
+        ctrl.step_frame(&mut mem, &mut irq);
+
+        let ctrl_sts = mem.read_u32(0x3004);
+        assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
+        assert_ne!(ctrl_sts & TD_CTRL_STALLED, 0);
+
+        assert_ne!(ctrl.usbsts & USBSTS_USBINT, 0);
+        assert_ne!(ctrl.usbint_causes & USBINT_CAUSE_IOC, 0);
+        assert!(irq.raised);
+        assert_eq!(irq.last_irq, Some(11));
+
         ctrl.port_write(io_base + REG_USBSTS, 2, USBSTS_USBINT as u32, &mut irq);
         assert_eq!(ctrl.usbsts & USBSTS_USBINT, 0);
         assert_eq!(ctrl.usbint_causes, 0);
