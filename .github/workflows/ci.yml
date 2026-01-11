@@ -192,6 +192,10 @@ jobs:
           set -euo pipefail
           # Use `cargo metadata --locked` as the drift check.
           #
+          # Important: do not add `--no-deps` here. `cargo metadata --locked --no-deps` can
+          # succeed even when `Cargo.toml` and `Cargo.lock` are out of sync, which would
+          # defeat the drift check.
+          #
           # Note: `cargo generate-lockfile` is an updater (like `cargo update`) and will
           # intentionally re-resolve to the latest compatible versions. Using it with
           # `--locked` can make CI flaky when crates are published between runs.

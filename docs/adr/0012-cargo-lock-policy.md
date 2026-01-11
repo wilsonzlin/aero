@@ -24,6 +24,8 @@ Policy:
   - Standalone nested workspaces/tools (each maintains its own `Cargo.lock` next to its `Cargo.toml`).
 - CI runs Rust commands with `--locked` and fails if any command would modify a lockfile.
 - CI verifies lockfile consistency via `cargo metadata --locked` (fails if `Cargo.toml` and `Cargo.lock` drift).
+  - Do not add `--no-deps`: `cargo metadata --locked --no-deps` can succeed even when the lockfile is stale,
+    so it is not a reliable drift check.
   - We intentionally avoid using `cargo generate-lockfile --locked` as a CI drift check: `cargo generate-lockfile`
     re-resolves to the latest compatible versions (like `cargo update`), so it can fail when crates are published
     between runs even if `Cargo.lock` is valid.
