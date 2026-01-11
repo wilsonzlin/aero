@@ -668,7 +668,7 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   out->vidpn_source_id = vidpnSourceId;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
-  if (!NT_SUCCESS(st) && st == STATUS_INVALID_PARAMETER && vidpnSourceId != 0) {
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && vidpnSourceId != 0) {
     wprintf(L"QueryVblank: VidPnSourceId=%lu not supported; retrying with source 0\n", (unsigned long)vidpnSourceId);
     ZeroMemory(out, sizeof(*out));
     out->hdr.version = AEROGPU_ESCAPE_VERSION;

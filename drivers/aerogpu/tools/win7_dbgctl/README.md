@@ -97,7 +97,7 @@ aerogpu_dbgctl --selftest --timeout-ms 2000
 
 Notes:
 - `IRQ_ACTIVE` is `IRQ_STATUS & IRQ_ENABLE` (i.e. causes that can currently assert the interrupt line).
-- Some environments may return a non-zero `VidPnSourceId` from `D3DKMTOpenAdapterFromHdc`; if `--wait-vblank` or `--query-scanline` fail with `STATUS_INVALID_PARAMETER`, dbgctl retries with source 0 (AeroGPU currently implements a single source).
+- Some environments may return a non-zero `VidPnSourceId` from `D3DKMTOpenAdapterFromHdc`; dbgctl retries `--dump-vblank`, `--wait-vblank`, and `--query-scanline` with source 0 if needed (AeroGPU currently implements a single source).
 
 ## Build (Windows 7)
 
