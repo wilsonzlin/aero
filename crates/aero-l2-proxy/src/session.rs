@@ -193,8 +193,11 @@ async fn close_with_error(
     code: u16,
     message: &str,
 ) {
+    // Sending on `ws_out_tx` can block if the writer task is backpressured and the bounded channel
+    // is full. Close paths should not hang indefinitely, so apply a short timeout.
+    let send_timeout = Duration::from_millis(100);
     if let Some(wire) = error_wire(state, code, message) {
-        let _ = ws_out_tx.send(Message::Binary(wire)).await;
+        let _ = timeout(send_timeout, ws_out_tx.send(Message::Binary(wire))).await;
     }
 
     const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
@@ -204,12 +207,14 @@ async fn close_with_error(
     } else {
         truncate_utf8(message, MAX_REASON_BYTES)
     };
-    let _ = ws_out_tx
-        .send(Message::Close(Some(CloseFrame {
+    let _ = timeout(
+        send_timeout,
+        ws_out_tx.send(Message::Close(Some(CloseFrame {
             code: CLOSE_CODE_POLICY_VIOLATION,
             reason: Cow::Owned(reason),
-        })))
-        .await;
+        }))),
+    )
+    .await;
 }
 
 async fn close_shutting_down(ws_out_tx: &mpsc::Sender<Message>) {
