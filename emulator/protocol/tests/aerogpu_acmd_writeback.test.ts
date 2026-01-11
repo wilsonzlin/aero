@@ -68,7 +68,7 @@ test("ACMD COPY_BUFFER writeback updates guest memory backing for dst buffer", (
 
 test("ACMD COPY_BUFFER writeback rejects READONLY allocs", () => {
   const guest = new Uint8Array(256);
-  const allocTableBuf = buildAllocTable([{ allocId: 42, flags: AEROGPU_ALLOC_FLAG_READONLY, gpa: 0, sizeBytes: 128 }]);
+  const allocTableBuf = buildAllocTable([{ allocId: 42, flags: AEROGPU_ALLOC_FLAG_READONLY, gpa: 100, sizeBytes: 128 }]);
   const allocTable = decodeAerogpuAllocTable(allocTableBuf);
 
   const w = new AerogpuCmdWriter();
@@ -82,6 +82,11 @@ test("ACMD COPY_BUFFER writeback rejects READONLY allocs", () => {
     () => executeAerogpuCmdStream(state, w.finish().buffer, { allocTable, guestU8: guest }),
     /READONLY/,
   );
+});
+
+test("decodeAerogpuAllocTable rejects entries with gpa=0", () => {
+  const allocTableBuf = buildAllocTable([{ allocId: 1, flags: 0, gpa: 0, sizeBytes: 128 }]);
+  assert.throws(() => decodeAerogpuAllocTable(allocTableBuf), /gpa=0/);
 });
 
 test("ACMD COPY_TEXTURE2D writeback packs rows using row_pitch_bytes and encodes X8 alpha as 255", () => {

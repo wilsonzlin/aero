@@ -52,6 +52,8 @@ export type AeroGpuCpuBuffer = {
 export type AeroGpuAllocTableEntry = { gpa: number; sizeBytes: number; flags: number };
 export type AeroGpuAllocTable = Map<number, AeroGpuAllocTableEntry>;
 
+const MAX_U64 = 0xffff_ffff_ffff_ffffn;
+
 export type AerogpuCpuExecutorState = {
   textures: Map<number, AeroGpuCpuTexture>;
   buffers: Map<number, AeroGpuCpuBuffer>;
@@ -127,8 +129,10 @@ export const decodeAerogpuAllocTable = (buf: ArrayBuffer): AeroGpuAllocTable => 
 
   const entryCount = dv.getUint32(12, true);
   const entryStrideBytes = dv.getUint32(16, true);
-  if (entryStrideBytes < AEROGPU_ALLOC_ENTRY_BYTES) {
-    throw new Error(`aerogpu: alloc table entry_stride_bytes too small (${entryStrideBytes})`);
+  if (entryStrideBytes !== AEROGPU_ALLOC_ENTRY_BYTES) {
+    throw new Error(
+      `aerogpu: invalid alloc table entry_stride_bytes=${entryStrideBytes} (expected ${AEROGPU_ALLOC_ENTRY_BYTES})`,
+    );
   }
 
   const requiredBytes = BigInt(AEROGPU_ALLOC_TABLE_HEADER_BYTES) + BigInt(entryCount) * BigInt(entryStrideBytes);
@@ -148,8 +152,21 @@ export const decodeAerogpuAllocTable = (buf: ArrayBuffer): AeroGpuAllocTable => 
       throw new Error(`aerogpu: alloc table entry ${i} has alloc_id=0`);
     }
     const flags = dv.getUint32(base + 4, true);
-    const gpa = checkedU64ToNumber(dv.getBigUint64(base + 8, true), `allocs[${i}].gpa`);
-    const allocSizeBytes = checkedU64ToNumber(dv.getBigUint64(base + 16, true), `allocs[${i}].size_bytes`);
+    const gpaU64 = dv.getBigUint64(base + 8, true);
+    const allocSizeBytesU64 = dv.getBigUint64(base + 16, true);
+
+    if (gpaU64 === 0n) {
+      throw new Error(`aerogpu: alloc table entry ${i} has gpa=0`);
+    }
+    if (allocSizeBytesU64 === 0n) {
+      throw new Error(`aerogpu: alloc table entry ${i} has size_bytes=0`);
+    }
+    if (gpaU64 + allocSizeBytesU64 > MAX_U64) {
+      throw new Error(`aerogpu: alloc table entry ${i} gpa+size overflow`);
+    }
+
+    const gpa = checkedU64ToNumber(gpaU64, `allocs[${i}].gpa`);
+    const allocSizeBytes = checkedU64ToNumber(allocSizeBytesU64, `allocs[${i}].size_bytes`);
     if (out.has(allocId)) {
       throw new Error(`aerogpu: duplicate alloc_id ${allocId} in alloc table`);
     }
