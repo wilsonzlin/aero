@@ -78,6 +78,9 @@ CI validates the deployment artifacts under:
 Reproduce locally:
 
 ```bash
+# Full reproduction (requires: node + docker compose + terraform + tflint + helm + kubeconform)
+./scripts/ci/check-iac.sh
+
 # Deploy manifest labelling/hygiene (requires docker compose)
 node scripts/ci/check-deploy-manifests.mjs
 

@@ -61,7 +61,7 @@ paths:
 
 This repository's CI validates that the Helm chart renders correctly and produces valid Kubernetes objects.
 
-To reproduce locally (requires `helm` + `kubeconform`):
+To reproduce locally (requires `helm` + `kubeconform`; or run the repo-wide `./scripts/ci/check-iac.sh`):
 
 ```bash
 CHART=deploy/k8s/chart/aero-gateway

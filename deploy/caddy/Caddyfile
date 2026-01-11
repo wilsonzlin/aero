@@ -26,9 +26,12 @@
 		#
 		# Keep the origin single-tenant: if you need to connect to a separate proxy
 		# origin, tighten/extend `connect-src` deliberately (see docs/security-headers.md).
+		# `aero-gateway.invalid` is a documentation-only placeholder (the `.invalid` TLD will never
+		# resolve). Replace it with the exact gateway/proxy origin(s) you want to allow, or remove
+		# it entirely for strict single-origin deployments.
 		# Optionally append additional allowed connect-src origins via env var:
 		#   AERO_CSP_CONNECT_SRC_EXTRA="https://proxy.example.com wss://proxy.example.com"
-		Content-Security-Policy "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' {$AERO_CSP_CONNECT_SRC_EXTRA}; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
+		Content-Security-Policy "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid {$AERO_CSP_CONNECT_SRC_EXTRA}; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
 
 		# HSTS is enabled by setting a non-zero max-age.
 		# - Local dev default: max-age=0 (disabled)
