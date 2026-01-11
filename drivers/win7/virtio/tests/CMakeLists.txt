@@ -2,6 +2,7 @@ add_executable(virtio_pci_cap_parser_test
     virtio_pci_cap_parser_test.c
     ${CMAKE_CURRENT_LIST_DIR}/../virtio-core/portable/virtio_pci_cap_parser.c
     ${CMAKE_CURRENT_LIST_DIR}/../virtio-core/portable/virtio_pci_aero_layout.c
+    ${CMAKE_CURRENT_LIST_DIR}/../virtio-core/portable/virtio_pci_identity.c
 )
 
 target_include_directories(virtio_pci_cap_parser_test PRIVATE

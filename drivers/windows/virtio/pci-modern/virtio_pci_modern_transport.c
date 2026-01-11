@@ -618,7 +618,10 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 	UINT64 device_features;
 	UINT64 negotiated;
 	UINT64 forbidden;
-	enum { VIRTIO_F_RING_EVENT_IDX_BIT = 29 };
+	enum {
+		VIRTIO_F_RING_EVENT_IDX_BIT = 29,
+		VIRTIO_F_RING_PACKED_BIT = 34,
+	};
 
 	if (t == NULL || t->CommonCfg == NULL || negotiated_out == NULL) {
 		return STATUS_INVALID_PARAMETER;
@@ -627,8 +630,9 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 	/* Contract requirement: modern device (VERSION_1). */
 	required |= VIRTIO_F_VERSION_1;
 
-	/* Contract requirement: split ring only; never negotiate EVENT_IDX. */
+	/* Contract requirement: split ring only; never negotiate EVENT_IDX or PACKED ring. */
 	forbidden = (UINT64)1u << VIRTIO_F_RING_EVENT_IDX_BIT;
+	forbidden |= (UINT64)1u << VIRTIO_F_RING_PACKED_BIT;
 	wanted &= ~forbidden;
 	required &= ~forbidden;
 
@@ -640,7 +644,7 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 		return STATUS_NOT_SUPPORTED;
 	}
 	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (device_features & forbidden) != 0) {
-		/* Contract v1 devices must not offer EVENT_IDX. */
+		/* Contract v1 devices must not offer EVENT_IDX or PACKED ring. */
 		return STATUS_NOT_SUPPORTED;
 	}
 
