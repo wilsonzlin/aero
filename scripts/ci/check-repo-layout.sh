@@ -151,6 +151,7 @@ suite_dir = Path("drivers/aerogpu/tests/win7")
 manifest_path = suite_dir / "tests_manifest.txt"
 readme_path = suite_dir / "README.md"
 cmake_path = suite_dir / "CMakeLists.txt"
+runner_path = suite_dir / "test_runner" / "main.cpp"
 
 manifest_tests = []
 for raw in manifest_path.read_text(encoding="utf-8").splitlines():
@@ -187,6 +188,19 @@ missing_cmake = [t for t in manifest_tests if t not in cmake_targets]
 if missing_cmake:
     raise SystemExit(
         f"{cmake_path}: missing aerogpu_add_win7_test entries for manifest test(s): {', '.join(missing_cmake)}"
+    )
+
+# Ensure the built-in fallback list stays in sync with the manifest. This is used
+# when tests_manifest.txt is not bundled with a binary-only distribution.
+runner_text = runner_path.read_text(encoding="utf-8", errors="replace")
+m = re.search(r"const\s+char\*\s+const\s+kFallbackTests\[\]\s*=\s*\{(.*?)\};", runner_text, re.S)
+if not m:
+    raise SystemExit(f"{runner_path}: could not find kFallbackTests[] fallback list")
+fallback_tests = set(re.findall(r'"([a-z0-9_]+)"', m.group(1)))
+missing_fallback = [t for t in manifest_tests if t not in fallback_tests]
+if missing_fallback:
+    raise SystemExit(
+        f"{runner_path}: missing kFallbackTests[] entries for manifest test(s): {', '.join(missing_fallback)}"
     )
 
 print("Win7 test suite manifest/doc/cmake check: OK")
