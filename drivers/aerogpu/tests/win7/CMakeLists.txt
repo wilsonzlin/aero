@@ -229,6 +229,11 @@ aerogpu_add_win7_test(d3d11_triangle
 )
 target_link_libraries(d3d11_triangle PRIVATE user32 gdi32 d3d11 dxgi)
 
+aerogpu_add_win7_test(d3d11_texture
+  d3d11_texture/main.cpp
+)
+target_link_libraries(d3d11_texture PRIVATE user32 gdi32 d3d11 dxgi)
+
 aerogpu_add_win7_test(d3d11_caps_smoke
   d3d11_caps_smoke/main.cpp
 )

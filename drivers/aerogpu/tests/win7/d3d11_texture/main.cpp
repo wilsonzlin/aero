@@ -1,5 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
 #include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_shader_compiler.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -14,6 +15,35 @@ struct Vertex {
 struct Params {
   float tint[4];
 };
+
+static const char kTextureHlsl[] = R"(cbuffer Params : register(b0) {
+  float4 tint;
+};
+
+Texture2D tex0 : register(t0);
+SamplerState samp0 : register(s0);
+
+struct VSIn {
+  float2 pos : POSITION;
+  float2 uv : TEXCOORD0;
+};
+
+struct VSOut {
+  float4 pos : SV_Position;
+  float2 uv : TEXCOORD0;
+};
+
+VSOut vs_main(VSIn input) {
+  VSOut o;
+  o.pos = float4(input.pos.xy * tint.xy, 0.0f, 1.0f);
+  o.uv = input.uv;
+  return o;
+}
+
+float4 ps_main(VSOut input) : SV_Target {
+  return tex0.Sample(samp0, input.uv) * tint;
+}
+)";
 
 static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
                                       const char* test_name,
@@ -233,17 +263,27 @@ static int RunD3D11Texture(int argc, char** argv) {
   context->RSSetViewports(1, &vp);
 
   const std::wstring dir = aerogpu_test::GetModuleDir();
-  const std::wstring vs_path = aerogpu_test::JoinPath(dir, L"d3d11_texture_vs.cso");
-  const std::wstring ps_path = aerogpu_test::JoinPath(dir, L"d3d11_texture_ps.cso");
 
   std::vector<unsigned char> vs_bytes;
   std::vector<unsigned char> ps_bytes;
-  std::string file_err;
-  if (!aerogpu_test::ReadFileBytes(vs_path, &vs_bytes, &file_err)) {
-    return reporter.Fail("failed to read %ls: %s", vs_path.c_str(), file_err.c_str());
+  std::string shader_err;
+  if (!aerogpu_test::CompileHlslToBytecode(kTextureHlsl,
+                                           strlen(kTextureHlsl),
+                                           "d3d11_texture.hlsl",
+                                           "vs_main",
+                                           "vs_4_0_level_9_1",
+                                           &vs_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile vertex shader: %s", shader_err.c_str());
   }
-  if (!aerogpu_test::ReadFileBytes(ps_path, &ps_bytes, &file_err)) {
-    return reporter.Fail("failed to read %ls: %s", ps_path.c_str(), file_err.c_str());
+  if (!aerogpu_test::CompileHlslToBytecode(kTextureHlsl,
+                                           strlen(kTextureHlsl),
+                                           "d3d11_texture.hlsl",
+                                           "ps_main",
+                                           "ps_4_0_level_9_1",
+                                           &ps_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile pixel shader: %s", shader_err.c_str());
   }
 
   ComPtr<ID3D11VertexShader> vs;
