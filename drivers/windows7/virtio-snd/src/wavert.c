@@ -747,9 +747,9 @@ VirtIoSndWaveRtRxCompletion(
     ULONG periodBytes;
     PVOID buffer;
     PKEVENT notifyEvent;
+    BOOLEAN streamRunning;
+    BOOLEAN ok;
 
-    UNREFERENCED_PARAMETER(CompletionStatus);
-    UNREFERENCED_PARAMETER(VirtioStatus);
     UNREFERENCED_PARAMETER(LatencyBytes);
     UNREFERENCED_PARAMETER(UsedLen);
     UNREFERENCED_PARAMETER(Context);
@@ -758,6 +758,8 @@ VirtIoSndWaveRtRxCompletion(
     if (stream == NULL) {
         return;
     }
+
+    ok = (NT_SUCCESS(CompletionStatus) && VirtioStatus == VIRTIO_SND_S_OK) ? TRUE : FALSE;
 
     /*
      * Ensure device-written PCM bytes are visible to the CPU before user-mode
@@ -770,6 +772,7 @@ VirtIoSndWaveRtRxCompletion(
     qpcValue = (ULONGLONG)KeQueryPerformanceCounter(NULL).QuadPart;
 
     notifyEvent = NULL;
+    streamRunning = FALSE;
 
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
 
@@ -779,11 +782,27 @@ VirtIoSndWaveRtRxCompletion(
     buffer = stream->BufferDma.Va;
 
     if (stream->State == KSSTATE_RUN && !stream->Stopping && stream->NotificationEvent != NULL) {
+        streamRunning = TRUE;
         notifyEvent = stream->NotificationEvent;
         ObReferenceObject(notifyEvent);
     }
 
     KeReleaseSpinLock(&stream->Lock, oldIrql);
+
+    /*
+     * Per contract, the device completes rxq buffers with IO_ERR when the
+     * capture stream is not running. In that case (and for any other error),
+     * treat the payload as invalid and return full-period silence.
+     */
+    if (!ok) {
+        PayloadBytes = 0;
+        if (streamRunning) {
+            VIRTIOSND_TRACE_ERROR("wavert: capture rx completion error: nt=0x%08X virtio=%lu (%s)\n",
+                                  (UINT)CompletionStatus,
+                                  VirtioStatus,
+                                  VirtioSndStatusToString(VirtioStatus));
+        }
+    }
 
     /*
      * If the device reports a short write, still treat it as a full period and
