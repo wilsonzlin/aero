@@ -600,16 +600,23 @@ struct AeroGpuResource {
   aerogpu_handle_t handle = 0;
   ResourceKind kind = ResourceKind::Unknown;
 
-  // Host-visible backing allocation ID.
+  // Host-visible backing allocation ID (`alloc_id` / `backing_alloc_id`).
   //
-  // Key design decision: use the WDDM allocation handle (D3DKMT_HANDLE /
-  // DXGK_ALLOCATIONINFO.hAllocation) as the AeroGPU allocation-table `alloc_id`
-  // so it can be encoded directly in packets as a `u32`.
+  // This is a stable driver-defined `u32` used as the key in the per-submit
+  // `aerogpu_alloc_table` (alloc_id -> {gpa, size}). It is intentionally *not*
+  // a raw OS handle (and not the KMD-visible `DXGK_ALLOCATIONLIST::hAllocation`
+  // pointer identity).
+  //
+  // On Win7/WDDM 1.1, the stable `alloc_id` is supplied to the KMD via WDDM
+  // allocation private driver data (`aerogpu_wddm_alloc_priv.alloc_id`).
   //
   // 0 means "host allocated" (no allocation-table entry).
   uint32_t backing_alloc_id = 0;
 
-  // WDDM allocation backing this resource (0 if host allocated).
+  // Allocation backing this resource as understood by the repo-local harness
+  // callback interface (0 if host allocated). In real WDDM builds, mapping is
+  // done via the runtime LockCb/UnlockCb path using the UMD-visible allocation
+  // handle returned by AllocateCb.
   AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle = 0;
   uint32_t alloc_offset_bytes = 0;
   uint64_t alloc_size_bytes = 0;

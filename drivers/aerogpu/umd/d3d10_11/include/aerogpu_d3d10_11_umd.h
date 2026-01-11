@@ -407,11 +407,19 @@ typedef struct AEROGPU_DDIARG_PRESENT {
 // Optional device callback table (allocation-backed resources + submission plumbing)
 // -------------------------------------------------------------------------------------------------
 
-// WDDM allocation handle (D3DKMT_HANDLE / DXGK_ALLOCATIONINFO.hAllocation).
-// Stored as u32 so it can be used directly as `aerogpu_alloc_entry.alloc_id`.
+// Stable allocation ID used by the AeroGPU per-submit allocation table (`alloc_id`).
+//
+// This is the value that must be placed in `AEROGPU_CMD_CREATE_*.backing_alloc_id`
+// when a resource is backed by guest memory.
+//
+// On real Win7/WDDM 1.1, this is a **driver-defined** `u32` persisted in WDDM
+// allocation private driver data (`aerogpu_wddm_alloc_priv.alloc_id` in
+// `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). It is intentionally not the
+// numeric value of the UMD-visible allocation handle (`D3DKMT_HANDLE`) and not
+// the KMD-visible `DXGK_ALLOCATIONLIST::hAllocation` identity.
 typedef uint32_t AEROGPU_WDDM_ALLOCATION_HANDLE;
 
-// Allocate backing storage for a resource and return the WDDM allocation handle.
+// Allocate backing storage for a resource and return the stable allocation ID.
 // For Texture2D allocations, the callback may also provide the linear row pitch.
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_ALLOCATE_BACKING)(
     void *pUserContext,
