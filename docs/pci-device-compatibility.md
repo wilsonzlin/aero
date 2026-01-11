@@ -22,7 +22,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:08.0  | vNIC   | 1AF4:1041     | 02/00/00                 | INTA     | virtio-net (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1000) |
 | 00:09.0  | vBlk   | 1AF4:1042     | 01/00/00                 | INTA     | virtio-blk (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1001) |
 | 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1011) |
-| 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1018) |
+| 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (Aero Win7 contract v1: modern-only, `REV_01`) |
 
 ### Notes on virtio IDs (transitional vs modern)
 
@@ -39,7 +39,8 @@ may not expose transitional IDs.
 | net             | 1AF4:1000       | 1AF4:1041 |
 | blk             | 1AF4:1001       | 1AF4:1042 |
 | input           | 1AF4:1011       | 1AF4:1052 |
-| snd             | 1AF4:1018       | 1AF4:1059 |
+
+Note: virtio-snd is treated as **modern-only** in `AERO-W7-VIRTIO` v1; do not rely on any legacy/transitional ID space for driver binding.
 
 ## IRQ routing (INTx → PIRQ → PIC/APIC)
 

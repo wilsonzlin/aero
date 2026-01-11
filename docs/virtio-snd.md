@@ -31,24 +31,39 @@ Aero exposes virtio-snd as a virtio-pci device using the standard virtio vendor 
 - Subsystem Device ID: `0x0019` (`VIRTIO_ID_SND`)
 - Revision ID: `0x01` (Aero Windows 7 virtio contract v1; see `docs/windows7-virtio-driver-contract.md`)
 
-The virtio specification also defines a **transitional** virtio-snd PCI device ID:
+Windows driver binding (Aero):
 
-- Transitional Device ID: `0x1018` (`0x1000 + (25 - 1)`)
+- The shipped Aero Win7 virtio-snd INF (`drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf`) is intentionally strict and matches only:
+  - `PCI\VEN_1AF4&DEV_1059&REV_01`
+  - (Optional) `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (commented out in the INF by default)
 
-However, Aero’s Windows 7 virtio contract v1 is **modern-only** and does not rely on transitional IDs for driver binding.
+### Contract v1 summary (AERO-W7-VIRTIO: virtio-snd)
 
-The clean-room Win7 INF (`aero-virtio-snd.inf`) is intentionally strict and matches only the contract v1 HWID
-`PCI\VEN_1AF4&DEV_1059&REV_01`. If Windows shows `DEV_1018` (transitional) or `REV_00`, configure the hypervisor to
-expose the contract v1 IDs (for example QEMU `disable-legacy=on,x-pci-revision=0x01`).
+Treat [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) as authoritative.
+This section is a convenience summary that MUST remain consistent with that contract.
 
-For QEMU bring-up/regression (where the virtio-snd device often enumerates as transitional by default), the repo also
-contains an opt-in transitional driver package:
+- **Transport:** virtio-pci **modern-only** (PCI vendor-specific capabilities + **BAR0 MMIO**). No legacy I/O-port BARs.
+- **Contract major version:** encoded in PCI Revision ID (`REV_01`).
+- **Feature bits:** `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only.
+- **Virtqueue sizes:** `controlq=64`, `eventq=64`, `txq=256`, `rxq=64`.
+- **Streams (fixed-format):**
+  - Stream `0`: render/playback, stereo (2ch), 48kHz, S16_LE
+  - Stream `1`: capture/input, mono (1ch), 48kHz, S16_LE
 
-- `drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` (binds `PCI\VEN_1AF4&DEV_1018`)
+The authoritative Windows driver-binding values are tracked in [`docs/windows-device-contract.md`](./windows-device-contract.md)
+and [`docs/windows-device-contract.json`](./windows-device-contract.json).
+
+If the device does not report `DEV_1059` and `REV_01`, the shipped INF will not bind. For QEMU, pass:
+
+```text
+-device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
+```
+
+For QEMU bring-up/regression (where the virtio-snd device may enumerate as transitional by default), the repo also
+contains an opt-in compatibility driver package:
+
+- `drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` (binds the transitional virtio-snd PCI ID)
 - `virtiosnd_legacy.sys` (build with MSBuild `Configuration=Legacy`)
-
-The authoritative Windows driver-binding values are tracked in
-[`docs/windows-device-contract.md`](./windows-device-contract.md).
 
 ## Device Configuration
 

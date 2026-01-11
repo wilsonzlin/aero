@@ -296,13 +296,14 @@ For safety and determinism, the provisioning script installs **only an allowlist
 
 Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input/virtio-snd
 (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`) and sets `x-pci-revision=0x01` so strict contract-v1 INFs can bind.
-For virtio-snd, the canonical INF (`aero-virtio-snd.inf`) requires `PCI\VEN_1AF4&DEV_1059&REV_01`. The repo also
-contains an optional legacy filename alias INF (`virtio-snd.inf.disabled`; rename to `virtio-snd.inf` to enable)
-for compatibility with older workflows/tools. It installs the same driver/service and matches the same contract-v1
-HWIDs, but it is not used by default.
+For virtio-snd, the canonical INF (`aero-virtio-snd.inf`) matches only `PCI\\VEN_1AF4&DEV_1059&REV_01`, so your QEMU
+build must support `disable-legacy=on` and `x-pci-revision=0x01` for virtio-snd testing.
+The repo also contains an optional legacy filename alias INF (`virtio-snd.inf.disabled`; rename to `virtio-snd.inf` to
+enable) for compatibility with older workflows/tools. It installs the same driver/service and matches the same
+contract-v1 HWIDs, but it is not used by default.
 
-For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`).
-Avoid installing multiple INFs that bind the same HWID, or disambiguate by passing a relative INF path via
+For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`). Avoid
+installing multiple `aerovnet.inf` files that bind the same HWID, or disambiguate by passing a relative INF path via
 `-InfAllowList`.
 
 For virtio-blk, use the contract-v1 driver under `drivers/windows7/virtio/blk/` (binds `DEV_1042`).

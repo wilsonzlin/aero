@@ -212,7 +212,7 @@ This signs:
 3. **Let me pick** → **Have Disk…**
 4. Browse to `drivers/windows7/virtio-snd/inf/`
 5. Select `aero-virtio-snd.inf` (recommended for Aero contract v1)
-   - For stock QEMU (transitional `DEV_1018`), select `aero-virtio-snd-legacy.inf`
+   - For stock QEMU defaults (transitional virtio-snd PCI IDs), select `aero-virtio-snd-legacy.inf`
 
 `virtio-snd.inf` is a legacy filename alias kept for compatibility with older workflows/tools.
 It installs the same driver/service and matches the same contract-v1 HWIDs as `aero-virtio-snd.inf`,

@@ -59,7 +59,7 @@ Implementing Windows 7 kernel drivers for Storport (block) and NDIS (network) fr
 
 We target the **virtio-win** driver distribution (commonly shipped as `virtio-win.iso`) and specifically the packages:
 
-| Aero device | virtio PCI ID (Aero / `AERO-W7-VIRTIO` v1) | virtio-win package name (typical) |
+| Aero device | virtio PCI ID (Aero / `AERO-W7-VIRTIO` v1; REV `0x01`) | virtio-win package name (typical) |
 |------------|----------------------------------------|-----------------------------------|
 | virtio-net | `VEN_1AF4&DEV_1041` | `NetKVM` (`netkvm.inf` / `netkvm.sys`) |
 | virtio-blk | `VEN_1AF4&DEV_1042` | `viostor` (`viostor.inf` / `viostor.sys`) |
@@ -91,7 +91,7 @@ For Aero’s in-tree drivers and Guest Tools installer logic, the identifiers be
 Guest Tools uses:
 
 - `AERO_VIRTIO_BLK_SERVICE` to configure the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase`.
-- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect (include `&REV_01` if your INFs match on revision).
+- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect. For `AERO-W7-VIRTIO` v1, include `&REV_01` when your INFs are revision-gated (for example the in-tree `aero-virtio-snd.inf` matches `...&REV_01`).
 
 Note: `guest-tools/config/devices.cmd` is generated from `docs/windows-device-contract.json`
 (see `scripts/generate-guest-tools-devices-cmd.py`) and is regenerated during Guest Tools packaging from

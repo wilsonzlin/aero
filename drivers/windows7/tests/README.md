@@ -30,16 +30,10 @@ drivers/windows7/tests/
 - Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
-- (Optional) Runs a virtio-snd test (PCI detection + endpoint enumeration + short playback).
-  - By default, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` (and the corresponding
-    `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`); enable playback with `--test-snd` / `--require-snd`.
-  - Detects the virtio-snd PCI function by hardware ID:
-    - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
-    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
-      `PCI\VEN_1AF4&DEV_1018`.
-      - By default, transitional `DEV_1018` is ignored (contract v1 is modern-only); use
-        `--allow-virtio-snd-transitional` to also accept it.
-  - When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL. Use `--disable-snd` to force SKIP.
+- Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when enabled with `--test-snd`
+  (or `--require-snd`).
+  - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059`).
+    - Aero contract v1 requires `REV_01` and a modern-only virtio-snd PCI function. If the device does not report `REV_01` (or does not expose the modern virtio-snd PCI ID), the Aero INF will not bind and the test will treat the device as missing.
 - Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
 - Logs to:
   - stdout
@@ -65,10 +59,8 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and 
 (virtio-blk + virtio-input + virtio-snd + virtio-net) were emitted so older selftest binaries can’t accidentally pass.
 
 Note:
-- virtio-snd playback is **opt-in**. By default the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
-  Enable playback (and require a virtio-snd device) with `--require-snd` / `--test-snd`.
-  Use `--allow-virtio-snd-transitional` to also accept transitional `DEV_1018` (debug/backcompat only; contract v1 is modern-only).
-  Use `--disable-snd` to force `SKIP` for both playback and capture.
+- The virtio-snd test reports `SKIP` when `PCI\\VEN_1AF4&DEV_1059` is missing by default; use `--require-snd` to make
+  missing virtio-snd fail the overall selftest. Use `--disable-snd` to force `SKIP`.
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed).

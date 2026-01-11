@@ -116,7 +116,7 @@ Notes:
 
 Compatibility note (non-canonical virtio PCI Device IDs):
 
-Transitional virtio-pci IDs (e.g. `1AF4:1000`, `1AF4:1018`) are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.
+Transitional virtio-pci IDs (e.g. `1AF4:1000`, `1AF4:1001`) are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.
 
 ## Windows hardware IDs and driver binding
 
@@ -154,6 +154,9 @@ Examples (illustrative) INF model entries:
 ; aerovnet.inf
 %AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
 %AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01
+
+; aero-virtio-snd.inf
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)

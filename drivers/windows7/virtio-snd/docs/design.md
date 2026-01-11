@@ -10,23 +10,27 @@ The directory contains a clean-room Windows 7 WDM audio adapter driver that
 integrates PortCls **WaveRT** + **Topology** miniports so Windows 7 can enumerate
 an audio endpoint.
 
+This driver targets the **Aero Windows 7 virtio device contract v1** (`AERO-W7-VIRTIO`).
+The authoritative interoperability contract is `docs/windows7-virtio-driver-contract.md`; if this
+design note ever disagrees with the contract, the contract wins.
+
 There are currently two **build/packaging variants** supported:
 
-1. **Aero contract v1 (default CI artifact):** strict PCI identity enforcement
-   (`DEV_1059` + `REV_01`) as encoded by `inf/aero-virtio-snd.inf`.
-2. **QEMU transitional (optional):** transitional virtio-snd identity (`DEV_1018`,
-   typically `REV_00`) as encoded by `inf/aero-virtio-snd-legacy.inf`.
+1. **Aero contract v1 (default CI artifact):** strict PCI identity enforcement (`DEV_1059` + `REV_01`)
+   as encoded by `inf/aero-virtio-snd.inf`.
+2. **QEMU compatibility (optional):** opt-in package for stock QEMU defaults as encoded by
+   `inf/aero-virtio-snd-legacy.inf`.
 
-The two INFs intentionally have **no overlapping hardware IDs** so they do not
-compete for the same PCI function.
+The two INFs intentionally have **no overlapping hardware IDs** so they do not compete for the same PCI function.
 
-Both variants use the same **virtio-pci modern** transport path (PCI vendor-specific
-capabilities + MMIO). The optional QEMU build only relaxes the contract identity
-checks so the driver can start on stock QEMU defaults.
+Both variants use the same **virtio-pci modern** transport path (PCI vendor-specific capabilities + BAR0 MMIO) with
+split-ring virtqueues. The optional QEMU package only relaxes the contract identity checks so the driver can start
+on QEMU defaults.
 
-Note: the repository also contains older legacy/transitional virtio-pci **I/O-port**
-bring-up code (for example `src/backend_virtio_legacy.c`) for historical bring-up
-only; it is not built/shipped.
+Note: the repository also contains older legacy/transitional virtio-pci **I/O-port** bring-up code (for example
+`src/backend_virtio_legacy.c`) for historical bring-up and ad-hoc compatibility testing only. It is not
+built/shipped and is not part of the `AERO-W7-VIRTIO` contract. This path only negotiates the low 32 bits of virtio
+feature flags and is not suitable for contract v1 devices (`VIRTIO_F_VERSION_1` is bit 32).
 
 ## Code organization
 
@@ -49,25 +53,24 @@ only; it is not built/shipped.
 
 ### Legacy virtio-pci I/O-port bring-up (not shipped)
 
-The repository also contains an older legacy/transitional virtio-pci I/O-port
-path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and
-`drivers/windows7/virtio/common/src/virtio_pci_legacy.c`). It is kept for historical bring-up only.
+The repository also contains an older legacy/transitional virtio-pci I/O-port path (for example
+`src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). It is
+kept for historical bring-up and ad-hoc compatibility testing only.
 
 CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
 
 ## Default build architecture (virtio-pci modern endpoint driver)
 
-- **Transport:** virtio-pci **modern** (MMIO + PCI vendor-specific capabilities; negotiates `VIRTIO_F_VERSION_1`).
+- **Transport:** virtio-pci **modern** (BAR0 MMIO + PCI vendor-specific capabilities; negotiates `VIRTIO_F_VERSION_1`).
 - **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four, but the current
   PortCls integration is render-only and primarily uses `controlq` (0) + `txq` (2). `eventq` is currently unused by the render endpoint, and capture endpoint plumbing is still pending.
 - **Interrupts:** INTx only.
 - **Protocol:** PCM control + TX/RX protocol engines for streams 0/1 (PortCls integration is render-only today).
-- **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
-  entries are treated as resource reclamation rather than timing.
+- **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used entries are treated as resource reclamation rather than timing.
 
 The optional `aero-virtio-snd-legacy.inf` package uses the same virtio-pci modern
 transport stack but relaxes PCI identity/version gating so it can be used with
-stock QEMU defaults (transitional `DEV_1018`, typically `REV_00`).
+stock QEMU defaults (transitional virtio-snd PCI ID, typically `REV_00`).
 
 ## High-level architecture
 
@@ -76,7 +79,7 @@ other Windows 7 virtio drivers (blk/net/input).
 
 ### 1) virtio-pci modern transport layer
 
-This section describes the virtio-pci modern architecture used by the driver package.
+This section describes the modern virtio-pci architecture used by the driver.
 
 Responsibilities:
 
@@ -151,8 +154,9 @@ Current behavior:
   - submit one period of PCM into a backend callback.
 - Uses a backend abstraction (`include/backend.h`) so the WaveRT period timer path
   can remain decoupled from virtio transport details.
-- The shipped driver package uses the virtio-pci modern backend (`backend_virtio.c`). A legacy I/O-port backend exists for
-  transitional devices but is not shipped. Capture is not yet exposed as a Windows endpoint.
+- The shipped driver package uses the virtio-pci modern backend (`backend_virtio.c`) and pushes PCM via `controlq`/`txq`.
+  A legacy I/O-port backend exists for compatibility testing with transitional devices, but it is not shipped. Capture is not
+  yet exposed as a Windows endpoint.
 
 ### 5) Interrupt + timer pacing model
 
@@ -206,7 +210,7 @@ Contract v1 requirements include:
   - `txq = 256`
 - `rxq = 64` (initialized; RX engine exists, capture endpoint integration is TBD)
 
-Driver stance (for strict contract-v1 support):
+Driver stance (strict contract-v1):
 
 - Negotiate only the features required for correctness. For contract v1 this
   means enabling `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_INDIRECT_DESC` and

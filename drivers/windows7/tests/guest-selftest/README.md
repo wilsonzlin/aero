@@ -27,16 +27,13 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
 - **virtio-snd** (optional; enable with `--test-snd` / `--require-snd`)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
-    - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
-    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
-      `PCI\VEN_1AF4&DEV_1018`. The default Aero contract-v1 INF is **modern-only**, so the device will not bind
-      unless you install the opt-in transitional package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
-      - Pass `--allow-virtio-snd-transitional` to accept the transitional ID (intended for QEMU bring-up/regression).
-  - Validate that the PCI device is bound to the expected in-tree driver service and emit
+    - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01` and the shipped INF matches `...&REV_01`)
+    - If the VM/device does not report `REV_01` (or does not expose the modern virtio-snd PCI ID), the Aero driver will not bind and the selftest will treat the device as missing.
+  - Validate that the PCI device is bound to the expected in-tree driver service (`aeroviosnd`) and emit
     actionable diagnostics (PNP instance ID, ConfigManagerErrorCode / Device Manager “Code X”, driver INF name
     when queryable).
-    - Modern (`DEV_1059`): expects service `aeroviosnd`
-    - Transitional (`DEV_1018` + `--allow-virtio-snd-transitional`): expects service `aeroviosnd_legacy`
+    - Contract v1 (`aero-virtio-snd.inf`): expects service `aeroviosnd`
+    - QEMU compatibility package (`aero-virtio-snd-legacy.inf`): expects service `aeroviosnd_legacy`
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
@@ -146,7 +143,7 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
 
-To require virtio-snd (fail the overall run if the modern `PCI\VEN_1AF4&DEV_1059` device is missing):
+To require virtio-snd (fail the overall run if the virtio-snd PCI device is missing):
 
 ```bat
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
@@ -155,8 +152,9 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
 
 (Alias: `--test-snd`.)
 
-Note: If your QEMU setup enumerates virtio-snd as the transitional ID (`DEV_1018`), you can allow it explicitly with
-`--allow-virtio-snd-transitional` (debug/backcompat only; the Aero contract v1 driver is modern-only).
+Note: Aero contract v1 requires `REV_01` and a modern-only virtio-snd PCI function. If the device does not report
+`REV_01` (or does not expose the modern virtio-snd PCI ID), the Aero driver will not bind and the selftest will
+report virtio-snd as missing.
 
 To explicitly skip virtio-snd:
 

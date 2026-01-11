@@ -254,17 +254,13 @@ Once the system boots with virtio-snd hardware present:
   Inspect `%WINDIR%\inf\setupapi.dev.log` and search for:
 
   - `aero-virtio-snd.inf`, or
-  - the device hardware ID (for Aero contract v1 virtio-snd: `PCI\VEN_1AF4&DEV_1059&REV_01`; more-specific `SUBSYS_...` qualifiers may also appear)
+  - the device hardware ID (for virtio-snd contract v1: `PCI\VEN_1AF4&DEV_1059&REV_01`; more-specific `SUBSYS_...` qualifiers may also appear)
 
-  Note: `aero-virtio-snd.inf` is intentionally strict and requires the Aero contract v1 HWID
-  (`PCI\VEN_1AF4&DEV_1059&REV_01`). If the device enumerates as transitional (`DEV_1018`) and/or
-  `REV_00` (stock QEMU defaults), either:
+  Note: `aero-virtio-snd.inf` is intentionally strict and matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
+  If the device does not expose that HWID (for example it reports `REV_00` under QEMU defaults), either:
   
   - configure QEMU to expose the contract identity (for example `disable-legacy=on,x-pci-revision=0x01`), or
   - inject/install the legacy package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
-  
-  If your hypervisor cannot expose `DEV_1059&REV_01`, the strict contract INF will not bind; use the
-  legacy package for QEMU bring-up.
 
  If the driver package is staged but the device doesn’t bind:
 

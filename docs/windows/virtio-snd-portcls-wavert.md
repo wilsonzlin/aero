@@ -7,11 +7,20 @@ The goal is to make the first bring-up deterministic: if the driver matches the 
 ## Scope / assumptions (minimum viable endpoint)
 
 * **Windows target:** Windows 7 SP1 (x86/x64). The driver can be built with WDK 7.1 or with newer WDKs (CI uses WDK10/MSBuild).
-* **Device model:** `virtio-snd` PCI function (`PCI\VEN_1AF4&DEV_1059`).
+* **Device model:** `virtio-snd` PCI function (`PCI\VEN_1AF4&DEV_1059&REV_01`; Aero `AERO-W7-VIRTIO` v1).
 * **Audio direction:** render-only (no capture).
-* **Streams:** exactly 1 playback stream.
-* **Format:** fixed **stereo (2ch), 48 kHz, signed 16-bit LE PCM (S16_LE)**.
+* **Streams:** device exposes **2** fixed-format virtio-snd streams by contract; this driver design uses only:
+  * Stream 0: playback/output (render)
+  * Stream 1: capture/input (not exposed yet)
+* **Format (stream 0):** fixed **stereo (2ch), 48 kHz, signed 16-bit LE PCM (S16_LE)**.
 * **Mixing:** Windows audio engine (`audiodg.exe`) does mixing; the miniport is a single shared-mode endpoint.
+* **Virtio transport:** virtio-pci **modern-only** (PCI vendor-specific capabilities + BAR0 MMIO).
+* **Virtio feature bits:** `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only.
+* **Virtqueues (contract v1):** `controlq=64`, `eventq=64`, `txq=256`, `rxq=64`.
+
+Authoritative virtio contract:
+
+* [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md) (AERO-W7-VIRTIO v1)
 
 Non-goals:
 
@@ -654,7 +663,7 @@ And in `AddReg`:
 
 Match at least:
 
-* `PCI\VEN_1AF4&DEV_1059` (virtio-snd)
+* `PCI\VEN_1AF4&DEV_1059&REV_01` (virtio-snd, Aero contract v1)
 
 For the Aero Windows 7 virtio contract (`AERO-W7-VIRTIO` v1), the in-tree Win7 `virtio-snd`
 package is intentionally **revision-gated** and matches only:
@@ -663,11 +672,11 @@ package is intentionally **revision-gated** and matches only:
 
 Optionally add more specific matches for your emulator’s subsystem ids if used:
 
-* `PCI\VEN_1AF4&DEV_1059&SUBSYS_XXXXXXXXYYYYYYYY`
-* (Aero contract v1 example) `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
+* `PCI\VEN_1AF4&DEV_1059&SUBSYS_XXXXXXXXYYYYYYYY&REV_01` (example placeholder)
+* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (Aero contract v1 example; also present as a commented-out match in `aero-virtio-snd.inf`)
 
-When testing under QEMU, note that virtio devices are often transitional and may default to
-`REV_00`. For strict Aero contract-v1 binding you typically need:
+When testing under QEMU, note that virtio devices may default to `REV_00`. For strict Aero
+contract-v1 binding you typically need:
 
 * `-device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01`
 

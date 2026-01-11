@@ -42,17 +42,16 @@ The shipped INF is intentionally strict and only matches Aero contract v1 device
 
 The INF does **not** match:
 
-- Transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`)
-- Any “short form” without the revision gate (for example `PCI\VEN_1AF4&DEV_1059`), even though those appear in the Windows device contract manifest for tooling convenience
+- Any legacy/transitional virtio-pci device IDs.
+- Any “short form” without the revision gate (for example `PCI\VEN_1AF4&DEV_1059`), even though those appear in the Windows device contract manifest for tooling convenience.
 
-The source tree also contains a legacy filename alias INF checked in as
-`inf/virtio-snd.inf.disabled` for compatibility with tooling/workflows that still reference
-`virtio-snd.inf`. When enabled (rename to `inf/virtio-snd.inf`), it installs the same driver/service
-as `aero-virtio-snd.inf`, matches the same Aero contract v1 HWIDs, and uses
+The source tree also contains a legacy filename alias INF checked in as `inf/virtio-snd.inf.disabled` for compatibility
+with tooling/workflows that still reference `virtio-snd.inf`. When enabled (rename to `inf/virtio-snd.inf`), it
+installs the same driver/service as `aero-virtio-snd.inf`, matches the same Aero contract v1 HWIDs, and uses
 `CatalogFile = virtio-snd.cat`.
 
-CI packaging stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping
-multiple INFs that match the same device IDs.
+CI packaging stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping multiple INFs that match
+the same hardware IDs.
 
 See also: [`pci-hwids.md`](pci-hwids.md) and `inf/aero-virtio-snd.inf`.
 
@@ -109,7 +108,7 @@ weakening the default Aero contract-v1 INF:
 | Variant | MSBuild config | SYS | INF | Binds to |
 | --- | --- | --- | --- | --- |
 | **Aero contract v1 (default)** | `Release` | `virtiosnd.sys` | `inf/aero-virtio-snd.inf` | `PCI\VEN_1AF4&DEV_1059&REV_01` |
-| **QEMU transitional (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | `PCI\VEN_1AF4&DEV_1018` |
+| **QEMU compatibility (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | transitional virtio-snd PCI ID (no revision gate) |
 
 The two INFs intentionally have **no overlapping hardware IDs**, so they do not compete for the
 same device.
@@ -620,7 +619,7 @@ guest-tools\drivers\<arch>\virtio-snd\
 INF selection note:
 
 - `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `DEV_1059&REV_01` and installs service `aeroviosnd`).
-- `aero-virtio-snd-legacy.inf` is an opt-in transitional/QEMU package (matches `DEV_1018` with no revision gate and installs service `aeroviosnd_legacy`).
+- `aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd PCI ID with no revision gate and installs service `aeroviosnd_legacy`).
 - `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows.
   It installs the same driver/service as `aero-virtio-snd.inf` and matches the same Aero contract v1 HWIDs,
   but uses `CatalogFile = virtio-snd.cat`.
