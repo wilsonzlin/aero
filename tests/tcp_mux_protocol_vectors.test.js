@@ -1,11 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, it } from "node:test";
 
 import {
-  TCP_MUX_SUBPROTOCOL,
   TcpMuxFrameParser,
-  TcpMuxMsgType,
   decodeTcpMuxClosePayload,
   decodeTcpMuxErrorPayload,
   decodeTcpMuxOpenPayload,
@@ -15,84 +14,109 @@ import {
   encodeTcpMuxOpenPayload,
 } from "../tools/net-proxy-server/src/protocol.js";
 
+function decodeB64(b64) {
+  return Buffer.from(b64, "base64");
+}
+
 function loadVectors() {
-  const path = new URL("./protocol-vectors/networking.json", import.meta.url);
-  return JSON.parse(readFileSync(path, "utf8"));
+  const vectorsPath = fileURLToPath(new URL("../protocol-vectors/tcp-mux-v1.json", import.meta.url));
+  return JSON.parse(fs.readFileSync(vectorsPath, "utf8"));
 }
 
 const vectors = loadVectors();
+assert.equal(vectors.schema, 1);
 
-test("tools/net-proxy-server tcp-mux framing matches shared protocol vectors", () => {
-  const v = vectors.tcpMux.v1;
-  assert.equal(v.subprotocol, TCP_MUX_SUBPROTOCOL);
+describe("tools/net-proxy-server tcp-mux protocol vectors", () => {
+  for (const v of vectors.frames) {
+    it(`frame/${v.name}`, () => {
+      const payload = decodeB64(v.payload_b64);
+      const expectedFrame = decodeB64(v.frame_b64);
 
-  const open = v.frames.open;
-  const openPayload = encodeTcpMuxOpenPayload({ host: open.host, port: open.port, metadata: open.metadata });
-  assert.equal(openPayload.toString("hex"), open.payloadHex);
-  assert.deepEqual(decodeTcpMuxOpenPayload(openPayload), { host: open.host, port: open.port, metadata: open.metadata });
-  const openFrame = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, open.streamId, openPayload);
-  assert.equal(openFrame.toString("hex"), open.frameHex);
+      const parser = new TcpMuxFrameParser();
+      const parsed = parser.push(expectedFrame);
+      assert.equal(parsed.length, 1);
+      assert.equal(parsed[0].msgType, v.msgType);
+      assert.equal(parsed[0].streamId, v.streamId);
+      assert.deepEqual(parsed[0].payload, payload);
+      assert.doesNotThrow(() => parser.finish());
 
-  const data = v.frames.data;
-  const dataPayload = Buffer.from(data.payloadHex, "hex");
-  const dataFrame = encodeTcpMuxFrame(TcpMuxMsgType.DATA, data.streamId, dataPayload);
-  assert.equal(dataFrame.toString("hex"), data.frameHex);
-
-  const close = v.frames.close;
-  const closePayload = encodeTcpMuxClosePayload(close.flags);
-  assert.equal(closePayload.toString("hex"), close.payloadHex);
-  assert.deepEqual(decodeTcpMuxClosePayload(closePayload), { flags: close.flags });
-  const closeFrame = encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, close.streamId, closePayload);
-  assert.equal(closeFrame.toString("hex"), close.frameHex);
-
-  const error = v.frames.error;
-  const errorPayload = encodeTcpMuxErrorPayload(error.code, error.message);
-  assert.equal(errorPayload.toString("hex"), error.payloadHex);
-  assert.deepEqual(decodeTcpMuxErrorPayload(errorPayload), { code: error.code, message: error.message });
-  const errorFrame = encodeTcpMuxFrame(TcpMuxMsgType.ERROR, error.streamId, errorPayload);
-  assert.equal(errorFrame.toString("hex"), error.frameHex);
-
-  const ping = v.frames.ping;
-  const pingPayload = Buffer.from(ping.payloadHex, "hex");
-  const pingFrame = encodeTcpMuxFrame(TcpMuxMsgType.PING, ping.streamId, pingPayload);
-  assert.equal(pingFrame.toString("hex"), ping.frameHex);
-
-  const pong = v.frames.pong;
-  const pongPayload = Buffer.from(pong.payloadHex, "hex");
-  const pongFrame = encodeTcpMuxFrame(TcpMuxMsgType.PONG, pong.streamId, pongPayload);
-  assert.equal(pongFrame.toString("hex"), pong.frameHex);
-});
-
-test("tools/net-proxy-server tcp-mux parser handles shared vectors across chunk boundaries", () => {
-  const v = vectors.tcpMux.v1.frames;
-  const stream = Buffer.concat([
-    Buffer.from(v.open.frameHex, "hex"),
-    Buffer.from(v.data.frameHex, "hex"),
-    Buffer.from(v.close.frameHex, "hex"),
-    Buffer.from(v.error.frameHex, "hex"),
-    Buffer.from(v.ping.frameHex, "hex"),
-    Buffer.from(v.pong.frameHex, "hex"),
-  ]);
-
-  const parser = new TcpMuxFrameParser();
-  const frames = [];
-  for (let i = 0; i < stream.length; i++) {
-    for (const frame of parser.push(stream.subarray(i, i + 1))) {
-      frames.push({
-        msgType: frame.msgType,
-        streamId: frame.streamId,
-        payloadHex: frame.payload.toString("hex"),
-      });
-    }
+      const encoded = encodeTcpMuxFrame(v.msgType, v.streamId, payload);
+      assert.deepEqual(encoded, expectedFrame);
+    });
   }
-  assert.equal(parser.pendingBytes(), 0);
 
-  assert.deepEqual(frames, [
-    { msgType: TcpMuxMsgType.OPEN, streamId: v.open.streamId, payloadHex: v.open.payloadHex },
-    { msgType: TcpMuxMsgType.DATA, streamId: v.data.streamId, payloadHex: v.data.payloadHex },
-    { msgType: TcpMuxMsgType.CLOSE, streamId: v.close.streamId, payloadHex: v.close.payloadHex },
-    { msgType: TcpMuxMsgType.ERROR, streamId: v.error.streamId, payloadHex: v.error.payloadHex },
-    { msgType: TcpMuxMsgType.PING, streamId: v.ping.streamId, payloadHex: v.ping.payloadHex },
-    { msgType: TcpMuxMsgType.PONG, streamId: v.pong.streamId, payloadHex: v.pong.payloadHex },
-  ]);
+  for (const v of vectors.openPayloads) {
+    it(`openPayload/${v.name}`, () => {
+      const expected = decodeB64(v.payload_b64);
+
+      const encoded = encodeTcpMuxOpenPayload({ host: v.host, port: v.port, metadata: v.metadata });
+      assert.deepEqual(encoded, expected);
+
+      const decoded = decodeTcpMuxOpenPayload(encoded);
+      assert.equal(decoded.host, v.host);
+      assert.equal(decoded.port, v.port);
+      assert.equal(decoded.metadata, v.metadata);
+    });
+  }
+
+  for (const v of vectors.closePayloads) {
+    it(`closePayload/${v.name}`, () => {
+      const expected = decodeB64(v.payload_b64);
+
+      const encoded = encodeTcpMuxClosePayload(v.flags);
+      assert.deepEqual(encoded, expected);
+
+      const decoded = decodeTcpMuxClosePayload(encoded);
+      assert.equal(decoded.flags, v.flags);
+    });
+  }
+
+  for (const v of vectors.errorPayloads) {
+    it(`errorPayload/${v.name}`, () => {
+      const payload = decodeB64(v.payload_b64);
+
+      if ("expectError" in v && v.expectError) {
+        assert.throws(
+          () => decodeTcpMuxErrorPayload(payload),
+          (err) => err instanceof Error && err.message.includes(v.errorContains),
+        );
+        return;
+      }
+
+      const encoded = encodeTcpMuxErrorPayload(v.code, v.message);
+      assert.deepEqual(encoded, payload);
+
+      const decoded = decodeTcpMuxErrorPayload(payload);
+      assert.deepEqual(decoded, { code: v.code, message: v.message });
+    });
+  }
+
+  for (const v of vectors.parserStreams) {
+    it(`parserStream/${v.name}`, () => {
+      const parser = new TcpMuxFrameParser();
+      const parsed = [];
+      for (const chunkB64 of v.chunks_b64) {
+        parsed.push(...parser.push(decodeB64(chunkB64)));
+      }
+
+      if ("expectError" in v && v.expectError) {
+        assert.throws(
+          () => parser.finish(),
+          (err) => err instanceof Error && err.message.includes(v.errorContains),
+        );
+        return;
+      }
+
+      assert.equal(parsed.length, v.expectFrames.length);
+      for (let i = 0; i < v.expectFrames.length; i++) {
+        const exp = v.expectFrames[i];
+        const got = parsed[i];
+        assert.equal(got.msgType, exp.msgType);
+        assert.equal(got.streamId, exp.streamId);
+        assert.deepEqual(got.payload, decodeB64(exp.payload_b64));
+      }
+
+      assert.doesNotThrow(() => parser.finish());
+    });
+  }
 });

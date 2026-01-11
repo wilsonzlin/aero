@@ -1,4 +1,4 @@
-import "fake-indexeddb/auto";
+import "../../test/fake_indexeddb_auto.ts";
 
 import { describe, expect, it } from "vitest";
 

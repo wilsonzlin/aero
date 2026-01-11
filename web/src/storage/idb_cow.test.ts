@@ -1,4 +1,4 @@
-import "fake-indexeddb/auto";
+import "../../test/fake_indexeddb_auto.ts";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -90,4 +90,3 @@ describe("IdbCowDisk", () => {
     await cow2.close();
   });
 });
-
