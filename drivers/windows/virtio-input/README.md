@@ -50,8 +50,18 @@ The output `virtioinput.sys` will be placed under the WDK `objfre_*` output dire
 
 ## Installing on Windows 7 SP1
 
-1. Ensure the virtio-input device is present. In QEMU, the device is commonly exposed as `virtio-input-pci` and shows the PCI hardware ID:
-   - `PCI\VEN_1AF4&DEV_1052`
+1. Ensure the virtio-input PCI device is present.
+   - In QEMU, virtio-input is typically exposed via:
+     - `virtio-keyboard-pci`
+     - `virtio-mouse-pci`
+     - `virtio-tablet-pci`
+   - For Aero contract v1 testing, pass `disable-legacy=on,x-pci-revision=0x01` so the device matches `AERO-W7-VIRTIO` v1
+     (modern transport + `REV_01`), e.g.:
+     - `-device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01`
+     - `-device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01`
+   - In Device Manager, the device’s Hardware Ids should include at least:
+     - `PCI\VEN_1AF4&DEV_1052`
+     - (and more-specific forms like `...&SUBSYS_...&REV_01` depending on the device model)
 2. Build and **test-sign** the driver package (or enable test signing):
    - `bcdedit /set testsigning on`
    - Reboot
