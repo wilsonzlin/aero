@@ -126,4 +126,9 @@ runs:
       if: ${{ inputs.skip-npm-ci != 'true' }}
       shell: bash
       working-directory: ${{ steps.detect.outputs.install_dir }}
+      env:
+        # Prevent Playwright's postinstall hook from downloading browser binaries during npm ci.
+        # CI should download browsers via the dedicated `.github/actions/setup-playwright` step,
+        # which enables caching and avoids flaky installs.
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       run: npm ci
