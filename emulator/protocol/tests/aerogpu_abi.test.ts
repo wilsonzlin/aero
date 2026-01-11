@@ -492,6 +492,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_seq"), 32);
   assert.equal(off("aerogpu_escape_query_vblank_out", "last_vblank_time_ns"), 40);
   assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_period_ns"), 48);
+  assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_interrupt_type"), 52);
 
   // Constants.
   assert.equal(konst("AEROGPU_ABI_MAJOR"), BigInt(AEROGPU_ABI_MAJOR));
@@ -674,6 +675,7 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"), 1n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID"), 2n);
 });
 
 test("decodeAllocTableHeader accepts unknown minor versions and extended strides", () => {

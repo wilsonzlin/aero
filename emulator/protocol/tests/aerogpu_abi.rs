@@ -691,6 +691,10 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_vblank_out", "vblank_period_ns"),
         48
     );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_vblank_out", "vblank_interrupt_type"),
+        52
+    );
 
     // UMD-private discovery blob (UMDRIVERPRIVATE).
     assert_off!(
@@ -1094,6 +1098,10 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"),
         1
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID"),
+        2
     );
 }
 

@@ -175,6 +175,7 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_seq);
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, last_vblank_time_ns);
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_period_ns);
+  PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_interrupt_type);
 
   /* ------------------------------ Constants ------------------------------- */
   PRINT_CONST(AEROGPU_ABI_MAJOR);
@@ -349,6 +350,7 @@ int main(void) {
 
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID);
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED);
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID);
 
   return 0;
 }
