@@ -1,6 +1,9 @@
 use super::ExecOutcome;
 use crate::exception::Exception;
-use crate::linear_mem::{read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped, write_u32_wrapped, write_u64_wrapped};
+use crate::linear_mem::{
+    read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped, write_u32_wrapped,
+    write_u64_wrapped,
+};
 use crate::mem::CpuBus;
 use crate::state::{CpuMode, CpuState, FLAG_DF, FLAG_ZF};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};

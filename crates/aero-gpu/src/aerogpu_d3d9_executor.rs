@@ -623,8 +623,11 @@ impl AerogpuD3d9Executor {
         self.encoder = None;
 
         // Avoid leaking constants across resets; the next draw will rewrite what it needs.
-        self.queue
-            .write_buffer(&self.constants_buffer, 0, &[0u8; CONSTANTS_BUFFER_SIZE_BYTES]);
+        self.queue.write_buffer(
+            &self.constants_buffer,
+            0,
+            &[0u8; CONSTANTS_BUFFER_SIZE_BYTES],
+        );
     }
 
     pub fn device(&self) -> &wgpu::Device {

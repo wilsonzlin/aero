@@ -3,7 +3,8 @@ use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
         AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR,
-        AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
+        AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AEROGPU_RESOURCE_USAGE_TEXTURE,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
 };
@@ -193,9 +194,5 @@ fn d3d9_cmd_stream_isolates_state_per_context() {
         .expect("readback RT2 should succeed");
 
     assert_eq!(&rgba1[0..4], &[0, 0, 255, 255], "RT1 should be blue");
-    assert_eq!(
-        &rgba2[0..4],
-        &[0, 255, 0, 255],
-        "RT2 should remain green"
-    );
+    assert_eq!(&rgba2[0..4], &[0, 255, 0, 255], "RT2 should remain green");
 }

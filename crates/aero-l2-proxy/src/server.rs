@@ -3,8 +3,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
-        Mutex,
+        Arc, Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -12,9 +11,7 @@ use std::{
 use axum::{
     extract::{
         ws::{WebSocket, WebSocketUpgrade},
-        ConnectInfo,
-        OriginalUri,
-        State,
+        ConnectInfo, OriginalUri, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::IntoResponse,

@@ -280,4 +280,3 @@ fn tier0_fetch_wraps_across_32bit_linear_boundary() {
     run_to_halt(&mut state, &mut bus, 16);
     assert_eq!(state.read_reg(Register::AL), 0xA5);
 }
-

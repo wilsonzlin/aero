@@ -393,7 +393,12 @@ fn calc_ea(
     }
 }
 
-fn read_mem<B: CpuBus>(state: &CpuState, bus: &mut B, addr: u64, bits: u32) -> Result<u64, Exception> {
+fn read_mem<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    addr: u64,
+    bits: u32,
+) -> Result<u64, Exception> {
     match bits {
         8 => Ok(bus.read_u8(state.apply_a20(addr))? as u64),
         16 => Ok(read_u16_wrapped(state, bus, addr)? as u64),
@@ -1090,11 +1095,12 @@ fn tss32_ring0_stack<B: CpuBus>(
         return Err(Exception::ts(0));
     }
     // TSS reads are system-structure accesses and ignore paging U/S restrictions.
-    let (ss0, esp0) = state.with_supervisor_access(bus, |bus, state| -> Result<(u16, u32), Exception> {
-        let esp0 = read_u32_wrapped(state, bus, base.wrapping_add(4))?;
-        let ss0 = read_u16_wrapped(state, bus, base.wrapping_add(8))?;
-        Ok((ss0, esp0))
-    })?;
+    let (ss0, esp0) =
+        state.with_supervisor_access(bus, |bus, state| -> Result<(u16, u32), Exception> {
+            let esp0 = read_u32_wrapped(state, bus, base.wrapping_add(4))?;
+            let ss0 = read_u16_wrapped(state, bus, base.wrapping_add(8))?;
+            Ok((ss0, esp0))
+        })?;
     if (ss0 >> 3) == 0 {
         return Err(Exception::ts(0));
     }

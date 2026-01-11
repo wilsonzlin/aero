@@ -223,7 +223,12 @@ impl SecurityConfig {
 
         let trust_proxy = std::env::var("AERO_L2_TRUST_PROXY")
             .ok()
-            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+            .map(|v| {
+                matches!(
+                    v.trim(),
+                    "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+                )
+            })
             .unwrap_or(false);
 
         let max_connections_per_ip = std::env::var("AERO_L2_MAX_CONNECTIONS_PER_IP")

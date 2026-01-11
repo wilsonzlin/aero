@@ -224,4 +224,3 @@ pub fn fetch_wrapped<B: CpuBus>(
     }
     Ok(buf)
 }
-
