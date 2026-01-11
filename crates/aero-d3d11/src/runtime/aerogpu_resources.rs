@@ -10,14 +10,12 @@ use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::{
-    parse_signatures, translate_sm4_module_to_wgsl, translate_sm4_to_wgsl, DxbcFile, ShaderStage,
-    Sm4Program,
-};
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations, InputLayoutBinding, InputLayoutDesc,
     VsInputSignatureElement,
 };
+use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
+use crate::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderStage, Sm4Program};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackingInfo {
@@ -283,7 +281,7 @@ impl AerogpuResourceManager {
         }
         let wgsl = match try_translate_sm4_signature_driven(&dxbc, &program, &signatures) {
             Ok(wgsl) => wgsl,
-            Err(_) => translate_sm4_to_wgsl(&program)
+            Err(_) => translate_sm4_to_wgsl_bootstrap(&program)
                 .map_err(|e| anyhow!("DXBC->WGSL translation failed: {e}"))?
                 .wgsl,
         };

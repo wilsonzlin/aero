@@ -19,9 +19,8 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
-use crate::{
-    parse_signatures, translate_sm4_module_to_wgsl, translate_sm4_to_wgsl, DxbcFile, Sm4Program,
-};
+use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
+use crate::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, Sm4Program};
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 
@@ -1029,7 +1028,7 @@ impl AerogpuD3d11Executor {
 
         let wgsl = match try_translate_sm4_signature_driven(&dxbc, &program, &signatures) {
             Ok(wgsl) => wgsl,
-            Err(_) => translate_sm4_to_wgsl(&program)
+            Err(_) => translate_sm4_to_wgsl_bootstrap(&program)
                 .context("DXBC->WGSL translation failed")?
                 .wgsl,
         };

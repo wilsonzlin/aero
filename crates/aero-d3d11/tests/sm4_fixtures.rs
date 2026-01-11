@@ -1,7 +1,7 @@
 use std::fs;
 
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, translate_sm4_to_wgsl, BindingKind, DxbcFile,
+    parse_signatures, translate_sm4_to_wgsl, translate_sm4_to_wgsl_bootstrap, BindingKind, DxbcFile,
     FourCC, RegFile, ShaderStage, Sm4Decl, Sm4Inst, Sm4Program, SrcKind,
 };
 
@@ -46,12 +46,14 @@ fn parses_and_translates_sm4_vs_passthrough_fixture() {
                 && matches!(src.kind, SrcKind::Register(r) if r.file == RegFile::Input && r.index == 0)
     ));
 
-    let wgsl_full = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+    let wgsl_full = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
         .expect("signature-driven translation failed")
         .wgsl;
     assert_wgsl_parses(&wgsl_full);
 
-    let wgsl = translate_sm4_to_wgsl(&program).expect("translation failed").wgsl;
+    let wgsl = translate_sm4_to_wgsl_bootstrap(&program)
+        .expect("translation failed")
+        .wgsl;
     assert_wgsl_parses(&wgsl);
     assert!(wgsl.contains("@vertex"));
     assert!(wgsl.contains("out.pos = input.v0"));
@@ -84,17 +86,18 @@ fn parses_and_translates_sm4_ps_passthrough_fixture() {
                 && matches!(src.kind, SrcKind::Register(r) if r.file == RegFile::Input && r.index == 1)
     ));
 
-    let wgsl_full = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+    let wgsl_full = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
         .expect("signature-driven translation failed")
         .wgsl;
     assert_wgsl_parses(&wgsl_full);
 
-    let wgsl = translate_sm4_to_wgsl(&program).expect("translation failed").wgsl;
+    let wgsl = translate_sm4_to_wgsl_bootstrap(&program)
+        .expect("translation failed")
+        .wgsl;
     assert_wgsl_parses(&wgsl);
     assert!(wgsl.contains("@fragment"));
     assert!(wgsl.contains("return input.v1"));
 }
-
 #[test]
 fn parses_and_translates_sm4_vs_matrix_fixture() {
     let bytes = load_fixture("vs_matrix.dxbc");
@@ -121,7 +124,7 @@ fn parses_and_translates_sm4_vs_matrix_fixture() {
         "expected dp4 instructions"
     );
 
-    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+    let translated = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
         .expect("signature-driven translation failed");
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("struct Cb0"));
@@ -153,7 +156,7 @@ fn parses_and_translates_sm4_ps_sample_fixture() {
         "expected sample instruction"
     );
 
-    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+    let translated = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
         .expect("signature-driven translation failed");
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("textureSample(t0, s0"));

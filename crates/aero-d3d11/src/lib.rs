@@ -13,6 +13,7 @@ pub mod signature;
 pub mod sm4;
 pub mod sm4_ir;
 pub mod wgsl;
+mod wgsl_bootstrap;
 
 pub use aero_dxbc::{DxbcChunk, DxbcError, DxbcFile, FourCC};
 pub use shader_translate::{
@@ -29,3 +30,6 @@ pub use sm4_ir::{
     SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 pub use wgsl::{translate_sm4_to_wgsl, WgslError, WgslTranslation};
+pub use wgsl_bootstrap::{
+    translate_sm4_to_wgsl_bootstrap, WgslBootstrapError, WgslBootstrapTranslation,
+};
