@@ -215,7 +215,7 @@ Disk image streaming is implemented via `fetch()` (often with HTTP `Range` reque
 
 **Quick header checklist for a cross-origin image host (example):**
 
-_Preflight (`OPTIONS`) response_:
+*Preflight (`OPTIONS`) response*:
 
 ```http
 HTTP/1.1 204 No Content
@@ -226,7 +226,7 @@ Access-Control-Max-Age: 600
 Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 ```
 
-_Disk byte response (`GET`/`HEAD`, including `206 Partial Content`)_:
+*Disk byte response (`GET`/`HEAD`, including `206 Partial Content`)*:
 
 ```http
 Access-Control-Allow-Origin: https://app.example.com

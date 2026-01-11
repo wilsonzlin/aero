@@ -750,7 +750,7 @@ impl DnsResolver {
 
 > For the exact Windows 7 driver ↔ Aero device-model interoperability contract (PCI transport, virtqueue rules, and virtio-net requirements), see:  
 > [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md)  
->  
+>
 > For the split-ring virtqueue implementation algorithms used by Windows 7 KMDF virtio drivers, see:  
 > [`docs/virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md)
 

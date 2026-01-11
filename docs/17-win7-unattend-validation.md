@@ -631,7 +631,7 @@ rem If `where` is not available (some WinPE environments), use:
 dir /s /b C:\AERO_CONFIG.MEDIA 2>nul
 ```
 
-* If `%configsetroot%` is empty, do **not** rely on it; treat CD1 as “just another CD drive” and use drive-letter discovery (see [Fallback](#fallback-approach-if-configsetroot--oem--are-unreliable)).
+* If `%configsetroot%` is empty, do **not** rely on it; treat CD1 as “just another CD drive” and use drive-letter discovery (see [Fallback](#fallback-approach-if-configsetroot--oem-are-unreliable)).
 
 ---
 

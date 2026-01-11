@@ -934,7 +934,7 @@ Example shape:
       "cache_hit_rate": 0.9875,
       "compile_ms_per_s": 3.4,
       "blocks_compiled_per_s": 12.0
-	}
+    }
   }
 }
 ```

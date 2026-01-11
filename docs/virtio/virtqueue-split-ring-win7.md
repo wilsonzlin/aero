@@ -19,17 +19,17 @@ Related Aero Windows driver references:
 ## Contents
 
 * [Reference implementation in this repo](#reference-implementation-in-this-repo)
-* [Scope / non-scope](#scope-non-scope)
-* [Terminology](#terminology-virtio-spec-linux-vringh-names)
+* [Scope / non-scope](#scope--non-scope)
+* [Terminology](#terminology-virtio-spec--linux-vringh-names)
 * [Split ring layout and field semantics](#1-split-ring-layout-and-field-semantics)
 * [Ring memory layout, sizing, and alignment](#2-ring-memory-layout-sizing-and-alignment)
 * [Driver-side virtqueue state](#3-driver-side-virtqueue-state-what-to-track)
-* [Descriptor allocation/free](#4-descriptor-allocationfree-free-list-cookie-mapping)
-* [Publishing to the avail ring](#5-publishing-to-the-avail-ring-driver-device)
-* [Consuming the used ring](#6-consuming-the-used-ring-device-driver)
+* [Descriptor allocation/free](#4-descriptor-allocationfree-free-list--cookie-mapping)
+* [Publishing to the avail ring](#5-publishing-to-the-avail-ring-driver--device)
+* [Consuming the used ring](#6-consuming-the-used-ring-device--driver)
 * [`VIRTIO_F_RING_EVENT_IDX`](#7-virtio_f_ring_event_idx-event-index)
 * [`VIRTIO_F_RING_INDIRECT_DESC`](#8-virtio_f_ring_indirect_desc-indirect-descriptors)
-* [Windows 7 / KMDF specifics](#9-windows-7-kmdf-specifics-practical-constraints)
+* [Windows 7 / KMDF specifics](#9-windows-7--kmdf-specifics-practical-constraints)
 * [End-to-end pseudocode example](#10-end-to-end-pseudocode-example-virtio-input-style-rx-queue)
 * [Common pitfalls](#11-common-pitfalls-things-that-break-real-drivers)
 
