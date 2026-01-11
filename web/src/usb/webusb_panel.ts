@@ -41,18 +41,6 @@ function summarizeUsbDevice(device: USBDevice): Record<string, unknown> {
   };
 }
 
-function formatErrorWithHints(err: unknown): string {
-  const formatted = formatWebUsbError(err);
-  const explained = explainWebUsbError(err);
-  const parts: string[] = [explained.title];
-  if (explained.details) parts.push(explained.details);
-  if (formatted) parts.push(formatted);
-  if (explained.hints.length) {
-    parts.push(`Hints:\n${explained.hints.map((h) => `- ${h}`).join("\n")}`);
-  }
-  return parts.join("\n\n");
-}
-
 async function requestUsbDevice(usb: USB): Promise<{ device: USBDevice; filterNote: string }> {
   // Chromium versions differ on whether `filters: []` and/or `filters: [{}]` are allowed.
   // Try a few reasonable fallbacks so the smoke test works in more environments.
@@ -89,7 +77,6 @@ async function requestUsbDevice(usb: USB): Promise<{ device: USBDevice; filterNo
 
   throw lastErr ?? new Error("USB requestDevice failed");
 }
-
 async function runWebUsbProbeWorker(msg: unknown, timeoutMs = 10_000): Promise<unknown> {
   const worker = new Worker(new URL("./webusb_probe_worker.ts", import.meta.url), { type: "module" });
 
@@ -183,13 +170,47 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const output = document.createElement("pre");
   output.className = "mono";
 
-  const error = document.createElement("pre");
-  error.className = "mono error";
+  const errorTitle = document.createElement("div");
+  errorTitle.className = "bad";
 
-  panel.append(title, note, actions, workerActions, status, output, error);
+  const errorDetails = document.createElement("div");
+  errorDetails.className = "hint";
+
+  const errorRaw = document.createElement("pre");
+  errorRaw.className = "mono";
+
+  const errorHints = document.createElement("ul");
+
+  panel.append(title, note, actions, workerActions, status, output, errorTitle, errorDetails, errorRaw, errorHints);
 
   let selected: USBDevice | null = null;
   let nextRequestId = 1;
+
+  const clearError = () => {
+    errorTitle.textContent = "";
+    errorDetails.textContent = "";
+    errorRaw.textContent = "";
+    errorHints.replaceChildren();
+  };
+
+  const showMessage = (message: string) => {
+    clearError();
+    errorTitle.textContent = message;
+  };
+
+  const showError = (err: unknown) => {
+    const explained = explainWebUsbError(err);
+    errorTitle.textContent = explained.title;
+    errorDetails.textContent = explained.details ?? "";
+    errorRaw.textContent = formatWebUsbError(err);
+    errorHints.replaceChildren(
+      ...explained.hints.map((hint) => {
+        const li = document.createElement("li");
+        li.textContent = hint;
+        return li;
+      }),
+    );
+  };
 
   const refreshStatus = () => {
     if (!report.webusb) {
@@ -220,11 +241,11 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   refreshStatus();
 
   requestButton.onclick = async () => {
-    error.textContent = "";
+    clearError();
     output.textContent = "";
 
     if (!report.webusb) {
-      error.textContent = "WebUSB is not supported in this browser/context.";
+      showMessage("WebUSB is not supported in this browser/context.");
       return;
     }
 
@@ -242,7 +263,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       status.textContent = "Device selected.";
       output.textContent = JSON.stringify({ selected: summarizeUsbDevice(device), filterNote }, null, 2);
     } catch (err) {
-      error.textContent = formatErrorWithHints(err);
+      showError(err);
       console.error(err);
       selected = null;
     } finally {
@@ -252,11 +273,11 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   };
 
   listButton.onclick = async () => {
-    error.textContent = "";
+    clearError();
     output.textContent = "";
 
     if (!report.webusb) {
-      error.textContent = "WebUSB is not supported in this browser/context.";
+      showMessage("WebUSB is not supported in this browser/context.");
       return;
     }
 
@@ -275,7 +296,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         2,
       );
     } catch (err) {
-      error.textContent = formatErrorWithHints(err);
+      showError(err);
       console.error(err);
     } finally {
       refreshStatus();
@@ -283,24 +304,24 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   };
 
   workerProbeButton.onclick = async () => {
-    error.textContent = "";
+    clearError();
     output.textContent = "";
 
     try {
       const resp = await runWebUsbProbeWorker({ type: "probe" });
       output.textContent = JSON.stringify(resp, null, 2);
     } catch (err) {
-      error.textContent = formatErrorWithHints(err);
+      showError(err);
       console.error(err);
     }
   };
 
   cloneButton.onclick = async () => {
-    error.textContent = "";
+    clearError();
     output.textContent = "";
 
     if (!selected) {
-      error.textContent = "No device selected. Click “Request USB device” first.";
+      showMessage("No device selected. Click “Request USB device” first.");
       refreshStatus();
       return;
     }
@@ -309,18 +330,18 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       const resp = await runWebUsbProbeWorker({ type: "clone-test", device: selected });
       output.textContent = JSON.stringify(resp, null, 2);
     } catch (err) {
-      error.textContent = formatErrorWithHints(err);
+      showError(err);
       console.error(err);
     }
   };
 
   openButton.onclick = async () => {
-    error.textContent = "";
+    clearError();
     output.textContent = "";
 
     const device = selected;
     if (!device) {
-      error.textContent = "No device selected. Click “Request USB device” first.";
+      showMessage("No device selected. Click “Request USB device” first.");
       refreshStatus();
       return;
     }
@@ -374,7 +395,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       output.textContent = `${header}\n\nDescriptor bytes:\n${formatHexBytes(completion.data)}\n\n${parsedLines}`;
       status.textContent = "OK.";
     } catch (err) {
-      error.textContent = formatErrorWithHints(err);
+      showError(err);
       status.textContent = "Failed.";
       console.error(err);
     } finally {

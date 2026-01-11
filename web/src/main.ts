@@ -12,7 +12,6 @@ import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatur
 import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
 import { mountWebHidPassthroughPanel, WebHidPassthroughManager } from "./platform/webhid_passthrough";
-import { mountWebUsbDiagnosticsPanel } from "./platform/webusb_diagnostics";
 import { initAeroStatusApi } from "./api/status";
 import { AeroConfigManager } from "./config/manager";
 import { InputCapture } from "./input/input_capture";
@@ -254,7 +253,6 @@ function render(): void {
     renderAudioPanel(),
     renderMicrophonePanel(),
     renderWebUsbPanel(report),
-    renderWebUsbDiagnosticsPanel(),
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
     renderWorkersPanel(report),
@@ -2078,12 +2076,6 @@ function renderWebHidPassthroughPanel(): HTMLElement {
   const host = el("div");
   mountWebHidPassthroughPanel(host, new WebHidPassthroughManager());
   return el("div", { class: "panel" }, host);
-}
-
-function renderWebUsbDiagnosticsPanel(): HTMLElement {
-  const host = el("div");
-  mountWebUsbDiagnosticsPanel(host);
-  return el("div", { class: "panel" }, el("h2", { text: "WebUSB diagnostics" }), host);
 }
 
 function renderMicrobenchPanel(): HTMLElement {
