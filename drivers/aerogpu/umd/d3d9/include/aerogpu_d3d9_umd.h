@@ -526,14 +526,14 @@ typedef struct _D3DDDIARG_SUBMITCOMMAND {
   UINT PatchLocationListSize; // entries used
   void* pDmaBufferPrivateData;
   UINT DmaBufferPrivateDataSize; // bytes
-  // Win7/WDDM 1.1 submission fences are 32-bit (ULONG).
-  UINT SubmissionFenceId; // out
-  void* pNewCommandBuffer; // out
-  UINT NewCommandBufferSize;
-  D3DDDI_ALLOCATIONLIST* pNewAllocationList; // out
-  UINT NewAllocationListSize;
-  D3DDDI_PATCHLOCATIONLIST* pNewPatchLocationList; // out
-  UINT NewPatchLocationListSize;
+  // Fence outputs (WDK header-dependent).
+  //
+  // Win7-era headers commonly expose a 32-bit SubmissionFenceId. Newer header
+  // vintages can also include 64-bit fence value fields.
+  UINT SubmissionFenceId; // out (legacy 32-bit fence value)
+  uint64_t NewFenceValue; // out (preferred 64-bit fence value when present)
+  uint64_t FenceValue;    // out (alternate 64-bit fence value)
+  uint64_t* pFenceValue;  // out (alternate pointer form)
 } D3DDDIARG_SUBMITCOMMAND;
 
 typedef struct _D3DDDICB_RENDER {

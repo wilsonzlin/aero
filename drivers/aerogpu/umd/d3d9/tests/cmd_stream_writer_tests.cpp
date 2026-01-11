@@ -3668,7 +3668,8 @@ bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
       }
       if (upload->resource_handle == ib_handle) {
         saw_ib_upload = true;
-        if (!Check(upload->size_bytes == sizeof(indices), "upload_resource(IB) size")) {
+        const uint64_t expected_size = static_cast<uint64_t>(AlignUp(sizeof(indices), 4));
+        if (!Check(upload->size_bytes == expected_size, "upload_resource(IB) size")) {
           return false;
         }
       }
