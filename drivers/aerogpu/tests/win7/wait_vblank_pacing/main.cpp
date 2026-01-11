@@ -1,6 +1,15 @@
 #include "..\\common\\aerogpu_test_common.h"
 
-#include <d3dkmthk.h>
+// This test directly exercises the WDDM kernel vblank wait path by calling
+// D3DKMTWaitForVerticalBlankEvent in a tight loop and measuring the pacing.
+//
+// It intentionally avoids requiring the Windows Driver Kit (WDK): the test
+// dynamically loads the required D3DKMT entry points from gdi32.dll and defines
+// the minimal thunk structs locally.
+
+typedef LONG NTSTATUS;
+
+typedef UINT D3DKMT_HANDLE;
 
 #ifndef NT_SUCCESS
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
@@ -8,12 +17,30 @@
 
 typedef ULONG(WINAPI* PFNRtlNtStatusToDosError)(NTSTATUS Status);
 
+typedef struct D3DKMT_OPENADAPTERFROMHDC {
+  HDC hDc;
+  D3DKMT_HANDLE hAdapter;
+  LUID AdapterLuid;
+  UINT VidPnSourceId;
+} D3DKMT_OPENADAPTERFROMHDC;
+
+typedef struct D3DKMT_CLOSEADAPTER {
+  D3DKMT_HANDLE hAdapter;
+} D3DKMT_CLOSEADAPTER;
+
+typedef struct D3DKMT_WAITFORVERTICALBLANKEVENT {
+  D3DKMT_HANDLE hAdapter;
+  D3DKMT_HANDLE hDevice;
+  UINT VidPnSourceId;
+} D3DKMT_WAITFORVERTICALBLANKEVENT;
+
 struct D3DKMT_FUNCS {
   HMODULE gdi32;
 
   typedef NTSTATUS(WINAPI* PFND3DKMTOpenAdapterFromHdc)(D3DKMT_OPENADAPTERFROMHDC* pData);
   typedef NTSTATUS(WINAPI* PFND3DKMTCloseAdapter)(D3DKMT_CLOSEADAPTER* pData);
-  typedef NTSTATUS(WINAPI* PFND3DKMTWaitForVerticalBlankEvent)(D3DKMT_WAITFORVERTICALBLANKEVENT* pData);
+  typedef NTSTATUS(WINAPI* PFND3DKMTWaitForVerticalBlankEvent)(
+      D3DKMT_WAITFORVERTICALBLANKEVENT* pData);
 
   PFND3DKMTOpenAdapterFromHdc OpenAdapterFromHdc;
   PFND3DKMTCloseAdapter CloseAdapter;
@@ -160,6 +187,7 @@ static int RunWaitVblankPacing(int argc, char** argv) {
   D3DKMT_WAITFORVERTICALBLANKEVENT wait;
   ZeroMemory(&wait, sizeof(wait));
   wait.hAdapter = h_adapter;
+  wait.hDevice = 0;
   wait.VidPnSourceId = 0;
 
   // Warm up once to avoid counting first-time initialization.
