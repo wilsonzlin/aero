@@ -3584,7 +3584,18 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
 #endif
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("OpenAdapter10");
-  return OpenAdapter_WDK(pOpenData);
+  if (!pOpenData) {
+    return E_INVALIDARG;
+  }
+  // `OpenAdapter10` is the D3D10 entrypoint. Some runtimes treat `Interface` as
+  // an in/out negotiation field; accept 0 and force D3D10DDI.
+  if (pOpenData->Interface == 0) {
+    pOpenData->Interface = D3D10DDI_INTERFACE_VERSION;
+  }
+  if (pOpenData->Interface != D3D10DDI_INTERFACE_VERSION) {
+    return E_INVALIDARG;
+  }
+  return AeroGpuOpenAdapter10Wdk(pOpenData);
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
@@ -3599,6 +3610,16 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
 #endif
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("OpenAdapter10_2");
+  if (!pOpenData) {
+    return E_INVALIDARG;
+  }
+  // `OpenAdapter10_2` is the D3D10.1 entrypoint. Accept 0 and force D3D10_1DDI.
+  if (pOpenData->Interface == 0) {
+    pOpenData->Interface = D3D10_1DDI_INTERFACE_VERSION;
+  }
+  if (pOpenData->Interface != D3D10_1DDI_INTERFACE_VERSION) {
+    return E_INVALIDARG;
+  }
   return OpenAdapter_WDK(pOpenData);
 }
 } // extern "C"
