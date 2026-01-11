@@ -59,11 +59,20 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
     parse_signature_chunk_impl(None, bytes)
 }
 
-pub(crate) fn parse_signature_chunk_for_fourcc(
+/// Parses a DXBC signature chunk payload, using the chunk `fourcc` to prefer the
+/// correct entry layout (`*SGN` vs `*SG1`) without relying on heuristics.
+pub fn parse_signature_chunk_with_fourcc(
     fourcc: FourCC,
     bytes: &[u8],
 ) -> Result<SignatureChunk, DxbcError> {
     parse_signature_chunk_impl(Some(fourcc), bytes)
+}
+
+pub(crate) fn parse_signature_chunk_for_fourcc(
+    fourcc: FourCC,
+    bytes: &[u8],
+) -> Result<SignatureChunk, DxbcError> {
+    parse_signature_chunk_with_fourcc(fourcc, bytes)
 }
 
 fn parse_signature_chunk_impl(

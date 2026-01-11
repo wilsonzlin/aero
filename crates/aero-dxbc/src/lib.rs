@@ -18,4 +18,6 @@ mod signature;
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
 pub use crate::error::DxbcError;
 pub use crate::fourcc::FourCC;
-pub use crate::signature::{parse_signature_chunk, SignatureChunk, SignatureEntry};
+pub use crate::signature::{
+    parse_signature_chunk, parse_signature_chunk_with_fourcc, SignatureChunk, SignatureEntry,
+};
