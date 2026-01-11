@@ -87,8 +87,8 @@ function aeroBuildInfoPlugin(): Plugin {
   };
 }
 function wasmMimeTypePlugin(): Plugin {
-  const setWasmHeader: Plugin["configureServer"] = (server) => {
-    server.middlewares.use((req, res, next) => {
+  const installWasmMiddleware = (middlewares: { use: (...args: any[]) => any }) => {
+    middlewares.use((req: { url?: string }, res: { setHeader: (name: string, value: string) => void }, next: () => void) => {
       // `instantiateStreaming` requires the correct MIME type.
       const pathname = req.url?.split("?", 1)[0];
       if (pathname?.endsWith(".wasm")) {
@@ -100,8 +100,12 @@ function wasmMimeTypePlugin(): Plugin {
 
   return {
     name: "wasm-mime-type",
-    configureServer: setWasmHeader,
-    configurePreviewServer: setWasmHeader,
+    configureServer(server) {
+      installWasmMiddleware(server.middlewares);
+    },
+    configurePreviewServer(server) {
+      installWasmMiddleware(server.middlewares);
+    },
   };
 }
 

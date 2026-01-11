@@ -17,8 +17,8 @@ const coopCoepSetting = (process.env.VITE_DISABLE_COOP_COEP ?? '').toLowerCase()
 const coopCoepDisabled = coopCoepSetting === '1' || coopCoepSetting === 'true';
 
 function wasmMimeTypePlugin(): Plugin {
-  const installMiddleware = (middlewares: { use: (fn: (...args: any[]) => void) => void }) => {
-    middlewares.use((req, res, next) => {
+  const installWasmMiddleware = (middlewares: { use: (...args: any[]) => any }) => {
+    middlewares.use((req: { url?: string }, res: { setHeader: (name: string, value: string) => void }, next: () => void) => {
       // `instantiateStreaming` requires the correct MIME type.
       const pathname = req.url?.split('?', 1)[0];
       if (pathname?.endsWith('.wasm')) {
@@ -31,10 +31,10 @@ function wasmMimeTypePlugin(): Plugin {
   return {
     name: 'wasm-mime-type',
     configureServer(server) {
-      installMiddleware(server.middlewares);
+      installWasmMiddleware(server.middlewares);
     },
     configurePreviewServer(server) {
-      installMiddleware(server.middlewares);
+      installWasmMiddleware(server.middlewares);
     },
   };
 }

@@ -349,36 +349,26 @@ node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
   --profile pr-smoke
 ```
 
-### Run the Storage I/O benchmark (Playwright + OPFS/IndexedDB)
+### Run + compare the storage I/O benchmark suite (OPFS + IndexedDB)
 
-The storage microbench runs in a real Chromium instance via Playwright and measures:
-
-- sequential read/write throughput (MB/s)
-- random 4K read latency (p50/p95)
-
-It prefers OPFS (sync access handle when available) and falls back to IndexedDB. The benchmark
-uses a fixed RNG seed in CI so random I/O patterns are repeatable.
-
-Run the scenario runner (writes `report.json`, `storage_bench.json`, and `perf_export.json`):
+The storage bench is a Playwright-driven macrobench (`bench/runner.ts storage_io`) that writes a raw `storage_bench.json`.
+To reproduce the CI compare locally:
 
 ```bash
+npm run bench:storage -- --out-dir storage-perf-results/base
 npm run bench:storage -- --out-dir storage-perf-results/head
-```
 
-Compare two `storage_bench.json` outputs and write a Markdown diff:
-
-```bash
 node --experimental-strip-types bench/compare.ts \
   --baseline storage-perf-results/base/storage_bench.json \
   --candidate storage-perf-results/head/storage_bench.json \
-  --out-dir storage-perf-results \
+  --out-dir storage-perf-results/compare \
   --thresholds-file bench/perf_thresholds.json \
   --profile pr-smoke
 ```
 
 Outputs:
- - `storage-perf-results/compare.md`
- - `storage-perf-results/summary.json` (machine-readable)
+- `storage-perf-results/compare/compare.md`
+- `storage-perf-results/compare/summary.json` (machine-readable)
 
 ### Interpreting summary output and variance warnings
 

@@ -174,21 +174,27 @@ npm run bench:storage -- --out-dir storage-perf-results/head
 ### Comparing two runs
 
 ```bash
-node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
+node --experimental-strip-types bench/compare.ts \
   --baseline storage-perf-results/base/storage_bench.json \
-  --current storage-perf-results/head/storage_bench.json \
-  --outDir storage-perf-results \
-  --thresholdPct 15 \
-  --json
+  --candidate storage-perf-results/head/storage_bench.json \
+  --out-dir storage-perf-results/compare \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 
-cat storage-perf-results/compare.md
+cat storage-perf-results/compare/compare.md
 ```
 
-The compare script writes `compare.md` + `summary.json` to `--out-dir` and exits non-zero if any metric
-regresses by more than the configured threshold (exit code 2 indicates extreme variance / missing data).
-`scripts/compare_storage_benchmarks.ts --json` also writes `compare.json` (a copy of `summary.json`) for legacy tooling.
-The per-metric table includes the baseline/current coefficient-of-variation (CV) computed from the
-per-run samples for quick noise inspection.
+The compare tool writes `compare.md` + `summary.json` to `--out-dir` and gates on:
+
+- capability regressions (e.g. OPFS → IndexedDB fallback, or OPFS `sync_access_handle` → `async`)
+- benchmark config mismatches between baseline/current runs (to avoid apples-to-oranges comparisons)
+- extreme variance (CV threshold per metric)
+
+It also includes any `warnings[]` from the benchmark output in the Markdown report.
+The exit code matches other perf suites (`0` pass, `1` regression, `2` unstable).
+
+`scripts/compare_storage_benchmarks.ts` remains as a compatibility wrapper for older invocations
+(`--current`, `--outDir`, `--thresholdPct`, `--json`) and can write `compare.json` for legacy tooling.
 
 ## Gateway benchmark suite (backend networking)
 

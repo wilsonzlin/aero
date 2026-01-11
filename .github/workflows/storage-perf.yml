@@ -67,7 +67,7 @@ jobs:
             --out-dir ../head/storage-perf-results/base
 
       - name: Validate perf export (baseline)
-        working-directory: head
+        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input storage-perf-results/base/perf_export.json
 
       - name: Run storage perf (candidate)
@@ -80,28 +80,26 @@ jobs:
           cp storage-perf-results/head/storage_bench.json storage-perf-results/head.json
 
       - name: Validate perf export (candidate)
-        working-directory: head
+        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input storage-perf-results/head/perf_export.json
 
-      - name: Compare (fail on regression)
-        working-directory: head
+      - name: Compare storage perf (job summary)
+        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: |
+          set +e
           node --experimental-strip-types bench/compare.ts \
             --baseline storage-perf-results/base/storage_bench.json \
             --candidate storage-perf-results/head/storage_bench.json \
-            --out-dir storage-perf-results \
+            --out-dir storage-perf-results/compare \
             --thresholds-file bench/perf_thresholds.json \
             --profile pr-smoke
-
-      - name: Job summary
-        if: always()
-        working-directory: head
-        run: |
-          if [[ -f storage-perf-results/compare.md ]]; then
-            cat storage-perf-results/compare.md >> "$GITHUB_STEP_SUMMARY"
+          status=$?
+          if [[ -f storage-perf-results/compare/compare.md ]]; then
+            cat storage-perf-results/compare/compare.md >> "$GITHUB_STEP_SUMMARY"
           else
             echo "No storage perf comparison produced (compare.md missing)." >> "$GITHUB_STEP_SUMMARY"
           fi
+          exit $status
 
       - name: Upload storage perf artifacts
         if: always()
