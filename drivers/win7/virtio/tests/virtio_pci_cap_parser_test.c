@@ -1781,6 +1781,19 @@ static void test_identity_contract_v1_bad_argument_null_cfg_space(void) {
     expect_identity_result("identity_contract_v1_bad_argument_null_cfg_space.res", res, VIRTIO_PCI_IDENTITY_ERR_BAD_ARGUMENT);
 }
 
+static void test_identity_contract_v1_ok_null_out_identity(void) {
+    uint8_t cfg[256];
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    write_le16(&cfg[0x00], VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    write_le16(&cfg[0x02], 0x1052);
+    cfg[0x08] = VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID;
+
+    res = virtio_pci_identity_validate_aero_contract_v1(cfg, sizeof(cfg), NULL, 0, NULL);
+    expect_identity_result("identity_contract_v1_ok_null_out_identity.res", res, VIRTIO_PCI_IDENTITY_OK);
+}
+
 static void test_identity_contract_v1_allowed_list_empty_ok(void) {
     uint8_t cfg[256];
     virtio_pci_identity_t id;
@@ -1810,6 +1823,20 @@ static void test_identity_contract_v1_cfg_space_too_small(void) {
     expect_identity_result("identity_contract_v1_cfg_space_too_small.res", res, VIRTIO_PCI_IDENTITY_ERR_CFG_SPACE_TOO_SMALL);
 }
 
+static void test_aero_layout_validation_permissive_ignores_missing_bar0(void) {
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_PERMISSIVE);
+    expect_layout_result("aero_layout_validation_permissive_ignores_missing_bar0.res",
+                         res,
+                         VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK);
+}
+
 int main(void) {
     test_valid_all_caps();
     test_contract_v1_parse_fixed_layout_ok();
@@ -1819,6 +1846,7 @@ int main(void) {
     test_aero_layout_validation_bad_argument_null_caps();
     test_aero_layout_validation_bad_argument_null_bars();
     test_aero_layout_validation_bad_argument_unknown_policy();
+    test_aero_layout_validation_permissive_ignores_missing_bar0();
     test_aero_layout_validation_ok_with_larger_lengths();
     test_aero_layout_validation_common_len_too_small();
     test_aero_layout_validation_notify_len_too_small();
@@ -1872,6 +1900,7 @@ int main(void) {
     test_identity_parse_reads_subsystem_ids();
     test_identity_parse_truncated_subsystem_ids_zeroed();
     test_identity_contract_v1_bad_argument_null_cfg_space();
+    test_identity_contract_v1_ok_null_out_identity();
     test_identity_contract_v1_allowed_list_empty_ok();
     test_identity_contract_v1_cfg_space_too_small();
 
