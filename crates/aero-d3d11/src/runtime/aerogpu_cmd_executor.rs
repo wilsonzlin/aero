@@ -973,6 +973,14 @@ impl AerogpuD3d11Executor {
                 .buffers
                 .get(&vb.buffer)
                 .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+            if vb.offset_bytes > buf.size {
+                bail!(
+                    "vertex buffer {} offset {} out of bounds (size={})",
+                    vb.buffer,
+                    vb.offset_bytes,
+                    buf.size
+                );
+            }
             pass.set_vertex_buffer(wgpu_slot as u32, buf.buffer.slice(vb.offset_bytes..));
         }
         if let Some(ib) = state.index_buffer {
@@ -980,6 +988,14 @@ impl AerogpuD3d11Executor {
                 .buffers
                 .get(&ib.buffer)
                 .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+            if ib.offset_bytes > buf.size {
+                bail!(
+                    "index buffer {} offset {} out of bounds (size={})",
+                    ib.buffer,
+                    ib.offset_bytes,
+                    buf.size
+                );
+            }
             pass.set_index_buffer(buf.buffer.slice(ib.offset_bytes..), ib.format);
         }
 
