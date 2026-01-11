@@ -354,11 +354,33 @@ struct has_member_SubmissionFenceId : std::false_type {};
 template <typename T>
 struct has_member_SubmissionFenceId<T, std::void_t<decltype(std::declval<T>().SubmissionFenceId)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_pSubmissionFenceId : std::false_type {};
+
+template <typename T>
+struct has_member_pSubmissionFenceId<T, std::void_t<decltype(std::declval<T>().pSubmissionFenceId)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_FenceValue : std::false_type {};
+
+template <typename T>
+struct has_member_FenceValue<T, std::void_t<decltype(std::declval<T>().FenceValue)>> : std::true_type {};
+
 template <typename SubmitArgsT>
 uint64_t extract_submit_fence(const SubmitArgsT& args) {
   uint64_t fence = 0;
   if constexpr (has_member_NewFenceValue<SubmitArgsT>::value) {
     fence = static_cast<uint64_t>(args.NewFenceValue);
+  }
+  if constexpr (has_member_FenceValue<SubmitArgsT>::value) {
+    if (fence == 0) {
+      fence = static_cast<uint64_t>(args.FenceValue);
+    }
+  }
+  if constexpr (has_member_pFenceValue<SubmitArgsT>::value) {
+    if (fence == 0 && args.pFenceValue) {
+      fence = static_cast<uint64_t>(*args.pFenceValue);
+    }
   }
   if constexpr (has_member_SubmissionFenceId<SubmitArgsT>::value) {
     // If both fields exist prefer the 64-bit value when present.
@@ -366,7 +388,112 @@ uint64_t extract_submit_fence(const SubmitArgsT& args) {
       fence = static_cast<uint64_t>(args.SubmissionFenceId);
     }
   }
+  if constexpr (has_member_pSubmissionFenceId<SubmitArgsT>::value) {
+    if (fence == 0 && args.pSubmissionFenceId) {
+      fence = static_cast<uint64_t>(*args.pSubmissionFenceId);
+    }
+  }
   return fence;
+}
+
+template <typename T, typename = void>
+struct has_member_hAdapter : std::false_type {};
+
+template <typename T>
+struct has_member_hAdapter<T, std::void_t<decltype(std::declval<T>().hAdapter)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hContext : std::false_type {};
+
+template <typename T>
+struct has_member_hContext<T, std::void_t<decltype(std::declval<T>().hContext)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ObjectCount : std::false_type {};
+
+template <typename T>
+struct has_member_ObjectCount<T, std::void_t<decltype(std::declval<T>().ObjectCount)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ObjectHandleArray : std::false_type {};
+
+template <typename T>
+struct has_member_ObjectHandleArray<T, std::void_t<decltype(std::declval<T>().ObjectHandleArray)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hSyncObjects : std::false_type {};
+
+template <typename T>
+struct has_member_hSyncObjects<T, std::void_t<decltype(std::declval<T>().hSyncObjects)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_FenceValueArray : std::false_type {};
+
+template <typename T>
+struct has_member_FenceValueArray<T, std::void_t<decltype(std::declval<T>().FenceValueArray)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Timeout : std::false_type {};
+
+template <typename T>
+struct has_member_Timeout<T, std::void_t<decltype(std::declval<T>().Timeout)>> : std::true_type {};
+
+template <typename WaitArgsT>
+void fill_wait_for_sync_object_args(WaitArgsT* args,
+                                    D3DKMT_HANDLE hContext,
+                                    D3DKMT_HANDLE hAdapter,
+                                    const D3DKMT_HANDLE* handles,
+                                    const UINT64* fence_values,
+                                    UINT64 fence_value,
+                                    UINT64 timeout) {
+  if (!args) {
+    return;
+  }
+
+  if constexpr (has_member_hContext<WaitArgsT>::value) {
+    args->hContext = hContext;
+  }
+  if constexpr (has_member_hAdapter<WaitArgsT>::value) {
+    args->hAdapter = hAdapter;
+  }
+
+  if constexpr (has_member_ObjectCount<WaitArgsT>::value) {
+    args->ObjectCount = 1;
+  }
+
+  // Handle-array field name drift: prefer the array form when present.
+  if constexpr (has_member_ObjectHandleArray<WaitArgsT>::value) {
+    if constexpr (std::is_pointer_v<decltype(args->ObjectHandleArray)>) {
+      args->ObjectHandleArray = handles;
+    } else {
+      args->ObjectHandleArray = handles ? handles[0] : 0;
+    }
+  } else if constexpr (has_member_hSyncObjects<WaitArgsT>::value) {
+    if constexpr (std::is_pointer_v<decltype(args->hSyncObjects)>) {
+      args->hSyncObjects = handles;
+    } else {
+      args->hSyncObjects = handles ? handles[0] : 0;
+    }
+  }
+
+  // Fence-value field name drift: prefer the array form when present.
+  if constexpr (has_member_FenceValueArray<WaitArgsT>::value) {
+    if constexpr (std::is_pointer_v<decltype(args->FenceValueArray)>) {
+      args->FenceValueArray = fence_values;
+    } else {
+      args->FenceValueArray = fence_value;
+    }
+  } else if constexpr (has_member_FenceValue<WaitArgsT>::value) {
+    if constexpr (std::is_pointer_v<decltype(args->FenceValue)>) {
+      args->FenceValue = fence_values;
+    } else {
+      args->FenceValue = fence_value;
+    }
+  }
+
+  if constexpr (has_member_Timeout<WaitArgsT>::value) {
+    args->Timeout = timeout;
+  }
 }
 
 struct SubmissionBuffers {
@@ -701,6 +828,8 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       if (!callbacks->pfnPresentCb) {
         return E_NOTIMPL;
       }
+      uint32_t fence_id_tmp = 0;
+      uint64_t fence_value_tmp = 0;
       D3DDDICB_PRESENT present = {};
       __if_exists(D3DDDICB_PRESENT::hContext) {
         present.hContext = hContext;
@@ -738,6 +867,12 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
         present.DmaBufferPrivateDataSize = buf.dma_private_data_bytes;
       }
+      __if_exists(D3DDDICB_PRESENT::pSubmissionFenceId) {
+        present.pSubmissionFenceId = reinterpret_cast<decltype(present.pSubmissionFenceId)>(&fence_id_tmp);
+      }
+      __if_exists(D3DDDICB_PRESENT::pFenceValue) {
+        present.pFenceValue = reinterpret_cast<decltype(present.pFenceValue)>(&fence_value_tmp);
+      }
 
       submit_hr = CallCbMaybeHandle(callbacks->pfnPresentCb,
                                     MakeRtDevice11(runtime_device_private),
@@ -754,6 +889,8 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       if (!callbacks->pfnRenderCb) {
         return E_NOTIMPL;
       }
+      uint32_t fence_id_tmp = 0;
+      uint64_t fence_value_tmp = 0;
       D3DDDICB_RENDER render = {};
       __if_exists(D3DDDICB_RENDER::hContext) {
         render.hContext = hContext;
@@ -790,6 +927,12 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       }
       __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
         render.DmaBufferPrivateDataSize = buf.dma_private_data_bytes;
+      }
+      __if_exists(D3DDDICB_RENDER::pSubmissionFenceId) {
+        render.pSubmissionFenceId = reinterpret_cast<decltype(render.pSubmissionFenceId)>(&fence_id_tmp);
+      }
+      __if_exists(D3DDDICB_RENDER::pFenceValue) {
+        render.pFenceValue = reinterpret_cast<decltype(render.pFenceValue)>(&fence_value_tmp);
       }
 
       submit_hr =
@@ -969,13 +1112,7 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
   if constexpr (has_pfnWaitForSynchronizationObjectCb<D3DDDI_DEVICECALLBACKS>::value) {
     if (callbacks_->pfnWaitForSynchronizationObjectCb) {
       D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
-      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
-        args.hContext = hContext_;
-      }
-      args.ObjectCount = 1;
-      args.ObjectHandleArray = handles;
-      args.FenceValueArray = fence_values;
-      args.Timeout = timeout;
+      fill_wait_for_sync_object_args(&args, hContext_, /*hAdapter=*/0, handles, fence_values, fence, timeout);
 
       const HRESULT hr = CallCbMaybeHandle(callbacks_->pfnWaitForSynchronizationObjectCb,
                                            MakeRtDevice11(runtime_device_private_),
@@ -1003,10 +1140,7 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
   }
 
   D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
-  args.ObjectCount = 1;
-  args.ObjectHandleArray = handles;
-  args.FenceValueArray = fence_values;
-  args.Timeout = timeout;
+  fill_wait_for_sync_object_args(&args, hContext_, kmt_adapter_for_debug_, handles, fence_values, fence, timeout);
 
   const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
   if (st == STATUS_TIMEOUT) {
@@ -1062,13 +1196,7 @@ uint64_t WddmSubmit::QueryCompletedFence() {
     if constexpr (has_pfnWaitForSynchronizationObjectCb<D3DDDI_DEVICECALLBACKS>::value) {
       if (callbacks_ && callbacks_->pfnWaitForSynchronizationObjectCb && runtime_device_private_ && hContext_ && hSyncObject_) {
         D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
-        __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
-          args.hContext = hContext_;
-        }
-        args.ObjectCount = 1;
-        args.ObjectHandleArray = handles;
-        args.FenceValueArray = fence_values;
-        args.Timeout = 0; // poll
+        fill_wait_for_sync_object_args(&args, hContext_, /*hAdapter=*/0, handles, fence_values, last_submitted_fence_, /*timeout=*/0);
 
         const HRESULT hr = CallCbMaybeHandle(callbacks_->pfnWaitForSynchronizationObjectCb,
                                              MakeRtDevice11(runtime_device_private_),
@@ -1077,7 +1205,7 @@ uint64_t WddmSubmit::QueryCompletedFence() {
         if (SUCCEEDED(hr)) {
           completed = std::max(completed, last_submitted_fence_);
           need_kmt_fallback = false;
-        } else if (hr == kDxgiErrorWasStillDrawing) {
+        } else if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
           need_kmt_fallback = false;
         }
       }
@@ -1087,10 +1215,13 @@ uint64_t WddmSubmit::QueryCompletedFence() {
       const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
       if (procs.pfn_wait_for_syncobj) {
         D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
-        args.ObjectCount = 1;
-        args.ObjectHandleArray = handles;
-        args.FenceValueArray = fence_values;
-        args.Timeout = 0; // poll
+        fill_wait_for_sync_object_args(&args,
+                                       hContext_,
+                                       kmt_adapter_for_debug_,
+                                       handles,
+                                       fence_values,
+                                       last_submitted_fence_,
+                                       /*timeout=*/0);
 
         const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
         if (st != STATUS_TIMEOUT && NtSuccess(st)) {
