@@ -16,6 +16,7 @@ export const AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE = 1n << 0n;
 export const AEROGPU_UMDPRIV_FEATURE_CURSOR = 1n << 1n;
 export const AEROGPU_UMDPRIV_FEATURE_SCANOUT = 1n << 2n;
 export const AEROGPU_UMDPRIV_FEATURE_VBLANK = 1n << 3n;
+export const AEROGPU_UMDPRIV_FEATURE_TRANSFER = 1n << 4n;
 
 export const AEROGPU_UMDPRIV_FLAG_IS_LEGACY = 1 << 0;
 export const AEROGPU_UMDPRIV_FLAG_HAS_VBLANK = 1 << 1;
@@ -59,4 +60,3 @@ export function decodeUmdPrivateV1(view: DataView, byteOffset = 0): AerogpuUmdPr
     flags: view.getUint32(byteOffset + AEROGPU_UMD_PRIVATE_V1_OFF_FLAGS, true),
   };
 }
-

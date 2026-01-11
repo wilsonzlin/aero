@@ -419,6 +419,10 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       wprintf(L"%sVBLANK", any ? L", " : L" ");
       any = true;
     }
+    if (q.features_lo & AEROGPU_FEATURE_TRANSFER) {
+      wprintf(L"%sTRANSFER", any ? L", " : L" ");
+      any = true;
+    }
     if (!any) {
       wprintf(L" (none)");
     }
@@ -523,6 +527,34 @@ static int DoQueryUmdPrivate(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long)abiMinor);
 
   wprintf(L"  device_features: 0x%I64x\n", (unsigned long long)blob.device_features);
+  if (blob.device_features != 0) {
+    wprintf(L"  decoded_features:");
+    bool any = false;
+    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) {
+      wprintf(L"%sFENCE_PAGE", any ? L", " : L" ");
+      any = true;
+    }
+    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_CURSOR) {
+      wprintf(L"%sCURSOR", any ? L", " : L" ");
+      any = true;
+    }
+    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_SCANOUT) {
+      wprintf(L"%sSCANOUT", any ? L", " : L" ");
+      any = true;
+    }
+    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_VBLANK) {
+      wprintf(L"%sVBLANK", any ? L", " : L" ");
+      any = true;
+    }
+    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) {
+      wprintf(L"%sTRANSFER", any ? L", " : L" ");
+      any = true;
+    }
+    if (!any) {
+      wprintf(L" (none)");
+    }
+    wprintf(L"\n");
+  }
   wprintf(L"  flags: 0x%08lx\n", (unsigned long)blob.flags);
   wprintf(L"    is_legacy: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_IS_LEGACY) != 0));
   wprintf(L"    has_vblank: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0));

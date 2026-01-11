@@ -59,6 +59,8 @@ typedef uint64_t aerogpu_umdpriv_u64;
 #define AEROGPU_UMDPRIV_FEATURE_CURSOR (1ull << 1)
 #define AEROGPU_UMDPRIV_FEATURE_SCANOUT (1ull << 2)
 #define AEROGPU_UMDPRIV_FEATURE_VBLANK (1ull << 3)
+/* Supports transfer/copy commands (e.g. COPY_BUFFER/COPY_TEXTURE2D). */
+#define AEROGPU_UMDPRIV_FEATURE_TRANSFER (1ull << 4)
 
 /* ------------------------------ Blob layout -------------------------------- */
 
