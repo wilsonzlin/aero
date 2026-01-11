@@ -108,10 +108,10 @@ tempfile = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 wasm-bindgen-test = "0.3"
+wgpu = "0.20"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
-wgpu = "0.20"
 
 [workspace.package]
 edition = "2021"
