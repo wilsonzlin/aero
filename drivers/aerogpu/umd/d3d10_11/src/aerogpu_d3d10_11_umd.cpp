@@ -6388,11 +6388,22 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
       //
       // Avoid using a pointer-based layout here; on x86 the pointer+count struct is
       // also 8 bytes and can be misinterpreted by the runtime.
+      static const uint32_t kLevels[] = {kD3DFeatureLevel10_0};
+      struct FeatureLevelsCapsPtr {
+        uint32_t NumFeatureLevels;
+        const uint32_t* pFeatureLevels;
+      };
+
       if (data_size >= sizeof(uint32_t) * 2) {
         std::memset(data, 0, data_size);
         auto* out = reinterpret_cast<uint32_t*>(data);
         out[0] = 1;
         out[1] = kD3DFeatureLevel10_0;
+        constexpr size_t kInlineLevelsOffset = sizeof(uint32_t);
+        constexpr size_t kPtrOffset = offsetof(FeatureLevelsCapsPtr, pFeatureLevels);
+        if (data_size >= sizeof(FeatureLevelsCapsPtr) && kPtrOffset >= kInlineLevelsOffset + sizeof(uint32_t)) {
+          reinterpret_cast<FeatureLevelsCapsPtr*>(data)->pFeatureLevels = kLevels;
+        }
         return S_OK;
       }
 
