@@ -267,7 +267,10 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                                 data: Some(mem::take(received)),
                             };
                         }
-                        ControlResponse::Stall => return UsbHandshake::Stall,
+                        ControlResponse::Stall => {
+                            state.stalled = true;
+                            return UsbHandshake::Stall;
+                        }
                         ControlResponse::Timeout => return UsbHandshake::Timeout,
                         ControlResponse::Data(_) => return UsbHandshake::Stall,
                     }
@@ -293,7 +296,10 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                     .handle_control_request(Self::to_passthrough_setup(setup), None)
                 {
                     ControlResponse::Nak => UsbHandshake::Nak,
-                    ControlResponse::Stall => UsbHandshake::Stall,
+                    ControlResponse::Stall => {
+                        state.stalled = true;
+                        UsbHandshake::Stall
+                    }
                     ControlResponse::Timeout => UsbHandshake::Timeout,
                     // Whether the model reports `Ack` or `Data([])`, treat this as the completion
                     // point for the whole control transfer (status stage).
@@ -347,7 +353,10 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                     .handle_control_request(Self::to_passthrough_setup(setup), None)
                 {
                     ControlResponse::Nak => UsbHandshake::Nak,
-                    ControlResponse::Stall => UsbHandshake::Stall,
+                    ControlResponse::Stall => {
+                        state.stalled = true;
+                        UsbHandshake::Stall
+                    }
                     ControlResponse::Timeout => UsbHandshake::Timeout,
                     ControlResponse::Ack => {
                         state.stage = ControlStage::StatusOut;
@@ -405,7 +414,10 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                         self.control = None;
                         UsbHandshake::Ack { bytes: 0 }
                     }
-                    ControlResponse::Stall => UsbHandshake::Stall,
+                    ControlResponse::Stall => {
+                        state.stalled = true;
+                        UsbHandshake::Stall
+                    }
                     ControlResponse::Timeout => UsbHandshake::Timeout,
                     ControlResponse::Data(_) => UsbHandshake::Stall,
                 }
@@ -540,5 +552,41 @@ mod tests {
         // Status stage for control-IN is an OUT ZLP.
         assert_eq!(dev.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
         assert!(dev.drain_actions().is_empty());
+    }
+
+    #[test]
+    fn control_in_stall_completion_halts_until_next_setup() {
+        let mut dev = UsbWebUsbPassthroughDevice::new();
+
+        let setup = UsbSetupPacket {
+            request_type: 0x80,
+            request: 0x06,
+            value: 0x0100,
+            index: 0,
+            length: 4,
+        };
+
+        dev.handle_setup(setup);
+        let actions = dev.drain_actions();
+        assert_eq!(actions.len(), 1);
+        let id = match actions[0] {
+            UsbHostAction::ControlIn { id, .. } => id,
+            ref other => panic!("unexpected action: {other:?}"),
+        };
+
+        let mut buf = [0u8; 4];
+        assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Nak);
+
+        dev.push_completion(UsbHostCompletion::ControlIn {
+            id,
+            result: UsbHostCompletionIn::Stall,
+        });
+
+        assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Stall);
+        // A stalled control endpoint should keep stalling until the next SETUP resets the pipe.
+        assert_eq!(dev.handle_out(0, &[]), UsbHandshake::Stall);
+
+        dev.handle_setup(setup);
+        assert_eq!(dev.drain_actions().len(), 1);
     }
 }
