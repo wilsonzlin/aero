@@ -156,6 +156,36 @@ static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICECONTEXTFU
               "Expected D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw");
 #endif
 
+// -------------------------------------------------------------------------------------------------
+// Optional bring-up logging for adapter caps queries.
+// Define AEROGPU_D3D10_11_CAPS_LOG in the build to enable.
+// -------------------------------------------------------------------------------------------------
+
+#if defined(AEROGPU_D3D10_11_CAPS_LOG)
+void CapsVLog(const char* fmt, va_list args) {
+  char buf[2048];
+  int n = vsnprintf(buf, sizeof(buf), fmt, args);
+  if (n <= 0) {
+    return;
+  }
+#if defined(_WIN32)
+  OutputDebugStringA(buf);
+#else
+  fputs(buf, stderr);
+#endif
+}
+
+void CapsLog(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  CapsVLog(fmt, args);
+  va_end(args);
+}
+#define CAPS_LOG(...) CapsLog(__VA_ARGS__)
+#else
+#define CAPS_LOG(...) ((void)0)
+#endif
+
 // D3D11_BIND_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
 constexpr uint32_t kD3D11BindIndexBuffer = 0x2;
@@ -206,6 +236,7 @@ constexpr uint32_t kD3D11FormatSupportBuffer = 0x1;
 constexpr uint32_t kD3D11FormatSupportIaVertexBuffer = 0x2;
 constexpr uint32_t kD3D11FormatSupportIaIndexBuffer = 0x4;
 constexpr uint32_t kD3D11FormatSupportTexture2D = 0x20;
+constexpr uint32_t kD3D11FormatSupportShaderLoad = 0x100;
 constexpr uint32_t kD3D11FormatSupportShaderSample = 0x200;
 constexpr uint32_t kD3D11FormatSupportRenderTarget = 0x4000;
 constexpr uint32_t kD3D11FormatSupportBlendable = 0x8000;
@@ -3233,6 +3264,7 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
   const uint32_t type = static_cast<uint32_t>(pGetCaps->Type);
   void* data = pGetCaps->pData;
   const uint32_t data_size = static_cast<uint32_t>(pGetCaps->DataSize);
+  CAPS_LOG("aerogpu-d3d10_11: GetCaps11 type=%u size=%u\n", (unsigned)type, (unsigned)data_size);
 
   // Mirror the non-WDK bring-up behavior: unknown cap types are treated as
   // "supported but with everything disabled" to avoid runtime crashes.
@@ -5736,27 +5768,6 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
 // Adapter DDI
 // -------------------------------------------------------------------------------------------------
 
-HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* pCaps) {
-  const uint32_t type = pCaps ? static_cast<uint32_t>(pCaps->Type) : 0;
-  const uint32_t size = pCaps ? static_cast<uint32_t>(pCaps->DataSize) : 0;
-  AEROGPU_D3D10_TRACEF("GetCaps hAdapter=%p Type=%u DataSize=%u pData=%p",
-                       hAdapter.pDrvPrivate,
-                       type,
-                       size,
-                       pCaps ? pCaps->pData : nullptr);
-
-  if (!pCaps) {
-    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
-  }
-
-  // Tracing-first bring-up: zero-fill unknown caps queries so the runtime keeps
-  // going and we can observe the full query sequence.
-  if (pCaps->pData && pCaps->DataSize) {
-    std::memset(pCaps->pData, 0, pCaps->DataSize);
-  }
-  AEROGPU_D3D10_RET_HR(S_OK);
-}
-
 SIZE_T AEROGPU_APIENTRY CalcPrivateDeviceSize(D3D10DDI_HADAPTER, const D3D10DDIARG_CREATEDEVICE*) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("CalcPrivateDeviceSize");
@@ -5878,32 +5889,6 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
-HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pGetCaps) {
-  AEROGPU_D3D10_TRACEF("GetCaps Type=%u DataSize=%u pData=%p",
-                       pGetCaps ? static_cast<unsigned>(pGetCaps->Type) : 0u,
-                       pGetCaps ? static_cast<unsigned>(pGetCaps->DataSize) : 0u,
-                       pGetCaps ? pGetCaps->pData : nullptr);
-  if (!pGetCaps) {
-    AEROGPU_D3D10_11_LOG("GetCaps pGetCaps=null");
-    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
-  }
-
-  bool recognized = false;
-
-  // For early bring-up, the D3D10/11 caps surface is intentionally conservative.
-  // We currently don't expose detailed caps; we only zero the caller buffer so
-  // the runtime sees a consistent "unsupported" baseline.
-  if (pGetCaps->pData && pGetCaps->DataSize) {
-    std::memset(pGetCaps->pData, 0, pGetCaps->DataSize);
-  }
-
-  AEROGPU_D3D10_11_LOG("GetCaps Type=%u DataSize=%u recognized=%u",
-                       static_cast<unsigned>(pGetCaps->Type),
-                       static_cast<unsigned>(pGetCaps->DataSize),
-                       recognized ? 1u : 0u);
-  AEROGPU_D3D10_RET_HR(S_OK);
-}
-
 void AEROGPU_APIENTRY CloseAdapter(D3D10DDI_HADAPTER hAdapter) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("CloseAdapter hAdapter=%p", hAdapter.pDrvPrivate);
@@ -5995,6 +5980,7 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
   const uint32_t type = static_cast<uint32_t>(pGetCaps->Type);
   void* data = pGetCaps->pData;
   const uint32_t data_size = static_cast<uint32_t>(pGetCaps->DataSize);
+  CAPS_LOG("aerogpu-d3d10_11: GetCaps type=%u size=%u\n", (unsigned)type, (unsigned)data_size);
 
   if (!data || data_size == 0) {
     AEROGPU_D3D10_11_LOG("GetCaps type=%u called with null/empty buffer", (unsigned)type);

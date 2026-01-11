@@ -840,6 +840,10 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
   void* data = pGetCaps->pData;
   const UINT size = pGetCaps->DataSize;
 
+#if defined(AEROGPU_D3D10_11_CAPS_LOG)
+  AEROGPU_D3D10_11_LOG("GetCaps11 type=%u size=%u", (unsigned)static_cast<uint32_t>(pGetCaps->Type), (unsigned)size);
+#endif
+
   auto zero_out = [&] { std::memset(data, 0, size); };
 
   switch (pGetCaps->Type) {
