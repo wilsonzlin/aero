@@ -13,7 +13,7 @@ identity.
 | ABI generation | PCI IDs | Header (source of truth) | Host device model |
 |---|---:|---|---|
 | New, versioned ABI | `VID=0xA3A0, DID=0x0001` (`PCI\VEN_A3A0&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_pci.h` (+ `aerogpu_ring.h`) | `crates/emulator/src/devices/pci/aerogpu.rs` |
-| Legacy bring-up ABI | `VID=0x1AED, DID=0x0001` (`PCI\VEN_1AED&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_protocol.h` | `crates/emulator/src/devices/pci/aerogpu_legacy.rs` |
+| Legacy bring-up ABI | `VID=0x1AED, DID=0x0001` (`PCI\VEN_1AED&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_protocol.h` | `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`) |
 
 ## PCI class identity (base class / subclass / prog-if)
 
@@ -38,8 +38,8 @@ Notes:
 
 `drivers/aerogpu/protocol/aerogpu_protocol.h` is the original, minimal ABI used
 to bring up the Windows 7 WDDM stack. It still exists because there is
-guest-side code that speaks it and the emulator still ships a compatible device
-model (`aerogpu_legacy.rs`).
+guest-side code that speaks it and the emulator still has a compatible device
+model (`aerogpu_legacy.rs`, behind the `emulator/aerogpu-legacy` feature).
 
 `drivers/aerogpu/protocol/aerogpu_pci.h` is the newer, versioned ABI intended
 to become the long-term stable contract. New development should target this ABI

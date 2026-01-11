@@ -13,6 +13,7 @@ via BAR0 MMIO magic:
   Ring = `aerogpu_ring_header` + `aerogpu_submit_desc` slots.
 - **Legacy bring-up ABI device**: `PCI\\VEN_1AED&DEV_0001` ("ARGP")  
   Ring = legacy `aerogpu_legacy_ring_entry` entries (see `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h`).
+  Note: the emulator legacy device model is optional (feature `emulator/aerogpu-legacy`).
 
 `--query-version` (alias: `--query-device`), `--query-fence`, `--dump-ring`, and `--selftest` rely on dbgctl escape
 packets implemented by the installed KMD. The tool is primarily developed against the versioned ("AGPU") path, but
