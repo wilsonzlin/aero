@@ -56,6 +56,18 @@ const TICK_MS = 250;
 // cannot overlap (e.g. autosave timer firing while the user hits "Load").
 let commandChain: Promise<void> = Promise.resolve();
 
+function getSerialOutputLenFromVm(current: InstanceType<WasmApi["DemoVm"]>): number | null {
+  const fn = (current as unknown as { serial_output_len?: () => number }).serial_output_len;
+  if (typeof fn !== "function") return null;
+  try {
+    const value = fn.call(current);
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 function post(msg: WorkerToMainMessage): void {
   ctx.postMessage(msg);
 }
@@ -82,8 +94,16 @@ function startStepLoop(): void {
     try {
       const current = ensureVm();
       current.run_steps(STEPS_PER_TICK);
-      stepsTotal += STEPS_PER_TICK;
-      if (serialBytes !== null) serialBytes += STEPS_PER_TICK;
+      const maybeLen = getSerialOutputLenFromVm(current);
+      if (maybeLen !== null) {
+        // Demo VM writes one serial byte per step; treat serial length as a proxy
+        // for total steps so restored snapshots report meaningful counters.
+        stepsTotal = maybeLen;
+        serialBytes = maybeLen;
+      } else {
+        stepsTotal += STEPS_PER_TICK;
+        if (serialBytes !== null) serialBytes += STEPS_PER_TICK;
+      }
       post({ type: "status", steps: stepsTotal, serialBytes });
     } catch (err) {
       postError(err instanceof Error ? err.message : String(err));
@@ -113,6 +133,12 @@ async function handleInit(ramBytes: number): Promise<InitResult> {
   const streamingRestore =
     typeof (vm as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs === "function";
 
+  const initialLen = getSerialOutputLenFromVm(vm);
+  if (initialLen !== null) {
+    stepsTotal = initialLen;
+    serialBytes = initialLen;
+  }
+
   startStepLoop();
 
   return { wasmVariant: variant, streamingSnapshots, streamingRestore };
@@ -121,8 +147,14 @@ async function handleInit(ramBytes: number): Promise<InitResult> {
 async function handleRunSteps(steps: number): Promise<{ steps: number; serialBytes: number | null }> {
   const current = ensureVm();
   current.run_steps(steps);
-  stepsTotal += steps;
-  if (serialBytes !== null) serialBytes += steps;
+  const maybeLen = getSerialOutputLenFromVm(current);
+  if (maybeLen !== null) {
+    stepsTotal = maybeLen;
+    serialBytes = maybeLen;
+  } else {
+    stepsTotal += steps;
+    if (serialBytes !== null) serialBytes += steps;
+  }
   const state = { steps: stepsTotal, serialBytes };
   post({ type: "status", ...state });
   return state;
@@ -156,7 +188,13 @@ async function handleRestoreFromOpfs(path: string): Promise<{ serialBytes: numbe
   stopStepLoop();
   try {
     await fn.call(current, path);
-    serialBytes = savedSerialBytesByPath.get(path) ?? null;
+    const maybeLen = getSerialOutputLenFromVm(current);
+    if (maybeLen !== null) {
+      stepsTotal = maybeLen;
+      serialBytes = maybeLen;
+    } else {
+      serialBytes = savedSerialBytesByPath.get(path) ?? null;
+    }
   } finally {
     startStepLoop();
   }

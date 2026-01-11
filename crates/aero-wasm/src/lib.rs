@@ -727,6 +727,11 @@ impl DemoVm {
         self.inner.serial_output().to_vec()
     }
 
+    pub fn serial_output_len(&self) -> u32 {
+        let len = self.inner.serial_output().len();
+        len.min(u32::MAX as usize) as u32
+    }
+
     pub fn snapshot_full(&mut self) -> Result<Vec<u8>, JsValue> {
         self.inner
             .take_snapshot_full()

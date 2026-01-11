@@ -66,6 +66,13 @@ export interface WasmApi {
     DemoVm: new (ramSizeBytes: number) => {
         run_steps(steps: number): void;
         serial_output(): Uint8Array;
+        /**
+         * Returns the number of bytes currently in the demo VM's serial output buffer.
+         *
+         * Optional for older WASM builds; prefer this over calling `serial_output()`
+         * when you only need the length (to avoid copying large buffers into JS).
+         */
+        serial_output_len?(): number;
         snapshot_full(): Uint8Array;
         snapshot_dirty(): Uint8Array;
         restore_snapshot(bytes: Uint8Array): void;
