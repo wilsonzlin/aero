@@ -3,7 +3,7 @@
 use crate::common;
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::guest_memory::VecGuestMemory;
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
+use aero_gpu::AerogpuD3d9Executor;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR,
