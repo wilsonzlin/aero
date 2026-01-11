@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -56,9 +57,19 @@ def relposix(path: Path) -> str:
     return path.relative_to(REPO_ROOT).as_posix()
 
 
+@dataclass(frozen=True)
+class HeaderEntry:
+    virtual: str
+    real: str
+
+
 def main() -> None:
-    # Map virtual include path (relative to include root) -> list of real paths.
-    include_map: dict[str, list[str]] = defaultdict(list)
+    # Map *case-insensitive* virtual include path (relative to include root) to a
+    # list of real header paths.
+    #
+    # Windows is case-insensitive, so `virtqueue_split.h` and `VirtQueue_Split.h`
+    # collide even if they are distinct files on a case-sensitive filesystem.
+    include_map: dict[str, list[HeaderEntry]] = defaultdict(list)
 
     for root in INCLUDE_ROOTS:
         if not root.is_dir():
@@ -71,17 +82,22 @@ def main() -> None:
                 continue
 
             virtual = path.relative_to(root).as_posix()
-            include_map[virtual].append(relposix(path))
+            include_map[virtual.lower()].append(
+                HeaderEntry(virtual=virtual, real=relposix(path))
+            )
 
     collisions = {k: v for k, v in include_map.items() if len(v) > 1}
     if collisions:
         lines: list[str] = []
         for virtual in sorted(collisions.keys()):
             lines.append(f"- {virtual}")
-            for real in sorted(collisions[virtual]):
-                lines.append(f"    - {real}")
+            for entry in sorted(
+                collisions[virtual], key=lambda e: (e.virtual.lower(), e.real)
+            ):
+                lines.append(f"    - {entry.real} (as '{entry.virtual}')")
         fail(
-            "duplicate header virtual paths across Win7 virtio include roots (include-order footgun):\n"
+            "duplicate header virtual paths across Win7 virtio include roots "
+            "(include-order footgun; case-insensitive):\n"
             + "\n".join(lines)
         )
 
@@ -90,4 +106,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
