@@ -6,12 +6,14 @@ use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKe
 use aero_gpu::GpuCapabilities;
 use aero_gpu::{GuestMemory, GuestMemoryError};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
-    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
-    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
+    decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
+    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
+    AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -418,16 +420,10 @@ impl AerogpuD3d11Executor {
         allocs: Option<&[AerogpuAllocEntry]>,
         guest_mem: &dyn GuestMemory,
     ) -> Result<ExecuteReport> {
-        let hdr = decode_cmd_stream_header_le(stream_bytes)
-            .map_err(|e| anyhow!("aerogpu_cmd: invalid stream header: {e:?}"))?;
-        let stream_size = hdr.size_bytes as usize;
-        if stream_bytes.len() < stream_size {
-            bail!(
-                "aerogpu_cmd: truncated stream: header size_bytes={}, buf_len={}",
-                stream_size,
-                stream_bytes.len()
-            );
-        }
+        let iter = AerogpuCmdStreamIter::new(stream_bytes)
+            .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
+        let stream_size = iter.header().size_bytes as usize;
+        let mut iter = iter.peekable();
 
         let alloc_map = AllocTable::new(allocs.unwrap_or(&[]))?;
 
@@ -440,18 +436,25 @@ impl AerogpuD3d11Executor {
         let mut report = ExecuteReport::default();
 
         let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
-        while cursor < stream_size {
-            let cmd_hdr = decode_cmd_hdr_le(&stream_bytes[cursor..stream_size])
-                .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {e:?}"))?;
-            let cmd_size = cmd_hdr.size_bytes as usize;
-            if cursor + cmd_size > stream_size {
-                bail!(
-                    "aerogpu_cmd: cmd overruns stream: cursor=0x{cursor:x} cmd_size=0x{cmd_size:x} stream_size=0x{stream_size:x}"
-                );
-            }
-
-            let cmd_bytes = &stream_bytes[cursor..cursor + cmd_size];
-            let opcode = cmd_hdr.opcode;
+        while let Some(next) = iter.peek() {
+            let (cmd_size, opcode) = match next {
+                Ok(packet) => (packet.hdr.size_bytes as usize, packet.hdr.opcode),
+                Err(err) => {
+                    return Err(anyhow!(
+                        "aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"
+                    ));
+                }
+            };
+            let cmd_end = cursor
+                .checked_add(cmd_size)
+                .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
+            let cmd_bytes = stream_bytes
+                .get(cursor..cmd_end)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "aerogpu_cmd: cmd overruns stream: cursor=0x{cursor:x} cmd_size=0x{cmd_size:x} stream_size=0x{stream_size:x}"
+                    )
+                })?;
 
             // Commands that need a render-pass boundary are handled by ending any
             // in-flight pass before processing the opcode.
@@ -459,6 +462,7 @@ impl AerogpuD3d11Executor {
                 OPCODE_DRAW | OPCODE_DRAW_INDEXED => {
                     self.exec_render_pass_load(
                         &mut encoder,
+                        &mut iter,
                         &mut cursor,
                         stream_bytes,
                         stream_size,
@@ -472,6 +476,9 @@ impl AerogpuD3d11Executor {
             }
 
             // Non-draw commands are processed directly.
+            iter.next()
+                .expect("peeked Some")
+                .map_err(|err| anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"))?;
             self.exec_non_draw_command(
                 &mut encoder,
                 opcode,
@@ -482,7 +489,7 @@ impl AerogpuD3d11Executor {
             )?;
 
             report.commands = report.commands.saturating_add(1);
-            cursor += cmd_size;
+            cursor = cmd_end;
         }
 
         self.queue.submit([encoder.finish()]);
@@ -543,11 +550,12 @@ impl AerogpuD3d11Executor {
     /// opcode while no render pass is active. It begins a pass with `LoadOp::Load`,
     /// then continues consuming subsequent commands until a pass-ending opcode is
     /// reached (SET_RENDER_TARGETS, CLEAR, PRESENT, FLUSH, ...).
-    fn exec_render_pass_load(
+    fn exec_render_pass_load<'a>(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
+        iter: &mut core::iter::Peekable<AerogpuCmdStreamIter<'a>>,
         cursor: &mut usize,
-        stream_bytes: &[u8],
+        stream_bytes: &'a [u8],
         stream_size: usize,
         allocs: &AllocTable,
         guest_mem: &dyn GuestMemory,
@@ -669,24 +677,40 @@ impl AerogpuD3d11Executor {
         }
 
         loop {
-            if *cursor >= stream_size {
+            let Some(next) = iter.peek() else {
                 break;
+            };
+            let (cmd_size, opcode) = match next {
+                Ok(packet) => (packet.hdr.size_bytes as usize, packet.hdr.opcode),
+                Err(err) => {
+                    return Err(anyhow!(
+                        "aerogpu_cmd: invalid cmd header @0x{:x}: {err:?}",
+                        *cursor
+                    ));
+                }
+            };
+
+            match opcode {
+                OPCODE_DRAW | OPCODE_DRAW_INDEXED | OPCODE_NOP | OPCODE_DEBUG_MARKER => {}
+                _ => break, // leave the opcode for the outer loop
             }
 
-            let cmd_hdr = decode_cmd_hdr_le(&stream_bytes[*cursor..stream_size])
-                .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd header @0x{:x}: {e:?}", *cursor))?;
-            let cmd_size = cmd_hdr.size_bytes as usize;
-            let opcode = cmd_hdr.opcode;
-
-            if *cursor + cmd_size > stream_size {
-                bail!(
-                    "aerogpu_cmd: cmd overruns stream: cursor=0x{:x} cmd_size=0x{:x} stream_size=0x{:x}",
-                    *cursor,
-                    cmd_size,
-                    stream_size
-                );
-            }
-            let cmd_bytes = &stream_bytes[*cursor..*cursor + cmd_size];
+            let cmd_end = cursor
+                .checked_add(cmd_size)
+                .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
+            let cmd_bytes = stream_bytes
+                .get(*cursor..cmd_end)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "aerogpu_cmd: cmd overruns stream: cursor=0x{:x} cmd_size=0x{:x} stream_size=0x{:x}",
+                        *cursor,
+                        cmd_size,
+                        stream_size
+                    )
+                })?;
+            iter.next().expect("peeked Some").map_err(|err| {
+                anyhow!("aerogpu_cmd: invalid cmd header @0x{:x}: {err:?}", *cursor)
+            })?;
 
             match opcode {
                 OPCODE_DRAW => exec_draw(&mut pass, cmd_bytes)?,
@@ -697,11 +721,11 @@ impl AerogpuD3d11Executor {
                     exec_draw_indexed(&mut pass, cmd_bytes)?;
                 }
                 OPCODE_NOP | OPCODE_DEBUG_MARKER => {}
-                _ => break, // leave the opcode for the outer loop
+                _ => {}
             }
 
             report.commands = report.commands.saturating_add(1);
-            *cursor += cmd_size;
+            *cursor = cmd_end;
         }
 
         drop(pass);
@@ -928,28 +952,11 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_upload_resource(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_upload_resource (32 bytes) + data.
-        if cmd_bytes.len() < 32 {
-            bail!(
-                "UPLOAD_RESOURCE: expected at least 32 bytes, got {}",
-                cmd_bytes.len()
-            );
-        }
-        let handle = read_u32_le(cmd_bytes, 8)?;
-        let offset = read_u64_le(cmd_bytes, 16)?;
-        let size = read_u64_le(cmd_bytes, 24)?;
-        let size_usize: usize = size
-            .try_into()
-            .map_err(|_| anyhow!("UPLOAD_RESOURCE: size_bytes out of range"))?;
-        let data_len = align4(size_usize);
-        if cmd_bytes.len() != 32 + data_len {
-            bail!(
-                "UPLOAD_RESOURCE: size mismatch: cmd_bytes={}, expected={}",
-                cmd_bytes.len(),
-                32 + data_len
-            );
-        }
-        let data = &cmd_bytes[32..32 + size_usize];
+        let (cmd, data) = decode_cmd_upload_resource_payload_le(cmd_bytes)
+            .map_err(|e| anyhow!("UPLOAD_RESOURCE: invalid payload: {e:?}"))?;
+        let handle = cmd.resource_handle;
+        let offset = cmd.offset_bytes;
+        let size = cmd.size_bytes;
 
         if let Some(buf) = self.resources.buffers.get(&handle) {
             if offset.saturating_add(size) > buf.size {
@@ -960,7 +967,7 @@ impl AerogpuD3d11Executor {
                 // Uploaded data is now current on the GPU; clear dirty ranges.
                 if let Some(dirty) = buf_mut.dirty.take() {
                     // If the dirty range extends outside the uploaded region, keep it.
-                    let uploaded = offset..offset + size;
+                    let uploaded = offset..offset.saturating_add(size);
                     if dirty.start < uploaded.start || dirty.end > uploaded.end {
                         buf_mut.dirty = Some(dirty);
                     }
@@ -1181,25 +1188,10 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_create_shader_dxbc(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_create_shader_dxbc (24 bytes) + dxbc bytes.
-        if cmd_bytes.len() < 24 {
-            bail!(
-                "CREATE_SHADER_DXBC: expected at least 24 bytes, got {}",
-                cmd_bytes.len()
-            );
-        }
-        let shader_handle = read_u32_le(cmd_bytes, 8)?;
-        let stage_u32 = read_u32_le(cmd_bytes, 12)?;
-        let dxbc_size = read_u32_le(cmd_bytes, 16)? as usize;
-        let expected = 24 + align4(dxbc_size);
-        if cmd_bytes.len() != expected {
-            bail!(
-                "CREATE_SHADER_DXBC: size mismatch: cmd_bytes={}, expected={}",
-                cmd_bytes.len(),
-                expected
-            );
-        }
-        let dxbc = &cmd_bytes[24..24 + dxbc_size];
+        let (cmd, dxbc) = decode_cmd_create_shader_dxbc_payload_le(cmd_bytes)
+            .map_err(|e| anyhow!("CREATE_SHADER_DXBC: invalid payload: {e:?}"))?;
+        let shader_handle = cmd.shader_handle;
+        let stage_u32 = cmd.stage;
 
         let stage = match stage_u32 {
             0 => ShaderStage::Vertex,
@@ -1279,24 +1271,9 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_create_input_layout(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_create_input_layout (20 bytes) + blob bytes.
-        if cmd_bytes.len() < 20 {
-            bail!(
-                "CREATE_INPUT_LAYOUT: expected at least 20 bytes, got {}",
-                cmd_bytes.len()
-            );
-        }
-        let handle = read_u32_le(cmd_bytes, 8)?;
-        let blob_size = read_u32_le(cmd_bytes, 12)? as usize;
-        let expected = 20 + align4(blob_size);
-        if cmd_bytes.len() != expected {
-            bail!(
-                "CREATE_INPUT_LAYOUT: size mismatch: cmd_bytes={}, expected={}",
-                cmd_bytes.len(),
-                expected
-            );
-        }
-        let blob = &cmd_bytes[20..20 + blob_size];
+        let (cmd, blob) = decode_cmd_create_input_layout_blob_le(cmd_bytes)
+            .map_err(|e| anyhow!("CREATE_INPUT_LAYOUT: invalid payload: {e:?}"))?;
+        let handle = cmd.input_layout_handle;
 
         let layout = InputLayoutDesc::parse(blob)
             .map_err(|e| anyhow!("CREATE_INPUT_LAYOUT: failed to parse ILAY blob: {e}"))?;
@@ -1407,32 +1384,19 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_set_vertex_buffers(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_set_vertex_buffers (16 bytes) + bindings.
-        if cmd_bytes.len() < 16 {
-            bail!(
-                "SET_VERTEX_BUFFERS: expected at least 16 bytes, got {}",
-                cmd_bytes.len()
-            );
-        }
-        let start_slot = read_u32_le(cmd_bytes, 8)? as usize;
-        let buffer_count = read_u32_le(cmd_bytes, 12)? as usize;
-        let expected = 16 + buffer_count * 16;
-        if cmd_bytes.len() != expected {
-            bail!(
-                "SET_VERTEX_BUFFERS: size mismatch: cmd_bytes={}, expected={}",
-                cmd_bytes.len(),
-                expected
-            );
-        }
+        let (cmd, bindings) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
+            .map_err(|e| anyhow!("SET_VERTEX_BUFFERS: invalid payload: {e:?}"))?;
+        let start_slot = cmd.start_slot as usize;
+        let buffer_count = cmd.buffer_count as usize;
+
         if start_slot + buffer_count > self.state.vertex_buffers.len() {
             bail!("SET_VERTEX_BUFFERS: slot range out of bounds");
         }
 
-        for i in 0..buffer_count {
-            let base = 16 + i * 16;
-            let buffer = read_u32_le(cmd_bytes, base)?;
-            let stride_bytes = read_u32_le(cmd_bytes, base + 4)?;
-            let offset_bytes = read_u32_le(cmd_bytes, base + 8)? as u64;
+        for (i, binding) in bindings.iter().copied().enumerate() {
+            let buffer = u32::from_le(binding.buffer);
+            let stride_bytes = u32::from_le(binding.stride_bytes);
+            let offset_bytes = u64::from(u32::from_le(binding.offset_bytes));
 
             self.state.vertex_buffers[start_slot + i] = if buffer == 0 {
                 None
@@ -2260,10 +2224,6 @@ fn read_u64_le(buf: &[u8], offset: usize) -> Result<u64> {
         .get(offset..offset + 8)
         .ok_or_else(|| anyhow!("truncated u64"))?;
     Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
-}
-
-fn align4(n: usize) -> usize {
-    (n + 3) & !3
 }
 
 fn map_color_write_mask(mask: u8) -> wgpu::ColorWrites {
