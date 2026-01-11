@@ -29,12 +29,7 @@ CatalogFile = virtio-snd.cat
 ;   DEV = 0x1040 + 25 = 0x1059
 ;
 ; This driver uses the virtio-pci **modern** transport (MMIO + vendor-specific
-; capabilities) and binds to the modern/non-transitional virtio-snd ID
-; (`DEV_1059`).
-;
-; If the device enumerates as the transitional ID (`DEV_1018`), the Aero INF /
-; contract v1 is intentionally **modern-only**; configure the hypervisor for
-; modern enumeration (e.g. QEMU `disable-legacy=on`) so Windows sees `DEV_1059`.
+; capabilities) and binds to the modern virtio-snd ID (`DEV_1059`).
 ;
 ; Contract v1 devices MUST expose PCI Revision ID 0x01. Match REV_01 in the INF
 ; to avoid binding to unsupported contract versions.
