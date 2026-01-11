@@ -5,6 +5,10 @@
 #include "virtiosnd_sg.h"
 #include "virtiosnd_sg_core.h"
 
+/* Ensure the SG builder's fixed 4KiB page assumptions match the OS. */
+C_ASSERT(PAGE_SHIFT == VIRTIOSND_SG_PAGE_SHIFT);
+C_ASSERT(PAGE_SIZE == VIRTIOSND_SG_PAGE_SIZE);
+
 /*
  * Allow KeFlushIoBuffers to be stubbed in host/unit builds if desired.
  * The virtio-snd driver build uses the real WDK KeFlushIoBuffers.
