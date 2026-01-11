@@ -571,10 +571,10 @@ foreach ($p in @($defaultsIso, $defaultsZip, $defaultsManifest)) {
 }
 
 $defaultsLogText = Get-Content -LiteralPath $guestToolsDefaultsLog -Raw
-if ($defaultsLogText -notmatch '(?m)^\\s*profile\\s*:\\s*full\\s*$') {
+if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
   throw "Expected defaults run to use -Profile full. See $guestToolsDefaultsLog"
 }
-if ($defaultsLogText -notmatch 'win7-virtio-full\\.json') {
+if ($defaultsLogText -notmatch 'win7-virtio-full\.json') {
   throw "Expected defaults run to select win7-virtio-full.json. See $guestToolsDefaultsLog"
 }
 
