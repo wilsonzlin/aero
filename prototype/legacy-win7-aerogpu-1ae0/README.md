@@ -17,9 +17,9 @@ Supported AeroGPU ABIs in this repo:
 Contents:
 
 - `guest/windows/`: archived Windows 7 WDDM 1.1 + D3D9 driver stack targeting the 1AE0 prototype.
-- Host-side toy device model (not wired into the current emulator):  
-  `crates/aero-emulator/src/devices/aerogpu_1ae0_prototype/` (gated behind the
-  `aerogpu-1ae0-prototype` crate feature).
+- The matching host-side 1AE0 device model is **not** part of the current emulator codebase.
+  (Only the 1AED legacy and A3A0 versioned AeroGPU devices are supported.) If you need the 1AE0
+  host-side prototype for archaeology, retrieve it from git history.
 
 Do not use this prototype for new development.
 
