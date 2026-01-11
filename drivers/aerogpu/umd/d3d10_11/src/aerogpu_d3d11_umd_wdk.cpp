@@ -4555,7 +4555,8 @@ static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
   cmd->state.front_ccw = front_ccw ? 1u : 0u;
   cmd->state.scissor_enable = scissor_enable ? 1u : 0u;
   cmd->state.depth_bias = 0;
-  cmd->state.reserved0 = depth_clip_enable ? 1u : 0u;
+  cmd->state.flags = depth_clip_enable ? AEROGPU_RASTERIZER_FLAG_NONE
+                                       : AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
 }
 
 static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
