@@ -278,6 +278,16 @@ fn rust_layout_matches_c_headers() {
     assert_off!(AerogpuRingHeader, tail, "aerogpu_ring_header", "tail");
     assert_off!(AerogpuFencePage, completed_fence, "aerogpu_fence_page", "completed_fence");
 
+    // WDDM allocation private-data contract (stable across x86/x64).
+    assert_eq!(abi.size("aerogpu_wddm_alloc_priv"), 40);
+    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "magic"), 0);
+    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "version"), 4);
+    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "alloc_id"), 8);
+    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "flags"), 12);
+    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "share_token"), 16);
+    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "size_bytes"), 24);
+    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "reserved0"), 32);
+
     // Escape ABI (driver-private; should remain stable across x86/x64).
     assert_eq!(abi.size("aerogpu_escape_header"), 16);
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
@@ -539,6 +549,12 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE"),
         AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE as u64
     );
+
+    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_PRIV_MAGIC"), 0x414c_4c4f);
+    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_PRIV_VERSION"), 1);
+    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_ID_UMD_MAX"), 0x7fff_ffff);
+    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_ID_KMD_MIN"), 0x8000_0000);
+    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED"), 1);
 
     assert_eq!(abi.konst("AEROGPU_ESCAPE_VERSION"), 1);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE"), 1);

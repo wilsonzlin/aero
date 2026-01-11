@@ -6,6 +6,7 @@
 #include "drivers/aerogpu/protocol/aerogpu_escape.h"
 #include "drivers/aerogpu/protocol/aerogpu_ring.h"
 #include "drivers/aerogpu/protocol/aerogpu_umd_private.h"
+#include "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
 
 #define PRINT_SIZE(name, type) printf("SIZE %s %zu\n", name, sizeof(type))
 #define PRINT_OFF(name, type, field) printf("OFF %s %s %zu\n", name, #field, offsetof(type, field))
@@ -62,6 +63,7 @@ int main(void) {
   PRINT_SIZE("aerogpu_fence_page", struct aerogpu_fence_page);
 
   PRINT_SIZE("aerogpu_umd_private_v1", aerogpu_umd_private_v1);
+  PRINT_SIZE("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv);
 
   PRINT_SIZE("aerogpu_escape_header", aerogpu_escape_header);
   PRINT_SIZE("aerogpu_escape_query_device_out", aerogpu_escape_query_device_out);
@@ -118,6 +120,14 @@ int main(void) {
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_abi_version_u32);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_features);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, flags);
+
+  PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, magic);
+  PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, version);
+  PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, alloc_id);
+  PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, flags);
+  PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, share_token);
+  PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, size_bytes);
+  PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, reserved0);
 
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, version);
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, op);
@@ -220,6 +230,12 @@ int main(void) {
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_IS_LEGACY);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_VBLANK);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE);
+
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_MAGIC);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_VERSION);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_ID_KMD_MIN);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED);
 
   PRINT_CONST(AEROGPU_ESCAPE_VERSION);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_DEVICE);

@@ -29,6 +29,8 @@
 extern "C" {
 #endif
 
+#include <stddef.h> /* offsetof */
+
 /*
  * Fixed-width types without depending on C99 stdint in kernel-mode builds.
  *
