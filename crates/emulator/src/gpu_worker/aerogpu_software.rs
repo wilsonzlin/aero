@@ -113,12 +113,54 @@ struct Vertex {
     color: [f32; 4],
 }
 
+#[derive(Clone, Copy, Debug)]
+struct BlendState {
+    enable: bool,
+    src_factor: u32,
+    dst_factor: u32,
+    blend_op: u32,
+    write_mask: u8,
+}
+
+impl Default for BlendState {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            // "no blend" is handled by enable=false, but keep a sensible default anyway.
+            src_factor: cmd::AerogpuBlendFactor::One as u32,
+            dst_factor: cmd::AerogpuBlendFactor::Zero as u32,
+            blend_op: cmd::AerogpuBlendOp::Add as u32,
+            write_mask: 0xF,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RasterizerState {
+    cull_mode: u32,
+    front_ccw: bool,
+    scissor_enable: bool,
+}
+
+impl Default for RasterizerState {
+    fn default() -> Self {
+        // D3D11 defaults: solid fill, backface culling, clockwise front, scissor disabled.
+        Self {
+            cull_mode: cmd::AerogpuCullMode::Back as u32,
+            front_ccw: false,
+            scissor_enable: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PipelineState {
     render_targets: [u32; cmd::AEROGPU_MAX_RENDER_TARGETS],
     viewport: Option<Viewport>,
     scissor: Option<Scissor>,
     topology: u32,
+    blend: BlendState,
+    rasterizer: RasterizerState,
     vertex_buffers: [VertexBufferBinding; MAX_VERTEX_BUFFER_SLOTS],
     index_buffer: Option<IndexBufferBinding>,
     input_layout: u32,
@@ -134,6 +176,8 @@ impl Default for PipelineState {
             viewport: None,
             scissor: None,
             topology: 4, // AEROGPU_TOPOLOGY_TRIANGLELIST
+            blend: BlendState::default(),
+            rasterizer: RasterizerState::default(),
             vertex_buffers: [VertexBufferBinding::default(); MAX_VERTEX_BUFFER_SLOTS],
             index_buffer: None,
             input_layout: 0,
@@ -399,31 +443,40 @@ impl AeroGpuSoftwareExecutor {
         [f(rgba[0]), f(rgba[1]), f(rgba[2]), f(rgba[3])]
     }
 
-    fn write_pixel(tex: &mut Texture2DResource, x: i32, y: i32, rgba: [f32; 4]) {
-        if x < 0 || y < 0 {
-            return;
+    fn read_pixel_rgba_u8(tex: &Texture2DResource, off: usize) -> Option<[u8; 4]> {
+        if off + 4 > tex.data.len() {
+            return None;
         }
-        let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
-            return;
-        };
-        let width = tex.width as usize;
-        let height = tex.height as usize;
-        if xu >= width || yu >= height {
-            return;
+        match tex.format {
+            AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8X8Unorm => Some([
+                tex.data[off + 2], // r
+                tex.data[off + 1], // g
+                tex.data[off + 0], // b
+                if matches!(tex.format, AeroGpuFormat::B8G8R8A8Unorm) {
+                    tex.data[off + 3]
+                } else {
+                    0xff
+                },
+            ]),
+            AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8X8Unorm => Some([
+                tex.data[off + 0],
+                tex.data[off + 1],
+                tex.data[off + 2],
+                if matches!(tex.format, AeroGpuFormat::R8G8B8A8Unorm) {
+                    tex.data[off + 3]
+                } else {
+                    0xff
+                },
+            ]),
+            _ => None,
         }
-        let bpp = match tex.format.bytes_per_pixel() {
-            Some(v) => v,
-            None => return,
-        };
-        if bpp != 4 {
-            return;
-        }
-        let row_pitch = tex.row_pitch_bytes as usize;
-        let off = yu * row_pitch + xu * bpp;
+    }
+
+    fn write_pixel_rgba_u8(tex: &mut Texture2DResource, off: usize, rgba: [u8; 4]) {
         if off + 4 > tex.data.len() {
             return;
         }
-        let [r, g, b, a] = Self::decode_color_f32_as_u8(rgba);
+        let [r, g, b, a] = rgba;
         match tex.format {
             AeroGpuFormat::B8G8R8A8Unorm => {
                 tex.data[off] = b;
@@ -451,6 +504,93 @@ impl AeroGpuSoftwareExecutor {
             }
             _ => {}
         }
+    }
+
+    fn blend_factor(factor: u32, src_a: f32, dst_a: f32) -> f32 {
+        match factor {
+            x if x == cmd::AerogpuBlendFactor::Zero as u32 => 0.0,
+            x if x == cmd::AerogpuBlendFactor::One as u32 => 1.0,
+            x if x == cmd::AerogpuBlendFactor::SrcAlpha as u32 => src_a,
+            x if x == cmd::AerogpuBlendFactor::InvSrcAlpha as u32 => 1.0 - src_a,
+            x if x == cmd::AerogpuBlendFactor::DestAlpha as u32 => dst_a,
+            x if x == cmd::AerogpuBlendFactor::InvDestAlpha as u32 => 1.0 - dst_a,
+            _ => 1.0,
+        }
+    }
+
+    fn blend_op(op: u32, src: f32, dst: f32) -> f32 {
+        match op {
+            x if x == cmd::AerogpuBlendOp::Add as u32 => src + dst,
+            x if x == cmd::AerogpuBlendOp::Subtract as u32 => src - dst,
+            x if x == cmd::AerogpuBlendOp::RevSubtract as u32 => dst - src,
+            x if x == cmd::AerogpuBlendOp::Min as u32 => src.min(dst),
+            x if x == cmd::AerogpuBlendOp::Max as u32 => src.max(dst),
+            _ => src + dst,
+        }
+    }
+
+    fn blend_and_write_pixel(tex: &mut Texture2DResource, x: i32, y: i32, rgba: [f32; 4], blend: BlendState) {
+        if x < 0 || y < 0 {
+            return;
+        }
+        let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
+            return;
+        };
+        let width = tex.width as usize;
+        let height = tex.height as usize;
+        if xu >= width || yu >= height {
+            return;
+        }
+        let bpp = match tex.format.bytes_per_pixel() {
+            Some(v) => v,
+            None => return,
+        };
+        if bpp != 4 {
+            return;
+        }
+        let row_pitch = tex.row_pitch_bytes as usize;
+        let off = yu * row_pitch + xu * bpp;
+        let Some(dst_u8) = Self::read_pixel_rgba_u8(tex, off) else {
+            return;
+        };
+        let dst = [
+            dst_u8[0] as f32 / 255.0,
+            dst_u8[1] as f32 / 255.0,
+            dst_u8[2] as f32 / 255.0,
+            dst_u8[3] as f32 / 255.0,
+        ];
+
+        let mut out = rgba;
+        if blend.enable {
+            let src_a = rgba[3].clamp(0.0, 1.0);
+            let dst_a = dst[3].clamp(0.0, 1.0);
+            let sf = Self::blend_factor(blend.src_factor, src_a, dst_a);
+            let df = Self::blend_factor(blend.dst_factor, src_a, dst_a);
+
+            for i in 0..4 {
+                let s = rgba[i].clamp(0.0, 1.0) * sf;
+                let d = dst[i].clamp(0.0, 1.0) * df;
+                out[i] = Self::blend_op(blend.blend_op, s, d).clamp(0.0, 1.0);
+            }
+        }
+
+        let mut out_u8 = Self::decode_color_f32_as_u8(out);
+
+        // Apply color write mask in RGBA order.
+        if (blend.write_mask & 0b0001) == 0 {
+            out_u8[0] = dst_u8[0];
+        }
+        if (blend.write_mask & 0b0010) == 0 {
+            out_u8[1] = dst_u8[1];
+        }
+        if (blend.write_mask & 0b0100) == 0 {
+            out_u8[2] = dst_u8[2];
+        }
+        if (blend.write_mask & 0b1000) == 0 {
+            out_u8[3] = dst_u8[3];
+        }
+
+        Self::write_pixel_rgba_u8(tex, off, out_u8);
     }
 
     fn clear_texture(tex: &mut Texture2DResource, rgba: [f32; 4]) {
@@ -510,6 +650,7 @@ impl AeroGpuSoftwareExecutor {
         c0: [f32; 4],
         c1: [f32; 4],
         c2: [f32; 4],
+        blend: BlendState,
     ) {
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
@@ -557,7 +698,7 @@ impl AeroGpuSoftwareExecutor {
                 for i in 0..4 {
                     out[i] = c0[i] * w0 + c1[i] * w1 + c2[i] * w2;
                 }
-                Self::write_pixel(tex, x, y, out);
+                Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
         }
     }
@@ -600,15 +741,18 @@ impl AeroGpuSoftwareExecutor {
         clip_x1 = clip_x1.min(tex_width as i32);
         clip_y1 = clip_y1.min(tex_height as i32);
 
-        if let Some(sc) = self.state.scissor {
-            let sc_x0 = sc.x.max(0);
-            let sc_y0 = sc.y.max(0);
-            let sc_x1 = (sc.x.saturating_add(sc.width)).min(tex_width as i32);
-            let sc_y1 = (sc.y.saturating_add(sc.height)).min(tex_height as i32);
-            clip_x0 = clip_x0.max(sc_x0);
-            clip_y0 = clip_y0.max(sc_y0);
-            clip_x1 = clip_x1.min(sc_x1);
-            clip_y1 = clip_y1.min(sc_y1);
+        let rast = self.state.rasterizer;
+        if rast.scissor_enable {
+            if let Some(sc) = self.state.scissor {
+                let sc_x0 = sc.x.max(0);
+                let sc_y0 = sc.y.max(0);
+                let sc_x1 = (sc.x.saturating_add(sc.width)).min(tex_width as i32);
+                let sc_y1 = (sc.y.saturating_add(sc.height)).min(tex_height as i32);
+                clip_x0 = clip_x0.max(sc_x0);
+                clip_y0 = clip_y0.max(sc_y0);
+                clip_x1 = clip_x1.min(sc_x1);
+                clip_y1 = clip_y1.min(sc_y1);
+            }
         }
 
         if clip_x0 >= clip_x1 || clip_y0 >= clip_y1 {
@@ -662,11 +806,28 @@ impl AeroGpuSoftwareExecutor {
             return;
         }
 
+        let blend = self.state.blend;
+
         let Some(tex) = self.textures.get_mut(&rt_handle) else {
             Self::record_error(regs);
             return;
         };
         for tri in vertices.chunks_exact(3) {
+            if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
+                let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
+                    - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
+                if area != 0.0 {
+                    let front_facing = if rast.front_ccw { area < 0.0 } else { area > 0.0 };
+                    let culled = match rast.cull_mode {
+                        x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
+                        x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
+                        _ => false,
+                    };
+                    if culled {
+                        continue;
+                    }
+                }
+            }
             Self::rasterize_triangle(
                 tex,
                 (clip_x0, clip_y0, clip_x1, clip_y1),
@@ -676,6 +837,7 @@ impl AeroGpuSoftwareExecutor {
                 tri[0].color,
                 tri[1].color,
                 tri[2].color,
+                blend,
             );
         }
 
@@ -1537,9 +1699,47 @@ impl AeroGpuSoftwareExecutor {
                 }
                 self.state.input_layout = Self::cmd_read_u32(packet, 8).unwrap_or(0);
             }
-            cmd::AerogpuCmdOpcode::SetBlendState
-            | cmd::AerogpuCmdOpcode::SetDepthStencilState
-            | cmd::AerogpuCmdOpcode::SetRasterizerState
+            cmd::AerogpuCmdOpcode::SetBlendState => {
+                if packet.len() < 28 {
+                    Self::record_error(regs);
+                    return false;
+                }
+
+                let enable = Self::cmd_read_u32(packet, 8).unwrap_or(0) != 0;
+                let src_factor = Self::cmd_read_u32(packet, 12)
+                    .unwrap_or(cmd::AerogpuBlendFactor::One as u32);
+                let dst_factor = Self::cmd_read_u32(packet, 16)
+                    .unwrap_or(cmd::AerogpuBlendFactor::Zero as u32);
+                let blend_op =
+                    Self::cmd_read_u32(packet, 20).unwrap_or(cmd::AerogpuBlendOp::Add as u32);
+                let write_mask = packet.get(24).copied().unwrap_or(0xF);
+
+                self.state.blend = BlendState {
+                    enable,
+                    src_factor,
+                    dst_factor,
+                    blend_op,
+                    write_mask,
+                };
+            }
+            cmd::AerogpuCmdOpcode::SetRasterizerState => {
+                if packet.len() < 32 {
+                    Self::record_error(regs);
+                    return false;
+                }
+
+                let cull_mode = Self::cmd_read_u32(packet, 12)
+                    .unwrap_or(cmd::AerogpuCullMode::Back as u32);
+                let front_ccw = Self::cmd_read_u32(packet, 16).unwrap_or(0) != 0;
+                let scissor_enable = Self::cmd_read_u32(packet, 20).unwrap_or(0) != 0;
+
+                self.state.rasterizer = RasterizerState {
+                    cull_mode,
+                    front_ccw,
+                    scissor_enable,
+                };
+            }
+            cmd::AerogpuCmdOpcode::SetDepthStencilState
             | cmd::AerogpuCmdOpcode::SetTexture
             | cmd::AerogpuCmdOpcode::SetSamplerState
             | cmd::AerogpuCmdOpcode::SetRenderState => {
