@@ -250,7 +250,10 @@ pub(crate) fn attach_device_at_path(
     Ok(())
 }
 
-pub(crate) fn detach_device_at_path(ctrl: &mut UhciController, path: &[usize]) -> Result<(), JsValue> {
+pub(crate) fn detach_device_at_path(
+    ctrl: &mut UhciController,
+    path: &[usize],
+) -> Result<(), JsValue> {
     let Some((&root, rest)) = path.split_first() else {
         return Err(js_error("USB topology path must not be empty"));
     };

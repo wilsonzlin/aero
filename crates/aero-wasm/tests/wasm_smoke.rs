@@ -222,7 +222,5 @@ fn webusb_uhci_bridge_can_attach_and_detach_usb_hid_passthrough_device() {
         .expect("attach_usb_hid_passthrough_device ok");
 
     let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path to_value");
-    bridge
-        .detach_at_path(path)
-        .expect("detach_at_path ok");
+    bridge.detach_at_path(path).expect("detach_at_path ok");
 }

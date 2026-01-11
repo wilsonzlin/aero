@@ -247,8 +247,10 @@ impl WebUsbUhciBridge {
         match (was_connected, connected) {
             (true, true) | (false, false) => {}
             (false, true) => {
-                self.controller
-                    .connect_device(ROOT_PORT_WEBUSB, Box::new(UsbWebUsbPassthroughDevice::new()));
+                self.controller.connect_device(
+                    ROOT_PORT_WEBUSB,
+                    Box::new(UsbWebUsbPassthroughDevice::new()),
+                );
             }
             (true, false) => {
                 self.controller.disconnect_device(ROOT_PORT_WEBUSB);
@@ -306,7 +308,9 @@ impl WebUsbUhciBridge {
     pub fn detach_at_path(&mut self, path: JsValue) -> Result<(), JsValue> {
         let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
         if path.len() == 1 && path[0] == ROOT_PORT_EXTERNAL_HUB {
-            return Err(js_sys::Error::new("Cannot detach the external USB hub from root port 0").into());
+            return Err(
+                js_sys::Error::new("Cannot detach the external USB hub from root port 0").into(),
+            );
         }
         crate::uhci_controller_bridge::detach_device_at_path(&mut self.controller, &path)
     }
@@ -512,7 +516,10 @@ fn validate_webhid_attach_path(path: &[usize]) -> Result<(), JsValue> {
         return Err(js_sys::Error::new("WebHID devices must attach behind the external hub (expected path like [0, <hubPort>])").into());
     }
     if path[0] != ROOT_PORT_EXTERNAL_HUB {
-        return Err(js_sys::Error::new("WebHID devices must attach behind the external hub on root port 0").into());
+        return Err(js_sys::Error::new(
+            "WebHID devices must attach behind the external hub on root port 0",
+        )
+        .into());
     }
     // Root port 0 is reserved for the hub itself; root port 1 is reserved for WebUSB.
     Ok(())
