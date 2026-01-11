@@ -6,6 +6,8 @@ const USB_REQUEST_CLEAR_FEATURE: u8 = 0x01;
 const USB_REQUEST_SET_FEATURE: u8 = 0x03;
 const USB_REQUEST_GET_DESCRIPTOR: u8 = 0x06;
 const USB_REQUEST_SET_CONFIGURATION: u8 = 0x09;
+const USB_REQUEST_GET_INTERFACE: u8 = 0x0a;
+const USB_REQUEST_SET_INTERFACE: u8 = 0x0b;
 
 const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
 
@@ -80,6 +82,14 @@ fn standard_get_status_interface(interface: u16) -> SetupPacket {
     setup(0x81, USB_REQUEST_GET_STATUS, 0, interface, 2)
 }
 
+fn standard_get_interface(interface: u16) -> SetupPacket {
+    setup(0x81, USB_REQUEST_GET_INTERFACE, 0, interface, 1)
+}
+
+fn standard_set_interface(interface: u16, alt_setting: u16) -> SetupPacket {
+    setup(0x01, USB_REQUEST_SET_INTERFACE, alt_setting, interface, 0)
+}
+
 fn standard_get_status_endpoint(ep: u8) -> SetupPacket {
     setup(0x82, USB_REQUEST_GET_STATUS, 0, ep as u16, 2)
 }
@@ -104,6 +114,10 @@ fn hub_clear_feature_port(port: u16, feature: u16) -> SetupPacket {
     setup(0x23, USB_REQUEST_CLEAR_FEATURE, feature, port, 0)
 }
 
+fn hub_clear_feature_device(feature: u16) -> SetupPacket {
+    setup(0x20, USB_REQUEST_CLEAR_FEATURE, feature, 0, 0)
+}
+
 fn get_port_status_and_change(hub: &mut UsbHubDevice, port: u16) -> (u16, u16) {
     let ControlResponse::Data(data) = hub.handle_control_request(hub_get_status_port(port), None) else {
         panic!("expected Data for hub port GET_STATUS");
@@ -123,6 +137,51 @@ fn usb_hub_standard_get_status_interface_returns_zeroes() {
         panic!("expected Data response");
     };
     assert_eq!(data, [0, 0]);
+}
+
+#[test]
+fn usb_hub_standard_get_set_interface_roundtrips_alt_setting_zero() {
+    let mut hub = UsbHubDevice::new();
+
+    let ControlResponse::Data(data) = hub.handle_control_request(standard_get_interface(0), None) else {
+        panic!("expected Data response");
+    };
+    assert_eq!(data, [0]);
+
+    assert_eq!(
+        hub.handle_control_request(standard_set_interface(0, 0), None),
+        ControlResponse::Ack
+    );
+
+    // Non-existent interface / alt-setting should stall.
+    assert_eq!(
+        hub.handle_control_request(standard_get_interface(1), None),
+        ControlResponse::Stall
+    );
+    assert_eq!(
+        hub.handle_control_request(standard_set_interface(0, 1), None),
+        ControlResponse::Stall
+    );
+}
+
+#[test]
+fn usb_hub_class_clear_feature_device_accepts_hub_change_selectors() {
+    const HUB_FEATURE_C_HUB_LOCAL_POWER: u16 = 0;
+    const HUB_FEATURE_C_HUB_OVER_CURRENT: u16 = 1;
+
+    let mut hub = UsbHubDevice::new();
+
+    for feature in [HUB_FEATURE_C_HUB_LOCAL_POWER, HUB_FEATURE_C_HUB_OVER_CURRENT] {
+        assert_eq!(
+            hub.handle_control_request(hub_clear_feature_device(feature), None),
+            ControlResponse::Ack
+        );
+    }
+
+    assert_eq!(
+        hub.handle_control_request(hub_clear_feature_device(0x1234), None),
+        ControlResponse::Stall
+    );
 }
 
 #[test]
@@ -330,4 +389,3 @@ fn usb_hub_hub_descriptor_fields_are_stable_and_correct_length() {
     // Configuration descriptor should expose a non-zero bMaxPower.
     assert_eq!(hub.get_config_descriptor()[8], 50);
 }
-

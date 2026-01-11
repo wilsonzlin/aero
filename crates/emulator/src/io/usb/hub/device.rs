@@ -18,8 +18,13 @@ const USB_REQUEST_SET_FEATURE: u8 = 0x03;
 const USB_REQUEST_GET_DESCRIPTOR: u8 = 0x06;
 const USB_REQUEST_GET_CONFIGURATION: u8 = 0x08;
 const USB_REQUEST_SET_CONFIGURATION: u8 = 0x09;
+const USB_REQUEST_GET_INTERFACE: u8 = 0x0a;
+const USB_REQUEST_SET_INTERFACE: u8 = 0x0b;
 
 const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
+
+const HUB_FEATURE_C_HUB_LOCAL_POWER: u16 = 0;
+const HUB_FEATURE_C_HUB_OVER_CURRENT: u16 = 1;
 
 const HUB_PORT_FEATURE_ENABLE: u16 = 1;
 const HUB_PORT_FEATURE_RESET: u16 = 4;
@@ -348,7 +353,6 @@ impl UsbDeviceModel for UsbHubDevice {
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
                         || setup.w_value != 0
-                        || setup.w_length != 2
                     {
                         return ControlResponse::Stall;
                     }
@@ -358,13 +362,30 @@ impl UsbDeviceModel for UsbHubDevice {
                     }
                     ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
                 }
+                USB_REQUEST_GET_INTERFACE => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_value != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![0], setup.w_length))
+                }
+                USB_REQUEST_SET_INTERFACE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_index != 0 || setup.w_value != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Ack
+                }
                 _ => ControlResponse::Stall,
             },
             (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
                         || setup.w_value != 0
-                        || setup.w_length != 2
                     {
                         return ControlResponse::Stall;
                     }
@@ -372,8 +393,8 @@ impl UsbDeviceModel for UsbHubDevice {
                     if ep != HUB_INTERRUPT_IN_EP {
                         return ControlResponse::Stall;
                     }
-                    let halted = u8::from(self.interrupt_ep_halted);
-                    ControlResponse::Data(clamp_response(vec![halted, 0], setup.w_length))
+                    let status: u16 = u16::from(self.interrupt_ep_halted);
+                    ControlResponse::Data(clamp_response(status.to_le_bytes().to_vec(), setup.w_length))
                 }
                 USB_REQUEST_CLEAR_FEATURE | USB_REQUEST_SET_FEATURE => {
                     if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
@@ -412,13 +433,24 @@ impl UsbDeviceModel for UsbHubDevice {
                     }
                     ControlResponse::Data(clamp_response(vec![0, 0, 0, 0], setup.w_length))
                 }
+                USB_REQUEST_CLEAR_FEATURE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    match setup.w_value {
+                        HUB_FEATURE_C_HUB_LOCAL_POWER | HUB_FEATURE_C_HUB_OVER_CURRENT => ControlResponse::Ack,
+                        _ => ControlResponse::Stall,
+                    }
+                }
                 _ => ControlResponse::Stall,
             },
             (RequestType::Class, RequestRecipient::Other) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
                         || setup.w_value != 0
-                        || setup.w_length != 4
                     {
                         return ControlResponse::Stall;
                     }
