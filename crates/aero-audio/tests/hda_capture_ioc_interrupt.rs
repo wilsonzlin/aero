@@ -46,5 +46,7 @@ fn hda_capture_ioc_interrupt() {
     capture.push_samples(&[0.5; 8]);
 
     hda.process_with_capture(&mut mem, frames, &mut capture);
+    assert!(hda.irq_level());
     assert!(hda.take_irq());
+    assert!(hda.irq_level());
 }

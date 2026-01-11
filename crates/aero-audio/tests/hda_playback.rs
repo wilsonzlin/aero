@@ -63,7 +63,9 @@ fn hda_dma_tone_reaches_ring_buffer() {
     hda.process(&mut mem, frames);
 
     // IOC should have fired and LPIB should wrap to 0.
+    assert!(hda.irq_level());
     assert!(hda.take_irq());
+    assert!(hda.irq_level());
     assert_eq!(hda.stream_mut(0).lpib, 0);
 
     // The ring buffer should contain the rendered tone.
@@ -142,7 +144,9 @@ fn hda_resamples_stream_to_configured_output_rate() {
     hda.process(&mut mem, dst_frames);
 
     // IOC should have fired and LPIB should wrap to 0.
+    assert!(hda.irq_level());
     assert!(hda.take_irq());
+    assert!(hda.irq_level());
     assert_eq!(hda.stream_mut(0).lpib, 0);
 
     // Resampled output should contain host_rate_hz-aligned frames.

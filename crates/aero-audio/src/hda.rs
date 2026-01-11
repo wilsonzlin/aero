@@ -1000,6 +1000,25 @@ impl HdaController {
         &mut self.streams[index]
     }
 
+    /// Returns the current asserted *level* of the controller's IRQ line.
+    ///
+    /// This is derived from the guest-visible interrupt control/status registers and therefore
+    /// does **not** clear or otherwise mutate interrupt state.
+    pub fn irq_level(&self) -> bool {
+        // Simplified: assert if global interrupt enable is set and any enabled interrupt source
+        // is pending.
+        if (self.intctl & INTCTL_GIE) == 0 {
+            return false;
+        }
+
+        let pending_streams = self.intsts & 0x3fff_ffff;
+        let enabled_streams = self.intctl & 0x3fff_ffff;
+        let pending_controller =
+            (self.intsts & INTSTS_CIS) != 0 && (self.intctl & (1 << 30)) != 0;
+
+        (pending_streams & enabled_streams) != 0 || pending_controller
+    }
+
     pub fn take_irq(&mut self) -> bool {
         let pending = self.irq_pending;
         self.irq_pending = false;
@@ -1702,18 +1721,7 @@ impl HdaController {
     }
 
     fn update_irq_line(&mut self) {
-        // Simplified: assert if global interrupt enable is set and any enabled
-        // interrupt source is pending.
-        if (self.intctl & INTCTL_GIE) == 0 {
-            self.irq_pending = false;
-            return;
-        }
-
-        let pending_streams = self.intsts & 0x3fff_ffff;
-        let enabled_streams = self.intctl & 0x3fff_ffff;
-        let pending_controller = (self.intsts & INTSTS_CIS) != 0 && (self.intctl & (1 << 30)) != 0;
-
-        self.irq_pending = (pending_streams & enabled_streams) != 0 || pending_controller;
+        self.irq_pending = self.irq_level();
     }
 
     fn process_output_stream(
@@ -2153,116 +2161,6 @@ impl HdaController {
 
         // Derive IRQ line state from restored registers.
         self.update_irq_line();
-    }
-}
-
-/// Very small PCI wrapper for the HDA controller.
-///
-/// The wider Aero codebase will likely have a full PCI bus + BAR allocation
-/// story; this model exists primarily so tests can validate that the device has
-/// sensible PCI identifiers.
-#[derive(Debug, Clone)]
-pub struct HdaPciDevice {
-    config: [u8; 256],
-    bar0: u32,
-    bar0_probe: bool,
-    pub hda: HdaController,
-}
-
-impl HdaPciDevice {
-    /// Size of the BAR0 MMIO region.
-    pub const MMIO_BAR_SIZE: u32 = HDA_MMIO_SIZE as u32;
-
-    pub fn new() -> Self {
-        let mut config = [0u8; 256];
-        // Vendor / device (Intel ICH6 HDA).
-        config[0x00..0x02].copy_from_slice(&0x8086u16.to_le_bytes());
-        config[0x02..0x04].copy_from_slice(&0x2668u16.to_le_bytes());
-
-        // Revision ID.
-        config[0x08] = 0x01;
-
-        // Class code: multimedia audio controller (0x04), HDA (0x03).
-        config[0x09] = 0x00; // prog-if
-        config[0x0a] = 0x03; // subclass
-        config[0x0b] = 0x04; // class
-
-        // Subsystem vendor/device (match Intel ICH6 conventions).
-        config[0x2c..0x2e].copy_from_slice(&0x8086u16.to_le_bytes());
-        config[0x2e..0x30].copy_from_slice(&0x2668u16.to_le_bytes());
-
-        // Interrupt pin: INTA#.
-        config[0x3d] = 0x01;
-
-        Self {
-            config,
-            bar0: 0,
-            bar0_probe: false,
-            hda: HdaController::new(),
-        }
-    }
-
-    pub fn config_read(&self, offset: u64, size: usize) -> u32 {
-        if !matches!(size, 1 | 2 | 4) {
-            return 0;
-        }
-        let end = match offset.checked_add(size as u64) {
-            Some(end) => end,
-            None => return 0,
-        };
-        if end > self.config.len() as u64 {
-            return 0;
-        }
-
-        if offset == 0x10 && size == 4 {
-            return if self.bar0_probe {
-                !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0
-            } else {
-                self.bar0
-            };
-        }
-
-        let o = offset as usize;
-        let mut b = [0u8; 4];
-        b[..size].copy_from_slice(&self.config[o..o + size]);
-        u32::from_le_bytes(b)
-    }
-
-    pub fn config_write(&mut self, offset: u64, size: usize, value: u32) {
-        if !matches!(size, 1 | 2 | 4) {
-            return;
-        }
-        let end = match offset.checked_add(size as u64) {
-            Some(end) => end,
-            None => return,
-        };
-        if end > self.config.len() as u64 {
-            return;
-        }
-
-        if offset == 0x10 && size == 4 {
-            if value == 0xffff_ffff {
-                self.bar0_probe = true;
-                self.bar0 = 0;
-            } else {
-                self.bar0_probe = false;
-                self.bar0 = value & 0xffff_fff0;
-            }
-            self.config[0x10..0x14].copy_from_slice(&self.bar0.to_le_bytes());
-            return;
-        }
-
-        let o = offset as usize;
-        let bytes = value.to_le_bytes();
-        self.config[o..o + size].copy_from_slice(&bytes[..size]);
-    }
-
-    pub fn config_read_u32(&self, offset: u64) -> u32 {
-        self.config_read(offset, 4)
-    }
-
-    pub fn config_write_u32(&mut self, offset: u64, value: u32) {
-        self.config_write(offset, 4, value);
     }
 }
 

@@ -7,6 +7,7 @@
 pub mod capture;
 pub mod clock;
 pub mod hda;
+pub mod hda_pci;
 pub mod mem;
 pub mod pcm;
 pub mod ring;

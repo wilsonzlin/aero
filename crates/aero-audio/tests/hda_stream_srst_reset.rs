@@ -70,5 +70,6 @@ fn clearing_srst_resets_stream_engine_state() {
     assert_eq!(hda.stream_mut(0).lpib, 0);
     assert_eq!(hda.mmio_read(REG_SD0STS, 1) as u8 & SD_STS_BCIS, 0);
     assert_eq!(hda.mmio_read(REG_INTSTS, 4) as u32 & 1, 0);
+    assert!(!hda.irq_level());
     assert!(!hda.take_irq());
 }
