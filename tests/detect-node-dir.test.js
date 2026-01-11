@@ -46,6 +46,34 @@ function runResolver({ repoRoot, resolverPath }, extraArgs = []) {
   return parseKeyVal(stdout);
 }
 
+function setupMultiCheckout() {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-node-dir-multiroot-"));
+  const baseRoot = path.join(workspaceRoot, "base");
+  const headRoot = path.join(workspaceRoot, "head");
+  fs.mkdirSync(baseRoot, { recursive: true });
+  fs.mkdirSync(headRoot, { recursive: true });
+
+  const resolverDest = path.join(baseRoot, "scripts/ci/detect-node-dir.mjs");
+  fs.mkdirSync(path.dirname(resolverDest), { recursive: true });
+  fs.copyFileSync(sourceResolverPath, resolverDest);
+
+  return { workspaceRoot, baseRoot, headRoot, resolverPath: resolverDest };
+}
+
+function runResolverFromWorkspace({ workspaceRoot, resolverPath }, extraArgs = []) {
+  const stdout = execFileSync(process.execPath, [resolverPath, "--require-lockfile", ...extraArgs], {
+    encoding: "utf8",
+    cwd: workspaceRoot,
+    env: {
+      ...process.env,
+      AERO_NODE_DIR: "",
+      AERO_WEB_DIR: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return parseKeyVal(stdout);
+}
+
 test("detect-node-dir: prefers repo root when root + web exist", () => {
   const temp = setupTempRepo();
   try {
@@ -95,5 +123,20 @@ test("detect-node-dir: falls back to web when repo root has no package.json", ()
     assert.equal(detected.lockfile, "web/package-lock.json");
   } finally {
     fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("detect-node-dir: supports --root for multi-checkout workflows", () => {
+  const temp = setupMultiCheckout();
+  try {
+    writeJson(path.join(temp.headRoot, "package.json"), { name: "head", version: "0.0.0" });
+    writeJson(path.join(temp.headRoot, "package-lock.json"), { lockfileVersion: 3 });
+
+    const detected = runResolverFromWorkspace(temp, ["--root", "head"]);
+    assert.equal(detected.dir, "head");
+    assert.equal(detected.lockfile, "head/package-lock.json");
+    assert.equal(detected.package_name, "head");
+  } finally {
+    fs.rmSync(temp.workspaceRoot, { recursive: true, force: true });
   }
 });
