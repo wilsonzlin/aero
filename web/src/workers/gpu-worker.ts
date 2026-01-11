@@ -1490,7 +1490,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
         const cmdU8 = new Uint8Array(req.cmdStream);
         const allocTableU8 = req.allocTable ? new Uint8Array(req.allocTable) : undefined;
 
-        void wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
+        await wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
 
         if (cmdAnalysis.presentCount > 0n) {
           aerogpuPresentCount += cmdAnalysis.presentCount;

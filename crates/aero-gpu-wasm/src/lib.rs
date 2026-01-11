@@ -404,7 +404,7 @@ mod wasm {
     }
 
     #[wasm_bindgen]
-    pub fn submit_aerogpu_d3d9(
+    pub async fn submit_aerogpu_d3d9(
         cmd_stream: Uint8Array,
         signal_fence: u64,
         context_id: u32,
@@ -423,34 +423,42 @@ mod wasm {
 
         let guest_memory = GUEST_MEMORY.with(|slot| slot.borrow().clone());
         let allocations = allocations.as_deref();
+        let d3d9_state = D3D9_STATE
+            .with(|slot| slot.borrow_mut().take())
+            .ok_or_else(|| {
+                JsValue::from_str(
+                    "AeroGPU D3D9 executor not initialized. Call init_aerogpu_d3d9(...) first.",
+                )
+            })?;
 
-        let present_count = with_d3d9_state_mut(|state| {
-            match (alloc_table.as_ref(), guest_memory.as_ref()) {
-                (Some(_), None) => {
-                    return Err(JsValue::from_str(
-                        "guest memory is not configured; call set_guest_memory(Uint8Array) before executing submissions with alloc_table",
-                    ));
-                }
-                (Some(table), Some(mem)) => state
-                    .executor
-                    .execute_cmd_stream_with_guest_memory_for_context(
-                        context_id,
-                        &bytes,
-                        mem,
-                        Some(table),
-                    )
-                    .map_err(|err| JsValue::from_str(&err.to_string()))?,
-                (None, Some(mem)) => state
-                    .executor
-                    .execute_cmd_stream_with_guest_memory_for_context(context_id, &bytes, mem, None)
-                    .map_err(|err| JsValue::from_str(&err.to_string()))?,
-                (None, None) => state
-                    .executor
-                    .execute_cmd_stream_for_context(context_id, &bytes)
-                    .map_err(|err| JsValue::from_str(&err.to_string()))?,
-            }
+        let mut d3d9_state = d3d9_state;
+        let exec_result: Result<(), JsValue> = match (alloc_table.as_ref(), guest_memory.as_ref()) {
+            (Some(_), None) => Err(JsValue::from_str(
+                "guest memory is not configured; call set_guest_memory(Uint8Array) before executing submissions with alloc_table",
+            )),
+            (Some(table), Some(mem)) => d3d9_state
+                .executor
+                .execute_cmd_stream_with_guest_memory_for_context_async(
+                    context_id,
+                    &bytes,
+                    mem,
+                    Some(table),
+                )
+                .await
+                .map_err(|err| JsValue::from_str(&err.to_string())),
+            (None, Some(mem)) => d3d9_state
+                .executor
+                .execute_cmd_stream_with_guest_memory_for_context_async(context_id, &bytes, mem, None)
+                .await
+                .map_err(|err| JsValue::from_str(&err.to_string())),
+            (None, None) => d3d9_state
+                .executor
+                .execute_cmd_stream_for_context(context_id, &bytes)
+                .map_err(|err| JsValue::from_str(&err.to_string())),
+        };
 
-            let (present_count, last_present_scanout) = PROCESSOR.with(|processor| {
+        let processor_result: Result<(Option<u64>, Option<u32>), JsValue> = if exec_result.is_ok() {
+            PROCESSOR.with(|processor| {
                 let mut processor = processor.borrow_mut();
                 let events = processor
                     .process_submission_with_allocations(&bytes, allocations, signal_fence)
@@ -466,30 +474,49 @@ mod wasm {
                 }
 
                 Ok::<(Option<u64>, Option<u32>), JsValue>((present_count, last_present_scanout))
-            })?;
+            })
+        } else {
+            Ok((None, None))
+        };
 
-            if let Some(scanout_id) = last_present_scanout {
-                state.last_presented_scanout = Some(scanout_id);
+        let present_result = (|| -> Result<(), JsValue> {
+            let (_, last_present_scanout) = match processor_result.as_ref() {
+                Ok(v) => *v,
+                Err(_) => return Ok(()),
+            };
 
-                if let Some(presenter) = state.presenter.as_mut() {
-                    let device = state.executor.device();
-                    let queue = state.executor.queue();
-                    if let Some(scanout) = state.executor.presented_scanout(scanout_id) {
-                        presenter.present_texture_view(
-                            device,
-                            queue,
-                            scanout.view,
-                            scanout.width,
-                            scanout.height,
-                        )?;
-                    } else {
-                        presenter.present_clear(device, queue)?;
+            if exec_result.is_ok() {
+                if let Some(scanout_id) = last_present_scanout {
+                    d3d9_state.last_presented_scanout = Some(scanout_id);
+
+                    if let Some(presenter) = d3d9_state.presenter.as_mut() {
+                        let device = d3d9_state.executor.device();
+                        let queue = d3d9_state.executor.queue();
+                        if let Some(scanout) = d3d9_state.executor.presented_scanout(scanout_id) {
+                            presenter.present_texture_view(
+                                device,
+                                queue,
+                                scanout.view,
+                                scanout.width,
+                                scanout.height,
+                            )?;
+                        } else {
+                            presenter.present_clear(device, queue)?;
+                        }
                     }
                 }
             }
 
-            Ok(present_count)
-        })?;
+            Ok(())
+        })();
+
+        D3D9_STATE.with(|slot| {
+            *slot.borrow_mut() = Some(d3d9_state);
+        });
+
+        exec_result?;
+        let (present_count, _last_present_scanout) = processor_result?;
+        present_result?;
 
         let out = Object::new();
         Reflect::set(
@@ -1863,17 +1890,6 @@ mod wasm {
         STATE.with(|state| match state.borrow_mut().as_mut() {
             Some(s) => f(s),
             None => Err(JsValue::from_str("GPU backend not initialized.")),
-        })
-    }
-
-    fn with_d3d9_state_mut<T>(
-        f: impl FnOnce(&mut AerogpuD3d9State) -> Result<T, JsValue>,
-    ) -> Result<T, JsValue> {
-        D3D9_STATE.with(|state| match state.borrow_mut().as_mut() {
-            Some(s) => f(s),
-            None => Err(JsValue::from_str(
-                "AeroGPU D3D9 executor not initialized. Call init_aerogpu_d3d9(...) first.",
-            )),
         })
     }
 

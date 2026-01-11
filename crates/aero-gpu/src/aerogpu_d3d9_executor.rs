@@ -1,7 +1,10 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc;
 
 use aero_d3d9::shader;
 use aero_d3d9::vertex::VertexDeclaration;
@@ -9,6 +12,7 @@ use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
+use futures_intrusive::channel::shared::oneshot_channel;
 use thiserror::Error;
 use tracing::debug;
 use wgpu::util::DeviceExt;
@@ -216,12 +220,26 @@ struct GuestTextureBacking {
 #[derive(Debug, Clone, Copy)]
 struct TextureWritebackPlan {
     backing: GuestTextureBacking,
+    backing_gpa: u64,
     dst_x: u32,
     dst_y: u32,
     height: u32,
     bytes_per_pixel: u32,
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
+}
+
+#[derive(Debug)]
+enum PendingWriteback {
+    Buffer {
+        staging: wgpu::Buffer,
+        dst_gpa: u64,
+        size_bytes: u64,
+    },
+    Texture2d {
+        staging: wgpu::Buffer,
+        plan: TextureWritebackPlan,
+    },
 }
 
 #[derive(Debug)]
@@ -764,6 +782,7 @@ impl AerogpuD3d9Executor {
         self.device.poll(wgpu::Maintain::Poll);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn readback_buffer_bytes(&self, buffer: &wgpu::Buffer) -> Result<Vec<u8>, AerogpuD3d9Error> {
         let slice = buffer.slice(..);
         let (sender, receiver) = mpsc::channel();
@@ -774,6 +793,185 @@ impl AerogpuD3d9Executor {
         receiver
             .recv()
             .map_err(|_| AerogpuD3d9Error::Validation("map_async sender dropped".into()))?
+            .map_err(|err| AerogpuD3d9Error::Validation(format!("map_async failed: {err:?}")))?;
+
+        let mapped = slice.get_mapped_range();
+        let out = mapped.to_vec();
+        drop(mapped);
+        buffer.unmap();
+        Ok(out)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_pending_writebacks_blocking(
+        &self,
+        pending: Vec<PendingWriteback>,
+        guest_memory: &dyn GuestMemory,
+    ) -> Result<(), AerogpuD3d9Error> {
+        for writeback in pending {
+            match writeback {
+                PendingWriteback::Buffer {
+                    staging,
+                    dst_gpa,
+                    size_bytes,
+                } => {
+                    let bytes = self.readback_buffer_bytes(&staging)?;
+                    let len: usize = size_bytes.try_into().map_err(|_| {
+                        AerogpuD3d9Error::Validation("buffer writeback size out of range".into())
+                    })?;
+                    let slice = bytes.get(..len).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("buffer writeback size mismatch".into())
+                    })?;
+                    guest_memory.write(dst_gpa, slice)?;
+                }
+                PendingWriteback::Texture2d { staging, plan } => {
+                    let bytes = self.readback_buffer_bytes(&staging)?;
+                    let row_pitch = plan.backing.row_pitch_bytes as u64;
+                    let dst_x_bytes = (plan.dst_x as u64)
+                        .checked_mul(plan.bytes_per_pixel as u64)
+                        .ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture writeback dst_x overflow".into())
+                        })?;
+                    for row in 0..plan.height {
+                        let src_start = row as usize * plan.padded_bytes_per_row as usize;
+                        let src_end = src_start + plan.unpadded_bytes_per_row as usize;
+                        let row_bytes = bytes.get(src_start..src_end).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation(
+                                "texture writeback staging out of bounds".into(),
+                            )
+                        })?;
+                        let row_index = plan.dst_y.checked_add(row).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture writeback dst_y overflow".into())
+                        })?;
+                        let row_off =
+                            (row_index as u64).checked_mul(row_pitch).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "texture writeback row offset overflow".into(),
+                                )
+                            })?;
+                        let dst_off = row_off.checked_add(dst_x_bytes).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture writeback backing overflow".into())
+                        })?;
+                        let dst_end =
+                            dst_off.checked_add(row_bytes.len() as u64).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "texture writeback backing overflow".into(),
+                                )
+                            })?;
+                        if dst_end > plan.backing.size_bytes {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "texture writeback backing out of bounds".into(),
+                            ));
+                        }
+
+                        let dst_gpa = plan.backing_gpa.checked_add(dst_off).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture writeback GPA overflow".into())
+                        })?;
+                        if dst_gpa.checked_add(row_bytes.len() as u64).is_none() {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "texture writeback GPA overflow".into(),
+                            ));
+                        }
+                        guest_memory.write(dst_gpa, row_bytes)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn flush_pending_writebacks_async(
+        &self,
+        pending: Vec<PendingWriteback>,
+        guest_memory: &dyn GuestMemory,
+    ) -> Result<(), AerogpuD3d9Error> {
+        for writeback in pending {
+            match writeback {
+                PendingWriteback::Buffer {
+                    staging,
+                    dst_gpa,
+                    size_bytes,
+                } => {
+                    let bytes = self.readback_buffer_bytes_async(&staging).await?;
+                    let len: usize = size_bytes.try_into().map_err(|_| {
+                        AerogpuD3d9Error::Validation("buffer writeback size out of range".into())
+                    })?;
+                    let slice = bytes.get(..len).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("buffer writeback size mismatch".into())
+                    })?;
+                    guest_memory.write(dst_gpa, slice)?;
+                }
+                PendingWriteback::Texture2d { staging, plan } => {
+                    let bytes = self.readback_buffer_bytes_async(&staging).await?;
+                    let row_pitch = plan.backing.row_pitch_bytes as u64;
+                    let dst_x_bytes = (plan.dst_x as u64)
+                        .checked_mul(plan.bytes_per_pixel as u64)
+                        .ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture writeback dst_x overflow".into())
+                        })?;
+                    for row in 0..plan.height {
+                        let src_start = row as usize * plan.padded_bytes_per_row as usize;
+                        let src_end = src_start + plan.unpadded_bytes_per_row as usize;
+                        let row_bytes = bytes.get(src_start..src_end).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation(
+                                "texture writeback staging out of bounds".into(),
+                            )
+                        })?;
+                        let row_index = plan.dst_y.checked_add(row).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture writeback dst_y overflow".into())
+                        })?;
+                        let row_off =
+                            (row_index as u64).checked_mul(row_pitch).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "texture writeback row offset overflow".into(),
+                                )
+                            })?;
+                        let dst_off = row_off.checked_add(dst_x_bytes).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture writeback backing overflow".into())
+                        })?;
+                        let dst_end =
+                            dst_off.checked_add(row_bytes.len() as u64).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "texture writeback backing overflow".into(),
+                                )
+                            })?;
+                        if dst_end > plan.backing.size_bytes {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "texture writeback backing out of bounds".into(),
+                            ));
+                        }
+
+                        let dst_gpa = plan.backing_gpa.checked_add(dst_off).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture writeback GPA overflow".into())
+                        })?;
+                        if dst_gpa.checked_add(row_bytes.len() as u64).is_none() {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "texture writeback GPA overflow".into(),
+                            ));
+                        }
+                        guest_memory.write(dst_gpa, row_bytes)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn readback_buffer_bytes_async(
+        &self,
+        buffer: &wgpu::Buffer,
+    ) -> Result<Vec<u8>, AerogpuD3d9Error> {
+        let slice = buffer.slice(..);
+        let (sender, receiver) = oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            sender.send(res).ok();
+        });
+        self.poll();
+
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| AerogpuD3d9Error::Validation("map_async sender dropped".into()))?
             .map_err(|err| AerogpuD3d9Error::Validation(format!("map_async failed: {err:?}")))?;
 
         let mapped = slice.get_mapped_range();
@@ -847,6 +1045,41 @@ impl AerogpuD3d9Executor {
         )
     }
 
+    /// WASM-friendly async variant of `execute_cmd_stream_with_guest_memory_for_context`.
+    ///
+    /// On WASM targets, `wgpu::Buffer::map_async` completion is delivered via the JS event loop,
+    /// so synchronous waiting would deadlock. This method awaits writeback staging buffer maps
+    /// when `AEROGPU_COPY_FLAG_WRITEBACK_DST` is used.
+    pub async fn execute_cmd_stream_with_guest_memory_for_context_async(
+        &mut self,
+        context_id: u32,
+        bytes: &[u8],
+        guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
+    ) -> Result<(), AerogpuD3d9Error> {
+        self.switch_context(context_id);
+
+        let stream = parse_cmd_stream(bytes)?;
+        let mut pending_writebacks = Vec::new();
+        let ctx = SubmissionCtx {
+            guest_memory: Some(guest_memory),
+            alloc_table,
+        };
+        for cmd in stream.cmds {
+            if let Err(err) = self.execute_cmd(cmd, ctx, &mut pending_writebacks) {
+                self.encoder = None;
+                self.queue.submit([]);
+                return Err(err);
+            }
+        }
+        self.flush()?;
+        if !pending_writebacks.is_empty() {
+            self.flush_pending_writebacks_async(pending_writebacks, guest_memory)
+                .await?;
+        }
+        Ok(())
+    }
+
     fn switch_context(&mut self, context_id: u32) {
         if self.current_context_id == context_id {
             return;
@@ -878,8 +1111,9 @@ impl AerogpuD3d9Executor {
         self.switch_context(context_id);
 
         let stream = parse_cmd_stream(bytes)?;
+        let mut pending_writebacks = Vec::new();
         for cmd in stream.cmds {
-            if let Err(err) = self.execute_cmd(cmd, ctx) {
+            if let Err(err) = self.execute_cmd(cmd, ctx, &mut pending_writebacks) {
                 // Do not submit partially-recorded work; drop the encoder but still push an empty
                 // submit boundary so `queue.write_texture` calls don't stay queued indefinitely.
                 self.encoder = None;
@@ -888,7 +1122,27 @@ impl AerogpuD3d9Executor {
             }
         }
         // Make sure we don't keep uploads queued indefinitely if the guest forgets to present.
-        self.flush()
+        self.flush()?;
+
+        if pending_writebacks.is_empty() {
+            return Ok(());
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            return Err(AerogpuD3d9Error::Validation(
+                "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_with_guest_memory_for_context_async)"
+                    .into(),
+            ));
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let guest_memory = ctx.guest_memory.ok_or_else(|| {
+                AerogpuD3d9Error::Validation("WRITEBACK_DST requires guest memory".into())
+            })?;
+            self.flush_pending_writebacks_blocking(pending_writebacks, guest_memory)
+        }
     }
 
     pub async fn read_presented_scanout_rgba8(
@@ -1086,6 +1340,7 @@ impl AerogpuD3d9Executor {
         &mut self,
         cmd: AeroGpuCmd<'_>,
         ctx: SubmissionCtx<'_>,
+        pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<(), AerogpuD3d9Error> {
         match cmd {
             AeroGpuCmd::Nop
@@ -1680,6 +1935,7 @@ impl AerogpuD3d9Executor {
             } => {
                 self.ensure_encoder();
                 let mut encoder_opt = self.encoder.take();
+                let mut writeback_entry: Option<PendingWriteback> = None;
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
                     if size_bytes == 0 {
                         return Ok(());
@@ -1807,14 +2063,13 @@ impl AerogpuD3d9Executor {
                         size_bytes,
                     );
 
-                    #[cfg(not(target_arch = "wasm32"))]
                     if writeback {
                         let dst_backing = dst_backing.ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
                                 "COPY_BUFFER: WRITEBACK_DST requires guest-backed dst".into(),
                             )
                         })?;
-                        let Some(guest_memory) = ctx.guest_memory else {
+                        let Some(_guest_memory) = ctx.guest_memory else {
                             return Err(AerogpuD3d9Error::MissingGuestMemory(dst_buffer));
                         };
                         let alloc = ctx
@@ -1853,8 +2108,6 @@ impl AerogpuD3d9Executor {
                             ));
                         }
 
-                        // MVP implementation: WRITEBACK_DST introduces a submit boundary so we can
-                        // synchronously map the copied bytes and commit them into guest memory.
                         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
                             label: Some("aerogpu-d3d9.copy_buffer.writeback_staging"),
                             size: size_bytes,
@@ -1868,16 +2121,20 @@ impl AerogpuD3d9Executor {
                             0,
                             size_bytes,
                         );
-                        let encoder = encoder_opt.take().ok_or_else(|| {
-                            AerogpuD3d9Error::Validation("COPY_BUFFER: missing encoder".into())
-                        })?;
-                        self.queue.submit([encoder.finish()]);
-                        let bytes = self.readback_buffer_bytes(&staging)?;
-                        guest_memory.write(dst_gpa, &bytes)?;
+                        writeback_entry = Some(PendingWriteback::Buffer {
+                            staging,
+                            dst_gpa,
+                            size_bytes,
+                        });
                     }
                     Ok(())
                 })();
                 self.encoder = encoder_opt;
+                if result.is_ok() {
+                    if let Some(entry) = writeback_entry {
+                        pending_writebacks.push(entry);
+                    }
+                }
                 result
             }
             AeroGpuCmd::CopyTexture2d {
@@ -1898,11 +2155,7 @@ impl AerogpuD3d9Executor {
             } => {
                 self.ensure_encoder();
                 let mut encoder_opt = self.encoder.take();
-                #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
-                let mut writeback_plan: Option<(
-                    wgpu::Buffer,
-                    TextureWritebackPlan,
-                )> = None;
+                let mut writeback_entry: Option<PendingWriteback> = None;
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
                     if width == 0 || height == 0 {
                         return Ok(());
@@ -2119,9 +2372,12 @@ impl AerogpuD3d9Executor {
                         },
                     );
 
-                    #[cfg(not(target_arch = "wasm32"))]
                     if writeback {
-                        let dst_backing = dst_backing.expect("validated dst_backing for writeback");
+                        let dst_backing = dst_backing.ok_or_else(|| {
+                            AerogpuD3d9Error::Validation(
+                                "COPY_TEXTURE2D: WRITEBACK_DST requires guest-backed dst".into(),
+                            )
+                        })?;
                         if ctx.guest_memory.is_none() {
                             return Err(AerogpuD3d9Error::MissingGuestMemory(dst_texture));
                         }
@@ -2188,10 +2444,21 @@ impl AerogpuD3d9Executor {
                                 alloc.size_bytes
                             )));
                         }
+                        let backing_gpa =
+                            alloc.gpa.checked_add(dst_backing.alloc_offset_bytes).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_TEXTURE2D: dst backing overflow".into(),
+                                )
+                            })?;
+                        if backing_gpa.checked_add(dst_backing.size_bytes).is_none() {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "COPY_TEXTURE2D: dst backing overflow".into(),
+                            ));
+                        }
 
-                        // MVP implementation: WRITEBACK_DST introduces a submit boundary so we can
-                        // synchronously map the copied texel bytes and commit them into guest
-                        // memory.
+                        // WRITEBACK_DST snapshots the copied texels into a staging buffer. The
+                        // staging buffer is mapped and committed into guest memory after a submit
+                        // boundary at the end of the command stream.
                         let staging_size = (padded_bpr as u64)
                             .checked_mul(height as u64)
                             .ok_or_else(|| {
@@ -2230,10 +2497,11 @@ impl AerogpuD3d9Executor {
                                 depth_or_array_layers: 1,
                             },
                         );
-                        writeback_plan = Some((
+                        writeback_entry = Some(PendingWriteback::Texture2d {
                             staging,
-                            TextureWritebackPlan {
+                            plan: TextureWritebackPlan {
                                 backing: dst_backing,
+                                backing_gpa,
                                 dst_x,
                                 dst_y,
                                 height,
@@ -2241,104 +2509,17 @@ impl AerogpuD3d9Executor {
                                 unpadded_bytes_per_row: unpadded_bpr,
                                 padded_bytes_per_row: padded_bpr,
                             },
-                        ));
+                        });
                     }
                     Ok(())
                 })();
-                if result.is_err() || writeback_plan.is_none() {
-                    self.encoder = encoder_opt;
-                    return result;
-                }
-
-                let (staging, plan) = writeback_plan.expect("writeback plan exists");
-                let encoder = encoder_opt.take().ok_or_else(|| {
-                    AerogpuD3d9Error::Validation("COPY_TEXTURE2D: missing encoder".into())
-                })?;
-                self.queue.submit([encoder.finish()]);
-                let bytes = self.readback_buffer_bytes(&staging)?;
-                let guest_memory = ctx
-                    .guest_memory
-                    .expect("validated guest memory for writeback");
-
-                let alloc = ctx
-                    .alloc_table
-                    .and_then(|t| t.get(plan.backing.alloc_id))
-                    .ok_or(AerogpuD3d9Error::MissingAllocTable(plan.backing.alloc_id))?;
-                if (alloc.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
-                    return Err(AerogpuD3d9Error::Validation(format!(
-                        "COPY_TEXTURE2D: WRITEBACK_DST to READONLY alloc_id={}",
-                        plan.backing.alloc_id
-                    )));
-                }
-                let backing_end = plan
-                    .backing
-                    .alloc_offset_bytes
-                    .checked_add(plan.backing.size_bytes)
-                    .ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("COPY_TEXTURE2D: dst backing overflow".into())
-                    })?;
-                if backing_end > alloc.size_bytes {
-                    return Err(AerogpuD3d9Error::Validation(format!(
-                        "COPY_TEXTURE2D: dst backing out of bounds (alloc_id={} offset=0x{:x} size=0x{:x} alloc_size=0x{:x})",
-                        plan.backing.alloc_id,
-                        plan.backing.alloc_offset_bytes,
-                        plan.backing.size_bytes,
-                        alloc.size_bytes
-                    )));
-                }
-
-                let row_pitch = plan.backing.row_pitch_bytes as u64;
-                let dst_x_bytes = (plan.dst_x as u64) * (plan.bytes_per_pixel as u64);
-                for row in 0..plan.height {
-                    let src_start = row as usize * plan.padded_bytes_per_row as usize;
-                    let src_end = src_start + plan.unpadded_bytes_per_row as usize;
-                    let row_bytes = &bytes[src_start..src_end];
-
-                    let row_index = plan.dst_y.checked_add(row).ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("COPY_TEXTURE2D: dst_y overflow".into())
-                    })?;
-                    let row_off = (row_index as u64).checked_mul(row_pitch).ok_or_else(|| {
-                        AerogpuD3d9Error::Validation(
-                            "COPY_TEXTURE2D: dst row offset overflow".into(),
-                        )
-                    })?;
-                    let alloc_offset = plan
-                        .backing
-                        .alloc_offset_bytes
-                        .checked_add(row_off)
-                        .and_then(|v| v.checked_add(dst_x_bytes))
-                        .ok_or_else(|| {
-                            AerogpuD3d9Error::Validation(
-                                "COPY_TEXTURE2D: dst backing overflow".into(),
-                            )
-                        })?;
-                    let alloc_end = alloc_offset
-                        .checked_add(row_bytes.len() as u64)
-                        .ok_or_else(|| {
-                            AerogpuD3d9Error::Validation(
-                                "COPY_TEXTURE2D: dst backing overflow".into(),
-                            )
-                        })?;
-                    if alloc_end > alloc.size_bytes {
-                        return Err(AerogpuD3d9Error::Validation(format!(
-                            "COPY_TEXTURE2D: dst backing out of bounds (alloc_id={} offset=0x{:x} size=0x{:x} alloc_size=0x{:x})",
-                            plan.backing.alloc_id,
-                            alloc_offset,
-                            row_bytes.len() as u64,
-                            alloc.size_bytes
-                        )));
+                self.encoder = encoder_opt;
+                if result.is_ok() {
+                    if let Some(entry) = writeback_entry {
+                        pending_writebacks.push(entry);
                     }
-                    let dst_gpa = alloc.gpa.checked_add(alloc_offset).ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("COPY_TEXTURE2D: dst backing overflow".into())
-                    })?;
-                    if dst_gpa.checked_add(row_bytes.len() as u64).is_none() {
-                        return Err(AerogpuD3d9Error::Validation(
-                            "COPY_TEXTURE2D: dst backing overflow".into(),
-                        ));
-                    }
-                    guest_memory.write(dst_gpa, row_bytes)?;
                 }
-                Ok(())
+                result
             }
             AeroGpuCmd::CreateShaderDxbc {
                 shader_handle,

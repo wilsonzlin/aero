@@ -202,17 +202,17 @@ export async function init_aerogpu_d3d9(
   await mod.init_aerogpu_d3d9(offscreenCanvas ?? undefined, options);
 }
 
-export function submit_aerogpu_d3d9(
+export async function submit_aerogpu_d3d9(
   cmdStream: Uint8Array,
   signalFence: bigint,
   contextId: number,
   allocTable?: Uint8Array,
-): SubmitAerogpuResult {
+): Promise<SubmitAerogpuResult> {
   const mod = requireLoaded();
   if (typeof mod.submit_aerogpu_d3d9 !== "function") {
     throw new Error("aero-gpu wasm export submit_aerogpu_d3d9 is missing (outdated bundle?)");
   }
-  return mod.submit_aerogpu_d3d9(cmdStream, signalFence, contextId, allocTable) as SubmitAerogpuResult;
+  return (await mod.submit_aerogpu_d3d9(cmdStream, signalFence, contextId, allocTable)) as SubmitAerogpuResult;
 }
 
 export type ScreenshotInfo = {
