@@ -1171,6 +1171,56 @@ fn fs_main() -> @location(0) vec4<f32> {
         )))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_buffer_to_vec_blocking(
+        &self,
+        buffer: &wgpu::Buffer,
+        size_bytes: u64,
+        context: &'static str,
+    ) -> Result<Vec<u8>, ExecutorError> {
+        let slice = buffer.slice(..size_bytes);
+        let state = std::sync::Arc::new((
+            std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
+            std::sync::Condvar::new(),
+        ));
+        let state_clone = state.clone();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            let (lock, cv) = &*state_clone;
+            *lock.lock().unwrap() = Some(res);
+            cv.notify_one();
+        });
+
+        self.device.poll(wgpu::Maintain::Wait);
+
+        let (lock, cv) = &*state;
+        let mut guard = lock.lock().unwrap();
+        while guard.is_none() {
+            guard = cv.wait(guard).unwrap();
+        }
+        let map_res = guard.take().unwrap();
+        map_res.map_err(|err| {
+            ExecutorError::Validation(format!("{context}: writeback map_async failed: {err:?}"))
+        })?;
+
+        let mapped = slice.get_mapped_range();
+        let out = mapped.to_vec();
+        drop(mapped);
+        buffer.unmap();
+        Ok(out)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn read_buffer_to_vec_blocking(
+        &self,
+        _buffer: &wgpu::Buffer,
+        _size_bytes: u64,
+        context: &'static str,
+    ) -> Result<Vec<u8>, ExecutorError> {
+        Err(ExecutorError::Validation(format!(
+            "{context}: writeback is not supported on wasm yet"
+        )))
+    }
+
     fn exec_copy_buffer(
         &mut self,
         dst_buffer: u32,
@@ -1185,12 +1235,8 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Ok(());
         }
 
-        if flags != 0 {
-            if flags == cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST {
-                return Err(ExecutorError::Validation(
-                    "COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet".into(),
-                ));
-            }
+        let writeback = (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+        if (flags & !cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
             return Err(ExecutorError::Validation(format!(
                 "COPY_BUFFER: unsupported flags 0x{flags:08X}"
             )));
@@ -1217,14 +1263,23 @@ fn fs_main() -> @location(0) vec4<f32> {
             )));
         }
 
-        let (src_size, dst_size) = {
+        let (src_size, dst_size, dst_backing) = {
             let src = self.buffers.get(&src_buffer).ok_or_else(|| {
                 ExecutorError::Validation(format!("COPY_BUFFER: unknown src buffer {src_buffer}"))
             })?;
             let dst = self.buffers.get(&dst_buffer).ok_or_else(|| {
                 ExecutorError::Validation(format!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))
             })?;
-            (src.size_bytes, dst.size_bytes)
+            let dst_backing = if writeback {
+                dst.backing.ok_or_else(|| {
+                    ExecutorError::Validation(format!(
+                        "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
+                    ))
+                })?
+            } else {
+                GuestBufferBacking { base_gpa: 0 }
+            };
+            (src.size_bytes, dst.size_bytes, dst_backing)
         };
 
         let src_end = src_offset_bytes
@@ -1253,13 +1308,47 @@ fn fs_main() -> @location(0) vec4<f32> {
             (&src.buffer, &dst.buffer)
         };
 
+        let size_usize = usize::try_from(size_bytes).map_err(|_| {
+            ExecutorError::Validation("COPY_BUFFER: size_bytes out of range".into())
+        })?;
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("aerogpu.executor.copy_buffer.encoder"),
             });
         encoder.copy_buffer_to_buffer(src, src_offset_bytes, dst, dst_offset_bytes, size_bytes);
+        let staging = if writeback {
+            let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu.executor.copy_buffer.writeback"),
+                size: size_bytes,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(dst, dst_offset_bytes, &staging, 0, size_bytes);
+            Some(staging)
+        } else {
+            None
+        };
         self.queue.submit([encoder.finish()]);
+
+        if writeback {
+            let Some(staging) = staging else {
+                return Err(ExecutorError::Validation(
+                    "COPY_BUFFER: missing staging buffer for writeback".into(),
+                ));
+            };
+            let dst_gpa = dst_backing.base_gpa.checked_add(dst_offset_bytes).ok_or_else(|| {
+                ExecutorError::Validation("COPY_BUFFER: dst backing GPA overflow".into())
+            })?;
+            let data = self.read_buffer_to_vec_blocking(&staging, size_bytes, "COPY_BUFFER")?;
+            if data.len() != size_usize {
+                return Err(ExecutorError::Validation(
+                    "COPY_BUFFER: internal writeback size mismatch".into(),
+                ));
+            }
+            guest_memory.write(dst_gpa, &data)?;
+        }
         Ok(())
     }
 
@@ -1284,12 +1373,8 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Ok(());
         }
 
-        if flags != 0 {
-            if flags == cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST {
-                return Err(ExecutorError::Validation(
-                    "COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet".into(),
-                ));
-            }
+        let writeback = (flags & cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
+        if (flags & !cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
             return Err(ExecutorError::Validation(format!(
                 "COPY_TEXTURE2D: unsupported flags 0x{flags:08X}"
             )));
@@ -1313,7 +1398,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             ));
         }
 
-        let (src_extent, dst_extent, src_format, dst_format) = {
+        let (src_extent, dst_extent, src_format, dst_format, dst_bpp, dst_backing) = {
             let src = self.textures.get(&src_texture).ok_or_else(|| {
                 ExecutorError::Validation(format!(
                     "COPY_TEXTURE2D: unknown src texture {src_texture}"
@@ -1324,12 +1409,27 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_TEXTURE2D: unknown dst texture {dst_texture}"
                 ))
             })?;
+            let dst_backing = if writeback {
+                dst.backing.ok_or_else(|| {
+                    ExecutorError::Validation(format!(
+                        "COPY_TEXTURE2D: WRITEBACK_DST requires dst texture to be guest-backed (handle={dst_texture})"
+                    ))
+                })?
+            } else {
+                GuestTextureBacking {
+                    base_gpa: 0,
+                    row_pitch_bytes: 0,
+                    size_bytes: 0,
+                }
+            };
 
             (
                 (src.width, src.height),
                 (dst.width, dst.height),
                 src.format,
                 dst.format,
+                dst.bytes_per_pixel,
+                dst_backing,
             )
         };
 
@@ -1413,7 +1513,116 @@ fn fs_main() -> @location(0) vec4<f32> {
                 depth_or_array_layers: 1,
             },
         );
+        let (staging, bytes_per_row) = if writeback {
+            let row_bytes = width.checked_mul(dst_bpp).ok_or_else(|| {
+                ExecutorError::Validation("COPY_TEXTURE2D: row size overflow".into())
+            })?;
+            let bytes_per_row = align_to(row_bytes, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+            let size_bytes = u64::from(bytes_per_row)
+                .checked_mul(u64::from(height))
+                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: staging size overflow".into()))?;
+            let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu.executor.copy_texture2d.writeback"),
+                size: size_bytes,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                wgpu::ImageCopyTexture {
+                    texture: dst,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: dst_x,
+                        y: dst_y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyBuffer {
+                    buffer: &staging,
+                    layout: wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(bytes_per_row),
+                        rows_per_image: Some(height),
+                    },
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            (Some(staging), bytes_per_row)
+        } else {
+            (None, 0)
+        };
         self.queue.submit([encoder.finish()]);
+
+        if writeback {
+            let Some(staging) = staging else {
+                return Err(ExecutorError::Validation(
+                    "COPY_TEXTURE2D: missing staging buffer for writeback".into(),
+                ));
+            };
+
+            let row_bytes = width
+                .checked_mul(dst_bpp)
+                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: row size overflow".into()))?;
+            let staging_size = u64::from(bytes_per_row)
+                .checked_mul(u64::from(height))
+                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: staging size overflow".into()))?;
+            let staging_bytes =
+                self.read_buffer_to_vec_blocking(&staging, staging_size, "COPY_TEXTURE2D")?;
+
+            let row_bytes_usize = usize::try_from(row_bytes)
+                .map_err(|_| ExecutorError::Validation("COPY_TEXTURE2D: row size out of range".into()))?;
+            let bytes_per_row_usize = usize::try_from(bytes_per_row).map_err(|_| {
+                ExecutorError::Validation("COPY_TEXTURE2D: bytes_per_row out of range".into())
+            })?;
+
+            let dst_x_bytes = u64::from(dst_x)
+                .checked_mul(u64::from(dst_bpp))
+                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into()))?;
+
+            let row_pitch = u64::from(dst_backing.row_pitch_bytes);
+            if row_pitch == 0 {
+                return Err(ExecutorError::Validation(
+                    "COPY_TEXTURE2D: missing dst row_pitch_bytes for writeback".into(),
+                ));
+            }
+
+            for row in 0..height {
+                let src_off = row as usize * bytes_per_row_usize;
+                let src_end = src_off + row_bytes_usize;
+                let row_bytes_slice = staging_bytes
+                    .get(src_off..src_end)
+                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: staging OOB".into()))?;
+
+                let row_y = u64::from(dst_y)
+                    .checked_add(u64::from(row))
+                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst_y overflow".into()))?;
+                let row_offset = row_y
+                    .checked_mul(row_pitch)
+                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: row offset overflow".into()))?;
+                let write_offset = row_offset
+                    .checked_add(dst_x_bytes)
+                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: write offset overflow".into()))?;
+                let write_end = write_offset
+                    .checked_add(u64::from(row_bytes))
+                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: write end overflow".into()))?;
+                if write_end > dst_backing.size_bytes {
+                    return Err(ExecutorError::Validation(
+                        "COPY_TEXTURE2D: writeback out of bounds".into(),
+                    ));
+                }
+                let dst_gpa = dst_backing
+                    .base_gpa
+                    .checked_add(write_offset)
+                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst GPA overflow".into()))?;
+
+                guest_memory.write(dst_gpa, row_bytes_slice)?;
+            }
+        }
         Ok(())
     }
 
