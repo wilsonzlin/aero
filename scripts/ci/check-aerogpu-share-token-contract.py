@@ -81,6 +81,10 @@ def read_text(path: pathlib.Path) -> str:
 def main() -> int:
     errors: list[str] = []
 
+    deprecated_header = ROOT / "drivers" / "aerogpu" / "protocol" / "aerogpu_alloc_privdata.h"
+    if deprecated_header.exists():
+        errors.append(f"{deprecated_header.relative_to(ROOT)}: deprecated header must not exist")
+
     # Banned substring scan.
     for base in SCAN_PATHS:
         for path in iter_files(base):

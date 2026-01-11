@@ -121,6 +121,18 @@ done
 need_file "drivers/aerogpu/protocol/aerogpu_alloc.h"
 need_file "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
 
+# Guardrail: the repo must not reintroduce the deprecated
+# `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h` header (the removed
+# "KMD→UMD ShareToken" model). The canonical cross-process token is stored in
+# `aerogpu_wddm_alloc_priv.share_token` (`aerogpu_wddm_alloc.h`).
+deprecated_alloc_privdata_header="drivers/aerogpu/protocol/aerogpu_alloc_privdata.h"
+if [[ -f "$deprecated_alloc_privdata_header" ]]; then
+  die "$deprecated_alloc_privdata_header is deprecated; use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead"
+fi
+if git grep -n "aerogpu_alloc_privdata.h" -- docs drivers >/dev/null; then
+  die "stale references to aerogpu_alloc_privdata.h found (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
+fi
+
 # npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
 # (Per-package lockfiles are ignored via .gitignore, but this catches forced adds.)
 mapfile -t npm_lockfiles < <(git ls-files | grep -E '(^|/)package-lock\.json$' || true)
