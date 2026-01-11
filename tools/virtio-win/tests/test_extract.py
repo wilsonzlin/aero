@@ -262,6 +262,43 @@ class VirtioWinExtractTest(unittest.TestCase):
                     expect_pycdlib_path_mode="rr",
                 )
 
+                # Create an ISO without Joliet/Rock Ridge and ensure the extractor can
+                # fall back to ISO-9660 paths (and strips ISO version suffixes like `;1`
+                # from extracted filenames).
+                iso_iso_path = tmp_path / "virtio-win-iso9660.iso"
+                cmd_iso = [
+                    *iso_tool,
+                    "-iso-level",
+                    "3",
+                    "-V",
+                    "VIRTIOWIN_TEST",
+                    "-o",
+                    str(iso_iso_path),
+                    str(stage_root),
+                ]
+                subprocess.run(cmd_iso, check=True)
+
+                out_iso_root = tmp_path / "out-pycdlib-iso"
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(extract_script),
+                        "--virtio-win-iso",
+                        str(iso_iso_path),
+                        "--out-root",
+                        str(out_iso_root),
+                        "--backend",
+                        "pycdlib",
+                    ],
+                    check=True,
+                )
+                self._assert_extract_output(
+                    out_root=out_iso_root,
+                    iso_path=iso_iso_path,
+                    expect_backend="pycdlib",
+                    expect_pycdlib_path_mode="iso",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

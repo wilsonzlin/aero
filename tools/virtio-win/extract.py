@@ -203,6 +203,23 @@ def _build_tree_from_paths(paths: Iterable[str]) -> _IsoNode:
     return root
 
 
+def _strip_iso9660_version_suffix(name: str) -> str:
+    """
+    Strip ISO-9660 file identifier version suffixes like `;1`.
+
+    When pycdlib is forced to use ISO-9660 paths (no Joliet/Rock Ridge), file names
+    are commonly reported as `FOO.TXT;1`. We strip the `;1` for the extracted output
+    path so downstream tooling sees normal filenames.
+    """
+
+    if ";" not in name:
+        return name
+    base, sep, ver = name.rpartition(";")
+    if sep and ver.isdigit():
+        return base
+    return name
+
+
 def _select_extract_targets(tree: _IsoNode) -> tuple[list[_ExtractTarget], list[dict[str, Any]]]:
     """
     Returns (targets, missing_optional).
@@ -377,6 +394,10 @@ def _extract_with_pycdlib(
                 for pref in want_prefixes:
                     if jp.casefold().startswith(pref.casefold()):
                         dest_rel = jp.lstrip("/")
+                        if path_mode == "iso":
+                            dest_parts = dest_rel.split("/")
+                            dest_parts[-1] = _strip_iso9660_version_suffix(dest_parts[-1])
+                            dest_rel = "/".join(dest_parts)
                         files.append((jp, dest_rel))
                         break
 
@@ -386,6 +407,8 @@ def _extract_with_pycdlib(
         # Root-level aux files (license/notice/version markers).
         for p in extra_paths:
             dest_rel = p.lstrip("/")
+            if path_mode == "iso":
+                dest_rel = _strip_iso9660_version_suffix(dest_rel)
             files.append((p, dest_rel))
 
         for p, dest_rel in files:
@@ -552,6 +575,9 @@ def main() -> int:
         targets, missing_optional = _select_extract_targets(tree)
         extra_root_files = extracted_notice_files + extracted_metadata_files
         extra_paths = ["/" + f for f in extra_root_files]
+        if pycdlib_path_mode == "iso":
+            extracted_notice_files = [_strip_iso9660_version_suffix(p) for p in extracted_notice_files]
+            extracted_metadata_files = [_strip_iso9660_version_suffix(p) for p in extracted_metadata_files]
         _extract_with_pycdlib(iso_path, out_root, targets, extra_paths, path_mode=pycdlib_path_mode or "joliet")
 
     # Quick sanity check: ensure each extracted target directory exists.
