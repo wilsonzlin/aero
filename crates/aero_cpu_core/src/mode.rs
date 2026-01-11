@@ -1,22 +1,9 @@
 use crate::segmentation::Seg;
-use crate::CpuState;
+use crate::state::{
+    CpuMode, CpuState, CR0_PE, CR0_PG, CR4_PAE, EFER_LMA, EFER_LME, SEG_ACCESS_DB, SEG_ACCESS_L,
+};
 
-pub const CR0_PE: u64 = 1 << 0;
-pub const CR0_PG: u64 = 1 << 31;
-
-pub const CR4_PAE: u64 = 1 << 5;
-
-pub const EFER_LME: u64 = 1 << 8;
-
-/// High-level CPU execution mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CpuMode {
-    Real,
-    Protected,
-    Long,
-}
-
-/// Instruction decoding/execution width derived from CS and mode.
+/// Instruction decoding/execution width derived from CS and [`CpuMode`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodeMode {
     Real16,
@@ -26,21 +13,20 @@ pub enum CodeMode {
 }
 
 impl CpuState {
+    /// Returns the current high-level execution mode classification.
+    ///
+    /// Prefer reading [`CpuState::mode`] directly unless you need a legacy name.
+    #[inline]
     pub fn cpu_mode(&self) -> CpuMode {
-        if self.lma {
-            CpuMode::Long
-        } else if self.cr0 & CR0_PE != 0 {
-            CpuMode::Protected
-        } else {
-            CpuMode::Real
-        }
+        self.mode
     }
 
+    /// Returns the current effective instruction decoding/execution width.
     pub fn code_mode(&self) -> CodeMode {
-        match self.cpu_mode() {
-            CpuMode::Real => CodeMode::Real16,
+        match self.mode {
+            CpuMode::Real | CpuMode::Vm86 => CodeMode::Real16,
             CpuMode::Protected => {
-                if self.segments.cs.cache.attrs.default_big {
+                if self.segments.cs.is_default_32bit() {
                     CodeMode::Protected32
                 } else {
                     CodeMode::Protected16
@@ -51,49 +37,66 @@ impl CpuState {
     }
 
     pub fn set_cr0(&mut self, value: u64) {
-        self.cr0 = value;
+        self.control.cr0 = value;
         self.recompute_lma();
+        self.update_mode();
     }
 
     pub fn set_cr4(&mut self, value: u64) {
-        self.cr4 = value;
+        self.control.cr4 = value;
         self.recompute_lma();
+        self.update_mode();
     }
 
     pub fn set_efer(&mut self, value: u64) {
-        self.efer = value;
+        // EFER.LMA is read-only on real hardware; preserve it across writes.
+        let lma = self.msr.efer & EFER_LMA;
+        self.msr.efer = (value & !EFER_LMA) | lma;
         self.recompute_lma();
+        self.update_mode();
     }
 
-    /// Recomputes whether long-mode active state is still valid.
-    ///
-    /// Per this project's simplified model, long mode only becomes active after a far
-    /// transfer loads a 64-bit code segment. However, long mode must be cleared when
-    /// the enabling conditions are no longer met (paging disabled, etc.).
-    fn recompute_lma(&mut self) {
-        let enabled =
-            (self.cr0 & CR0_PG != 0) && (self.cr4 & CR4_PAE != 0) && (self.efer & EFER_LME != 0);
-        if !enabled {
-            self.lma = false;
-        }
-    }
-
-    /// Returns whether long-mode activation conditions are met (CR0.PG, CR4.PAE, EFER.LME).
+    /// Returns whether long-mode enabling conditions are met (CR0.PG, CR4.PAE, EFER.LME).
     pub fn long_mode_conditions_met(&self) -> bool {
-        (self.cr0 & CR0_PG != 0) && (self.cr4 & CR4_PAE != 0) && (self.efer & EFER_LME != 0)
+        (self.control.cr0 & CR0_PG != 0) && (self.control.cr4 & CR4_PAE != 0) && (self.msr.efer & EFER_LME != 0)
     }
 
-    /// Model-Specific Register (MSR) backed base for FS/GS in long mode.
+    /// Model-Specific Register (MSR) backed base for FS/GS in IA-32e mode.
     pub fn msr_seg_base(&self, seg: Seg) -> u64 {
         match seg {
-            Seg::FS => self.msr_fs_base,
-            Seg::GS => self.msr_gs_base,
+            Seg::FS => self.msr.fs_base,
+            Seg::GS => self.msr.gs_base,
             _ => 0,
         }
     }
 
     /// Implements the SWAPGS instruction semantics (swap GS_BASE and KERNEL_GS_BASE).
     pub fn swapgs(&mut self) {
-        core::mem::swap(&mut self.msr_gs_base, &mut self.msr_kernel_gs_base);
+        core::mem::swap(&mut self.msr.gs_base, &mut self.msr.kernel_gs_base);
+    }
+
+    /// Convenience: updates CR0.PE while keeping the rest of CR0 unchanged.
+    pub fn set_protected_enable(&mut self, enabled: bool) {
+        if enabled {
+            self.control.cr0 |= CR0_PE;
+        } else {
+            self.control.cr0 &= !CR0_PE;
+            // Leaving protected mode implicitly leaves IA-32e mode.
+            self.msr.efer &= !EFER_LMA;
+            // Reset CS.L so `update_mode()` doesn't accidentally classify a future
+            // PE transition as 64-bit without a far transfer.
+            self.segments.cs.access &= !(SEG_ACCESS_L | SEG_ACCESS_DB);
+        }
+        self.update_mode();
+    }
+
+    /// Recomputes whether IA-32e mode active state (EFER.LMA) is still valid.
+    ///
+    /// Real hardware clears EFER.LMA when the enabling conditions are no longer met.
+    fn recompute_lma(&mut self) {
+        if !self.long_mode_conditions_met() {
+            self.msr.efer &= !EFER_LMA;
+        }
     }
 }
+

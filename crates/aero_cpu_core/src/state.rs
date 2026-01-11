@@ -112,6 +112,7 @@ pub const EFER_LMA: u64 = 1 << 10;
 pub const SEG_ACCESS_L: u32 = 1 << 9;
 pub const SEG_ACCESS_DB: u32 = 1 << 10;
 pub const SEG_ACCESS_UNUSABLE: u32 = 1 << 16;
+pub const SEG_ACCESS_PRESENT: u32 = 1 << 7;
 
 // ---- JIT ABI offsets --------------------------------------------------------
 
@@ -137,7 +138,7 @@ pub const CPU_XMM_OFF: [usize; 16] = [
 ];
 
 /// Total size (in bytes) of [`CpuState`].
-pub const CPU_STATE_SIZE: usize = 1056;
+pub const CPU_STATE_SIZE: usize = 1072;
 
 /// Alignment (in bytes) of [`CpuState`].
 pub const CPU_STATE_ALIGN: usize = 16;
@@ -496,8 +497,58 @@ pub struct Segment {
 
 impl Segment {
     #[inline]
+    pub const fn typ(&self) -> u8 {
+        (self.access & 0xF) as u8
+    }
+
+    #[inline]
+    pub const fn s(&self) -> bool {
+        (self.access & (1 << 4)) != 0
+    }
+
+    #[inline]
+    pub const fn dpl(&self) -> u8 {
+        ((self.access >> 5) & 0b11) as u8
+    }
+
+    #[inline]
+    pub const fn is_present(&self) -> bool {
+        (self.access & SEG_ACCESS_PRESENT) != 0
+    }
+
+    #[inline]
     pub const fn is_unusable(&self) -> bool {
         (self.access & SEG_ACCESS_UNUSABLE) != 0
+    }
+
+    #[inline]
+    pub const fn is_code(&self) -> bool {
+        self.s() && (self.typ() & 0b1000 != 0)
+    }
+
+    #[inline]
+    pub const fn is_data(&self) -> bool {
+        self.s() && (self.typ() & 0b1000 == 0)
+    }
+
+    #[inline]
+    pub const fn code_conforming(&self) -> bool {
+        self.is_code() && (self.typ() & 0b0100 != 0)
+    }
+
+    #[inline]
+    pub const fn code_readable(&self) -> bool {
+        self.is_code() && (self.typ() & 0b0010 != 0)
+    }
+
+    #[inline]
+    pub const fn data_expand_down(&self) -> bool {
+        self.is_data() && (self.typ() & 0b0100 != 0)
+    }
+
+    #[inline]
+    pub const fn data_writable(&self) -> bool {
+        self.is_data() && (self.typ() & 0b0010 != 0)
     }
 
     #[inline]
@@ -628,6 +679,12 @@ pub struct CpuState {
     pub fpu: FpuState,
     /// SSE architectural state (XMM0-15 + MXCSR).
     pub sse: SseState,
+
+    /// A20 gate state (real mode address wrap behaviour).
+    ///
+    /// When disabled, physical addresses are masked to 20 bits (1MiB wraparound).
+    /// This is only applied by real/v8086 mode linearization helpers.
+    pub a20_enabled: bool,
 }
 
 impl Default for CpuState {
@@ -648,6 +705,7 @@ impl Default for CpuState {
             _pad_align16: [0; 8],
             fpu: FpuState::default(),
             sse: SseState::default(),
+            a20_enabled: true,
         }
     }
 }
@@ -945,8 +1003,8 @@ impl CpuState {
         use Register::*;
         match self.mode {
             CpuMode::Long => match seg {
-                FS => self.segments.fs.base,
-                GS => self.segments.gs.base,
+                FS => self.msr.fs_base,
+                GS => self.msr.gs_base,
                 _ => 0,
             },
             _ => match seg {
@@ -1307,5 +1365,22 @@ mod tests {
         for i in 0..16 {
             assert_eq!(CPU_XMM_OFF[i], xmm_base + i * core::mem::size_of::<u128>());
         }
+    }
+
+    #[test]
+    fn seg_base_reg_uses_msr_bases_in_long_mode() {
+        use aero_x86::Register;
+
+        let mut cpu = CpuState::new(CpuMode::Long);
+        cpu.msr.fs_base = 0x0000_1111_2222_3333;
+        cpu.msr.gs_base = 0xFFFF_8000_0000_1000;
+
+        // Segment caches are still populated by descriptor loads, but in long mode
+        // address formation uses the MSR-backed bases.
+        cpu.segments.fs.base = 0xDEAD_BEEF;
+        cpu.segments.gs.base = 0xCAFE_BABE;
+
+        assert_eq!(cpu.seg_base_reg(Register::FS), cpu.msr.fs_base);
+        assert_eq!(cpu.seg_base_reg(Register::GS), cpu.msr.gs_base);
     }
 }

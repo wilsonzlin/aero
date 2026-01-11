@@ -1,6 +1,6 @@
 use crate::descriptors::{Descriptor, DescriptorAttributes, SegmentDescriptor};
-use crate::mode::{CpuMode, CR0_PE};
-use crate::{CpuBus, CpuState, Exception};
+use crate::state::{CpuMode, CpuState, EFER_LMA, SEG_ACCESS_UNUSABLE};
+use crate::{CpuBus, Exception};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Seg {
@@ -187,16 +187,16 @@ impl CpuState {
     pub fn seg_base(&self, seg: Seg) -> u64 {
         match self.cpu_mode() {
             CpuMode::Long => self.msr_seg_base(seg),
-            CpuMode::Protected => self.segments.reg(seg).cache.base,
-            CpuMode::Real => (self.segments.reg(seg).selector as u64) << 4,
+            CpuMode::Protected => self.seg_reg(seg).base,
+            CpuMode::Real | CpuMode::Vm86 => (self.seg_reg(seg).selector as u64) << 4,
         }
     }
 
     pub fn seg_limit(&self, seg: Seg) -> u32 {
         match self.cpu_mode() {
             CpuMode::Long => 0xFFFF_FFFF,
-            CpuMode::Protected => self.segments.reg(seg).cache.limit,
-            CpuMode::Real => 0xFFFF,
+            CpuMode::Protected => self.seg_reg(seg).limit,
+            CpuMode::Real | CpuMode::Vm86 => 0xFFFF,
         }
     }
 
@@ -204,14 +204,10 @@ impl CpuState {
     /// segmentation checks required for the active CPU mode.
     pub fn linearize(&self, seg: Seg, offset: u64, access: AccessType) -> Result<u64, Exception> {
         match self.cpu_mode() {
-            CpuMode::Real => {
-                let base = (self.segments.reg(seg).selector as u64) << 4;
+            CpuMode::Real | CpuMode::Vm86 => {
+                let base = (self.seg_reg(seg).selector as u64) << 4;
                 let linear = base.wrapping_add(offset);
-                let linear = if self.a20_enabled {
-                    linear
-                } else {
-                    linear & 0xFFFFF
-                };
+                let linear = if self.a20_enabled { linear } else { linear & 0xFFFFF };
                 Ok(linear)
             }
             CpuMode::Protected => self.linearize_protected(seg, offset, access),
@@ -221,8 +217,8 @@ impl CpuState {
 
     fn linearize_long(&self, seg: Seg, offset: u64) -> Result<u64, Exception> {
         let base = match seg {
-            Seg::FS => self.msr_fs_base,
-            Seg::GS => self.msr_gs_base,
+            Seg::FS => self.msr.fs_base,
+            Seg::GS => self.msr.gs_base,
             _ => 0,
         };
         let linear = base.wrapping_add(offset);
@@ -238,8 +234,8 @@ impl CpuState {
         offset: u64,
         access: AccessType,
     ) -> Result<u64, Exception> {
-        let reg = self.segments.reg(seg);
-        if reg.cache.attrs.unusable {
+        let reg = self.seg_reg(seg);
+        if reg.is_unusable() {
             return Err(match seg {
                 Seg::SS => Exception::ss(0),
                 _ => Exception::gp0(),
@@ -249,40 +245,40 @@ impl CpuState {
         // Rights checks.
         match access.kind {
             AccessKind::Execute => {
-                if seg != Seg::CS || !reg.cache.attrs.is_code() {
+                if seg != Seg::CS || !reg.is_code() {
                     return Err(Exception::gp0());
                 }
             }
             AccessKind::Read => {
-                if reg.cache.attrs.is_code() && !reg.cache.attrs.code_readable() {
+                if reg.is_code() && !reg.code_readable() {
                     return Err(Exception::gp0());
                 }
             }
             AccessKind::Write => {
-                if reg.cache.attrs.is_code() {
+                if reg.is_code() {
                     return Err(Exception::gp0());
                 }
-                if reg.cache.attrs.is_data() && !reg.cache.attrs.data_writable() {
+                if reg.is_data() && !reg.data_writable() {
                     return Err(Exception::gp0());
                 }
             }
         }
 
-        // Limit checks (ignored in long mode).
+        // Limit checks.
         let size = access.size.max(1) as u64;
         let end = offset.checked_add(size - 1).ok_or_else(|| match seg {
             Seg::SS => Exception::ss(0),
             _ => Exception::gp0(),
         })?;
 
-        let max = if reg.cache.attrs.default_big {
+        let max = if reg.is_default_32bit() {
             0xFFFF_FFFFu64
         } else {
             0xFFFFu64
         };
 
-        let limit = reg.cache.limit as u64;
-        let ok = if reg.cache.attrs.data_expand_down() {
+        let limit = reg.limit as u64;
+        let ok = if reg.data_expand_down() {
             offset > limit && end <= max
         } else {
             end <= limit
@@ -295,7 +291,7 @@ impl CpuState {
             });
         }
 
-        Ok(reg.cache.base.wrapping_add(offset))
+        Ok(reg.base.wrapping_add(offset))
     }
 
     pub fn load_seg(
@@ -306,18 +302,17 @@ impl CpuState {
         reason: LoadReason,
     ) -> Result<(), Exception> {
         match self.cpu_mode() {
-            CpuMode::Real => self.load_seg_real(seg, selector),
-            CpuMode::Protected => self.load_seg_protected(bus, seg, selector, reason),
-            CpuMode::Long => self.load_seg_protected(bus, seg, selector, reason),
+            CpuMode::Real | CpuMode::Vm86 => self.load_seg_real(seg, selector),
+            CpuMode::Protected | CpuMode::Long => self.load_seg_protected(bus, seg, selector, reason),
         }
     }
 
     fn load_seg_real(&mut self, seg: Seg, selector: u16) -> Result<(), Exception> {
-        let reg = self.segments.reg_mut(seg);
+        let reg = self.seg_reg_mut(seg);
         reg.selector = selector;
-        reg.cache.base = (selector as u64) << 4;
-        reg.cache.limit = 0xFFFF;
-        reg.cache.attrs = DescriptorAttributes {
+        reg.base = (selector as u64) << 4;
+        reg.limit = 0xFFFF;
+        reg.access = DescriptorAttributes {
             typ: if seg == Seg::CS { 0xB } else { 0x3 },
             s: true,
             dpl: 0,
@@ -327,7 +322,8 @@ impl CpuState {
             default_big: false,
             granularity: false,
             unusable: false,
-        };
+        }
+        .encode_access_rights();
         Ok(())
     }
 
@@ -341,28 +337,29 @@ impl CpuState {
         // Null selector handling (index==0).
         if selector_index(selector) == 0 {
             match seg {
-                Seg::CS => return Err(Exception::gp(selector)),
-                Seg::SS => return Err(Exception::gp(selector)),
+                Seg::CS | Seg::SS => return Err(Exception::gp(selector)),
                 Seg::DS | Seg::ES | Seg::FS | Seg::GS => {
-                    let reg = self.segments.reg_mut(seg);
+                    let reg = self.seg_reg_mut(seg);
                     reg.selector = selector;
-                    reg.cache = SegmentCache::unusable();
+                    reg.base = 0;
+                    reg.limit = 0;
+                    reg.access = SEG_ACCESS_UNUSABLE;
                     return Ok(());
                 }
             }
         }
 
+        let old_cpl = self.cpl();
+
         // Fetch descriptor.
         let desc = self.read_descriptor_8(bus, selector)?;
-        let (seg_desc, attrs) = match desc {
-            Descriptor::Segment(SegmentDescriptor { base, limit, attrs }) => {
-                (SegmentDescriptor { base, limit, attrs }, attrs)
-            }
+        let seg_desc = match desc {
+            Descriptor::Segment(sd) => sd,
             Descriptor::System(_) => return Err(Exception::gp(selector)),
         };
 
         // Present check.
-        if !attrs.present {
+        if !seg_desc.attrs.present {
             return Err(match seg {
                 Seg::SS => Exception::ss(selector),
                 _ => Exception::np(selector),
@@ -373,27 +370,21 @@ impl CpuState {
         match seg {
             Seg::CS => self.validate_load_cs(selector, seg_desc, reason)?,
             Seg::SS => self.validate_load_ss(selector, seg_desc, reason)?,
-            Seg::DS | Seg::ES | Seg::FS | Seg::GS => {
-                self.validate_load_data_seg(selector, seg_desc, reason)?
-            }
+            Seg::DS | Seg::ES | Seg::FS | Seg::GS => self.validate_load_data_seg(selector, seg_desc, reason)?,
         }
 
         // Commit: visible selector + hidden cache.
-        let reg = self.segments.reg_mut(seg);
+        let reg = self.seg_reg_mut(seg);
         reg.selector = selector;
-        reg.cache = SegmentCache {
-            base: seg_desc.base,
-            limit: seg_desc.limit,
-            attrs: seg_desc.attrs,
-        };
+        reg.base = seg_desc.base;
+        reg.limit = seg_desc.limit;
+        reg.access = seg_desc.attrs.encode_access_rights();
 
         // On far transfers loading CS, long mode may become active.
         if seg == Seg::CS && reason == LoadReason::FarControlTransfer {
-            self.after_cs_load(seg_desc.attrs);
+            self.after_cs_load(old_cpl, seg_desc.attrs);
         }
 
-        // Loading SS updates CPL to match the selector in a strict model; here CPL
-        // is derived from CS, so SS load does not change CPL.
         Ok(())
     }
 
@@ -409,7 +400,7 @@ impl CpuState {
         }
 
         let rpl = selector_rpl(selector);
-        let epl = self.cpl.max(rpl);
+        let epl = self.cpl().max(rpl);
         if desc.attrs.dpl < epl {
             return Err(Exception::gp(selector));
         }
@@ -427,11 +418,12 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
+        let cpl = self.cpl();
         let rpl = selector_rpl(selector);
-        if rpl != self.cpl {
+        if rpl != cpl {
             return Err(Exception::gp(selector));
         }
-        if desc.attrs.dpl != self.cpl {
+        if desc.attrs.dpl != cpl {
             return Err(Exception::gp(selector));
         }
         Ok(())
@@ -451,72 +443,73 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
+        let cpl = self.cpl();
         let rpl = selector_rpl(selector);
-        if rpl > self.cpl {
+        if rpl > cpl {
             return Err(Exception::gp(selector));
         }
 
         if desc.attrs.code_conforming() {
             // Conforming code: DPL must be <= CPL.
-            if desc.attrs.dpl > self.cpl {
+            if desc.attrs.dpl > cpl {
                 return Err(Exception::gp(selector));
             }
         } else {
             // Non-conforming code: DPL must equal CPL.
-            if desc.attrs.dpl != self.cpl {
+            if desc.attrs.dpl != cpl {
                 return Err(Exception::gp(selector));
             }
         }
 
         // Long-mode entry requires a 64-bit code segment to be loaded via far transfer.
-        if self.long_mode_conditions_met() && desc.attrs.long {
-            // OK; after_cs_load will flip LMA.
-        } else if self.lma {
-            // In our simplified model, if we're already in long mode we don't allow
-            // switching back to non-64-bit CS.
-            if !desc.attrs.long {
+        if desc.attrs.long {
+            if self.cpu_mode() != CpuMode::Long && !self.long_mode_conditions_met() {
                 return Err(Exception::gp(selector));
             }
+        } else if self.cpu_mode() == CpuMode::Long {
+            // Simplified model: once in long mode, don't allow returning to legacy CS.
+            return Err(Exception::gp(selector));
         }
 
         Ok(())
     }
 
-    fn after_cs_load(&mut self, attrs: DescriptorAttributes) {
+    fn after_cs_load(&mut self, old_cpl: u8, attrs: DescriptorAttributes) {
         // Conforming code segments do not change CPL; non-conforming transfers set
         // CPL to the descriptor's DPL (direct far jumps/calls require equality).
-        let new_cpl = if attrs.code_conforming() {
-            self.cpl
-        } else {
-            attrs.dpl
-        };
-        self.cpl = new_cpl;
+        let new_cpl = if attrs.code_conforming() { old_cpl } else { attrs.dpl };
+
         // Hardware forces CS.RPL == CPL.
         self.segments.cs.selector = (self.segments.cs.selector & !0x3) | (new_cpl as u16);
 
-        // Long-mode activation (project model): only when far transfer loads CS.L=1.
-        if !self.lma && self.long_mode_conditions_met() && self.segments.cs.cache.attrs.long {
-            self.lma = true;
-            // Long mode treats CS/DS/ES/SS base as 0; keep cached base for potential
-            // debugging but `seg_base` will return 0.
-            // Mark default_big based on 64-bit CS: CS.D must be 0, but software can
-            // still set it; we don't enforce that strictly here.
+        // Long-mode activation: only when far transfer loads CS.L=1 and the enabling
+        // conditions are met.
+        if (self.msr.efer & EFER_LMA) == 0 && self.long_mode_conditions_met() && attrs.long {
+            self.msr.efer |= EFER_LMA;
+        }
+
+        self.update_mode();
+    }
+
+    fn seg_reg(&self, seg: Seg) -> &crate::state::Segment {
+        match seg {
+            Seg::ES => &self.segments.es,
+            Seg::CS => &self.segments.cs,
+            Seg::SS => &self.segments.ss,
+            Seg::DS => &self.segments.ds,
+            Seg::FS => &self.segments.fs,
+            Seg::GS => &self.segments.gs,
         }
     }
-}
 
-impl CpuState {
-    /// Convenience: updates CR0.PE while keeping the rest of CR0 unchanged.
-    pub fn set_protected_enable(&mut self, enabled: bool) {
-        if enabled {
-            self.cr0 |= CR0_PE;
-        } else {
-            self.cr0 &= !CR0_PE;
-        }
-        // Leaving protected mode implicitly leaves long mode.
-        if !enabled {
-            self.lma = false;
-            self.cpl = 0;
+    fn seg_reg_mut(&mut self, seg: Seg) -> &mut crate::state::Segment {
+        match seg {
+            Seg::ES => &mut self.segments.es,
+            Seg::CS => &mut self.segments.cs,
+            Seg::SS => &mut self.segments.ss,
+            Seg::DS => &mut self.segments.ds,
+            Seg::FS => &mut self.segments.fs,
+            Seg::GS => &mut self.segments.gs,
         }
     }
 }

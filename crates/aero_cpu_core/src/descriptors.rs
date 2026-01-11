@@ -1,4 +1,5 @@
-use crate::{CpuBus, CpuState, Exception};
+use crate::state::{CpuState, EFER_LMA, EFER_LME, SEG_ACCESS_PRESENT, SEG_ACCESS_UNUSABLE};
+use crate::{CpuBus, Exception};
 
 /// GDTR/IDTR storage (base + limit).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -209,27 +210,35 @@ impl SystemSegmentRegister {
 
 impl CpuState {
     pub fn set_gdtr(&mut self, base: u64, limit: u16) {
-        self.gdtr = TableRegister { base, limit };
+        self.tables.gdtr.base = base;
+        self.tables.gdtr.limit = limit;
     }
 
     pub fn set_idtr(&mut self, base: u64, limit: u16) {
-        self.idtr = TableRegister { base, limit };
+        self.tables.idtr.base = base;
+        self.tables.idtr.limit = limit;
     }
 
     pub fn sgdt(&self) -> TableRegister {
-        self.gdtr
+        TableRegister {
+            base: self.tables.gdtr.base,
+            limit: self.tables.gdtr.limit,
+        }
     }
 
     pub fn sidt(&self) -> TableRegister {
-        self.idtr
+        TableRegister {
+            base: self.tables.idtr.base,
+            limit: self.tables.idtr.limit,
+        }
     }
 
     pub fn sldt(&self) -> u16 {
-        self.ldtr.selector
+        self.tables.ldtr.selector
     }
 
     pub fn str(&self) -> u16 {
-        self.tr.selector
+        self.tables.tr.selector
     }
 
     fn descriptor_table_for_selector(
@@ -237,17 +246,17 @@ impl CpuState {
         selector: u16,
     ) -> Result<DescriptorTableView, Exception> {
         if selector_ti(selector) {
-            if self.ldtr.unusable {
+            if self.tables.ldtr.is_unusable() {
                 return Err(Exception::gp(selector));
             }
             Ok(DescriptorTableView {
-                base: self.ldtr.base,
-                limit: self.ldtr.limit,
+                base: self.tables.ldtr.base,
+                limit: self.tables.ldtr.limit,
             })
         } else {
             Ok(DescriptorTableView {
-                base: self.gdtr.base,
-                limit: self.gdtr.limit as u32,
+                base: self.tables.gdtr.base,
+                limit: self.tables.gdtr.limit as u32,
             })
         }
     }
@@ -302,12 +311,14 @@ impl CpuState {
     pub fn load_ldtr(&mut self, bus: &mut impl CpuBus, selector: u16) -> Result<(), Exception> {
         let index = selector_index(selector);
         if index == 0 {
-            self.ldtr.selector = selector;
-            self.ldtr.invalidate();
+            self.tables.ldtr.selector = selector;
+            self.tables.ldtr.base = 0;
+            self.tables.ldtr.limit = 0;
+            self.tables.ldtr.access = SEG_ACCESS_UNUSABLE;
             return Ok(());
         }
 
-        let desc = self.read_system_descriptor(bus, selector, self.lma)?;
+        let desc = self.read_system_descriptor(bus, selector, self.ia32e_active())?;
         if !desc.attrs.present {
             return Err(Exception::np(selector));
         }
@@ -316,15 +327,10 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        self.ldtr = SystemSegmentRegister {
-            selector,
-            base: desc.base,
-            limit: desc.limit,
-            typ,
-            dpl: desc.attrs.dpl,
-            present: desc.attrs.present,
-            unusable: false,
-        };
+        self.tables.ldtr.selector = selector;
+        self.tables.ldtr.base = desc.base;
+        self.tables.ldtr.limit = desc.limit;
+        self.tables.ldtr.access = desc.attrs.encode_access_rights();
         Ok(())
     }
 
@@ -334,7 +340,7 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        let desc = self.read_system_descriptor(bus, selector, self.lma)?;
+        let desc = self.read_system_descriptor(bus, selector, self.ia32e_active())?;
         if !desc.attrs.present {
             return Err(Exception::np(selector));
         }
@@ -343,24 +349,19 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        self.tr = SystemSegmentRegister {
-            selector,
-            base: desc.base,
-            limit: desc.limit,
-            typ,
-            dpl: desc.attrs.dpl,
-            present: desc.attrs.present,
-            unusable: false,
-        };
+        self.tables.tr.selector = selector;
+        self.tables.tr.base = desc.base;
+        self.tables.tr.limit = desc.limit;
+        self.tables.tr.access = desc.attrs.encode_access_rights();
         Ok(())
     }
 
     /// Reads the ring-0 stack for 32-bit privilege switching (SS0:ESP0).
     pub fn tss32_ring0_stack(&mut self, bus: &mut impl CpuBus) -> Result<(u16, u32), Exception> {
-        if self.tr.unusable {
+        if self.tables.tr.is_unusable() {
             return Err(Exception::ts(0));
         }
-        let base = self.tr.base;
+        let base = self.tables.tr.base;
         // 32-bit TSS: ESP0 at +4, SS0 at +8.
         let esp0 = bus.read_u32(base + 4)?;
         let ss0 = bus.read_u16(base + 8)?;
@@ -369,10 +370,10 @@ impl CpuState {
 
     /// Reads the ring-0 stack pointer for 64-bit privilege switching (RSP0).
     pub fn tss64_rsp0(&mut self, bus: &mut impl CpuBus) -> Result<u64, Exception> {
-        if self.tr.unusable {
+        if self.tables.tr.is_unusable() {
             return Err(Exception::ts(0));
         }
-        let base = self.tr.base;
+        let base = self.tables.tr.base;
         // 64-bit TSS: RSP0 at +4.
         bus.read_u64(base + 4)
     }
@@ -382,19 +383,58 @@ impl CpuState {
         if !(1..=7).contains(&index) {
             return Err(Exception::ts(0));
         }
-        if self.tr.unusable {
+        if self.tables.tr.is_unusable() {
             return Err(Exception::ts(0));
         }
-        let base = self.tr.base;
+        let base = self.tables.tr.base;
         let off = 0x24u64 + (index as u64 - 1) * 8;
         bus.read_u64(base + off)
     }
 
     /// Placeholder hook for the TSS I/O bitmap base.
     pub fn tss64_iomap_base(&mut self, bus: &mut impl CpuBus) -> Result<u16, Exception> {
-        if self.tr.unusable {
+        if self.tables.tr.is_unusable() {
             return Err(Exception::ts(0));
         }
-        bus.read_u16(self.tr.base + 0x66)
+        bus.read_u16(self.tables.tr.base + 0x66)
+    }
+}
+
+impl DescriptorAttributes {
+    /// Encodes the descriptor attribute bits into a VMX-style "access rights" value.
+    pub fn encode_access_rights(self) -> u32 {
+        let mut ar = (self.typ as u32) & 0xF;
+        if self.s {
+            ar |= 1 << 4;
+        }
+        ar |= ((self.dpl as u32) & 0x3) << 5;
+        if self.present {
+            ar |= SEG_ACCESS_PRESENT;
+        }
+        if self.avl {
+            ar |= 1 << 8;
+        }
+        if self.long {
+            ar |= 1 << 9;
+        }
+        if self.default_big {
+            ar |= 1 << 10;
+        }
+        if self.granularity {
+            ar |= 1 << 11;
+        }
+        if self.unusable {
+            ar |= SEG_ACCESS_UNUSABLE;
+        }
+        ar
+    }
+}
+
+impl CpuState {
+    fn ia32e_active(&self) -> bool {
+        (self.msr.efer & EFER_LMA) != 0
+            || ((self.msr.efer & EFER_LME) != 0
+                && (self.control.cr0 & crate::state::CR0_PG) != 0
+                && (self.control.cr4 & crate::state::CR4_PAE) != 0)
     }
 }
