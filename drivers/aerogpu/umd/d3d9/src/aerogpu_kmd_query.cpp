@@ -923,6 +923,36 @@ bool AerogpuKmdQuery::WaitForVBlank(uint32_t vid_pn_source_id, uint32_t timeout_
   }
 }
 
+bool AerogpuKmdQuery::GetScanLine(uint32_t vid_pn_source_id, bool* out_in_vblank, uint32_t* out_scanline) {
+  D3DKMT_HANDLE adapter = 0;
+  PFND3DKMTGetScanLine get_scanline = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    adapter = adapter_;
+    get_scanline = get_scanline_;
+  }
+  if (!adapter || !get_scanline) {
+    return false;
+  }
+
+  D3DKMT_GETSCANLINE scan{};
+  scan.hAdapter = adapter;
+  scan.VidPnSourceId = vid_pn_source_id;
+
+  const NTSTATUS st = get_scanline(&scan);
+  if (!NtSuccess(st)) {
+    return false;
+  }
+
+  if (out_in_vblank) {
+    *out_in_vblank = (scan.InVerticalBlank != FALSE);
+  }
+  if (out_scanline) {
+    *out_scanline = scan.ScanLine;
+  }
+  return true;
+}
+
 bool AerogpuKmdQuery::WaitForFence(uint64_t fence, uint32_t timeout_ms) {
   const DWORD start = GetTickCount();
 
@@ -979,6 +1009,10 @@ bool AerogpuKmdQuery::QueryMaxAllocationListSlotId(uint32_t*) {
 }
 
 bool AerogpuKmdQuery::WaitForVBlank(uint32_t, uint32_t) {
+  return false;
+}
+
+bool AerogpuKmdQuery::GetScanLine(uint32_t, bool*, uint32_t*) {
   return false;
 }
 

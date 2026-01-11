@@ -456,10 +456,6 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawTriPatch, D3d9TraceFunc::DeviceDrawTriPatch,
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeletePatch, D3d9TraceFunc::DeviceDeletePatch, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnProcessVertices, D3d9TraceFunc::DeviceProcessVertices, D3DERR_NOTAVAILABLE);
 
-// GetRasterStatus is used by some clients to sync to vblank; we already provide
-// WaitForVBlank, so return a clean "not available" for this legacy query.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetRasterStatus, D3d9TraceFunc::DeviceGetRasterStatus, D3DERR_NOTAVAILABLE);
-
 // Dialog-box mode impacts present/occlusion semantics; treat as a no-op for bring-up.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialogBoxMode, S_OK);
 
@@ -7736,6 +7732,113 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(D3DDDI_HDEVICE hDevice) {
 }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+namespace {
+
+std::atomic<uint64_t> g_raster_status_sim_line{0};
+
+template <typename T, typename = void>
+struct has_member_InVBlank : std::false_type {};
+
+template <typename T>
+struct has_member_InVBlank<T, std::void_t<decltype(std::declval<T>().InVBlank)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_InVerticalBlank : std::false_type {};
+
+template <typename T>
+struct has_member_InVerticalBlank<T, std::void_t<decltype(std::declval<T>().InVerticalBlank)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ScanLine : std::false_type {};
+
+template <typename T>
+struct has_member_ScanLine<T, std::void_t<decltype(std::declval<T>().ScanLine)>> : std::true_type {};
+
+template <typename RasterStatusT>
+void write_raster_status(RasterStatusT* out, bool in_vblank, uint32_t scan_line) {
+  if (!out) {
+    return;
+  }
+  if constexpr (has_member_InVBlank<RasterStatusT>::value) {
+    out->InVBlank = in_vblank ? TRUE : FALSE;
+  } else if constexpr (has_member_InVerticalBlank<RasterStatusT>::value) {
+    out->InVerticalBlank = in_vblank ? TRUE : FALSE;
+  }
+  if constexpr (has_member_ScanLine<RasterStatusT>::value) {
+    out->ScanLine = scan_line;
+  }
+}
+
+template <typename DeviceHandleT, typename SwapChainT, typename RasterStatusT>
+HRESULT device_get_raster_status_impl(DeviceHandleT hDevice, SwapChainT swap_chain, RasterStatusT* pRasterStatus) {
+  const auto packed = d3d9_stub_trace_args(hDevice, swap_chain, pRasterStatus);
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetRasterStatus, packed[0], packed[1], packed[2], packed[3]);
+
+  if (!pRasterStatus) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  void* drv_private = nullptr;
+  if constexpr (aerogpu_has_member_pDrvPrivate<DeviceHandleT>::value) {
+    drv_private = hDevice.pDrvPrivate;
+  }
+  if (!drv_private) {
+    write_raster_status(pRasterStatus, /*in_vblank=*/false, /*scan_line=*/0);
+    return trace.ret(E_INVALIDARG);
+  }
+
+  auto* dev = reinterpret_cast<Device*>(drv_private);
+  Adapter* adapter = dev->adapter;
+  if (!adapter) {
+    write_raster_status(pRasterStatus, /*in_vblank=*/false, /*scan_line=*/0);
+    return trace.ret(S_OK);
+  }
+
+  bool in_vblank = false;
+  uint32_t scan_line = 0;
+  const uint32_t vid_pn_source_id = adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0;
+  const bool ok = adapter->kmd_query.GetScanLine(vid_pn_source_id, &in_vblank, &scan_line);
+  if (!ok) {
+    const uint32_t height = adapter->primary_height ? adapter->primary_height : 768u;
+    const uint32_t vblank_lines = std::max<uint32_t>(1u, height / 20u);
+    const uint32_t total_lines = height + vblank_lines;
+    const uint64_t tick = g_raster_status_sim_line.fetch_add(1, std::memory_order_relaxed);
+    const uint32_t pos = static_cast<uint32_t>(tick % total_lines);
+    in_vblank = (pos >= height);
+    scan_line = in_vblank ? 0u : pos;
+  }
+
+  write_raster_status(pRasterStatus, in_vblank, scan_line);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_raster_status_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_raster_status_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetRasterStatus;
+
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetRasterStatus<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetRasterStatus(Args... args) {
+    return static_cast<Ret>(device_get_raster_status_dispatch(args...));
+  }
+};
+
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetRasterStatus<Ret(*)(Args...)> {
+  static Ret pfnGetRasterStatus(Args... args) {
+    return static_cast<Ret>(device_get_raster_status_dispatch(args...));
+  }
+};
+
+} // namespace
+
 // -----------------------------------------------------------------------------
 // WDK-signature wrappers for entrypoints that use AeroGPU's portable arg structs.
 // -----------------------------------------------------------------------------
@@ -8227,7 +8330,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnGetRasterStatus<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnGetRasterStatus,
-        aerogpu_d3d9_stub_pfnGetRasterStatus<decltype(pDeviceFuncs->pfnGetRasterStatus)>::pfnGetRasterStatus);
+        aerogpu_d3d9_impl_pfnGetRasterStatus<decltype(pDeviceFuncs->pfnGetRasterStatus)>::pfnGetRasterStatus);
   }
   if constexpr (aerogpu_has_member_pfnSetDialogBoxMode<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(

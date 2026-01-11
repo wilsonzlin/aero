@@ -108,6 +108,12 @@ class AerogpuKmdQuery {
   // true.
   bool WaitForVBlank(uint32_t vid_pn_source_id, uint32_t timeout_ms);
 
+  // Best-effort scanline query using `D3DKMTGetScanLine`.
+  //
+  // Returns false if the scanline query path is unavailable; otherwise fills
+  // `out_in_vblank` / `out_scanline` (when non-null) and returns true.
+  bool GetScanLine(uint32_t vid_pn_source_id, bool* out_in_vblank, uint32_t* out_scanline);
+
  private:
   void ShutdownLocked();
 

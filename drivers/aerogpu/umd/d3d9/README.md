@@ -189,7 +189,7 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnSetSoftwareVertexProcessing`, `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`,
   `pfnSetPaletteEntries` / `pfnSetCurrentTexturePalette`, `pfnSetClipStatus` (no-op, returns `S_OK`)
 - `pfnGetClipStatus` / `pfnGetGammaRamp` (returns `D3DERR_NOTAVAILABLE`)
-- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices` / `pfnGetRasterStatus`
+- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
   (returns `D3DERR_NOTAVAILABLE`)
 - `pfnSetDialogBoxMode` (no-op, returns `S_OK`)
 - `pfnDrawIndexedPrimitiveUP` (returns `D3DERR_NOTAVAILABLE`)
