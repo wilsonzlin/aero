@@ -214,6 +214,69 @@ def _find_uncovered_hwids(patterns: Sequence[str], hwids: Sequence[str]) -> List
     return uncovered
 
 
+def _validate_hwid_contract(
+    *,
+    spec_path: Path,
+    driver_name: str,
+    patterns: Sequence[str],
+    hwids: Sequence[str],
+    devices_var: str,
+    driver_kind: str,
+) -> Tuple[str, str]:
+    """
+    Validate that:
+    - there is at least one regex match between `patterns` and `hwids`
+    - every HWID in `hwids` is covered by at least one pattern
+
+    Returns (pattern, hwid) for the first match, for debug output.
+    """
+
+    if not hwids:
+        raise ValidationError(
+            f"{devices_var} is empty.\n"
+            f"Remediation: set {devices_var} in guest-tools/config/devices.cmd to the emulator-presented PCI HWIDs for {driver_kind}."
+        )
+
+    if not patterns:
+        raise ValidationError(
+            f"Spec {spec_path} driver {driver_name!r} has an empty expected_hardware_ids list.\n"
+            f"Remediation: add the {driver_kind} PCI HWID regex(es) under {driver_name}.expected_hardware_ids."
+        )
+
+    match = _find_first_match(patterns, hwids)
+    if not match:
+        raise ValidationError(
+            f"Mismatch: {spec_path.name} expects {driver_name} HWIDs that don't match devices.cmd.\n"
+            f"Spec: {spec_path}\n"
+            "\n"
+            f"Spec patterns ({driver_name}.expected_hardware_ids):\n{_format_bullets(patterns)}\n"
+            "\n"
+            f"devices.cmd {devices_var}:\n{_format_bullets(hwids)}\n"
+            "\n"
+            "Remediation:\n"
+            "- If the emulator/device contract changed (new PCI VEN/DEV IDs), update BOTH:\n"
+            f"  * guest-tools/config/devices.cmd ({devices_var})\n"
+            f"  * {spec_path} ({driver_name}.expected_hardware_ids)\n"
+            f"- Otherwise, fix the regex in {spec_path.name} so it matches the HWIDs used by Guest Tools.\n"
+        )
+
+    uncovered = _find_uncovered_hwids(patterns, hwids)
+    if uncovered:
+        raise ValidationError(
+            f"Mismatch: devices.cmd contains {driver_kind} HWIDs not covered by {spec_path.name}.\n"
+            "\n"
+            f"Spec patterns ({driver_name}.expected_hardware_ids):\n{_format_bullets(patterns)}\n"
+            "\n"
+            f"Uncovered devices.cmd {devices_var}:\n{_format_bullets(uncovered)}\n"
+            "\n"
+            "Remediation:\n"
+            f"- If the emulator/device contract changed, expand {driver_name}.expected_hardware_ids in the spec to cover the new IDs.\n"
+            f"- If devices.cmd is wrong/out-of-date, update {devices_var} to match the supported IDs.\n"
+        )
+
+    return match
+
+
 def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str, Tuple[str, ...]]) -> None:
     missing = [name for name in ("viostor", "netkvm") if name not in spec_expected]
     if missing:
@@ -236,90 +299,51 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "  Guest Tools preseed (devices.cmd), and packaging inputs are all updated together.\n"
         )
 
-    if not devices.virtio_blk_hwids:
-        raise ValidationError(
-            "AERO_VIRTIO_BLK_HWIDS is empty.\n"
-            "Remediation: set AERO_VIRTIO_BLK_HWIDS in guest-tools/config/devices.cmd."
-        )
-    if not devices.virtio_net_hwids:
-        raise ValidationError(
-            "AERO_VIRTIO_NET_HWIDS is empty.\n"
-            "Remediation: set AERO_VIRTIO_NET_HWIDS in guest-tools/config/devices.cmd."
-        )
+    blk_match = _validate_hwid_contract(
+        spec_path=spec_path,
+        driver_name="viostor",
+        patterns=spec_expected["viostor"],
+        hwids=devices.virtio_blk_hwids,
+        devices_var="AERO_VIRTIO_BLK_HWIDS",
+        driver_kind="virtio-blk",
+    )
+    net_match = _validate_hwid_contract(
+        spec_path=spec_path,
+        driver_name="netkvm",
+        patterns=spec_expected["netkvm"],
+        hwids=devices.virtio_net_hwids,
+        devices_var="AERO_VIRTIO_NET_HWIDS",
+        driver_kind="virtio-net",
+    )
 
-    blk_patterns = spec_expected["viostor"]
-    net_patterns = spec_expected["netkvm"]
-    if not blk_patterns:
-        raise ValidationError(
-            f"Spec {spec_path} driver 'viostor' has an empty expected_hardware_ids list.\n"
-            "Remediation: add the virtio-blk PCI HWID regex(es) under viostor.expected_hardware_ids."
+    optional_matches: List[Tuple[str, Tuple[str, str]]] = []
+    if "vioinput" in spec_expected and devices.virtio_input_hwids:
+        optional_matches.append(
+            (
+                "vioinput",
+                _validate_hwid_contract(
+                    spec_path=spec_path,
+                    driver_name="vioinput",
+                    patterns=spec_expected["vioinput"],
+                    hwids=devices.virtio_input_hwids,
+                    devices_var="AERO_VIRTIO_INPUT_HWIDS",
+                    driver_kind="virtio-input",
+                ),
+            )
         )
-    if not net_patterns:
-        raise ValidationError(
-            f"Spec {spec_path} driver 'netkvm' has an empty expected_hardware_ids list.\n"
-            "Remediation: add the virtio-net PCI HWID regex(es) under netkvm.expected_hardware_ids."
-        )
-
-    blk_match = _find_first_match(blk_patterns, devices.virtio_blk_hwids)
-    if not blk_match:
-        raise ValidationError(
-            "Mismatch: packaging spec expects viostor HWIDs that don't match devices.cmd.\n"
-            f"Spec: {spec_path}\n"
-            "\n"
-            f"Spec patterns (viostor.expected_hardware_ids):\n{_format_bullets(blk_patterns)}\n"
-            "\n"
-            f"devices.cmd AERO_VIRTIO_BLK_HWIDS:\n{_format_bullets(devices.virtio_blk_hwids)}\n"
-            "\n"
-            "Remediation:\n"
-            "- If the emulator/device contract changed (new PCI VEN/DEV IDs), update BOTH:\n"
-            "  * guest-tools/config/devices.cmd (AERO_VIRTIO_BLK_HWIDS)\n"
-            f"  * {spec_path} (viostor.expected_hardware_ids)\n"
-            f"- Otherwise, fix the regex in {spec_path} so it matches the HWIDs used by Guest Tools.\n"
-        )
-
-    blk_uncovered = _find_uncovered_hwids(blk_patterns, devices.virtio_blk_hwids)
-    if blk_uncovered:
-        raise ValidationError(
-            "Mismatch: devices.cmd contains virtio-blk HWIDs not covered by win7-virtio-win.json.\n"
-            "\n"
-            f"Spec patterns (viostor.expected_hardware_ids):\n{_format_bullets(blk_patterns)}\n"
-            "\n"
-            f"Uncovered devices.cmd AERO_VIRTIO_BLK_HWIDS:\n{_format_bullets(blk_uncovered)}\n"
-            "\n"
-            "Remediation:\n"
-            "- If the emulator/device contract changed, expand viostor.expected_hardware_ids in the spec to cover the new IDs.\n"
-            "- If devices.cmd is wrong/out-of-date, update AERO_VIRTIO_BLK_HWIDS to match the supported virtio-win IDs.\n"
-        )
-
-    net_match = _find_first_match(net_patterns, devices.virtio_net_hwids)
-    if not net_match:
-        raise ValidationError(
-            "Mismatch: packaging spec expects netkvm HWIDs that don't match devices.cmd.\n"
-            f"Spec: {spec_path}\n"
-            "\n"
-            f"Spec patterns (netkvm.expected_hardware_ids):\n{_format_bullets(net_patterns)}\n"
-            "\n"
-            f"devices.cmd AERO_VIRTIO_NET_HWIDS:\n{_format_bullets(devices.virtio_net_hwids)}\n"
-            "\n"
-            "Remediation:\n"
-            "- If the emulator/device contract changed (new PCI VEN/DEV IDs), update BOTH:\n"
-            "  * guest-tools/config/devices.cmd (AERO_VIRTIO_NET_HWIDS)\n"
-            f"  * {spec_path} (netkvm.expected_hardware_ids)\n"
-            f"- Otherwise, fix the regex in {spec_path} so it matches the HWIDs used by Guest Tools.\n"
-        )
-
-    net_uncovered = _find_uncovered_hwids(net_patterns, devices.virtio_net_hwids)
-    if net_uncovered:
-        raise ValidationError(
-            "Mismatch: devices.cmd contains virtio-net HWIDs not covered by win7-virtio-win.json.\n"
-            "\n"
-            f"Spec patterns (netkvm.expected_hardware_ids):\n{_format_bullets(net_patterns)}\n"
-            "\n"
-            f"Uncovered devices.cmd AERO_VIRTIO_NET_HWIDS:\n{_format_bullets(net_uncovered)}\n"
-            "\n"
-            "Remediation:\n"
-            "- If the emulator/device contract changed, expand netkvm.expected_hardware_ids in the spec to cover the new IDs.\n"
-            "- If devices.cmd is wrong/out-of-date, update AERO_VIRTIO_NET_HWIDS to match the supported virtio-win IDs.\n"
+    if "viosnd" in spec_expected and devices.virtio_snd_hwids:
+        optional_matches.append(
+            (
+                "viosnd",
+                _validate_hwid_contract(
+                    spec_path=spec_path,
+                    driver_name="viosnd",
+                    patterns=spec_expected["viosnd"],
+                    hwids=devices.virtio_snd_hwids,
+                    devices_var="AERO_VIRTIO_SND_HWIDS",
+                    driver_kind="virtio-snd",
+                ),
+            )
         )
 
     # Provide context in success output to make debugging CI failures easier.
@@ -329,6 +353,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     print(f"- virtio-blk service : {devices.virtio_blk_service}")
     print(f"- viostor HWID match : {blk_pattern!r} matched {blk_hwid!r}")
     print(f"- netkvm HWID match  : {net_pattern!r} matched {net_hwid!r}")
+    for name, (pattern, hwid) in optional_matches:
+        print(f"- {name} HWID match  : {pattern!r} matched {hwid!r}")
 
 
 def main(argv: Sequence[str]) -> int:
