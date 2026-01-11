@@ -45,6 +45,16 @@ _DRIVER_NAME_ALIASES = {
 
 TRANSITIONAL_VIRTIO_DEVICE_IDS = frozenset({"1000", "1001", "1011", "1018"})
 
+MODERN_ONLY_VIRTIO_SPECS = frozenset(
+    {
+        "win7-aero-guest-tools.json",
+        "win7-aero-virtio.json",
+        "win7-signed.json",
+        "win7-virtio-full.json",
+        "win7-virtio-win.json",
+    }
+)
+
 
 @dataclass(frozen=True)
 class DevicesConfig:
@@ -627,15 +637,32 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             f"Remediation: update {spec_path} to include them."
         )
 
-    if spec_path.name == "win7-aero-guest-tools.json":
+    if spec_path.name in MODERN_ONLY_VIRTIO_SPECS:
         offenders: List[str] = []
         for driver_name, drv in spec_expected.items():
-            for pattern in drv.expected_hardware_ids:
+            patterns = list(drv.expected_hardware_ids)
+            if drv.expected_hardware_ids_from_devices_cmd_var:
+                var = drv.expected_hardware_ids_from_devices_cmd_var
+                raw = devices.vars_map.get(var.upper())
+                if raw is None:
+                    raise ValidationError(
+                        f"Spec {spec_path} driver {driver_name!r} references missing devices.cmd variable: {var}"
+                    )
+                derived = _parse_quoted_list(raw)
+                if not derived:
+                    raise ValidationError(
+                        f"devices.cmd variable {var} referenced by spec {spec_path} driver {driver_name!r} is empty."
+                    )
+                for hwid in derived:
+                    base = _pci_hwid_base_ven_dev(hwid)
+                    patterns.append(re.escape(base))
+
+            for pattern in patterns:
                 for dev_id in _find_transitional_virtio_device_ids(pattern):
                     offenders.append(f"{driver_name}: {pattern} (contains DEV_{dev_id})")
         if offenders:
             raise ValidationError(
-                "Aero packaging spec contains transitional virtio PCI IDs, but Aero virtio contract v1 is modern-only.\n"
+                f"Packaging spec {spec_path.name} contains transitional virtio PCI IDs, but AERO-W7-VIRTIO v1 is modern-only.\n"
                 "\n"
                 f"Offending expected_hardware_ids entries:\n{_format_bullets(offenders)}\n"
                 "\n"

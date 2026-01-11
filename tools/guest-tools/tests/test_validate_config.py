@@ -327,6 +327,53 @@ class ValidateConfigTests(unittest.TestCase):
             self.assertIn("transitional virtio pci ids", str(ctx.exception).lower())
             self.assertIn("DEV_1000", str(ctx.exception))
 
+    def test_virtio_win_spec_rejects_transitional_virtio_ids(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            devices_cmd = tmp_path / "devices.cmd"
+            virtio_blk = _contract_device("virtio-blk")
+            virtio_net = _contract_device("virtio-net")
+            devices_cmd.write_text(
+                "\n".join(
+                    [
+                        f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
+                        f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            spec_path = tmp_path / "win7-virtio-win.json"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "drivers": [
+                            {
+                                "name": "viostor",
+                                "required": True,
+                                "expected_hardware_ids": [_ven_dev_regex_from_hwid(virtio_blk.hardware_id_patterns[0])],
+                            },
+                            {
+                                "name": "netkvm",
+                                "required": True,
+                                "expected_hardware_ids": [r"PCI\\VEN_1AF4&DEV_(1000|1041)"],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            devices = validate_config.load_devices_cmd(devices_cmd)
+            expected = validate_config.load_packaging_spec(spec_path)
+            with self.assertRaises(validate_config.ValidationError) as ctx:
+                with redirect_stdout(io.StringIO()):
+                    validate_config.validate(devices, spec_path, expected)
+
+            self.assertIn("transitional virtio pci ids", str(ctx.exception).lower())
+            self.assertIn("DEV_1000", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
