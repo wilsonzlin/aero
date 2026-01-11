@@ -3,8 +3,25 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "virtiosnd_sg_core.h"
+
+/*
+ * Keep assertions active in all build configurations.
+ *
+ * These host tests are typically built as part of a CMake Release configuration
+ * in CI, which defines NDEBUG and would normally compile out assert() checks.
+ * Override assert() so failures are still caught.
+ */
+#undef assert
+#define assert(expr)                                                                                                   \
+    do {                                                                                                               \
+        if (!(expr)) {                                                                                                 \
+            fprintf(stderr, "ASSERT failed at %s:%d: %s\n", __FILE__, __LINE__, #expr);                                \
+            abort();                                                                                                   \
+        }                                                                                                              \
+    } while (0)
 
 static void test_coalesce_contiguous_pfns(void)
 {
@@ -121,4 +138,3 @@ int main(void)
     printf("virtiosnd_sg_tests: PASS\n");
     return 0;
 }
-
