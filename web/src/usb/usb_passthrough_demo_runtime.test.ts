@@ -139,6 +139,27 @@ describe("UsbPassthroughDemoRuntime", () => {
     ]);
   });
 
+  it("uses descriptor-specific default lengths when run() omits length", () => {
+    const demo = new FakeDemo();
+    const posted: any[] = [];
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: (msg) => posted.push(msg),
+    });
+
+    runtime.run("deviceDescriptor");
+    runtime.run("configDescriptor");
+
+    const actions = posted.filter((m) => m.type === "usb.action").map((m) => m.action);
+    expect(actions).toHaveLength(2);
+    expect(actions[0]!.setup.wValue).toBe(0x0100);
+    expect(actions[0]!.setup.wLength).toBe(18);
+    expect(actions[1]!.setup.wValue).toBe(0x0200);
+    expect(actions[1]!.setup.wLength).toBe(255);
+    expect(actions[1]!.id).toBeGreaterThan(actions[0]!.id);
+  });
+
   it("does not reuse proxy action IDs after reset", () => {
     const demo = new FakeDemo();
     const posted: any[] = [];
