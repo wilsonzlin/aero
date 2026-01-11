@@ -387,11 +387,11 @@ For each entrypoint:
 - **Can be deferred:** Seamless transitions.
 
 #### `DxgkDdiGetScanLine` + `DxgkDdiControlInterrupt`
-   
+    
 - **Purpose:** Support vblank timing (DWM stability) and enable/disable interrupts.
 - **AeroGPU MVP behavior:**
   - `ControlInterrupt`: gate vblank interrupts by enabling/disabling `AEROGPU_IRQ_SCANOUT_VBLANK` in `AEROGPU_MMIO_REG_IRQ_ENABLE`.
-  - `GetScanLine`: return a simulated scanline based on a host timer (or return “in vblank”).
+  - `GetScanLine`: return a simulated scanline based on the scanout vblank cadence (preferred: `SCANOUT0_VBLANK_*` timing registers) with a software fallback if timing regs are unavailable.
 - **Can be deferred:** Accurate scanline emulation.
  
 ### 4.3 Memory segments and allocations (system-memory-only MVP)
@@ -673,9 +673,16 @@ DWM’s scheduling expects periodic vblank events. Because AeroGPU is virtual:
   - KMD `InterruptRoutine` reports a vblank interrupt for Source 0 (backed by `AEROGPU_IRQ_SCANOUT_VBLANK`)
  
 `GetScanLine` may be implemented as:
- 
-- A simple time-based estimate: `scanline = (t % frame_time) * height / frame_time`
-- Or a constant “in vblank” response if acceptable for early bring-up
+  
+- A simple time-based estimate:
+  - pick a synthetic total line count `total_lines = height + vblank_lines`
+  - compute `t = (pos_ns * total_lines) / period_ns`
+  - if you treat the vblank tick as the **start of vblank** (end-of-frame), rotate the phase so vblank occupies `[height, total_lines)`:
+    - `scanline = (t + height) % total_lines`
+    - `InVBlank = (scanline >= height)`
+- Or (least preferred) a constant “in vblank” response if acceptable for very early bring-up
+
+When vblank timing registers are not available, a pure software 60 Hz fallback (based on a monotonic guest clock) is usually preferable to returning `STATUS_NOT_SUPPORTED`, because many D3D9-era apps poll raster status and can hang if scanline queries fail.
   
 **MVP requirement:** vblank interrupts must be regular enough that DWM does not hang or TDR due to missed presents.
 
