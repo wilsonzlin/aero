@@ -83,6 +83,12 @@ The dev UI includes a **Remote disk image (streaming)** panel that can open a re
 
 It also provides buttons to **flush metadata**, **clear cache**, and **close** the streaming handle so you can tune block/chunk sizing and cache limits for 20GB+ boot scenarios.
 
+Additional tuning knobs:
+
+- **Credentials mode** (`same-origin` / `include` / `omit`) for cookie-auth / credentialed CORS setups.
+- **Range cache key override** (`cacheImageId`, `cacheVersion`) so you can pin cache identity separately from the URL
+  (useful when URLs include ephemeral auth query params or when you want to force a cache bust by bumping a version).
+
 ## Security / UX expectations
 
 Remote image support should be gated behind explicit user action:
