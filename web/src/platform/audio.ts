@@ -602,10 +602,27 @@ export function startAudioPerfSampling(
   perf: { counter(name: string, value: number): void },
   intervalMs = 250,
 ): () => void {
+  let workletUnderrunCount: number | null = null;
+
+  const onWorkletMessage = (event: MessageEvent) => {
+    const data = event.data as unknown;
+    if (!data || typeof data !== "object") return;
+    const msg = data as { type?: unknown; underrunCount?: unknown };
+    if (msg.type !== "underrun") return;
+    if (typeof msg.underrunCount !== "number") return;
+    const next = msg.underrunCount >>> 0;
+    workletUnderrunCount = workletUnderrunCount === null ? next : Math.max(workletUnderrunCount, next);
+  };
+
+  output.node.port.addEventListener("message", onWorkletMessage);
+  // Required for MessagePort when using addEventListener (as opposed to `onmessage`).
+  output.node.port.start();
+
   const sample = () => {
     const metrics = output.getMetrics();
+    const underruns = workletUnderrunCount ?? metrics.underrunCount;
     perf.counter("audio.bufferLevelFrames", metrics.bufferLevelFrames);
-    perf.counter("audio.underruns", metrics.underrunCount);
+    perf.counter("audio.underruns", underruns);
     perf.counter("audio.overruns", metrics.overrunCount);
     perf.counter("audio.sampleRate", metrics.sampleRate);
   };
@@ -616,6 +633,7 @@ export function startAudioPerfSampling(
   return () => {
     if (stopped) return;
     stopped = true;
+    output.node.port.removeEventListener("message", onWorkletMessage);
     globalThis.clearInterval(intervalId);
   };
 }
