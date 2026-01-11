@@ -1075,7 +1075,7 @@ fn aerogpu_cmd_rebinds_allocation_backed_texture_between_draws_uploads_second_te
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping texture upload rebind test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
