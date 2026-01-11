@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <audioclient.h>
+#include <audiopolicy.h>
 #include <cfgmgr32.h>
 #include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
@@ -2191,6 +2192,50 @@ static void TryEnsureEndpointVolumeAudible(Logger& log, IMMDevice* endpoint, con
   }
 }
 
+static void TryEnsureEndpointSessionAudible(Logger& log, IMMDevice* endpoint, const char* tag) {
+  if (!endpoint || !tag) return;
+
+  ComPtr<IAudioSessionManager2> mgr;
+  HRESULT hr = endpoint->Activate(__uuidof(IAudioSessionManager2), CLSCTX_INPROC_SERVER, nullptr,
+                                  reinterpret_cast<void**>(mgr.Put()));
+  if (FAILED(hr) || !mgr) {
+    log.Logf("virtio-snd: %s endpoint IAudioSessionManager2 unavailable hr=0x%08lx", tag,
+             static_cast<unsigned long>(hr));
+    return;
+  }
+
+  ComPtr<ISimpleAudioVolume> vol;
+  hr = mgr->GetSimpleAudioVolume(nullptr, 0, vol.Put());
+  if (FAILED(hr) || !vol) {
+    log.Logf("virtio-snd: %s endpoint ISimpleAudioVolume unavailable hr=0x%08lx", tag,
+             static_cast<unsigned long>(hr));
+    return;
+  }
+
+  BOOL mute = FALSE;
+  hr = vol->GetMute(&mute);
+  if (SUCCEEDED(hr)) {
+    log.Logf("virtio-snd: %s session mute=%d", tag, mute ? 1 : 0);
+  }
+
+  if (mute) {
+    hr = vol->SetMute(FALSE, nullptr);
+    log.Logf("virtio-snd: %s session SetMute(FALSE) hr=0x%08lx", tag, static_cast<unsigned long>(hr));
+  }
+
+  float before = 0.0f;
+  hr = vol->GetMasterVolume(&before);
+  if (SUCCEEDED(hr)) {
+    log.Logf("virtio-snd: %s session volume=%.3f", tag, before);
+  }
+
+  hr = vol->SetMasterVolume(1.0f, nullptr);
+  if (FAILED(hr)) {
+    log.Logf("virtio-snd: %s session SetMasterVolume(1.0) failed hr=0x%08lx", tag,
+             static_cast<unsigned long>(hr));
+  }
+}
+
 static void TryEnsureDefaultRenderEndpointAudible(Logger& log) {
   ScopedCoInitialize com(COINIT_MULTITHREADED);
   if (FAILED(com.hr())) {
@@ -2217,6 +2262,7 @@ static void TryEnsureDefaultRenderEndpointAudible(Logger& log) {
   }
 
   TryEnsureEndpointVolumeAudible(log, endpoint.Get(), "default-render");
+  TryEnsureEndpointSessionAudible(log, endpoint.Get(), "default-render");
 }
 
 static bool LooksLikeVirtioSndEndpoint(const std::wstring& friendly_name, const std::wstring& instance_id,
@@ -2549,6 +2595,7 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
            WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen_id).c_str(),
            WideToUtf8(chosen_instance_id).c_str(), WideToUtf8(chosen_pci_hwid).c_str(), best_score);
   TryEnsureEndpointVolumeAudible(log, chosen.Get(), "render");
+  TryEnsureEndpointSessionAudible(log, chosen.Get(), "render");
 
   ComPtr<IAudioClient> client;
   hr = chosen->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
