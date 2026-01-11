@@ -76,9 +76,15 @@ function createFrameWaiter(ws) {
           resolve(frame);
           return;
         }
-        const timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+        let entry;
+        const timer = setTimeout(() => {
+          const idx = pending.indexOf(entry);
+          if (idx !== -1) pending.splice(idx, 1);
+          reject(new Error("timeout"));
+        }, timeoutMs);
         timer.unref?.();
-        pending.push({ predicate, resolve, reject, timer });
+        entry = { predicate, resolve, reject, timer };
+        pending.push(entry);
       });
     },
   };
