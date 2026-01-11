@@ -39,6 +39,32 @@ Header policy: `drivers/windows/virtio/common/virtqueue_split.h` is the **only**
 header named `virtqueue_split.h` in-tree. The Win7 portable header is named
 `virtqueue_split_legacy.h` to avoid include-path ambiguity.
 
+## Build wiring (where each engine is compiled)
+
+These are the build entry points that pull in each implementation (kept here so
+it’s obvious which driver binaries are expected to link which engine):
+
+- Canonical engine (`drivers/windows/virtio/common/virtqueue_split.c`)
+  - `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
+  - `drivers/windows7/virtio-snd/src/sources` (WDK 7.1 `build.exe`)
+  - `drivers/windows/virtio-input/virtio-input.vcxproj`
+  - `drivers/windows/virtio-input/sources` (WDK 7.1 `build.exe`)
+  - Host tests:
+    - `drivers/windows/virtio/common/tests/CMakeLists.txt`
+    - `drivers/windows/virtio/common/tests/Makefile`
+
+- Legacy portable engine (`drivers/windows7/virtio/common/src/virtqueue_split_legacy.c`)
+  - `drivers/windows7/virtio/blk/aerovblk.vcxproj`
+  - `drivers/windows7/virtio/blk/sources` (WDK 7.1 `build.exe`)
+  - `drivers/windows7/virtio/net/aerovnet.vcxproj`
+  - `drivers/windows7/virtio/net/sources` (WDK 7.1 `build.exe`)
+  - Host tests: `drivers/windows7/virtio/common/tests/CMakeLists.txt`
+
+CI enforces this wiring via:
+
+- `scripts/ci/check-win7-virtqueue-split-headers.py` (header-name ambiguity)
+- `scripts/ci/check-virtqueue-split-driver-builds.py` (per-driver build files)
+
 Related (outside this directory):
 
 - [`../windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.

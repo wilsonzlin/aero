@@ -214,6 +214,11 @@ def main() -> None:
         context="drivers/windows/virtio/common/tests (CMake)",
     )
     require_contains(
+        REPO_ROOT / "drivers/windows/virtio/common/tests/Makefile",
+        needle="virtqueue_split.c",
+        context="drivers/windows/virtio/common/tests (Makefile)",
+    )
+    require_contains(
         REPO_ROOT / "drivers/windows7/virtio/common/tests/CMakeLists.txt",
         needle="virtqueue_split_legacy.c",
         context="drivers/windows7/virtio/common/tests (CMake)",
