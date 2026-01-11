@@ -137,6 +137,24 @@ impl CpuFeatures {
             topology,
         })
     }
+
+    /// Extract the CPUID feature bits used for instruction gating.
+    ///
+    /// Tier-0 uses [`CpuFeatureSet`] to decide which optional instructions are
+    /// enabled (SSE3/SSSE3/SSE4.x/etc). To keep the virtual CPU coherent, Tier-0
+    /// must always derive its gating mask from the same [`CpuFeatures`] instance
+    /// that backs `CPUID` and MSR masking.
+    pub fn feature_set(&self) -> CpuFeatureSet {
+        CpuFeatureSet {
+            leaf1_ecx: self.leaf1_ecx,
+            leaf1_edx: self.leaf1_edx,
+            leaf7_ebx: self.leaf7_ebx,
+            leaf7_ecx: self.leaf7_ecx,
+            leaf7_edx: self.leaf7_edx,
+            ext1_ecx: self.ext1_ecx,
+            ext1_edx: self.ext1_edx,
+        }
+    }
 }
 
 impl Default for CpuFeatures {

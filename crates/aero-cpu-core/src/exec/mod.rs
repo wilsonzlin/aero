@@ -229,6 +229,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
         use crate::interp::tier0::exec::StepExit;
 
         let max = self.max_insts.max(1);
+        let cfg = crate::interp::tier0::Tier0Config::from_cpuid(&self.assist.features);
         let mut executed = 0u64;
         while executed < max {
             if cpu.exit.is_some() {
@@ -244,7 +245,11 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
             }
 
             let faulting_rip = cpu.cpu.state.rip();
-            let step = match crate::interp::tier0::exec::step(&mut cpu.cpu.state, &mut cpu.bus) {
+            let step = match crate::interp::tier0::exec::step_with_config(
+                &cfg,
+                &mut cpu.cpu.state,
+                &mut cpu.bus,
+            ) {
                 Ok(step) => step,
                 Err(e) => {
                     deliver_tier0_exception(cpu, faulting_rip, e);

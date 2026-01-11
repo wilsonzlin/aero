@@ -16,7 +16,7 @@ mod ops_sse;
 mod ops_string;
 mod ops_x87;
 
-use crate::cpuid::CpuFeatureSet;
+use crate::cpuid::{CpuFeatureSet, CpuFeatures};
 use crate::exception::{AssistReason, Exception};
 use crate::fpu::FpKind;
 use crate::linear_mem::{
@@ -35,6 +35,19 @@ use aero_x86::{DecodedInst, Mnemonic};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tier0Config {
     pub features: CpuFeatureSet,
+}
+
+impl Tier0Config {
+    /// Construct a Tier-0 configuration from the guest-visible CPUID surface.
+    ///
+    /// Tier-0 instruction gating must match what `CPUID` advertises to the guest
+    /// (via [`crate::assist::AssistContext`]). Use this helper to keep Tier-0
+    /// coherent with the `CpuFeatures` policy.
+    pub fn from_cpuid(features: &CpuFeatures) -> Self {
+        Self {
+            features: features.feature_set(),
+        }
+    }
 }
 
 impl Default for Tier0Config {

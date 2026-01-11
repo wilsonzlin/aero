@@ -210,7 +210,7 @@ pub fn run_batch_with_assists<B: CpuBus>(
     bus: &mut B,
     max_insts: u64,
 ) -> BatchResult {
-    let cfg = Tier0Config::default();
+    let cfg = Tier0Config::from_cpuid(&ctx.features);
     run_batch_with_assists_with_config(&cfg, ctx, cpu, bus, max_insts)
 }
 

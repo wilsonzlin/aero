@@ -161,3 +161,15 @@ fn optimized_profile_only_exposes_implemented_extra_bits() {
     assert_eq!(leaf1.ecx & bits::LEAF1_ECX_PCLMULQDQ, 0);
     assert_eq!(leaf1.ecx & bits::LEAF1_ECX_AES, 0);
 }
+
+#[test]
+fn optimized_mask_does_not_include_unimplemented_bits() {
+    // `optimized_mask()` must never advertise features Tier-0 doesn't implement.
+    // In particular, Tier-0 does not yet implement AVX/AVX2.
+    const LEAF1_ECX_AVX: u32 = 1 << 28;
+    const LEAF7_EBX_AVX2: u32 = 1 << 5;
+
+    let mask = CpuFeatureSet::optimized_mask();
+    assert_eq!(mask.leaf1_ecx & LEAF1_ECX_AVX, 0);
+    assert_eq!(mask.leaf7_ebx & LEAF7_EBX_AVX2, 0);
+}
