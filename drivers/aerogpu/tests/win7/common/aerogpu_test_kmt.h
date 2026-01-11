@@ -447,6 +447,33 @@ static inline bool AerogpuDumpRingV2(const D3DKMT_FUNCS* f,
   return AerogpuEscapeWithTimeout(f, adapter, out_dump, sizeof(*out_dump), 2000, out_status);
 }
 
+static inline bool AerogpuDumpCreateAllocationTrace(const D3DKMT_FUNCS* f,
+                                                    D3DKMT_HANDLE adapter,
+                                                    aerogpu_escape_dump_createallocation_inout* out_dump,
+                                                    NTSTATUS* out_status) {
+  if (out_dump) {
+    ZeroMemory(out_dump, sizeof(*out_dump));
+  }
+  if (!out_dump) {
+    if (out_status) {
+      *out_status = kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  out_dump->hdr.version = AEROGPU_ESCAPE_VERSION;
+  out_dump->hdr.op = AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION;
+  out_dump->hdr.size = sizeof(*out_dump);
+  out_dump->hdr.reserved0 = 0;
+
+  out_dump->write_index = 0;
+  out_dump->entry_count = 0;
+  out_dump->entry_capacity = AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS;
+  out_dump->reserved0 = 0;
+
+  return AerogpuEscapeWithTimeout(f, adapter, out_dump, sizeof(*out_dump), 2000, out_status);
+}
+
 static inline bool AerogpuMapSharedHandleDebugToken(const D3DKMT_FUNCS* f,
                                                     D3DKMT_HANDLE adapter,
                                                     unsigned long long shared_handle,

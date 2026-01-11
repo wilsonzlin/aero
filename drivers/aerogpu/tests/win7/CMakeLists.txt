@@ -98,6 +98,11 @@ aerogpu_add_win7_test(scanout_state_sanity
 )
 target_link_libraries(scanout_state_sanity PRIVATE user32 gdi32)
 
+aerogpu_add_win7_test(dump_createalloc_sanity
+  dump_createalloc_sanity/main.cpp
+)
+target_link_libraries(dump_createalloc_sanity PRIVATE user32 gdi32)
+
 aerogpu_add_win7_test(d3d9_raster_status_sanity
   d3d9_raster_status_sanity/main.cpp
 )

@@ -58,7 +58,7 @@ Artifacts collected:
 - dbgctl `--status` snapshots (dbgctl_<test>_status.txt) (dir):
 - failing test --dump outputs (BMP/bin) (dir):
 - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
-- KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank (outputs saved):
+- KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
 Notes:
 ```
 
@@ -310,6 +310,7 @@ For quick guest-side sanity checks:
   * Scanline/raster status plumbing (`D3DKMTGetScanLine` → `DxgkDdiGetScanLine`): `drivers/aerogpu/tests/win7/get_scanline_sanity`
   * Vblank counter/timestamp registers (`AEROGPU_ESCAPE_OP_QUERY_VBLANK`): `drivers/aerogpu/tests/win7/vblank_state_sanity`
   * Scanout mode caching vs MMIO scanout state (`DxgkDdiCommitVidPn`): `drivers/aerogpu/tests/win7/scanout_state_sanity`
+  * CreateAllocation trace dump (`AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION`): `drivers/aerogpu/tests/win7/dump_createalloc_sanity`
   * D3D9 raster status (`IDirect3DDevice9::GetRasterStatus`): `drivers/aerogpu/tests/win7/d3d9_raster_status_sanity` and `drivers/aerogpu/tests/win7/d3d9_raster_status_pacing`
   * D3D9Ex EVENT query behavior (non-blocking `GetData(D3DGETDATA_DONOTFLUSH)` + eventual signal; window hidden by default): `drivers/aerogpu/tests/win7/d3d9ex_event_query`
   * D3D9Ex per-submit fence stress (validates monotonic submit fences + EVENT query completion + PresentEx throttling; on AGPU also validates ring descriptor `AEROGPU_SUBMIT_FLAG_PRESENT` + non-zero `alloc_table_gpa` for presents): `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress`
@@ -461,6 +462,7 @@ aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 | `--dump-ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
 | `--query-fence` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
 | `--query-scanout` | cached scanout mode/visibility vs best-effort MMIO snapshot (`SCANOUT0_*`, including framebuffer GPA) | diagnosing blank output, mode/pitch mismatches, scanline bounds issues |
+| `--dump-createalloc` | recent `DxgkDdiCreateAllocation` trace entries (requested flags, final flags, alloc_id/share_token/pitch) | diagnosing allocation flag mismatches and shared-surface ID issues |
 | `--dump-vblank` | IRQ enable/status + vblank seq/time/period (optionally sampled with deltas/observed Hz). Also prints `vblank_interrupt_type` when dxgkrnl has enabled vblank delivery via `DxgkDdiControlInterrupt`. | DWM stutter / Basic fallback |
 | `--wait-vblank` | WDDM vblank wait pacing via `D3DKMTWaitForVerticalBlankEvent` | verifying vblank interrupts/waits work |
 | `--query-scanline` | `D3DKMTGetScanLine` (scanline + vblank state) | sanity-check scanline/vblank state queries |
