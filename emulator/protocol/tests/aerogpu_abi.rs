@@ -399,7 +399,7 @@ fn rust_layout_matches_c_headers() {
     // Escape ABI (driver-private; should remain stable across x86/x64).
     assert_eq!(abi.size("aerogpu_escape_header"), 16);
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
-    assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 40);
+    assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 48);
     assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 32);
     assert_eq!(
         abi.size("aerogpu_escape_dump_ring_inout"),
