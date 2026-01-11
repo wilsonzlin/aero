@@ -155,7 +155,7 @@ $defaultInfAllowList = @(
   "aerovblk.inf",
   "aerovnet.inf",
   "virtio-input.inf",
-  "virtio-snd.inf"
+  "aero-virtio-snd.inf"
 )
 
 $installDriversCmd = ""
@@ -218,6 +218,28 @@ for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
 
       $available = ($infIndex | Select-Object -ExpandProperty RelPathWin | Sort-Object) -join ", "
       throw "InfAllowList entry '$entryNorm' did not match any .inf under -DriversDir '$DriversDir'. Available INFs: $available"
+    }
+
+    if ($matches.Count -gt 1 -and -not $isRelative -and $allowListSource -eq "default allowlist") {
+      # If multiple INFs share the same basename (common when staging driver packs),
+      # prefer the contract-v1 modern IDs used by the harness (`disable-legacy=on`).
+      # If still ambiguous after filtering, require an explicit relative path.
+      $preferPattern = $null
+      switch ($entryWin.ToLowerInvariant()) {
+        "aerovblk.inf" { $preferPattern = "DEV_1042" }
+        "aerovnet.inf" { $preferPattern = "DEV_1041" }
+        "virtio-input.inf" { $preferPattern = "DEV_1052" }
+        "aero-virtio-snd.inf" { $preferPattern = "DEV_1059" }
+      }
+
+      if ($preferPattern) {
+        $preferredMatches = @(
+          $matches | Where-Object { Select-String -LiteralPath $_.FullPath -Pattern $preferPattern -SimpleMatch -Quiet }
+        )
+        if ($preferredMatches.Count -eq 1) {
+          $matches = $preferredMatches
+        }
+      }
     }
 
     if ($matches.Count -gt 1) {

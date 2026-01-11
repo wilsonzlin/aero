@@ -204,6 +204,11 @@ For safety and determinism, the provisioning script installs **only an allowlist
 (virtio blk/net/input/snd). This avoids accidentally installing experimental/test INFs (for example
 `virtio-transport-test.inf`) that can match the same HWIDs and steal device binding.
 
+Note: the harness uses **modern-only** virtio device IDs (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`).
+For virtio-blk/virtio-net, use the contract-v1 drivers under `drivers/win7/virtio-blk/` and
+`drivers/win7/virtio-net/` (the legacy/transitional packages under `drivers/windows7/virtio/` bind
+`DEV_1000`/`DEV_1001` and will not match when `disable-legacy=on`).
+
 For fully repeatable provisioning, pass `-InfAllowList` explicitly:
 
 `New-AeroWin7TestImage.ps1` also supports baking `--blk-root` into the installed scheduled task (useful if the VM boots
@@ -217,7 +222,7 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
     "aerovblk.inf",
     "aerovnet.inf",
     "virtio-input.inf",
-    "virtio-snd.inf"
+    "aero-virtio-snd.inf"
   ) `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
@@ -237,13 +242,13 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
     "aerovblk.inf",
     "aerovnet.inf",
     "virtio-input.inf",
-    "virtio-snd.inf"
+    "aero-virtio-snd.inf"
   ) `
   -DisableSnd
 ```
 
 If your `-DriversDir` contains duplicate INF basenames, disambiguate by passing a relative path (e.g.
-`"amd64\\aerovnet.inf"`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
+`"win7\\virtio-net\\x64\\aerovnet.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
 
 ### Enabling test-signing mode (unsigned / test-signed drivers)
 
@@ -260,7 +265,7 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
     "aerovblk.inf",
     "aerovnet.inf",
     "virtio-input.inf",
-    "virtio-snd.inf"
+    "aero-virtio-snd.inf"
   ) `
   -EnableTestSigning `
   -AutoReboot
