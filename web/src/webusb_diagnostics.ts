@@ -449,6 +449,7 @@ function main(): void {
   const eventLog = el("pre", { class: "mono", text: "" });
   const deviceHost = el("div", {});
   const knownDevicesHost = el("div", {});
+  const claimHint = el("div", { class: "hint", text: "" });
 
   let selectedDevice: USBDevice | null = null;
   let selectedClass: WebUsbDeviceClassification | null = null;
@@ -472,6 +473,23 @@ function main(): void {
     errorDetails.textContent = explained.details ?? "";
     errorRaw.textContent = fmtError(err);
     errorHints.replaceChildren(...explained.hints.map((h) => el("li", { text: h })));
+  }
+
+  function updateClaimHint(): void {
+    if (!selectedDevice || !selectedClass) {
+      claimHint.textContent = "";
+      return;
+    }
+
+    const candidate = findBestClaimCandidate(selectedDevice, selectedClass);
+    if (!candidate) {
+      claimHint.textContent = "No claimable (unprotected) interfaces found.";
+      return;
+    }
+
+    claimHint.textContent =
+      `Auto-claim target: cfg=${candidate.configValue} iface=${candidate.interfaceNumber} alt=${candidate.alternateSetting} ` +
+      `(bulkIn=${candidate.bulkIn} bulkOut=${candidate.bulkOut}; ${candidate.reason}).`;
   }
 
   async function refreshKnownDevices(): Promise<void> {
@@ -504,6 +522,8 @@ function main(): void {
       lastFilterNote = "getDevices() (previously granted permission)";
       claimBtn.disabled = false;
       copyBtn.disabled = false;
+      closeBtn.disabled = false;
+      updateClaimHint();
       renderSelected();
     };
 
@@ -528,6 +548,7 @@ function main(): void {
   const requestBtn = el("button", { text: "Request USB device" }) as HTMLButtonElement;
   const claimBtn = el("button", { text: "Try open + claim (best claimable interface)", disabled: "true" }) as HTMLButtonElement;
   const copyBtn = el("button", { text: "Copy JSON summary", disabled: "true" }) as HTMLButtonElement;
+  const closeBtn = el("button", { text: "Release + close device", disabled: "true" }) as HTMLButtonElement;
   const refreshKnownBtn = el("button", { text: "Refresh granted devices" }) as HTMLButtonElement;
 
   copyBtn.onclick = () => {
@@ -559,15 +580,51 @@ function main(): void {
     })();
   };
 
-  refreshKnownBtn.onclick = () => {
+  closeBtn.onclick = () => {
     void (async () => {
+      status.textContent = "";
+      clearError();
+
+      if (!selectedDevice) {
+        status.textContent = "No device selected.";
+        return;
+      }
+
       try {
-        await refreshKnownDevices();
+        if (selectedDevice.opened) {
+          const configuration = selectedDevice.configuration;
+          if (configuration) {
+            for (const iface of configuration.interfaces) {
+              if (!iface.claimed) continue;
+              try {
+                await selectedDevice.releaseInterface(iface.interfaceNumber);
+              } catch (err) {
+                console.warn(`Failed to release interface ${iface.interfaceNumber}: ${fmtError(err)}`);
+              }
+            }
+          }
+          await selectedDevice.close();
+        }
+
+        status.textContent = "Device closed.";
+        selectedClass = classifyWebUsbDevice(selectedDevice);
+        updateClaimHint();
+        renderSelected();
       } catch (err) {
         showError(err);
+        console.error(err);
       }
     })();
   };
+
+  const refreshKnownDevicesSafe = (): void => {
+    void refreshKnownDevices().catch((err) => {
+      showError(err);
+      console.error(err);
+    });
+  };
+
+  refreshKnownBtn.onclick = () => refreshKnownDevicesSafe();
 
   requestBtn.onclick = () => {
     void (async () => {
@@ -580,6 +637,8 @@ function main(): void {
         lastFilterNote = filterNote;
         claimBtn.disabled = false;
         copyBtn.disabled = false;
+        closeBtn.disabled = false;
+        updateClaimHint();
 
         renderSelected();
       } catch (err) {
@@ -602,6 +661,7 @@ function main(): void {
         status.textContent = result;
         // Re-render so `opened`/`claimed` state updates.
         selectedClass = classifyWebUsbDevice(selectedDevice);
+        updateClaimHint();
         renderSelected();
       } catch (err) {
         showError(err);
@@ -613,16 +673,16 @@ function main(): void {
   usb.addEventListener("connect", (event) => {
     const dev = (event as USBConnectionEvent).device;
     appendEvent(`connect: ${deviceSummaryLabel(dev)}`);
-    void refreshKnownDevices();
+    refreshKnownDevicesSafe();
   });
   usb.addEventListener("disconnect", (event) => {
     const dev = (event as USBConnectionEvent).device;
     appendEvent(`disconnect: ${deviceSummaryLabel(dev)}`);
-    void refreshKnownDevices();
+    refreshKnownDevicesSafe();
   });
 
   appendEvent("listening for navigator.usb connect/disconnect events…");
-  void refreshKnownDevices();
+  refreshKnownDevicesSafe();
 
   app.append(
     renderWhyDevicesDontShow(ppUsb),
@@ -630,7 +690,8 @@ function main(): void {
       "div",
       { class: "panel" },
       el("h2", { text: "Actions" }),
-      el("div", { class: "row actions" }, requestBtn, claimBtn, copyBtn),
+      el("div", { class: "row actions" }, requestBtn, claimBtn, closeBtn, copyBtn),
+      claimHint,
       status,
       errorTitle,
       errorDetails,
