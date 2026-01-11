@@ -108,6 +108,27 @@
         "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCJ9.k-Tdx_zyU69AhBb7p2GR4v8oxh7JRI1A7tbXlm_LTZ4",
         "nowMs": 1700000000000,
         "expectError": true
+      },
+      {
+        "name": "wrongType.sidNumber",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOjEyMywiZXhwIjoxNzAwMDAwMDYwfQ.kyGvxVV5mXGQNmNjXxqeQ2E85-2x01TJbwcJaP7UXcU",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.expString",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6IjE3MDAwMDAwNjAifQ.qvapdGCIj9MCD8fQ3C_kf42mIP09Cms34tC369NZSxk",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.vString",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoiMSIsInNpZCI6InNpZC0xMjM0NTY3ODkwIiwiZXhwIjoxNzAwMDAwMDYwfQ.NvwHz1febRax7c7jmdzQqga9VjHpKyZdmDsl7bgbx70",
+        "nowMs": 1700000000000,
+        "expectError": true
       }
     ]
   },
@@ -167,6 +188,34 @@
         "name": "missingExp",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsInNpZCI6InNpZC0xMjM0NTY3ODkwIiwib3JpZ2luIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0IiwiYXVkIjoiYWVyby11ZHAtcmVsYXkiLCJpc3MiOiJhZXJvLWdhdGV3YXkifQ.8XgVDfd1mFI1cm8UM-R3PQSTqYEsNKtNte4g62ElYW8",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.sidNumber",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoxMjMsIm9yaWdpbiI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdCIsImF1ZCI6ImFlcm8tdWRwLXJlbGF5IiwiaXNzIjoiYWVyby1nYXRld2F5In0.ocfjKuu7OXxvfJB1M7YfbgIqHgy5mayj8ZFowCmkiW0",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.expString",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6IjE3MDAwMDAwNjAiLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsIm9yaWdpbiI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdCIsImF1ZCI6ImFlcm8tdWRwLXJlbGF5IiwiaXNzIjoiYWVyby1nYXRld2F5In0.R4rMu-fA7DDhR0awoFjkzj6Ujd3Q7fgP5N7CM87fAKo",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.iatString",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOiIxNzAwMDAwMDAwIiwiZXhwIjoxNzAwMDAwMDYwLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsIm9yaWdpbiI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdCIsImF1ZCI6ImFlcm8tdWRwLXJlbGF5IiwiaXNzIjoiYWVyby1nYXRld2F5In0.YFvEUEHtLCMVTGyT0fmAZKyvfbh7AjuLGdfJ5SS2LOw",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.originNumber",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOjUsImF1ZCI6ImFlcm8tdWRwLXJlbGF5IiwiaXNzIjoiYWVyby1nYXRld2F5In0.3_lM7HRIPuuXWKOxgb9qcWDBSEkYogzEFhvAtlS9Iso",
         "nowSec": 1700000000,
         "expectError": true
       },
