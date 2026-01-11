@@ -14,6 +14,7 @@
 //! | Type | `IoSnapshot::DEVICE_ID` |
 //! |------|------------------------|
 //! | `uhci::UhciController` | `b"UHCI"` |
+//! | `usb::UsbBus` | `b"USBB"` |
 //! | `hub::UsbHubDevice` | `b"UHUB"` |
 //! | `hid::UsbHidKeyboard` | `b"UKBD"` |
 //! | `hid::UsbHidMouse` | `b"UMSE"` |
