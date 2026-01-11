@@ -94,6 +94,18 @@ Map/Unmap uses at least:
 * `pfnUnlockCb` with `D3DDDICB_UNLOCK`
 * `pfnSetErrorCb` (required for `pfnUnmap` error reporting and other void DDIs)
 
+In WDK 7.1, these callbacks are typically declared as `HRESULT`-returning functions that take the runtime device handle first:
+
+```c
+HRESULT APIENTRY pfnLockCb(D3D10DDI_HRTDEVICE hRTDevice, D3DDDICB_LOCK* pLock);
+HRESULT APIENTRY pfnUnlockCb(D3D10DDI_HRTDEVICE hRTDevice, D3DDDICB_UNLOCK* pUnlock);
+```
+
+Important details:
+
+* `D3DDDICB_LOCK::hAllocation` / `D3DDDICB_UNLOCK::hAllocation` is a `D3DKMT_HANDLE` (a 32-bit integer handle even on x64), **not** a pointer.
+* Field spellings in `D3DDDICB_LOCK` / `D3DDDICB_LOCKFLAGS` vary across header revisions; build against your chosen WDK and use the exact member names it defines (see `win7_wdk_probe` link above).
+
 For synchronization/fence-based implementations, the shared callback table (or an embedded equivalent) also provides (names vary slightly by interface version, but the Win7-era concept is consistent):
 
 * `pfnWaitForSynchronizationObjectCb` / `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT`
@@ -161,7 +173,7 @@ For the `d3d11_triangle` / `readback_sanity` staging readback path, **`RowPitch`
 On Win7, a D3D11 `Map` call is implemented by translating the map request to a runtime `pfnLockCb` request:
 
 * `D3D11_MAP_*` → `D3DDDICB_LOCKFLAGS` (`ReadOnly`, `Discard`, `NoOverwrite`, …)
-* `D3D11_MAP_FLAG_DO_NOT_WAIT` → `D3DDDICB_LOCKFLAGS::DoNotWait` (header spelling can vary)
+* `D3D11_MAP_FLAG_DO_NOT_WAIT` → `D3DDDICB_LOCKFLAGS::{DoNotWait, DonotWait}` (header spelling varies)
 
 ### 3.2 Map-type table
 
@@ -184,12 +196,12 @@ Notes:
 
 | API flag | `D3DDDICB_LOCKFLAGS` bit | Required return on contention |
 |---|---|---|
-| `D3D11_MAP_FLAG_DO_NOT_WAIT` | `DoNotWait = 1` | `DXGI_ERROR_WAS_STILL_DRAWING` |
+| `D3D11_MAP_FLAG_DO_NOT_WAIT` | `DoNotWait/DonotWait = 1` | `DXGI_ERROR_WAS_STILL_DRAWING` |
 
 Required behavior:
 
 * If DO_NOT_WAIT is set, the UMD **must not block** inside `pfnMap`.
-* The UMD must attempt `pfnLockCb` with `DoNotWait = 1`.
+* The UMD must attempt `pfnLockCb` with `DoNotWait/DonotWait = 1`.
 * If the runtime reports the allocation is still in use (i.e. the lock would block), `pfnMap` must return `DXGI_ERROR_WAS_STILL_DRAWING` (not `S_FALSE`, not `E_FAIL`).
 
 ---
@@ -352,7 +364,7 @@ HRESULT APIENTRY Map(hContext, hResource, Subresource, MapType, MapFlags, pOut) 
   // exact name exposed by the header you build against.
   lock.Flags.DoNotWait = do_not_wait ? 1 : 0;
 
-  HRESULT hr = callbacks->pfnLockCb(/* see header: typically hRTDevice */, &lock);
+  HRESULT hr = callbacks->pfnLockCb(hRTDevice, &lock);
   if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
     // Only legal if DO_NOT_WAIT was requested; otherwise treat as an error.
     return do_not_wait ? DXGI_ERROR_WAS_STILL_DRAWING : hr;
@@ -392,7 +404,7 @@ void APIENTRY Unmap(hContext, hResource, Subresource) {
   // use the exact name exposed by the header you build against.
   unlock.SubresourceIndex = Subresource;
 
-  HRESULT hr = callbacks->pfnUnlockCb(/* see header: typically hRTDevice */, &unlock);
+  HRESULT hr = callbacks->pfnUnlockCb(hRTDevice, &unlock);
   if (FAILED(hr)) {
     callbacks->pfnSetErrorCb(hRTDevice, hr);
   }
