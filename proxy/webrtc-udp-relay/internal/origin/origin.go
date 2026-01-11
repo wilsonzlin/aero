@@ -27,6 +27,22 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 	if strings.Contains(trimmed, "%") {
 		return "", "", false
 	}
+	lower := strings.ToLower(trimmed)
+	schemePrefix := ""
+	switch {
+	case strings.HasPrefix(lower, "http://"):
+		schemePrefix = "http://"
+	case strings.HasPrefix(lower, "https://"):
+		schemePrefix = "https://"
+	default:
+		return "", "", false
+	}
+	if strings.HasPrefix(lower, schemePrefix+"/") {
+		return "", "", false
+	}
+	if strings.Contains(trimmed, "\\") {
+		return "", "", false
+	}
 
 	u, err := url.Parse(trimmed)
 	if err != nil || u.Scheme == "" || u.Host == "" {

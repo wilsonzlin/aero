@@ -9,6 +9,16 @@ export function normalizeOriginString(origin: string): string | null {
   // Disallow percent-encoding and IPv6 zone identifiers; browsers don't emit
   // these in Origin, and different URL libraries disagree on how to handle them.
   if (trimmed.includes('%')) return null;
+  // Require an explicit scheme://host serialization; WHATWG URL parsers accept
+  // weird variants like `https:example.com` and will normalize them to an
+  // authority URL, but browsers don't emit those in Origin headers.
+  const lower = trimmed.toLowerCase();
+  const schemePrefix = lower.startsWith('http://') ? 'http://' : lower.startsWith('https://') ? 'https://' : null;
+  if (!schemePrefix) return null;
+  if (trimmed.charAt(schemePrefix.length) === '/') return null;
+  // Reject backslashes; some URL parsers normalize them to `/`, which can
+  // silently change the host/path boundary.
+  if (trimmed.includes('\\')) return null;
   // Reject empty port specs like `https://example.com:` or `https://example.com:/`.
   if (trimmed.endsWith(':') || trimmed.endsWith(':/')) return null;
 

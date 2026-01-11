@@ -18,6 +18,25 @@ pub(crate) fn normalize_origin(input: &str) -> Option<String> {
     if trimmed.contains('%') {
         return None;
     }
+    // Require an explicit scheme://host serialization; `url` will happily
+    // normalize `https:example.com` to `https://example.com/`, but browsers won't
+    // emit those in Origin headers.
+    let lower = trimmed.to_ascii_lowercase();
+    let rest = if let Some(rest) = lower.strip_prefix("http://") {
+        rest
+    } else if let Some(rest) = lower.strip_prefix("https://") {
+        rest
+    } else {
+        return None;
+    };
+    if rest.starts_with('/') {
+        return None;
+    }
+    // Reject backslashes; some URL parsers normalize them to `/`, which can
+    // silently change the host/path boundary.
+    if trimmed.contains('\\') {
+        return None;
+    }
     // Reject empty port specs like `https://example.com:` or `https://example.com:/`.
     if trimmed.ends_with(':') || trimmed.ends_with(":/") {
         return None;
