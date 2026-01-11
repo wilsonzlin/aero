@@ -892,16 +892,15 @@ fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
     let scissor_w = 16i32;
     let scissor_h = 16i32;
 
-    // Fullscreen quad with z=0.5.
-    // Note: D3D9 defaults to clockwise front faces. Arrange vertices with clockwise winding so
-    // they are not culled by the default rasterizer state.
-    let mut vb_data = Vec::new();
-    for (x, y) in [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
-        push_f32(&mut vb_data, x);
-        push_f32(&mut vb_data, y);
-        push_f32(&mut vb_data, 0.5);
-        push_f32(&mut vb_data, 1.0);
-    }
+    // Full-screen triangle (POSITION float4) at z=0.5.
+    // Note: D3D9 defaults to clockwise front faces. Arrange the full-screen triangle with
+    // clockwise winding so it isn't culled by default state.
+    let vertices: [f32; 12] = [
+        -1.0, -1.0, 0.5, 1.0, //
+        -1.0, 3.0, 0.5, 1.0, //
+        3.0, -1.0, 0.5, 1.0, //
+    ];
+    let vb_bytes: &[u8] = bytemuck::cast_slice(&vertices);
 
     let vs_bytes = assemble_vs_passthrough_pos();
     let ps_bytes = assemble_ps_solid_color_c0();
@@ -945,7 +944,7 @@ fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
         emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
             push_u32(out, VB_HANDLE);
             push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
-            push_u64(out, vb_data.len() as u64);
+            push_u64(out, vb_bytes.len() as u64);
             push_u32(out, 0); // backing_alloc_id
             push_u32(out, 0); // backing_offset_bytes
             push_u64(out, 0); // reserved0
@@ -955,8 +954,8 @@ fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
             push_u32(out, VB_HANDLE);
             push_u32(out, 0); // reserved0
             push_u64(out, 0); // offset_bytes
-            push_u64(out, vb_data.len() as u64);
-            out.extend_from_slice(&vb_data);
+            push_u64(out, vb_bytes.len() as u64);
+            out.extend_from_slice(vb_bytes);
         });
 
         emit_packet(out, AerogpuCmdOpcode::CreateShaderDxbc as u32, |out| {
@@ -1004,7 +1003,7 @@ fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::SetPrimitiveTopology as u32, |out| {
-            push_u32(out, AerogpuPrimitiveTopology::TriangleStrip as u32);
+            push_u32(out, AerogpuPrimitiveTopology::TriangleList as u32);
             push_u32(out, 0); // reserved0
         });
 
@@ -1094,7 +1093,7 @@ fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 3); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
@@ -1258,16 +1257,15 @@ fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
     let scissor_w = 16i32;
     let scissor_h = 16i32;
 
-    // Fullscreen quad with z=0.5.
-    // Note: D3D9 defaults to clockwise front faces. Arrange vertices with clockwise winding so
-    // they are not culled by the default rasterizer state.
-    let mut vb_data = Vec::new();
-    for (x, y) in [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
-        push_f32(&mut vb_data, x);
-        push_f32(&mut vb_data, y);
-        push_f32(&mut vb_data, 0.5);
-        push_f32(&mut vb_data, 1.0);
-    }
+    // Full-screen triangle (POSITION float4) at z=0.5.
+    // Note: D3D9 defaults to clockwise front faces. Arrange the full-screen triangle with
+    // clockwise winding so it isn't culled by default state.
+    let vertices: [f32; 12] = [
+        -1.0, -1.0, 0.5, 1.0, //
+        -1.0, 3.0, 0.5, 1.0, //
+        3.0, -1.0, 0.5, 1.0, //
+    ];
+    let vb_bytes: &[u8] = bytemuck::cast_slice(&vertices);
 
     let vs_bytes = assemble_vs_passthrough_pos();
     let ps_bytes = assemble_ps_solid_color_c0();
@@ -1311,7 +1309,7 @@ fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
         emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
             push_u32(out, VB_HANDLE);
             push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
-            push_u64(out, vb_data.len() as u64);
+            push_u64(out, vb_bytes.len() as u64);
             push_u32(out, 0); // backing_alloc_id
             push_u32(out, 0); // backing_offset_bytes
             push_u64(out, 0); // reserved0
@@ -1321,8 +1319,8 @@ fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
             push_u32(out, VB_HANDLE);
             push_u32(out, 0); // reserved0
             push_u64(out, 0); // offset_bytes
-            push_u64(out, vb_data.len() as u64);
-            out.extend_from_slice(&vb_data);
+            push_u64(out, vb_bytes.len() as u64);
+            out.extend_from_slice(vb_bytes);
         });
 
         emit_packet(out, AerogpuCmdOpcode::CreateShaderDxbc as u32, |out| {
@@ -1370,7 +1368,7 @@ fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::SetPrimitiveTopology as u32, |out| {
-            push_u32(out, AerogpuPrimitiveTopology::TriangleStrip as u32);
+            push_u32(out, AerogpuPrimitiveTopology::TriangleList as u32);
             push_u32(out, 0); // reserved0
         });
 
@@ -1460,7 +1458,7 @@ fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 3); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance

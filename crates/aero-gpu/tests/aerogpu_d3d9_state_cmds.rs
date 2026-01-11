@@ -210,18 +210,21 @@ fn vertex_decl_pos4_uv2() -> Vec<u8> {
     vertex_decl
 }
 
-fn fullscreen_strip_vb(uv: [[f32; 2]; 4]) -> Vec<u8> {
+fn fullscreen_quad_vb(uv: [[f32; 2]; 4]) -> Vec<u8> {
     // Vertex format:
     //   float4 position
     //   float2 texcoord
     const STRIDE: usize = 24;
-    // Note: D3D9 defaults to clockwise front faces; order the strip vertices so both triangles
-    // have clockwise winding and aren't culled by the default rasterizer state.
-    let verts: [[f32; 6]; 4] = [
+    // D3D9 defaults to back-face culling with clockwise front faces. Triangle strips alternate
+    // winding, which would cull half the quad under default state. Use a triangle list with a
+    // consistent winding order so the quad fully renders without touching cull state.
+    let verts: [[f32; 6]; 6] = [
         [-1.0, -1.0, 0.0, 1.0, uv[0][0], uv[0][1]],
         [-1.0, 1.0, 0.0, 1.0, uv[1][0], uv[1][1]],
         [1.0, -1.0, 0.0, 1.0, uv[2][0], uv[2][1]],
+        [-1.0, 1.0, 0.0, 1.0, uv[1][0], uv[1][1]],
         [1.0, 1.0, 0.0, 1.0, uv[3][0], uv[3][1]],
+        [1.0, -1.0, 0.0, 1.0, uv[2][0], uv[2][1]],
     ];
 
     let mut vb = Vec::with_capacity(verts.len() * STRIDE);
@@ -264,7 +267,7 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
 
     let width = 64u32;
     let height = 64u32;
-    let vb_data = fullscreen_strip_vb([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]);
+    let vb_data = fullscreen_quad_vb([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]);
     let vertex_decl = vertex_decl_pos4_uv2();
 
     let vs_bytes = assemble_vs_passthrough_pos_and_t0();
@@ -377,7 +380,7 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::SetPrimitiveTopology as u32, |out| {
-            push_u32(out, AerogpuPrimitiveTopology::TriangleStrip as u32);
+            push_u32(out, AerogpuPrimitiveTopology::TriangleList as u32);
             push_u32(out, 0); // reserved0
         });
 
@@ -432,7 +435,7 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 6); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
@@ -493,7 +496,7 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
         }
 
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 6); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
@@ -537,7 +540,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_clips_draw() {
 
     let width = 64u32;
     let height = 64u32;
-    let vb_data = fullscreen_strip_vb([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]);
+    let vb_data = fullscreen_quad_vb([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]);
     let vertex_decl = vertex_decl_pos4_uv2();
 
     let vs_bytes = assemble_vs_passthrough_pos_and_t0();
@@ -616,7 +619,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_clips_draw() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::SetPrimitiveTopology as u32, |out| {
-            push_u32(out, AerogpuPrimitiveTopology::TriangleStrip as u32);
+            push_u32(out, AerogpuPrimitiveTopology::TriangleList as u32);
             push_u32(out, 0); // reserved0
         });
 
@@ -663,7 +666,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_clips_draw() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 6); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
@@ -693,7 +696,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_clips_draw() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 6); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
@@ -734,7 +737,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_is_clamped() {
 
     let width = 64u32;
     let height = 64u32;
-    let vb_data = fullscreen_strip_vb([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]);
+    let vb_data = fullscreen_quad_vb([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]);
     let vertex_decl = vertex_decl_pos4_uv2();
 
     let vs_bytes = assemble_vs_passthrough_pos_and_t0();
@@ -813,7 +816,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_is_clamped() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::SetPrimitiveTopology as u32, |out| {
-            push_u32(out, AerogpuPrimitiveTopology::TriangleStrip as u32);
+            push_u32(out, AerogpuPrimitiveTopology::TriangleList as u32);
             push_u32(out, 0); // reserved0
         });
 
@@ -860,7 +863,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_is_clamped() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 6); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
@@ -892,7 +895,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_is_clamped() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 6); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
@@ -929,7 +932,7 @@ fn d3d9_cmd_stream_sampler_address_wrap_vs_clamp() {
 
     let width = 64u32;
     let height = 64u32;
-    let vb_data = fullscreen_strip_vb([[1.1, 0.5], [1.1, 0.5], [1.1, 0.5], [1.1, 0.5]]);
+    let vb_data = fullscreen_quad_vb([[1.1, 0.5], [1.1, 0.5], [1.1, 0.5], [1.1, 0.5]]);
     let vertex_decl = vertex_decl_pos4_uv2();
 
     let vs_bytes = assemble_vs_passthrough_pos_and_t0();
@@ -1038,7 +1041,7 @@ fn d3d9_cmd_stream_sampler_address_wrap_vs_clamp() {
         });
 
         emit_packet(out, AerogpuCmdOpcode::SetPrimitiveTopology as u32, |out| {
-            push_u32(out, AerogpuPrimitiveTopology::TriangleStrip as u32);
+            push_u32(out, AerogpuPrimitiveTopology::TriangleList as u32);
             push_u32(out, 0); // reserved0
         });
 
@@ -1119,7 +1122,7 @@ fn d3d9_cmd_stream_sampler_address_wrap_vs_clamp() {
             push_u32(out, D3DTADDRESS_CLAMP);
         });
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 6); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
@@ -1139,7 +1142,7 @@ fn d3d9_cmd_stream_sampler_address_wrap_vs_clamp() {
             push_u32(out, D3DTADDRESS_WRAP);
         });
         emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-            push_u32(out, 4); // vertex_count
+            push_u32(out, 6); // vertex_count
             push_u32(out, 1); // instance_count
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
