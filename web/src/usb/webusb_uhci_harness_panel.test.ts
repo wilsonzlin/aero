@@ -33,10 +33,8 @@ describe("bridgeHarnessDrainActions", () => {
             return { kind: "bulkIn", id: action.id, status: "stall" };
           case "bulkOut":
             return { kind: "bulkOut", id: action.id, status: "success", bytesWritten: action.data.byteLength };
-          default: {
-            const neverAction: never = action;
-            throw new Error(`unreachable: ${String((neverAction as { kind?: unknown }).kind)}`);
-          }
+          default:
+            throw new Error(`unreachable action kind: ${action.kind}`);
         }
       },
     };
@@ -47,4 +45,3 @@ describe("bridgeHarnessDrainActions", () => {
     expect(harnessCompletions).toEqual(completions);
   });
 });
-

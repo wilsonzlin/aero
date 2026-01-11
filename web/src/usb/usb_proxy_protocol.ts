@@ -73,11 +73,8 @@ export function isUsbHostCompletion(value: unknown): value is UsbHostCompletion 
       if (value.status === "stall") return true;
       if (value.status === "error") return typeof value.message === "string";
       return false;
-    default: {
-      const neverCompletion: never = value;
-      void neverCompletion;
+    default:
       return false;
-    }
   }
 }
 

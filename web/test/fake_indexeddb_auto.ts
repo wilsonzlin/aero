@@ -117,7 +117,7 @@ class FakeIDBKeyRange {
 type Listener = ((event?: unknown) => void) | null | undefined;
 
 class FakeIDBRequest {
-  result = undefined;
+  result: unknown = undefined;
   error: Error | null = null;
   onsuccess: Listener = null;
   onerror: Listener = null;
