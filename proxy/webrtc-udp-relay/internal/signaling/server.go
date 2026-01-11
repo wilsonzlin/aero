@@ -253,8 +253,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.authorizer().Authorize(r, nil); err != nil {
-		s.incMetric(metrics.AuthFailure)
-		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
+		if IsUnauthorized(err) {
+			s.incMetric(metrics.AuthFailure)
+			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 
@@ -305,8 +309,12 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	authRes, err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer})
 	if err != nil {
-		s.incMetric(metrics.AuthFailure)
-		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
+		if IsUnauthorized(err) {
+			s.incMetric(metrics.AuthFailure)
+			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 
@@ -431,8 +439,12 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 
 	authRes, err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer})
 	if err != nil {
-		s.incMetric(metrics.AuthFailure)
-		writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		if IsUnauthorized(err) {
+			s.incMetric(metrics.AuthFailure)
+			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 
