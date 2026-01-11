@@ -226,7 +226,9 @@ function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidRepo
   const usages = isRange ? [usageMinimum, usageMaximum] : Array.from(rawUsages);
 
   const isAbsolute = item.isAbsolute ?? (item.isRelative !== undefined ? !item.isRelative : true);
-  const isRelative = item.isRelative ?? !isAbsolute;
+  // `isRelative` is redundant with `isAbsolute`. Prefer `isAbsolute` as the source of truth when
+  // both are present so the normalized contract is always internally consistent.
+  const isRelative = !isAbsolute;
   const isWrapped = item.isWrapped ?? item.wrap ?? false;
 
   return {
