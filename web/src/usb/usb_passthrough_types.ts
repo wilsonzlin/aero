@@ -6,6 +6,8 @@ export interface SetupPacket {
   wLength: number;
 }
 
+// `id` is a Rust-generated u32 used to correlate an action with its completion.
+// Keep it representable as a JS number (<= 0xffff_ffff).
 export type UsbHostAction =
   | { kind: "controlIn"; id: number; setup: SetupPacket }
   | { kind: "controlOut"; id: number; setup: SetupPacket; data: Uint8Array }
@@ -25,4 +27,3 @@ export type UsbHostCompletion =
   | { kind: "bulkOut"; id: number; status: "success"; bytesWritten: number }
   | { kind: "bulkOut"; id: number; status: "stall" }
   | { kind: "bulkOut"; id: number; status: "error"; message: string };
-
