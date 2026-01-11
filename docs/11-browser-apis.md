@@ -986,7 +986,7 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
         this.ringBuffer = options.processorOptions.ringBuffer;
         this.readIndex = new Uint32Array(this.ringBuffer, 0, 1);
         this.writeIndex = new Uint32Array(this.ringBuffer, 4, 1);
-        this.audioData = new Float32Array(this.ringBuffer, 8);
+        this.audioData = new Float32Array(this.ringBuffer, 16);
         
         this.port.onmessage = this.handleMessage.bind(this);
     }
