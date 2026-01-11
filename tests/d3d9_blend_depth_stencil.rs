@@ -225,7 +225,11 @@ fn read_texture_rgba8(
     let slice = buffer.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).unwrap());
+    #[cfg(not(target_arch = "wasm32"))]
     device.poll(wgpu::Maintain::Wait);
+
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
     rx.recv().unwrap().unwrap();
 
     let data = slice.get_mapped_range().to_vec();

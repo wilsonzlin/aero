@@ -298,7 +298,11 @@ fn fs_main() -> @location(0) vec4<f32> {
         assert_eq!(encoded.metrics.pipeline_switches, 1);
         assert_eq!(encoded.metrics.bind_group_changes, 0);
         queue.submit(Some(encoded.command_buffer));
+        #[cfg(not(target_arch = "wasm32"))]
         device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        device.poll(wgpu::Maintain::Poll);
         let err = device.pop_error_scope().await;
         assert!(err.is_none(), "wgpu validation error: {err:?}");
     });

@@ -116,7 +116,11 @@ fn readback_rgba8(
     slice.map_async(wgpu::MapMode::Read, move |result| {
         tx.send(result).ok();
     });
+    #[cfg(not(target_arch = "wasm32"))]
     device.poll(wgpu::Maintain::Wait);
+
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
     rx.recv()
         .expect("map_async callback dropped")
         .expect("map_async failed");

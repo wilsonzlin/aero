@@ -76,7 +76,11 @@ fn gpu_profiler_reports_gpu_time_when_supported_otherwise_falls_back() {
     }
 
     // Ensure the final readback (if any) is completed and processed.
+    #[cfg(not(target_arch = "wasm32"))]
     device.poll(wgpu::Maintain::Wait);
+
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
     profiler.poll(&device);
 
     let report = profiler.get_frame_timings().expect("expected timings");

@@ -141,7 +141,11 @@ fn headless_webgpu_triangle_renders() {
         slice.map_async(wgpu::MapMode::Read, move |res| {
             tx.send(res).ok();
         });
+        #[cfg(not(target_arch = "wasm32"))]
         device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        device.poll(wgpu::Maintain::Poll);
         rx.recv().expect("map callback").expect("map ok");
 
         let data = slice.get_mapped_range();
