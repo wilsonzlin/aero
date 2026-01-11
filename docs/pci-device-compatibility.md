@@ -19,16 +19,20 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:04.0  | Audio  | 8086:2668     | 04/03/00                 | INTA     | Intel HD Audio (HDA) controller |
 | 00:05.0  | NIC    | 8086:100E     | 02/00/00                 | INTA     | Intel E1000 (82540EM) |
 | 00:06.0  | NIC    | 10EC:8139     | 02/00/00                 | INTA     | RTL8139 (alternate NIC option) |
-| 00:08.0  | vNIC   | 1AF4:1041     | 02/00/00                 | INTA     | virtio-net (modern ID; transitional = 1AF4:1000) |
-| 00:09.0  | vBlk   | 1AF4:1042     | 01/00/00                 | INTA     | virtio-blk (modern ID; transitional = 1AF4:1001) |
-| 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input (modern ID; transitional = 1AF4:1011) |
-| 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (modern ID; transitional = 1AF4:1018; Aero Win7 contract v1 expects `REV_01`) |
+| 00:08.0  | vNIC   | 1AF4:1041     | 02/00/00                 | INTA     | virtio-net (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1000) |
+| 00:09.0  | vBlk   | 1AF4:1042     | 01/00/00                 | INTA     | virtio-blk (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1001) |
+| 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1011) |
+| 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1018) |
 
 ### Notes on virtio IDs (transitional vs modern)
 
 Virtio uses vendor ID `0x1AF4`.
 
-Aero’s canonical profile uses **modern** virtio PCI IDs (`0x1040 + device_type`), but also documents the **transitional** IDs used by older stacks.
+Aero’s canonical profile (and the Windows 7 virtio device contract, `AERO-W7-VIRTIO` v1) uses the virtio 1.0+
+**modern** virtio-pci device ID space (`0x1040 + device_id`) and a modern-only transport (PCI capabilities + MMIO).
+
+The **transitional** IDs below are listed only for upstream/historical context; Aero contract v1 does not require and
+may not expose transitional IDs.
 
 | Virtio function | Transitional ID | Modern ID |
 |-----------------|-----------------|-----------|
