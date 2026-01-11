@@ -185,6 +185,10 @@ impl AttachedUsbDevice {
     }
 
     pub fn handle_out(&mut self, endpoint: u8, data: &[u8]) -> UsbOutResult {
+        debug_assert!(
+            (endpoint & 0xF0) == 0,
+            "handle_out expects an endpoint number (0..=15), got {endpoint:#04x}"
+        );
         if endpoint != 0 {
             let ep_addr = endpoint & 0x0f;
             return self.model.handle_out_transfer(ep_addr, data);
@@ -251,6 +255,10 @@ impl AttachedUsbDevice {
     }
 
     pub fn handle_in(&mut self, endpoint: u8, max_len: usize) -> UsbInResult {
+        debug_assert!(
+            (endpoint & 0xF0) == 0,
+            "handle_in expects an endpoint number (0..=15), got {endpoint:#04x}"
+        );
         if endpoint == 0 {
             return self.handle_control_in(max_len);
         }
