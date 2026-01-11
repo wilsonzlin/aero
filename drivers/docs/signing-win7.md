@@ -59,10 +59,12 @@ This produces:
 - signed driver packages under `out/packages/**`
 - the public test certificate at `out/certs/aero-test.cer`
 
-When installing on a Win7 VM, you can import the certificate via the AeroGPU helper:
+When installing on a Win7 VM, copy `aero-test.cer` next to the signed INF (package root) and import it via the AeroGPU helper shipped under `packaging/win7/`:
 
 ```bat
-trust_test_cert.cmd aero-test.cer
+cd C:\path\to\out\packages\aerogpu\x64
+packaging\win7\trust_test_cert.cmd
+shutdown /r /t 0
 ```
 
 ## Offline installs (WIM/WinPE) need the certificate too
