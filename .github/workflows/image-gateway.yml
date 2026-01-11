@@ -55,3 +55,75 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Disk streaming conformance (MinIO)
+        env:
+          AUTH_MODE: none
+          CORS_ALLOW_ORIGIN: "*"
+          S3_BUCKET: aero-images
+          AWS_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          S3_ENDPOINT: http://127.0.0.1:9000
+          S3_FORCE_PATH_STYLE: "true"
+          PORT: "3000"
+        run: |
+          set -euo pipefail
+
+          docker compose -f docker-compose.minio.yml up -d
+
+          minio_ready=0
+          for i in {1..30}; do
+            if curl -sf http://127.0.0.1:9000/minio/health/ready > /dev/null; then
+              minio_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$minio_ready" -ne 1 ]; then
+            echo "minio did not start" >&2
+            exit 1
+          fi
+
+          npm start &
+          PID="$!"
+          cleanup() {
+            kill "$PID" 2>/dev/null || true
+            docker compose -f docker-compose.minio.yml down -v 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for i in {1..30}; do
+            if curl -sf http://127.0.0.1:3000/healthz > /dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "image-gateway did not start" >&2
+            exit 1
+          fi
+
+          API='http://127.0.0.1:3000'
+          IMG_JSON="$(curl -sS -X POST "$API/v1/images")"
+          IMAGE_ID="$(python3 -c 'import sys, json; print(json.loads(sys.stdin.read())["imageId"])' <<< "$IMG_JSON")"
+          UPLOAD_ID="$(python3 -c 'import sys, json; print(json.loads(sys.stdin.read())["uploadId"])' <<< "$IMG_JSON")"
+
+          UPLOAD_JSON="$(curl -sS -X POST "$API/v1/images/$IMAGE_ID/upload-url" \
+            -H 'content-type: application/json' \
+            -d "{\"uploadId\":\"$UPLOAD_ID\",\"partNumber\":1}")"
+          UPLOAD_URL="$(python3 -c 'import sys, json; print(json.loads(sys.stdin.read())["url"])' <<< "$UPLOAD_JSON")"
+
+          truncate -s 1M part.bin
+          ETAG="$(curl -sS -D - -o /dev/null -X PUT --upload-file part.bin "$UPLOAD_URL" \
+            | awk -F': ' 'tolower($1)=="etag" {print $2}' | tr -d '\r\"')"
+
+          curl -sS -X POST "$API/v1/images/$IMAGE_ID/complete" \
+            -H 'content-type: application/json' \
+            -d "{\"uploadId\":\"$UPLOAD_ID\",\"parts\":[{\"partNumber\":1,\"etag\":\"$ETAG\"}]}" \
+            > /dev/null
+
+          BASE_URL="$API/v1/images/$IMAGE_ID/range" ORIGIN='https://example.com' \
+            python3 ../../tools/disk-streaming-conformance/conformance.py --strict

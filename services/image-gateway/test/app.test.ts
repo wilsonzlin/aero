@@ -170,6 +170,10 @@ describe("app", () => {
     expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
     expect(res.headers["access-control-allow-credentials"]).toBe("true");
+    expect(res.headers["access-control-expose-headers"]).toContain("accept-ranges");
+    expect(res.headers["access-control-expose-headers"]).toContain("content-range");
+    expect(res.headers["access-control-expose-headers"]).toContain("content-length");
+    expect(res.headers["access-control-expose-headers"]).toContain("etag");
   });
 
   it("rejects multi-range requests", async () => {

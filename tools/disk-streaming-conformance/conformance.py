@@ -121,7 +121,7 @@ class TestFailure(Exception):
 @dataclass
 class TestResult:
     name: str
-    status: str  # PASS | FAIL | SKIP
+    status: str  # PASS | FAIL | SKIP | WARN
     details: str = ""
 
 
@@ -230,7 +230,11 @@ def _test_head(
         except ValueError:
             raise TestFailure(f"invalid Content-Length {content_length!r}") from None
         _require(size > 0, f"Content-Length must be > 0, got {size}")
-        _require_cors(resp, origin, expose={"accept-ranges", "content-length"})
+        _require_cors(
+            resp,
+            origin,
+            expose={"accept-ranges", "content-range", "content-length", "etag"},
+        )
         return (
             TestResult(
                 name=name,
@@ -259,6 +263,7 @@ def _test_get_valid_range(
     authorization: str | None,
     timeout_s: float,
     size: int | None,
+    strict: bool,
 ) -> TestResult:
     name = "GET: valid Range (first byte) returns 206 with correct Content-Range and body length"
     if size is None:
@@ -276,6 +281,7 @@ def _test_get_valid_range(
             size=size,
             req_start=req_start,
             req_end=req_end,
+            strict=strict,
         )
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e))
@@ -288,6 +294,7 @@ def _test_get_mid_range(
     authorization: str | None,
     timeout_s: float,
     size: int | None,
+    strict: bool,
 ) -> TestResult:
     name = "GET: valid Range (mid-file) returns 206 with correct Content-Range and body length"
     if size is None:
@@ -309,6 +316,7 @@ def _test_get_mid_range(
             size=size,
             req_start=req_start,
             req_end=req_end,
+            strict=strict,
         )
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e))
@@ -324,6 +332,7 @@ def _test_get_range(
     size: int,
     req_start: int,
     req_end: int,
+    strict: bool,
 ) -> TestResult:
     _require(0 <= req_start <= req_end < size, f"invalid test range {req_start}-{req_end} for size {size}")
     headers: dict[str, str] = {
@@ -338,9 +347,28 @@ def _test_get_range(
     resp = _request(url=base_url, method="GET", headers=headers, timeout_s=timeout_s)
     _require(resp.status == 206, f"expected 206, got {resp.status}")
 
+    cache_control = _header(resp, "Cache-Control")
+    _require(cache_control is not None, "missing Cache-Control header")
+    _require(
+        "no-transform" in _csv_tokens(cache_control),
+        f"expected Cache-Control to include 'no-transform', got {cache_control!r}",
+    )
+
+    content_encoding = _header(resp, "Content-Encoding")
+    if content_encoding is not None:
+        encodings = _csv_tokens(content_encoding)
+        _require(
+            encodings == {"identity"},
+            f"expected Content-Encoding to be absent or 'identity', got {content_encoding!r}",
+        )
+
     content_range = _header(resp, "Content-Range")
     _require(content_range is not None, "missing Content-Range header")
-    _require_cors(resp, origin, expose={"content-range"})
+    _require_cors(
+        resp,
+        origin,
+        expose={"accept-ranges", "content-range", "content-length", "etag"},
+    )
     start, end, total = _parse_content_range(content_range)
     _require(start == req_start and end == req_end, f"expected bytes {req_start}-{req_end}, got {start}-{end}")
     _require(total == size, f"expected total size {size}, got {total}")
@@ -355,6 +383,20 @@ def _test_get_range(
         except ValueError:
             raise TestFailure(f"invalid Content-Length {content_length!r}") from None
         _require(resp_len == expected_len, f"expected Content-Length {expected_len}, got {resp_len}")
+
+    transfer_encoding = _header(resp, "Transfer-Encoding")
+    if transfer_encoding is not None and "chunked" in _csv_tokens(transfer_encoding):
+        message = (
+            "206 responses should not use Transfer-Encoding: chunked (some CDNs mishandle it); "
+            "prefer a fixed Content-Length"
+        )
+        if strict:
+            raise TestFailure(message)
+        return TestResult(
+            name=name,
+            status="WARN",
+            details=f"{message}; Transfer-Encoding={transfer_encoding!r}; Content-Range={content_range!r}",
+        )
 
     return TestResult(name=name, status="PASS", details=f"Content-Range={content_range!r}")
 
@@ -389,7 +431,11 @@ def _test_get_unsatisfiable_range(
 
         content_range = _header(resp, "Content-Range")
         _require(content_range is not None, "missing Content-Range header")
-        _require_cors(resp, origin, expose={"content-range"})
+        _require_cors(
+            resp,
+            origin,
+            expose={"accept-ranges", "content-range", "content-length", "etag"},
+        )
 
         # Example: "bytes */12345"
         m = re.fullmatch(r"\s*bytes\s+\*/(\d+)\s*", content_range, flags=re.IGNORECASE)
@@ -476,6 +522,11 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Origin to simulate for CORS (env: ORIGIN; default: https://example.com)",
     )
     parser.add_argument("--timeout", type=float, default=30.0, help="Request timeout in seconds (default: 30)")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail on 'WARN' conditions (currently: Transfer-Encoding: chunked on 206)",
+    )
     args = parser.parse_args(argv)
 
     if not args.base_url:
@@ -496,6 +547,7 @@ def main(argv: Sequence[str]) -> int:
     base_url: str = args.base_url
     origin: str | None = args.origin
     timeout_s: float = args.timeout
+    strict: bool = bool(args.strict)
 
     token: str | None = args.token
     authorization: str | None = _authorization_value(token) if token else None
@@ -503,6 +555,7 @@ def main(argv: Sequence[str]) -> int:
     print("Disk streaming conformance")
     print(f"  BASE_URL: {base_url}")
     print(f"  ORIGIN:   {origin or '(none)'}")
+    print(f"  STRICT:   {strict}")
     if authorization is None:
         print("  AUTH:     (none)")
     else:
@@ -530,6 +583,7 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             size=size,
+            strict=strict,
         )
     )
     results.append(
@@ -539,6 +593,7 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             size=size,
+            strict=strict,
         )
     )
     results.append(
@@ -556,13 +611,16 @@ def main(argv: Sequence[str]) -> int:
         _print_result(result)
 
     failed = [r for r in results if r.status == "FAIL"]
+    warned = [r for r in results if r.status == "WARN"]
     skipped = [r for r in results if r.status == "SKIP"]
     passed = [r for r in results if r.status == "PASS"]
 
     print()
-    print(f"Summary: {len(passed)} passed, {len(failed)} failed, {len(skipped)} skipped")
+    print(
+        f"Summary: {len(passed)} passed, {len(failed)} failed, {len(warned)} warned, {len(skipped)} skipped"
+    )
 
-    return 1 if failed else 0
+    return 1 if failed or (strict and warned) else 0
 
 
 if __name__ == "__main__":

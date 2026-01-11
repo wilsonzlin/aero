@@ -4,9 +4,12 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 
 - `HEAD` advertises byte ranges and provides a stable `Content-Length`
 - `GET` Range requests work (`206` + correct `Content-Range`)
+- `GET` Range responses are safe for byte-addressed reads (no compression transforms):
+  - `Cache-Control` includes `no-transform`
+  - `Content-Encoding` is absent or `identity`
 - Unsatisfiable ranges fail correctly (`416` + `Content-Range: bytes */<size>`)
 - CORS preflight (`OPTIONS`) allows the `Range` and `Authorization` headers
-- CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`)
+- CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`)
 - (Private images) unauthenticated requests are denied, authenticated requests succeed
 
 The script is dependency-free (Python stdlib only) and exits non-zero on failures (CI-friendly).
@@ -48,6 +51,7 @@ If you pass a token **without** whitespace (e.g. `TOKEN='eyJ...'`), the tool wil
 
 - Exit code `0` = all checks passed
 - Exit code `1` = one or more checks failed
+- Some checks may emit `WARN` (exit code is still `0` unless you pass `--strict`)
 
 Example output:
 
@@ -55,6 +59,7 @@ Example output:
 Disk streaming conformance
   BASE_URL: https://aero.example.com/disk/my-image
   ORIGIN:   https://app.example.com
+  STRICT:   False
   AUTH:     (none)
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
@@ -63,8 +68,12 @@ PASS GET: valid Range (mid-file) returns 206 with correct Content-Range and body
 PASS GET: unsatisfiable Range returns 416 and Content-Range bytes */<size> - Content-Range='bytes */2147483648'
 PASS OPTIONS: CORS preflight allows Range + Authorization headers - status=204
 
-Summary: 5 passed, 0 failed, 0 skipped
+Summary: 5 passed, 0 failed, 0 warned, 0 skipped
 ```
+
+## Strict mode
+
+`--strict` fails on `WARN` conditions. Currently this includes `Transfer-Encoding: chunked` on `206` responses (some CDNs mishandle it).
 
 ## Running against the reference `server/disk-gateway`
 
@@ -117,4 +126,64 @@ BASE_URL='http://127.0.0.1:3000/disk/secret' \
 TOKEN="$TOKEN" \
 ORIGIN='https://example.com' \
 python3 tools/disk-streaming-conformance/conformance.py
+```
+
+## Running against `services/image-gateway` (local dev + MinIO)
+
+Start MinIO (creates the `aero-images` bucket by default):
+
+```bash
+cd services/image-gateway
+docker compose -f docker-compose.minio.yml up -d
+```
+
+In another terminal, start the gateway pointed at MinIO (disable auth for this local conformance run):
+
+```bash
+cd services/image-gateway
+
+export AUTH_MODE=none
+export CORS_ALLOW_ORIGIN='*'
+
+export S3_BUCKET='aero-images'
+export AWS_REGION='us-east-1'
+export AWS_ACCESS_KEY_ID='minioadmin'
+export AWS_SECRET_ACCESS_KEY='minioadmin'
+export S3_ENDPOINT='http://127.0.0.1:9000'
+export S3_FORCE_PATH_STYLE='true'
+
+npm install
+npm run dev
+```
+
+Create a small image via the API, upload a single part, and complete the upload (example uses `jq`):
+
+```bash
+API='http://127.0.0.1:3000'
+
+IMG="$(curl -sS -X POST "$API/v1/images")"
+IMAGE_ID="$(echo "$IMG" | jq -r .imageId)"
+UPLOAD_ID="$(echo "$IMG" | jq -r .uploadId)"
+
+UPLOAD_URL="$(curl -sS -X POST "$API/v1/images/$IMAGE_ID/upload-url" \
+  -H 'content-type: application/json' \
+  -d "{\"uploadId\":\"$UPLOAD_ID\",\"partNumber\":1}" \
+  | jq -r .url)"
+
+truncate -s 1M part.bin
+ETAG="$(curl -sS -D - -o /dev/null -X PUT --upload-file part.bin "$UPLOAD_URL" \
+  | awk -F': ' 'tolower($1)=="etag" {print $2}' | tr -d '\r\"')"
+
+curl -sS -X POST "$API/v1/images/$IMAGE_ID/complete" \
+  -H 'content-type: application/json' \
+  -d "{\"uploadId\":\"$UPLOAD_ID\",\"parts\":[{\"partNumber\":1,\"etag\":\"$ETAG\"}]}" \
+  > /dev/null
+```
+
+Now run conformance against the Range proxy endpoint:
+
+```bash
+BASE_URL="$API/v1/images/$IMAGE_ID/range" \
+ORIGIN='https://example.com' \
+python3 ../../tools/disk-streaming-conformance/conformance.py
 ```
