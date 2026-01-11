@@ -69,11 +69,9 @@ multiple INFs that match the same contract-v1 device IDs.
 
 The repository also contains an optional **legacy filename alias** INF
 (`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf` (and
-regenerate/sign `virtio-snd.cat`), it can be used for development bring-up
-against less strict HWIDs such as:
-
-* `PCI\VEN_1AF4&DEV_1059` (no `REV_01` gate)
-* Transitional virtio-snd: `PCI\VEN_1AF4&DEV_1018`
+regenerate/sign `virtio-snd.cat`), it installs the same driver/service as
+`aero-virtio-snd.inf` but provides the legacy filename for compatibility with
+older tooling/workflows.
 
 ## QEMU mapping
 
@@ -110,7 +108,6 @@ If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
   (You can confirm supported properties with `qemu-system-x86_64 -device virtio-sound-pci,help`.)
 * If your QEMU build does **not** support overriding the PCI Revision ID, the stock Aero INF will
   not bind. Use a contract-v1-capable device model/hypervisor (or patch QEMU) for testing.
-  (Development-only alternative: enable the legacy alias INF described above.)
 
 ### Verify the emitted PCI ID (no guest required)
 
@@ -130,9 +127,7 @@ Audio: PCI device 1af4:1059
 
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with `SUBSYS_...` and
   `REV_...`). `aero-virtio-snd.inf` requires a `REV_01` match; if your device reports `REV_00`, that
-  strict contract-v1 INF will not bind (use `x-pci-revision=0x01` in QEMU, or use the `virtio-snd.inf`
-  compatibility alias during bring-up).
+  strict contract-v1 INF will not bind (use `x-pci-revision=0x01` in QEMU).
 * The transitional ID `PCI\VEN_1AF4&DEV_1018` exists in the virtio spec.
   - `aero-virtio-snd.inf` (contract v1) does **not** match it; if Windows shows `DEV_1018`, configure the hypervisor to expose a
     modern-only device (e.g. QEMU `disable-legacy=on`) so Windows enumerates `DEV_1059`.
-  - `virtio-snd.inf` can be used to install the same driver on transitional `DEV_1018` devices when needed.

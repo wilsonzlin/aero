@@ -45,7 +45,7 @@ The INF does **not** match:
 - Transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`)
 - Any “short form” without the revision gate (for example `PCI\VEN_1AF4&DEV_1059`), even though those appear in the Windows device contract manifest for tooling convenience
 
-The source tree also contains a legacy filename alias INF (`inf/virtio-snd.inf`) for bring-up and compatibility with older tooling. It installs the same driver/service but matches additional HWIDs (including transitional `DEV_1018`). CI packaging stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping multiple INFs that match the same modern contract-v1 device IDs.
+The source tree also contains a legacy filename alias INF (`inf/virtio-snd.inf.disabled`) for compatibility with older tooling/workflows. It installs the same driver/service as `aero-virtio-snd.inf`. CI packaging stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`); rename `virtio-snd.inf.disabled` back to `virtio-snd.inf` if you need the legacy filename.
 
 See also: [`pci-hwids.md`](pci-hwids.md) and `inf/aero-virtio-snd.inf`.
 
@@ -552,9 +552,8 @@ INF selection note:
 
 - `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `DEV_1059&REV_01` and installs service `aeroviosnd`).
 - `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows.
-  It installs the same driver/service as `aero-virtio-snd.inf`, but is less strict: it also matches
-  `PCI\VEN_1AF4&DEV_1059` without `REV_01` and the transitional virtio-snd ID (`DEV_1018`), and uses
-  `CatalogFile = virtio-snd.cat`.
+  It installs the same driver/service as `aero-virtio-snd.inf` and matches the same contract-v1 HWID,
+  but uses `CatalogFile = virtio-snd.cat`.
 
   To avoid accidentally installing **two** INFs that match the same HWIDs, the alias INF is checked in as
   `virtio-snd.inf.disabled`; rename it back to `virtio-snd.inf` if you need the legacy filename.
