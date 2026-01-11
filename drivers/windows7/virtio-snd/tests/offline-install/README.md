@@ -1,6 +1,6 @@
 # Offline / slipstream install: virtio-snd driver into Windows 7 (WIM or offline OS)
 
-This document describes how to **stage** (preinstall) the `virtio-snd` driver into a Windows 7 image so that Plug‑and‑Play can bind it **on first boot** (useful for automated test images where you want audio working immediately).
+This document describes how to **stage** (preinstall) the `virtio-snd` driver package into a Windows 7 image so that Plug‑and‑Play can bind it **on first boot** (useful for automated test images / unattended installs where you want the device installed without a manual “Have Disk…” step).
 
 The driver artifacts referenced here are built/staged in this repo under:
 
@@ -13,6 +13,8 @@ Point DISM at the directory (or `.inf`) produced by your build. In a “ready to
 - `virtio-snd.inf`
 - `virtiosnd.sys` (architecture-specific)
 - `virtio-snd.cat` (optional but strongly recommended; required for signature enforcement scenarios)
+
+`virtio-snd.inf` is architecture-decorated (`NTx86` and `NTamd64`) but the package still includes a single `virtiosnd.sys` filename, so the `virtiosnd.sys` you stage must match the target OS architecture.
 
 > Note: `virtio-snd` is **not boot-critical** (it’s a PnP media device, StartType=3). If staging fails or the driver is blocked by signature policy at runtime, **Windows will still boot**; you’ll just have missing audio / an unknown device to troubleshoot.
 
@@ -207,17 +209,20 @@ On the next boot of that VM, PnP should bind the device to the staged driver.
 
 Once the system boots with virtio-snd hardware present:
 
-- `devmgmt.msc` → verify **Aero VirtIO Sound Device** is present and is using the expected virtio-snd driver.
-  - Typical category after install: **Sound, video and game controllers**
-  - Driver Details should include `virtiosnd.sys`
-- `pnputil -e` (lists staged driver packages) → verify the virtio-snd INF package exists.
-- `%WINDIR%\inf\setupapi.dev.log` → search for the virtio-snd hardware ID (`PCI\VEN_1AF4&DEV_1059...`) or `virtio-snd.inf` and confirm it selected your INF and installed without prompting.
+- `devmgmt.msc`:
+  - Under **Sound, video and game controllers** (Class=`MEDIA`), you should see the virtio-snd device (e.g. `Aero VirtIO Sound Device` from `virtio-snd.inf`).
+  - Driver Details should include `virtiosnd.sys`.
+  - If your build exposes PortCls endpoints, you should also see playback/capture endpoints under **Audio inputs and outputs**.
+- `pnputil -e` (lists staged driver packages) → verify the virtio-snd INF package exists (look for `virtio-snd.inf` and its `Published name` like `oem#.inf`).
+- `%WINDIR%\inf\setupapi.dev.log` → search for:
+  - the device’s Hardware ID (`PCI\\VEN_1AF4&DEV_1059...`), or
+  - `virtio-snd.inf` / `virtiosnd.sys`
 
 If the driver is staged but the device doesn’t bind:
 
 1) Confirm you injected the correct architecture (x86 vs x64).
 2) Confirm the INF actually matches the device’s Hardware IDs (Device Manager → device → Details → “Hardware Ids”).
-3) Confirm signature policy didn’t block installation (see below).
+3) Confirm signature policy didn’t block installation/loading (see below).
 
 ---
 
@@ -230,10 +235,29 @@ Windows 7’s kernel-mode driver signature policy can prevent unattended first-b
 
 Important implications:
 
-- `dism /Add-Driver /ForceUnsigned` can stage an unsigned driver into the image, but that does **not** guarantee Windows will load it at runtime.
+- `dism /Add-Driver /ForceUnsigned` can stage an unsigned driver into the image, but that does **not** guarantee Windows will install and load it at runtime.
 - For automated / unattended first boot, you generally want a **properly signed** driver package (or you must arrange for test-signing / signature enforcement changes *before* the driver needs to load).
 
-If you plan to use a test-signed build for automation, ensure your boot configuration and policies allow it (for example by enabling test signing in the image) and validate that your CI harness boots with the expected settings.
+Common symptom on Win7 x64 when signature enforcement blocks the driver: the device shows up with **Code 52** (“Windows cannot verify the digital signature…”).
+
+Recommended workflow for development/test images:
+
+1) Use the virtio-snd package’s test certificate + signing workflow (Task 239) to produce a test-signed `.sys` + `.cat` (see `drivers/windows7/virtio-snd/README.md` and `drivers/windows7/virtio-snd/scripts/`).
+2) Ensure the target system boots with **test signing enabled** (and trusts the test certificate) before the virtio-snd device is enumerated.
+
+If you’re experimenting on an already-booted machine, you can enable test signing (elevated cmd) and reboot:
+
+```bat
+bcdedit /set testsigning on
+shutdown /r /t 0
+```
+
+For unattended “works on first boot” images, you generally want `testsigning` set **offline** in the image’s BCD (or `BCD-Template`) before the first boot.
+
+For end-to-end Win7 media patching (BCD `testsigning` + offline cert injection into `boot.wim`/`install.wim`), see:
+
+- `docs/16-win7-image-servicing.md`
+- `docs/win7-bcd-offline-patching.md`
 
 Reminder: virtio-snd is non-boot-critical. A signature failure typically results in a Code 52 device error or an unknown PCI device, not a boot failure.
 
@@ -253,4 +277,4 @@ dism /Image:%MOUNT% /Add-Driver /Driver:%VIRTIO_SND_INF_DIR% /Recurse
 dism /Unmount-Wim /MountDir:%MOUNT% /Commit
 ```
 
-This is optional for “first boot driver availability”; most setups do not need audio drivers during installation.
+This is optional for “first boot driver availability”; most setups do not need audio drivers during installation, but it can be useful for validating the driver in WinPE.

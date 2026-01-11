@@ -239,6 +239,10 @@ The output will be under `objfre_win7_*` (or `objchk_win7_*` for checked builds)
 1. Copy `virtiosnd.sys` next to `inf\virtio-snd.inf`.
 2. Use Device Manager → Update Driver → "Have Disk..." and point to the `inf` directory.
 
+For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
+
+- `../tests/offline-install/README.md`
+
 ### PCI Hardware IDs
 
 Contract v1 virtio-snd devices enumerate as:
