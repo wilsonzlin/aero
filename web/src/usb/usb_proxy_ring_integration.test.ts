@@ -86,6 +86,29 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
     expect(ringAttach!.completionRing).toBeInstanceOf(SharedArrayBuffer);
   });
 
+  it("re-sends usb.ringAttach on usb.ringAttachRequest (reusing the same ring handles)", () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const broker = new UsbBroker({ ringDrainIntervalMs: 1 });
+    const { brokerPort, workerPort } = createChannel();
+    broker.attachWorkerPort(brokerPort as unknown as MessagePort);
+
+    const first = brokerPort.sent.find((p) => (p.msg as { type?: unknown }).type === "usb.ringAttach")?.msg as
+      | { actionRing: SharedArrayBuffer; completionRing: SharedArrayBuffer }
+      | undefined;
+    expect(first).toBeTruthy();
+
+    brokerPort.sent.length = 0;
+    workerPort.postMessage({ type: "usb.ringAttachRequest" });
+
+    const second = brokerPort.sent.find((p) => (p.msg as { type?: unknown }).type === "usb.ringAttach")?.msg as
+      | { actionRing: SharedArrayBuffer; completionRing: SharedArrayBuffer }
+      | undefined;
+    expect(second).toBeTruthy();
+    expect(second!.actionRing).toBe(first!.actionRing);
+    expect(second!.completionRing).toBe(first!.completionRing);
+  });
+
   it("flows actions/completions end-to-end via rings (no per-action postMessage required)", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
