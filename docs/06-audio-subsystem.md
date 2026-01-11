@@ -690,6 +690,7 @@ Reference implementation files:
 - `crates/platform/src/audio/mic_bridge.rs` (ring buffer layout + wrap-around math)
 - `crates/aero-audio/src/capture.rs` (`AudioCaptureSource` trait + adapters for mic ring buffers)
 - `crates/aero-audio/src/hda.rs` (HDA capture stream DMA + mic pin exposure)
+- `crates/aero-virtio/src/devices/snd.rs` (virtio-snd capture stream + RX queue)
 
 ### HDA capture exposure (guest)
 
@@ -702,6 +703,17 @@ The canonical `aero-audio` HDA model exposes one capture stream and a microphone
 Host code provides microphone samples via `aero_audio::capture::AudioCaptureSource` (implemented for
 `aero_platform::audio::mic_bridge::MicBridge` on wasm) and advances the device model via
 `HdaController::process_*_with_capture(...)`.
+
+### virtio-snd capture exposure (guest)
+
+The canonical `aero-virtio` virtio-snd device model exposes an additional fixed-format capture stream:
+
+- Stream id `1`, S16_LE mono @ 48kHz.
+- Captured data is delivered to the guest via the virtio-snd RX queue (`VIRTIO_SND_QUEUE_RX`).
+
+In browser builds, the device can be backed by the mic SharedArrayBuffer ring buffer via
+`aero_platform::audio::mic_bridge::MicBridge` (through the capture-source adapter in
+`crates/aero-virtio/src/devices/snd.rs`).
 
 ### Ring buffer layout
   
