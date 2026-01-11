@@ -4435,6 +4435,20 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
       hr = wddm_acquire_submit_buffers_get_command_buffer_impl(dev, dev->wddm_callbacks.pfnGetCommandBufferCb);
     }
   }
+  // If GetCommandBufferCb succeeds but returns an undersized buffer for the
+  // current packet, allow AllocateCb to satisfy the minimum size.
+  if (SUCCEEDED(hr)) {
+    const bool have_required =
+        dev->wddm_context.pCommandBuffer &&
+        dev->wddm_context.CommandBufferSize >= min_buffer_bytes &&
+        dev->wddm_context.pAllocationList &&
+        dev->wddm_context.AllocationListSize != 0 &&
+        dev->wddm_context.pDmaBufferPrivateData &&
+        dev->wddm_context.DmaBufferPrivateDataSize >= expected_dma_priv_bytes;
+    if (!have_required) {
+      hr = E_FAIL;
+    }
+  }
   if (FAILED(hr)) {
     if constexpr (has_pfnAllocateCb<WddmDeviceCallbacks>::value && has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
       if (dev->wddm_callbacks.pfnAllocateCb && dev->wddm_callbacks.pfnDeallocateCb) {
