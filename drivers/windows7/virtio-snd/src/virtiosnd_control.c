@@ -356,6 +356,8 @@ VirtioSndCtrlSendSyncLocked(
     VIRTIOSND_SG sg[16];
     USHORT sgCount;
     LARGE_INTEGER timeout;
+    ULONGLONG deadline100ns;
+    ULONGLONG now100ns;
     ULONG usedLen;
     ULONG virtioStatus;
     ULONG copyLen;
@@ -482,21 +484,53 @@ VirtioSndCtrlSendSyncLocked(
     VirtioSndQueueKick(Ctrl->ControlQ);
 
     /*
-     * Best-effort poll in case the driver is using a polling path and the
-     * completion interrupt is delayed or suppressed.
+     * Poll used entries while waiting so this helper still functions if the
+     * driver is running in a polling-only configuration (or if an interrupt is
+     * delayed/lost). Control requests are infrequent, so a short polling cadence
+     * keeps behavior deterministic without meaningful overhead.
      */
-    VirtioSndCtrlProcessUsed(Ctrl);
+    now100ns = KeQueryInterruptTime();
+    deadline100ns = now100ns + ((ULONGLONG)TimeoutMs * 10000ull);
 
-    timeout.QuadPart = -((LONGLONG)TimeoutMs * 10000); /* relative, 100ns units */
-    waitStatus = KeWaitForSingleObject(&ctx->Event, Executive, KernelMode, FALSE, &timeout);
-    if (waitStatus == STATUS_TIMEOUT) {
-        VIRTIOSND_TRACE_ERROR("ctrlq timeout code=0x%08lx\n", ctx->Code);
+    for (;;) {
+        /* If already signaled, exit the loop without waiting. */
+        if (KeReadStateEvent(&ctx->Event) != 0) {
+            waitStatus = STATUS_SUCCESS;
+            break;
+        }
 
-        InterlockedIncrement(&Ctrl->Stats.RequestsTimedOut);
+        VirtioSndCtrlProcessUsed(Ctrl);
 
-        /* Drop the send-thread reference. */
-        VirtioSndCtrlRequestRelease(ctx);
-        return STATUS_IO_TIMEOUT;
+        if (KeReadStateEvent(&ctx->Event) != 0) {
+            waitStatus = STATUS_SUCCESS;
+            break;
+        }
+
+        now100ns = KeQueryInterruptTime();
+        if (now100ns >= deadline100ns) {
+            VIRTIOSND_TRACE_ERROR("ctrlq timeout code=0x%08lx\n", ctx->Code);
+
+            InterlockedIncrement(&Ctrl->Stats.RequestsTimedOut);
+
+            /* Drop the send-thread reference. */
+            VirtioSndCtrlRequestRelease(ctx);
+            return STATUS_IO_TIMEOUT;
+        }
+
+        {
+            ULONGLONG remaining = deadline100ns - now100ns;
+            /* Poll at up to 10ms granularity. */
+            if (remaining > 10ull * 1000ull * 10ull) {
+                remaining = 10ull * 1000ull * 10ull;
+            }
+            timeout.QuadPart = -(LONGLONG)remaining;
+        }
+
+        waitStatus = KeWaitForSingleObject(&ctx->Event, Executive, KernelMode, FALSE, &timeout);
+        if (waitStatus == STATUS_TIMEOUT) {
+            continue;
+        }
+        break;
     }
 
     if (!NT_SUCCESS(waitStatus)) {
