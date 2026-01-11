@@ -15,6 +15,10 @@
 //! |------|------------------------|
 //! | `uhci::UhciController` | `b"UHCI"` |
 //! | `hub::UsbHubDevice` | `b"UHUB"` |
+//! | `hid::UsbHidKeyboard` | `b"UKBD"` |
+//! | `hid::UsbHidMouse` | `b"UMSE"` |
+//! | `hid::UsbHidGamepad` | `b"UGPD"` |
+//! | `hid::UsbHidCompositeInput` | `b"UCMP"` |
 //! | `hid::passthrough::UsbHidPassthrough` | `b"HIDP"` |
 //! | `passthrough::UsbPassthroughDevice` | `b"USBP"` |
 //! | `passthrough_device::UsbWebUsbPassthroughDevice` | `b"WUSB"` |

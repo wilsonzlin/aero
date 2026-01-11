@@ -2,6 +2,11 @@ pub mod passthrough;
 pub mod report_descriptor;
 pub mod webhid;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
 use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -99,6 +104,78 @@ impl Ep0Control {
     fn setup(&self) -> SetupPacket {
         self.setup.expect("control transfer missing SETUP")
     }
+}
+
+fn encode_ep0(ep0: &Ep0Control) -> Vec<u8> {
+    let stage = match ep0.stage {
+        Ep0Stage::Idle => 0u8,
+        Ep0Stage::DataIn => 1,
+        Ep0Stage::DataOut => 2,
+        Ep0Stage::StatusIn => 3,
+        Ep0Stage::StatusOut => 4,
+    };
+    let mut enc = Encoder::new().u8(stage).bool(ep0.setup.is_some());
+    if let Some(setup) = ep0.setup {
+        enc = enc
+            .u8(setup.request_type)
+            .u8(setup.request)
+            .u16(setup.value)
+            .u16(setup.index)
+            .u16(setup.length);
+    }
+    enc = enc
+        .vec_u8(&ep0.in_data)
+        .u32(ep0.in_offset as u32)
+        .u32(ep0.out_expected as u32)
+        .vec_u8(&ep0.out_data)
+        .bool(ep0.stalled);
+    enc.finish()
+}
+
+fn decode_ep0(ep0: &mut Ep0Control, buf: &[u8]) -> SnapshotResult<()> {
+    let mut d = Decoder::new(buf);
+    let stage = match d.u8()? {
+        0 => Ep0Stage::Idle,
+        1 => Ep0Stage::DataIn,
+        2 => Ep0Stage::DataOut,
+        3 => Ep0Stage::StatusIn,
+        4 => Ep0Stage::StatusOut,
+        _ => return Err(SnapshotError::InvalidFieldEncoding("ep0 stage")),
+    };
+    let has_setup = d.bool()?;
+    let setup = if has_setup {
+        Some(SetupPacket {
+            request_type: d.u8()?,
+            request: d.u8()?,
+            value: d.u16()?,
+            index: d.u16()?,
+            length: d.u16()?,
+        })
+    } else {
+        None
+    };
+    let in_data = d.vec_u8()?;
+    let in_offset = d.u32()? as usize;
+    if in_offset > in_data.len() {
+        return Err(SnapshotError::InvalidFieldEncoding("ep0 in_offset"));
+    }
+    if stage != Ep0Stage::Idle && setup.is_none() {
+        return Err(SnapshotError::InvalidFieldEncoding("ep0 setup"));
+    }
+    let out_expected = d.u32()? as usize;
+    let out_data = d.vec_u8()?;
+    let stalled = d.bool()?;
+    d.finish()?;
+
+    ep0.stage = stage;
+    ep0.setup = setup;
+    ep0.in_data = in_data;
+    ep0.in_offset = in_offset;
+    ep0.out_expected = out_expected;
+    ep0.out_data = out_data;
+    ep0.stalled = stalled;
+
+    Ok(())
 }
 
 fn string_descriptor_utf16le(s: &str) -> Vec<u8> {
@@ -696,6 +773,121 @@ impl UsbDevice for UsbHidKeyboard {
     }
 }
 
+impl IoSnapshot for UsbHidKeyboard {
+    const DEVICE_ID: [u8; 4] = *b"UKBD";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOL: u16 = 7;
+        const TAG_IDLE_RATE: u16 = 8;
+        const TAG_LEDS: u16 = 9;
+        const TAG_EP0: u16 = 10;
+        const TAG_MODIFIERS: u16 = 11;
+        const TAG_PRESSED_KEYS: u16 = 12;
+        const TAG_LAST_REPORT: u16 = 13;
+        const TAG_PENDING_REPORTS: u16 = 14;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        if let Some(cfg) = self.pending_configuration {
+            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
+        }
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_INTERRUPT_IN_HALTED, self.interrupt_in_halted);
+        w.field_u8(TAG_PROTOCOL, self.protocol);
+        w.field_u8(TAG_IDLE_RATE, self.idle_rate);
+        w.field_u8(TAG_LEDS, self.leds);
+        w.field_bytes(TAG_EP0, encode_ep0(&self.ep0));
+
+        w.field_u8(TAG_MODIFIERS, self.modifiers);
+        w.field_bytes(TAG_PRESSED_KEYS, Encoder::new().vec_u8(&self.pressed_keys).finish());
+        w.field_bytes(TAG_LAST_REPORT, self.last_report.to_vec());
+
+        let pending: Vec<Vec<u8>> = self.pending_reports.iter().map(|r| r.to_vec()).collect();
+        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOL: u16 = 7;
+        const TAG_IDLE_RATE: u16 = 8;
+        const TAG_LEDS: u16 = 9;
+        const TAG_EP0: u16 = 10;
+        const TAG_MODIFIERS: u16 = 11;
+        const TAG_PRESSED_KEYS: u16 = 12;
+        const TAG_LAST_REPORT: u16 = 13;
+        const TAG_PENDING_REPORTS: u16 = 14;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        *self = Self::new();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.pending_configuration = r.u8(TAG_PENDING_CONFIGURATION)?;
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
+        self.protocol = r.u8(TAG_PROTOCOL)?.unwrap_or(1);
+        self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+        self.leds = r.u8(TAG_LEDS)?.unwrap_or(0);
+
+        if let Some(buf) = r.bytes(TAG_EP0) {
+            decode_ep0(&mut self.ep0, buf)?;
+        }
+
+        self.modifiers = r.u8(TAG_MODIFIERS)?.unwrap_or(0);
+
+        if let Some(buf) = r.bytes(TAG_PRESSED_KEYS) {
+            let mut d = Decoder::new(buf);
+            self.pressed_keys = d.vec_u8()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_LAST_REPORT) {
+            if buf.len() != 8 {
+                return Err(SnapshotError::InvalidFieldEncoding("keyboard last_report"));
+            }
+            self.last_report.copy_from_slice(buf);
+        }
+
+        self.pending_reports.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
+            let mut d = Decoder::new(buf);
+            for report in d.vec_bytes()? {
+                if report.len() != 8 {
+                    return Err(SnapshotError::InvalidFieldEncoding("keyboard report"));
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&report);
+                self.pending_reports.push_back(arr);
+            }
+            d.finish()?;
+        }
+
+        Ok(())
+    }
+}
+
 pub struct UsbHidMouse {
     address: u8,
     pending_address: Option<u8>,
@@ -1203,6 +1395,110 @@ impl UsbDevice for UsbHidMouse {
             }
             _ => UsbHandshake::Nak,
         }
+    }
+}
+
+impl IoSnapshot for UsbHidMouse {
+    const DEVICE_ID: [u8; 4] = *b"UMSE";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOL: u16 = 7;
+        const TAG_IDLE_RATE: u16 = 8;
+        const TAG_EP0: u16 = 9;
+        const TAG_BUTTONS: u16 = 10;
+        const TAG_DX: u16 = 11;
+        const TAG_DY: u16 = 12;
+        const TAG_WHEEL: u16 = 13;
+        const TAG_PENDING_REPORTS: u16 = 14;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        if let Some(cfg) = self.pending_configuration {
+            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
+        }
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_INTERRUPT_IN_HALTED, self.interrupt_in_halted);
+        w.field_u8(TAG_PROTOCOL, self.protocol);
+        w.field_u8(TAG_IDLE_RATE, self.idle_rate);
+        w.field_bytes(TAG_EP0, encode_ep0(&self.ep0));
+
+        w.field_u8(TAG_BUTTONS, self.buttons);
+        w.field_i32(TAG_DX, self.dx);
+        w.field_i32(TAG_DY, self.dy);
+        w.field_i32(TAG_WHEEL, self.wheel);
+
+        let pending: Vec<Vec<u8>> = self.pending_reports.iter().map(|r| r.to_vec()).collect();
+        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOL: u16 = 7;
+        const TAG_IDLE_RATE: u16 = 8;
+        const TAG_EP0: u16 = 9;
+        const TAG_BUTTONS: u16 = 10;
+        const TAG_DX: u16 = 11;
+        const TAG_DY: u16 = 12;
+        const TAG_WHEEL: u16 = 13;
+        const TAG_PENDING_REPORTS: u16 = 14;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        *self = Self::new();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.pending_configuration = r.u8(TAG_PENDING_CONFIGURATION)?;
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
+        self.protocol = r.u8(TAG_PROTOCOL)?.unwrap_or(1);
+        self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+
+        if let Some(buf) = r.bytes(TAG_EP0) {
+            decode_ep0(&mut self.ep0, buf)?;
+        }
+
+        self.buttons = r.u8(TAG_BUTTONS)?.unwrap_or(0);
+        self.dx = r.i32(TAG_DX)?.unwrap_or(0);
+        self.dy = r.i32(TAG_DY)?.unwrap_or(0);
+        self.wheel = r.i32(TAG_WHEEL)?.unwrap_or(0);
+
+        self.pending_reports.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
+            let mut d = Decoder::new(buf);
+            for report in d.vec_bytes()? {
+                if report.len() != 4 {
+                    return Err(SnapshotError::InvalidFieldEncoding("mouse report"));
+                }
+                let mut arr = [0u8; 4];
+                arr.copy_from_slice(&report);
+                self.pending_reports.push_back(arr);
+            }
+            d.finish()?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1770,6 +2066,115 @@ impl UsbDevice for UsbHidGamepad {
             }
             _ => UsbHandshake::Nak,
         }
+    }
+}
+
+impl IoSnapshot for UsbHidGamepad {
+    const DEVICE_ID: [u8; 4] = *b"UGPD";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOL: u16 = 7;
+        const TAG_IDLE_RATE: u16 = 8;
+        const TAG_EP0: u16 = 9;
+        const TAG_REPORT: u16 = 10;
+        const TAG_PENDING_REPORTS: u16 = 11;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        if let Some(cfg) = self.pending_configuration {
+            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
+        }
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_INTERRUPT_IN_HALTED, self.interrupt_in_halted);
+        w.field_u8(TAG_PROTOCOL, self.protocol);
+        w.field_u8(TAG_IDLE_RATE, self.idle_rate);
+        w.field_bytes(TAG_EP0, encode_ep0(&self.ep0));
+
+        w.field_bytes(TAG_REPORT, self.report.to_bytes().to_vec());
+
+        let pending: Vec<Vec<u8>> = self.pending_reports.iter().map(|r| r.to_vec()).collect();
+        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOL: u16 = 7;
+        const TAG_IDLE_RATE: u16 = 8;
+        const TAG_EP0: u16 = 9;
+        const TAG_REPORT: u16 = 10;
+        const TAG_PENDING_REPORTS: u16 = 11;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        *self = Self::new();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.pending_configuration = r.u8(TAG_PENDING_CONFIGURATION)?;
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
+        self.protocol = r.u8(TAG_PROTOCOL)?.unwrap_or(1);
+        self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+
+        if let Some(buf) = r.bytes(TAG_EP0) {
+            decode_ep0(&mut self.ep0, buf)?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_REPORT) {
+            if buf.len() != 8 {
+                return Err(SnapshotError::InvalidFieldEncoding("gamepad report"));
+            }
+            let buttons = u16::from_le_bytes([buf[0], buf[1]]);
+            let mut hat = buf[2] & 0x0F;
+            if hat > 8 {
+                hat = 8;
+            }
+            self.report = GamepadReport {
+                buttons,
+                hat,
+                x: buf[3] as i8,
+                y: buf[4] as i8,
+                rx: buf[5] as i8,
+                ry: buf[6] as i8,
+            };
+        }
+
+        self.pending_reports.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
+            let mut d = Decoder::new(buf);
+            for report in d.vec_bytes()? {
+                if report.len() != 8 {
+                    return Err(SnapshotError::InvalidFieldEncoding("gamepad pending report"));
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&report);
+                self.pending_reports.push_back(arr);
+            }
+            d.finish()?;
+        }
+
+        Ok(())
     }
 }
 
@@ -2483,6 +2888,235 @@ impl UsbDevice for UsbHidCompositeInput {
             }
             _ => UsbHandshake::Nak,
         }
+    }
+}
+
+impl IoSnapshot for UsbHidCompositeInput {
+    const DEVICE_ID: [u8; 4] = *b"UCMP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOLS: u16 = 7;
+        const TAG_IDLE_RATES: u16 = 8;
+        const TAG_EP0: u16 = 9;
+        const TAG_KEYBOARD_MODIFIERS: u16 = 10;
+        const TAG_KEYBOARD_PRESSED_KEYS: u16 = 11;
+        const TAG_KEYBOARD_LAST_REPORT: u16 = 12;
+        const TAG_KEYBOARD_LEDS: u16 = 13;
+        const TAG_PENDING_KEYBOARD_REPORTS: u16 = 14;
+        const TAG_MOUSE_BUTTONS: u16 = 15;
+        const TAG_PENDING_MOUSE_REPORTS: u16 = 16;
+        const TAG_GAMEPAD_REPORT: u16 = 17;
+        const TAG_PENDING_GAMEPAD_REPORTS: u16 = 18;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        if let Some(cfg) = self.pending_configuration {
+            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
+        }
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+
+        let halted = Encoder::new()
+            .bool(self.interrupt_in_halted[0])
+            .bool(self.interrupt_in_halted[1])
+            .bool(self.interrupt_in_halted[2])
+            .finish();
+        w.field_bytes(TAG_INTERRUPT_IN_HALTED, halted);
+
+        w.field_bytes(TAG_PROTOCOLS, self.protocols.to_vec());
+        w.field_bytes(TAG_IDLE_RATES, self.idle_rates.to_vec());
+        w.field_bytes(TAG_EP0, encode_ep0(&self.ep0));
+
+        w.field_u8(TAG_KEYBOARD_MODIFIERS, self.keyboard_modifiers);
+        w.field_bytes(
+            TAG_KEYBOARD_PRESSED_KEYS,
+            Encoder::new().vec_u8(&self.keyboard_pressed_keys).finish(),
+        );
+        w.field_bytes(TAG_KEYBOARD_LAST_REPORT, self.keyboard_last_report.to_vec());
+        w.field_u8(TAG_KEYBOARD_LEDS, self.keyboard_leds);
+
+        let pending_kb: Vec<Vec<u8>> = self
+            .pending_keyboard_reports
+            .iter()
+            .map(|r| r.to_vec())
+            .collect();
+        w.field_bytes(
+            TAG_PENDING_KEYBOARD_REPORTS,
+            Encoder::new().vec_bytes(&pending_kb).finish(),
+        );
+
+        w.field_u8(TAG_MOUSE_BUTTONS, self.mouse_buttons);
+        let pending_mouse: Vec<Vec<u8>> = self.pending_mouse_reports.iter().map(|r| r.to_vec()).collect();
+        w.field_bytes(
+            TAG_PENDING_MOUSE_REPORTS,
+            Encoder::new().vec_bytes(&pending_mouse).finish(),
+        );
+
+        w.field_bytes(TAG_GAMEPAD_REPORT, self.gamepad_report.to_bytes().to_vec());
+        let pending_gp: Vec<Vec<u8>> = self
+            .pending_gamepad_reports
+            .iter()
+            .map(|r| r.to_vec())
+            .collect();
+        w.field_bytes(
+            TAG_PENDING_GAMEPAD_REPORTS,
+            Encoder::new().vec_bytes(&pending_gp).finish(),
+        );
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOLS: u16 = 7;
+        const TAG_IDLE_RATES: u16 = 8;
+        const TAG_EP0: u16 = 9;
+        const TAG_KEYBOARD_MODIFIERS: u16 = 10;
+        const TAG_KEYBOARD_PRESSED_KEYS: u16 = 11;
+        const TAG_KEYBOARD_LAST_REPORT: u16 = 12;
+        const TAG_KEYBOARD_LEDS: u16 = 13;
+        const TAG_PENDING_KEYBOARD_REPORTS: u16 = 14;
+        const TAG_MOUSE_BUTTONS: u16 = 15;
+        const TAG_PENDING_MOUSE_REPORTS: u16 = 16;
+        const TAG_GAMEPAD_REPORT: u16 = 17;
+        const TAG_PENDING_GAMEPAD_REPORTS: u16 = 18;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        *self = Self::new();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.pending_configuration = r.u8(TAG_PENDING_CONFIGURATION)?;
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+
+        if let Some(buf) = r.bytes(TAG_INTERRUPT_IN_HALTED) {
+            let mut d = Decoder::new(buf);
+            self.interrupt_in_halted[0] = d.bool()?;
+            self.interrupt_in_halted[1] = d.bool()?;
+            self.interrupt_in_halted[2] = d.bool()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_PROTOCOLS) {
+            if buf.len() != 3 {
+                return Err(SnapshotError::InvalidFieldEncoding("composite protocols"));
+            }
+            self.protocols.copy_from_slice(buf);
+        }
+
+        if let Some(buf) = r.bytes(TAG_IDLE_RATES) {
+            if buf.len() != 3 {
+                return Err(SnapshotError::InvalidFieldEncoding("composite idle_rates"));
+            }
+            self.idle_rates.copy_from_slice(buf);
+        }
+
+        if let Some(buf) = r.bytes(TAG_EP0) {
+            decode_ep0(&mut self.ep0, buf)?;
+        }
+
+        self.keyboard_modifiers = r.u8(TAG_KEYBOARD_MODIFIERS)?.unwrap_or(0);
+        if let Some(buf) = r.bytes(TAG_KEYBOARD_PRESSED_KEYS) {
+            let mut d = Decoder::new(buf);
+            self.keyboard_pressed_keys = d.vec_u8()?;
+            d.finish()?;
+        }
+        if let Some(buf) = r.bytes(TAG_KEYBOARD_LAST_REPORT) {
+            if buf.len() != 8 {
+                return Err(SnapshotError::InvalidFieldEncoding("composite keyboard_last_report"));
+            }
+            self.keyboard_last_report.copy_from_slice(buf);
+        }
+        self.keyboard_leds = r.u8(TAG_KEYBOARD_LEDS)?.unwrap_or(0);
+
+        self.pending_keyboard_reports.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_KEYBOARD_REPORTS) {
+            let mut d = Decoder::new(buf);
+            for report in d.vec_bytes()? {
+                if report.len() != 8 {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "composite pending keyboard report",
+                    ));
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&report);
+                self.pending_keyboard_reports.push_back(arr);
+            }
+            d.finish()?;
+        }
+
+        self.mouse_buttons = r.u8(TAG_MOUSE_BUTTONS)?.unwrap_or(0);
+        self.pending_mouse_reports.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_MOUSE_REPORTS) {
+            let mut d = Decoder::new(buf);
+            for report in d.vec_bytes()? {
+                if report.len() != 4 {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "composite pending mouse report",
+                    ));
+                }
+                let mut arr = [0u8; 4];
+                arr.copy_from_slice(&report);
+                self.pending_mouse_reports.push_back(arr);
+            }
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_GAMEPAD_REPORT) {
+            if buf.len() != 8 {
+                return Err(SnapshotError::InvalidFieldEncoding("composite gamepad report"));
+            }
+            let buttons = u16::from_le_bytes([buf[0], buf[1]]);
+            let mut hat = buf[2] & 0x0F;
+            if hat > 8 {
+                hat = 8;
+            }
+            self.gamepad_report = GamepadReport {
+                buttons,
+                hat,
+                x: buf[3] as i8,
+                y: buf[4] as i8,
+                rx: buf[5] as i8,
+                ry: buf[6] as i8,
+            };
+        }
+
+        self.pending_gamepad_reports.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_GAMEPAD_REPORTS) {
+            let mut d = Decoder::new(buf);
+            for report in d.vec_bytes()? {
+                if report.len() != 8 {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "composite pending gamepad report",
+                    ));
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&report);
+                self.pending_gamepad_reports.push_back(arr);
+            }
+            d.finish()?;
+        }
+
+        Ok(())
     }
 }
 
