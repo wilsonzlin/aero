@@ -1185,6 +1185,40 @@ pub fn decode_cmd_set_vertex_buffers_bindings_le(
     packet.decode_set_vertex_buffers_payload_le()
 }
 
+/// Decode SET_SAMPLERS and parse the trailing `aerogpu_handle_t samplers[]`.
+pub fn decode_cmd_set_samplers_handles_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdSetSamplers, &[AerogpuHandle]), AerogpuCmdDecodeError> {
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+    let packet = AerogpuCmdPacket {
+        hdr,
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
+    };
+    packet.decode_set_samplers_payload_le()
+}
+
+/// Decode SET_CONSTANT_BUFFERS and parse the trailing `aerogpu_constant_buffer_binding[]`.
+pub fn decode_cmd_set_constant_buffers_bindings_le(
+    buf: &[u8],
+) -> Result<
+    (
+        AerogpuCmdSetConstantBuffers,
+        &[AerogpuConstantBufferBinding],
+    ),
+    AerogpuCmdDecodeError,
+> {
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+    let packet = AerogpuCmdPacket {
+        hdr,
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
+    };
+    packet.decode_set_constant_buffers_payload_le()
+}
+
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdPacket<'a> {
     pub hdr: AerogpuCmdHdr,
@@ -1463,6 +1497,111 @@ impl<'a> AerogpuCmdPacket<'a> {
                 hdr: self.hdr,
                 start_slot,
                 buffer_count,
+            },
+            bindings,
+        ))
+    }
+
+    pub fn decode_set_samplers_payload_le(
+        &self,
+    ) -> Result<(AerogpuCmdSetSamplers, &'a [AerogpuHandle]), AerogpuCmdDecodeError> {
+        if self.opcode != Some(AerogpuCmdOpcode::SetSamplers) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::SetSamplers,
+            });
+        }
+        if self.payload.len() < 16 {
+            return Err(AerogpuCmdDecodeError::BufferTooSmall);
+        }
+
+        let shader_stage = u32::from_le_bytes(self.payload[0..4].try_into().unwrap());
+        let start_slot = u32::from_le_bytes(self.payload[4..8].try_into().unwrap());
+        let sampler_count = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
+
+        let sampler_count_usize = sampler_count as usize;
+        let handles_bytes_len = sampler_count_usize
+            .checked_mul(core::mem::size_of::<AerogpuHandle>())
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
+        let handles_end = 16usize
+            .checked_add(handles_bytes_len)
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
+        if handles_end > self.payload.len() {
+            return Err(AerogpuCmdDecodeError::BadSizeBytes {
+                found: self.hdr.size_bytes,
+            });
+        }
+
+        let handles_bytes = &self.payload[16..handles_end];
+        let (prefix, handles, suffix) = unsafe { handles_bytes.align_to::<AerogpuHandle>() };
+        if !prefix.is_empty() || !suffix.is_empty() || handles.len() != sampler_count_usize {
+            return Err(AerogpuCmdDecodeError::CountOverflow);
+        }
+
+        Ok((
+            AerogpuCmdSetSamplers {
+                hdr: self.hdr,
+                shader_stage,
+                start_slot,
+                sampler_count,
+                reserved0,
+            },
+            handles,
+        ))
+    }
+
+    pub fn decode_set_constant_buffers_payload_le(
+        &self,
+    ) -> Result<
+        (
+            AerogpuCmdSetConstantBuffers,
+            &'a [AerogpuConstantBufferBinding],
+        ),
+        AerogpuCmdDecodeError,
+    > {
+        if self.opcode != Some(AerogpuCmdOpcode::SetConstantBuffers) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::SetConstantBuffers,
+            });
+        }
+        if self.payload.len() < 16 {
+            return Err(AerogpuCmdDecodeError::BufferTooSmall);
+        }
+
+        let shader_stage = u32::from_le_bytes(self.payload[0..4].try_into().unwrap());
+        let start_slot = u32::from_le_bytes(self.payload[4..8].try_into().unwrap());
+        let buffer_count = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
+
+        let buffer_count_usize = buffer_count as usize;
+        let binding_bytes_len = buffer_count_usize
+            .checked_mul(core::mem::size_of::<AerogpuConstantBufferBinding>())
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
+        let binding_end = 16usize
+            .checked_add(binding_bytes_len)
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
+        if binding_end > self.payload.len() {
+            return Err(AerogpuCmdDecodeError::BadSizeBytes {
+                found: self.hdr.size_bytes,
+            });
+        }
+
+        let binding_bytes = &self.payload[16..binding_end];
+        let (prefix, bindings, suffix) =
+            unsafe { binding_bytes.align_to::<AerogpuConstantBufferBinding>() };
+        if !prefix.is_empty() || !suffix.is_empty() || bindings.len() != buffer_count_usize {
+            return Err(AerogpuCmdDecodeError::CountOverflow);
+        }
+
+        Ok((
+            AerogpuCmdSetConstantBuffers {
+                hdr: self.hdr,
+                shader_stage,
+                start_slot,
+                buffer_count,
+                reserved0,
             },
             bindings,
         ))

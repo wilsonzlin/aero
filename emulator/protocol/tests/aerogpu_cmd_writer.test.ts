@@ -16,6 +16,10 @@ import {
   AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE,
   AEROGPU_CMD_SET_RENDER_STATE_SIZE,
   AEROGPU_CMD_SET_SAMPLER_STATE_SIZE,
+  AEROGPU_CMD_CREATE_SAMPLER_SIZE,
+  AEROGPU_CMD_DESTROY_SAMPLER_SIZE,
+  AEROGPU_CMD_SET_SAMPLERS_SIZE,
+  AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE,
   AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE,
   AEROGPU_CMD_SET_TEXTURE_SIZE,
   AerogpuCmdOpcode,
@@ -25,6 +29,8 @@ import {
   AerogpuCompareFunc,
   AerogpuCullMode,
   AerogpuFillMode,
+  AerogpuSamplerAddressMode,
+  AerogpuSamplerFilter,
   AerogpuShaderStage,
   alignUp,
   decodeCmdStreamHeader,
@@ -188,6 +194,85 @@ test("AerogpuCmdWriter emits copy packets", () => {
   assert.equal(view.getUint32(pkt2 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
   assert.equal(view.getUint32(pkt2 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 16);
   assert.equal(pkt2 + 16, bytes.byteLength);
+});
+
+test("AerogpuCmdWriter emits sampler binding table packets", () => {
+  const w = new AerogpuCmdWriter();
+  w.createSampler(
+    1,
+    AerogpuSamplerFilter.Linear,
+    AerogpuSamplerAddressMode.Repeat,
+    AerogpuSamplerAddressMode.ClampToEdge,
+    AerogpuSamplerAddressMode.MirrorRepeat,
+  );
+  w.setSamplers(AerogpuShaderStage.Pixel, 2, new Uint32Array([10, 11, 12]));
+  w.setConstantBuffers(AerogpuShaderStage.Vertex, 0, [
+    { buffer: 100, offsetBytes: 0, sizeBytes: 64 },
+    { buffer: 101, offsetBytes: 16, sizeBytes: 128 },
+  ]);
+  w.destroySampler(1);
+  w.flush();
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  let cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  // CREATE_SAMPLER
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.CreateSampler);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_CREATE_SAMPLER_SIZE);
+  assert.equal(view.getUint32(cursor + 8, true), 1);
+  assert.equal(view.getUint32(cursor + 12, true), AerogpuSamplerFilter.Linear);
+  assert.equal(view.getUint32(cursor + 16, true), AerogpuSamplerAddressMode.Repeat);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuSamplerAddressMode.ClampToEdge);
+  assert.equal(view.getUint32(cursor + 24, true), AerogpuSamplerAddressMode.MirrorRepeat);
+  cursor += AEROGPU_CMD_CREATE_SAMPLER_SIZE;
+
+  // SET_SAMPLERS
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetSamplers);
+  assert.equal(
+    view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    AEROGPU_CMD_SET_SAMPLERS_SIZE + 3 * 4,
+  );
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(cursor + 12, true), 2);
+  assert.equal(view.getUint32(cursor + 16, true), 3);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_SAMPLERS_SIZE + 0, true), 10);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_SAMPLERS_SIZE + 4, true), 11);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_SAMPLERS_SIZE + 8, true), 12);
+  cursor += AEROGPU_CMD_SET_SAMPLERS_SIZE + 3 * 4;
+
+  // SET_CONSTANT_BUFFERS
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetConstantBuffers);
+  assert.equal(
+    view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 2 * 16,
+  );
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Vertex);
+  assert.equal(view.getUint32(cursor + 12, true), 0);
+  assert.equal(view.getUint32(cursor + 16, true), 2);
+  // bindings[0]
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 0, true), 100);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 4, true), 0);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 8, true), 64);
+  // bindings[1]
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 16, true), 101);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 20, true), 16);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 24, true), 128);
+  cursor += AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 2 * 16;
+
+  // DESTROY_SAMPLER
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.DestroySampler);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_DESTROY_SAMPLER_SIZE);
+  assert.equal(view.getUint32(cursor + 8, true), 1);
+  cursor += AEROGPU_CMD_DESTROY_SAMPLER_SIZE;
+
+  // FLUSH
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 16);
+  cursor += 16;
+
+  assert.equal(cursor, bytes.byteLength);
 });
 
 test("alignUp handles values > 2^31 without signed 32-bit wrap", () => {

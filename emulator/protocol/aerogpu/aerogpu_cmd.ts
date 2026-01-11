@@ -259,6 +259,22 @@ export const AerogpuIndexFormat = {
 
 export type AerogpuIndexFormat = (typeof AerogpuIndexFormat)[keyof typeof AerogpuIndexFormat];
 
+export const AerogpuSamplerFilter = {
+  Nearest: 0,
+  Linear: 1,
+} as const;
+
+export type AerogpuSamplerFilter = (typeof AerogpuSamplerFilter)[keyof typeof AerogpuSamplerFilter];
+
+export const AerogpuSamplerAddressMode = {
+  ClampToEdge: 0,
+  Repeat: 1,
+  MirrorRepeat: 2,
+} as const;
+
+export type AerogpuSamplerAddressMode =
+  (typeof AerogpuSamplerAddressMode)[keyof typeof AerogpuSamplerAddressMode];
+
 export const AerogpuBlendFactor = {
   Zero: 0,
   One: 1,
@@ -412,6 +428,12 @@ export interface AerogpuVertexBufferBinding {
   buffer: AerogpuHandle;
   strideBytes: number;
   offsetBytes: number;
+}
+
+export interface AerogpuConstantBufferBinding {
+  buffer: AerogpuHandle;
+  offsetBytes: number;
+  sizeBytes: number;
 }
 
 function isPowerOfTwo(v: number): boolean {
@@ -691,6 +713,123 @@ export function decodeCmdSetVertexBuffersBindingsFromPacket(
   }
 
   return { startSlot, bufferCount, bindings };
+}
+
+export interface AerogpuCmdSetSamplersPayload {
+  shaderStage: number;
+  startSlot: number;
+  samplerCount: number;
+  reserved0: number;
+  /**
+   * View of `aerogpu_handle_t samplers[sampler_count]`.
+   *
+   * The command stream is little-endian; JS runtimes supported by Aero are little-endian,
+   * so `Uint32Array` provides an allocation-free view of the handle table.
+   */
+  samplers: Uint32Array;
+}
+
+export function decodeCmdSetSamplersPayload(bytes: Uint8Array, packetOffset = 0): AerogpuCmdSetSamplersPayload {
+  return decodeCmdSetSamplersPayloadFromPacket(decodePacketFromBytes(bytes, packetOffset));
+}
+
+export function decodeCmdSetSamplersPayloadFromPacket(packet: AerogpuCmdPacket): AerogpuCmdSetSamplersPayload {
+  validatePacketPayloadLen(packet);
+  if (packet.opcode !== AerogpuCmdOpcode.SetSamplers) {
+    throw new Error(`Unexpected opcode: 0x${packet.opcode.toString(16)} (expected SET_SAMPLERS)`);
+  }
+  if (packet.payload.byteLength < 16) {
+    throw new Error("Buffer too small for SET_SAMPLERS payload");
+  }
+
+  const view = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const shaderStage = view.getUint32(0, true);
+  const startSlot = view.getUint32(4, true);
+  const samplerCount = view.getUint32(8, true);
+  const reserved0 = view.getUint32(12, true);
+
+  const handlesSizeBig = BigInt(samplerCount) * 4n;
+  const handlesStart = 16;
+  const handlesEndBig = BigInt(handlesStart) + handlesSizeBig;
+  if (handlesEndBig > BigInt(packet.payload.byteLength)) {
+    throw new Error(`SET_SAMPLERS packet too small for sampler_count=${samplerCount}`);
+  }
+  if (handlesSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`SET_SAMPLERS handles too large: sampler_count=${samplerCount}`);
+  }
+
+  const handlesByteOffset = packet.payload.byteOffset + handlesStart;
+  if (handlesByteOffset % 4 !== 0) {
+    throw new Error(`SET_SAMPLERS handles not 4-byte aligned (byteOffset=${handlesByteOffset})`);
+  }
+
+  return {
+    shaderStage,
+    startSlot,
+    samplerCount,
+    reserved0,
+    samplers: new Uint32Array(packet.payload.buffer, handlesByteOffset, samplerCount),
+  };
+}
+
+export interface AerogpuCmdSetConstantBuffersPayload {
+  shaderStage: number;
+  startSlot: number;
+  bufferCount: number;
+  reserved0: number;
+  /**
+   * View of `aerogpu_constant_buffer_binding bindings[buffer_count]`.
+   *
+   * Each element is 16 bytes: `{buffer:u32, offset_bytes:u32, size_bytes:u32, reserved0:u32}`.
+   */
+  bindings: DataView;
+}
+
+export function decodeCmdSetConstantBuffersPayload(
+  bytes: Uint8Array,
+  packetOffset = 0,
+): AerogpuCmdSetConstantBuffersPayload {
+  return decodeCmdSetConstantBuffersPayloadFromPacket(decodePacketFromBytes(bytes, packetOffset));
+}
+
+export function decodeCmdSetConstantBuffersPayloadFromPacket(
+  packet: AerogpuCmdPacket,
+): AerogpuCmdSetConstantBuffersPayload {
+  validatePacketPayloadLen(packet);
+  if (packet.opcode !== AerogpuCmdOpcode.SetConstantBuffers) {
+    throw new Error(`Unexpected opcode: 0x${packet.opcode.toString(16)} (expected SET_CONSTANT_BUFFERS)`);
+  }
+  if (packet.payload.byteLength < 16) {
+    throw new Error("Buffer too small for SET_CONSTANT_BUFFERS payload");
+  }
+
+  const view = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const shaderStage = view.getUint32(0, true);
+  const startSlot = view.getUint32(4, true);
+  const bufferCount = view.getUint32(8, true);
+  const reserved0 = view.getUint32(12, true);
+
+  const bindingsSizeBig = BigInt(bufferCount) * 16n;
+  const bindingsStart = 16;
+  const bindingsEndBig = BigInt(bindingsStart) + bindingsSizeBig;
+  if (bindingsEndBig > BigInt(packet.payload.byteLength)) {
+    throw new Error(`SET_CONSTANT_BUFFERS packet too small for buffer_count=${bufferCount}`);
+  }
+  if (bindingsSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`SET_CONSTANT_BUFFERS bindings too large: buffer_count=${bufferCount}`);
+  }
+
+  return {
+    shaderStage,
+    startSlot,
+    bufferCount,
+    reserved0,
+    bindings: new DataView(
+      packet.payload.buffer,
+      packet.payload.byteOffset + bindingsStart,
+      Number(bindingsSizeBig),
+    ),
+  };
 }
 
 export interface AerogpuCmdSetShaderConstantsFPayload {
@@ -1096,6 +1235,56 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 12, slot, true);
     this.view.setUint32(base + 16, state, true);
     this.view.setUint32(base + 20, value, true);
+  }
+
+  createSampler(
+    samplerHandle: AerogpuHandle,
+    filter: AerogpuSamplerFilter,
+    addressU: AerogpuSamplerAddressMode,
+    addressV: AerogpuSamplerAddressMode,
+    addressW: AerogpuSamplerAddressMode,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.CreateSampler, AEROGPU_CMD_CREATE_SAMPLER_SIZE);
+    this.view.setUint32(base + 8, samplerHandle, true);
+    this.view.setUint32(base + 12, filter, true);
+    this.view.setUint32(base + 16, addressU, true);
+    this.view.setUint32(base + 20, addressV, true);
+    this.view.setUint32(base + 24, addressW, true);
+  }
+
+  destroySampler(samplerHandle: AerogpuHandle): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.DestroySampler, AEROGPU_CMD_DESTROY_SAMPLER_SIZE);
+    this.view.setUint32(base + 8, samplerHandle, true);
+  }
+
+  setSamplers(shaderStage: AerogpuShaderStage, startSlot: number, handles: ArrayLike<AerogpuHandle>): void {
+    const unpadded = AEROGPU_CMD_SET_SAMPLERS_SIZE + handles.length * 4;
+    const base = this.appendRaw(AerogpuCmdOpcode.SetSamplers, unpadded);
+    this.view.setUint32(base + 8, shaderStage, true);
+    this.view.setUint32(base + 12, startSlot, true);
+    this.view.setUint32(base + 16, handles.length, true);
+    for (let i = 0; i < handles.length; i++) {
+      this.view.setUint32(base + AEROGPU_CMD_SET_SAMPLERS_SIZE + i * 4, handles[i]!, true);
+    }
+  }
+
+  setConstantBuffers(
+    shaderStage: AerogpuShaderStage,
+    startSlot: number,
+    bindings: readonly AerogpuConstantBufferBinding[],
+  ): void {
+    const unpadded = AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + bindings.length * 16;
+    const base = this.appendRaw(AerogpuCmdOpcode.SetConstantBuffers, unpadded);
+    this.view.setUint32(base + 8, shaderStage, true);
+    this.view.setUint32(base + 12, startSlot, true);
+    this.view.setUint32(base + 16, bindings.length, true);
+    for (let i = 0; i < bindings.length; i++) {
+      const b = bindings[i];
+      const off = base + AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + i * 16;
+      this.view.setUint32(off + 0, b.buffer, true);
+      this.view.setUint32(off + 4, b.offsetBytes, true);
+      this.view.setUint32(off + 8, b.sizeBytes, true);
+    }
   }
 
   setRenderState(state: number, value: number): void {

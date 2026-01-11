@@ -16,6 +16,10 @@ import {
   decodeCmdCreateShaderDxbcPayloadFromPacket,
   decodeCmdSetShaderConstantsFPayload,
   decodeCmdSetShaderConstantsFPayloadFromPacket,
+  decodeCmdSetSamplersPayload,
+  decodeCmdSetSamplersPayloadFromPacket,
+  decodeCmdSetConstantBuffersPayload,
+  decodeCmdSetConstantBuffersPayloadFromPacket,
   decodeCmdSetVertexBuffersBindings,
   decodeCmdSetVertexBuffersBindingsFromPacket,
   decodeCmdUploadResourcePayload,
@@ -35,11 +39,18 @@ test("iterCmdStream yields packets and variable-payload decoders round-trip", ()
     { buffer: 10, strideBytes: 16, offsetBytes: 0 },
     { buffer: 11, strideBytes: 32, offsetBytes: 64 },
   ];
+  const samplers = new Uint32Array([10, 20, 30]);
+  const constantBuffers = [
+    { buffer: 100, offsetBytes: 0, sizeBytes: 64 },
+    { buffer: 101, offsetBytes: 16, sizeBytes: 128 },
+  ];
 
   w.createShaderDxbc(100, AerogpuShaderStage.Vertex, dxbcBytes);
   w.setShaderConstantsF(AerogpuShaderStage.Pixel, 5, shaderConstants);
   w.createInputLayout(200, blobBytes);
   w.setVertexBuffers(1, bindings);
+  w.setSamplers(AerogpuShaderStage.Pixel, 3, samplers);
+  w.setConstantBuffers(AerogpuShaderStage.Vertex, 1, constantBuffers);
   w.uploadResource(300, 0x1234n, uploadBytes);
 
   const stream = w.finish();
@@ -57,6 +68,8 @@ test("iterCmdStream yields packets and variable-payload decoders round-trip", ()
       AerogpuCmdOpcode.SetShaderConstantsF,
       AerogpuCmdOpcode.CreateInputLayout,
       AerogpuCmdOpcode.SetVertexBuffers,
+      AerogpuCmdOpcode.SetSamplers,
+      AerogpuCmdOpcode.SetConstantBuffers,
       AerogpuCmdOpcode.UploadResource,
     ],
   );
@@ -95,12 +108,40 @@ test("iterCmdStream yields packets and variable-payload decoders round-trip", ()
   }
 
   {
+    const decoded = decodeCmdSetSamplersPayload(extended, offset);
+    assert.equal(decoded.shaderStage, AerogpuShaderStage.Pixel);
+    assert.equal(decoded.startSlot, 3);
+    assert.equal(decoded.samplerCount, samplers.length);
+    assert.deepEqual(decoded.samplers, samplers);
+    offset += packets[4]!.sizeBytes;
+  }
+
+  {
+    const decoded = decodeCmdSetConstantBuffersPayload(extended, offset);
+    assert.equal(decoded.shaderStage, AerogpuShaderStage.Vertex);
+    assert.equal(decoded.startSlot, 1);
+    assert.equal(decoded.bufferCount, constantBuffers.length);
+    for (let i = 0; i < constantBuffers.length; i++) {
+      const off = i * 16;
+      assert.deepEqual(
+        {
+          buffer: decoded.bindings.getUint32(off + 0, true),
+          offsetBytes: decoded.bindings.getUint32(off + 4, true),
+          sizeBytes: decoded.bindings.getUint32(off + 8, true),
+        },
+        constantBuffers[i],
+      );
+    }
+    offset += packets[5]!.sizeBytes;
+  }
+
+  {
     const decoded = decodeCmdUploadResourcePayload(extended, offset);
     assert.equal(decoded.resourceHandle, 300);
     assert.equal(decoded.offsetBytes, 0x1234n);
     assert.equal(decoded.sizeBytes, BigInt(uploadBytes.byteLength));
     assert.deepEqual(decoded.dataBytes, uploadBytes);
-    offset += packets[4]!.sizeBytes;
+    offset += packets[6]!.sizeBytes;
   }
 
   assert.equal(offset, stream.byteLength);
@@ -188,6 +229,26 @@ test("variable-payload decoders reject size/count fields that would overrun pack
     view.setUint32(packetOffset + 16, 2, true);
     assert.throws(() => decodeCmdSetShaderConstantsFPayload(bytes, packetOffset), /too small/);
   }
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.setSamplers(AerogpuShaderStage.Pixel, 0, new Uint32Array([1]));
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // sampler_count @ +16
+    view.setUint32(packetOffset + 16, 2, true);
+    assert.throws(() => decodeCmdSetSamplersPayload(bytes, packetOffset), /too small/);
+  }
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.setConstantBuffers(AerogpuShaderStage.Vertex, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16 }]);
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // buffer_count @ +16
+    view.setUint32(packetOffset + 16, 2, true);
+    assert.throws(() => decodeCmdSetConstantBuffersPayload(bytes, packetOffset), /too small/);
+  }
 });
 
 test("decodeCmdStreamView collects header + packets", () => {
@@ -213,16 +274,20 @@ test("variable-payload decoders accept AerogpuCmdPacket from iterCmdStream", () 
   const uploadBytes = new Uint8Array([1, 2, 3, 4]);
   const shaderConstants = new Float32Array([1, 2, 3, 4]);
   const bindings = [{ buffer: 10, strideBytes: 16, offsetBytes: 0 }];
+  const samplers = new Uint32Array([10, 20]);
+  const constantBuffers = [{ buffer: 100, offsetBytes: 0, sizeBytes: 64 }];
 
   w.createShaderDxbc(100, AerogpuShaderStage.Vertex, dxbcBytes);
   w.setShaderConstantsF(AerogpuShaderStage.Pixel, 5, shaderConstants);
   w.createInputLayout(200, blobBytes);
   w.setVertexBuffers(1, bindings);
+  w.setSamplers(AerogpuShaderStage.Pixel, 3, samplers);
+  w.setConstantBuffers(AerogpuShaderStage.Vertex, 1, constantBuffers);
   w.uploadResource(300, 0x1234n, uploadBytes);
   w.debugMarker("hello");
 
   const packets = Array.from(iterCmdStream(w.finish()));
-  assert.equal(packets.length, 6);
+  assert.equal(packets.length, 8);
 
   assert.deepEqual(decodeCmdCreateShaderDxbcPayloadFromPacket(packets[0]!).dxbcBytes, dxbcBytes);
   assert.deepEqual(
@@ -231,8 +296,16 @@ test("variable-payload decoders accept AerogpuCmdPacket from iterCmdStream", () 
   );
   assert.deepEqual(decodeCmdCreateInputLayoutBlobFromPacket(packets[2]!).blobBytes, blobBytes);
   assert.deepEqual(decodeCmdSetVertexBuffersBindingsFromPacket(packets[3]!).bindings, bindings);
-  assert.deepEqual(decodeCmdUploadResourcePayloadFromPacket(packets[4]!).dataBytes, uploadBytes);
-  assert.equal(decodeCmdDebugMarkerPayloadFromPacket(packets[5]!).marker, "hello");
+  assert.deepEqual(decodeCmdSetSamplersPayloadFromPacket(packets[4]!).samplers, samplers);
+  {
+    const decoded = decodeCmdSetConstantBuffersPayloadFromPacket(packets[5]!);
+    assert.equal(decoded.bufferCount, constantBuffers.length);
+    assert.equal(decoded.bindings.getUint32(0, true), 100);
+    assert.equal(decoded.bindings.getUint32(4, true), 0);
+    assert.equal(decoded.bindings.getUint32(8, true), 64);
+  }
+  assert.deepEqual(decodeCmdUploadResourcePayloadFromPacket(packets[6]!).dataBytes, uploadBytes);
+  assert.equal(decodeCmdDebugMarkerPayloadFromPacket(packets[7]!).marker, "hello");
 });
 
 test("packet-based decoders validate cmd.size_bytes invariants", () => {
