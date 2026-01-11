@@ -31,7 +31,7 @@ drivers/windows7/tests/
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
 - Runs a virtio-snd test (PCI detection + endpoint enumeration + short playback).
-  - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059`).
+  - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059` or `PCI\\VEN_1AF4&DEV_1018`).
     - Missing virtio-snd is reported as `SKIP` by default; use `--require-snd` to make it a `FAIL`.
 - Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
 - Logs to:
@@ -59,7 +59,7 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and 
 
 Note:
 - The virtio-snd test reports `SKIP` when `PCI\\VEN_1AF4&DEV_1059` is missing by default; use `--require-snd` to make
-  missing virtio-snd fail the overall selftest. Use `--disable-snd` to force `SKIP`.
+  `PCI\\VEN_1AF4&DEV_1059` / `PCI\\VEN_1AF4&DEV_1018` missing virtio-snd fail the overall selftest. Use `--disable-snd` to force `SKIP`.
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed).

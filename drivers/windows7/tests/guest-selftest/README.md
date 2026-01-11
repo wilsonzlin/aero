@@ -28,6 +28,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
 - **virtio-snd**
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
+    - `PCI\VEN_1AF4&DEV_1018` (transitional; may appear when legacy virtio-pci transport is enabled)
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
@@ -124,7 +125,7 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
 
-To require virtio-snd (fail the overall run if `PCI\VEN_1AF4&DEV_1059` is missing):
+To require virtio-snd (fail the overall run if `PCI\VEN_1AF4&DEV_1059` / `PCI\VEN_1AF4&DEV_1018` is missing):
 
 ```bat
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
