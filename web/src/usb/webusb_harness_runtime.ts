@@ -161,8 +161,12 @@ function normalizeBytes(value: unknown): Uint8Array {
     return new Uint8Array(value);
   }
   if (Array.isArray(value)) {
-    if (!value.every((v) => typeof v === "number" && Number.isFinite(v))) {
-      throw new Error("Expected byte array to contain only numbers");
+    if (
+      !value.every(
+        (v) => typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) && v >= 0 && v <= 0xff,
+      )
+    ) {
+      throw new Error("Expected byte array to contain only uint8 numbers");
     }
     return Uint8Array.from(value as number[]);
   }

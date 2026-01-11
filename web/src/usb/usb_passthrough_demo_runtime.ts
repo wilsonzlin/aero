@@ -82,8 +82,8 @@ function coerceBytes(value: unknown): Uint8Array | null {
     const out = new Uint8Array(value.length);
     for (let i = 0; i < value.length; i += 1) {
       const b = value[i];
-      if (typeof b !== "number" || !Number.isFinite(b)) return null;
-      out[i] = b & 0xff;
+      if (typeof b !== "number" || !Number.isFinite(b) || !Number.isInteger(b) || b < 0 || b > 0xff) return null;
+      out[i] = b;
     }
     return out;
   }
