@@ -540,7 +540,7 @@ Practical Win7 note: the wait callback does not always report "not ready" as `DX
 - `HRESULT_FROM_WIN32(WAIT_TIMEOUT)`
 - `HRESULT_FROM_WIN32(ERROR_TIMEOUT)`
 - `HRESULT_FROM_NT(STATUS_TIMEOUT)` (`0x10000102`; `SUCCEEDED()`, so don't rely solely on `FAILED(hr)`)
-- `E_PENDING` (`0x8000000A`) (seen in some stacks)
+- `E_PENDING` (`0x8000000A`) (seen in some stacks, typically for `Timeout = 0` polls)
 
 ### 4.3 Direct thunk alternative: `D3DKMTWaitForSynchronizationObject`
 
