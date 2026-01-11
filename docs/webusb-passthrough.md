@@ -534,6 +534,18 @@ This pattern is implemented by `UsbBroker` (main thread) using a `postMessage` p
 (`web/src/usb/usb_broker.ts`, `web/src/usb/usb_proxy_protocol.ts`). (A legacy broker/client RPC
 implementation also exists under `src/platform/webusb_*`.)
 
+#### SharedArrayBuffer ring fast path (optional)
+
+When `SharedArrayBuffer` is available (cross-origin isolated deployments), `UsbBroker` can
+optionally provide a shared-memory fast path (`web/src/usb/usb_proxy_ring.ts`) to avoid
+per-action structured-clone overhead:
+
+- The broker sends `{type:"usb.ringAttach"}` with `actionRing` and `completionRing` SAB handles.
+- Worker runtimes can push actions into the ring and pop completions from the ring.
+- If a worker-side runtime starts after the initial `usb.ringAttach` (e.g. WASM finishes loading
+  late), it can request the rings via `{type:"usb.ringAttachRequest"}`; the broker will resend
+  `usb.ringAttach` when possible.
+
 If the emulator uses WASM threads / SharedArrayBuffer (preferred), use the existing
 cross-thread IPC mechanism described in [`docs/11-browser-apis.md`](./11-browser-apis.md)
 and [ADR 0002](./adr/0002-cross-origin-isolation.md).
