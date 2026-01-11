@@ -84,9 +84,9 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
 
           await ready;
 
-          // Ensure "screenshot" triggers an internal "handleTick()" call without using
-          // an explicit GPU-protocol "tick" message.
-          frameState[FRAME_STATUS_INDEX] = FRAME_DIRTY;
+          // Ensure `screenshot` triggers an internal `handleTick()` call without using
+          // an explicit GPU-protocol `tick` message.
+          Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
 
           const writerVsync = new AerogpuCmdWriter();
           writerVsync.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
@@ -272,9 +272,9 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions advance one-per-tick
 
           await ready;
 
-          // Ensure "screenshot" triggers an internal "handleTick()" call without using
-          // an explicit GPU-protocol "tick" message.
-          frameState[FRAME_STATUS_INDEX] = FRAME_DIRTY;
+          // Ensure `screenshot` triggers an internal `handleTick()` call without using
+          // an explicit GPU-protocol `tick` message.
+          Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
 
           const writer1 = new AerogpuCmdWriter();
           writer1.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
@@ -339,16 +339,19 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions advance one-per-tick
           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
           await submitPromise1;
 
-          const submit2AfterTick1 = await Promise.race([
-            submitPromise2.then(() => ({ kind: "submit" })),
-            sleep(50).then(() => ({ kind: "timeout" })),
-          ]);
-          const submit2CompletedOnTick1 = submit2AfterTick1.kind === "submit";
+          // Give the worker time to accidentally flush more than one VSYNC completion
+          // for this tick (regression guard).
+          await sleep(200);
+          const submit2CompletedOnTick1 = !pending.has(submitRequestId2);
 
           // Tick again: now the second submission should complete.
-          if (!submit2CompletedOnTick1) {
-            worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+          if (submit2CompletedOnTick1) {
+            window.__AERO_VSYNC_MULTI_RESULT__ = { receivedBeforeTick: true, completions };
+            worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
+            worker.terminate();
+            return;
           }
+          worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
           await submitPromise2;
 
           window.__AERO_VSYNC_MULTI_RESULT__ = {
