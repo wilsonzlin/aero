@@ -3,7 +3,7 @@ use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
 
-use super::{UsbHub, UsbTopologyError};
+use super::UsbHub;
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;
 const USB_DESCRIPTOR_TYPE_STRING: u8 = 0x03;
@@ -322,94 +322,6 @@ impl Default for UsbHubDevice {
 }
 
 impl UsbDeviceModel for UsbHubDevice {
-    fn hub_port_count(&self) -> Option<u8> {
-        u8::try_from(self.ports.len()).ok()
-    }
-
-    fn hub_attach_device(
-        &mut self,
-        port: u8,
-        model: Box<dyn UsbDeviceModel>,
-    ) -> Result<(), UsbTopologyError> {
-        let num_ports = self.ports.len();
-        if port == 0 {
-            return Err(UsbTopologyError::PortOutOfRange {
-                depth: 0,
-                port: port as usize,
-                num_ports,
-            });
-        }
-        let idx = (port - 1) as usize;
-        let Some(p) = self.ports.get_mut(idx) else {
-            return Err(UsbTopologyError::PortOutOfRange {
-                depth: 0,
-                port: port as usize,
-                num_ports,
-            });
-        };
-        if p.device.is_some() {
-            return Err(UsbTopologyError::PortOccupied {
-                depth: 0,
-                port: port as usize,
-            });
-        }
-        p.attach(model);
-        Ok(())
-    }
-
-    fn hub_detach_device(&mut self, port: u8) -> Result<(), UsbTopologyError> {
-        let num_ports = self.ports.len();
-        if port == 0 {
-            return Err(UsbTopologyError::PortOutOfRange {
-                depth: 0,
-                port: port as usize,
-                num_ports,
-            });
-        }
-        let idx = (port - 1) as usize;
-        let Some(p) = self.ports.get_mut(idx) else {
-            return Err(UsbTopologyError::PortOutOfRange {
-                depth: 0,
-                port: port as usize,
-                num_ports,
-            });
-        };
-        if p.device.is_none() {
-            return Err(UsbTopologyError::NoDeviceAtPort {
-                depth: 0,
-                port: port as usize,
-            });
-        }
-        p.detach();
-        Ok(())
-    }
-
-    fn hub_port_device_mut(
-        &mut self,
-        port: u8,
-    ) -> Result<&mut AttachedUsbDevice, UsbTopologyError> {
-        let num_ports = self.ports.len();
-        if port == 0 {
-            return Err(UsbTopologyError::PortOutOfRange {
-                depth: 0,
-                port: port as usize,
-                num_ports,
-            });
-        }
-        let idx = (port - 1) as usize;
-        let Some(p) = self.ports.get_mut(idx) else {
-            return Err(UsbTopologyError::PortOutOfRange {
-                depth: 0,
-                port: port as usize,
-                num_ports,
-            });
-        };
-        p.device.as_mut().ok_or(UsbTopologyError::NoDeviceAtPort {
-            depth: 0,
-            port: port as usize,
-        })
-    }
-
     fn reset(&mut self) {
         self.configuration = 0;
         self.remote_wakeup_enabled = false;
