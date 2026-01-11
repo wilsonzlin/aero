@@ -3,7 +3,7 @@ description: Detect the repo's Node workspace (package.json + lockfile), setup N
 
 inputs:
   node-version:
-    description: Node version to use (defaults to .nvmrc when present).
+    description: Optional override Node version (defaults to <working-directory>/.nvmrc).
     required: false
     default: ""
   working-directory:
