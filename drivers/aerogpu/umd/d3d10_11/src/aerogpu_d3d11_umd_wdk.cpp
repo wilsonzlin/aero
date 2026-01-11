@@ -29,6 +29,7 @@
 #include "aerogpu_d3d10_11_internal.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "../../../protocol/aerogpu_wddm_alloc.h"
+#include "../../../protocol/aerogpu_win7_abi.h"
 
 #ifndef DXGI_ERROR_WAS_STILL_DRAWING
   #define DXGI_ERROR_WAS_STILL_DRAWING ((HRESULT)0x887A000AL)
@@ -857,6 +858,37 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     const size_t remaining_packets_bytes = src_size - cur;
     const UINT request_bytes = static_cast<UINT>(remaining_packets_bytes + sizeof(aerogpu_cmd_stream_header));
 
+    auto deallocate = [&](const D3DDDICB_ALLOCATE& alloc, void* dma_priv_ptr, UINT dma_priv_size) {
+      D3DDDICB_DEALLOCATE dealloc = {};
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
+        __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
+          dealloc.pDmaBuffer = alloc.pDmaBuffer;
+        }
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
+        __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
+          dealloc.pCommandBuffer = alloc.pCommandBuffer;
+        }
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
+        __if_exists(D3DDDICB_ALLOCATE::pAllocationList) {
+          dealloc.pAllocationList = alloc.pAllocationList;
+        }
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
+        __if_exists(D3DDDICB_ALLOCATE::pPatchLocationList) {
+          dealloc.pPatchLocationList = alloc.pPatchLocationList;
+        }
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
+        dealloc.pDmaBufferPrivateData = dma_priv_ptr;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::DmaBufferPrivateDataSize) {
+        dealloc.DmaBufferPrivateDataSize = dma_priv_size;
+      }
+      CallCbMaybeHandle(cb->pfnDeallocateCb, hrt_device11, hrt_device10, &dealloc);
+    };
+
     D3DDDICB_ALLOCATE alloc = {};
     __if_exists(D3DDDICB_ALLOCATE::hContext) {
       alloc.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
@@ -891,6 +923,19 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       dma_cap = alloc.CommandBufferSize;
     }
 
+    void* dma_priv_ptr = nullptr;
+    UINT dma_priv_size = 0;
+    bool dma_priv_ptr_present = false;
+    bool dma_priv_size_present = false;
+    __if_exists(D3DDDICB_ALLOCATE::pDmaBufferPrivateData) {
+      dma_priv_ptr = alloc.pDmaBufferPrivateData;
+      dma_priv_ptr_present = true;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
+      dma_priv_size = alloc.DmaBufferPrivateDataSize;
+      dma_priv_size_present = true;
+    }
+
     if (FAILED(alloc_hr) || !dma_ptr || dma_cap == 0) {
       if (out_hr) {
         *out_hr = FAILED(alloc_hr) ? alloc_hr : E_OUTOFMEMORY;
@@ -900,21 +945,35 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       return 0;
     }
 
+    if (dma_priv_ptr_present) {
+      if (dma_priv_ptr == nullptr) {
+        deallocate(alloc, dma_priv_ptr, dma_priv_size);
+        if (out_hr) {
+          *out_hr = E_FAIL;
+        }
+        dev->cmd.reset();
+        dev->pending_staging_writes.clear();
+        return 0;
+      }
+
+      const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+      if (dma_priv_size_present) {
+        if (dma_priv_size < expected_dma_priv_bytes) {
+          deallocate(alloc, dma_priv_ptr, dma_priv_size);
+          if (out_hr) {
+            *out_hr = E_FAIL;
+          }
+          dev->cmd.reset();
+          dev->pending_staging_writes.clear();
+          return 0;
+        }
+      } else {
+        dma_priv_size = expected_dma_priv_bytes;
+      }
+    }
+
     if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
-      D3DDDICB_DEALLOCATE dealloc = {};
-      __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
-        dealloc.pDmaBuffer = alloc.pDmaBuffer;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
-        dealloc.pCommandBuffer = alloc.pCommandBuffer;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
-        dealloc.pAllocationList = alloc.pAllocationList;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
-        dealloc.pPatchLocationList = alloc.pPatchLocationList;
-      }
-      CallCbMaybeHandle(cb->pfnDeallocateCb, hrt_device11, hrt_device10, &dealloc);
+      deallocate(alloc, dma_priv_ptr, dma_priv_size);
 
       if (out_hr) {
         *out_hr = E_OUTOFMEMORY;
@@ -944,20 +1003,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     }
 
     if (chunk_end == chunk_begin) {
-      D3DDDICB_DEALLOCATE dealloc = {};
-      __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
-        dealloc.pDmaBuffer = alloc.pDmaBuffer;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
-        dealloc.pCommandBuffer = alloc.pCommandBuffer;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
-        dealloc.pAllocationList = alloc.pAllocationList;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
-        dealloc.pPatchLocationList = alloc.pPatchLocationList;
-      }
-      CallCbMaybeHandle(cb->pfnDeallocateCb, hrt_device11, hrt_device10, &dealloc);
+      deallocate(alloc, dma_priv_ptr, dma_priv_size);
 
       if (out_hr) {
         *out_hr = E_OUTOFMEMORY;
@@ -973,6 +1019,10 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     std::memcpy(dst + sizeof(aerogpu_cmd_stream_header), src + chunk_begin, chunk_size - sizeof(aerogpu_cmd_stream_header));
     auto* hdr = reinterpret_cast<aerogpu_cmd_stream_header*>(dst);
     hdr->size_bytes = static_cast<uint32_t>(chunk_size);
+
+    if (dma_priv_ptr_present && dma_priv_ptr && dma_priv_size) {
+      std::memset(dma_priv_ptr, 0, static_cast<size_t>(dma_priv_size));
+    }
 
     const bool is_last_chunk = (chunk_end == src_size);
     const bool do_present = want_present && is_last_chunk && cb->pfnPresentCb != nullptr;
@@ -1007,6 +1057,15 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       }
       __if_exists(D3DDDICB_PRESENT::PatchLocationListSize) {
         present.PatchLocationListSize = 0;
+      }
+      __if_exists(D3DDDICB_PRESENT::CommandBufferSize) {
+        present.CommandBufferSize = dma_cap;
+      }
+      __if_exists(D3DDDICB_PRESENT::pDmaBufferPrivateData) {
+        present.pDmaBufferPrivateData = dma_priv_ptr;
+      }
+      __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
+        present.DmaBufferPrivateDataSize = dma_priv_size;
       }
 
       submit_hr = CallCbMaybeHandle(cb->pfnPresentCb, hrt_device11, hrt_device10, &present);
@@ -1047,6 +1106,15 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       __if_exists(D3DDDICB_RENDER::PatchLocationListSize) {
         render.PatchLocationListSize = 0;
       }
+      __if_exists(D3DDDICB_RENDER::CommandBufferSize) {
+        render.CommandBufferSize = dma_cap;
+      }
+      __if_exists(D3DDDICB_RENDER::pDmaBufferPrivateData) {
+        render.pDmaBufferPrivateData = dma_priv_ptr;
+      }
+      __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
+        render.DmaBufferPrivateDataSize = dma_priv_size;
+      }
 
       submit_hr = CallCbMaybeHandle(cb->pfnRenderCb, hrt_device11, hrt_device10, &render);
       __if_exists(D3DDDICB_RENDER::NewFenceValue) {
@@ -1060,22 +1128,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     }
 
     // Always return submission buffers to the runtime.
-    {
-      D3DDDICB_DEALLOCATE dealloc = {};
-      __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
-        dealloc.pDmaBuffer = alloc.pDmaBuffer;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
-        dealloc.pCommandBuffer = alloc.pCommandBuffer;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
-        dealloc.pAllocationList = alloc.pAllocationList;
-      }
-      __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
-        dealloc.pPatchLocationList = alloc.pPatchLocationList;
-      }
-      CallCbMaybeHandle(cb->pfnDeallocateCb, hrt_device11, hrt_device10, &dealloc);
-    }
+    deallocate(alloc, dma_priv_ptr, dma_priv_size);
 
     if (FAILED(submit_hr)) {
       if (out_hr) {
