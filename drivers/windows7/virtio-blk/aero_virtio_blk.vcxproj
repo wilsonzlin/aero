@@ -71,11 +71,11 @@
   </ItemDefinitionGroup>
 
   <ItemGroup>
-    <ClCompile Include="src\aerovblk.c" />
+    <ClCompile Include="src\aero_virtio_blk.c" />
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
-    <ClInclude Include="include\aerovblk.h" />
+    <ClInclude Include="include\aero_virtio_blk.h" />
     <None Include="inf\aero_virtio_blk.inf" />
   </ItemGroup>
 

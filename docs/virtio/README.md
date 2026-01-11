@@ -18,8 +18,8 @@ Reference code in this repo:
     - Host tests: `drivers/windows/virtio/common/tests/` (`CMakeLists.txt`, `Makefile`)
 
   In-tree include sites for `virtqueue_split.h`:
-  - `drivers/windows7/virtio-blk/include/aerovblk.h`
-  - `drivers/windows7/virtio-net/include/aerovnet.h`
+  - `drivers/windows7/virtio-blk/include/aero_virtio_blk.h`
+  - `drivers/windows7/virtio-net/include/aero_virtio_net.h`
   - `drivers/windows7/virtio-snd/include/virtiosnd_queue_split.h`
   - `drivers/windows7/virtio-input/src/device.c`
   - `drivers/windows7/virtio-input/src/virtio_statusq.c`

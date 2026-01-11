@@ -1,4 +1,4 @@
-#include "../include/aerovblk.h"
+#include "../include/aero_virtio_blk.h"
 
 static UINT8 AerovblkTransportPciRead8(void *context, UINT16 offset)
 {

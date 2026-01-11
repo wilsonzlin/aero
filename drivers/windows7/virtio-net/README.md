@@ -31,8 +31,8 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 
 ## Files
 
-- `src/aerovnet.c` – NDIS miniport implementation + virtio-net datapath
-- `include/aerovnet.h` – driver-local definitions
+- `src/aero_virtio_net.c` – NDIS miniport implementation + virtio-net datapath
+- `include/aero_virtio_net.h` – driver-local definitions
 - `inf/aero_virtio_net.inf` – network class INF for installation on Win7 x86/x64
 
 ## Building

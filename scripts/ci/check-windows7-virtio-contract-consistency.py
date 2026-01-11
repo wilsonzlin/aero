@@ -127,8 +127,8 @@ AERO_VIRTIO_INF_SOURCES: Mapping[str, Path] = {
 }
 
 AERO_VIRTIO_PCI_IDENTITY_HEADER = REPO_ROOT / "drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h"
-AERO_VIRTIO_BLK_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-blk/include/aerovblk.h"
-AERO_VIRTIO_NET_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-net/include/aerovnet.h"
+AERO_VIRTIO_BLK_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-blk/include/aero_virtio_blk.h"
+AERO_VIRTIO_NET_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-net/include/aero_virtio_net.h"
 AERO_VIRTIO_INPUT_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-input/src/virtio_input.h"
 AERO_VIRTIO_PCI_MODERN_TRANSPORT_H = REPO_ROOT / "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h"
 AERO_VIRTIO_PCI_MODERN_TRANSPORT_C = REPO_ROOT / "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c"

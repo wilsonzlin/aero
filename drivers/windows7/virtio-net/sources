@@ -8,7 +8,7 @@ TARGETEXT=.sys
 
 INCLUDES=$(INCLUDES);.\include;..\..\windows\virtio\common;..\..\windows\virtio\pci-modern;..\..\win7\virtio\virtio-core\portable
 
-SOURCES=src\aerovnet.c \
+SOURCES=src\aero_virtio_net.c \
         ..\..\windows\virtio\common\virtqueue_split.c \
         ..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c \
         ..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c
