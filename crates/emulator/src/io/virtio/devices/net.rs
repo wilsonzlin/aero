@@ -1292,6 +1292,77 @@ mod tests {
     }
 
     #[test]
+    fn poll_receive_drops_invalid_frames_and_still_delivers_valid_ones() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x400;
+        let payload_addr = 0x500;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let mut backend = TestBackend::default();
+        backend
+            .rx_frames
+            .push_back(vec![0x55u8; MAX_FRAME_LEN + 1]); // oversized
+        backend
+            .rx_frames
+            .push_back(vec![0x66u8; MIN_FRAME_LEN - 1]); // undersized
+
+        let frame = vec![0x77u8; MIN_FRAME_LEN];
+        backend.rx_frames.push_back(frame.clone());
+
+        let irq = dev.poll(&mut mem, &mut backend).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+        assert!(backend.rx_frames.is_empty());
+
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 1);
+        assert_eq!(mem.read_u32_le(used + 8).unwrap(), (VirtioNetHeader::SIZE + frame.len()) as u32);
+
+        let mut payload = vec![0u8; frame.len()];
+        mem.read_into(payload_addr, &mut payload).unwrap();
+        assert_eq!(payload, frame);
+    }
+
+    #[test]
     fn tx_drops_undersized_frames_but_completes_used_ring() {
         let mut mem = DenseMemory::new(0x4000).unwrap();
 
