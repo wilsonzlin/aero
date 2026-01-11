@@ -333,6 +333,63 @@ describe("usb/UsbBroker", () => {
     expect(port.transfers[idx]).toEqual([msg.completion.data.buffer]);
   });
 
+  it("falls back to non-transfer postMessage when completion payload buffers cannot be transferred", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(action: { id: number }): Promise<BackendUsbHostCompletion> {
+          return { kind: "bulkIn", id: action.id, status: "success", data: Uint8Array.of(action.id) };
+        }
+      },
+    }));
+
+    const device = { vendorId: 1, productId: 2, close: async () => {} } as unknown as USBDevice;
+    const usb = new FakeUsb(device);
+    stubNavigatorUsb(usb);
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+    await broker.requestDevice();
+
+    class ThrowOnTransferPort extends FakePort {
+      override postMessage(msg: unknown, transfer?: Transferable[]): void {
+        if (transfer && transfer.length > 0) throw new Error("transfer not supported");
+        super.postMessage(msg, transfer);
+      }
+    }
+
+    const port = new ThrowOnTransferPort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+    port.posted.length = 0;
+    port.transfers.length = 0;
+
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 1, length: 1 } });
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 2, endpoint: 1, length: 1 } });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    const completions = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.completion") as Array<{
+      type: string;
+      completion: ProxyUsbHostCompletion;
+    }>;
+    expect(completions).toEqual([
+      { type: "usb.completion", completion: { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) } },
+      { type: "usb.completion", completion: { kind: "bulkIn", id: 2, status: "success", data: Uint8Array.of(2) } },
+    ]);
+
+    // Both completion buffers attempted to transfer (and failed) but the broker should
+    // have retried without transferables.
+    const completionIndices = port.posted
+      .map((m, i) => ({ m, i }))
+      .filter(({ m }) => (m as { type?: unknown }).type === "usb.completion")
+      .map(({ i }) => i);
+    expect(completionIndices).toHaveLength(2);
+    for (const i of completionIndices) {
+      expect(port.transfers[i]).toBeUndefined();
+    }
+  });
+
   it("does not resend usb.selected when attaching the same port twice", async () => {
     vi.doMock("./webusb_backend", () => ({
       WebUsbBackend: class {

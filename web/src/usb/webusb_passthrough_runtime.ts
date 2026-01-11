@@ -374,7 +374,14 @@ export class WebUsbPassthroughRuntime {
         try {
           const transfer = getTransferablesForUsbActionMessage(msg);
           if (transfer) {
-            this.#port.postMessage(msg, transfer);
+            try {
+              this.#port.postMessage(msg, transfer);
+            } catch {
+              // Some ArrayBuffers (e.g. WebAssembly.Memory.buffer) cannot be transferred.
+              // Fall back to a regular structured clone (copy) rather than failing the
+              // whole passthrough action.
+              this.#port.postMessage(msg);
+            }
           } else {
             this.#port.postMessage(msg);
           }

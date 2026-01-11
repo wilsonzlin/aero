@@ -80,6 +80,43 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     await p;
   });
 
+  it("falls back to non-transfer postMessage when the payload buffer cannot be transferred", async () => {
+    class ThrowOnTransferPort extends FakePort {
+      override postMessage(msg: unknown, transfer?: Transferable[]): void {
+        if (transfer && transfer.length > 0) throw new Error("transfer not supported");
+        super.postMessage(msg, transfer);
+      }
+    }
+
+    const port = new ThrowOnTransferPort();
+
+    const actions: UsbHostAction[] = [{ kind: "bulkOut", id: 1, endpoint: 1, data: Uint8Array.of(1, 2, 3) }];
+
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions),
+      push_completion: vi.fn(),
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+
+    const p = runtime.pollOnce();
+
+    expect(port.posted).toEqual([{ type: "usb.action", action: actions[0] }]);
+    // Transfer list was rejected, so the runtime should retry without transferables.
+    expect(port.transfers).toEqual([undefined]);
+
+    port.emit({
+      type: "usb.completion",
+      completion: { kind: "bulkOut", id: 1, status: "success", bytesWritten: 3 } satisfies UsbHostCompletion,
+    });
+
+    await p;
+    expect(runtime.getMetrics().lastError).toBeNull();
+  });
+
   it("normalizes bigint ids from WASM actions before forwarding to the broker", async () => {
     const port = new FakePort();
 

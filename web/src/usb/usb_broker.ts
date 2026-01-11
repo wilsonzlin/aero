@@ -430,13 +430,26 @@ export class UsbBroker {
   }
 
   private postToPort(port: MessagePort | Worker, msg: UsbCompletionMessage | UsbSelectedMessage): void {
-    try {
-      const transfer = msg.type === "usb.completion" ? getTransferablesForUsbCompletionMessage(msg) : undefined;
-      if (transfer) {
+    const transfer = msg.type === "usb.completion" ? getTransferablesForUsbCompletionMessage(msg) : undefined;
+    if (transfer) {
+      try {
         port.postMessage(msg, transfer);
-      } else {
-        port.postMessage(msg);
+        return;
+      } catch {
+        // Some ArrayBuffers (e.g. WebAssembly.Memory.buffer) cannot be transferred.
+        // Fall back to a regular structured clone (copy) before treating the port as dead.
+        try {
+          port.postMessage(msg);
+          return;
+        } catch {
+          this.detachWorkerPort(port);
+          return;
+        }
       }
+    }
+
+    try {
+      port.postMessage(msg);
     } catch {
       this.detachWorkerPort(port);
     }
