@@ -292,7 +292,10 @@ fn validate_collection(
     if collection.usage > MAX_HID_USAGE_U16 {
         return Err(HidDescriptorError::at(
             path.as_string(),
-            format!("usage must be in 0..={MAX_HID_USAGE_U16} (got {})", collection.usage),
+            format!(
+                "usage must be in 0..={MAX_HID_USAGE_U16} (got {})",
+                collection.usage
+            ),
         ));
     }
 
@@ -377,9 +380,7 @@ fn validate_report_item(item: &HidReportItem, path: &str) -> Result<u32, HidDesc
         if usage > MAX_HID_USAGE_U16 {
             return Err(HidDescriptorError::at(
                 path,
-                format!(
-                    "usages[{idx}] must be in 0..={MAX_HID_USAGE_U16} (got {usage})"
-                ),
+                format!("usages[{idx}] must be in 0..={MAX_HID_USAGE_U16} (got {usage})"),
             ));
         }
     }
