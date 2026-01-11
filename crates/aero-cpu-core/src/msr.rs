@@ -4,6 +4,7 @@
 //! APIC programming. We model the subset required for Windows 7 boot/runtime.
 
 use crate::cpuid::{bits as cpuid_bits, CpuFeatures};
+use crate::state;
 use crate::Exception;
 
 // Common MSR indices used by Windows 7.
@@ -31,50 +32,13 @@ pub const EFER_LME: u64 = 1 << 8;
 pub const EFER_LMA: u64 = 1 << 10;
 pub const EFER_NXE: u64 = 1 << 11;
 
-/// MSR backing storage.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MsrState {
-    pub efer: u64,
-    pub star: u64,
-    pub lstar: u64,
-    pub cstar: u64,
-    pub fmask: u64,
+/// Canonical MSR storage used by [`crate::state::CpuState`].
+///
+/// We keep the backing fields inside `state::CpuState` so the interpreter/JIT ABI
+/// remains stable, but expose MSR indices and helpers from this module.
+pub type MsrState = state::MsrState;
 
-    pub sysenter_cs: u64,
-    pub sysenter_esp: u64,
-    pub sysenter_eip: u64,
-
-    pub fs_base: u64,
-    pub gs_base: u64,
-    pub kernel_gs_base: u64,
-
-    pub apic_base: u64,
-    pub tsc_aux: u32,
-}
-
-impl Default for MsrState {
-    fn default() -> Self {
-        Self {
-            efer: 0,
-            star: 0,
-            lstar: 0,
-            cstar: 0,
-            fmask: 0,
-            sysenter_cs: 0,
-            sysenter_esp: 0,
-            sysenter_eip: 0,
-            fs_base: 0,
-            gs_base: 0,
-            kernel_gs_base: 0,
-            // Typical reset value: APIC enabled at 0xFEE00000 with BSP bit set.
-            // (Intel SDM: IA32_APIC_BASE[11]=global enable, [8]=BSP).
-            apic_base: 0xFEE0_0000 | (1 << 11) | (1 << 8),
-            tsc_aux: 0,
-        }
-    }
-}
-
-impl MsrState {
+impl state::MsrState {
     /// Read an MSR value.
     ///
     /// Unknown MSRs raise `#GP(0)` instead of being silently ignored.
@@ -92,7 +56,7 @@ impl MsrState {
             IA32_GS_BASE => Ok(self.gs_base),
             IA32_KERNEL_GS_BASE => Ok(self.kernel_gs_base),
             IA32_APIC_BASE => Ok(self.apic_base),
-            IA32_TSC_AUX => Ok(self.tsc_aux as u64),
+            IA32_TSC_AUX => Ok((self.tsc_aux & 0xFFFF_FFFF) as u64),
             _ => Err(Exception::gp0()),
         }
     }
@@ -167,7 +131,7 @@ impl MsrState {
                 Ok(())
             }
             IA32_TSC_AUX => {
-                self.tsc_aux = value as u32;
+                self.tsc_aux = (value & 0xFFFF_FFFF) as u32;
                 Ok(())
             }
             _ => Err(Exception::gp0()),
