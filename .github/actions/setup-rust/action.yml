@@ -3,7 +3,7 @@ description: Install a Rust toolchain + optional targets/components, configure c
 
 inputs:
   toolchain:
-    description: Rust toolchain to install (stable, nightly, or an explicit toolchain like 1.92.0 / nightly-YYYY-MM-DD).
+    description: Rust toolchain to install (stable -> rust-toolchain.toml pin, nightly -> scripts/toolchains.json pin, or an explicit toolchain like 1.92.0 / nightly-YYYY-MM-DD).
     required: false
     default: stable
   targets:
@@ -27,6 +27,9 @@ outputs:
   cargo_locked_flag:
     description: Either '--locked' or an empty string (per Cargo.lock policy).
     value: ${{ steps.cargo-locked.outputs.cargo_locked_flag }}
+  rust_toolchain:
+    description: Resolved Rust toolchain string installed by this action.
+    value: ${{ steps.toolchain.outputs.toolchain }}
 
 runs:
   using: composite
@@ -69,6 +72,30 @@ runs:
           if [[ -n "$pinned" ]]; then
             resolved="$pinned"
           fi
+        fi
+
+        # Aero pins nightly Rust for threaded WASM builds in scripts/toolchains.json.
+        # Treat "nightly" as "use the pinned nightly" so CI doesn't drift.
+        if [[ "$requested" == "nightly" ]]; then
+          if [[ ! -f scripts/toolchains.json ]]; then
+            echo "::error::setup-rust: scripts/toolchains.json not found (required to resolve pinned nightly toolchain)."
+            exit 1
+          fi
+
+          pinned_nightly=""
+          while IFS= read -r line; do
+            if [[ "$line" =~ \"nightlyWasm\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+              pinned_nightly="${BASH_REMATCH[1]}"
+              break
+            fi
+          done < scripts/toolchains.json
+
+          if [[ -z "$pinned_nightly" ]]; then
+            echo "::error::setup-rust: unable to resolve rust.nightlyWasm from scripts/toolchains.json."
+            exit 1
+          fi
+
+          resolved="$pinned_nightly"
         fi
 
         echo "toolchain=$resolved" >> "$GITHUB_OUTPUT"

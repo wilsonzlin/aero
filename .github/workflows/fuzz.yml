@@ -17,25 +17,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read pinned nightly toolchain
-        id: toolchains
-        shell: bash
-        run: |
-          set -euo pipefail
-          nightly="$(node -p "require('./scripts/toolchains.json').rust.nightlyWasm")"
-          echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
-
       - name: Setup Rust
+        id: setup-rust
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ steps.toolchains.outputs.nightly }}
+          toolchain: nightly
           locked: auto
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
 
       - name: fuzz_mmu_translate (10s)
-        run: cargo +${{ steps.toolchains.outputs.nightly }} fuzz run fuzz_mmu_translate -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_mmu_translate -- -max_total_time=10
 
       - name: fuzz_bus_rw (10s)
-        run: cargo +${{ steps.toolchains.outputs.nightly }} fuzz run fuzz_bus_rw -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_bus_rw -- -max_total_time=10
