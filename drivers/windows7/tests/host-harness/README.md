@@ -270,13 +270,13 @@ Note: the harness uses **modern-only** virtio device IDs (`DEV_1041`/`DEV_1042`/
 If QEMU cannot expose modern-only virtio-snd (no `disable-legacy` property for the device), virtio-snd may enumerate
 as the transitional ID `DEV_1018`, and the Aero virtio-snd INF (`DEV_1059&REV_01`) will not bind. Use a QEMU build
 that supports `disable-legacy=on` for virtio-snd.
-For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`
-or `drivers/win7/virtio-net/`). Avoid installing multiple `aerovnet.inf` files that bind the same HWID,
-or disambiguate by passing a relative INF path via `-InfAllowList`.
+For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`).
+Avoid installing multiple INFs that bind the same HWID, or disambiguate by passing a relative INF path via
+`-InfAllowList`.
 
 For virtio-blk, use the contract-v1 driver under `drivers/windows7/virtio/blk/` (binds `DEV_1042`).
-Avoid installing multiple `aerovblk.inf` files that bind the same HWID, or disambiguate by passing a
-relative INF path via `-InfAllowList`.
+Avoid installing multiple INFs that bind the same HWID, or disambiguate by passing a relative INF path via
+`-InfAllowList`.
 
 For fully repeatable provisioning, pass `-InfAllowList` explicitly:
 

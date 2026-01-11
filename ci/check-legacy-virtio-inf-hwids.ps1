@@ -2,24 +2,21 @@
 
 <#
 .SYNOPSIS
-Guard against INF hardware ID conflicts between legacy/transitional virtio drivers and
-contract-v1 modern-only drivers.
+Guard against multiple INFs matching the same contract-v1 virtio PCI hardware IDs.
 
 .DESCRIPTION
-The legacy/transitional driver packages under:
+Windows selects PnP drivers by matching a device's Hardware IDs against installed INFs.
+If multiple INFs match the same virtio device ID (e.g. both bind `PCI\VEN_1AF4&DEV_1042`),
+binding can become nondeterministic.
 
-  drivers/windows7/virtio/
+This script scans all driver INFs under `drivers/` and fails if more than one INF
+references one of Aero's contract-v1 modern virtio PCI device IDs:
 
-must NOT match Aero's contract-v1 modern-only virtio PCI Device ID space (`DEV_104x` / `DEV_105x`),
-otherwise Windows may have multiple installed INFs that match the same modern device.
+  - `PCI\VEN_1AF4&DEV_1041` (virtio-net)
+  - `PCI\VEN_1AF4&DEV_1042` (virtio-blk)
 
-This script scans all *.inf files under that legacy directory and fails if it finds any
-non-comment line that references a virtio modern-only hardware ID, e.g.:
-
-  PCI\VEN_1AF4&DEV_1042
-
-It intentionally ignores comment lines (starting with ';') so maintainers can still
-reference modern IDs in explanatory comments without breaking the guard.
+The check ignores comment lines (starting with ';') so documentation inside INFs can
+still mention these IDs.
 #>
 
 [CmdletBinding()]
@@ -37,24 +34,29 @@ function Get-RepoRoot {
 }
 
 $repoRoot = Get-RepoRoot
-$legacyRoot = Join-Path (Join-Path (Join-Path $repoRoot 'drivers') 'windows7') 'virtio'
+$driversRoot = Join-Path $repoRoot 'drivers'
 
-if (-not (Test-Path -LiteralPath $legacyRoot -PathType Container)) {
-  Write-Host "Legacy virtio directory not found ($legacyRoot); skipping INF HWID check."
+if (-not (Test-Path -LiteralPath $driversRoot -PathType Container)) {
+  Write-Host "drivers/ directory not found ($driversRoot); skipping virtio INF HWID check."
   exit 0
 }
 
-$infFiles = @(Get-ChildItem -LiteralPath $legacyRoot -Recurse -File -Filter '*.inf' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
+$infFiles = @(Get-ChildItem -LiteralPath $driversRoot -Recurse -File -Filter '*.inf' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
 if (-not $infFiles -or $infFiles.Count -eq 0) {
-  Write-Host "No .inf files found under legacy virtio directory ($legacyRoot); skipping INF HWID check."
+  Write-Host "No .inf files found under drivers/ ($driversRoot); skipping virtio INF HWID check."
   exit 0
 }
 
-# Match virtio Vendor ID (0x1AF4) with the modern-only virtio-pci ID space (0x1040+ / 0x1050+).
-# We only care about preventing accidental binding conflicts on Aero contract-v1 devices.
-$modernHwidRegex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_10(4|5)[0-9A-F]')
+# Only enforce the IDs we know are boot/perf-critical today; broaden later if needed.
+$hwidPatterns = @(
+  [pscustomobject]@{ Name = 'virtio-net (DEV_1041)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1041') },
+  [pscustomobject]@{ Name = 'virtio-blk (DEV_1042)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1042') }
+)
 
-$violations = New-Object System.Collections.Generic.List[object]
+$matchesByPattern = @{}
+foreach ($p in $hwidPatterns) {
+  $matchesByPattern[$p.Name] = New-Object System.Collections.Generic.List[object]
+}
 
 foreach ($inf in $infFiles) {
   $lines = @(Get-Content -LiteralPath $inf.FullName -ErrorAction Stop)
@@ -62,28 +64,50 @@ foreach ($inf in $infFiles) {
     $line = [string]$lines[$i]
     $trim = $line.TrimStart()
     if ($trim.StartsWith(';')) { continue }
-    if (-not $modernHwidRegex.IsMatch($line)) { continue }
 
-    $violations.Add([pscustomobject]@{
-      Path = $inf.FullName
-      Line = $i + 1
-      Text = $line
+    foreach ($p in $hwidPatterns) {
+      if (-not $p.Regex.IsMatch($line)) { continue }
+      $matchesByPattern[$p.Name].Add([pscustomobject]@{
+        Pattern = $p.Name
+        Path = $inf.FullName
+        Line = $i + 1
+        Text = $line
+      }) | Out-Null
+      break
+    }
+  }
+}
+
+$conflicts = New-Object System.Collections.Generic.List[object]
+foreach ($p in $hwidPatterns) {
+  $entries = @(
+    $matchesByPattern[$p.Name] |
+      Group-Object -Property Path |
+      ForEach-Object { $_.Group[0] }
+  )
+  if ($entries.Count -gt 1) {
+    $conflicts.Add([pscustomobject]@{
+      Pattern = $p.Name
+      Entries = $entries
     }) | Out-Null
   }
 }
 
-if ($violations.Count -gt 0) {
+if ($conflicts.Count -gt 0) {
   Write-Host ""
-  Write-Host "ERROR: Found modern-only virtio PCI HWIDs referenced by legacy/transitional INFs under drivers/windows7/virtio/."
-  Write-Host "These INFs must not bind to DEV_104x/DEV_105x because contract-v1 drivers also bind to those IDs."
+  Write-Host "ERROR: Multiple INFs match the same contract-v1 virtio PCI hardware IDs."
+  Write-Host "Remove/disable the duplicate INFs so Windows cannot pick an unintended driver."
   Write-Host ""
-  Write-Host "Violations:"
-  foreach ($v in $violations) {
-    Write-Host ("- {0}:{1}: {2}" -f $v.Path, $v.Line, $v.Text)
+  Write-Host "Conflicts:"
+  foreach ($c in $conflicts) {
+    Write-Host ("- {0}" -f $c.Pattern)
+    foreach ($e in $c.Entries) {
+      Write-Host ("    - {0}:{1}: {2}" -f $e.Path, $e.Line, $e.Text)
+    }
   }
   Write-Host ""
   exit 1
 }
 
-Write-Host "OK: legacy/transitional virtio INFs do not reference modern-only HWIDs (DEV_104x/DEV_105x)."
+Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (DEV_1041/DEV_1042)."
 exit 0

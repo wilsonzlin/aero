@@ -1,3 +1,9 @@
+; NOTE: This INF is intentionally disabled (renamed to *.inf.disabled) to avoid
+; shipping multiple INFs that match the same contract-v1 virtio-net HWID.
+;
+; Use the active contract-v1 driver package under:
+;   drivers/windows7/virtio/net/aerovnet.inf
+;
 ; Aero virtio-net NDIS 6.20 miniport driver (Windows 7 SP1)
 ;
 ; AERO-W7-VIRTIO contract v1 (virtio-pci modern, BAR0 MMIO, split virtqueues, INTx).
@@ -5,7 +11,7 @@
 ; Hardware ID: PCI\VEN_1AF4&DEV_1041 (virtio-net modern PCI ID space).
 ;
 ; Note: Windows 7 x64 requires driver signing unless test mode is enabled.
-
+;
 [Version]
 Signature   = "$Windows NT$"
 Class       = Net

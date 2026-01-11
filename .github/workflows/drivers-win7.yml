@@ -49,7 +49,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check legacy virtio INFs (no modern-only HWIDs)
+      - name: Check virtio INFs (no duplicate contract HWIDs)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -112,7 +112,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Check legacy virtio INFs (no modern-only HWIDs)
+      - name: Check virtio INFs (no duplicate contract HWIDs)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
