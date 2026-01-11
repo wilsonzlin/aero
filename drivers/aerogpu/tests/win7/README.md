@@ -13,7 +13,7 @@ Common flags:
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
 * `--allow-non-aerogpu` – allow running on adapters whose description does not contain `AeroGPU` (by default, rendering tests expect to be running on an AeroGPU adapter).
-* `--allow-remote` – skip tests that are expected to fail under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait_pacing`, `vblank_wait_sanity`.
+* `--allow-remote` – skip tests that are expected to fail under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait_pacing`, `vblank_wait_sanity`, `d3d9_raster_status_pacing`.
 * `--help` / `/?` – print per-test usage.
 
 ## Layout

@@ -95,7 +95,7 @@ echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
 echo   --samples affects pacing tests ^(dwm_flush_pacing, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, d3d9_raster_status_pacing^).
-echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, dwm_flush_pacing, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity.
+echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, dwm_flush_pacing, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, d3d9_raster_status_pacing.
 echo   Use --timeout-ms=NNNN or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
 echo   Use --no-timeout to run without enforcing a timeout.
 exit /b 0
