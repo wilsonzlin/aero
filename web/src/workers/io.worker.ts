@@ -1664,8 +1664,15 @@ function startIoIpcServer(): void {
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
       usbUhciHarnessRuntime?.pollOnce();
-      usbDemo?.tick();
-      usbDemo?.pollResults();
+      if (usbDemo) {
+        try {
+          usbDemo.tick();
+          usbDemo.pollResults();
+        } catch (err) {
+          console.warn("[io.worker] UsbPassthroughDemo tick failed", err);
+          // Keep the worker alive; demo failures should not crash the VM runtime.
+        }
+      }
 
       if (perfActive) perfIoMs += performance.now() - t0;
       maybeEmitPerfSample();
