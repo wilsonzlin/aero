@@ -192,15 +192,16 @@ impl AeroGpuCommandBackend for AerogpuWgpuBackend {
         // P0 fence semantics: ensure GPU work has completed before signaling the fence.
         self.exec.poll_wait();
 
-        let result = exec_result.map_err(|e| e.to_string());
+        let error = exec_result.as_ref().err().map(|e| e.to_string());
 
         // Never drop completions on error; fences must always make progress.
         self.completions.push_back(AeroGpuBackendCompletion {
             fence: submission.signal_fence,
-            error: result.as_ref().err().cloned(),
+            error,
         });
 
-        result
+        // Always accept the submission; execution failures are reported via `completion.error`.
+        Ok(())
     }
 
     fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
