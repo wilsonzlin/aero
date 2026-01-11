@@ -494,6 +494,25 @@ fn virtio_pci_queue_notify_off_matches_queue_index() {
 }
 
 #[test]
+fn virtio_pci_reserved_feature_select_reads_zero_and_ignores_writes() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // device_feature_select values other than 0 or 1 must read as 0.
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 2);
+    assert_eq!(bar_read_u32(&mut dev, caps.common + 0x04), 0);
+
+    // driver_feature_select values other than 0 or 1 must read as 0 and ignore writes.
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 2);
+    assert_eq!(bar_read_u32(&mut dev, caps.common + 0x0c), 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, 0xffff_ffff);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    assert_eq!(bar_read_u32(&mut dev, caps.common + 0x0c), 0);
+}
+
+#[test]
 fn virtio_pci_queue_size_is_read_only() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));

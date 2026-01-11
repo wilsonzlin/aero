@@ -1,6 +1,6 @@
 use aero_virtio::devices::blk::{
-    BlockBackend, VirtioBlk, VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN,
-    VIRTIO_BLK_T_OUT,
+    BlockBackend, VirtioBlk, VIRTIO_BLK_S_IOERR, VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_FLUSH,
+    VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
 };
 use aero_virtio::memory::{
     read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -416,5 +416,71 @@ fn malformed_chains_return_ioerr_without_panicking() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 1);
+    assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
+}
+
+#[test]
+fn virtio_blk_rejects_non_sector_multiple_requests() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    let header = 0x7000;
+    let data = 0x8000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    mem.write(data, &vec![0xa5u8; 513]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data, 513, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert!(backing.borrow().iter().all(|b| *b == 0));
+    assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
+}
+
+#[test]
+fn virtio_blk_rejects_requests_beyond_capacity() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    let header = 0x7000;
+    let data = 0x8000;
+    let status = 0x9000;
+
+    // `setup()` uses a 4096-byte backing store -> 8 sectors. Sector 8 is out of range.
+    let sector = 8u64;
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_IN).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, sector).unwrap();
+
+    mem.write(data, &[0u8; 512]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001 | 0x0002, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert!(backing.borrow().iter().all(|b| *b == 0));
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
 }
