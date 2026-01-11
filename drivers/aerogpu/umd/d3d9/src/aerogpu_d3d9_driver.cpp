@@ -3318,10 +3318,14 @@ uint64_t submit(Device* dev, bool is_present) {
       dev->wddm_context.command_buffer_bytes_used = static_cast<uint32_t>(cmd_bytes);
       dev->wddm_context.allocation_list_entries_used = dev->alloc_list_tracker.list_len();
       dev->wddm_context.patch_location_entries_used = 0;
+      const uint32_t allocs_used = dev->wddm_context.allocation_list_entries_used;
+      const bool needs_allocation_table = (allocs_used != 0);
 
       // Clear the driver-private per-DMA-buffer metadata so the KMD never observes
       // stale submission state (in particular, stale MetaHandle values from a
       // previous submission).
+      void* submit_priv_ptr = dev->wddm_context.pDmaBufferPrivateData;
+      const uint32_t submit_priv_size = dev->wddm_context.DmaBufferPrivateDataSize;
       if (dev->wddm_context.pDmaBufferPrivateData &&
           dev->wddm_context.DmaBufferPrivateDataSize >= AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
         (void)InitWin7DmaBufferPrivateData(dev->wddm_context.pDmaBufferPrivateData,
@@ -3347,6 +3351,22 @@ uint64_t submit(Device* dev, bool is_present) {
         }
 
         if (!SUCCEEDED(submit_hr)) {
+          // Next preference: RenderCb when it can signal "present". This keeps
+          // us on the DxgkDdiRender/DxgkDdiPresent path so the KMD can stamp a
+          // per-submission MetaHandle for guest-backed resources.
+          if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
+            if (dev->wddm_callbacks.pfnRenderCb) {
+              using RenderCbT = decltype(dev->wddm_callbacks.pfnRenderCb);
+              if constexpr (submit_callback_can_signal_present<RenderCbT>()) {
+                submission_fence = 0;
+                submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
+                                                   &submission_fence);
+              }
+            }
+          }
+        }
+
+        if (!SUCCEEDED(submit_hr)) {
           if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
             if (dev->wddm_callbacks.pfnSubmitCommandCb) {
               using SubmitCbT = decltype(dev->wddm_callbacks.pfnSubmitCommandCb);
@@ -3359,11 +3379,24 @@ uint64_t submit(Device* dev, bool is_present) {
           }
         }
 
+        // Last resort: allow submitting even when we can't explicitly signal
+        // present via the callback args. This is primarily a bring-up aid; the
+        // KMD/emulator may observe the submission as render if the runtime cannot
+        // dispatch to DxgkDdiPresent.
         if (!SUCCEEDED(submit_hr)) {
           if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
             if (dev->wddm_callbacks.pfnRenderCb) {
               submission_fence = 0;
               submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
+                                                 &submission_fence);
+            }
+          }
+        }
+        if (!SUCCEEDED(submit_hr)) {
+          if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
+            if (dev->wddm_callbacks.pfnSubmitCommandCb) {
+              submission_fence = 0;
+              submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/true,
                                                  &submission_fence);
             }
           }
@@ -3389,6 +3422,17 @@ uint64_t submit(Device* dev, bool is_present) {
       }
 
       if (SUCCEEDED(submit_hr)) {
+        if (needs_allocation_table && submit_priv_ptr &&
+            submit_priv_size >= AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
+          AEROGPU_DMA_PRIV priv{};
+          std::memcpy(&priv, submit_priv_ptr, sizeof(priv));
+          if (priv.MetaHandle == 0) {
+            logf("aerogpu-d3d9: submit missing MetaHandle (allocs=%u present=%u type=%u)\n",
+                 static_cast<unsigned>(allocs_used),
+                 is_present ? 1u : 0u,
+                 static_cast<unsigned>(priv.Type));
+          }
+        }
         submitted_to_kmd = true;
         did_submit = true;
         dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),

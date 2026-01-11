@@ -3289,6 +3289,23 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     PVOID dmaVa = NULL;
     ULONG dmaSizeBytes = (ULONG)pSubmitCommand->DmaBufferSize;
 
+    /*
+     * Defensive: some user-mode/runtime paths report DMA buffer *capacity* rather
+     * than bytes-used. The AeroGPU command stream carries its own length in the
+     * stream header; prefer that size when it is self-consistent so we never
+     * copy uninitialized bytes into the ring submission.
+     */
+    if (dmaSizeBytes != 0 && pSubmitCommand->pDmaBuffer &&
+        dmaSizeBytes >= sizeof(struct aerogpu_cmd_stream_header)) {
+        struct aerogpu_cmd_stream_header hdr;
+        RtlCopyMemory(&hdr, pSubmitCommand->pDmaBuffer, sizeof(hdr));
+        if (hdr.magic == AEROGPU_CMD_STREAM_MAGIC &&
+            hdr.size_bytes >= sizeof(struct aerogpu_cmd_stream_header) &&
+            hdr.size_bytes <= (uint32_t)dmaSizeBytes) {
+            dmaSizeBytes = (ULONG)hdr.size_bytes;
+        }
+    }
+
     if (dmaSizeBytes != 0) {
         dmaVa = AeroGpuAllocContiguous(dmaSizeBytes, &dmaPa);
         if (!dmaVa) {
@@ -3363,7 +3380,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         desc->fence = (uint32_t)fence;
         desc->reserved0 = 0;
         desc->dma_buffer_gpa = (uint64_t)dmaPa.QuadPart;
-        desc->dma_buffer_size = pSubmitCommand->DmaBufferSize;
+        desc->dma_buffer_size = dmaSizeBytes;
         desc->allocation_count = allocCount;
 
         if (allocCount && meta) {
