@@ -67,7 +67,6 @@ members = [
     "tools/qemu_diff",
     "crates/virtio-gpu-proto",
     "crates/vm",
-    "tools/aero-gateway-rs",
     "crates/aero-usb",
     "crates/st-idb",
     "crates/conformance",
@@ -83,6 +82,8 @@ members = [
 exclude = [
     "fuzz",
     # Standalone tools with their own lockfiles (build by `cd tools/<name> && cargo ...`).
+    # Legacy/diagnostic gateway prototype (NOT the production gateway).
+    "tools/aero-gateway-rs",
     "tools/win-offline-cert-injector",
     "tools/win-certstore-regblob-export",
     "tools/win7-slipstream",

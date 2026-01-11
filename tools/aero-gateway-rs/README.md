@@ -1,6 +1,6 @@
-# aero-gateway-rs (legacy)
+# aero-gateway-rs (legacy / diagnostic)
 
-This directory contains the legacy Rust/Axum gateway prototype that only implements the historical
+This directory contains a legacy Rust/Axum gateway prototype that only implements the historical
 `/tcp?target=<host>:<port>` WebSocket tunnel (plus a small `/admin` surface and optional on-disk
 capture).
 
@@ -15,8 +15,13 @@ and the public contract is documented in:
 ## Run
 
 ```bash
-cargo run --locked -p aero-gateway-rs
+cd tools/aero-gateway-rs
+cargo run --locked
 ```
+
+This tool is intentionally **not** a Rust workspace member (see the repo root `Cargo.toml`) so it
+does not increase default `cargo build/test` surface area. Build/run it explicitly from this
+directory.
 
 Environment variables:
 

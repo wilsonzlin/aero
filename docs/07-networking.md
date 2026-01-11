@@ -230,6 +230,10 @@ See: [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
   - `proxy/webrtc-udp-relay` (WebRTC UDP relay + `/udp` fallback + `l2` bridge)
   - `crates/aero-l2-proxy` (Option C user-space stack / NAT)
   - `crates/aero-storage-server` (storage service; part of the backend split)
+- `tools/aero-gateway-rs` is a **legacy/diagnostic** Rust gateway prototype that only implements the
+  historical `/tcp?target=<host>:<port>` tunnel (plus a small admin/capture surface). It is not
+  production-hardened and is intentionally excluded from the default Rust workspace build/test
+  surface. The canonical gateway is `backend/aero-gateway` (Node/TypeScript).
 - Guest network stack implementations exist in multiple places:
   - `crates/aero-net-stack` is the canonical Phase 0 in-browser stack.
   - `crates/emulator/src/io/net/stack` is a thin wrapper around `crates/aero-net-stack` for the native emulator runtime.

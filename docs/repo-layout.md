@@ -100,6 +100,12 @@ npm run dev:harness
 
 See: `server/LEGACY.md`.
 
+### Legacy gateway prototype (Rust): `tools/aero-gateway-rs`
+
+`tools/aero-gateway-rs` is a legacy Rust/Axum gateway prototype (historical `/tcp?target=...`).
+It is kept for diagnostics only and is intentionally excluded from the default Rust workspace build
+surface. The canonical, CI-tested gateway implementation is `backend/aero-gateway` (Node/TypeScript).
+
 ### Prototypes / PoCs
 
 These directories are intentionally **not** production code:
