@@ -37,7 +37,7 @@ pub enum StreamingDiskError {
     RangeNotSupported,
 
     #[error("remote request failed with HTTP status {status}")]
-    HttpStatus { status: reqwest::StatusCode },
+    HttpStatus { status: u16 },
 
     #[error("remote request failed: {0}")]
     Http(String),
@@ -1011,9 +1011,7 @@ impl StreamingDisk {
                         | StreamingDiskError::ValidatorMismatch { .. }
                         | StreamingDiskError::Cancelled => false,
                         StreamingDiskError::HttpStatus { status } => {
-                            status.is_server_error()
-                                || *status == reqwest::StatusCode::REQUEST_TIMEOUT
-                                || *status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                            (500..=599).contains(status) || *status == 408 || *status == 429
                         }
                         _ => true,
                     };
@@ -1108,7 +1106,7 @@ impl StreamingDisk {
                 return Err(StreamingDiskError::RangeNotSupported);
             }
             return Err(StreamingDiskError::HttpStatus {
-                status: resp.status(),
+                status: resp.status().as_u16(),
             });
         }
 
@@ -1205,14 +1203,14 @@ async fn probe_remote_size_and_validator(
         .await
         .map_err(|e| StreamingDiskError::Http(format_reqwest_error(e)))?;
 
-    if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-        if resp.status().is_success() {
-            return Err(StreamingDiskError::RangeNotSupported);
+        if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            if resp.status().is_success() {
+                return Err(StreamingDiskError::RangeNotSupported);
+            }
+            return Err(StreamingDiskError::HttpStatus {
+                status: resp.status().as_u16(),
+            });
         }
-        return Err(StreamingDiskError::HttpStatus {
-            status: resp.status(),
-        });
-    }
 
     let validator = extract_validator(resp.headers());
 
