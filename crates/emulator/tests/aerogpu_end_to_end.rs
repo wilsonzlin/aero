@@ -103,9 +103,16 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    // `AERO_REQUIRE_WEBGPU=1` means WebGPU is a hard requirement; anything else (including `0`/unset)
+    // means tests should skip when no adapter/device is available. This matches the repo-wide CI
+    // policy (PR CI should never require WebGPU).
+    let require_webgpu = matches!(std::env::var("AERO_REQUIRE_WEBGPU").as_deref(), Ok("1"));
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
+            if require_webgpu {
+                panic!("AERO_REQUIRE_WEBGPU=1 but wgpu request_adapter returned None");
+            }
             eprintln!("skipping AeroGPU end-to-end test: wgpu adapter not found");
             return;
         }
