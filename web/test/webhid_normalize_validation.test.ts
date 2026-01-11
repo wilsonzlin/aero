@@ -111,6 +111,20 @@ test("normalizeCollections(validate): rejects non-u32 usages values with a path"
   });
 });
 
+test("normalizeCollections(validate): rejects non-boolean isAbsolute with a path", () => {
+  const badItem = { ...BASE_ITEM, isAbsolute: 1 } as unknown as HidReportItem;
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 0, items: [badItem] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /isAbsolute.*collections\[0\]\.inputReports\[0\]\.items\[0\]/,
+  });
+});
+
 test("normalizeCollections(validate): rejects logicalMinimum outside i32 with a path", () => {
   const collections: HidCollectionInfo[] = [
     {

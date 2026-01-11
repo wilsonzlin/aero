@@ -151,6 +151,12 @@ function validateU32Array(values: unknown, name: string, path: Path): void {
   }
 }
 
+function validateBool(value: unknown, name: string, path: Path): void {
+  if (typeof value !== "boolean") {
+    throw err(path, `${name} must be a boolean (got ${String(value)})`);
+  }
+}
+
 function normalizeCollectionType(type: HidCollectionTypeLike, path: Path): HidCollectionTypeCode {
   // Some environments surface numeric HID collection type codes directly, while others use the
   // WebHID string enum. Support both to keep the normalizer resilient to typing/library changes.
@@ -447,6 +453,17 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
           validateI32(item.logicalMaximum, "logicalMaximum", itemPath);
           validateI32(item.physicalMinimum, "physicalMinimum", itemPath);
           validateI32(item.physicalMaximum, "physicalMaximum", itemPath);
+          validateBool(item.isAbsolute, "isAbsolute", itemPath);
+          validateBool(item.isArray, "isArray", itemPath);
+          validateBool(item.isBufferedBytes, "isBufferedBytes", itemPath);
+          validateBool(item.isConstant, "isConstant", itemPath);
+          validateBool(item.isLinear, "isLinear", itemPath);
+          validateBool(item.isRange, "isRange", itemPath);
+          validateBool(item.isRelative, "isRelative", itemPath);
+          validateBool(item.isVolatile, "isVolatile", itemPath);
+          validateBool(item.hasNull, "hasNull", itemPath);
+          validateBool(item.hasPreferredState, "hasPreferredState", itemPath);
+          validateBool(item.isWrapped, "isWrapped", itemPath);
 
           if (
             !Number.isSafeInteger(item.reportSize) ||

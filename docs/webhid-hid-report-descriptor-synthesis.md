@@ -336,6 +336,9 @@ in the Rust value types:
   - all entries of `usages`, `strings`, `designators`
 - All signed numeric fields (`i32`) MUST be integers in `-2147483648..=2147483647`:
   - `logicalMinimum`, `logicalMaximum`, `physicalMinimum`, `physicalMaximum`
+- Boolean fields MUST be booleans (not `0/1` or other truthy/falsy values):
+  - `isAbsolute`, `isArray`, `isBufferedBytes`, `isConstant`, `isLinear`, `isRange`, `isRelative`,
+    `isVolatile`, `hasNull`, `hasPreferredState`, `isWrapped`
 
 ### Collection tree bounds
 
