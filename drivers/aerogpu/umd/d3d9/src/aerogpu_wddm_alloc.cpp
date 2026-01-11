@@ -112,6 +112,30 @@ template <typename T>
 struct has_member_SizeInBytes<T, std::void_t<decltype(std::declval<T&>().SizeInBytes)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_Alignment : std::false_type {};
+
+template <typename T>
+struct has_member_Alignment<T, std::void_t<decltype(std::declval<T&>().Alignment)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AlignmentInBytes : std::false_type {};
+
+template <typename T>
+struct has_member_AlignmentInBytes<T, std::void_t<decltype(std::declval<T&>().AlignmentInBytes)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SupportedReadSegmentSet : std::false_type {};
+
+template <typename T>
+struct has_member_SupportedReadSegmentSet<T, std::void_t<decltype(std::declval<T&>().SupportedReadSegmentSet)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SupportedWriteSegmentSet : std::false_type {};
+
+template <typename T>
+struct has_member_SupportedWriteSegmentSet<T, std::void_t<decltype(std::declval<T&>().SupportedWriteSegmentSet)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pPrivateDriverData : std::false_type {};
 
 template <typename T>
@@ -226,6 +250,18 @@ template <typename T>
 struct has_member_ReadOnly<T, std::void_t<decltype(std::declval<T&>().ReadOnly)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_CpuVisible : std::false_type {};
+
+template <typename T>
+struct has_member_CpuVisible<T, std::void_t<decltype(std::declval<T&>().CpuVisible)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Primary : std::false_type {};
+
+template <typename T>
+struct has_member_Primary<T, std::void_t<decltype(std::declval<T&>().Primary)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_CreateResource : std::false_type {};
 
 template <typename T>
@@ -323,6 +359,22 @@ void set_allocate_flags(FlagsT& flags, bool is_shared) {
   }
 }
 
+template <typename FlagsT>
+void set_allocation_info_flags(FlagsT& flags) {
+  // AeroGPU's Win7 MVP uses a single CPU-visible system-memory segment, so
+  // marking allocations as CPU-visible keeps Lock/Unlock paths simple.
+  if constexpr (has_member_CpuVisible<FlagsT>::value) {
+    flags.CpuVisible = 1u;
+  }
+
+  // Do not force Primary here; callers should rely on the runtime's standard
+  // allocation path for real primaries. Backbuffer allocations created by the
+  // D3D9 UMD are still treated as generic resources.
+  if constexpr (has_member_Primary<FlagsT>::value) {
+    flags.Primary = 0u;
+  }
+}
+
 } // namespace
 
 template <typename CallbackFn>
@@ -367,6 +419,25 @@ HRESULT invoke_create_allocation_cb(CallbackFn cb,
       info.SizeInBytes = static_cast<decltype(info.SizeInBytes)>(size_bytes);
     } else {
       return E_NOTIMPL;
+    }
+
+    if constexpr (has_member_Alignment<Info>::value) {
+      info.Alignment = 0;
+    } else if constexpr (has_member_AlignmentInBytes<Info>::value) {
+      info.AlignmentInBytes = 0;
+    }
+
+    if constexpr (has_member_SupportedReadSegmentSet<Info>::value) {
+      info.SupportedReadSegmentSet = 1;
+    }
+    if constexpr (has_member_SupportedWriteSegmentSet<Info>::value) {
+      info.SupportedWriteSegmentSet = 1;
+    }
+
+    if constexpr (has_member_Flags<Info>::value) {
+      set_allocation_info_flags(info.Flags);
+    } else if constexpr (has_member_flags<Info>::value) {
+      set_allocation_info_flags(info.flags);
     }
 
     if constexpr (has_member_pPrivateDriverData<Info>::value) {
