@@ -246,9 +246,13 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
     this.opts = { maxQueuedBytes, maxBufferedAmount, maxFrameSize, errorIntervalMs, keepaliveMinMs, keepaliveMaxMs };
     this.token = opts.token;
-    this.tokenTransport =
-      opts.tokenTransport ??
-      (opts.tokenViaSubprotocol ? "subprotocol" : "query");
+    const tokenTransport = opts.tokenTransport ?? (opts.tokenViaSubprotocol ? "subprotocol" : "query");
+    if (tokenTransport !== "query" && tokenTransport !== "subprotocol" && tokenTransport !== "both") {
+      throw new RangeError(
+        `tokenTransport must be "query", "subprotocol", or "both" (got ${JSON.stringify(tokenTransport)})`,
+      );
+    }
+    this.tokenTransport = tokenTransport;
   }
 
   connect(): void {

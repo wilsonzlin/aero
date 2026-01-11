@@ -417,6 +417,16 @@ describe("net/l2Tunnel", () => {
     ).toThrow(/Sec-WebSocket-Protocol/);
   });
 
+  it("rejects invalid tokenTransport values at runtime", () => {
+    expect(
+      () =>
+        new WebSocketL2TunnelClient("wss://gateway.example.com/l2", () => {}, {
+          token: "sekrit",
+          tokenTransport: "nope" as unknown as "query",
+        }),
+    ).toThrow(/tokenTransport/);
+  });
+
   it("WebSocket client closes when subprotocol is not negotiated", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
