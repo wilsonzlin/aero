@@ -92,6 +92,16 @@ _Must_inspect_result_ NTSTATUS VirtioSndTxSubmitPeriod(
 
 VOID VirtioSndTxProcessCompletions(_Inout_ VIRTIOSND_TX_ENGINE* Tx);
 
+/*
+ * Complete a single used entry from the TX virtqueue.
+ *
+ * This is intended for generic virtqueue drain loops that pop used entries and
+ * then dispatch completions to the queue owner (TX engine).
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+VOID VirtioSndTxOnUsed(_Inout_ VIRTIOSND_TX_ENGINE* Tx, _In_opt_ void* Cookie, _In_ UINT32 UsedLen);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

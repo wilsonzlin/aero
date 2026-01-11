@@ -151,6 +151,32 @@ static VOID VirtioSndTxReturnToFreeListLocked(_Inout_ VIRTIOSND_TX_ENGINE* Tx, _
     Tx->FreeCount++;
 }
 
+static VOID VirtioSndTxHandleUsedLocked(_Inout_ VIRTIOSND_TX_ENGINE* Tx, _Inout_ VIRTIOSND_TX_BUFFER* Buffer)
+{
+    ULONG st;
+    ULONG latency;
+
+    st = Buffer->StatusVa->status;
+    latency = Buffer->StatusVa->latency_bytes;
+
+    Tx->LastVirtioStatus = st;
+    Tx->LastLatencyBytes = latency;
+
+    if (st == VIRTIO_SND_S_OK) {
+        Tx->CompletedOk++;
+    } else if (st == VIRTIO_SND_S_IO_ERR) {
+        Tx->CompletedIoErr++;
+    } else {
+        Tx->CompletedBadMsgOrNotSupp++;
+        if (st == VIRTIO_SND_S_BAD_MSG || st == VIRTIO_SND_S_NOT_SUPP) {
+            Tx->FatalError = TRUE;
+        }
+    }
+
+    Buffer->PcmBytes = 0;
+    VirtioSndTxReturnToFreeListLocked(Tx, Buffer);
+}
+
 _Use_decl_annotations_
 NTSTATUS
 VirtioSndTxSubmitPeriod(
@@ -265,8 +291,6 @@ VirtioSndTxProcessCompletions(VIRTIOSND_TX_ENGINE* Tx)
     VOID* ctx;
     UINT32 usedLen;
     VIRTIOSND_TX_BUFFER* buf;
-    ULONG st;
-    ULONG latency;
 
     NT_ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
@@ -283,27 +307,33 @@ VirtioSndTxProcessCompletions(VIRTIOSND_TX_ENGINE* Tx)
         if (buf == NULL) {
             continue;
         }
-
-        st = buf->StatusVa->status;
-        latency = buf->StatusVa->latency_bytes;
-
-        Tx->LastVirtioStatus = st;
-        Tx->LastLatencyBytes = latency;
-
-        if (st == VIRTIO_SND_S_OK) {
-            Tx->CompletedOk++;
-        } else if (st == VIRTIO_SND_S_IO_ERR) {
-            Tx->CompletedIoErr++;
-        } else {
-            Tx->CompletedBadMsgOrNotSupp++;
-            if (st == VIRTIO_SND_S_BAD_MSG || st == VIRTIO_SND_S_NOT_SUPP) {
-                Tx->FatalError = TRUE;
-            }
-        }
-
-        buf->PcmBytes = 0;
-        VirtioSndTxReturnToFreeListLocked(Tx, buf);
+        VirtioSndTxHandleUsedLocked(Tx, buf);
     }
 
+    KeReleaseSpinLock(&Tx->Lock, oldIrql);
+}
+
+_Use_decl_annotations_
+VOID
+VirtioSndTxOnUsed(VIRTIOSND_TX_ENGINE* Tx, void* Cookie, UINT32 UsedLen)
+{
+    KIRQL oldIrql;
+    VIRTIOSND_TX_BUFFER* buf;
+
+    UNREFERENCED_PARAMETER(UsedLen);
+
+    NT_ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
+
+    if (Tx == NULL || Cookie == NULL) {
+        return;
+    }
+    if (Tx->Queue == NULL) {
+        return;
+    }
+
+    buf = (VIRTIOSND_TX_BUFFER*)Cookie;
+
+    KeAcquireSpinLock(&Tx->Lock, &oldIrql);
+    VirtioSndTxHandleUsedLocked(Tx, buf);
     KeReleaseSpinLock(&Tx->Lock, oldIrql);
 }

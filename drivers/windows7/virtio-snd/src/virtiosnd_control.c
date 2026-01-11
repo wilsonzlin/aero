@@ -199,6 +199,18 @@ VirtioSndCtrlProcessUsed(_Inout_ VIRTIOSND_CONTROL* Ctrl)
     }
 }
 
+VOID
+VirtioSndCtrlOnUsed(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_opt_ void* Cookie, _In_ UINT32 UsedLen)
+{
+    UNREFERENCED_PARAMETER(Ctrl);
+
+    if (Cookie == NULL) {
+        return;
+    }
+
+    VirtioSndCtrlCompleteRequest((VIRTIOSND_CTRL_REQUEST*)Cookie, (ULONG)UsedLen);
+}
+
 static NTSTATUS
 VirtioSndCtrlSendSyncLocked(
     _Inout_ VIRTIOSND_CONTROL* Ctrl,

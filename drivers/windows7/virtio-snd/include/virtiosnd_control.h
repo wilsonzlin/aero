@@ -78,6 +78,17 @@ VOID VirtioSndCtrlCancelAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ NTSTATUS Cance
  */
 VOID VirtioSndCtrlProcessUsed(_Inout_ VIRTIOSND_CONTROL* Ctrl);
 
+/*
+ * Complete a single used entry from the control virtqueue.
+ *
+ * Intended for use by a generic virtqueue drain loop that already popped
+ * descriptors and wants to hand completions to the control engine without
+ * requiring it to re-pop the used ring.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+VOID VirtioSndCtrlOnUsed(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_opt_ void* Cookie, _In_ UINT32 UsedLen);
+
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlSendSync(
     _Inout_ VIRTIOSND_CONTROL* Ctrl,
     _In_reads_bytes_(ReqLen) const void* Req,
