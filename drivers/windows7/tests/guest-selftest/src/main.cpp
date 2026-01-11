@@ -1485,9 +1485,13 @@ static std::wstring GetPropertyString(IPropertyStore* store, const PROPERTYKEY& 
 }
 
 static bool LooksLikeVirtioSndEndpoint(const std::wstring& friendly_name, const std::wstring& instance_id,
-                                       const std::vector<std::wstring>& hwids) {
+                                       const std::vector<std::wstring>& hwids,
+                                       const std::vector<std::wstring>& match_names) {
   if (ContainsInsensitive(friendly_name, L"virtio") || ContainsInsensitive(friendly_name, L"aero")) return true;
   if (ContainsInsensitive(friendly_name, L"snd")) return true;
+  for (const auto& m : match_names) {
+    if (!m.empty() && ContainsInsensitive(friendly_name, m)) return true;
+  }
   if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
     return true;
   }
@@ -1610,7 +1614,7 @@ static bool FillToneInterleaved(BYTE* dst, UINT32 frames, const WAVEFORMATEX* fm
   return true;
 }
 
-static TestResult VirtioSndTest(Logger& log) {
+static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& match_names) {
   TestResult out;
 
   ScopedCoInitialize com(COINIT_MULTITHREADED);
@@ -1714,6 +1718,9 @@ static TestResult VirtioSndTest(Logger& log) {
       if (ContainsInsensitive(friendly, L"virtio")) score += 100;
       if (ContainsInsensitive(friendly, L"aero")) score += 50;
       if (ContainsInsensitive(friendly, L"snd")) score += 20;
+      for (const auto& m : match_names) {
+        if (!m.empty() && ContainsInsensitive(friendly, m)) score += 200;
+      }
       if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
         score += 150;
       }
@@ -1725,7 +1732,7 @@ static TestResult VirtioSndTest(Logger& log) {
 
       if (score <= 0) continue;
 
-      if (score > best_score && LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids)) {
+      if (score > best_score && LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
         best_score = score;
         chosen = std::move(dev);
         chosen_friendly = friendly;
@@ -1738,12 +1745,30 @@ static TestResult VirtioSndTest(Logger& log) {
   }
 
   if (!chosen) {
-    log.LogLine("virtio-snd: no matching ACTIVE render endpoint found; trying default endpoint");
+    log.LogLine("virtio-snd: no matching ACTIVE render endpoint found; checking default endpoint");
     hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, chosen.Put());
     if (FAILED(hr) || !chosen) {
       out.fail_reason = "no_matching_endpoint";
       out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
       log.LogLine("virtio-snd: no default render endpoint available");
+      return out;
+    }
+
+    ComPtr<IPropertyStore> props;
+    hr = chosen->OpenPropertyStore(STGM_READ, props.Put());
+    std::wstring friendly = L"";
+    std::wstring instance_id = L"";
+    if (SUCCEEDED(hr)) {
+      friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
+      if (friendly.empty()) friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
+      instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
+    }
+    const auto hwids = GetHardwareIdsForInstanceId(instance_id);
+    if (!LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
+      out.fail_reason = "no_matching_endpoint";
+      out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+      log.Logf("virtio-snd: default endpoint does not look like virtio-snd (name=%s instance_id=%s)",
+               WideToUtf8(friendly).c_str(), WideToUtf8(instance_id).c_str());
       return out;
     }
 
@@ -1758,7 +1783,7 @@ static TestResult VirtioSndTest(Logger& log) {
       CoTaskMemFree(dev_id_raw);
     }
 
-    ComPtr<IPropertyStore> props;
+    props.Reset();
     hr = chosen->OpenPropertyStore(STGM_READ, props.Put());
     if (SUCCEEDED(hr)) {
       chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
@@ -2029,6 +2054,7 @@ static std::wstring WinmmErrorToWide(MMRESULT rc) {
 static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_names) {
   const UINT num = waveOutGetNumDevs();
   log.Logf("virtio-snd: waveOut devices=%u", num);
+  if (num == 0) return false;
 
   auto name_matches = [&](const std::wstring& n) -> bool {
     if (ContainsInsensitive(n, L"virtio") || ContainsInsensitive(n, L"aero")) return true;
@@ -2038,19 +2064,20 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
     return false;
   };
 
-  UINT device_id = WAVE_MAPPER;
+  UINT device_id = UINT_MAX;
   for (UINT i = 0; i < num; i++) {
     WAVEOUTCAPSW caps{};
     const MMRESULT rc = waveOutGetDevCapsW(i, &caps, sizeof(caps));
     if (rc != MMSYSERR_NOERROR) continue;
     log.Logf("virtio-snd: waveOut[%u]=%s", i, WideToUtf8(caps.szPname).c_str());
-    if (device_id == WAVE_MAPPER && name_matches(caps.szPname)) {
+    if (device_id == UINT_MAX && name_matches(caps.szPname)) {
       device_id = i;
     }
   }
 
-  if (device_id == WAVE_MAPPER) {
-    log.LogLine("virtio-snd: waveOut using default mapper");
+  if (device_id == UINT_MAX) {
+    log.LogLine("virtio-snd: waveOut no matching device name found");
+    return false;
   } else {
     log.Logf("virtio-snd: waveOut using device_id=%u", device_id);
   }
@@ -2285,7 +2312,7 @@ int wmain(int argc, wchar_t** argv) {
       }
 
       bool snd_ok = false;
-      const auto snd = VirtioSndTest(log);
+      const auto snd = VirtioSndTest(log, match_names);
       if (snd.ok) {
         snd_ok = true;
       } else {
