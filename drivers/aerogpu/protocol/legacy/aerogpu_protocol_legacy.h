@@ -190,7 +190,7 @@ typedef struct AEROGPU_CMD_BIND_SHADERS_PAYLOAD {
  *   [AEROGPU_INPUT_ELEMENT element[element_count]]
  */
 typedef struct AEROGPU_INPUT_ELEMENT {
-  aerogpu_u32 semantic_name_hash; /* FNV-1a hash of ASCII semantic name */
+  aerogpu_u32 semantic_name_hash; /* FNV-1a hash of ASCII uppercase semantic name */
   aerogpu_u32 semantic_index;
   aerogpu_u32 format_dxgi; /* DXGI_FORMAT numeric value */
   aerogpu_u32 input_slot;

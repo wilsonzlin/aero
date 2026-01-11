@@ -820,6 +820,9 @@ pub fn map_layout_to_shader_locations_compact(
 }
 
 /// Compute a 32-bit FNV-1a hash (used for semantic name hashing in the ILAY protocol).
+///
+/// Note: D3D semantic matching is case-insensitive; the AeroGPU ILAY protocol hashes the
+/// semantic name after canonicalizing it to ASCII uppercase.
 pub fn fnv1a_32(bytes: &[u8]) -> u32 {
     const OFFSET: u32 = 0x811c_9dc5;
     const PRIME: u32 = 0x0100_0193;

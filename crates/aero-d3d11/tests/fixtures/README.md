@@ -76,7 +76,8 @@ The AeroGPU guest↔host ABI defines an opaque input-layout blob with magic
 * `ilay_pos3_color.bin`: `POSITION0` (`R32G32B32_FLOAT`) + `COLOR0` (`R32G32B32A32_FLOAT`)
 * `ilay_pos3_tex2.bin`: `POSITION0` (`R32G32B32_FLOAT`) + `TEXCOORD0` (`R32G32_FLOAT`)
 
-Semantic names are represented as a 32-bit FNV-1a hash of the ASCII name, per
+Semantic names are represented as a 32-bit FNV-1a hash of the **ASCII uppercase**
+name, per
 `drivers/aerogpu/protocol/aerogpu_cmd.h`.
 
 ## Command stream
