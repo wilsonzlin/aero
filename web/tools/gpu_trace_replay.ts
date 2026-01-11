@@ -23,12 +23,16 @@
   const RECORD_PRESENT = 0x02;
   const RECORD_PACKET = 0x03;
   const RECORD_BLOB = 0x04;
+  const RECORD_AEROGPU_SUBMISSION = 0x05;
 
   const BLOB_BUFFER_DATA = 0x01;
   const BLOB_TEXTURE_DATA = 0x02;
   const BLOB_SHADER_DXBC = 0x03;
   const BLOB_SHADER_WGSL = 0x04;
   const BLOB_SHADER_GLSL_ES300 = 0x05;
+  const BLOB_AEROGPU_CMD_STREAM = 0x100;
+  const BLOB_AEROGPU_ALLOC_TABLE = 0x101;
+  const BLOB_AEROGPU_ALLOC_MEMORY = 0x102;
 
   // Minimal command ABI v1 opcodes (Appendix A).
   const OP_CREATE_BUFFER = 0x0001;
@@ -49,15 +53,26 @@
   // sequence of size-prefixed packets (unknown opcodes must be skipped).
   const AEROGPU_CMD_STREAM_MAGIC = asciiBytes("ACMD");
   const AEROGPU_CMD_STREAM_MAGIC_U32 = 0x444d4341; // "ACMD" LE
+  const AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES = 24;
+  const AEROGPU_CMD_HDR_SIZE_BYTES = 8;
 
+  const AEROGPU_CMD_CREATE_BUFFER = 0x0100;
+  const AEROGPU_CMD_CREATE_TEXTURE2D = 0x0101;
+  const AEROGPU_CMD_SET_RENDER_TARGETS = 0x0400;
   const AEROGPU_CMD_SET_VIEWPORT = 0x0401;
+  const AEROGPU_CMD_SET_VERTEX_BUFFERS = 0x0500;
+  const AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = 0x0502;
   const AEROGPU_CMD_CLEAR = 0x0600;
+  const AEROGPU_CMD_DRAW = 0x0601;
   const AEROGPU_CMD_PRESENT = 0x0700;
   const AEROGPU_CMD_PRESENT_EX = 0x0701;
 
   const AEROGPU_CLEAR_COLOR = 1 << 0;
   const AEROGPU_CLEAR_DEPTH = 1 << 1;
   const AEROGPU_CLEAR_STENCIL = 1 << 2;
+
+  const AEROGPU_FORMAT_R8G8B8A8_UNORM = 3;
+  const AEROGPU_TOPOLOGY_TRIANGLELIST = 4;
 
   function asciiBytes(s) {
     const out = new Uint8Array(s.length);
@@ -567,7 +582,9 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     if (headerSize !== 32) fail("unsupported header_size=" + headerSize);
     const containerVersion = readU32(view, off);
     off += 4;
-    if (containerVersion !== 1) fail("unsupported container_version=" + containerVersion);
+    if (containerVersion !== 1 && containerVersion !== 2) {
+      fail("unsupported container_version=" + containerVersion);
+    }
     const commandAbiVersion = readU32(view, off);
     off += 4;
     const flags = readU32(view, off);
@@ -624,6 +641,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     // Scan record stream once to collect blobs and per-frame packets.
     const blobs = new Map(); // bigint -> Uint8Array
     const framePackets = new Map(); // frameIndex -> Uint8Array[]
+    const frameSubmissions = new Map(); // frameIndex -> AerogpuSubmission[]
     let currentFrame = null;
 
     let recOff = off;
@@ -639,12 +657,58 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
         const frameIndex = readU32(view, payloadOff);
         currentFrame = frameIndex;
         if (!framePackets.has(frameIndex)) framePackets.set(frameIndex, []);
+        if (!frameSubmissions.has(frameIndex)) frameSubmissions.set(frameIndex, []);
       } else if (rType === RECORD_PRESENT) {
         currentFrame = null;
       } else if (rType === RECORD_PACKET) {
         if (currentFrame === null) fail("packet outside of a frame");
         const pkt = bytes.subarray(payloadOff, payloadEnd);
         framePackets.get(currentFrame).push(pkt);
+      } else if (rType === RECORD_AEROGPU_SUBMISSION) {
+        if (currentFrame === null) fail("aerogpu submission outside of a frame");
+        if (payloadLen < 56) fail("malformed aerogpu submission record");
+
+        const recordVersion = readU32(view, payloadOff + 0);
+        const headerSizeBytes = readU32(view, payloadOff + 4);
+        if (headerSizeBytes < 56 || headerSizeBytes > payloadLen) {
+          fail("malformed aerogpu submission header_size_bytes=" + headerSizeBytes);
+        }
+        const submitFlags = readU32(view, payloadOff + 8);
+        const contextId = readU32(view, payloadOff + 12);
+        const engineId = readU32(view, payloadOff + 16);
+        // reserved0 @ +20
+        const signalFence = readU64Big(view, payloadOff + 24);
+        const cmdStreamBlobId = readU64Big(view, payloadOff + 32);
+        const allocTableBlobId = readU64Big(view, payloadOff + 40);
+        const memoryRangeCount = readU32(view, payloadOff + 48);
+        // reserved1 @ +52
+
+        const requiredLen = headerSizeBytes + memoryRangeCount * 32;
+        if (requiredLen > payloadLen) fail("malformed aerogpu submission record length");
+
+        const memoryRanges = [];
+        let mrOff = payloadOff + headerSizeBytes;
+        for (let i = 0; i < memoryRangeCount; i++) {
+          const allocId = readU32(view, mrOff + 0);
+          const flags = readU32(view, mrOff + 4);
+          const gpa = readU64Big(view, mrOff + 8);
+          const sizeBytes = readU64Big(view, mrOff + 16);
+          const blobId = readU64Big(view, mrOff + 24);
+          memoryRanges.push({ allocId, flags, gpa, sizeBytes, blobId });
+          mrOff += 32;
+        }
+
+        frameSubmissions.get(currentFrame).push({
+          recordVersion,
+          headerSizeBytes,
+          submitFlags,
+          contextId,
+          engineId,
+          signalFence,
+          cmdStreamBlobId,
+          allocTableBlobId,
+          memoryRanges,
+        });
       } else if (rType === RECORD_BLOB) {
         if (payloadLen < 16) fail("malformed blob record");
         const blobId = readU64Big(view, payloadOff + 0);
@@ -666,6 +730,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
       frames,
       blobs,
       framePackets,
+      frameSubmissions,
     };
   }
 
@@ -977,6 +1042,364 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     return { gl, executePacket, readPixels };
   }
 
+  function createAerogpuWebgl2Backend(canvas) {
+    const gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true });
+    if (!gl) fail("WebGL2 is not available");
+
+    // Reduce driver variance for screenshot comparisons.
+    gl.disable(gl.DITHER);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+    const GLSL_VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec2 a_position;
+layout(location=1) in vec4 a_color;
+out vec4 v_color;
+void main() {
+  v_color = a_color;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}
+`;
+
+    const GLSL_FS = `#version 300 es
+precision highp float;
+in vec4 v_color;
+out vec4 o_color;
+void main() {
+  o_color = v_color;
+}
+`;
+
+    function compileShader(stage, src) {
+      const shader = gl.createShader(stage);
+      if (!shader) fail("gl.createShader failed");
+      gl.shaderSource(shader, src);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const log = gl.getShaderInfoLog(shader) || "(no log)";
+        fail("shader compile failed: " + log);
+      }
+      return shader;
+    }
+
+    function linkProgram(vsSrc, fsSrc) {
+      const vs = compileShader(gl.VERTEX_SHADER, vsSrc);
+      const fs = compileShader(gl.FRAGMENT_SHADER, fsSrc);
+      const prog = gl.createProgram();
+      if (!prog) fail("gl.createProgram failed");
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        const log = gl.getProgramInfoLog(prog) || "(no log)";
+        fail("program link failed: " + log);
+      }
+      gl.deleteShader(vs);
+      gl.deleteShader(fs);
+      return prog;
+    }
+
+    const prog = linkProgram(GLSL_VS, GLSL_FS);
+    gl.useProgram(prog);
+
+    const vao = gl.createVertexArray();
+    if (!vao) fail("gl.createVertexArray failed");
+    gl.bindVertexArray(vao);
+
+    const buffers = new Map(); // handle -> WebGLBuffer
+    const textures = new Map(); // handle -> { tex, fb, width, height }
+
+    let currentRenderTarget = null; // handle | null
+    let currentTopology = gl.TRIANGLES;
+
+    function currentTargetSize() {
+      if (currentRenderTarget !== null && currentRenderTarget !== 0) {
+        const rt = textures.get(currentRenderTarget);
+        if (rt) return { w: rt.width, h: rt.height };
+      }
+      return { w: canvas.width, h: canvas.height };
+    }
+
+    function bindRenderTarget(rtHandle) {
+      if (rtHandle === null || rtHandle === 0) {
+        currentRenderTarget = null;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.drawBuffers([gl.BACK]);
+        return;
+      }
+      const rt = textures.get(rtHandle);
+      if (!rt) fail("unknown render target handle=" + rtHandle);
+      currentRenderTarget = rtHandle;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fb);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    }
+
+    function executeCmdStream(cmdStreamBytes, memAllocs) {
+      const dv = new DataView(
+        cmdStreamBytes.buffer,
+        cmdStreamBytes.byteOffset,
+        cmdStreamBytes.byteLength,
+      );
+      const bufLen = dv.byteLength;
+      if (bufLen < AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES) fail("cmd stream too small");
+      const magic = dv.getUint32(0, true);
+      if (magic !== AEROGPU_CMD_STREAM_MAGIC_U32) fail("bad cmd stream magic");
+      const sizeBytes = dv.getUint32(8, true);
+      if (sizeBytes < AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES || sizeBytes > bufLen) {
+        fail("invalid cmd stream size_bytes=" + sizeBytes);
+      }
+
+      let off = AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES;
+      while (off < sizeBytes) {
+        if (off + AEROGPU_CMD_HDR_SIZE_BYTES > sizeBytes) {
+          fail("truncated cmd header at offset " + off);
+        }
+        const opcode = dv.getUint32(off + 0, true);
+        const cmdSizeBytes = dv.getUint32(off + 4, true);
+        if (cmdSizeBytes < AEROGPU_CMD_HDR_SIZE_BYTES) {
+          fail("invalid cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
+        }
+        if (cmdSizeBytes % 4 !== 0) {
+          fail("misaligned cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
+        }
+        const end = off + cmdSizeBytes;
+        if (end > sizeBytes) {
+          fail("cmd overruns stream (end=" + end + ", size=" + sizeBytes + ")");
+        }
+
+        switch (opcode) {
+          case AEROGPU_CMD_CREATE_BUFFER: {
+            if (cmdSizeBytes < 40) fail("CREATE_BUFFER packet too small");
+            const bufferHandle = dv.getUint32(off + 8, true);
+            const sizeBytesU64 = readU64Big(dv, off + 16);
+            const backingAllocId = dv.getUint32(off + 24, true);
+            const backingOffsetBytes = dv.getUint32(off + 28, true);
+
+            const size = u64BigToSafeNumber(sizeBytesU64, "CREATE_BUFFER.size_bytes");
+            const glBuf = gl.createBuffer();
+            if (!glBuf) fail("gl.createBuffer failed");
+            buffers.set(bufferHandle, glBuf);
+            gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+
+            if (backingAllocId !== 0) {
+              const allocBytes = memAllocs.get(backingAllocId);
+              if (!allocBytes) fail("missing alloc_id=" + backingAllocId + " for CREATE_BUFFER");
+              const endOff = backingOffsetBytes + size;
+              if (endOff > allocBytes.byteLength) fail("CREATE_BUFFER backing out of bounds");
+              gl.bufferData(
+                gl.ARRAY_BUFFER,
+                allocBytes.subarray(backingOffsetBytes, endOff),
+                gl.STATIC_DRAW,
+              );
+            } else {
+              gl.bufferData(gl.ARRAY_BUFFER, size, gl.STATIC_DRAW);
+            }
+            break;
+          }
+
+          case AEROGPU_CMD_CREATE_TEXTURE2D: {
+            if (cmdSizeBytes < 56) fail("CREATE_TEXTURE2D packet too small");
+            const textureHandle = dv.getUint32(off + 8, true);
+            const format = dv.getUint32(off + 16, true);
+            const width = dv.getUint32(off + 20, true);
+            const height = dv.getUint32(off + 24, true);
+            const mipLevels = dv.getUint32(off + 28, true);
+            const arrayLayers = dv.getUint32(off + 32, true);
+            const backingAllocId = dv.getUint32(off + 40, true);
+
+            if (width === 0 || height === 0) fail("CREATE_TEXTURE2D invalid dimensions");
+            if (mipLevels !== 1 || arrayLayers !== 1) {
+              fail("CREATE_TEXTURE2D only supports mip_levels=1, array_layers=1");
+            }
+            if (format !== AEROGPU_FORMAT_R8G8B8A8_UNORM) fail("unsupported texture format");
+            if (backingAllocId !== 0) fail("backed textures are not supported in JS replayer");
+
+            const tex = gl.createTexture();
+            if (!tex) fail("gl.createTexture failed");
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texImage2D(
+              gl.TEXTURE_2D,
+              0,
+              gl.RGBA8,
+              width,
+              height,
+              0,
+              gl.RGBA,
+              gl.UNSIGNED_BYTE,
+              null,
+            );
+
+            const fb = gl.createFramebuffer();
+            if (!fb) fail("gl.createFramebuffer failed");
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+            gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+            const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+            if (status !== gl.FRAMEBUFFER_COMPLETE) {
+              fail("incomplete framebuffer (status=0x" + status.toString(16) + ")");
+            }
+            textures.set(textureHandle, { tex, fb, width, height });
+            // Creating resources should not implicitly switch render targets.
+            bindRenderTarget(currentRenderTarget);
+            break;
+          }
+
+          case AEROGPU_CMD_SET_RENDER_TARGETS: {
+            if (cmdSizeBytes < 48) fail("SET_RENDER_TARGETS packet too small");
+            const colorCount = dv.getUint32(off + 8, true);
+            const rt0 = dv.getUint32(off + 16, true);
+            bindRenderTarget(colorCount > 0 ? rt0 : null);
+            break;
+          }
+
+          case AEROGPU_CMD_SET_VIEWPORT: {
+            if (cmdSizeBytes < 32) fail("SET_VIEWPORT packet too small");
+            const x = dv.getFloat32(off + 8, true);
+            const y = dv.getFloat32(off + 12, true);
+            const wReq = dv.getFloat32(off + 16, true);
+            const hReq = dv.getFloat32(off + 20, true);
+            const size = currentTargetSize();
+            const w = wReq > 0 ? wReq : size.w;
+            const h = hReq > 0 ? hReq : size.h;
+            gl.viewport(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h));
+            break;
+          }
+
+          case AEROGPU_CMD_CLEAR: {
+            if (cmdSizeBytes < 36) fail("CLEAR packet too small");
+            const flags = dv.getUint32(off + 8, true);
+            if ((flags & AEROGPU_CLEAR_COLOR) !== 0) {
+              const r = dv.getFloat32(off + 12, true);
+              const g = dv.getFloat32(off + 16, true);
+              const b = dv.getFloat32(off + 20, true);
+              const a = dv.getFloat32(off + 24, true);
+              gl.clearColor(r, g, b, a);
+              gl.clear(gl.COLOR_BUFFER_BIT);
+            }
+            break;
+          }
+
+          case AEROGPU_CMD_SET_VERTEX_BUFFERS: {
+            if (cmdSizeBytes < 32) fail("SET_VERTEX_BUFFERS packet too small");
+            const startSlot = dv.getUint32(off + 8, true);
+            const bufferCount = dv.getUint32(off + 12, true);
+            if (startSlot !== 0) fail("SET_VERTEX_BUFFERS only supports start_slot=0");
+            if (bufferCount === 0) break;
+
+            // First binding.
+            const bufHandle = dv.getUint32(off + 16, true);
+            const strideBytes = dv.getUint32(off + 20, true);
+            const offsetBytes = dv.getUint32(off + 24, true);
+            const glBuf = buffers.get(bufHandle);
+            if (!glBuf) fail("unknown vertex buffer handle=" + bufHandle);
+            gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+            gl.enableVertexAttribArray(0);
+            gl.vertexAttribPointer(0, 2, gl.FLOAT, false, strideBytes, offsetBytes + 0);
+            gl.enableVertexAttribArray(1);
+            gl.vertexAttribPointer(1, 4, gl.FLOAT, false, strideBytes, offsetBytes + 8);
+            break;
+          }
+
+          case AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY: {
+            if (cmdSizeBytes < 16) fail("SET_PRIMITIVE_TOPOLOGY packet too small");
+            const topology = dv.getUint32(off + 8, true);
+            if (topology !== AEROGPU_TOPOLOGY_TRIANGLELIST) {
+              fail("unsupported primitive topology " + topology);
+            }
+            currentTopology = gl.TRIANGLES;
+            break;
+          }
+
+          case AEROGPU_CMD_DRAW: {
+            if (cmdSizeBytes < 24) fail("DRAW packet too small");
+            const vertexCount = dv.getUint32(off + 8, true);
+            const instanceCount = dv.getUint32(off + 12, true);
+            const firstVertex = dv.getUint32(off + 16, true);
+            const firstInstance = dv.getUint32(off + 20, true);
+            if (instanceCount !== 1 || firstInstance !== 0) fail("instancing not supported");
+            gl.drawArrays(currentTopology, firstVertex, vertexCount);
+            break;
+          }
+
+          case AEROGPU_CMD_PRESENT: {
+            if (currentRenderTarget !== null && currentRenderTarget !== 0) {
+              const rt = textures.get(currentRenderTarget);
+              if (!rt) fail("missing current render target");
+
+              gl.bindFramebuffer(gl.READ_FRAMEBUFFER, rt.fb);
+              gl.readBuffer(gl.COLOR_ATTACHMENT0);
+              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+              gl.drawBuffers([gl.BACK]);
+              gl.blitFramebuffer(
+                0,
+                0,
+                rt.width,
+                rt.height,
+                0,
+                0,
+                canvas.width,
+                canvas.height,
+                gl.COLOR_BUFFER_BIT,
+                gl.NEAREST,
+              );
+              gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            }
+            gl.finish();
+            break;
+          }
+
+          default:
+            // Unknown opcodes are skipped (forward-compat).
+            break;
+        }
+
+        off = end;
+      }
+    }
+
+    async function executeSubmission(submission, trace) {
+      const cmdBlob = trace.blobs.get(submission.cmdStreamBlobId);
+      if (!cmdBlob) fail("missing cmd_stream_blob_id=" + submission.cmdStreamBlobId.toString());
+      if (cmdBlob.kind !== BLOB_AEROGPU_CMD_STREAM) fail("unexpected cmd stream blob kind");
+
+      if (submission.allocTableBlobId !== 0n) {
+        const allocTableBlob = trace.blobs.get(submission.allocTableBlobId);
+        if (!allocTableBlob) {
+          fail("missing alloc_table_blob_id=" + submission.allocTableBlobId.toString());
+        }
+        if (allocTableBlob.kind !== BLOB_AEROGPU_ALLOC_TABLE) {
+          fail("unexpected alloc table blob kind");
+        }
+      }
+
+      const memAllocs = new Map(); // alloc_id -> Uint8Array
+      for (const r of submission.memoryRanges) {
+        const blob = trace.blobs.get(r.blobId);
+        if (!blob) fail("missing memory blob_id=" + r.blobId.toString());
+        if (blob.kind !== BLOB_AEROGPU_ALLOC_MEMORY) fail("unexpected alloc memory blob kind");
+        memAllocs.set(r.allocId, blob.bytes);
+      }
+
+      executeCmdStream(cmdBlob.bytes, memAllocs);
+    }
+
+    function readPixels() {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      const out = new Uint8Array(canvas.width * canvas.height * 4);
+      gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, out);
+      return out;
+    }
+
+    return { gl, executeSubmission, readPixels };
+  }
+
   async function createWebgpuBackend(canvas) {
     const gpu = navigator.gpu;
     if (!gpu) fail("WebGPU is not available");
@@ -1191,7 +1614,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
   async function loadTrace(bytesLike, canvas, opts) {
     const trace = parseTrace(bytesLike);
     // `command_abi_version` is primarily for tooling; the actual packet format is
-    // detected per-packet.
+    // detected per-record. (Old traces used `RecordType::Packet` with raw ACMD
+    // bytes, new canonical traces use `RecordType::AerogpuSubmission` + blobs.)
     //
     // Currently supported:
     // - 1: Minimal reference command ABI v1 (Appendix A).
@@ -1206,18 +1630,46 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
           " (supported: 1 (minimal ABI v1) or 0x0001_xxxx (AeroGPU ABI v1))",
       );
     }
+
+    let hasSubmissions = false;
+    for (const subs of trace.frameSubmissions.values()) {
+      if (subs.length > 0) {
+        hasSubmissions = true;
+        break;
+      }
+    }
+
     const backendName = (opts && opts.backend) || "webgl2";
-    const backend =
-      backendName === "webgpu"
-        ? await createWebgpuBackend(canvas)
-        : createWebgl2Backend(canvas);
+    const backend = hasSubmissions
+      ? !isAerogpuAbiV1
+        ? fail("AerogpuSubmission records require an AeroGPU ABI v1 command_abi_version")
+        : backendName === "webgl2"
+          ? createAerogpuWebgl2Backend(canvas)
+          : fail(
+              "backend " +
+                backendName +
+                " does not support AeroGPU submission traces (use backend: 'webgl2')",
+            )
+      : !isMinimalAbiV1 && backendName === "webgpu"
+        ? fail(
+            "backend webgpu does not support AeroGPU command stream packet traces (use backend: 'webgl2')",
+          )
+        : backendName === "webgpu"
+          ? await createWebgpuBackend(canvas)
+          : createWebgl2Backend(canvas);
     let cursor = 0;
     let playing = false;
 
     async function replayFrame(frameIndex) {
-      const packets = trace.framePackets.get(frameIndex);
-      if (!packets) fail("no such frame " + frameIndex);
-      for (const pkt of packets) await backend.executePacket(pkt, trace);
+      if (!hasSubmissions) {
+        const packets = trace.framePackets.get(frameIndex);
+        if (!packets) fail("no such frame " + frameIndex);
+        for (const pkt of packets) await backend.executePacket(pkt, trace);
+      } else {
+        const subs = trace.frameSubmissions.get(frameIndex);
+        if (!subs) fail("no such frame " + frameIndex);
+        for (const sub of subs) await backend.executeSubmission(sub, trace);
+      }
     }
 
     async function step() {
